@@ -75,3 +75,32 @@ export interface StatsResponse {
   elements: string[]
   recent: Potential[]
 }
+
+// Phase 2: Auth & Contributions
+
+export interface Profile {
+  id: string
+  username: string
+  full_name: string | null
+  email: string | null
+  role: 'admin' | 'contributor' | 'viewer'
+  avatar_url: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Contribution {
+  id: string
+  potential_id: string | null
+  user_id: string | null
+  action: 'create' | 'update' | 'review'
+  status: 'pending' | 'approved' | 'rejected'
+  notes: string | null
+  created_at: string
+}
+
+export interface AuthUser {
+  id: string
+  email: string | null
+  profile: Profile | null
+}
