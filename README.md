@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NucPot - 核材料势函数库
 
-## Getting Started
+面向核燃料、包壳和结构材料的原子间势函数开放平台 MVP。
 
-First, run the development server:
+## 快速开始
+
+### 前置要求
+
+- Node.js 18+
+- Docker Desktop（用于本地 Supabase）
+
+### 1. 启动本地数据库
+
+```bash
+# 启动 Docker Desktop 后执行
+supabase start
+```
+
+启动后会显示本地连接信息，将 URL 和 Key 更新到 `.env.local`。
+
+### 2. 初始化 Schema + 种子数据
+
+```bash
+supabase db reset
+# 这会执行 supabase/schema.sql（建表 + 10 条种子数据）
+```
+
+### 3. 启动开发服务器
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# 打开 http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 项目结构
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+src/
+├── app/
+│   ├── page.tsx              # 首页
+│   ├── browse/page.tsx       # 势函数浏览
+│   ├── potential/[id]/       # 势函数详情
+│   └── api/
+│       ├── potentials/        # 势函数 CRUD API
+│       └── stats/             # 统计 API
+├── lib/
+│   └── supabase.ts           # Supabase 客户端
+supabase/
+├── schema.sql                # 数据库 Schema + 种子数据
+└── config.toml               # Supabase 本地配置
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 技术栈
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **前端**: Next.js 16 (App Router) + Tailwind CSS
+- **数据库**: Supabase (PostgreSQL) + JSONB + 全文检索
+- **部署**: Vercel (二期) / 本地开发
