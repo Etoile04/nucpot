@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
 
+const VALID_LICENSE_TYPES = ['own_work', 'author_permission', 'open_license']
+
 export async function POST(request: NextRequest) {
   // 1. Verify auth
   const authHeader = request.headers.get('authorization')
@@ -17,7 +19,9 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const {
     name, display_name, type, subtype, format, elements, system_name, system_tags,
-    description, applicability, references, developers, lammps_config, tags, extra
+    description, applicability, references, developers, lammps_config, tags, extra,
+    // Authorization fields
+    license_type, license_detail, auth_file_path,
   } = body
 
   // 3. Validate required fields
@@ -28,7 +32,27 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 4. Check name uniqueness (use admin to bypass RLS)
+  // 4. Validate authorization
+  if (!license_type || !VALID_LICENSE_TYPES.includes(license_type)) {
+    return NextResponse.json(
+      { error: 'license_type is required (own_work, author_permission, or open_license)' },
+      { status: 400 }
+    )
+  }
+  if (license_type === 'author_permission' && !auth_file_path) {
+    return NextResponse.json(
+      { error: 'Authorization proof file is required when license_type is author_permission' },
+      { status: 400 }
+    )
+  }
+  if (license_type === 'open_license' && !license_detail) {
+    return NextResponse.json(
+      { error: 'License name (e.g. CC-BY-4.0) is required when license_type is open_license' },
+      { status: 400 }
+    )
+  }
+
+  // 5. Check name uniqueness (use admin to bypass RLS)
   const { data: existing } = await supabaseAdmin!
     .from('potentials')
     .select('id')
@@ -38,7 +62,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Potential name already exists' }, { status: 409 })
   }
 
-  // 5. Insert potential (requires admin to bypass RLS)
+  // 6. Insert potential (requires admin to bypass RLS)
   if (!supabaseAdmin) {
     return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
   }
@@ -63,7 +87,16 @@ export async function POST(request: NextRequest) {
       lammps_config: lammps_config || {},
       source: 'user_contributed',
       tags: tags || [],
-      extra: { ...extra, status: 'pending', uploaded_by: user.id, validationLevel: 'unverified' },
+      extra: {
+        ...extra,
+        status: 'pending',
+        uploaded_by: user.id,
+        validationLevel: 'unverified',
+        // Store authorization metadata
+        license_type,
+        license_detail: license_detail || null,
+        auth_file_path: auth_file_path || null,
+      },
     })
     .select()
     .single()
@@ -72,13 +105,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: insertError.message }, { status: 400 })
   }
 
-  // 6. Create contribution record
+  // 7. Create contribution record with authorization info
   await supabaseAdmin.from('contributions').insert({
     user_id: user.id,
     potential_id: potential.id,
     action: 'upload',
     status: 'pending',
-    data: { name, type, elements },
+    data: {
+      name, type, elements,
+      license_type,
+      license_detail: license_detail || null,
+      auth_file_path: auth_file_path || null,
+    },
   })
 
   return NextResponse.json(
