@@ -254,15 +254,47 @@ export default function PotentialDetailPage() {
             )}
             <div>
               <h3 className="text-sm font-semibold text-gray-400 uppercase mb-2">文件信息</h3>
-              <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 text-sm space-y-1">
+              <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 text-sm space-y-2">
                 {p.file_url ? (
                   <div>文件: <a href={p.file_url} className="text-blue-400 hover:underline">下载</a> {p.file_size && `(${(p.file_size / 1024).toFixed(1)} KB)`}</div>
                 ) : (
-                  <div className="text-gray-400">文件待上传</div>
+                  <div>
+                    <div className="text-yellow-400 mb-2">势函数文件需从原始来源获取</div>
+                    <div className="space-y-1">
+                      {p.source === 'NIST IPR' && (
+                        <a
+                          href={`https://www.ctcms.nist.gov/potentials/system/${p.elements.sort().join('-')}/`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-blue-400 hover:underline mr-4"
+                        >
+                          📦 NIST IPR 下载页
+                        </a>
+                      )}
+                      {p.references?.[0]?.doi && (
+                        <a
+                          href={`https://doi.org/${p.references[0].doi}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-blue-400 hover:underline mr-4"
+                        >
+                          📄 原始论文
+                        </a>
+                      )}
+                      <a
+                        href="https://openkim.org"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-blue-400 hover:underline"
+                      >
+                        🔬 OpenKIM
+                      </a>
+                    </div>
+                  </div>
                 )}
                 <div>格式: {p.format || '-'}</div>
                 {p.file_hash && <div className="text-xs text-gray-500">SHA256: {p.file_hash}</div>}
-                <div>许可: {p.license}</div>
+                <div>来源: {p.source || '-'}</div>
               </div>
             </div>
           </div>
