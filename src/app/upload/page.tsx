@@ -301,6 +301,17 @@ export default function UploadPage() {
                     ✓ 已选择: {authFile.name} ({(authFile.size / 1024).toFixed(1)} KB)
                   </div>
                 )}
+                <div className="flex items-center gap-4 mt-2">
+                  <a
+                    href="/authorization-template.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-yellow-400 hover:text-yellow-300 hover:underline"
+                  >
+                    📥 下载授权书模板
+                  </a>
+                  <span className="text-xs text-gray-500">（打印 → 填写 → 签字 → 扫描上传）</span>
+                </div>
                 <p className="text-xs text-gray-500">
                   支持 PDF、PNG、JPG、DOC 格式。请上传作者签署的授权书、邮件授权截图等证明材料。
                 </p>
