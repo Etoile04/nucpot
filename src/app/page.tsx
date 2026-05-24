@@ -44,18 +44,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
-      {/* Nav */}
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-        <Link href="/" className="text-xl font-bold tracking-tight">
-          NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
-        </Link>
-        <div className="flex gap-6 text-sm">
-          <Link href="/browse" className="hover:text-blue-400 transition">浏览</Link>
-          <Link href="/search" className="hover:text-blue-400 transition">高级检索</Link>
-          <Link href="/about" className="hover:text-blue-400 transition">关于</Link>
-        </div>
-      </nav>
-
       {/* Hero */}
       <section className="max-w-4xl mx-auto px-6 pt-20 pb-16 text-center">
         <h1 className="text-4xl font-bold mb-4">

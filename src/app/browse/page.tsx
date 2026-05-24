@@ -68,17 +68,6 @@ function BrowseContent() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-        <Link href="/" className="text-xl font-bold tracking-tight">
-          NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
-        </Link>
-        <div className="flex gap-6 text-sm">
-          <Link href="/browse" className="text-blue-400">浏览</Link>
-          <Link href="/search" className="hover:text-blue-400 transition">高级检索</Link>
-          <Link href="/about" className="hover:text-blue-400 transition">关于</Link>
-        </div>
-      </nav>
-
       <div className="flex max-w-7xl mx-auto">
         {/* Sidebar Filters */}
         <aside className="w-64 shrink-0 p-6 border-r border-gray-700 min-h-[calc(100vh-60px)]">
