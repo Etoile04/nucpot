@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 4. Check name uniqueness
-  const { data: existing } = await supabase
+  // 4. Check name uniqueness (use admin to bypass RLS)
+  const { data: existing } = await supabaseAdmin!
     .from('potentials')
     .select('id')
     .eq('name', name)
