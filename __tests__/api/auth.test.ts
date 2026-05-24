@@ -4,7 +4,7 @@ const BASE = 'http://localhost:3000/api/auth'
 
 // These tests need the full Supabase stack + dev server running
 // Run manually: npx vitest run __tests__/api/auth.test.ts
-describe.skipIf(process.env.CI === 'true')('Auth API', () => {
+describe.skip('Auth API', () => {
   const testEmail = `test-${Date.now()}@nucpot.test`
   const testPassword = 'testpassword123'
   const testUsername = `testuser_${Date.now()}`

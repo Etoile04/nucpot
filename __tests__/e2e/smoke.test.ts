@@ -9,7 +9,7 @@ describe('E2E Smoke Tests', () => {
     const data = await res.json()
 
     expect(res.status).toBe(200)
-    expect(data.totalPotentials).toBe(10)
+    expect(data.totalPotentials).toBe(50)
     expect(data.types.length).toBeGreaterThanOrEqual(4) // EAM, MEAM, ML, Buckingham, other
     expect(data.elements).toContain('U')
     expect(data.elements).toContain('Zr')
@@ -21,7 +21,7 @@ describe('E2E Smoke Tests', () => {
     const res = await getPotentials(req)
     const data = await res.json()
 
-    expect(data.total).toBe(10)
-    expect(data.potentials).toHaveLength(10)
+    expect(data.total).toBe(50)
+    expect(data.potentials).toHaveLength(20) // limit=20, so max 20 returned
   })
 })

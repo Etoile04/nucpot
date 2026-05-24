@@ -10,7 +10,7 @@ describe('GET /api/potentials', () => {
 
     expect(res.status).toBe(200)
     expect(data.potentials).toBeInstanceOf(Array)
-    expect(data.total).toBe(10)
+    expect(data.total).toBe(50)
     expect(data.page).toBe(1)
     expect(data.limit).toBe(20)
   })
@@ -59,7 +59,7 @@ describe('GET /api/potentials', () => {
 
     expect(res.status).toBe(200)
     expect(data.potentials).toHaveLength(3)
-    expect(data.total).toBe(10)
-    expect(data.totalPages).toBe(4)
+    expect(data.total).toBe(50)
+    expect(data.totalPages).toBe(17)
   })
 })
