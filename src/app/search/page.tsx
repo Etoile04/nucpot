@@ -120,18 +120,6 @@ function SearchContent() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      {/* Navigation */}
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-        <Link href="/" className="text-xl font-bold tracking-tight">
-          NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
-        </Link>
-        <div className="flex gap-6 text-sm">
-          <Link href="/browse" className="hover:text-blue-400 transition">浏览</Link>
-          <Link href="/search" className="text-blue-400">高级检索</Link>
-          <Link href="/about" className="hover:text-blue-400 transition">关于</Link>
-        </div>
-      </nav>
-
       <div className="max-w-5xl mx-auto px-6 py-8">
         <h1 className="text-2xl font-bold mb-1">高级检索</h1>
         <p className="text-gray-400 text-sm mb-6">通过多维度条件精准筛选势函数</p>

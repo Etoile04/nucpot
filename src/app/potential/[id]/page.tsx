@@ -81,17 +81,6 @@ export default function PotentialDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-        <Link href="/" className="text-xl font-bold tracking-tight">
-          NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
-        </Link>
-        <div className="flex gap-6 text-sm">
-          <Link href="/browse" className="hover:text-blue-400 transition">浏览</Link>
-          <Link href="/search" className="hover:text-blue-400 transition">高级检索</Link>
-          <Link href="/about" className="hover:text-blue-400 transition">关于</Link>
-        </div>
-      </nav>
-
       <div className="max-w-4xl mx-auto px-6 py-8">
         {/* Header */}
         <Link href="/browse" className="text-sm text-gray-400 hover:text-white transition mb-4 inline-block">← 返回列表</Link>

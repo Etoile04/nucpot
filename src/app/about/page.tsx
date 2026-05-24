@@ -1,20 +1,6 @@
-import Link from 'next/link'
-
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
-      {/* Nav */}
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-        <Link href="/" className="text-xl font-bold tracking-tight">
-          NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
-        </Link>
-        <div className="flex gap-6 text-sm">
-          <Link href="/browse" className="hover:text-blue-400 transition">浏览</Link>
-          <Link href="/search" className="hover:text-blue-400 transition">高级检索</Link>
-          <Link href="/about" className="hover:text-blue-400 transition">关于</Link>
-        </div>
-      </nav>
-
       <main className="max-w-4xl mx-auto px-6 py-12 space-y-12">
         {/* Section 1: 项目背景 */}
         <section>
