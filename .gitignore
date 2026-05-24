@@ -43,3 +43,4 @@ node_modules/
 .next/
 .env*.local
 .worktrees/
+docs/superpowers/
