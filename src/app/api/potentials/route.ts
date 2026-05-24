@@ -31,6 +31,29 @@ export async function GET(request: Request) {
     dbQuery = dbQuery.textSearch('search_vector', query)
   }
 
+  const irradiation = searchParams.get('irradiation')
+  const hasDefect = searchParams.get('hasDefect')
+  const hasLiquid = searchParams.get('hasLiquid')
+  const validationLevel = searchParams.get('validationLevel')
+  const tempMin = searchParams.get('tempMin')
+  const tempMax = searchParams.get('tempMax')
+
+  if (irradiation === 'true') {
+    dbQuery = dbQuery.contains('extra', { irradiationRelevant: true })
+  }
+
+  if (hasDefect === 'true') {
+    dbQuery = dbQuery.contains('extra', { hasDefectData: true })
+  }
+
+  if (hasLiquid === 'true') {
+    dbQuery = dbQuery.contains('extra', { hasLiquidPhase: true })
+  }
+
+  if (validationLevel && validationLevel !== 'all') {
+    dbQuery = dbQuery.contains('extra', { validationLevel })
+  }
+
   const { data, count, error } = await dbQuery
 
   if (error) {
