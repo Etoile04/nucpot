@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import pg from 'pg'
 import { readFileSync } from 'fs'
 
-const connectionString = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
 
 async function main() {
   const client = new pg.Client({ connectionString })
