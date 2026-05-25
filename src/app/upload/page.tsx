@@ -30,6 +30,9 @@ export default function UploadPage() {
   const [tags, setTags] = useState('')
   const [doiRefs, setDoiRefs] = useState('')
 
+  // Potential file upload
+  const [potentialFile, setPotentialFile] = useState<File | null>(null)
+
   // License / Authorization fields
   const [licenseType, setLicenseType] = useState<LicenseType>('')
   const [licenseDetail, setLicenseDetail] = useState('')
@@ -115,6 +118,29 @@ export default function UploadPage() {
       }
     }
 
+    // Upload potential file if provided
+    let potentialFileUrl: string | null = null
+    if (potentialFile) {
+      try {
+        const formData = new FormData()
+        formData.append('file', potentialFile)
+        formData.append('userId', user!.id)
+        formData.append('type', 'potential')
+
+        const uploadRes = await fetch('/api/auth/upload-proof', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session!.access_token}` },
+          body: formData,
+        })
+        const uploadData = await uploadRes.json()
+        if (uploadRes.ok && uploadData.path) {
+          potentialFileUrl = uploadData.path
+        }
+      } catch {
+        // Non-blocking: file upload is optional
+      }
+    }
+
     // Parse comma-separated fields
     const elementsArray = elements.split(',').map(s => s.trim()).filter(Boolean)
     const systemTagsArray = systemTags.split(',').map(s => s.trim()).filter(Boolean)
@@ -138,6 +164,7 @@ export default function UploadPage() {
       license_type: licenseType,
       license_detail: licenseDetail.trim() || undefined,
       auth_file_path: authFilePath || undefined,
+      file_url: potentialFileUrl || undefined,
     }
 
     // Applicability
@@ -180,7 +207,7 @@ export default function UploadPage() {
         setSystemTags(''); setDescription(''); setTempRange('')
         setPhases(''); setPairStyle(''); setPairCoeff('')
         setTags(''); setDoiRefs(''); setLicenseType('')
-        setLicenseDetail(''); setAuthFile(null)
+        setLicenseDetail(''); setAuthFile(null); setPotentialFile(null)
       }
     } catch {
       setError('网络错误，请稍后重试')
@@ -308,9 +335,22 @@ export default function UploadPage() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-sm text-yellow-400 hover:text-yellow-300 hover:underline"
                   >
-                    📥 下载授权书模板
+                    📄 查看授权书模板（HTML）
                   </a>
-                  <span className="text-xs text-gray-500">（打印 → 填写 → 签字 → 扫描上传）</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const printWindow = window.open('/authorization-template.html', '_blank')
+                      if (printWindow) {
+                        printWindow.onload = () => {
+                          printWindow.print()
+                        }
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 hover:underline"
+                  >
+                    🖨️ 打印/保存为 PDF
+                  </button>
                 </div>
                 <p className="text-xs text-gray-500">
                   支持 PDF、PNG、JPG、DOC 格式。请上传作者签署的授权书、邮件授权截图等证明材料。
@@ -334,6 +374,27 @@ export default function UploadPage() {
                 <p className="text-xs text-gray-500 mt-1">
                   请填写该势函数发布的开源许可证全称。如果是 NIST IPR 公开资源，可填写 "NIST IPR Public"。
                 </p>
+              </div>
+            )}
+          </div>
+
+          {/* ========== 势函数文件 ========== */}
+          <div className={sectionClass}>
+            <h2 className="text-base font-semibold text-white border-b border-gray-700 pb-2">
+              势函数文件（可选）
+            </h2>
+            <p className="text-xs text-gray-400">
+              上传势函数源文件（如 .eam.alloy、.setfl、.meam 等）。如暂无文件可稍后补充。
+            </p>
+            <input
+              type="file"
+              accept=".eam.alloy,.eam.fs,.setfl,.eam,.meam,.param,.table,.txt,.json,.zip,.tar.gz,.gz"
+              onChange={e => setPotentialFile(e.target.files?.[0] || null)}
+              className="text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 file:cursor-pointer w-full"
+            />
+            {potentialFile && (
+              <div className="text-xs text-green-400 mt-2">
+                ✓ 已选择: {potentialFile.name} ({(potentialFile.size / 1024).toFixed(1)} KB)
               </div>
             )}
           </div>
