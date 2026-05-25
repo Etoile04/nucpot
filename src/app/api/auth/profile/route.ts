@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 
 const EDITABLE_FIELDS = ['full_name', 'affiliation', 'title', 'phone'] as const
 
@@ -34,15 +34,31 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
   }
 
-  const { data: updated, error: updateError } = await supabase
+  // Use admin client to bypass RLS for reliable updates
+  const client = supabaseAdmin || supabase
+  const { data: updated, error: updateError } = await client
     .from('profiles')
-    .update(updates)
+    .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', user.id)
     .select()
-    .single()
+    .maybeSingle()
 
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 })
+  }
+
+  if (!updated) {
+    // Profile doesn't exist yet, create it
+    const { data: created, error: createError } = await client
+      .from('profiles')
+      .insert({ id: user.id, username: user.email?.split('@')[0] || '', email: user.email || '', role: 'contributor', ...updates })
+      .select()
+      .single()
+
+    if (createError) {
+      return NextResponse.json({ error: createError.message }, { status: 500 })
+    }
+    return NextResponse.json({ profile: created })
   }
 
   return NextResponse.json({ profile: updated })
