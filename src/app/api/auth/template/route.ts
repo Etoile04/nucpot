@@ -1,31 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const lang = searchParams.get('lang') || 'zh'
   const autoPrint = searchParams.get('print') === '1'
 
-  const p = {
+  // Potential info from form
+  const potential = {
     name: searchParams.get('name') || '',
     type: searchParams.get('type') || '',
     elements: searchParams.get('elements') || '',
     systemName: searchParams.get('systemName') || '',
     doiRefs: searchParams.get('doiRefs') || '',
-    userName: searchParams.get('userName') || '',
-    userEmail: searchParams.get('userEmail') || '',
+  }
+
+  // User info from query params (fallback)
+  const queryUser = {
+    name: searchParams.get('userName') || '',
+    email: searchParams.get('userEmail') || '',
+  }
+
+  // Try to fetch profile from DB for richer info
+  const userId = searchParams.get('userId')
+  let profileUser = {
+    name: queryUser.name,
+    email: queryUser.email,
+    affiliation: '',
+    title: '',
+    phone: '',
+  }
+
+  if (userId) {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name, email, affiliation, title, phone')
+        .eq('id', userId)
+        .single()
+      if (profile) {
+        profileUser = {
+          name: profile.full_name || queryUser.name,
+          email: profile.email || queryUser.email,
+          affiliation: profile.affiliation || '',
+          title: profile.title || '',
+          phone: profile.phone || '',
+        }
+      }
+    } catch {
+      // Fallback to query params
+    }
   }
 
   const today = new Date().toISOString().split('T')[0]
 
   if (lang === 'en') {
     return NextResponse.json(
-      { html: generateEnglish(p, today, autoPrint) },
+      { html: generateEnglish(potential, profileUser, today, autoPrint) },
       { headers: { 'Content-Type': 'application/json' } }
     )
   }
 
   return NextResponse.json(
-    { html: generateChinese(p, today, autoPrint) },
+    { html: generateChinese(potential, profileUser, today, autoPrint) },
     { headers: { 'Content-Type': 'application/json' } }
   )
 }
@@ -34,7 +71,7 @@ function esc(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function generateChinese(p: ReturnType<typeof Object>, today: string, autoPrint: boolean) {
+function generateChinese(p: { name: string; type: string; elements: string; systemName: string; doiRefs: string }, u: { name: string; email: string; affiliation: string; title: string; phone: string }, today: string, autoPrint: boolean) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -60,6 +97,7 @@ function generateChinese(p: ReturnType<typeof Object>, today: string, autoPrint:
   .footer { margin-top: 40px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; color: #999; }
   .checkbox { font-size: 14px; margin: 5px 0; }
   .checkbox input { margin-right: 5px; }
+  .auto-filled { background: #f0fdf4; }
   @media print { body { padding: 0; } .no-print { display: none; } }
 </style>
 </head>
@@ -99,11 +137,11 @@ function generateChinese(p: ReturnType<typeof Object>, today: string, autoPrint:
 
 <div class="section-title">五、授权人信息</div>
 <table>
-  <tr><th>姓名</th><td><strong>${esc(p.userName)}</strong></td></tr>
-  <tr><th>单位</th><td></td></tr>
-  <tr><th>职务/职称</th><td></td></tr>
-  <tr><th>电子邮箱</th><td>${esc(p.userEmail)}</td></tr>
-  <tr><th>联系电话</th><td></td></tr>
+  <tr><th>姓名</th><td class="auto-filled"><strong>${esc(u.name)}</strong></td></tr>
+  <tr><th>单位</th><td class="auto-filled">${esc(u.affiliation) || ''}</td></tr>
+  <tr><th>职务/职称</th><td class="auto-filled">${esc(u.title) || ''}</td></tr>
+  <tr><th>电子邮箱</th><td class="auto-filled">${esc(u.email)}</td></tr>
+  <tr><th>联系电话</th><td class="auto-filled">${esc(u.phone) || ''}</td></tr>
   <tr><th>日期</th><td>${today}</td></tr>
 </table>
 
@@ -122,7 +160,7 @@ function generateChinese(p: ReturnType<typeof Object>, today: string, autoPrint:
 </html>`
 }
 
-function generateEnglish(p: ReturnType<typeof Object>, today: string, autoPrint: boolean) {
+function generateEnglish(p: { name: string; type: string; elements: string; systemName: string; doiRefs: string }, u: { name: string; email: string; affiliation: string; title: string; phone: string }, today: string, autoPrint: boolean) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -148,6 +186,7 @@ function generateEnglish(p: ReturnType<typeof Object>, today: string, autoPrint:
   .footer { margin-top: 40px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; color: #999; }
   .checkbox { font-size: 14px; margin: 5px 0; }
   .checkbox input { margin-right: 5px; }
+  .auto-filled { background: #f0fdf4; }
   @media print { body { padding: 0; } .no-print { display: none; } }
 </style>
 </head>
@@ -187,11 +226,11 @@ function generateEnglish(p: ReturnType<typeof Object>, today: string, autoPrint:
 
 <div class="section-title">5. Authorizer Information</div>
 <table>
-  <tr><th>Full Name</th><td><strong>${esc(p.userName)}</strong></td></tr>
-  <tr><th>Affiliation</th><td></td></tr>
-  <tr><th>Title / Position</th><td></td></tr>
-  <tr><th>Email</th><td>${esc(p.userEmail)}</td></tr>
-  <tr><th>Phone</th><td></td></tr>
+  <tr><th>Full Name</th><td class="auto-filled"><strong>${esc(u.name)}</strong></td></tr>
+  <tr><th>Affiliation</th><td class="auto-filled">${esc(u.affiliation) || ''}</td></tr>
+  <tr><th>Title / Position</th><td class="auto-filled">${esc(u.title) || ''}</td></tr>
+  <tr><th>Email</th><td class="auto-filled">${esc(u.email)}</td></tr>
+  <tr><th>Phone</th><td class="auto-filled">${esc(u.phone) || ''}</td></tr>
   <tr><th>Date</th><td>${today}</td></tr>
 </table>
 
