@@ -61,6 +61,38 @@ export default function UploadPage() {
 
   if (!user) return null
 
+  function openTemplate(lang: 'zh' | 'en', autoPrint: boolean) {
+    const params = new URLSearchParams({
+      lang,
+      print: autoPrint ? '1' : '0',
+      name,
+      type,
+      elements,
+      systemName,
+      doiRefs,
+      userName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || '',
+      userEmail: user?.email || '',
+    })
+    const url = `/api/auth/template?${params.toString()}`
+    const w = window.open('', '_blank')
+    if (w) {
+      w.document.write('<html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#666">加载中…</body></html>')
+      w.document.close()
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          if (data.html) {
+            w.document.open()
+            w.document.write(data.html)
+            w.document.close()
+          }
+        })
+        .catch(() => {
+          w.document.body.textContent = '加载失败，请重试'
+        })
+    }
+  }
+
   async function uploadAuthFile(file: File): Promise<string | null> {
     setAuthFileUploading(true)
     try {
@@ -328,29 +360,41 @@ export default function UploadPage() {
                     ✓ 已选择: {authFile.name} ({(authFile.size / 1024).toFixed(1)} KB)
                   </div>
                 )}
-                <div className="flex items-center gap-4 mt-2">
-                  <a
-                    href="/authorization-template.html"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-yellow-400 hover:text-yellow-300 hover:underline"
-                  >
-                    📄 查看授权书模板（HTML）
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const printWindow = window.open('/authorization-template.html', '_blank')
-                      if (printWindow) {
-                        printWindow.onload = () => {
-                          printWindow.print()
-                        }
-                      }
-                    }}
-                    className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 hover:underline"
-                  >
-                    🖨️ 打印/保存为 PDF
-                  </button>
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs text-gray-400 font-medium">下载授权书模板（已自动填入信息）：</div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => openTemplate('zh', false)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-yellow-600/20 border border-yellow-600/40 text-sm text-yellow-400 hover:text-yellow-300 hover:bg-yellow-600/30 transition"
+                    >
+                      📄 中文版
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openTemplate('en', false)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-yellow-600/20 border border-yellow-600/40 text-sm text-yellow-400 hover:text-yellow-300 hover:bg-yellow-600/30 transition"
+                    >
+                      📄 English
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openTemplate('zh', true)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-600/40 text-sm text-blue-400 hover:text-blue-300 hover:bg-blue-600/30 transition"
+                    >
+                      🖨️ 中文打印/PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openTemplate('en', true)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-600/40 text-sm text-blue-400 hover:text-blue-300 hover:bg-blue-600/30 transition"
+                    >
+                      🖨️ English Print/PDF
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    信息已从表单自动填入，打印后签字扫描上传即可。
+                  </p>
                 </div>
                 <p className="text-xs text-gray-500">
                   支持 PDF、PNG、JPG、DOC 格式。请上传作者签署的授权书、邮件授权截图等证明材料。
