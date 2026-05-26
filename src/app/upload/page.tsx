@@ -235,11 +235,24 @@ export default function UploadPage() {
 
     const body: Record<string, unknown> = {
       name: name.trim(), display_name: displayName.trim() || undefined,
-      type, subtype: subtype.trim() || undefined, format: format.trim() || 'LAMMPS',
+      type,
+      subtype: subtype === '其他' ? (subtypeOther.trim() || undefined) : (subtype.trim() || undefined),
+      format: format.trim() || 'LAMMPS',
       elements: elementsArray, system_name: systemName.trim(), system_tags: systemTagsArray,
       description: description.trim(), tags: tagsArray, references: referencesArray,
       license_type: licenseType, license_detail: licenseDetail.trim() || undefined,
       auth_file_path: authFilePath || undefined, file_url: potentialFileUrl || undefined,
+      developers: developers.filter(d => d.name.trim()).length > 0
+        ? developers.filter(d => d.name.trim()).map(d => ({ name: d.name.trim(), affiliation: d.affiliation.trim() }))
+        : undefined,
+      sim_software: (() => {
+        const list = simSoftware.filter(s => s !== '其他')
+        if (simSoftware.includes('其他') && simSoftwareOther.trim()) list.push(simSoftwareOther.trim())
+        return list.length > 0 ? list : undefined
+      })(),
+      extra: (irradiationRelevant || hasDefectData || hasLiquidPhase)
+        ? { irradiationRelevant, hasDefectData, hasLiquidPhase }
+        : undefined,
     }
 
     const applicability: Record<string, unknown> = {}
@@ -266,11 +279,15 @@ export default function UploadPage() {
         setSuccess(`势函数 "${data.potential.name}" 已提交，等待管理员审核。`)
         // Reset all
         setName(''); setDisplayName(''); setType(''); setSubtype('')
+        setSubtypeOther('')
         setFormat('LAMMPS'); setElements(''); setSystemName('')
         setSystemTags(''); setDescription(''); setTempRange('')
         setPhases(''); setPairStyle(''); setPairCoeff('')
         setTags(''); setDoiRefs(''); setLicenseType('')
         setLicenseDetail(''); setAuthFile(null); setPotentialFile(null)
+        setDevelopers([{ name: '', affiliation: '' }]); setSimSoftware(['LAMMPS']); setSimSoftwareOther('')
+        setIrradiationRelevant(false); setHasDefectData(false); setHasLiquidPhase(false)
+        setPhaseTags([])
         clearDraft()
         setLastSaved(null)
       }
