@@ -53,6 +53,7 @@ function BrowseContent() {
   const [totalPages, setTotalPages] = useState(1)
   const [allElements, setAllElements] = useState<string[]>([])
   const [compareIds, setCompareIds] = useState<string[]>([])
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
 
   // Fetch all available elements from stats API
   useEffect(() => {
@@ -105,9 +106,61 @@ function BrowseContent() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
+      {/* Mobile filter toggle */}
+      <div className="md:hidden px-4 pt-4 max-w-7xl mx-auto">
+        <button
+          onClick={() => setMobileFilterOpen(!mobileFilterOpen)}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white transition"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 010 2H4a1 1 0 01-1-1zm4 7a1 1 0 011-1h8a1 1 0 010 2H8a1 1 0 01-1-1zm2 7a1 1 0 011-1h4a1 1 0 010 2h-4a1 1 0 01-1-1z" />
+          </svg>
+          筛选 {selectedTypes.length + selectedElements.length > 0 && `(${selectedTypes.length + selectedElements.length})`}
+        </button>
+      </div>
+
+      {/* Mobile filter panel */}
+      {mobileFilterOpen && (
+        <div className="md:hidden px-4 pt-3 max-w-7xl mx-auto border-b border-gray-700 pb-4">
+          <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">筛选器</h2>
+            <div className="mb-4">
+              <h3 className="text-sm font-medium mb-2 text-gray-300">▼ 函数形式</h3>
+              <div className="flex flex-wrap gap-2">
+                {TYPES.map(t => (
+                  <label key={t} className="flex items-center gap-1.5 text-sm cursor-pointer hover:text-blue-400">
+                    <input
+                      type="checkbox"
+                      checked={selectedTypes.includes(t)}
+                      onChange={() => toggleFilter(t, selectedTypes, setSelectedTypes)}
+                      className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
+                    />
+                    {t === 'other' ? '其他' : t}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="mb-4">
+              <h3 className="text-sm font-medium mb-2 text-gray-300">▼ 元素组合</h3>
+              <ElementFilter
+                allElements={allElements}
+                selected={selectedElements}
+                onToggle={(el) => toggleFilter(el, selectedElements, setSelectedElements)}
+              />
+            </div>
+            <button
+              onClick={() => { setSelectedTypes([]); setSelectedElements([]); setQuery('') }}
+              className="text-sm text-gray-400 hover:text-white transition"
+            >
+              重置筛选
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex max-w-7xl mx-auto">
-        {/* Sidebar Filters */}
-        <aside className="w-64 shrink-0 p-6 border-r border-gray-700 min-h-[calc(100vh-60px)]">
+        {/* Desktop Sidebar Filters */}
+        <aside className="hidden md:block w-64 shrink-0 p-6 border-r border-gray-700 min-h-[calc(100vh-60px)]">
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">筛选器</h2>
 
           {/* Type filter */}
@@ -145,7 +198,7 @@ function BrowseContent() {
         </aside>
 
         {/* Results */}
-        <main className="flex-1 p-6">
+        <main className="flex-1 p-4 md:p-6">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-xl font-semibold">势函数浏览</h1>
             <span className="text-sm text-gray-400">共 {total} 个结果</span>
