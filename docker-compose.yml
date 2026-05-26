@@ -1,55 +1,43 @@
 version: "3.8"
 
 services:
-  # PostgreSQL database (or use Supabase Cloud)
-  nucpot-db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: nucpot
-      POSTGRES_USER: nucpot
-      POSTGRES_PASSWORD: nucpot
-    ports:
-      - "5432:5432"
-    volumes:
-      - nucpot-pgdata:/var/lib/postgresql/data
-      - ./supabase/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql
-      - ./supabase/migrations/002_verifications.sql:/docker-entrypoint-initdb.d/002_verifications.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nucpot"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Python verification service
-  verify-service:
+  verify-api:
     build:
       context: ./verify-service
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://nucpot:nucpot@nucpot-db:5432/nucpot
-      VERIFY_HOST: 0.0.0.0
-      VERIFY_PORT: 8000
+      - SUPABASE_URL=${SUPABASE_URL:-http://host.docker.internal:54321}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
-      nucpot-db:
-        condition: service_healthy
+      - redis
     restart: unless-stopped
 
-  # Next.js frontend (production mode)
-  nucpot-web:
+  verify-worker:
     build:
-      context: .
-      dockerfile: Dockerfile.web
-    ports:
-      - "3000:3000"
+      context: ./verify-service
+      dockerfile: Dockerfile
+    command: celery -A verify_service.workers.celery_app worker --loglevel=info --concurrency=2
     environment:
-      NEXT_PUBLIC_SUPABASE_URL: http://nucpot-db:5432
-      NEXT_PUBLIC_VERIFY_API: http://verify-service:8000
+      - SUPABASE_URL=${SUPABASE_URL:-http://host.docker.internal:54321}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
-      - verify-service
-    profiles:
-      - full
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
 
 volumes:
-  nucpot-pgdata:
+  redis-data:

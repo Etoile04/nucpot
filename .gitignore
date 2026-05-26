@@ -44,3 +44,17 @@ node_modules/
 .env*.local
 .worktrees/
 docs/superpowers/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.venv/
+*.db
+
+# Verify service
+verify-service/.env
