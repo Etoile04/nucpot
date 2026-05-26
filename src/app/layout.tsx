@@ -18,6 +18,14 @@ export const metadata: Metadata = {
   title: "NucPot - 核材料势函数库",
   description:
     "面向核燃料、包壳和结构材料的原子间势函数开放平台。覆盖 EAM、MEAM、机器学习势等多种形式，支持 LAMMPS、GULP 等主流模拟软件。",
+  openGraph: {
+    title: 'NucPot - 核材料势函数库',
+    description: '面向核燃料、包壳和结构材料的原子间势函数开放平台',
+    url: 'https://nucpot.vercel.app',
+    siteName: 'NucPot',
+    locale: 'zh_CN',
+    type: 'website',
+  },
 };
 
 export default function RootLayout({
