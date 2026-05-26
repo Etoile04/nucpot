@@ -114,7 +114,7 @@ export interface Verification {
   requested_by: string | null
   created_at: string
   completed_at: string | null
-  results: Record<string, VerificationResult>
+  results: Record<string, VerificationResultDetail>
   overall_grade: VerificationGrade | null
   summary: string | null
   error_log: string | null
@@ -123,7 +123,7 @@ export interface Verification {
 
 export type VerificationGrade = 'A' | 'B' | 'C' | 'D' | 'F'
 
-export interface VerificationResult {
+export interface VerificationResultDetail {
   value: number
   unit: string
   reference: number
@@ -147,6 +147,42 @@ export interface ReferenceValue {
   created_at: string
 }
 
+// Verification Service API types (nucpot-autovc)
+
+export interface VerificationTemplate {
+  id: string
+  name: string
+  properties: string[]
+  description: string
+  estimated_time: string
+}
+
+export interface VerificationResult {
+  id: number
+  potential_id: number
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  results: PropertyResult[]
+  overall_grade: string
+  summary: string
+  created_at: string
+  completed_at: string | null
+}
+
+export interface PropertyResult {
+  property_name: string
+  computed_value: number
+  reference_value: number
+  unit: string
+  relative_error: number
+  grade: string
+}
+
+export interface VerificationSubmitRequest {
+  potential_name: string
+  template?: string
+  properties?: string[]
+  parameters?: Record<string, any>
+}
+
 // Convenience aliases
 export type VerificationStatus = Verification['status']
-export type PropertyVerification = VerificationResult

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import VerificationPanel from '@/components/VerificationPanel'
 
 interface Potential {
   id: string
@@ -252,6 +253,7 @@ export default function PotentialDetailPage() {
     { id: 'properties', label: '验证性质' },
     { id: 'citation', label: '引用' },
     { id: 'usage', label: '使用方法' },
+    { id: 'verify', label: '验证' },
   ]
 
   return (
@@ -479,6 +481,10 @@ export default function PotentialDetailPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {activeTab === 'verify' && (
+          <VerificationPanel potentialName={p.name} />
         )}
       </div>
     </div>
