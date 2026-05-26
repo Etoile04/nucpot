@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, Suspense, useEffect } from 'react'
+import { useState, Suspense, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import Pagination from '@/components/Pagination'
 import ElementFilter from '@/components/ElementFilter'
+import CompareBar from '@/components/CompareBar'
 
 interface Potential {
   id: string
@@ -67,6 +68,7 @@ function SearchContent() {
   const [searched, setSearched] = useState(false)
   const [error, setError] = useState('')
   const [allElements, setAllElements] = useState<string[]>([])
+  const [compareIds, setCompareIds] = useState<string[]>([])
 
   // Fetch all available elements from stats API
   useEffect(() => {
@@ -99,6 +101,16 @@ function SearchContent() {
     setError('')
     setPage(1)
   }
+
+  const toggleCompare = useCallback((id: string) => {
+    setCompareIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 4 ? [...prev, id] : prev
+    )
+  }, [])
+
+  const comparePotentials = Object.fromEntries(
+    potentials.map(p => [p.id, { name: p.name, display_name: p.display_name }])
+  )
 
   const handleSearch = async () => {
     setPage(1)
@@ -295,16 +307,17 @@ function SearchContent() {
             ) : (
               <div className="space-y-3">
                 {potentials.map(p => (
-                  <Link
+                  <div
                     key={p.id}
-                    href={`/potential/${p.id}`}
-                    className="block bg-gray-800/50 rounded-xl p-4 border border-gray-700 hover:border-blue-500/50 transition"
+                    className="bg-gray-800/50 rounded-xl p-4 border border-gray-700 hover:border-blue-500/50 transition"
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-blue-300">
-                          {p.display_name || p.name}
-                        </h3>
+                      <div className="flex-1 min-w-0">
+                        <Link href={`/potential/${p.id}`} className="block">
+                          <h3 className="font-semibold text-blue-300">
+                            {p.display_name || p.name}
+                          </h3>
+                        </Link>
                         <div className="flex flex-wrap gap-2 mt-2 text-xs">
                           <span className="px-2 py-0.5 bg-blue-900/50 rounded">{p.type}</span>
                           <span className="px-2 py-0.5 bg-gray-700 rounded">
@@ -344,13 +357,26 @@ function SearchContent() {
                           <p className="text-sm text-gray-400 mt-2 line-clamp-2">{p.description}</p>
                         )}
                       </div>
-                      <div className="flex gap-2 ml-4 shrink-0">
-                        <span className="text-xs text-blue-400 border border-blue-800 rounded px-2 py-1">
+                      <div className="flex items-center gap-3 ml-4 shrink-0">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-white transition">
+                          <input
+                            type="checkbox"
+                            checked={compareIds.includes(p.id)}
+                            onChange={() => toggleCompare(p.id)}
+                            disabled={!compareIds.includes(p.id) && compareIds.length >= 4}
+                            className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
+                          />
+                          对比
+                        </label>
+                        <Link
+                          href={`/potential/${p.id}`}
+                          className="text-xs text-blue-400 border border-blue-800 rounded px-2 py-1 hover:bg-blue-900/30 transition"
+                        >
                           详情 →
-                        </span>
+                        </Link>
                       </div>
                     </div>
-                  </Link>
+                  </div>
                 ))}
               </div>
             )}
@@ -369,6 +395,13 @@ function SearchContent() {
           </div>
         )}
       </div>
+      <CompareBar
+        selectedIds={compareIds}
+        potentials={comparePotentials}
+        onRemove={(id) => setCompareIds(prev => prev.filter(x => x !== id))}
+        onClear={() => setCompareIds([])}
+      />
+      {compareIds.length > 0 && <div className="h-16" />}
     </div>
   )
 }

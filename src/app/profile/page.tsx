@@ -4,13 +4,13 @@ import { useEffect, useState, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 
-interface Contribution {
+interface MyContribution {
   id: string
-  action: string
-  status: string
-  notes: string | null
+  name: string
+  display_name: string
+  type: string
+  status: string // 'pending' | 'published' | 'rejected'
   created_at: string
-  potential_id: string | null
 }
 
 interface ProfileData {
@@ -23,7 +23,7 @@ interface ProfileData {
 export default function ProfilePage() {
   const router = useRouter()
   const { user, profile, session, loading, signOut } = useAuth()
-  const [contributions, setContributions] = useState<Contribution[]>([])
+  const [contributions, setContributions] = useState<MyContribution[]>([])
   const [loadingContribs, setLoadingContribs] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -48,15 +48,12 @@ export default function ProfilePage() {
 
   async function fetchContributions() {
     try {
-      const res = await fetch('/api/admin/contributions', {
+      const res = await fetch('/api/auth/my-contributions', {
         headers: { Authorization: `Bearer ${session!.access_token}` },
       })
       if (res.ok) {
         const data = await res.json()
-        const mine = (data.contributions || data).filter(
-          (c: Contribution & { user_id?: string }) => c.user_id === user!.id || true
-        )
-        setContributions(mine)
+        setContributions(data.contributions || [])
       }
     } catch {
       // Ignore
@@ -134,9 +131,15 @@ export default function ProfilePage() {
   const isAdmin = profile.role === 'admin'
 
   const statusBadge: Record<string, string> = {
-    pending: 'bg-yellow-900/50 text-yellow-300 border-yellow-700',
-    approved: 'bg-green-900/50 text-green-300 border-green-700',
-    rejected: 'bg-red-900/50 text-red-300 border-red-700',
+    pending: 'bg-yellow-900/50 text-yellow-400 border-yellow-700',
+    published: 'bg-green-900/50 text-green-400 border-green-700',
+    rejected: 'bg-red-900/50 text-red-400 border-red-700',
+  }
+
+  const statusLabel: Record<string, string> = {
+    pending: 'pending',
+    published: '已发布',
+    rejected: '已拒绝',
   }
 
   const inputClass =
@@ -290,9 +293,9 @@ export default function ProfilePage() {
           </div>
           <div className="bg-gray-900 rounded-xl p-4 text-center border border-gray-800">
             <div className="text-2xl font-bold text-green-400">
-              {contributions.filter(c => c.status === 'approved').length}
+              {contributions.filter(c => c.status === 'published').length}
             </div>
-            <div className="text-gray-500 text-xs mt-1">已通过</div>
+            <div className="text-gray-500 text-xs mt-1">已发布</div>
           </div>
           <div className="bg-gray-900 rounded-xl p-4 text-center border border-gray-800">
             <div className="text-2xl font-bold text-yellow-400">
@@ -308,24 +311,53 @@ export default function ProfilePage() {
             <h2 className="text-base font-semibold text-white">贡献记录</h2>
           </div>
           {loadingContribs ? (
-            <div className="px-6 py-8 text-center text-gray-500">加载中…</div>
+            <div className="px-6 py-8 flex items-center justify-center gap-2 text-gray-500">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              加载中…
+            </div>
           ) : contributions.length === 0 ? (
-            <div className="px-6 py-8 text-center text-gray-500">暂无贡献记录</div>
+            <div className="px-6 py-8 text-center">
+              <p className="text-gray-500 text-sm">暂无贡献记录，去<a href="/upload" className="text-blue-400 hover:underline">上传势函数</a> →</p>
+            </div>
           ) : (
-            <div className="divide-y divide-gray-800">
-              {contributions.map(c => (
-                <div key={c.id} className="px-6 py-3 flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-gray-200 truncate">{c.action}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {new Date(c.created_at).toLocaleString('zh-CN')}
-                    </div>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded text-xs border ${statusBadge[c.status] || 'bg-gray-800 text-gray-400'}`}>
-                    {c.status === 'pending' ? '待审核' : c.status === 'approved' ? '已通过' : '已拒绝'}
-                  </span>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 border-b border-gray-800">
+                    <th className="px-6 py-2 font-medium">名称</th>
+                    <th className="px-6 py-2 font-medium">类型</th>
+                    <th className="px-6 py-2 font-medium">状态</th>
+                    <th className="px-6 py-2 font-medium">提交时间</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {contributions.map(c => (
+                    <tr key={c.id} className="hover:bg-gray-800/30 transition-colors">
+                      <td className="px-6 py-3">
+                        <span className="text-sm text-gray-200 truncate block max-w-[200px]">
+                          {c.display_name || c.name}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3">
+                        <span className="text-sm text-gray-400">{c.type}</span>
+                      </td>
+                      <td className="px-6 py-3">
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs border ${statusBadge[c.status] || 'bg-gray-800 text-gray-400'}`}>
+                          {statusLabel[c.status] || c.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3">
+                        <span className="text-xs text-gray-500">
+                          {new Date(c.created_at).toLocaleString('zh-CN')}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
