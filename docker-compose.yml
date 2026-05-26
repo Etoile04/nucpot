@@ -1,39 +1,55 @@
+version: "3.8"
+
 services:
+  # PostgreSQL database (or use Supabase Cloud)
   nucpot-db:
     image: postgres:16-alpine
-    container_name: nucpot-postgres
     environment:
-      POSTGRES_USER: nucpot
-      POSTGRES_PASSWORD: nucpot_dev
       POSTGRES_DB: nucpot
+      POSTGRES_USER: nucpot
+      POSTGRES_PASSWORD: nucpot
     ports:
       - "5432:5432"
     volumes:
       - nucpot-pgdata:/var/lib/postgresql/data
+      - ./supabase/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql
+      - ./supabase/migrations/002_verifications.sql:/docker-entrypoint-initdb.d/002_verifications.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nucpot"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # Python verification service
   verify-service:
     build:
       context: ./verify-service
       dockerfile: Dockerfile
-    container_name: nucpot-verify
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: "postgresql://nucpot:nucpot_dev@nucpot-db:5432/nucpot"
-      VERIFY_HOST: "0.0.0.0"
-      VERIFY_PORT: "8000"
+      DATABASE_URL: postgresql://nucpot:nucpot@nucpot-db:5432/nucpot
+      VERIFY_HOST: 0.0.0.0
+      VERIFY_PORT: 8000
     depends_on:
       nucpot-db:
         condition: service_healthy
-    volumes:
-      - ./verify-service:/app
-      - potential-files:/data/potentials
+    restart: unless-stopped
+
+  # Next.js frontend (production mode)
+  nucpot-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: http://nucpot-db:5432
+      NEXT_PUBLIC_VERIFY_API: http://verify-service:8000
+    depends_on:
+      - verify-service
+    profiles:
+      - full
 
 volumes:
   nucpot-pgdata:
-  potential-files:

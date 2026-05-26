@@ -104,3 +104,44 @@ export interface AuthUser {
   email: string | null
   profile: Profile | null
 }
+
+// Phase 2: Verification Pipeline
+
+export type VerificationGrade = 'A' | 'B' | 'C' | 'D' | 'F'
+export type VerificationStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface PropertyVerification {
+  value: number
+  unit: string
+  reference: number
+  error_pct: number
+  grade: VerificationGrade
+}
+
+export interface Verification {
+  id: string
+  potential_id: string
+  status: VerificationStatus
+  results: Record<string, PropertyVerification>
+  overall_grade: VerificationGrade | null
+  summary: string | null
+  error_log: string | null
+  compute_time: number | null
+  requested_by: string | null
+  created_at: string | null
+  completed_at: string | null
+}
+
+export interface ReferenceValue {
+  id: string
+  element_system: string
+  phase: string | null
+  property: string
+  value: number
+  unit: string | null
+  uncertainty: number | null
+  temperature: number | null
+  source: string | null
+  source_doi: string | null
+  method: string | null
+}
