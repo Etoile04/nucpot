@@ -3,28 +3,25 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nucpot-verify-service"
+name = "nucpot-verify"
 version = "0.1.0"
 description = "NucPot interatomic potential verification service"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.29",
-    "pydantic>=2.6",
-    "pydantic-settings>=2.2",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.23",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
     "ase>=3.22",
-    "httpx>=0.27",
-    "celery[redis]>=5.3",
     "numpy>=1.24",
-    "supabase>=2.0",
+    "httpx>=0.25",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "httpx>=0.27",
-    "pytest-cov>=4.1",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx",  # for test client
 ]
 
 [tool.setuptools.packages.find]
@@ -32,4 +29,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+asyncio_mode = "auto"

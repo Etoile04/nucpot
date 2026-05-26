@@ -1,25 +1,30 @@
-FROM python:3.11-slim
+# Multi-stage build for NucPot Verify Service
+FROM python:3.11-slim AS builder
 
-# Install system deps for ASE/scientific computing
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ gfortran \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy and install dependencies
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]"
+# Install dependencies first to leverage Docker cache
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Copy source
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy installed dependencies from builder stage
+COPY --from=builder /install /usr/local
+
+# Copy application source
+COPY pyproject.toml .
 COPY src/ src/
-COPY tests/ tests/
 
-# Activate KIM API if available (mounted volume)
-ENV KIM_API_PATH=/usr/local/kim-api
-ENV PKG_CONFIG_PATH=${KIM_API_PATH}/lib/pkgconfig:${PKG_CONFIG_PATH}
-ENV LD_LIBRARY_PATH=${KIM_API_PATH}/lib:${LD_LIBRARY_PATH}
+# Install the package
+RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
-CMD ["python", "-m", "verify_service"]
+CMD ["uvicorn", "verify.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]

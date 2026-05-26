@@ -1,59 +1,96 @@
 # NucPot Verify Service
 
-Automated verification service for nuclear material interatomic potentials.
+势函数自动验证服务 — 使用 ASE (Atomic Simulation Environment) 计算材料性质并与参考值对比评分。
 
-## Architecture
+## 功能
 
-```
-verify-service/
-├── src/verify_service/
-│   ├── api/          # FastAPI REST endpoints
-│   ├── core/         # Calculation engine (ASE + grading)
-│   ├── workers/      # Celery async tasks
-│   └── supabase.py   # Supabase client
-```
+- 晶格常数 (EOS 拟合)
+- 弹性常数 (C11, C12, C44 via 应变-能量法)
+- 体积模量
+- 空位形成能
+- A-F 评分系统
 
-## Quick Start
+## 快速开始
 
 ```bash
-# Install
+# 1. 安装依赖
 cd verify-service
 pip install -e ".[dev]"
 
-# Configure
+# 2. 配置环境变量
 cp .env.example .env
-# Edit .env with your Supabase credentials
+# 编辑 .env，填入 SUPABASE_SERVICE_KEY
 
-# Run API
-python -m verify_service
-
-# Run worker (separate terminal)
-celery -A verify_service.workers.celery_app worker --loglevel=info
+# 3. 启动服务
+python -m verify
+# 或
+uvicorn verify.api.routes:app --reload --port 8000
 ```
 
-## API Endpoints
+## API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/health | Health check |
-| POST | /api/verify/{potential_id} | Submit verification job |
-| GET | /api/verify/{potential_id}/status | Get verification status |
-| GET | /api/reference-values | List reference values |
-| POST | /api/reference-values | Add reference value |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/health` | GET | 健康检查 |
+| `/api/verify` | POST | 提交验证任务 |
+| `/api/verify/{job_id}` | GET | 查询验证结果 |
+| `/api/reference-values/{element}/{structure}` | GET | 查询参考值 |
 
-## Calculated Properties
+### 提交验证
 
-- **Lattice constant**: BFGS relaxation + volume→a conversion
-- **Bulk modulus**: Birch-Murnaghan EOS fit from E-V curve
-- **Cohesive energy**: E_isolated - E_bulk/N
-- **Vacancy formation energy**: E_vac - (N-1)/N * E_perfect
+```bash
+curl -X POST http://localhost:8000/api/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "potential_id": "uuid-of-potential",
+    "properties_to_compute": ["lattice_constant", "elastic_constants", "bulk_modulus", "vacancy_formation_energy"]
+  }'
+```
 
-## Grading
+### 查询结果
 
-| Grade | Relative Error |
-|-------|---------------|
+```bash
+curl http://localhost:8000/api/verify/{job_id}
+```
+
+## Docker
+
+```bash
+docker build -t nucpot-verify .
+docker run -p 8000:8000 --env-file .env nucpot-verify
+```
+
+## 支持的势函数类型
+
+| 类型 | 引擎 | 状态 |
+|------|------|------|
+| EAM | ASE (ase.calculators.eam) | ✅ 已支持 |
+| EMT | ASE (测试用) | ✅ 已支持 |
+| MEAM | LAMMPS subprocess | 🔜 计划中 |
+| ML/RANN | LAMMPS subprocess | 🔜 计划中 |
+| Buckingham | GULP/LAMMPS | 🔜 计划中 |
+
+## 评分标准
+
+| 等级 | 相对误差 |
+|------|----------|
 | A | ≤ 1% |
 | B | ≤ 3% |
 | C | ≤ 5% |
 | D | ≤ 10% |
 | F | > 10% |
+
+## 项目结构
+
+```
+verify-service/
+├── src/verify/
+│   ├── api/          # FastAPI routes + schemas
+│   ├── core/         # Calculator, grading, potential loader
+│   ├── workers/      # Background task runner
+│   ├── config.py     # Settings (env vars)
+│   └── database.py   # Supabase REST client
+├── pyproject.toml
+├── Dockerfile
+└── requirements.txt
+```
