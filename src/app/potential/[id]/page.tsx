@@ -148,6 +148,87 @@ function parseVerifiedProps(props: Record<string, unknown>): PropEntry[] {
   })
 }
 
+function LAMMPSScriptTemplate({ potential: p }: { potential: Potential }) {
+  const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  if (!p.lammps_config?.pair_style) return null
+
+  const temperatureRange = p.applicability?.temperatureRange
+  const exampleTemp = temperatureRange
+    ? Math.round((temperatureRange[0] + temperatureRange[1]) / 2)
+    : 300
+
+  const displayName = p.display_name || p.name
+  const pairStyle = p.lammps_config.pair_style
+  const pairCoeff = p.lammps_config.pair_coeff || ''
+
+  const script = `# LAMMPS 输入脚本 — ${displayName}
+# 自动生成 by NucPot，请根据实际模拟需求修改
+
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# 读取原子模型文件（需自行准备）
+read_data       model.data
+
+# 势函数设置
+pair_style      ${pairStyle}
+pair_coeff      ${pairCoeff}
+
+# 邻居列表
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+# 时间步长（建议值，请根据体系调整）
+timestep        0.001
+
+# 能量最小化示例
+minimize        1e-10 1e-10 1000 10000
+
+# 或 MD 模拟示例
+# velocity      all create ${exampleTemp} 87287 dist gaussian
+# fix           1 all npt temp ${exampleTemp} ${exampleTemp} 0.1 iso 0 0 1
+# thermo        100
+# thermo_style  custom step temp pe ke etotal press vol
+# run           10000
+`
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(script)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-sm font-semibold text-gray-400 uppercase hover:text-gray-200 transition"
+      >
+        <span className={`transform transition-transform ${expanded ? 'rotate-90' : ''}`}>▸</span>
+        完整 LAMMPS 输入脚本模板
+      </button>
+      {expanded && (
+        <div className="mt-3">
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 font-mono text-sm text-green-400 whitespace-pre-wrap">{script}</div>
+          <div className="mt-2 flex items-center gap-4">
+            <button
+              onClick={handleCopy}
+              className="text-xs text-blue-400 hover:text-blue-300 transition"
+            >
+              {copied ? '已复制 ✓' : '一键复制完整脚本'}
+            </button>
+            <span className="text-xs text-yellow-400/80">⚠️ 此脚本为模板，请根据实际模拟需求修改参数</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function PotentialDetailPage() {
   const { id } = useParams()
   const [potential, setPotential] = useState<Potential | null>(null)
@@ -351,6 +432,7 @@ export default function PotentialDetailPage() {
                 )}
               </div>
             )}
+            <LAMMPSScriptTemplate potential={p} />
             <div>
               <h3 className="text-sm font-semibold text-gray-400 uppercase mb-2">文件信息</h3>
               <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 text-sm space-y-2">

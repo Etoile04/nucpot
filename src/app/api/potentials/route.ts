@@ -11,11 +11,18 @@ export async function GET(request: Request) {
   const limit = parseInt(searchParams.get('limit') || '20')
   const offset = (page - 1) * limit
 
+  // Sorting: 'updated' (default), 'name', 'type'
+  const sort = searchParams.get('sort') || 'updated'
+  let orderColumn = 'updated_at'
+  let orderAsc = false
+  if (sort === 'name') { orderColumn = 'name'; orderAsc = true }
+  else if (sort === 'type') { orderColumn = 'type'; orderAsc = true }
+
   let dbQuery = supabase
     .from('potentials')
     .select('*', { count: 'exact' })
     .eq('status', 'published')
-    .order('updated_at', { ascending: false })
+    .order(orderColumn, { ascending: orderAsc })
     .range(offset, offset + limit - 1)
 
   if (type) {
@@ -54,11 +61,50 @@ export async function GET(request: Request) {
     dbQuery = dbQuery.contains('extra', { validationLevel })
   }
 
+  // Temperature range filtering
+  // applicability.temperatureRange is [min, max] stored as JSONB.
+  // Supabase JS client doesn't natively support numeric comparison on JSONB array elements,
+  // so we use .filter() with PostgreSQL jsonb path operators:
+  //   applicability->temperatureRange->>0 extracts the lower bound as text
+  //   We cast to numeric for proper comparison.
+  if (tempMin) {
+    const minVal = parseFloat(tempMin)
+    if (!isNaN(minVal)) {
+      // temperatureRange[1] (upper bound) must be >= tempMin
+      dbQuery = dbQuery.filter(
+        'applicability->temperatureRange->>1',
+        'gte',
+        String(minVal)
+      )
+    }
+  }
+  if (tempMax) {
+    const maxVal = parseFloat(tempMax)
+    if (!isNaN(maxVal)) {
+      // temperatureRange[0] (lower bound) must be <= tempMax
+      dbQuery = dbQuery.filter(
+        'applicability->temperatureRange->>0',
+        'lte',
+        String(maxVal)
+      )
+    }
+  }
+
   const { data, count, error } = await dbQuery
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  // NOTE: If the JSONB text-based comparison above yields false positives
+  // (e.g. lexicographic vs numeric), uncomment the JS-side filter below:
+  // let filtered = data || []
+  // if (tempMin) { const v = parseFloat(tempMin); filtered = filtered.filter(p => {
+  //   const r = p.applicability?.temperatureRange; return r && r[1] >= v;
+  // }) }
+  // if (tempMax) { const v = parseFloat(tempMax); filtered = filtered.filter(p => {
+  //   const r = p.applicability?.temperatureRange; return r && r[0] <= v;
+  // }) }
 
   return NextResponse.json({
     potentials: data,
