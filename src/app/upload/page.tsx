@@ -58,6 +58,7 @@ export default function UploadPage() {
   const [displayName, setDisplayName] = useState(draft.displayName)
   const [type, setType] = useState(draft.type)
   const [subtype, setSubtype] = useState(draft.subtype)
+  const [subtypeOther, setSubtypeOther] = useState('')
   const [format, setFormat] = useState(draft.format)
   const [elements, setElements] = useState(draft.elements)
   const [systemName, setSystemName] = useState(draft.systemName)
@@ -65,12 +66,22 @@ export default function UploadPage() {
   const [description, setDescription] = useState(draft.description)
   const [tempRange, setTempRange] = useState(draft.tempRange)
   const [phases, setPhases] = useState(draft.phases)
+  const [phaseTags, setPhaseTags] = useState<string[]>([])
   const [pairStyle, setPairStyle] = useState(draft.pairStyle)
   const [pairCoeff, setPairCoeff] = useState(draft.pairCoeff)
   const [tags, setTags] = useState(draft.tags)
   const [doiRefs, setDoiRefs] = useState(draft.doiRefs)
   const [licenseType, setLicenseType] = useState<LicenseType>(draft.licenseType)
   const [licenseDetail, setLicenseDetail] = useState(draft.licenseDetail)
+
+  // Advanced options
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [developers, setDevelopers] = useState<{ name: string; affiliation: string }[]>([{ name: '', affiliation: '' }])
+  const [simSoftware, setSimSoftware] = useState<string[]>(['LAMMPS'])
+  const [simSoftwareOther, setSimSoftwareOther] = useState('')
+  const [irradiationRelevant, setIrradiationRelevant] = useState(false)
+  const [hasDefectData, setHasDefectData] = useState(false)
+  const [hasLiquidPhase, setHasLiquidPhase] = useState(false)
 
   // File fields — not persisted in draft (File objects can't be serialized)
   const [potentialFile, setPotentialFile] = useState<File | null>(null)
@@ -234,6 +245,7 @@ export default function UploadPage() {
     const applicability: Record<string, unknown> = {}
     if (tempRange.trim()) applicability.temperatureRange = tempRange.trim()
     if (phases.trim()) applicability.phases = phases.split(',').map(s => s.trim()).filter(Boolean)
+    if (phaseTags.length > 0) applicability.phases = phaseTags
     if (Object.keys(applicability).length > 0) body.applicability = applicability
 
     const lammpsConfig: Record<string, string> = {}
@@ -352,10 +364,7 @@ export default function UploadPage() {
                   {POTENTIAL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              <div>
-                <label className={labelClass}>子类型</label>
-                <input type="text" value={subtype} onChange={e => setSubtype(e.target.value)} placeholder="e.g. fs, alloy" className={inputClass} />
-              </div>
+
               <div>
                 <label className={labelClass}>格式</label>
                 <input type="text" value={format} onChange={e => setFormat(e.target.value)} placeholder="e.g. LAMMPS" className={inputClass} />
@@ -479,10 +488,7 @@ export default function UploadPage() {
                 <label className={labelClass}>温度范围</label>
                 <input type="text" value={tempRange} onChange={e => setTempRange(e.target.value)} placeholder="e.g. 300-1200 K" className={inputClass} />
               </div>
-              <div>
-                <label className={labelClass}>相（逗号分隔）</label>
-                <input type="text" value={phases} onChange={e => setPhases(e.target.value)} placeholder="e.g. fcc, bcc, liquid" className={inputClass} />
-              </div>
+
             </div>
           </div>
 
@@ -510,6 +516,112 @@ export default function UploadPage() {
               <label className={labelClass}>参考文献 DOI（逗号分隔）</label>
               <input type="text" value={doiRefs} onChange={e => setDoiRefs(e.target.value)} placeholder="e.g. 10.1103/PhysRevB.68.024102" className={inputClass} />
             </div>
+          </div>
+
+          {/* ========== 高级选项 ========== */}
+          <div className={sectionClass}>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen(!advancedOpen)}
+              className="w-full flex items-center justify-between text-base font-semibold text-white border-b border-gray-700 pb-2 hover:text-blue-400 transition-colors"
+            >
+              <span>高级选项</span>
+              <span className="text-sm text-gray-400">{advancedOpen ? '▼' : '▶'}</span>
+            </button>
+
+            {advancedOpen && (
+              <div className="space-y-5 pt-2">
+                {/* 开发者信息 */}
+                <div>
+                  <label className={labelClass}>开发者信息</label>
+                  {developers.map((dev, idx) => (
+                    <div key={idx} className="flex items-center gap-2 mb-2">
+                      <input type="text" value={dev.name} onChange={e => {
+                        const next = [...developers]; next[idx] = { ...next[idx], name: e.target.value }; setDevelopers(next)
+                      }} placeholder="姓名" className={`${inputClass} flex-1`} />
+                      <input type="text" value={dev.affiliation} onChange={e => {
+                        const next = [...developers]; next[idx] = { ...next[idx], affiliation: e.target.value }; setDevelopers(next)
+                      }} placeholder="单位" className={`${inputClass} flex-1`} />
+                      {developers.length > 1 && (
+                        <button type="button" onClick={() => setDevelopers(developers.filter((_, i) => i !== idx))}
+                          className="text-red-400 hover:text-red-300 text-sm px-2">✕</button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setDevelopers([...developers, { name: '', affiliation: '' }])}
+                    className="text-sm text-blue-400 hover:text-blue-300">+ 添加开发者</button>
+                </div>
+
+                {/* 模拟软件 */}
+                <div>
+                  <label className={labelClass}>模拟软件</label>
+                  <div className="flex flex-wrap gap-3">
+                    {['LAMMPS', 'GULP', 'VASP', 'LAMMPS/GULP', '其他'].map(sw => (
+                      <label key={sw} className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={simSoftware.includes(sw)} onChange={e => {
+                          if (e.target.checked) setSimSoftware([...simSoftware, sw])
+                          else setSimSoftware(simSoftware.filter(s => s !== sw))
+                        }} className="accent-blue-500" />
+                        <span className="text-sm text-gray-300">{sw}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {simSoftware.includes('其他') && (
+                    <input type="text" value={simSoftwareOther} onChange={e => setSimSoftwareOther(e.target.value)} placeholder="请输入软件名称" className={`${inputClass} mt-2`} />
+                  )}
+                </div>
+
+                {/* 子类型 */}
+                <div>
+                  <label className={labelClass}>子类型</label>
+                  <select value={subtype} onChange={e => setSubtype(e.target.value)} className={inputClass}>
+                    <option value="">请选择子类型</option>
+                    {['eam/alloy', 'eam/fs', 'meam', 'snap', 'rann', 'buckingham', 'reaxff', '其他'].map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  {subtype === '其他' && (
+                    <input type="text" value={subtypeOther} onChange={e => setSubtypeOther(e.target.value)} placeholder="请输入子类型" className={`${inputClass} mt-2`} />
+                  )}
+                </div>
+
+                {/* 核材料特性标记 */}
+                <div>
+                  <label className={labelClass}>核材料特性标记</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={irradiationRelevant} onChange={e => setIrradiationRelevant(e.target.checked)} className="accent-blue-500" />
+                      <span className="text-sm text-gray-300">辐照相关</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={hasDefectData} onChange={e => setHasDefectData(e.target.checked)} className="accent-blue-500" />
+                      <span className="text-sm text-gray-300">含缺陷数据</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={hasLiquidPhase} onChange={e => setHasLiquidPhase(e.target.checked)} className="accent-blue-500" />
+                      <span className="text-sm text-gray-300">含液相数据</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* 适用相态 */}
+                <div>
+                  <label className={labelClass}>适用相态</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['固相', '液相', '气相', '固液共存'].map(p => {
+                      const active = phaseTags.includes(p)
+                      return (
+                        <button key={p} type="button" onClick={() => {
+                          setPhaseTags(active ? phaseTags.filter(t => t !== p) : [...phaseTags, p])
+                        }} className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                          active ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}>{p}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ========== 提交 ========== */}
