@@ -3,6 +3,8 @@
 import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import Pagination from '@/components/Pagination'
+import ElementFilter from '@/components/ElementFilter'
 
 interface Potential {
   id: string
@@ -19,7 +21,6 @@ interface Potential {
 }
 
 const TYPES = ['EAM', 'MEAM', 'ML', 'Buckingham', 'other']
-const ELEMENTS = ['U', 'Zr', 'Mo', 'Nb', 'O', 'Fe', 'He']
 
 export default function BrowsePage() {
   return (
@@ -44,6 +45,20 @@ function BrowseContent() {
     return e ? e.split(',') : []
   })
   const [query, setQuery] = useState(searchParams.get('q') || '')
+  const [page, setPage] = useState(() => {
+    const p = searchParams.get('page')
+    return p ? parseInt(p) : 1
+  })
+  const [totalPages, setTotalPages] = useState(1)
+  const [allElements, setAllElements] = useState<string[]>([])
+
+  // Fetch all available elements from stats API
+  useEffect(() => {
+    fetch('/api/stats')
+      .then(r => r.json())
+      .then(data => setAllElements(data.elements || []))
+      .catch(console.error)
+  }, [])
 
   useEffect(() => {
     setLoading(true)
@@ -51,20 +66,30 @@ function BrowseContent() {
     if (selectedTypes.length > 0) params.set('type', selectedTypes[0])
     if (selectedElements.length > 0) params.set('elements', selectedElements.join(','))
     if (query) params.set('q', query)
+    params.set('page', String(page))
 
     fetch(`/api/potentials?${params.toString()}`)
       .then(r => r.json())
       .then(data => {
         setPotentials(data.potentials || [])
         setTotal(data.total || 0)
+        setTotalPages(data.totalPages || 1)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [selectedTypes, selectedElements, query])
+  }, [selectedTypes, selectedElements, query, page])
 
   const toggleFilter = (value: string, current: string[], setter: (v: string[]) => void) => {
     setter(current.includes(value) ? current.filter(v => v !== value) : [...current, value])
   }
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1) }, [selectedTypes, selectedElements, query])
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -92,17 +117,11 @@ function BrowseContent() {
           {/* Element filter */}
           <div className="mb-6">
             <h3 className="text-sm font-medium mb-2 text-gray-300">▼ 元素组合</h3>
-            {ELEMENTS.map(e => (
-              <label key={e} className="flex items-center gap-2 py-1 text-sm cursor-pointer hover:text-blue-400">
-                <input
-                  type="checkbox"
-                  checked={selectedElements.includes(e)}
-                  onChange={() => toggleFilter(e, selectedElements, setSelectedElements)}
-                  className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
-                />
-                {e}
-              </label>
-            ))}
+            <ElementFilter
+              allElements={allElements}
+              selected={selectedElements}
+              onToggle={(el) => toggleFilter(el, selectedElements, setSelectedElements)}
+            />
           </div>
 
           <button
@@ -165,6 +184,14 @@ function BrowseContent() {
                 </Link>
               ))}
             </div>
+          )}
+
+          {!loading && potentials.length > 0 && (
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              onPageChange={handlePageChange}
+            />
           )}
         </main>
       </div>

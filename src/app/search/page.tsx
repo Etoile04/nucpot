@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, Suspense } from 'react'
+import { useState, Suspense, useEffect } from 'react'
 import Link from 'next/link'
+import Pagination from '@/components/Pagination'
+import ElementFilter from '@/components/ElementFilter'
 
 interface Potential {
   id: string
@@ -23,7 +25,6 @@ interface Potential {
 }
 
 const TYPES = ['EAM', 'MEAM', 'ML', 'Buckingham', 'other']
-const ELEMENTS = ['U', 'Zr', 'Mo', 'Nb', 'O', 'Fe', 'He']
 const VALIDATION_LEVELS = [
   { value: 'all', label: '全部' },
   { value: 'basic', label: 'basic' },
@@ -60,9 +61,20 @@ function SearchContent() {
   // Results state
   const [potentials, setPotentials] = useState<Potential[]>([])
   const [total, setTotal] = useState<number | null>(null)
+  const [totalPages, setTotalPages] = useState(1)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [error, setError] = useState('')
+  const [allElements, setAllElements] = useState<string[]>([])
+
+  // Fetch all available elements from stats API
+  useEffect(() => {
+    fetch('/api/stats')
+      .then(r => r.json())
+      .then(data => setAllElements(data.elements || []))
+      .catch(console.error)
+  }, [])
 
   const toggleElement = (el: string) => {
     setSelectedElements(prev =>
@@ -82,11 +94,18 @@ function SearchContent() {
     setValidationLevel('all')
     setPotentials([])
     setTotal(null)
+    setTotalPages(1)
     setSearched(false)
     setError('')
+    setPage(1)
   }
 
   const handleSearch = async () => {
+    setPage(1)
+    doSearch(1)
+  }
+
+  const doSearch = async (p: number) => {
     setLoading(true)
     setError('')
     setSearched(true)
@@ -102,6 +121,7 @@ function SearchContent() {
     if (hasLiquid) params.set('hasLiquid', 'true')
     if (validationLevel && validationLevel !== 'all') params.set('validationLevel', validationLevel)
     params.set('limit', '50')
+    params.set('page', String(p))
 
     try {
       const res = await fetch(`/api/potentials?${params.toString()}`)
@@ -109,6 +129,7 @@ function SearchContent() {
       const data = await res.json()
       setPotentials(data.potentials || [])
       setTotal(data.total ?? data.potentials?.length ?? 0)
+      setTotalPages(data.totalPages || 1)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '搜索失败，请重试')
       setPotentials([])
@@ -143,21 +164,11 @@ function SearchContent() {
           {/* Elements */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">元素（多选）</label>
-            <div className="flex flex-wrap gap-2">
-              {ELEMENTS.map(el => (
-                <button
-                  key={el}
-                  onClick={() => toggleElement(el)}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium border transition
-                    ${selectedElements.includes(el)
-                      ? 'bg-blue-600 border-blue-500 text-white'
-                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-blue-500 hover:text-blue-300'
-                    }`}
-                >
-                  {el}
-                </button>
-              ))}
-            </div>
+            <ElementFilter
+              allElements={allElements}
+              selected={selectedElements}
+              onToggle={toggleElement}
+            />
           </div>
 
           {/* Type and Validation Level */}
@@ -342,6 +353,18 @@ function SearchContent() {
                   </Link>
                 ))}
               </div>
+            )}
+
+            {!loading && potentials.length > 0 && (
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                onPageChange={(p) => {
+                  setPage(p)
+                  doSearch(p)
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+              />
             )}
           </div>
         )}
