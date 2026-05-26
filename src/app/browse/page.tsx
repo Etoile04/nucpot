@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import Pagination from '@/components/Pagination'
 
 interface Potential {
   id: string
@@ -44,6 +45,11 @@ function BrowseContent() {
     return e ? e.split(',') : []
   })
   const [query, setQuery] = useState(searchParams.get('q') || '')
+  const [page, setPage] = useState(() => {
+    const p = searchParams.get('page')
+    return p ? parseInt(p) : 1
+  })
+  const [totalPages, setTotalPages] = useState(1)
 
   useEffect(() => {
     setLoading(true)
@@ -51,20 +57,30 @@ function BrowseContent() {
     if (selectedTypes.length > 0) params.set('type', selectedTypes[0])
     if (selectedElements.length > 0) params.set('elements', selectedElements.join(','))
     if (query) params.set('q', query)
+    params.set('page', String(page))
 
     fetch(`/api/potentials?${params.toString()}`)
       .then(r => r.json())
       .then(data => {
         setPotentials(data.potentials || [])
         setTotal(data.total || 0)
+        setTotalPages(data.totalPages || 1)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [selectedTypes, selectedElements, query])
+  }, [selectedTypes, selectedElements, query, page])
 
   const toggleFilter = (value: string, current: string[], setter: (v: string[]) => void) => {
     setter(current.includes(value) ? current.filter(v => v !== value) : [...current, value])
   }
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1) }, [selectedTypes, selectedElements, query])
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -165,6 +181,14 @@ function BrowseContent() {
                 </Link>
               ))}
             </div>
+          )}
+
+          {!loading && potentials.length > 0 && (
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              onPageChange={handlePageChange}
+            />
           )}
         </main>
       </div>
