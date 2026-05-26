@@ -367,43 +367,43 @@ export default function UploadPage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>势函数名称 <span className="text-red-400">*</span></label>
-                <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Fe_EAM_Mendelev2003" className={inputClass} required />
+                <label htmlFor="pot-name" className={labelClass}>势函数名称 <span className="text-red-400">*</span></label>
+                <input id="pot-name" type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Fe_EAM_Mendelev2003" className={inputClass} required />
               </div>
               <div>
-                <label className={labelClass}>显示名称</label>
-                <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="留空则使用势函数名称" className={inputClass} />
+                <label htmlFor="pot-display-name" className={labelClass}>显示名称</label>
+                <input id="pot-display-name" type="text" value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="留空则使用势函数名称" className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>类型 <span className="text-red-400">*</span></label>
-                <select value={type} onChange={e => setType(e.target.value)} className={inputClass} required>
+                <label htmlFor="pot-type" className={labelClass}>类型 <span className="text-red-400">*</span></label>
+                <select id="pot-type" value={type} onChange={e => setType(e.target.value)} className={inputClass} required>
                   <option value="">请选择类型</option>
                   {POTENTIAL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className={labelClass}>格式</label>
-                <input type="text" value={format} onChange={e => setFormat(e.target.value)} placeholder="e.g. LAMMPS" className={inputClass} />
+                <label htmlFor="pot-format" className={labelClass}>格式</label>
+                <input id="pot-format" type="text" value={format} onChange={e => setFormat(e.target.value)} placeholder="e.g. LAMMPS" className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>元素（逗号分隔） <span className="text-red-400">*</span></label>
-                <input type="text" value={elements} onChange={e => setElements(e.target.value)} placeholder="e.g. Fe, Ni, Cr" className={inputClass} required />
+                <label htmlFor="pot-elements" className={labelClass}>元素（逗号分隔） <span className="text-red-400">*</span></label>
+                <input id="pot-elements" type="text" value={elements} onChange={e => setElements(e.target.value)} placeholder="e.g. Fe, Ni, Cr" className={inputClass} required />
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>体系名称 <span className="text-red-400">*</span></label>
-                <input type="text" value={systemName} onChange={e => setSystemName(e.target.value)} placeholder="e.g. Fe-Ni 合金" className={inputClass} required />
+                <label htmlFor="pot-system-name" className={labelClass}>体系名称 <span className="text-red-400">*</span></label>
+                <input id="pot-system-name" type="text" value={systemName} onChange={e => setSystemName(e.target.value)} placeholder="e.g. Fe-Ni 合金" className={inputClass} required />
               </div>
               <div>
-                <label className={labelClass}>体系标签（逗号分隔）</label>
-                <input type="text" value={systemTags} onChange={e => setSystemTags(e.target.value)} placeholder="e.g. steel, alloy" className={inputClass} />
+                <label htmlFor="pot-system-tags" className={labelClass}>体系标签（逗号分隔）</label>
+                <input id="pot-system-tags" type="text" value={systemTags} onChange={e => setSystemTags(e.target.value)} placeholder="e.g. steel, alloy" className={inputClass} />
               </div>
             </div>
             <div>
-              <label className={labelClass}>描述 <span className="text-red-400">*</span></label>
-              <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4} placeholder="请描述该势函数的适用范围、来源、验证情况等" className={inputClass} required />
+              <label htmlFor="pot-description" className={labelClass}>描述 <span className="text-red-400">*</span></label>
+              <textarea id="pot-description" value={description} onChange={e => setDescription(e.target.value)} rows={4} placeholder="请描述该势函数的适用范围、来源、验证情况等" className={inputClass} required />
             </div>
           </div>
 
@@ -433,9 +433,9 @@ export default function UploadPage() {
             {licenseType === 'author_permission' && (
               <div className="mt-4 space-y-3">
                 <div>
-                  <label className={labelClass}>📎 上传授权证明文件 <span className="text-red-400">*</span></label>
+                  <label htmlFor="pot-auth-file" className={labelClass}>📎 上传授权证明文件 <span className="text-red-400">*</span></label>
                   <div className="flex items-center gap-3">
-                    <input ref={fileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                    <input ref={fileInputRef} id="pot-auth-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
                       onChange={e => setAuthFile(e.target.files?.[0] || null)}
                       className="text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 file:cursor-pointer" />
                     {authFileUploading && <span className="text-xs text-blue-400">上传中…</span>}
@@ -477,8 +477,8 @@ export default function UploadPage() {
 
             {licenseType === 'open_license' && (
               <div className="mt-4">
-                <label className={labelClass}>许可证名称 <span className="text-red-400">*</span></label>
-                <input type="text" value={licenseDetail} onChange={e => setLicenseDetail(e.target.value)} placeholder="e.g. CC-BY-4.0, MIT, GPL-3.0" className={inputClass} />
+                <label htmlFor="pot-license-detail" className={labelClass}>许可证名称 <span className="text-red-400">*</span></label>
+                <input id="pot-license-detail" type="text" value={licenseDetail} onChange={e => setLicenseDetail(e.target.value)} placeholder="e.g. CC-BY-4.0, MIT, GPL-3.0" className={inputClass} />
               </div>
             )}
           </div>
@@ -502,8 +502,8 @@ export default function UploadPage() {
             <h2 className="text-base font-semibold text-white border-b border-gray-700 pb-2">适用条件（可选）</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>温度范围</label>
-                <input type="text" value={tempRange} onChange={e => setTempRange(e.target.value)} placeholder="e.g. 300-1200 K" className={inputClass} />
+                <label htmlFor="pot-temp-range" className={labelClass}>温度范围</label>
+                <input id="pot-temp-range" type="text" value={tempRange} onChange={e => setTempRange(e.target.value)} placeholder="e.g. 300-1200 K" className={inputClass} />
               </div>
 
             </div>
@@ -513,12 +513,12 @@ export default function UploadPage() {
           <div className={sectionClass}>
             <h2 className="text-base font-semibold text-white border-b border-gray-700 pb-2">LAMMPS 配置（可选）</h2>
             <div>
-              <label className={labelClass}>pair_style</label>
-              <input type="text" value={pairStyle} onChange={e => setPairStyle(e.target.value)} placeholder="e.g. eam/fs" className={inputClass} />
+              <label htmlFor="pot-pair-style" className={labelClass}>pair_style</label>
+              <input id="pot-pair-style" type="text" value={pairStyle} onChange={e => setPairStyle(e.target.value)} placeholder="e.g. eam/fs" className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>pair_coeff</label>
-              <input type="text" value={pairCoeff} onChange={e => setPairCoeff(e.target.value)} placeholder="e.g. * * Fe.eam.fs Fe" className={inputClass} />
+              <label htmlFor="pot-pair-coeff" className={labelClass}>pair_coeff</label>
+              <input id="pot-pair-coeff" type="text" value={pairCoeff} onChange={e => setPairCoeff(e.target.value)} placeholder="e.g. * * Fe.eam.fs Fe" className={inputClass} />
             </div>
           </div>
 
@@ -526,12 +526,12 @@ export default function UploadPage() {
           <div className={sectionClass}>
             <h2 className="text-base font-semibold text-white border-b border-gray-700 pb-2">元数据（可选）</h2>
             <div>
-              <label className={labelClass}>标签（逗号分隔）</label>
-              <input type="text" value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. radiation, defect, diffusion" className={inputClass} />
+              <label htmlFor="pot-tags" className={labelClass}>标签（逗号分隔）</label>
+              <input id="pot-tags" type="text" value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. radiation, defect, diffusion" className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>参考文献 DOI（逗号分隔）</label>
-              <input type="text" value={doiRefs} onChange={e => setDoiRefs(e.target.value)} placeholder="e.g. 10.1103/PhysRevB.68.024102" className={inputClass} />
+              <label htmlFor="pot-doi-refs" className={labelClass}>参考文献 DOI（逗号分隔）</label>
+              <input id="pot-doi-refs" type="text" value={doiRefs} onChange={e => setDoiRefs(e.target.value)} placeholder="e.g. 10.1103/PhysRevB.68.024102" className={inputClass} />
             </div>
           </div>
 
@@ -590,8 +590,8 @@ export default function UploadPage() {
 
                 {/* 子类型 */}
                 <div>
-                  <label className={labelClass}>子类型</label>
-                  <select value={subtype} onChange={e => setSubtype(e.target.value)} className={inputClass}>
+                  <label htmlFor="pot-subtype" className={labelClass}>子类型</label>
+                  <select id="pot-subtype" value={subtype} onChange={e => setSubtype(e.target.value)} className={inputClass}>
                     <option value="">请选择子类型</option>
                     {['eam/alloy', 'eam/fs', 'meam', 'snap', 'rann', 'buckingham', 'reaxff', '其他'].map(s => (
                       <option key={s} value={s}>{s}</option>
@@ -605,17 +605,17 @@ export default function UploadPage() {
                 {/* 核材料特性标记 */}
                 <div>
                   <label className={labelClass}>核材料特性标记</label>
-                  <div className="space-y-2">
+                  <div className="space-y-2" id="nuclear-traits-desc">
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={irradiationRelevant} onChange={e => setIrradiationRelevant(e.target.checked)} className="accent-blue-500" />
+                      <input type="checkbox" checked={irradiationRelevant} onChange={e => setIrradiationRelevant(e.target.checked)} aria-describedby="nuclear-traits-desc" className="accent-blue-500" />
                       <span className="text-sm text-gray-300">辐照相关</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={hasDefectData} onChange={e => setHasDefectData(e.target.checked)} className="accent-blue-500" />
+                      <input type="checkbox" checked={hasDefectData} onChange={e => setHasDefectData(e.target.checked)} aria-describedby="nuclear-traits-desc" className="accent-blue-500" />
                       <span className="text-sm text-gray-300">含缺陷数据</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={hasLiquidPhase} onChange={e => setHasLiquidPhase(e.target.checked)} className="accent-blue-500" />
+                      <input type="checkbox" checked={hasLiquidPhase} onChange={e => setHasLiquidPhase(e.target.checked)} aria-describedby="nuclear-traits-desc" className="accent-blue-500" />
                       <span className="text-sm text-gray-300">含液相数据</span>
                     </label>
                   </div>
