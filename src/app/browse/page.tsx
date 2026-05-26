@@ -22,6 +22,24 @@ interface Potential {
 }
 
 const TYPES = ['EAM', 'MEAM', 'ML', 'Buckingham', 'other']
+const SORT_OPTIONS = [
+  { value: 'updated', label: '最近更新' },
+  { value: 'name', label: '名称' },
+  { value: 'type', label: '类型' },
+]
+
+/** Highlight matching keywords in text with <mark> tags */
+function highlightText(text: string, keyword: string) {
+  if (!keyword.trim()) return text
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'))
+  if (parts.length <= 1) return text
+  return parts.map((part, i) =>
+    part.toLowerCase() === keyword.toLowerCase()
+      ? <mark key={i} className="bg-yellow-400/30 text-yellow-200 rounded px-0.5">{part}</mark>
+      : part
+  )
+}
 
 export default function BrowsePage() {
   return (
@@ -54,6 +72,7 @@ function BrowseContent() {
   const [allElements, setAllElements] = useState<string[]>([])
   const [compareIds, setCompareIds] = useState<string[]>([])
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
+  const [sort, setSort] = useState('updated')
 
   // Fetch all available elements from stats API
   useEffect(() => {
@@ -69,6 +88,7 @@ function BrowseContent() {
     if (selectedTypes.length > 0) params.set('type', selectedTypes[0])
     if (selectedElements.length > 0) params.set('elements', selectedElements.join(','))
     if (query) params.set('q', query)
+    params.set('sort', sort)
     params.set('page', String(page))
 
     fetch(`/api/potentials?${params.toString()}`)
@@ -80,7 +100,7 @@ function BrowseContent() {
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [selectedTypes, selectedElements, query, page])
+  }, [selectedTypes, selectedElements, query, page, sort])
 
   const toggleFilter = (value: string, current: string[], setter: (v: string[]) => void) => {
     setter(current.includes(value) ? current.filter(v => v !== value) : [...current, value])
@@ -92,7 +112,7 @@ function BrowseContent() {
   }
 
   // Reset page when filters change
-  useEffect(() => { setPage(1) }, [selectedTypes, selectedElements, query])
+  useEffect(() => { setPage(1) }, [selectedTypes, selectedElements, query, sort])
 
   const toggleCompare = useCallback((id: string) => {
     setCompareIds(prev =>
@@ -164,7 +184,7 @@ function BrowseContent() {
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">筛选器</h2>
 
           {/* Type filter */}
-          <div className="mb-6">
+          <div className="mb-6" role="group" aria-label="势函数类型筛选">
             <h3 className="text-sm font-medium mb-2 text-gray-300">▼ 函数形式</h3>
             {TYPES.map(t => (
               <label key={t} className="flex items-center gap-2 py-1 text-sm cursor-pointer hover:text-blue-400">
@@ -201,7 +221,18 @@ function BrowseContent() {
         <main className="flex-1 p-4 md:p-6">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-xl font-semibold">势函数浏览</h1>
-            <span className="text-sm text-gray-400">共 {total} 个结果</span>
+            <div className="flex items-center gap-4">
+              <select
+                value={sort}
+                onChange={e => setSort(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {SORT_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <span className="text-sm text-gray-400">共 {total} 个结果</span>
+            </div>
           </div>
 
           {loading ? (
@@ -219,14 +250,14 @@ function BrowseContent() {
                     <div className="flex-1 min-w-0">
                       <Link href={`/potential/${p.id}`} className="block">
                         <h3 className="font-semibold text-blue-300">
-                          {p.display_name || p.name}
+                          {highlightText(p.display_name || p.name, query)}
                         </h3>
                       </Link>
                       <div className="flex flex-wrap gap-2 mt-2 text-xs">
                         <span className="px-2 py-0.5 bg-blue-900/50 rounded">{p.type}</span>
                         <span className="px-2 py-0.5 bg-gray-700 rounded">{p.elements.join('-')}</span>
                         {p.system_name && (
-                          <span className="px-2 py-0.5 bg-gray-700 rounded">{p.system_name}</span>
+                          <span className="px-2 py-0.5 bg-gray-700 rounded">{highlightText(p.system_name, query)}</span>
                         )}
                         {p.applicability?.temperatureRange && (
                           <span className="px-2 py-0.5 bg-gray-700 rounded">
@@ -238,7 +269,7 @@ function BrowseContent() {
                         )}
                       </div>
                       {p.description && (
-                        <p className="text-sm text-gray-400 mt-2 line-clamp-2">{p.description}</p>
+                        <p className="text-sm text-gray-400 mt-2 line-clamp-2">{highlightText(p.description, query)}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-3 ml-4 shrink-0">

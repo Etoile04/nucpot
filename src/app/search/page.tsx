@@ -32,6 +32,24 @@ const VALIDATION_LEVELS = [
   { value: 'benchmarked', label: 'benchmarked' },
   { value: 'production', label: 'production' },
 ]
+const SORT_OPTIONS = [
+  { value: 'updated', label: '最近更新' },
+  { value: 'name', label: '名称' },
+  { value: 'type', label: '类型' },
+]
+
+/** Highlight matching keywords in text with <mark> tags */
+function highlightText(text: string, keyword: string) {
+  if (!keyword.trim()) return text
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'))
+  if (parts.length <= 1) return text
+  return parts.map((part, i) =>
+    part.toLowerCase() === keyword.toLowerCase()
+      ? <mark key={i} className="bg-yellow-400/30 text-yellow-200 rounded px-0.5">{part}</mark>
+      : part
+  )
+}
 
 export default function SearchPage() {
   return (
@@ -69,6 +87,7 @@ function SearchContent() {
   const [error, setError] = useState('')
   const [allElements, setAllElements] = useState<string[]>([])
   const [compareIds, setCompareIds] = useState<string[]>([])
+  const [sort, setSort] = useState('updated')
 
   // Fetch all available elements from stats API
   useEffect(() => {
@@ -100,6 +119,7 @@ function SearchContent() {
     setSearched(false)
     setError('')
     setPage(1)
+    setSort('updated')
   }
 
   const toggleCompare = useCallback((id: string) => {
@@ -133,6 +153,7 @@ function SearchContent() {
     if (hasLiquid) params.set('hasLiquid', 'true')
     if (validationLevel && validationLevel !== 'all') params.set('validationLevel', validationLevel)
     params.set('limit', '50')
+    params.set('sort', sort)
     params.set('page', String(p))
 
     try {
@@ -293,9 +314,20 @@ function SearchContent() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">搜索结果</h2>
-              <span className="text-sm text-gray-400">
-                共 {total !== null ? total : 0} 个结果
-              </span>
+              <div className="flex items-center gap-4">
+                <select
+                  value={sort}
+                  onChange={e => { setSort(e.target.value); if (searched) doSearch(page) }}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {SORT_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <span className="text-sm text-gray-400">
+                  共 {total !== null ? total : 0} 个结果
+                </span>
+              </div>
             </div>
 
             {potentials.length === 0 ? (
@@ -315,7 +347,7 @@ function SearchContent() {
                       <div className="flex-1 min-w-0">
                         <Link href={`/potential/${p.id}`} className="block">
                           <h3 className="font-semibold text-blue-300">
-                            {p.display_name || p.name}
+                            {highlightText(p.display_name || p.name, keyword)}
                           </h3>
                         </Link>
                         <div className="flex flex-wrap gap-2 mt-2 text-xs">
@@ -324,7 +356,7 @@ function SearchContent() {
                             {p.elements.join('-')}
                           </span>
                           {p.system_name && (
-                            <span className="px-2 py-0.5 bg-gray-700 rounded">{p.system_name}</span>
+                            <span className="px-2 py-0.5 bg-gray-700 rounded">{highlightText(p.system_name, keyword)}</span>
                           )}
                           {p.applicability?.temperatureRange && (
                             <span className="px-2 py-0.5 bg-gray-700 rounded">
@@ -354,8 +386,8 @@ function SearchContent() {
                           )}
                         </div>
                         {p.description && (
-                          <p className="text-sm text-gray-400 mt-2 line-clamp-2">{p.description}</p>
-                        )}
+                          <p className="text-sm text-gray-400 mt-2 line-clamp-2">{highlightText(p.description, keyword)}</p>
+                        )}}
                       </div>
                       <div className="flex items-center gap-3 ml-4 shrink-0">
                         <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-white transition">
