@@ -35,6 +35,18 @@ def ensure_tables():
         conn.execute(sql)
 
 
+def _serialize_row(row: dict) -> dict:
+    """Convert DB row values to JSON-safe types."""
+    import uuid
+    d = dict(row)
+    for k, v in d.items():
+        if isinstance(v, uuid.UUID):
+            d[k] = str(v)
+        elif hasattr(v, "isoformat"):
+            d[k] = v.isoformat()
+    return d
+
+
 # ---------------------------------------------------------------------------
 # Potentials
 # ---------------------------------------------------------------------------
@@ -43,7 +55,8 @@ def get_potential(potential_id: str) -> Optional[dict]:
     conn = _get_conn()
     with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
         cur.execute("SELECT * FROM potentials WHERE id = %s", (potential_id,))
-        return cur.fetchone()
+        row = cur.fetchone()
+        return _serialize_row(row) if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -107,14 +120,7 @@ def get_verification(vid: str) -> Optional[dict]:
     with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
         cur.execute("SELECT * FROM verifications WHERE id = %s", (vid,))
         row = cur.fetchone()
-        if row:
-            # Convert non-serializable types
-            d = dict(row)
-            for k, v in d.items():
-                if hasattr(v, "isoformat"):
-                    d[k] = v.isoformat()
-            return d
-    return None
+        return _serialize_row(row) if row else None
 
 
 def get_latest_verification(potential_id: str) -> Optional[dict]:
@@ -127,13 +133,7 @@ def get_latest_verification(potential_id: str) -> Optional[dict]:
             (potential_id,),
         )
         row = cur.fetchone()
-        if row:
-            d = dict(row)
-            for k, v in d.items():
-                if hasattr(v, "isoformat"):
-                    d[k] = v.isoformat()
-            return d
-    return None
+        return _serialize_row(row) if row else None
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ class Settings:
     # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://nucpot:***@localhost:5432/nucpot",
+        "postgresql://nucpot:nucpot_dev@localhost:5432/nucpot",
     )
 
     # Service

@@ -105,31 +105,30 @@ export interface AuthUser {
   profile: Profile | null
 }
 
-// Phase 2: Verification Pipeline
+// Phase 3: Verification Pipeline
+
+export interface Verification {
+  id: string
+  potential_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  requested_by: string | null
+  created_at: string
+  completed_at: string | null
+  results: Record<string, VerificationResult>
+  overall_grade: VerificationGrade | null
+  summary: string | null
+  error_log: string | null
+  compute_time: number | null
+}
 
 export type VerificationGrade = 'A' | 'B' | 'C' | 'D' | 'F'
-export type VerificationStatus = 'pending' | 'running' | 'completed' | 'failed'
 
-export interface PropertyVerification {
+export interface VerificationResult {
   value: number
   unit: string
   reference: number
   error_pct: number
   grade: VerificationGrade
-}
-
-export interface Verification {
-  id: string
-  potential_id: string
-  status: VerificationStatus
-  results: Record<string, PropertyVerification>
-  overall_grade: VerificationGrade | null
-  summary: string | null
-  error_log: string | null
-  compute_time: number | null
-  requested_by: string | null
-  created_at: string | null
-  completed_at: string | null
 }
 
 export interface ReferenceValue {
@@ -138,10 +137,16 @@ export interface ReferenceValue {
   phase: string | null
   property: string
   value: number
-  unit: string | null
+  unit: string
   uncertainty: number | null
   temperature: number | null
+  pressure: number | null
   source: string | null
   source_doi: string | null
   method: string | null
+  created_at: string
 }
+
+// Convenience aliases
+export type VerificationStatus = Verification['status']
+export type PropertyVerification = VerificationResult

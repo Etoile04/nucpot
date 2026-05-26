@@ -97,7 +97,7 @@ class TestE2EVerification:
         from main import app
 
         client = TestClient(app)
-        resp = client.get("/api/verify/nonexistent-id/status")
+        resp = client.get("/api/verify/00000000-0000-0000-0000-000000000000/status")
         assert resp.status_code == 404
 
     def test_potential_not_found(self):
