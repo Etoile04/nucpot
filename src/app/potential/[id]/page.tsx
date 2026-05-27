@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import VerificationPanel from '@/components/VerificationPanel'
+import VerificationBadge from '@/components/VerificationBadge'
 
 interface Potential {
   id: string
@@ -253,7 +253,6 @@ export default function PotentialDetailPage() {
     { id: 'properties', label: '验证性质' },
     { id: 'citation', label: '引用' },
     { id: 'usage', label: '使用方法' },
-    { id: 'verify', label: '验证' },
   ]
 
   return (
@@ -483,9 +482,78 @@ export default function PotentialDetailPage() {
           </div>
         )}
 
-        {activeTab === 'verify' && (
-          <VerificationPanel potentialName={p.name} />
-        )}
+        {/* Verification results — read only, shown on overview tab */}
+        {activeTab === 'overview' && (() => {
+          const vp = p.verified_props as Record<string, any> | null
+          if (!vp || Object.keys(vp).length === 0) {
+            return (
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase mb-3">验证状态</h3>
+                <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 text-sm text-gray-400 flex items-center gap-2">
+                  <span className="text-gray-500">⏳</span>
+                  尚未验证
+                </div>
+              </div>
+            )
+          }
+
+          const overallGrade = vp.overall_grade as string | undefined
+          const verifiedAt = vp.verified_at as string | undefined
+          const verifiedSource = vp.source as string | undefined
+          const results = vp.results as Array<{ property_name: string; computed_value: number; reference_value: number; unit: string; relative_error: number; grade: string }> | undefined
+
+          return (
+            <div className="mt-6 space-y-4">
+              <h3 className="text-sm font-semibold text-gray-400 uppercase mb-3">验证结果</h3>
+
+              {/* Grade badge */}
+              {overallGrade && (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-300">综合评级:</span>
+                  <span className="scale-150 inline-flex items-center">
+                    <VerificationBadge grade={overallGrade} />
+                  </span>
+                </div>
+              )}
+
+              {/* Results table */}
+              {results && results.length > 0 && (
+                <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-700">
+                        <th className="px-4 py-2 text-left text-gray-300">属性</th>
+                        <th className="px-4 py-2 text-right text-gray-300">计算值</th>
+                        <th className="px-4 py-2 text-right text-gray-300">参考值</th>
+                        <th className="px-4 py-2 text-right text-gray-300">误差</th>
+                        <th className="px-4 py-2 text-center text-gray-300">等级</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map((r, i) => (
+                        <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-700/50 transition">
+                          <td className="px-4 py-2 text-gray-200">{r.property_name}</td>
+                          <td className="px-4 py-2 text-right font-mono text-gray-300">{r.computed_value?.toFixed(4)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-gray-400">{r.reference_value?.toFixed(4)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-gray-300">{(r.relative_error * 100).toFixed(2)}%</td>
+                          <td className="px-4 py-2 text-center">
+                            <VerificationBadge grade={r.grade} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Metadata */}
+              <div className="flex items-center gap-4 text-xs text-gray-500">
+                {verifiedAt && <span>验证时间: {new Date(verifiedAt).toLocaleString('zh-CN')}</span>}
+                {verifiedSource && <span>来源: {verifiedSource}</span>}
+              </div>
+            </div>
+          )
+        })()}
       </div>
     </div>
   )
