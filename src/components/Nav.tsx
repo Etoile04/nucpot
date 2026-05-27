@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { href: '/browse', label: '浏览' },
   { href: '/search', label: '高级检索' },
   { href: '/compare', label: '对比' },
+  { href: '/feedback', label: '反馈' },
   { href: '/about', label: '关于' },
 ]
 

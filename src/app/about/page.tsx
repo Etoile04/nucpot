@@ -65,9 +65,23 @@ export default function AboutPage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              李文杰 — 项目推进与标准制定
+              李文杰 — 项目开发与维护
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-blue-400 mt-1">•</span>
+              刘翔根 — 网站搭建
             </li>
           </ul>
+        </section>
+
+        <hr className="border-gray-700" />
+
+        {/* 致谢 */}
+        <section>
+          <h2 className="text-2xl font-semibold mb-4">致谢</h2>
+          <p className="text-gray-300 leading-relaxed">
+            感谢中核集团焦拥军首席专家提议建设开源势函数网站。
+          </p>
         </section>
 
         <hr className="border-gray-700" />
@@ -78,8 +92,8 @@ export default function AboutPage() {
           <p className="text-gray-300 mb-3">如有问题或合作意向，请通过以下方式联系：</p>
           <p className="text-gray-400">
             📧&nbsp;
-            <a href="mailto:nucpot@example.com" className="text-blue-400 hover:underline">
-              nucpot@example.com
+            <a href="mailto:liwenjie@npic.ac.cn" className="text-blue-400 hover:underline">
+              liwenjie@npic.ac.cn
             </a>
           </p>
         </section>

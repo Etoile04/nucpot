@@ -3,6 +3,7 @@
 import { useEffect, useState, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
+import { supabase } from '@/lib/supabase'
 
 interface MyContribution {
   id: string
@@ -32,6 +33,11 @@ export default function ProfilePage() {
   })
   const [savedProfile, setSavedProfile] = useState<ProfileData | null>(null)
   const [profileMsg, setProfileMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+
+  // Password change state
+  const [pwdForm, setPwdForm] = useState({ current: '', newPwd: '', confirm: '' })
+  const [pwdMsg, setPwdMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  const [pwdSaving, setPwdSaving] = useState(false)
 
   useEffect(() => {
     if (!loading && !user) {
@@ -109,6 +115,44 @@ export default function ProfilePage() {
       setProfileMsg({ type: 'err', text: '网络错误' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handlePasswordChange(e: FormEvent) {
+    e.preventDefault()
+    setPwdMsg(null)
+    if (pwdForm.newPwd !== pwdForm.confirm) {
+      setPwdMsg({ type: 'err', text: '两次输入的密码不一致' })
+      return
+    }
+    if (pwdForm.newPwd.length < 6) {
+      setPwdMsg({ type: 'err', text: '新密码至少需要 6 位' })
+      return
+    }
+    setPwdSaving(true)
+    try {
+      // 先验证当前密码
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: profile!.email || '',
+        password: pwdForm.current,
+      })
+      if (signInError) {
+        setPwdMsg({ type: 'err', text: '当前密码错误' })
+        setPwdSaving(false)
+        return
+      }
+      // 更新密码
+      const { error } = await supabase.auth.updateUser({ password: pwdForm.newPwd })
+      if (error) {
+        setPwdMsg({ type: 'err', text: error.message })
+      } else {
+        setPwdMsg({ type: 'ok', text: '密码修改成功' })
+        setPwdForm({ current: '', newPwd: '', confirm: '' })
+      }
+    } catch {
+      setPwdMsg({ type: 'err', text: '网络错误' })
+    } finally {
+      setPwdSaving(false)
     }
   }
 
@@ -283,6 +327,64 @@ export default function ProfilePage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* 修改密码 */}
+        <div className="bg-gray-900 rounded-xl border border-gray-800">
+          <div className="px-6 py-4 border-b border-gray-800">
+            <h2 className="text-base font-semibold text-white">修改密码</h2>
+          </div>
+          {pwdMsg && (
+            <div className={`mx-6 mt-4 rounded-lg px-4 py-2 text-sm ${
+              pwdMsg.type === 'ok'
+                ? 'bg-green-900/40 border border-green-700 text-green-300'
+                : 'bg-red-900/40 border border-red-700 text-red-300'
+            }`}>
+              {pwdMsg.type === 'ok' ? '✓' : '✗'} {pwdMsg.text}
+            </div>
+          )}
+          <form onSubmit={handlePasswordChange} className="px-6 py-4 space-y-4">
+            <div>
+              <label className={labelClass}>当前密码</label>
+              <input
+                type="password"
+                value={pwdForm.current}
+                onChange={e => setPwdForm(f => ({ ...f, current: e.target.value }))}
+                placeholder="输入当前密码"
+                className={inputClass}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelClass}>新密码</label>
+              <input
+                type="password"
+                value={pwdForm.newPwd}
+                onChange={e => setPwdForm(f => ({ ...f, newPwd: e.target.value }))}
+                placeholder="至少 6 位"
+                className={inputClass}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelClass}>确认新密码</label>
+              <input
+                type="password"
+                value={pwdForm.confirm}
+                onChange={e => setPwdForm(f => ({ ...f, confirm: e.target.value }))}
+                placeholder="再次输入新密码"
+                className={inputClass}
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={pwdSaving}
+              className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition disabled:opacity-50"
+            >
+              {pwdSaving ? '修改中…' : '修改密码'}
+            </button>
+          </form>
         </div>
 
         {/* Stats */}
