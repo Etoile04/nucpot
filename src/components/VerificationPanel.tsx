@@ -34,7 +34,7 @@ function gradeColor(grade: string): string {
   return colors[grade.toUpperCase()] || 'text-gray-400'
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'https://soldiers-financing-spectrum-ent.trycloudflare.com'
+const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'https://verify.nucpot.dpdns.org'
 
 interface VerificationPanelProps {
   potentialName: string

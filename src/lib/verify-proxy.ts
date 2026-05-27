@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'http://localhost:8000'
+const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'https://verify.nucpot.dpdns.org'
 
 export async function proxyFetch(path: string, init?: RequestInit) {
   const url = `${API_BASE}${path}`
