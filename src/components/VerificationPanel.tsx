@@ -34,6 +34,8 @@ function gradeColor(grade: string): string {
   return colors[grade.toUpperCase()] || 'text-gray-400'
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || ''
+
 interface VerificationPanelProps {
   potentialName: string
 }
@@ -52,7 +54,7 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
 
   // Load templates
   useEffect(() => {
-    fetch('/api/verify/templates')
+    fetch(`${API_BASE}/api/templates`)
       .then(r => {
         if (!r.ok) throw new Error('Service unavailable')
         return r.json()
@@ -71,7 +73,7 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
     const maxAttempts = 60
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const r = await fetch(`/api/verify/${id}`)
+        const r = await fetch(`${API_BASE}/api/verification/${id}`)
         if (!r.ok) continue
         const data: VerificationResult = await r.json()
         setResult(data)
@@ -101,7 +103,7 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
     }
 
     try {
-      const r = await fetch('/api/verify/submit', {
+      const r = await fetch(`${API_BASE}/api/verification/v2`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -126,7 +128,7 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
   const [reportData, setReportData] = useState<any>(null)
   useEffect(() => {
     if (result?.status !== 'completed' || !jobId) return
-    fetch(`/api/verify/${jobId}/report`)
+    fetch(`${API_BASE}/api/verification/${jobId}/report`)
       .then(r => r.ok ? r.json() : null)
       .then(setReportData)
       .catch(() => {})
