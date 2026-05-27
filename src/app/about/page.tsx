@@ -67,10 +67,7 @@ export default function AboutPage() {
               <span className="text-blue-400 mt-1">•</span>
               李文杰 — 项目开发与维护
             </li>
-            <li className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">•</span>
-              刘翔根 — 网站搭建
-            </li>
+
           </ul>
         </section>
 
