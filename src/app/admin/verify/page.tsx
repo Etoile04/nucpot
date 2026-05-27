@@ -87,7 +87,7 @@ function gradeColor(grade: string): string {
   return c[grade.toUpperCase()] || 'text-gray-400'
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || ''
+const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'https://verify.nucpot.dpdns.org'
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
