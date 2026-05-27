@@ -104,3 +104,85 @@ export interface AuthUser {
   email: string | null
   profile: Profile | null
 }
+
+// Phase 3: Verification Pipeline
+
+export interface Verification {
+  id: string
+  potential_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  requested_by: string | null
+  created_at: string
+  completed_at: string | null
+  results: Record<string, VerificationResultDetail>
+  overall_grade: VerificationGrade | null
+  summary: string | null
+  error_log: string | null
+  compute_time: number | null
+}
+
+export type VerificationGrade = 'A' | 'B' | 'C' | 'D' | 'F'
+
+export interface VerificationResultDetail {
+  value: number
+  unit: string
+  reference: number
+  error_pct: number
+  grade: VerificationGrade
+}
+
+export interface ReferenceValue {
+  id: string
+  element_system: string
+  phase: string | null
+  property: string
+  value: number
+  unit: string
+  uncertainty: number | null
+  temperature: number | null
+  pressure: number | null
+  source: string | null
+  source_doi: string | null
+  method: string | null
+  created_at: string
+}
+
+// Verification Service API types (nucpot-autovc)
+
+export interface VerificationTemplate {
+  id: string
+  name: string
+  properties: string[]
+  description: string
+  estimated_time: string
+}
+
+export interface VerificationResult {
+  id: number
+  potential_id: number
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  results: PropertyResult[]
+  overall_grade: string
+  summary: string
+  created_at: string
+  completed_at: string | null
+}
+
+export interface PropertyResult {
+  property_name: string
+  computed_value: number
+  reference_value: number
+  unit: string
+  relative_error: number
+  grade: string
+}
+
+export interface VerificationSubmitRequest {
+  potential_name: string
+  template?: string
+  properties?: string[]
+  parameters?: Record<string, any>
+}
+
+// Convenience aliases
+export type VerificationStatus = Verification['status']
