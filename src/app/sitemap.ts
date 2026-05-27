@@ -5,7 +5,7 @@ interface PotentialItem {
   updated_at?: string
 }
 
-export default async function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = 'https://nucpot.vercel.app'
 
   const staticPages: MetadataRoute.Sitemap = [

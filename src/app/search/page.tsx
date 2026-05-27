@@ -387,7 +387,7 @@ function SearchContent() {
                         </div>
                         {p.description && (
                           <p className="text-sm text-gray-400 mt-2 line-clamp-2">{highlightText(p.description, keyword)}</p>
-                        )}}
+                        )}
                       </div>
                       <div className="flex items-center gap-3 ml-4 shrink-0">
                         <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-white transition">
