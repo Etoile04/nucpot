@@ -129,6 +129,49 @@ def run_verification(
             "completed_at": datetime.now(timezone.utc).isoformat(),
         })
 
+        # Write verified_props back to potentials table so detail page shows grades
+        # Build results in the format the frontend detail page expects
+        vp_results = []
+        prop_labels = {
+            "lattice_constant": "晶格常数", "cohesive_energy": "结合能",
+            "bulk_modulus": "体积模量", "elastic_constants": "弹性常数",
+            "vacancy_formation_energy": "空位形成能", "surface_energy": "表面能",
+            "melting_point": "熔点", "formation_energy": "形成能",
+        }
+        graded_results = graded.get("results", {})
+        if isinstance(graded_results, dict):
+            for prop_key, prop_data in graded_results.items():
+                if isinstance(prop_data, dict) and "value" in prop_data:
+                    ref_val = prop_data.get("reference", 0) or 0
+                    comp_val = prop_data.get("value", 0) or 0
+                    rel_err = prop_data.get("relative_error", 0) or 0
+                    vp_results.append({
+                        "property_name": prop_labels.get(prop_key, prop_key),
+                        "computed_value": comp_val,
+                        "reference_value": ref_val,
+                        "unit": prop_data.get("unit", ""),
+                        "relative_error": rel_err,
+                        "grade": prop_data.get("grade", "N/A"),
+                    })
+        verified_props_payload = {
+            "overall_grade": graded.get("overall_grade"),
+            "verified_at": datetime.now(timezone.utc).isoformat(),
+            "source": "nucpot-autovc",
+            "results": vp_results,
+        }
+        try:
+            client.patch(
+                "/potentials",
+                params={"id": f"eq.{potential_id}"},
+                json={
+                    "verified_props": verified_props_payload,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            logger.info(f"Wrote verified_props to potential {potential_id}")
+        except Exception as e:
+            logger.warning(f"Failed to write verified_props to potential {potential_id}: {e}")
+
         logger.info(
             f"Verification {verification_id} completed. "
             f"Grade: {graded['overall_grade']}"

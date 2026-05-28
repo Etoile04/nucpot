@@ -121,6 +121,22 @@ class SupabaseClient:
         rows = resp.json()
         return rows[0] if rows else None
 
+    async def update_potential(
+        self,
+        potential_id: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update a potential record (e.g. write back verified_props)."""
+        client = await self._get_client()
+        resp = await client.patch(
+            "/potentials",
+            json=data,
+            params={"id": f"eq.{potential_id}"},
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0] if rows else {}
+
 
 # Singleton instance
 db = SupabaseClient()

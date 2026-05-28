@@ -190,6 +190,33 @@ async def _run_verification(job_id: str) -> None:
             "completed_at": job["completed_at"],
         })
 
+        # Write verified_props back to potentials table so detail page shows grades
+        # Frontend detail page expects property_name key (not name)
+        frontend_results = []
+        for pr in property_results:
+            frontend_results.append({
+                "property_name": pr.get("name", ""),
+                "computed_value": pr.get("computed_value"),
+                "reference_value": pr.get("reference_value"),
+                "unit": pr.get("unit", ""),
+                "relative_error": pr.get("relative_error"),
+                "grade": pr.get("grade", "N/A"),
+            })
+        verified_props_payload = {
+            "overall_grade": overall,
+            "verified_at": job["completed_at"],
+            "source": "nucpot-autovc",
+            "results": frontend_results,
+        }
+        try:
+            await db.update_potential(job["potential_id"], {
+                "verified_props": verified_props_payload,
+                "updated_at": job["completed_at"],
+            })
+            logger.info("Wrote verified_props to potential %s", job["potential_id"])
+        except Exception as e:
+            logger.warning("Failed to write verified_props to potential %s: %s", job["potential_id"], e)
+
         logger.info(
             "Verification %s completed: %s (grade %s, %dms)",
             job_id[:8], job.get("potential_name", "?"), overall, elapsed_ms,
