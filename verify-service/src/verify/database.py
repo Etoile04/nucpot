@@ -55,6 +55,21 @@ class SupabaseClient:
         rows = resp.json()
         return rows[0] if rows else None
 
+    async def get_potential_by_name(self, name: str) -> dict[str, Any] | None:
+        """Fetch a potential by its name or display_name field."""
+        client = await self._get_client()
+        # Try exact match on name first, then display_name
+        for field in ("name", "display_name"):
+            resp = await client.get(
+                "/potentials",
+                params={field: f"eq.{name}", "select": "*", "limit": "1"},
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            if rows:
+                return rows[0]
+        return None
+
     async def get_reference_values(
         self,
         element: str,
