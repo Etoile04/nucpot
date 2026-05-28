@@ -216,15 +216,13 @@ export default function UploadPage() {
       try {
         const formData = new FormData()
         formData.append('file', potentialFile)
-        formData.append('userId', user!.id)
-        formData.append('type', 'potential')
-        const uploadRes = await fetch('/api/auth/upload-proof', {
+        const uploadRes = await fetch('/api/potentials/upload-file', {
           method: 'POST',
           headers: { Authorization: `Bearer ${session!.access_token}` },
           body: formData,
         })
         const uploadData = await uploadRes.json()
-        if (uploadRes.ok && uploadData.path) potentialFileUrl = uploadData.path
+        if (uploadRes.ok && uploadData.public_url) potentialFileUrl = uploadData.public_url
       } catch { /* non-blocking */ }
     }
 
