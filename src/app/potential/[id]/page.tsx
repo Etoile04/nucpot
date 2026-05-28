@@ -438,7 +438,7 @@ export default function PotentialDetailPage() {
               <h3 className="text-sm font-semibold text-gray-400 uppercase mb-2">文件信息</h3>
               <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 text-sm space-y-2">
                 {p.file_url ? (
-                  <div>文件: <a href={p.file_url} className="text-blue-400 hover:underline">下载</a> {p.file_size && `(${(p.file_size / 1024).toFixed(1)} KB)`}</div>
+                  <div>文件: <a href={p.file_url.startsWith('/') ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}${p.file_url}` : p.file_url} className="text-blue-400 hover:underline">下载</a> {p.file_size && `(${(p.file_size / 1024).toFixed(1)} KB)`}</div>
                 ) : (
                   <div>
                     <div className="text-yellow-400 mb-2">势函数文件需从原始来源获取</div>

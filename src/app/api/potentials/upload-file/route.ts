@@ -75,17 +75,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: uploadError.message }, { status: 500 })
   }
 
-  // 7. Get public URL
-  const { data: urlData } = client.storage
-    .from('potentials')
-    .getPublicUrl(storagePath)
+  // 7. Build relative URL (env-independent)
+  const relativeUrl = `/storage/v1/object/public/potentials/${storagePath}`
 
   // 8. If potential_id provided, update the potential record with file_url
   if (potentialId && supabaseAdmin) {
     await supabaseAdmin
       .from('potentials')
       .update({
-        file_url: urlData.publicUrl,
+        file_url: relativeUrl,
         file_size: file.size,
       })
       .eq('id', potentialId)
@@ -93,7 +91,7 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     path: uploadData.path,
-    public_url: urlData.publicUrl,
+    public_url: relativeUrl,
     file_name: file.name,
     file_size: file.size,
   }, { status: 201 })
