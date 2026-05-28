@@ -497,10 +497,42 @@ export default function PotentialDetailPage() {
             )
           }
 
-          const overallGrade = vp.overall_grade as string | undefined
+          // Support both formats:
+          //   Format A: { overall_grade, results: [{property_name, computed_value, ...}] }
+          //   Format B: { cohesive_energy: {value, reference, unit, grade, ...}, lattice_constant: {...} }
+          let overallGrade = vp.overall_grade as string | undefined
           const verifiedAt = vp.verified_at as string | undefined
           const verifiedSource = vp.source as string | undefined
-          const results = vp.results as Array<{ property_name: string; computed_value: number; reference_value: number; unit: string; relative_error: number; grade: string }> | undefined
+          let results = vp.results as Array<{ property_name: string; computed_value: number; reference_value: number; unit: string; relative_error: number; grade: string }> | undefined
+
+          // Auto-convert Format B → Format A
+          if (!results) {
+            const labels: Record<string, string> = { lattice_constant: '晶格常数', cohesive_energy: '结合能', bulk_modulus: '体弹模量', elastic_constant: '弹性常数', vacancy_formation_energy: '空位形成能' }
+            const converted: typeof results = []
+            let grades: string[] = []
+            for (const [key, raw] of Object.entries(vp)) {
+              if (typeof raw === 'object' && raw !== null && 'value' in (raw as Record<string, unknown>)) {
+                const d = raw as Record<string, any>
+                if (d.value == null || d.error) continue
+                converted.push({
+                  property_name: labels[key] || key,
+                  computed_value: d.value,
+                  reference_value: d.reference ?? 0,
+                  unit: d.unit || '',
+                  relative_error: d.relative_error ?? (d.reference ? Math.abs(d.value - d.reference) / Math.abs(d.reference) : 0),
+                  grade: d.grade || 'N/A',
+                })
+                if (d.grade) grades.push(d.grade)
+              }
+            }
+            if (converted.length > 0) {
+              results = converted
+              if (!overallGrade && grades.length > 0) {
+                const gradeOrder = ['A', 'B', 'C', 'D']
+                overallGrade = grades.sort((a, b) => gradeOrder.indexOf(a) - gradeOrder.indexOf(b))[0]
+              }
+            }
+          }
 
           return (
             <div className="mt-6 space-y-4">
