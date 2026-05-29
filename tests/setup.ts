@@ -1,11 +1,12 @@
 import '@testing-library/jest-dom/vitest'
+import { vi } from 'vitest'
 
 /**
  * Shared test utility: creates a mock Supabase chain (from → select/insert/etc → single/eq/etc)
  * that resolves to the given result. Returns `as any` to avoid PostgrestQueryBuilder type mismatch.
  */
 export function mockSupabaseChain(result: unknown) {
-  const store: Record<string, ReturnType<typeof vi.fn>> = {}
+  const store: Record<string, ReturnType<typeof vi.fn>> = {} // eslint-disable-line @typescript-eslint/no-explicit-any
   const mk = () => vi.fn(() => {
     const proxy = new Proxy(store, {
       get(t, p) {
