@@ -508,7 +508,7 @@ export default function PotentialDetailPage() {
           // Auto-convert Format B → Format A
           if (!results) {
             const labels: Record<string, string> = { lattice_constant: '晶格常数', cohesive_energy: '结合能', bulk_modulus: '体弹模量', elastic_constant: '弹性常数', vacancy_formation_energy: '空位形成能' }
-            const converted: typeof results = []
+            const converted: Array<{ property_name: string; computed_value: number; reference_value: number; unit: string; relative_error: number; grade: string }> = []
             let grades: string[] = []
             for (const [key, raw] of Object.entries(vp)) {
               if (typeof raw === 'object' && raw !== null && 'value' in (raw as Record<string, unknown>)) {
