@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "git rev-parse --git-dir > /dev/null 2>&1 && HOOK_DIR=$(git rev-parse --git-dir)/hooks && mkdir -p $HOOK_DIR && cp scripts/pre-push.sh $HOOK_DIR/pre-push && chmod +x $HOOK_DIR/pre-push"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
