@@ -1,25 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockSupabaseChain } from '../setup'
 import { POST as loginPOST } from '@/app/api/auth/login/route'
 import { POST as registerPOST } from '@/app/api/auth/register/route'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
 
-function mockChain(result: unknown) {
-  const store: Record<string, ReturnType<typeof vi.fn>> = {}
-  const mk = () => vi.fn(() => new Proxy(store, {
-    get(t, p) {
-      if (p === 'then') return (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => Promise.resolve(result).then(res, rej)
-      if (!t[p as string]) t[p as string] = mk()
-      return t[p as string]
-    }
-  }))
-  return new Proxy(store, {
-    get(t, p) {
-      if (p === 'then') return (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => Promise.resolve(result).then(res, rej)
-      if (!t[p as string]) t[p as string] = mk()
-      return t[p as string]
-    }
-  })
-}
+
 
 const mockSignInWithPassword = vi.fn()
 vi.mock('@/lib/supabase', () => ({
@@ -93,7 +78,7 @@ describe('POST /api/auth/login', () => {
       data: { user: mockUser, session: mockSession },
       error: null,
     })
-    vi.mocked(supabase.from).mockImplementation(() => mockChain({ data: mockProfile, error: null }))
+    vi.mocked(supabase.from).mockImplementation(() => mockSupabaseChain({ data: mockProfile, error: null }))
 
     const req = new Request('http://localhost/api/auth/login', {
       method: 'POST',
@@ -135,7 +120,7 @@ describe('POST /api/auth/register', () => {
       data: { user: mockAuthUser },
       error: null,
     } as any)
-    vi.mocked(supabaseAdmin!.from).mockImplementation(() => mockChain({ error: null }))
+    vi.mocked(supabaseAdmin!.from).mockImplementation(() => mockSupabaseChain({ error: null }))
 
     const req = new Request('http://localhost/api/auth/register', {
       method: 'POST',

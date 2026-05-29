@@ -1,24 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockSupabaseChain } from '../setup'
 import { GET, PATCH } from '@/app/api/auth/profile/route'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
 
-function mockChain(result: unknown) {
-  const store: Record<string, ReturnType<typeof vi.fn>> = {}
-  const mk = () => vi.fn(() => new Proxy(store, {
-    get(t, p) {
-      if (p === 'then') return (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => Promise.resolve(result).then(res, rej)
-      if (!t[p as string]) t[p as string] = mk()
-      return t[p as string]
-    }
-  }))
-  return new Proxy(store, {
-    get(t, p) {
-      if (p === 'then') return (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => Promise.resolve(result).then(res, rej)
-      if (!t[p as string]) t[p as string] = mk()
-      return t[p as string]
-    }
-  })
-}
+
 
 const mockGetUser = vi.fn()
 vi.mock('@/lib/supabase', () => ({
@@ -43,7 +28,7 @@ describe('GET /api/auth/profile', () => {
     const mockProfile = { id: 'user-1', username: 'test', full_name: 'Test User', email: 'test@test.com' }
 
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
-    vi.mocked(supabase.from).mockImplementation(() => mockChain({ data: mockProfile, error: null }))
+    vi.mocked(supabase.from).mockImplementation(() => mockSupabaseChain({ data: mockProfile, error: null }))
 
     const req = new Request('http://localhost/api/auth/profile', {
       headers: { authorization: 'Bearer valid-token' },
@@ -85,7 +70,7 @@ describe('PATCH /api/auth/profile', () => {
     const updatedProfile = { id: 'user-1', full_name: 'New Name', affiliation: 'MIT' }
 
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
-    vi.mocked(supabase.from).mockImplementation(() => mockChain({ data: updatedProfile, error: null }))
+    vi.mocked(supabase.from).mockImplementation(() => mockSupabaseChain({ data: updatedProfile, error: null }))
 
     const req = new Request('http://localhost/api/auth/profile', {
       method: 'PATCH',
@@ -132,7 +117,7 @@ describe('PATCH /api/auth/profile', () => {
         { data: null, error: null },   // update: maybeSingle returns null
         { data: createdProfile, error: null }, // insert: single returns data
       ]
-      return mockChain(results[callIdx++])
+      return mockSupabaseChain(results[callIdx++])
     })
 
     const req = new Request('http://localhost/api/auth/profile', {

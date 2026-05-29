@@ -1,42 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockSupabaseChain } from '../setup'
 import { GET } from '@/app/api/stats/route'
 import { supabase } from '@/lib/supabase'
 
-/**
- * Creates a chainable mock that resolves to `result` when awaited.
- * Supports: .from().select().eq().order().limit().range().overlaps().textSearch().contains().single().maybeSingle()
- */
-function mockChain(result: unknown) {
-  const chain: Record<string, ReturnType<typeof vi.fn>> = {}
-  const self: Record<string, ReturnType<typeof vi.fn>> = {}
-
-  const method = () => vi.fn((..._args: unknown[]) => new Proxy(self, {
-    get(target, prop) {
-      if (prop === 'then') {
-        // Make thenable
-        return (resolve: (v: unknown) => unknown, reject: (v: unknown) => unknown) =>
-          Promise.resolve(result).then(resolve, reject)
-      }
-      if (!target[prop as string]) {
-        target[prop as string] = method()
-      }
-      return target[prop as string]
-    }
-  }))
-
-  return new Proxy(self, {
-    get(target, prop) {
-      if (prop === 'then') {
-        return (resolve: (v: unknown) => unknown, reject: (v: unknown) => unknown) =>
-          Promise.resolve(result).then(resolve, reject)
-      }
-      if (!target[prop as string]) {
-        target[prop as string] = method()
-      }
-      return target[prop as string]
-    }
-  })
-}
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -62,7 +28,7 @@ describe('GET /api/stats', () => {
       { data: mockRecentData, error: null },                          // recent
     ]
     let idx = 0
-    vi.mocked(supabase.from).mockImplementation(() => mockChain(responses[idx++]))
+    vi.mocked(supabase.from).mockImplementation(() => mockSupabaseChain(responses[idx++]))
 
     const res = await GET()
     const json = await res.json()
@@ -83,7 +49,7 @@ describe('GET /api/stats', () => {
       { data: null, error: null },
     ]
     let idx = 0
-    vi.mocked(supabase.from).mockImplementation(() => mockChain(responses[idx++]))
+    vi.mocked(supabase.from).mockImplementation(() => mockSupabaseChain(responses[idx++]))
 
     const res = await GET()
     const json = await res.json()

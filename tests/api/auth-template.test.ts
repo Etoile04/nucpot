@@ -1,24 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { GET } from '@/app/api/auth/template/route'
 import { supabase } from '@/lib/supabase'
-
-function mockChain(result: unknown) {
-  const store: Record<string, ReturnType<typeof vi.fn>> = {}
-  const mk = () => vi.fn(() => new Proxy(store, {
-    get(t, p) {
-      if (p === 'then') return (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => Promise.resolve(result).then(res, rej)
-      if (!t[p as string]) t[p as string] = mk()
-      return t[p as string]
-    }
-  }))
-  return new Proxy(store, {
-    get(t, p) {
-      if (p === 'then') return (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => Promise.resolve(result).then(res, rej)
-      if (!t[p as string]) t[p as string] = mk()
-      return t[p as string]
-    }
-  })
-}
+import { mockSupabaseChain } from '../setup'
 
 vi.mock('@/lib/supabase', () => ({
   supabase: { from: vi.fn() },
@@ -30,7 +13,7 @@ describe('GET /api/auth/template', () => {
 
   it('generates Chinese HTML by default', async () => {
     vi.mocked(supabase.from).mockImplementation(() =>
-      mockChain({ data: null, error: null })
+      mockSupabaseChain({ data: null, error: null })
     )
 
     const req = new Request('http://localhost/api/auth/template?name=TestPot&type=EAM&elements=U,Zr&systemName=U-Zr')
@@ -46,7 +29,7 @@ describe('GET /api/auth/template', () => {
 
   it('generates English HTML when lang=en', async () => {
     vi.mocked(supabase.from).mockImplementation(() =>
-      mockChain({ data: null, error: null })
+      mockSupabaseChain({ data: null, error: null })
     )
 
     const req = new Request('http://localhost/api/auth/template?lang=en&name=TestPot&type=EAM&elements=U,Zr&systemName=U-Zr')
@@ -68,7 +51,7 @@ describe('GET /api/auth/template', () => {
       phone: '123456',
     }
     vi.mocked(supabase.from).mockImplementation(() =>
-      mockChain({ data: mockProfile, error: null })
+      mockSupabaseChain({ data: mockProfile, error: null })
     )
 
     const req = new Request('http://localhost/api/auth/template?userId=user-1&name=Test&type=EAM&elements=U&systemName=U&userName= fallback&userEmail=fallback@test.com')
@@ -84,7 +67,7 @@ describe('GET /api/auth/template', () => {
 
   it('includes auto-print onload when print=1', async () => {
     vi.mocked(supabase.from).mockImplementation(() =>
-      mockChain({ data: null, error: null })
+      mockSupabaseChain({ data: null, error: null })
     )
 
     const req = new Request('http://localhost/api/auth/template?print=1&name=Test&type=EAM&elements=U&systemName=U')
@@ -96,7 +79,7 @@ describe('GET /api/auth/template', () => {
 
   it('escapes HTML special characters in user input', async () => {
     vi.mocked(supabase.from).mockImplementation(() =>
-      mockChain({ data: null, error: null })
+      mockSupabaseChain({ data: null, error: null })
     )
 
     const req = new Request('http://localhost/api/auth/template?name=<script>alert(1)</script>&type=EAM&elements=U&systemName=U')
