@@ -1,7 +1,7 @@
 -- Seed data for reference values of nuclear materials
 -- Values sourced from experimental data and standard literature
 
-INSERT INTO reference_values (element, crystal_structure, property_name, value, unit, temperature, source, notes) VALUES
+INSERT INTO reference_values (material, structure, property_name, value, unit, temperature, source, notes) VALUES
 -- Uranium (gamma phase, BCC)
 ('U', 'BCC', 'lattice_constant', 3.47, 'Å', 1050, 'experimental', 'gamma-U at 1050K'),
 ('U', 'BCC', 'C11', 125, 'GPa', 0, 'review', 'Estimated value'),
