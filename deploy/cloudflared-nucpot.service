@@ -1,0 +1,12 @@
+[Unit]
+Description=Cloudflare Tunnel for NucPot Verify
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/z203/bin/cloudflared tunnel --config /home/z203/.cloudflared/config.yml run nucpot-verify
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
