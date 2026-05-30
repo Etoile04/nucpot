@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Pagination from '@/components/Pagination'
 import ElementFilter from '@/components/ElementFilter'
 import CompareBar from '@/components/CompareBar'
+import SearchSuggestions from '@/components/SearchSuggestions'
 
 interface Potential {
   id: string
@@ -16,6 +17,7 @@ interface Potential {
   description: string
   applicability: { temperatureRange?: number[]; phases?: string[] }
   tags: string[]
+  version: string
   extra: {
     irradiationRelevant?: boolean
     hasDefectData?: boolean
@@ -88,6 +90,7 @@ function SearchContent() {
   const [allElements, setAllElements] = useState<string[]>([])
   const [compareIds, setCompareIds] = useState<string[]>([])
   const [sort, setSort] = useState('updated')
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
 
   // Fetch all available elements from stats API
   useEffect(() => {
@@ -182,15 +185,25 @@ function SearchContent() {
         <div className="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 mb-8 space-y-6">
 
           {/* Keyword */}
-          <div>
+          <div className="relative">
             <label className="block text-sm font-medium text-gray-300 mb-2">关键词搜索</label>
             <input
               type="text"
               value={keyword}
               onChange={e => setKeyword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              onKeyDown={e => {
+                if (!suggestionsOpen && e.key === 'Enter') handleSearch()
+              }}
               placeholder="作者、描述、体系名称..."
               className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <SearchSuggestions
+              query={keyword}
+              onSelect={(value) => {
+                setKeyword(value)
+                handleSearch()
+              }}
+              onOpenChange={setSuggestionsOpen}
             />
           </div>
 
@@ -355,6 +368,11 @@ function SearchContent() {
                           <span className="px-2 py-0.5 bg-gray-700 rounded">
                             {p.elements.join('-')}
                           </span>
+                          {p.version && (
+                            <span className="px-2 py-0.5 bg-gray-600/50 rounded text-gray-400">
+                              v{p.version}
+                            </span>
+                          )}
                           {p.system_name && (
                             <span className="px-2 py-0.5 bg-gray-700 rounded">{highlightText(p.system_name, keyword)}</span>
                           )}

@@ -17,6 +17,7 @@ interface Potential {
   description: string
   applicability: { temperatureRange?: number[]; phases?: string[] }
   tags: string[]
+  version: string
   extra: { irradiationRelevant?: boolean; hasDefectData?: boolean; validationLevel?: string }
   references: { doi?: string; citation?: string }[]
 }
@@ -256,6 +257,9 @@ function BrowseContent() {
                       <div className="flex flex-wrap gap-2 mt-2 text-xs">
                         <span className="px-2 py-0.5 bg-blue-900/50 rounded">{p.type}</span>
                         <span className="px-2 py-0.5 bg-gray-700 rounded">{p.elements.join('-')}</span>
+                        {p.version && (
+                          <span className="px-2 py-0.5 bg-gray-600/50 rounded text-gray-400">v{p.version}</span>
+                        )}
                         {p.system_name && (
                           <span className="px-2 py-0.5 bg-gray-700 rounded">{highlightText(p.system_name, query)}</span>
                         )}

@@ -28,6 +28,7 @@ interface Potential {
   source: string
   license: string
   tags: string[]
+  version: string
   extra: { irradiationRelevant?: boolean; hasDefectData?: boolean; hasLiquidPhase?: boolean; validationLevel?: string }
   created_at: string
   updated_at: string
@@ -261,7 +262,12 @@ export default function PotentialDetailPage() {
         {/* Header */}
         <Link href="/browse" className="text-sm text-gray-400 hover:text-white transition mb-4 inline-block">← 返回列表</Link>
 
-        <h1 className="text-2xl font-bold mb-1">{p.display_name || p.name}</h1>
+        <h1 className="text-2xl font-bold mb-1">
+          {p.display_name || p.name}
+          {p.version && p.version !== '1.0' && (
+            <span className="ml-2 text-base font-normal text-gray-500">v{p.version}</span>
+          )}
+        </h1>
         <div className="text-gray-400 mb-4">{p.name}</div>
 
         <div className="flex flex-wrap gap-2 mb-6">

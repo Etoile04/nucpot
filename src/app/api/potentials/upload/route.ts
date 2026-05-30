@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const {
     name, display_name, type, subtype, format, elements, system_name, system_tags,
-    description, applicability, references, developers, lammps_config, tags, extra,
+    description, applicability, references, developers, lammps_config, tags, extra, version,
     // Authorization fields
     license_type, license_detail, auth_file_path,
   } = body
@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
       sim_software: ['LAMMPS'],
       lammps_config: lammps_config || {},
       source: 'user_contributed',
+      version: version || '1.0',
       tags: tags || [],
       extra: {
         ...extra,
