@@ -14,6 +14,7 @@ interface DraftData {
   elements: string; systemName: string; systemTags: string; description: string;
   tempRange: string; phases: string; pairStyle: string; pairCoeff: string;
   tags: string; doiRefs: string; licenseType: LicenseType; licenseDetail: string;
+  version: string;
 }
 
 function getEmptyDraft(): DraftData {
@@ -22,6 +23,7 @@ function getEmptyDraft(): DraftData {
     elements: '', systemName: '', systemTags: '', description: '',
     tempRange: '', phases: '', pairStyle: '', pairCoeff: '',
     tags: '', doiRefs: '', licenseType: '', licenseDetail: '',
+    version: '1.0',
   }
 }
 
@@ -82,6 +84,7 @@ export default function UploadPage() {
   const [irradiationRelevant, setIrradiationRelevant] = useState(false)
   const [hasDefectData, setHasDefectData] = useState(false)
   const [hasLiquidPhase, setHasLiquidPhase] = useState(false)
+  const [version, setVersion] = useState(draft.version || '1.0')
 
   // File fields — not persisted in draft (File objects can't be serialized)
   const [potentialFile, setPotentialFile] = useState<File | null>(null)
@@ -101,12 +104,12 @@ export default function UploadPage() {
     saveTimerRef.current = setTimeout(() => {
       saveDraft({
         name, displayName, type, subtype, format, elements, systemName, systemTags,
-        description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail,
+        description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail, version,
       })
       setLastSaved(new Date())
     }, 1000)
   }, [name, displayName, type, subtype, format, elements, systemName, systemTags,
-      description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail])
+      description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail, version])
 
   // Save on any field change
   useEffect(() => {
@@ -122,13 +125,13 @@ export default function UploadPage() {
     const handler = () => {
       saveDraft({
         name, displayName, type, subtype, format, elements, systemName, systemTags,
-        description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail,
+        description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail, version,
       })
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [name, displayName, type, subtype, format, elements, systemName, systemTags,
-      description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail])
+      description, tempRange, phases, pairStyle, pairCoeff, tags, doiRefs, licenseType, licenseDetail, version])
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -240,6 +243,7 @@ export default function UploadPage() {
       description: description.trim(), tags: tagsArray, references: referencesArray,
       license_type: licenseType, license_detail: licenseDetail.trim() || undefined,
       auth_file_path: authFilePath || undefined, file_url: potentialFileUrl || undefined,
+      version: version.trim() || '1.0',
       developers: developers.filter(d => d.name.trim()).length > 0
         ? developers.filter(d => d.name.trim()).map(d => ({ name: d.name.trim(), affiliation: d.affiliation.trim() }))
         : undefined,
@@ -282,7 +286,7 @@ export default function UploadPage() {
         setSystemTags(''); setDescription(''); setTempRange('')
         setPhases(''); setPairStyle(''); setPairCoeff('')
         setTags(''); setDoiRefs(''); setLicenseType('')
-        setLicenseDetail(''); setAuthFile(null); setPotentialFile(null)
+        setLicenseDetail(''); setVersion('1.0'); setAuthFile(null); setPotentialFile(null)
         setDevelopers([{ name: '', affiliation: '' }]); setSimSoftware(['LAMMPS']); setSimSoftwareOther('')
         setIrradiationRelevant(false); setHasDefectData(false); setHasLiquidPhase(false)
         setPhaseTags([])
@@ -371,6 +375,10 @@ export default function UploadPage() {
               <div>
                 <label htmlFor="pot-display-name" className={labelClass}>显示名称</label>
                 <input id="pot-display-name" type="text" value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="留空则使用势函数名称" className={inputClass} />
+              </div>
+              <div>
+                <label htmlFor="pot-version" className={labelClass}>版本号</label>
+                <input id="pot-version" type="text" value={version} onChange={e => setVersion(e.target.value)} placeholder="e.g. 1.0, 2.1, 1.0.1" className={inputClass} />
               </div>
               <div>
                 <label htmlFor="pot-type" className={labelClass}>类型 <span className="text-red-400">*</span></label>
