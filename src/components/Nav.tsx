@@ -118,6 +118,24 @@ export default function Nav() {
                           管理后台
                         </Link>
                       )}
+                      {isAdmin && (
+                        <Link
+                          href="/admin/verify"
+                          onClick={() => setDropdownOpen(false)}
+                          className="block px-4 py-2 hover:bg-gray-700/60 text-yellow-400 hover:text-yellow-300 transition"
+                        >
+                          验证管理
+                        </Link>
+                      )}
+                      {isAdmin && (
+                        <Link
+                          href="/admin/references"
+                          onClick={() => setDropdownOpen(false)}
+                          className="block px-4 py-2 hover:bg-gray-700/60 text-yellow-400 hover:text-yellow-300 transition"
+                        >
+                          参考值管理
+                        </Link>
+                      )}
                       <div className="border-t border-gray-700 my-1" />
                       <button
                         onClick={handleSignOut}
@@ -197,6 +215,24 @@ export default function Nav() {
                       className="text-yellow-400 hover:text-yellow-300 transition"
                     >
                       管理后台
+                    </Link>
+                  )}
+                  {isAdmin && (
+                    <Link
+                      href="/admin/verify"
+                      onClick={() => setMobileOpen(false)}
+                      className="text-yellow-400 hover:text-yellow-300 transition"
+                    >
+                      验证管理
+                    </Link>
+                  )}
+                  {isAdmin && (
+                    <Link
+                      href="/admin/references"
+                      onClick={() => setMobileOpen(false)}
+                      className="text-yellow-400 hover:text-yellow-300 transition"
+                    >
+                      参考值管理
                     </Link>
                   )}
                   <button

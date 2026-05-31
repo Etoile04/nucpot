@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import VerificationBadge from '@/components/VerificationBadge'
@@ -113,6 +114,129 @@ export default function AdminVerifyPage() {
   // Verification history (in-memory for now)
   const [history, setHistory] = useState<VerificationRecord[]>([])
 
+  // 批量验证状态
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [batchTemplate, setBatchTemplate] = useState<Template>('basic')
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
+  const [batchJobs, setBatchJobs] = useState<Record<string, {
+    status: 'pending' | 'running' | 'completed' | 'failed'
+    progress: number
+    overall_grade: string | null
+    potentialName: string
+    error?: string
+  }>>({})
+  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 批量提交验证
+  const handleBatchSubmit = async () => {
+    if (selectedIds.size === 0) return
+    setBatchSubmitting(true)
+    setError(null)
+
+    const potentialsToVerify = potentials.filter(p => selectedIds.has(p.id))
+    const initialJobs: typeof batchJobs = {}
+    for (const p of potentialsToVerify) {
+      initialJobs[p.id] = {
+        status: 'pending',
+        progress: 0,
+        overall_grade: null,
+        potentialName: p.display_name || p.name,
+      }
+    }
+    setBatchJobs(initialJobs)
+
+    // 并行提交所有验证任务
+    const results = await Promise.allSettled(
+      potentialsToVerify.map(async (p) => {
+        const r = await fetch(`${API_BASE}/api/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ potential_id: p.id, template: batchTemplate }),
+        })
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const data = await r.json()
+        return { potential: p, jobId: data.job_id }
+      })
+    )
+
+    // 处理提交结果，成功项开始轮询
+    const pollTargets: { jobId: string; potentialId: string; potentialName: string }[] = []
+    const jobUpdates = { ...initialJobs }
+
+    results.forEach((result, i) => {
+      const p = potentialsToVerify[i]
+      if (result.status === 'fulfilled') {
+        pollTargets.push({
+          jobId: result.value.jobId,
+          potentialId: p.id,
+          potentialName: result.value.potential.display_name || result.value.potential.name,
+        })
+        jobUpdates[p.id] = { ...jobUpdates[p.id], status: 'running' }
+      } else {
+        jobUpdates[p.id] = { ...jobUpdates[p.id], status: 'failed', error: result.reason?.message || '提交失败' }
+      }
+    })
+    setBatchJobs(jobUpdates)
+    setBatchSubmitting(false)
+
+    // 轮询所有成功提交的任务
+    if (pollTargets.length > 0) {
+      if (batchPollRef.current) clearInterval(batchPollRef.current)
+      batchPollRef.current = setInterval(async () => {
+        const pollResults = await Promise.allSettled(
+          pollTargets.map(async ({ jobId, potentialId }) => {
+            const r = await fetch(`${API_BASE}/api/verify/${jobId}`)
+            if (!r.ok) throw new Error('Poll failed')
+            return { potentialId, job: await r.json() as VerifyJob }
+          })
+        )
+
+        let allDone = true
+        const updates = { ...batchJobs }
+        pollResults.forEach(result => {
+          if (result.status === 'fulfilled') {
+            const { potentialId, job } = result.value
+            updates[potentialId] = {
+              ...updates[potentialId],
+              status: job.status,
+              progress: job.progress,
+              overall_grade: job.overall_grade,
+            }
+            if (job.status === 'completed') {
+              setHistory(prev => [{
+                id: job.job_id,
+                potential_id: potentialId,
+                potential_name: updates[potentialId].potentialName,
+                template: batchTemplate,
+                status: job.status,
+                overall_grade: job.overall_grade,
+                created_at: new Date().toISOString(),
+                completed_at: new Date().toISOString(),
+                results: job.results,
+              }, ...prev])
+            } else {
+              allDone = false
+            }
+          }
+        })
+        setBatchJobs(updates)
+        if (allDone) {
+          if (batchPollRef.current) clearInterval(batchPollRef.current)
+          batchPollRef.current = null
+          setSelectedIds(new Set())
+        }
+      }, 3000)
+    }
+  }
+
+  // 批量统计
+  const batchEntries = Object.entries(batchJobs)
+  const batchTotal = batchEntries.length
+  const batchCompleted = batchEntries.filter(([, j]) => j.status === 'completed' || j.status === 'failed').length
+  const batchGradeA = batchEntries.filter(([, j]) => j.overall_grade?.toUpperCase() === 'A').length
+  const batchGradeB = batchEntries.filter(([, j]) => j.overall_grade?.toUpperCase() === 'B').length
+  const hasActiveBatch = batchTotal > 0 && batchCompleted < batchTotal
+
   // Auth guard
   useEffect(() => {
     if (!loading) {
@@ -139,8 +263,38 @@ export default function AdminVerifyPage() {
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current)
+      if (batchPollRef.current) clearInterval(batchPollRef.current)
     }
   }, [])
+
+  const filtered = potentials.filter(p => {
+    if (!searchQuery) return true
+    const q = searchQuery.toLowerCase()
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.display_name || '').toLowerCase().includes(q) ||
+      p.elements.some(e => e.toLowerCase().includes(q)) ||
+      p.type.toLowerCase().includes(q)
+    )
+  })
+
+  // 全选/取消全选
+  const allSelected = filtered.length > 0 && filtered.every(p => selectedIds.has(p.id))
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filtered.map(p => p.id)))
+    }
+  }
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   // Start polling for job status
   const startPolling = useCallback((jobId: string, potentialName: string) => {
@@ -230,17 +384,6 @@ export default function AdminVerifyPage() {
 
   if (profile.role !== 'admin') return null
 
-  const filtered = potentials.filter(p => {
-    if (!searchQuery) return true
-    const q = searchQuery.toLowerCase()
-    return (
-      p.name.toLowerCase().includes(q) ||
-      (p.display_name || '').toLowerCase().includes(q) ||
-      p.elements.some(e => e.toLowerCase().includes(q)) ||
-      p.type.toLowerCase().includes(q)
-    )
-  })
-
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
       <div className="max-w-6xl mx-auto px-4 py-8">
@@ -308,6 +451,14 @@ export default function AdminVerifyPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-700">
+                  <th className="px-4 py-2 text-center text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      className="rounded border-gray-500 bg-gray-600 text-blue-500 focus:ring-blue-500"
+                    />
+                  </th>
                   <th className="px-4 py-2 text-left text-gray-300">名称</th>
                   <th className="px-4 py-2 text-left text-gray-300">类型</th>
                   <th className="px-4 py-2 text-left text-gray-300">元素</th>
@@ -317,7 +468,15 @@ export default function AdminVerifyPage() {
               </thead>
               <tbody>
                 {filtered.map(p => (
-                  <tr key={p.id} className="border-b border-gray-700/50 hover:bg-gray-700/30 transition">
+                  <tr key={p.id} className={`border-b border-gray-700/50 hover:bg-gray-700/30 transition ${selectedIds.has(p.id) ? 'bg-blue-900/20' : ''}`}>
+                    <td className="px-4 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(p.id)}
+                        onChange={() => toggleSelect(p.id)}
+                        className="rounded border-gray-500 bg-gray-600 text-blue-500 focus:ring-blue-500"
+                      />
+                    </td>
                     <td className="px-4 py-2">
                       <div className="font-medium text-white">{p.display_name || p.name}</div>
                       <div className="text-xs text-gray-500">{p.name}</div>
@@ -343,11 +502,93 @@ export default function AdminVerifyPage() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-gray-500">未找到势函数</td>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500">未找到势函数</td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 批量操作浮动栏 */}
+        {selectedIds.size > 0 && !hasActiveBatch && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gray-800 border border-gray-600 rounded-xl px-6 py-3 shadow-2xl flex items-center gap-4">
+            <span className="text-sm text-gray-200">已选 <span className="text-white font-bold">{selectedIds.size}</span> 个</span>
+            <select
+              value={batchTemplate}
+              onChange={e => setBatchTemplate(e.target.value as Template)}
+              className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              {(Object.keys(TEMPLATE_INFO) as Template[]).map(t => (
+                <option key={t} value={t}>{TEMPLATE_INFO[t].label}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleBatchSubmit}
+              disabled={batchSubmitting}
+              className="px-4 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition disabled:opacity-50"
+            >
+              {batchSubmitting ? '提交中...' : '🚀 批量验证'}
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-gray-400 hover:text-white transition text-sm"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* 批量验证进度 */}
+        {hasActiveBatch && (
+          <div className="mb-6 bg-gray-800 border border-blue-800/50 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-white">批量验证进度：{batchCompleted}/{batchTotal} 完成</h3>
+              <span className="text-xs text-gray-400">
+                {batchTotal - batchCompleted} 个任务进行中
+              </span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2 mb-3 overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                style={{ width: `${(batchCompleted / batchTotal) * 100}%` }}
+              />
+            </div>
+            <div className="space-y-1">
+              {batchEntries.map(([id, job]) => (
+                <div key={id} className="flex items-center justify-between text-xs py-1">
+                  <span className="text-gray-300">{job.potentialName}</span>
+                  <div className="flex items-center gap-2">
+                    {job.status === 'failed' && <span className="text-red-400">失败: {job.error || '未知'}</span>}
+                    {job.status === 'completed' && <span className={`font-bold ${gradeColor(job.overall_grade || '')}`}>{job.overall_grade}</span>}
+                    {job.status === 'running' && <span className="text-blue-400">{Math.round(job.progress * 100)}%</span>}
+                    {job.status === 'pending' && <span className="text-yellow-400">排队中</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 批量结果摘要 */}
+        {batchTotal > 0 && batchCompleted === batchTotal && (
+          <div className="mb-6 bg-gray-800 border border-green-800/50 rounded-xl p-5">
+            <h3 className="text-sm font-medium text-white mb-2">批量验证完成</h3>
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-gray-300">共 {batchTotal} 个，</span>
+              <span className="text-green-400">A: {batchGradeA}</span>
+              <span className="text-blue-400">B: {batchGradeB}</span>
+              <span className="text-gray-400">其他: {batchTotal - batchGradeA - batchGradeB}</span>
+              <span className="text-gray-300">
+                A/B 率: {((batchGradeA + batchGradeB) / batchTotal * 100).toFixed(0)}%
+              </span>
+            </div>
+            <button
+              onClick={() => setBatchJobs({})}
+              className="mt-3 text-xs text-gray-400 hover:text-white transition"
+            >
+              清除批量结果
+            </button>
           </div>
         )}
 
@@ -365,7 +606,9 @@ export default function AdminVerifyPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {h.status === 'completed' && h.overall_grade && (
-                        <VerificationBadge grade={h.overall_grade} />
+                        <Link href={`/verify/${h.id}`} className="hover:opacity-80">
+                          <VerificationBadge grade={h.overall_grade} />
+                        </Link>
                       )}
                       {h.status === 'failed' && (
                         <span className="text-xs px-2 py-0.5 rounded bg-red-900/50 text-red-300">失败</span>
