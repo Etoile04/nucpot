@@ -51,6 +51,16 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
   const [jobId, setJobId] = useState<number | null>(null)
   const [result, setResult] = useState<VerificationResult | null>(null)
   const [polling, setPolling] = useState(false)
+  const [selectedStructure, setSelectedStructure] = useState<string>('')
+
+  const STRUCTURES = [
+    { value: '', label: '自动检测' },
+    { value: 'bcc', label: 'BCC (体心立方)' },
+    { value: 'fcc', label: 'FCC (面心立方)' },
+    { value: 'hcp', label: 'HCP (六方密排)' },
+    { value: 'diamond', label: 'Diamond (金刚石)' },
+    { value: 'sc', label: 'SC (简立方)' },
+  ]
 
   // Load templates
   useEffect(() => {
@@ -100,6 +110,7 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
     const body: VerificationSubmitRequest = {
       potential_name: potentialName,
       template: selectedTemplate,
+      ...(selectedStructure ? { structure: selectedStructure } : {}),
     }
 
     try {
@@ -164,6 +175,19 @@ export default function VerificationPanel({ potentialName }: VerificationPanelPr
               >
                 {templates.map(t => (
                   <option key={t.id} value={t.id}>{t.name} — {t.description} (~{t.estimated_time})</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-300 mb-2">晶体结构</label>
+              <select
+                value={selectedStructure}
+                onChange={e => setSelectedStructure(e.target.value)}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+              >
+                {STRUCTURES.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
                 ))}
               </select>
             </div>

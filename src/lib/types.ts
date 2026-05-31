@@ -182,6 +182,7 @@ export interface VerificationSubmitRequest {
   template?: string
   properties?: string[]
   parameters?: Record<string, any>
+  structure?: string
 }
 
 // Convenience aliases
