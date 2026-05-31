@@ -211,7 +211,21 @@ export default function VerifyReportPage() {
                     )}
                   </div>
                 </div>
-                <VerificationBadge grade={report?.overall_grade || job.overall_grade} size="lg" />
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => window.open(`${API_BASE}/api/verification/${id}/export?format=json`, '_blank')}
+                    className="px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg transition"
+                  >
+                    📄 JSON
+                  </button>
+                  <button
+                    onClick={() => window.open(`${API_BASE}/api/verification/${id}/export?format=pdf`, '_blank')}
+                    className="px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg transition"
+                  >
+                    📑 PDF
+                  </button>
+                  <VerificationBadge grade={report?.overall_grade || job.overall_grade} size="lg" />
+                </div>
               </div>
             </div>
 
