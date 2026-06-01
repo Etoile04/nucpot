@@ -60,3 +60,4 @@ build/
 verify-service/.env
 # Potential files now stored in Supabase Storage
 public/uploads/
+verify-env/

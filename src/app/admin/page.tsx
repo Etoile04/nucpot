@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useAuth } from '@/components/AuthProvider'
 
 interface AdminStats {
@@ -177,6 +178,9 @@ export default function AdminPage() {
           >
             统计概览
           </button>
+          <Link href="/admin/review" className="px-5 py-2 rounded-lg text-sm font-medium transition text-gray-400 hover:text-gray-200">
+            NFMD 校对
+          </Link>
           <button
             onClick={() => setTab('contributions')}
             className={`px-5 py-2 rounded-lg text-sm font-medium transition relative ${
