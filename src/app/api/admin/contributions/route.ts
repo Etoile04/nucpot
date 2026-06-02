@@ -1,28 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
+import { verifyAdmin } from '@/lib/verify-admin'
 
-async function verifyAdmin(request: NextRequest) {
-  const authHeader = request.headers.get('authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return { error: 'Authentication required', status: 401, user: null }
+// Helper that returns error response shape for backward compat
+async function verifyAdminOrError(request: NextRequest) {
+  const admin = await verifyAdmin(request)
+  if (!admin) {
+    return { error: 'Unauthorized', status: 401, user: null }
   }
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error } = await supabase.auth.getUser(token)
-  if (error || !user) {
-    return { error: 'Invalid token', status: 401, user: null }
-  }
-
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (profile?.role !== 'admin') {
-    return { error: 'Admin access required', status: 403, user: null }
-  }
-
-  return { error: null, status: 200, user }
+  return { error: null, status: 200, user: { id: admin.id } }
 }
 
 // GET: List all contributions with user info and potential details
 export async function GET(request: NextRequest) {
-  const { error, status } = await verifyAdmin(request)
+  const { error, status } = await verifyAdminOrError(request)
   if (error) {
     return NextResponse.json({ error }, { status })
   }
@@ -86,7 +77,7 @@ export async function GET(request: NextRequest) {
 
 // PATCH: Approve or reject a contribution
 export async function PATCH(request: NextRequest) {
-  const { error, status } = await verifyAdmin(request)
+  const { error, status } = await verifyAdminOrError(request)
   if (error) {
     return NextResponse.json({ error }, { status })
   }

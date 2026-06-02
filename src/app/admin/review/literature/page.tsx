@@ -35,7 +35,7 @@ export default function ReviewLiteraturePage() {
     setError(null)
     try {
       const { data } = await api.queueLiterature({
-        status: null,
+        status: undefined,
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
       })
@@ -46,8 +46,8 @@ export default function ReviewLiteraturePage() {
       // Batch fetch param counts
       const enriched = await Promise.all(records.map(async (lit: LitRecord) => {
         try {
-          const { count } = await api.countParamsForLit(lit.id)
-          return { ...lit, actual_count: count || 0 }
+          const { data: countData } = await api.countParamsForLit(lit.id)
+          return { ...lit, actual_count: countData?.count || 0 }
         } catch {
           return { ...lit, actual_count: 0 }
         }

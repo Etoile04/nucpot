@@ -1,23 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase, supabaseAdmin } from '@/lib/supabase'
-
-// ── Auth helper ──────────────────────────────────────────────────────────────
-async function verifyAdmin(request: NextRequest) {
-  const authHeader = request.headers.get('authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error } = await supabase.auth.getUser(token)
-  if (error || !user) return null
-
-  // Check admin role
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, username')
-    .eq('id', user.id)
-    .single()
-  if (!profile || profile.role !== 'admin') return null
-  return profile
-}
+import { supabaseAdmin } from '@/lib/supabase'
+import { verifyAdmin } from '@/lib/verify-admin'
 
 // ── POST /api/admin/review ───────────────────────────────────────────────────
 // Unified RPC proxy for all review operations
@@ -27,8 +10,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Admin client not configured' }, { status: 500 })
   }
 
-  const profile = await verifyAdmin(request)
-  if (!profile) {
+  const admin = await verifyAdmin(request)
+  if (!admin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -147,7 +130,7 @@ export async function POST(request: NextRequest) {
         const { data, error } = await supabaseAdmin.rpc('review_batch_update', {
           p_ids: params.ids,
           p_status: params.status,
-          p_reviewer: profile.username || 'admin',
+          p_reviewer: admin.username || 'admin',
         })
         if (error) throw error
         return NextResponse.json({ data })
@@ -167,7 +150,7 @@ export async function POST(request: NextRequest) {
           p_confidence: params.confidence || null,
           p_notes: params.notes || null,
           p_review_status: params.review_status || 'approved',
-          p_reviewer: profile.username || 'admin',
+          p_reviewer: admin.username || 'admin',
         })
         if (error) throw error
         return NextResponse.json({ data })
@@ -185,7 +168,7 @@ export async function POST(request: NextRequest) {
             review_status: 'approved',
             review_notes: `auto-fixed: ${params.old_count} -> ${params.actual_count}`,
             reviewed_at: new Date().toISOString(),
-            reviewed_by: profile.username || 'admin',
+            reviewed_by: admin.username || 'admin',
           })
           .eq('id', params.id as string)
         if (error) throw error
