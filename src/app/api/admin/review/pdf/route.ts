@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
@@ -88,9 +88,33 @@ async function searchZoteroLiterature(lit: {
   return null
 }
 
+// ── Auth check ────────────────────────────────────────────────────────────────
+async function verifyAdmin(request: NextRequest) {
+  // Support both Authorization header and query param (for iframe)
+  const authHeader = request.headers.get('authorization')
+  const token = authHeader?.startsWith('Bearer ')
+    ? authHeader.replace('Bearer ', '')
+    : new URL(request.url).searchParams.get('token')
+  if (!token) return false
+  const { data: { user }, error } = await supabase.auth.getUser(token)
+  if (error || !user) return false
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+  return profile?.role === 'admin'
+}
+
 // ── GET /api/admin/review/pdf?source_file=... ────────────────────────────────
-// Returns PDF binary stream
+// Returns PDF binary stream or keyword search results
 export async function GET(request: NextRequest) {
+  // Auth check
+  const isAdmin = await verifyAdmin(request)
+  if (!isAdmin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const { searchParams } = new URL(request.url)
   const sourceFile = searchParams.get('source_file')
   const keyword = searchParams.get('keyword')

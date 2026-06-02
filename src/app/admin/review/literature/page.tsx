@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
-import { supabaseAdmin } from '@/lib/supabase'
+import { reviewApi } from '@/lib/review-api'
 
 const PAGE_SIZE = 30
 
@@ -19,58 +19,59 @@ interface LitRecord {
 
 export default function ReviewLiteraturePage() {
   const router = useRouter()
-  const { profile, loading: authLoading } = useAuth()
+  const { profile, loading: authLoading, session } = useAuth()
 
   const [lits, setLits] = useState<LitRecord[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
 
+  const api = useMemo(() => reviewApi(session), [session])
+
   const fetchLits = useCallback(async () => {
     setIsLoading(true)
+    setError(null)
     try {
-      // Get literature records
-      const { data, error } = await supabaseAdmin!.rpc('review_queue_literature', {
-        p_status: null,
-        p_limit: PAGE_SIZE,
-        p_offset: (page - 1) * PAGE_SIZE,
+      const { data } = await api.queueLiterature({
+        status: null,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
       })
-      if (error) throw error
-
-      const result = typeof data === 'object' && 'data' in (data as any) ? (data as any) : { data: [], total: 0 }
+      const result = data.data || { data: [], total: 0 }
       const records: LitRecord[] = result.data || []
       setTotalCount(result.total || 0)
 
-      // Fetch actual param counts for each literature
+      // Batch fetch param counts
       const enriched = await Promise.all(records.map(async (lit: LitRecord) => {
-        const id = lit.id
-        const sf = encodeURIComponent(id)
-        const { count, error: countErr } = await supabaseAdmin!
-          .from('parameters')
-          .select('*', { count: 'exact', head: true })
-          .or(`source_file.ilike.%${id}%,source_file.eq.${id}`)
-        return { ...lit, actual_count: count || 0 }
+        try {
+          const { count } = await api.countParamsForLit(lit.id)
+          return { ...lit, actual_count: count || 0 }
+        } catch {
+          return { ...lit, actual_count: 0 }
+        }
       }))
-
       setLits(enriched)
-    } catch (e) {
+    } catch (e: any) {
+      setError(e.message || '加载失败')
       console.error(e)
     } finally {
       setIsLoading(false)
     }
-  }, [page, search])
+  }, [page, search, api])
 
   useEffect(() => { if (profile?.role === 'admin') fetchLits() }, [profile, fetchLits])
 
   const handleFixCount = async (lit: LitRecord) => {
     const actual = lit.actual_count || 0
     if (actual === lit.parameter_count) return
-    await supabaseAdmin!
-      .from('literature')
-      .update({ parameter_count: actual, review_status: 'approved', review_notes: `auto-fixed: ${lit.parameter_count} -> ${actual}`, reviewed_at: new Date().toISOString(), reviewed_by: profile?.username || 'admin' })
-      .eq('id', lit.id)
-    fetchLits()
+    try {
+      await api.fixLitCount(lit.id, actual, lit.parameter_count || 0)
+      fetchLits()
+    } catch (e: any) {
+      alert(`修正失败: ${e.message}`)
+    }
   }
 
   const mismatches = lits.filter(l => l.parameter_count !== l.actual_count)
@@ -82,6 +83,13 @@ export default function ReviewLiteraturePage() {
           <button onClick={() => router.push('/admin/review')} className="text-gray-400 hover:text-white transition-colors">← 返回</button>
           <h1 className="text-xl font-bold">文献关联校对</h1>
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-900/30 border border-red-800/50 rounded-lg text-sm text-red-300">
+            {error}
+            <button onClick={() => setError(null)} className="ml-2 text-red-400 hover:text-red-300">✕</button>
+          </div>
+        )}
 
         <div className="mb-4 text-sm text-gray-400">
           {mismatches.length} 条计数不匹配（共 {totalCount} 条文献）
@@ -147,7 +155,6 @@ export default function ReviewLiteraturePage() {
             </tbody>
           </table>
 
-          {/* Pagination */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-gray-800">
             <span className="text-sm text-gray-500">第 {page}/{Math.ceil(totalCount / PAGE_SIZE) || 1} 页</span>
             <div className="flex gap-2">

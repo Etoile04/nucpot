@@ -1,34 +1,38 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
-import { supabaseAdmin } from '@/lib/supabase'
+import { reviewApi } from '@/lib/review-api'
 import type { ReviewStats, ReviewStatus } from '@/lib/nfmd-review'
 import { STATUS_CONFIG } from '@/lib/nfmd-review'
 
 export default function ReviewDashboardPage() {
   const router = useRouter()
-  const { profile, loading } = useAuth()
+  const { profile, loading, session } = useAuth()
   const [stats, setStats] = useState<ReviewStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loading && (!profile || profile.role !== 'admin')) router.push('/')
   }, [loading, profile, router])
 
+  const api = useMemo(() => reviewApi(session), [session])
+
   const fetchStats = useCallback(async () => {
     setLoadingStats(true)
+    setError(null)
     try {
-      const { data, error } = await supabaseAdmin!.rpc('review_stats')
-      if (error) throw error
+      const { data } = await api.stats()
       setStats(data)
     } catch (e: any) {
+      setError(e.message || '加载失败')
       console.error('Failed to load review stats:', e)
     } finally {
       setLoadingStats(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => { if (profile?.role === 'admin') fetchStats() }, [profile, fetchStats])
 
@@ -51,13 +55,19 @@ export default function ReviewDashboardPage() {
           </button>
         </div>
 
+        {error && (
+          <div className="mb-6 p-3 bg-red-900/30 border border-red-800/50 rounded-lg text-sm text-red-300">
+            {error}
+            <button onClick={() => setError(null)} className="ml-2 text-red-400 hover:text-red-300">✕</button>
+          </div>
+        )}
+
         {loadingStats && !stats ? (
           <div className="animate-pulse space-y-4">
             {[1,2,3].map(i => <div key={i} className="h-32 bg-gray-800 rounded-lg" />)}
           </div>
         ) : stats ? (
           <>
-            {/* Overview Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <StatCard label="总参数" value={stats.total_params.toLocaleString()} color="text-blue-400" />
               <StatCard label="待处理" value={String(needsAction)} color="text-orange-400"
@@ -66,7 +76,6 @@ export default function ReviewDashboardPage() {
               <StatCard label="人工通过" value={String(stats.by_status.approved || 0)} color="text-green-400" />
             </div>
 
-            {/* Status Distribution */}
             <div className="bg-gray-900 rounded-lg p-6 mb-8">
               <h2 className="text-lg font-semibold mb-4">审核状态分布</h2>
               <div className="space-y-3">
@@ -94,29 +103,12 @@ export default function ReviewDashboardPage() {
               </div>
             </div>
 
-            {/* Quick Actions */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              <ActionCard
-                title="参数校对"
-                desc={`${needsAction} 条待处理`}
-                onClick={() => router.push('/admin/review/params')}
-                accent="orange"
-              />
-              <ActionCard
-                title="文献关联"
-                desc="检查文献-参数计数匹配"
-                onClick={() => router.push('/admin/review/literature')}
-                accent="blue"
-              />
-              <ActionCard
-                title="审核日志"
-                desc="查看操作历史"
-                onClick={() => {/* TODO */}}
-                accent="gray"
-              />
+              <ActionCard title="参数校对" desc={`${needsAction} 条待处理`} onClick={() => router.push('/admin/review/params')} accent="orange" />
+              <ActionCard title="文献关联" desc="检查文献-参数计数匹配" onClick={() => router.push('/admin/review/literature')} accent="blue" />
+              <ActionCard title="审核日志" desc="查看操作历史" onClick={() => {/* TODO */}} accent="gray" />
             </div>
 
-            {/* Top Materials in Review */}
             <div className="bg-gray-900 rounded-lg p-6">
               <h2 className="text-lg font-semibold mb-4">待审材料 TOP 10</h2>
               <div className="space-y-2">
@@ -154,10 +146,7 @@ function ActionCard({ title, desc, onClick, accent }: { title: string; desc: str
     gray: 'border-gray-700 hover:border-gray-500',
   }
   return (
-    <button
-      onClick={onClick}
-      className={`bg-gray-900 border ${borders[accent] || borders.gray} rounded-lg p-5 text-left transition-colors`}
-    >
+    <button onClick={onClick} className={`bg-gray-900 border ${borders[accent] || borders.gray} rounded-lg p-5 text-left transition-colors`}>
       <h3 className="font-semibold">{title}</h3>
       <p className="text-sm text-gray-400 mt-1">{desc}</p>
     </button>
