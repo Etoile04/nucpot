@@ -1,7 +1,4 @@
 import type { Metadata } from "next"
-import { AntdRegistry } from "@ant-design/nextjs-registry"
-import { ConfigProvider } from "antd"
-import zhCN from "antd/locale/zh_CN"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
@@ -16,11 +13,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
-      <body>
-        <AntdRegistry>
-          <ConfigProvider locale={zhCN}>{children}</ConfigProvider>
-        </AntdRegistry>
-      </body>
+      <body>{children}</body>
     </html>
   )
 }

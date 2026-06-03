@@ -1,7 +1,3 @@
-import { Typography } from "antd"
-
-const { Title, Paragraph } = Typography
-
 export default function HomePage() {
   return (
     <main
@@ -11,14 +7,12 @@ export default function HomePage() {
         padding: "4rem 1.5rem",
       }}
     >
-      <Title level={1}>核燃料与材料物性数据库</Title>
-      <Paragraph>
-        可持续共享的核燃料与材料物性数据库平台
-      </Paragraph>
-      <Paragraph type="secondary">
+      <h1>核燃料与材料物性数据库</h1>
+      <p>可持续共享的核燃料与材料物性数据库平台</p>
+      <p style={{ color: "#666" }}>
         Nuclear Fuel &amp; Materials Properties Database — a sustainable and
         sharing platform for nuclear materials data in China.
-      </Paragraph>
+      </p>
     </main>
   )
 }
