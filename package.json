@@ -1,0 +1,20 @@
+{
+  "name": "nfm-db",
+  "private": true,
+  "description": "Nuclear Fuel & Materials Properties Database Platform",
+  "scripts": {
+    "dev": "pnpm --filter @nfm-db/web dev",
+    "dev:api": "cd apps/api && uvicorn nfm_db.main:app --reload --port 8000",
+    "build": "pnpm --filter @nfm-db/web build",
+    "lint": "pnpm -r run lint",
+    "lint:fix": "pnpm -r run lint:fix",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "test:e2e": "pnpm --filter @nfm-db/web test:e2e"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.4"
+}
