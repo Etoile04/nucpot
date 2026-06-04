@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       // ── Stats ────────────────────────────────────────────────────────────
       case 'stats': {
         const { data, error } = await supabaseAdmin.rpc('review_stats')
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         return NextResponse.json({ data })
       }
 
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
           p_limit: params.limit || 30,
           p_offset: params.offset || 0,
         })
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         const result = data && typeof data === 'object' && 'data' in (data as object)
           ? data
           : { data: [], total: 0 }
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
           p_limit: params.limit || 30,
           p_offset: params.offset || 0,
         })
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
 
         const result = data && typeof data === 'object' && 'data' in (data as object)
           ? (data as { data: any[]; total: number })
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
           p_limit: params.limit || 30,
           p_offset: params.offset || 0,
         })
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         const result = data && typeof data === 'object' && 'data' in (data as object)
           ? data
           : { data: [], total: 0 }
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
         const { data, error } = await supabaseAdmin.rpc('review_literature_for_source', {
           p_source_file: params.source_file as string,
         })
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         return NextResponse.json({ data: Array.isArray(data) ? data : [] })
       }
 
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
           p_status: params.status,
           p_reviewer: admin.username || 'admin',
         })
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         return NextResponse.json({ data })
       }
 
@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
           p_review_status: params.review_status || 'approved',
           p_reviewer: admin.username || 'admin',
         })
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         return NextResponse.json({ data })
       }
 
@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
             reviewed_by: admin.username || 'admin',
           })
           .eq('id', params.id as string)
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         return NextResponse.json({ ok: true })
       }
 
@@ -184,7 +184,7 @@ export async function POST(request: NextRequest) {
           .from('parameters')
           .select('*', { count: 'exact', head: true })
           .or(`source_file.ilike.%${params.id}%,source_file.eq.${params.id}`)
-        if (error) throw error
+        if (error) throw new Error(error.message || JSON.stringify(error))
         return NextResponse.json({ count })
       }
 
