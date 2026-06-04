@@ -26,8 +26,8 @@ export default function ReviewDashboardPage() {
     try {
       const { data } = await api.stats()
       setStats(data)
-    } catch (e: any) {
-      setError(e.message || '加载失败')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '加载失败')
       console.error('Failed to load review stats:', e)
     } finally {
       setLoadingStats(false)
@@ -53,6 +53,12 @@ export default function ReviewDashboardPage() {
           >
             {loadingStats ? '刷新中...' : '刷新'}
           </button>
+        </div>
+
+        <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-4 mb-6">
+          <p className="text-yellow-300 text-sm">
+            ⚠️ 此功能需要本地 NFMD PostgreSQL 数据库连接。当前连接的是云端 Supabase，review RPC 不可用。
+          </p>
         </div>
 
         {error && (

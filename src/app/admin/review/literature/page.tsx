@@ -53,8 +53,8 @@ export default function ReviewLiteraturePage() {
         }
       }))
       setLits(enriched)
-    } catch (e: any) {
-      setError(e.message || '加载失败')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '加载失败')
       console.error(e)
     } finally {
       setIsLoading(false)
@@ -69,8 +69,8 @@ export default function ReviewLiteraturePage() {
     try {
       await api.fixLitCount(lit.id, actual, lit.parameter_count || 0)
       fetchLits()
-    } catch (e: any) {
-      alert(`修正失败: ${e.message}`)
+    } catch (e: unknown) {
+      alert(`修正失败: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 

@@ -178,8 +178,9 @@ export default function AdminPage() {
           >
             统计概览
           </button>
-          <Link href="/admin/review" className="px-5 py-2 rounded-lg text-sm font-medium transition text-gray-400 hover:text-gray-200">
+          <Link href="/admin/review" className="px-5 py-2 rounded-lg text-sm font-medium transition text-gray-400 hover:text-gray-200 flex items-center gap-1">
             NFMD 校对
+            <span className="text-xs bg-yellow-900/60 text-yellow-400 px-1.5 py-0.5 rounded">本地</span>
           </Link>
           <button
             onClick={() => setTab('contributions')}

@@ -16,6 +16,7 @@ interface Potential {
   type: string
   elements: string[]
   verified_props: Record<string, unknown> | null
+  file_url: string | null
 }
 
 interface VerifyJob {
@@ -279,12 +280,13 @@ export default function AdminVerifyPage() {
   })
 
   // 全选/取消全选
-  const allSelected = filtered.length > 0 && filtered.every(p => selectedIds.has(p.id))
+  const selectablePotentials = filtered.filter(p => !!p.file_url)
+  const allSelected = selectablePotentials.length > 0 && selectablePotentials.every(p => selectedIds.has(p.id))
   const toggleSelectAll = () => {
     if (allSelected) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(filtered.map(p => p.id)))
+      setSelectedIds(new Set(selectablePotentials.map(p => p.id)))
     }
   }
   const toggleSelect = (id: string) => {
@@ -474,7 +476,9 @@ export default function AdminVerifyPage() {
                         type="checkbox"
                         checked={selectedIds.has(p.id)}
                         onChange={() => toggleSelect(p.id)}
-                        className="rounded border-gray-500 bg-gray-600 text-blue-500 focus:ring-blue-500"
+                        disabled={!p.file_url}
+                        title={!p.file_url ? '该势函数尚未上传文件' : undefined}
+                        className="rounded border-gray-500 bg-gray-600 text-blue-500 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -487,16 +491,26 @@ export default function AdminVerifyPage() {
                       <VerificationBadge grade={(p.verified_props as any)?.overall_grade} />
                     </td>
                     <td className="px-4 py-2 text-center">
-                      <button
-                        onClick={() => {
-                          setDialogPotential(p)
-                          setSelectedTemplate('basic')
-                        }}
-                        disabled={activeJob?.status === 'running' || activeJob?.status === 'pending'}
-                        className="px-3 py-1 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        验证
-                      </button>
+                      {p.file_url ? (
+                        <button
+                          onClick={() => {
+                            setDialogPotential(p)
+                            setSelectedTemplate('basic')
+                          }}
+                          disabled={activeJob?.status === 'running' || activeJob?.status === 'pending'}
+                          className="px-3 py-1 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          验证
+                        </button>
+                      ) : (
+                        <button
+                          disabled
+                          title="该势函数尚未上传文件，无法验证"
+                          className="px-3 py-1 text-xs rounded-lg bg-gray-600 text-gray-400 cursor-not-allowed"
+                        >
+                          需上传文件
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

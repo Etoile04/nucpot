@@ -23,7 +23,7 @@ interface VerificationBadgeProps {
 }
 
 export default function VerificationBadge({ grade, size = 'sm' }: VerificationBadgeProps) {
-  if (!grade) {
+  if (!grade || grade.toUpperCase() === 'N/A') {
     const smClasses = 'px-2 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400'
     const lgClasses = 'px-4 py-1.5 rounded-lg text-sm font-medium bg-gray-700 text-gray-400'
     return (

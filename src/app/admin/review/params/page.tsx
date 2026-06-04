@@ -65,8 +65,8 @@ export default function ReviewParamsPage() {
       setTotalCount(result.total || 0)
       setSelected(new Set())
       setParams(paramsList)
-    } catch (e: any) {
-      setError(e.message || '加载失败')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '加载失败')
       console.error('Failed to fetch params:', e)
     } finally {
       setIsLoading(false)
@@ -92,8 +92,8 @@ export default function ReviewParamsPage() {
     try {
       await api.batchUpdate(Array.from(selected), bulkAction, profile?.username)
       fetchParams()
-    } catch (e: any) {
-      alert(`批量操作失败: ${e.message}`)
+    } catch (e: unknown) {
+      alert(`批量操作失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSubmitting(false)
       setBulkAction(null)
@@ -105,8 +105,8 @@ export default function ReviewParamsPage() {
     try {
       await api.batchUpdate([p.id], 'approved', profile?.username)
       fetchParams()
-    } catch (e: any) {
-      alert(`操作失败: ${e.message}`)
+    } catch (e: unknown) {
+      alert(`操作失败: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -128,8 +128,8 @@ export default function ReviewParamsPage() {
         text: data.paragraphs?.map((pg: any) => `[p.${pg.page}] ${pg.text}`).join('\n\n') || '未找到相关文本段落',
         loading: false,
       })
-    } catch (e: any) {
-      setContextPanel({ param: p, text: `获取失败: ${e.message}`, loading: false })
+    } catch (e: unknown) {
+      setContextPanel({ param: p, text: `获取失败: ${e instanceof Error ? e.message : String(e)}`, loading: false })
     }
   }
 
@@ -176,8 +176,8 @@ export default function ReviewParamsPage() {
       })
       setEditModal(null)
       fetchParams()
-    } catch (e: any) {
-      alert(`保存失败: ${e.message}`)
+    } catch (e: unknown) {
+      alert(`保存失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSubmitting(false)
     }
