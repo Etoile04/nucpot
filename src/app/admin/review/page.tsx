@@ -25,7 +25,9 @@ export default function ReviewDashboardPage() {
     setError(null)
     try {
       const { data } = await api.stats()
-      setStats(data)
+      // API returns { data: rpc_result }, post() wraps in { data: body }
+      // So we need to unwrap: data.data is the actual RPC result
+      setStats(data?.data ?? data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '加载失败')
       console.error('Failed to load review stats:', e)
@@ -36,7 +38,8 @@ export default function ReviewDashboardPage() {
 
   useEffect(() => { if (profile?.role === 'admin') fetchStats() }, [profile, fetchStats])
 
-  const needsAction = stats ? (stats.by_status.needs_data || 0) + (stats.by_status.needs_review || 0) + (stats.by_status.pending || 0) : 0
+  const byStatus = stats?.by_status ?? {}
+  const needsAction = stats ? (byStatus.needs_data || 0) + (byStatus.needs_review || 0) + (byStatus.pending || 0) : 0
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -55,11 +58,7 @@ export default function ReviewDashboardPage() {
           </button>
         </div>
 
-        <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-4 mb-6">
-          <p className="text-yellow-300 text-sm">
-            ⚠️ 此功能需要本地 NFMD PostgreSQL 数据库连接。当前连接的是云端 Supabase，review RPC 不可用。
-          </p>
-        </div>
+        {/* Review RPCs now available on Cloud Supabase (migration 006) */}
 
         {error && (
           <div className="mb-6 p-3 bg-red-900/30 border border-red-800/50 rounded-lg text-sm text-red-300">
@@ -77,9 +76,9 @@ export default function ReviewDashboardPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <StatCard label="总参数" value={stats.total_params.toLocaleString()} color="text-blue-400" />
               <StatCard label="待处理" value={String(needsAction)} color="text-orange-400"
-                sub={`needs_data ${stats.by_status.needs_data || 0} + needs_review ${stats.by_status.needs_review || 0}`} />
-              <StatCard label="自动通过" value={String(stats.by_status.auto_approved || 0)} color="text-gray-400" />
-              <StatCard label="人工通过" value={String(stats.by_status.approved || 0)} color="text-green-400" />
+                sub={`needs_data ${byStatus.needs_data || 0} + needs_review ${byStatus.needs_review || 0}`} />
+              <StatCard label="自动通过" value={String(byStatus.auto_approved || 0)} color="text-gray-400" />
+              <StatCard label="人工通过" value={String(byStatus.approved || 0)} color="text-green-400" />
             </div>
 
             <div className="bg-gray-900 rounded-lg p-6 mb-8">
@@ -88,7 +87,7 @@ export default function ReviewDashboardPage() {
                 {(Object.entries(STATUS_CONFIG) as [ReviewStatus, typeof STATUS_CONFIG[ReviewStatus]][])
                   .sort((a, b) => a[1].priority - b[1].priority)
                   .map(([status, cfg]) => {
-                    const count = stats.by_status[status] || 0
+                    const count = byStatus[status] || 0
                     const pct = stats.total_params > 0 ? (count / stats.total_params * 100) : 0
                     return (
                       <div key={status} className="flex items-center gap-3">
