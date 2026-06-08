@@ -24,3 +24,15 @@ class TimestampMixin:
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority  # noqa: E402, F401
+
+__all__ = [
+    "Base",
+    "TimestampMixin",
+    "Feedback",
+    "FeedbackType",
+    "Priority",
+    "FeedbackStatus",
+]

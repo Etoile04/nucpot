@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nfm_db.api.v1 import health
+from nfm_db.api.v1 import feedback, health
 
 app = FastAPI(
     title="核燃料与材料物性数据库 API",
@@ -20,3 +20,4 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
+app.include_router(feedback.router, prefix="/api/v1", tags=["feedback"])
