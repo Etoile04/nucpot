@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import RefValueReviewTab from '@/components/RefValueReviewTab'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 
@@ -39,7 +40,7 @@ interface ContributionItem {
   } | null
 }
 
-type Tab = 'stats' | 'contributions'
+type Tab = 'stats' | 'contributions' | 'ref-review'
 
 export default function AdminPage() {
   const router = useRouter()
@@ -53,6 +54,7 @@ export default function AdminPage() {
   const [contribLoading, setContribLoading] = useState(false)
   const [actionInProgress, setActionInProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refReviewCount, setRefReviewCount] = useState(0)
 
   // Auth guard — redirect if not admin
   useEffect(() => {
@@ -108,6 +110,13 @@ export default function AdminPage() {
     if (profile?.role === 'admin' && session?.access_token) {
       fetchStats()
       fetchContributions('pending')
+      // Fetch ref review count
+      fetch('/api/admin/reference-values?needs_review=true&limit=0', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+        .then(r => r.json())
+        .then(d => setRefReviewCount(d.total || 0))
+        .catch(() => {})
     }
   }, [profile, session?.access_token, fetchStats, fetchContributions])
 
@@ -192,6 +201,22 @@ export default function AdminPage() {
               </span>
             )}
           </button>
+
+          <button
+            onClick={() => setTab('ref-review')}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition relative ${
+              tab === 'ref-review'
+                ? 'bg-gray-700 text-white shadow'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            参考值审核
+            {refReviewCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-yellow-500 rounded-full text-xs text-black font-bold flex items-center justify-center">
+                {refReviewCount > 99 ? "99+" : refReviewCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* === STATS TAB === */}
@@ -265,6 +290,11 @@ export default function AdminPage() {
               </div>
             )}
           </div>
+        )}
+
+        {/* === REF REVIEW TAB === */}
+        {tab === "ref-review" && session?.access_token && (
+          <RefValueReviewTab sessionToken={session.access_token} />
         )}
       </div>
     </div>
