@@ -144,6 +144,9 @@ export interface ReferenceValue {
   source: string | null
   source_doi: string | null
   method: string | null
+  confidence: 'high' | 'medium' | 'low' | null
+  needs_review: boolean
+  review_notes: string | null
   created_at: string
 }
 
@@ -187,3 +190,40 @@ export interface VerificationSubmitRequest {
 
 // Convenience aliases
 export type VerificationStatus = Verification['status']
+export type PropertyVerification = VerificationResult
+
+// Phase 4: Reference Value Review
+export interface RefValueItem {
+  id: string
+  element_system: string
+  phase: string | null
+  property: string
+  value: number
+  unit: string
+  uncertainty: number | null
+  temperature: number | null
+  source: string | null
+  source_doi: string | null
+  method: string | null
+  confidence: string
+  needs_review: boolean
+  cache_level: string | null
+  status: string
+  review_notes: string | null
+  created_at: string
+  updated_at: string | null
+}
+
+export interface RefValueMatrixData {
+  systems: {
+    element_system: string
+    phase: string | null
+    properties: Record<string, {
+      value: number
+      unit: string
+      confidence: string
+      needs_review: boolean
+      status: string
+    } | null>
+  }[]
+}

@@ -110,13 +110,22 @@ export default function Nav() {
                         上传势函数
                       </Link>
                       {isAdmin && (
-                        <Link
-                          href="/admin"
-                          onClick={() => setDropdownOpen(false)}
-                          className="block px-4 py-2 hover:bg-gray-700/60 text-yellow-400 hover:text-yellow-300 transition"
-                        >
-                          管理后台
-                        </Link>
+                        <>
+                          <Link
+                            href="/admin"
+                            onClick={() => setDropdownOpen(false)}
+                            className="block px-4 py-2 hover:bg-gray-700/60 text-yellow-400 hover:text-yellow-300 transition"
+                          >
+                            管理后台
+                          </Link>
+                          <Link
+                            href="/admin/reference-values"
+                            onClick={() => setDropdownOpen(false)}
+                            className="block px-4 py-2 hover:bg-gray-700/60 text-yellow-400 hover:text-yellow-300 transition"
+                          >
+                            参考值矩阵
+                          </Link>
+                        </>
                       )}
                       {isAdmin && (
                         <Link
@@ -209,13 +218,22 @@ export default function Nav() {
                     上传势函数
                   </Link>
                   {isAdmin && (
-                    <Link
-                      href="/admin"
-                      onClick={() => setMobileOpen(false)}
-                      className="text-yellow-400 hover:text-yellow-300 transition"
-                    >
-                      管理后台
-                    </Link>
+                    <>
+                      <Link
+                        href="/admin"
+                        onClick={() => setMobileOpen(false)}
+                        className="text-yellow-400 hover:text-yellow-300 transition"
+                      >
+                        管理后台
+                      </Link>
+                      <Link
+                        href="/admin/reference-values"
+                        onClick={() => setMobileOpen(false)}
+                        className="text-yellow-400 hover:text-yellow-300 transition"
+                      >
+                        参考值矩阵
+                      </Link>
+                    </>
                   )}
                   {isAdmin && (
                     <Link

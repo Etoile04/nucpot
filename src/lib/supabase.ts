@@ -1,7 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://gzhiqyopzlmnkdzammhx.supabase.co'
+// Support both legacy JWT keys (disabled) and new sb_publishable_ keys
+const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+const supabaseAnonKey = envKey.startsWith('sb_publishable_')
+  ? envKey
+  : 'sb_publishable_fY3HKqTwRqPJRBOwIOdCFQ_6zJdA9iD'
 
 export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey)
 
