@@ -9,6 +9,9 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    env: {
+      BLOG_CONTENT_DIR: path.join(__dirname, "content", "blog", "__test__"),
+    },
   },
   resolve: {
     conditions: ["development"],
