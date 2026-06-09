@@ -19,18 +19,23 @@ function getContentDir(): string {
   return process.env.BLOG_CONTENT_DIR || path.join(process.cwd(), "content", "blog")
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function isValidFrontmatter(data: any): data is BlogPostFrontmatter {
+function isValidFrontmatter(data: unknown): data is BlogPostFrontmatter {
+  if (typeof data !== "object" || data === null) {
+    return false
+  }
+
+  const record = data as Record<string, unknown>
+
   return REQUIRED_FIELDS.every(
     (field: RequiredField) =>
-      field in data &&
-      data[field] !== null &&
-      data[field] !== undefined &&
+      field in record &&
+      record[field] !== null &&
+      record[field] !== undefined &&
       (field === "tags"
-        ? Array.isArray(data[field])
+        ? Array.isArray(record[field])
         : field === "date"
-          ? data[field] instanceof Date || typeof data[field] === "string"
-          : typeof data[field] === "string")
+          ? record[field] instanceof Date || typeof record[field] === "string"
+          : typeof record[field] === "string")
   )
 }
 
@@ -38,23 +43,27 @@ function parseMarkdownFile(
   filePath: string,
   fileName: string
 ): BlogPost | null {
-  const raw = fs.readFileSync(filePath, "utf-8")
-  const { data, content } = matter(raw)
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8")
+    const { data, content } = matter(raw)
 
-  if (!isValidFrontmatter(data)) {
+    if (!isValidFrontmatter(data)) {
+      return null
+    }
+
+    return {
+      slug: fileName.replace(/\.md$/, ""),
+      frontmatter: {
+        title: String(data.title),
+        date: normalizeDate(data.date),
+        summary: String(data.summary),
+        tags: Array.isArray(data.tags) ? [...data.tags] : [],
+        author: String(data.author),
+      },
+      content,
+    }
+  } catch {
     return null
-  }
-
-  return {
-    slug: fileName.replace(/\.md$/, ""),
-    frontmatter: {
-      title: String(data.title),
-      date: normalizeDate(data.date),
-      summary: String(data.summary),
-      tags: Array.isArray(data.tags) ? [...data.tags] : [],
-      author: String(data.author),
-    },
-    content,
   }
 }
 
@@ -107,7 +116,12 @@ export function getPostBySlug(slug: string): BlogPost | null {
     return null
   }
 
-  const filePath = path.join(contentDir, `${slug}.md`)
+  const filePath = path.resolve(contentDir, `${slug}.md`)
+  const resolvedContentDir = path.resolve(contentDir)
+
+  if (!filePath.startsWith(resolvedContentDir + path.sep)) {
+    return null
+  }
 
   if (!fs.existsSync(filePath)) {
     return null

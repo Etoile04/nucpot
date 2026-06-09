@@ -4,17 +4,10 @@ import Link from "next/link"
 import { Card, Tag, Typography, Space } from "antd"
 import { CalendarOutlined, UserOutlined } from "@ant-design/icons"
 import type { BlogPostMeta } from "@/lib/blog/types"
+import { formatDate } from "@/lib/blog/format-date"
 
 interface BlogCardProps {
   readonly post: BlogPostMeta
-}
-
-function formatDateChinese(dateStr: string): string {
-  const date = new Date(dateStr)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}年${month}月${day}日`
 }
 
 export function BlogCard({ post }: BlogCardProps) {
@@ -52,7 +45,7 @@ export function BlogCard({ post }: BlogCardProps) {
       >
         <span>
           <CalendarOutlined style={{ marginRight: 4 }} />
-          {formatDateChinese(date)}
+          {formatDate(date)}
         </span>
         <span>
           <UserOutlined style={{ marginRight: 4 }} />

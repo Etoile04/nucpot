@@ -3,6 +3,7 @@ import { notFound } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { getAllPosts, getPostBySlug, getAllSlugs } from "@/lib/blog/posts"
+import { formatDate } from "@/lib/blog/format-date"
 import { BlogNavigation } from "@/components/blog"
 
 interface BlogDetailPageProps {
@@ -28,14 +29,6 @@ export async function generateMetadata({
     title: `${post.frontmatter.title} — 核燃料与材料物性数据库`,
     description: post.frontmatter.summary,
   }
-}
-
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}年${month}月${day}日`
 }
 
 function findAdjacentPosts(
