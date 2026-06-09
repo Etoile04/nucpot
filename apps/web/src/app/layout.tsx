@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { AntdProvider } from "@/components/antd-provider"
 import { FeedbackFloatButton } from "@/components/feedback"
+import { SiteHeader } from "@/components/blog"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
@@ -17,10 +18,11 @@ export default function RootLayout({
     <html lang="zh-CN">
       <body>
         <AntdProvider>
+          <SiteHeader />
           {children}
           <footer
             style={{
-              borderTop: "1px solid #f0f0f0",
+              borderTop: "1px solid var(--color-border)",
               padding: "2rem 1.5rem",
               textAlign: "center",
               color: "#999",
