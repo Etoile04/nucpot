@@ -23,3 +23,4 @@ htmlcov/
 *.swo
 *~
 docker/postgres-data/
+.worktrees/
