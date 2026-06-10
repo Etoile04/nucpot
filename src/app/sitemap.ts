@@ -1,4 +1,5 @@
 import { MetadataRoute } from 'next'
+import { getAllPosts } from '@/lib/blog'
 
 interface PotentialItem {
   id: string
@@ -15,7 +16,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${baseUrl}/about`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.5 },
     { url: `${baseUrl}/upload`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.5 },
     { url: `${baseUrl}/compare`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.7 },
+    { url: `${baseUrl}/blog`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.6 },
   ]
+
+  const posts = getAllPosts()
+  const blogPages: MetadataRoute.Sitemap = posts.map((post) => ({
+    url: `${baseUrl}/blog/${post.slug}`,
+    lastModified: post.date ? new Date(post.date) : new Date(),
+    changeFrequency: 'monthly' as const,
+    priority: 0.7,
+  }))
 
   try {
     const res = await fetch(`${baseUrl}/api/potentials?limit=100`, {
@@ -31,8 +41,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.8,
     }))
 
-    return [...staticPages, ...dynamicPages]
+    return [...staticPages, ...blogPages, ...dynamicPages]
   } catch {
-    return staticPages
+    return [...staticPages, ...blogPages]
   }
 }
