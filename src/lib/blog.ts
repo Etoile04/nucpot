@@ -9,11 +9,11 @@ export interface Post {
   description: string
   author: string
   tags: string[]
-  ogImage: string
+  ogImage?: string
   content: string
 }
 
-const CONTENT_DIR = path.join(process.cwd(), 'content', 'blog')
+const CONTENT_DIR = path.resolve(process.cwd(), 'content', 'blog')
 
 function readMarkdownFile(filePath: string): Post | null {
   try {
@@ -21,6 +21,12 @@ function readMarkdownFile(filePath: string): Post | null {
     const { data, content } = matter(raw)
 
     const slug = path.basename(filePath, '.md')
+
+    const rawOgImage = data.ogImage
+    const ogImage =
+      typeof rawOgImage === 'string' && rawOgImage.length > 0
+        ? rawOgImage
+        : undefined
 
     return {
       slug,
@@ -33,11 +39,11 @@ function readMarkdownFile(filePath: string): Post | null {
       author:
         typeof data.author === 'string' ? data.author : 'NucPot 团队',
       tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
-      ogImage:
-        typeof data.ogImage === 'string' ? data.ogImage : '',
+      ogImage,
       content,
     }
-  } catch {
+  } catch (error) {
+    console.error(`Failed to read markdown file ${filePath}:`, error)
     return null
   }
 }
@@ -58,17 +64,25 @@ export function getAllPosts(): Post[] {
 }
 
 export function getPostBySlug(slug: string): Post | null {
-  const filePath = path.join(CONTENT_DIR, `${slug}.md`)
+  if (slug.includes('/') || slug.includes('\\') || slug.includes('..')) {
+    return null
+  }
+
+  const filePath = path.resolve(CONTENT_DIR, `${slug}.md`)
+
+  if (!filePath.startsWith(CONTENT_DIR)) {
+    return null
+  }
+
   return readMarkdownFile(filePath)
 }
 
-export function getAllSlugs(): string[] {
-  if (!fs.existsSync(CONTENT_DIR)) {
-    return []
-  }
-
-  return fs
-    .readdirSync(CONTENT_DIR)
-    .filter((f) => f.endsWith('.md'))
-    .map((f) => path.basename(f, '.md'))
+export function formatDate(dateStr: string): string {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
 }

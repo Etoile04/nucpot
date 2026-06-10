@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { getAllPosts } from '@/lib/blog'
+import { getAllPosts, formatDate } from '@/lib/blog'
 import Footer from '@/components/Footer'
 
 export const metadata: Metadata = {
@@ -15,16 +15,6 @@ export const metadata: Metadata = {
     locale: 'zh_CN',
     type: 'website',
   },
-}
-
-function formatDate(dateStr: string): string {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
 }
 
 export default function BlogPage() {

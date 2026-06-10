@@ -2,12 +2,14 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
-import { getAllPosts, getPostBySlug } from '@/lib/blog'
+import { getAllPosts, getPostBySlug, formatDate } from '@/lib/blog'
 import Footer from '@/components/Footer'
 
 interface PageProps {
   params: Promise<{ slug: string }>
 }
+
+export const dynamicParams = false
 
 export async function generateStaticParams() {
   const posts = getAllPosts()
@@ -39,16 +41,6 @@ export async function generateMetadata({
       ...(post.ogImage && { images: [{ url: post.ogImage }] }),
     },
   }
-}
-
-function formatDate(dateStr: string): string {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
 }
 
 export default async function BlogPostPage({ params }: PageProps) {
@@ -101,6 +93,9 @@ export default async function BlogPostPage({ params }: PageProps) {
           <hr className="border-gray-700" />
 
           <section className="prose prose-invert prose-gray max-w-none prose-headings:text-white prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:text-gray-300 prose-li:text-gray-300 prose-strong:text-white prose-a:text-blue-400 prose-code:text-blue-300 prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-700 prose-table:border-gray-700 prose-th:border-gray-700 prose-td:border-gray-700">
+            {/* Content is from trusted local .md files (repo-committed).
+                react-markdown v10 strips raw HTML by default.
+                If external content is ever supported, add rehype-sanitize. */}
             <ReactMarkdown>{post.content}</ReactMarkdown>
           </section>
         </article>
