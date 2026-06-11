@@ -1,10 +1,13 @@
-"""Reference values API endpoints: bulk staging, review queue, approve/reject.
+"""Reference values API endpoints: bulk staging, review queue, approve/reject,
+bulk export for verification, and verification callback.
 
-Per NFM-54 design Sections 2.2-2.3:
+Per NFM-54 design Sections 2.2-2.3 and NFM-66:
 - POST /api/v1/reference-values/bulk — Bulk write to staging
 - GET  /api/v1/reference-values/pending-review — Review queue
 - POST /api/v1/reference-values/{id}/approve — Approve + promote
 - POST /api/v1/reference-values/{id}/reject — Reject
+- POST /api/v1/reference-values/export — Bulk export for verification
+- POST /api/v1/reference-values/verify-callback — Verification results callback
 """
 
 from __future__ import annotations
@@ -32,6 +35,14 @@ from nfm_db.schemas.reference_values import (
     ReviewResponse,
     StagingRecordResponse,
 )
+from nfm_db.schemas.verification import (
+    ExportedRecord,
+    ExportRequest,
+    ExportResponse,
+    VerificationCallbackItem,
+    VerificationCallbackRequest,
+    VerificationCallbackResponse,
+)
 from nfm_db.services.promotion_service import (
     InvalidTransitionError,
     StagingRecordNotFoundError,
@@ -39,6 +50,10 @@ from nfm_db.services.promotion_service import (
     reject_staging_record,
 )
 from nfm_db.services.quality_gate import QualityGateService
+from nfm_db.services.verification_service import (
+    export_for_verification,
+    process_verification_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -268,5 +283,95 @@ async def reject_reference_value(
             staging_id=record.id,
             status=record.status,
             review_note=record.review_note,
+        ).model_dump(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/reference-values/export
+# NFM-66: Bulk export for external verification
+# ---------------------------------------------------------------------------
+
+
+@router.post("/reference-values/export")
+async def export_reference_values(
+    payload: ExportRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bulk export reference values for verification consumption.
+
+    Exports staged values with optional filters (status, element_system,
+    date range). The output format is compatible with verify-service
+    ingestion.
+
+    Defaults to exporting approved + promoted records if no status filter
+    is provided.
+    """
+    filters = payload.filters
+
+    records, total = await export_for_verification(
+        session=session,
+        element_system=filters.element_system,
+        phase=filters.phase,
+        property_name=filters.property_name,
+        confidence=filters.confidence,
+        min_confidence=filters.min_confidence,
+        status_filter=filters.status,
+        from_date=filters.from_date,
+        to_date=filters.to_date,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
+    exported = [ExportedRecord.model_validate(r) for r in records]
+
+    return {
+        "success": True,
+        "data": ExportResponse(
+            records=exported,
+            total=total,
+            offset=payload.offset,
+            limit=payload.limit,
+        ).model_dump(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/reference-values/verify-callback
+# NFM-66: Verification results callback from verify-service
+# ---------------------------------------------------------------------------
+
+
+@router.post("/reference-values/verify-callback")
+async def verify_callback(
+    payload: VerificationCallbackRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Receive verification results from the verify-service.
+
+    The verify-service sends A-F grades for each staging record.
+    F-grade records are auto-rejected. All verified records have
+    their review_note updated with the grade and evidence.
+
+    Returns counts of processed, updated, and not-found records.
+    """
+    results_raw = [item.model_dump() for item in payload.results]
+    outcome = await process_verification_results(session, results_raw)
+
+    response_items = [
+        VerificationCallbackItem(
+            staging_id=item["staging_id"],
+            status=item["status"],
+        )
+        for item in outcome["results"]
+    ]
+
+    return {
+        "success": True,
+        "data": VerificationCallbackResponse(
+            processed=outcome["processed"],
+            updated=outcome["updated"],
+            not_found=outcome["not_found"],
+            results=response_items,
         ).model_dump(),
     }
