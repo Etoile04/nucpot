@@ -431,3 +431,22 @@ async def test_reject_already_rejected_conflict(db_session: AsyncSession) -> Non
     app.dependency_overrides.clear()
 
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# promote_to_measurements placeholder
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_promote_to_measurements_not_implemented(db_session: AsyncSession) -> None:
+    """promote_to_measurements raises NotImplementedError (NFMD schema not ready)."""
+    from nfm_db.services.promotion_service import (
+        PromotionNotImplementedError,
+        promote_to_measurements,
+    )
+
+    record = await _persist_record(db_session)
+
+    with pytest.raises(PromotionNotImplementedError, match="not yet implemented"):
+        await promote_to_measurements(db_session, record)

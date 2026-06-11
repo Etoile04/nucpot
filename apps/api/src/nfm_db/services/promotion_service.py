@@ -12,6 +12,7 @@ point awaiting the normalized schema (NFM-65+).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -41,6 +42,25 @@ class InvalidTransitionError(Exception):
         super().__init__(
             f"Cannot transition staging record {staging_id} "
             f"from {current.value} to {target.value}"
+        )
+
+
+@dataclass(frozen=True)
+class PromotionResult:
+    """Immutable result of a promotion operation."""
+
+    property_measurement_id: UUID | None = None
+    condition_ids: tuple[UUID, ...] = ()
+    note: str = ""
+
+
+class PromotionNotImplementedError(NotImplementedError):
+    """Raised when promote_to_measurements is called before NFMD schema exists."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Promotion to property_measurements is not yet implemented. "
+            "Awaiting NFMD normalized schema (NFM-65+)."
         )
 
 
@@ -162,3 +182,29 @@ async def reject_staging_record(
     )
 
     return record
+
+
+async def promote_to_measurements(
+    session: AsyncSession,
+    staging_record: RefGapFillStaging,
+) -> PromotionResult:
+    """Promote an approved staging record to property_measurements.
+
+    Placeholder awaiting the NFMD normalized schema (property_measurements,
+    measurement_conditions). When the schema exists, this function will:
+    - Resolve material_id, property_type_id, unit_id, data_source_id
+    - INSERT into property_measurements
+    - INSERT into measurement_conditions
+    - Return a PromotionResult with the new IDs
+
+    Args:
+        session: Async database session.
+        staging_record: An approved staging record to promote.
+
+    Returns:
+        PromotionResult with IDs of created records.
+
+    Raises:
+        PromotionNotImplementedError: Always, until NFMD schema is available.
+    """
+    raise PromotionNotImplementedError()
