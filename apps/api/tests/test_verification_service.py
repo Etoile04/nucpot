@@ -233,6 +233,62 @@ class TestExportForVerification:
         assert all(r.confidence != Confidence.LOW for r in records)
 
     @pytest.mark.asyncio
+    async def test_export_with_status_approved_excludes_promoted(
+        self, db_session: AsyncSession,
+    ):
+        """Filter by status=approved excludes promoted records."""
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            element_system="U",
+        )
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.PROMOTED,
+            element_system="Pu",
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            status_filter=StagingStatus.APPROVED,
+        )
+
+        assert total == 1
+        assert records[0].status == StagingStatus.APPROVED
+
+    @pytest.mark.asyncio
+    async def test_export_with_exact_confidence_filter(
+        self, db_session: AsyncSession,
+    ):
+        """Filter by exact confidence returns correct subset."""
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            confidence=Confidence.HIGH,
+        )
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            confidence=Confidence.MEDIUM,
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            confidence=Confidence.HIGH,
+        )
+
+        assert total == 1
+        assert records[0].confidence == Confidence.HIGH
+
+    @pytest.mark.asyncio
+    async def test_export_empty_result(self, db_session: AsyncSession):
+        """Empty result returns (records=[], total=0)."""
+        records, total = await export_for_verification(db_session)
+
+        assert records == []
+        assert total == 0
+
+    @pytest.mark.asyncio
     async def test_export_pagination(self, db_session: AsyncSession):
         """Export with limit and offset."""
         # Insert 5 records
