@@ -12,9 +12,8 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
-    DoublePrecision,
     Enum,
-    ForeignKey,
+    Float,
     Index,
     String,
     Text,
@@ -70,16 +69,16 @@ class RefGapFillStaging(TimestampMixin, Base):
     element_system: Mapped[str] = mapped_column(String(50), nullable=False)
     phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
     property_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    value: Mapped[float] = mapped_column(DoublePrecision, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     method: Mapped[str | None] = mapped_column(String(100), nullable=True)
     source: Mapped[str] = mapped_column(String(200), nullable=False)
     source_doi: Mapped[str | None] = mapped_column(String(200), nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
-        DoublePrecision, nullable=True,
+        Float, nullable=True,
     )
     temperature: Mapped[float | None] = mapped_column(
-        DoublePrecision, nullable=True,
+        Float, nullable=True,
     )
 
     # --- Quality gate columns ---
@@ -103,7 +102,7 @@ class RefGapFillStaging(TimestampMixin, Base):
     )
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True,
+        nullable=True,
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
