@@ -27,6 +27,12 @@ class TimestampMixin:
 
 
 from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority  # noqa: E402, F401
+from nfm_db.models.ref_gap_fill import (  # noqa: E402, F401
+    CacheLevel,
+    Confidence,
+    RefGapFillStaging,
+    StagingStatus,
+)
 
 __all__ = [
     "Base",
@@ -35,4 +41,8 @@ __all__ = [
     "FeedbackType",
     "Priority",
     "FeedbackStatus",
+    "RefGapFillStaging",
+    "Confidence",
+    "StagingStatus",
+    "CacheLevel",
 ]
