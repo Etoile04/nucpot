@@ -58,7 +58,8 @@ ALTER TABLE potentials ADD COLUMN search_vector tsvector
     setweight(to_tsvector('english', COALESCE(display_name, '')), 'A') ||
     setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
     setweight(to_tsvector('english', COALESCE(system_name, '')), 'A') ||
-    setweight(to_tsvector('english', array_to_string(COALESCE(tags, '{}'), ' ')), 'C')
+    setweight(to_tsvector('english', array_to_string(COALESCE(tags, '{}'), ' ')), 'C') ||
+    setweight(to_tsvector('english', array_to_string(COALESCE(elements, '{}'), ' ')), 'A')
   ) STORED;
 
 CREATE INDEX idx_potentials_search ON potentials USING GIN(search_vector);
