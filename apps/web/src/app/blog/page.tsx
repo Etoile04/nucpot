@@ -2,42 +2,11 @@ import type { Metadata } from "next"
 import { getAllPosts } from "@/lib/blog/posts"
 import type { BlogPostMeta } from "@/lib/blog/types"
 import { BlogCard } from "@/components/blog"
+import "./blog.css"
 
 export const metadata: Metadata = {
   title: "技术博客 — 核燃料与材料物性数据库",
   description: "核材料科学、数据库技术、核工程领域的技术文章",
-}
-
-function BlogListClientWrapper({
-  posts,
-}: {
-  readonly posts: readonly BlogPostMeta[]
-}) {
-  return (
-    <div>
-      <BlogListContent posts={posts} />
-    </div>
-  )
-}
-
-function BlogListContent({
-  posts,
-}: {
-  readonly posts: readonly BlogPostMeta[]
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "1.5rem",
-      }}
-    >
-      {posts.map((post) => (
-        <BlogCard key={post.slug} post={post} />
-      ))}
-    </div>
-  )
 }
 
 function extractUniqueTags(
@@ -61,14 +30,29 @@ export default function BlogListPage() {
       style={{
         maxWidth: "var(--max-width)",
         margin: "0 auto",
-        padding: "2rem 1.5rem",
+        padding: "3rem 1.5rem",
       }}
     >
-      <header style={{ marginBottom: "2rem" }}>
-        <h1 style={{ fontSize: "1.75rem", fontWeight: 700, margin: "0 0 0.5rem" }}>
+      <header style={{ marginBottom: "3rem" }}>
+        <h1
+          style={{
+            fontSize: "2.25rem",
+            fontWeight: 700,
+            lineHeight: 1.2,
+            marginBottom: "0.75rem",
+            letterSpacing: "-0.02em",
+          }}
+        >
           技术博客
         </h1>
-        <p style={{ color: "var(--color-text-secondary)", margin: 0 }}>
+        <p
+          style={{
+            fontSize: "1.125rem",
+            lineHeight: 1.6,
+            color: "var(--color-text-secondary)",
+            margin: 0,
+          }}
+        >
           核材料科学、数据库技术与核工程领域的技术文章
         </p>
       </header>
@@ -76,15 +60,22 @@ export default function BlogListPage() {
       <nav
         aria-label="文章标签筛选"
         style={{
-          marginBottom: "2rem",
-          padding: "1rem",
+          marginBottom: "3rem",
+          padding: "1.25rem",
           background: "var(--color-surface-elevated)",
           borderRadius: 8,
           border: "1px solid var(--color-border)",
         }}
       >
-        <div style={{ fontSize: "0.8125rem", marginBottom: "0.5rem", color: "var(--color-text-secondary)" }}>
-          标签筛选
+        <div
+          style={{
+            fontSize: "0.875rem",
+            fontWeight: 500,
+            marginBottom: "0.75rem",
+            color: "var(--color-text)",
+          }}
+        >
+          按标签筛选
         </div>
         <div
           style={{
@@ -96,14 +87,18 @@ export default function BlogListPage() {
           {allTags.map((tag) => (
             <span
               key={tag}
+              className="blog-tag"
               style={{
                 display: "inline-block",
-                padding: "0.25rem 0.625rem",
-                fontSize: "0.8125rem",
+                padding: "0.375rem 0.75rem",
+                fontSize: "0.875rem",
+                lineHeight: 1.4,
                 borderRadius: 4,
+                background: "var(--color-surface)",
                 border: "1px solid var(--color-border)",
                 color: "var(--color-text-secondary)",
-                cursor: "default",
+                cursor: "pointer",
+                transition: "all 150ms ease",
               }}
             >
               {tag}
@@ -123,7 +118,17 @@ export default function BlogListPage() {
           <p>暂无文章</p>
         </div>
       ) : (
-        <BlogListClientWrapper posts={posts} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "1.5rem",
+          }}
+        >
+          {posts.map((post) => (
+            <BlogCard key={post.slug} post={post} />
+          ))}
+        </div>
       )}
     </main>
   )
