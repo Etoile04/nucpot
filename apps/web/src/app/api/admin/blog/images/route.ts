@@ -112,8 +112,9 @@ async function validateImageContent(filePath: string): Promise<boolean> {
     const stream = createReadStream(filePath)
     let buffer = Buffer.alloc(0)
 
-    stream.on("data", (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk])
+    stream.on("data", (chunk: Buffer | string) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      buffer = Buffer.concat([buffer, buf])
       if (buffer.length >= 12) {
         stream.destroy()
         resolve(true) // If we can read it, it's valid
