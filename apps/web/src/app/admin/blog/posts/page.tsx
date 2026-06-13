@@ -316,6 +316,5 @@ export default function BlogPostsAdminPage() {
           </div>
         )}
       </div>
-    </div>
   )
 }
