@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
 from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 
 
 class FeedbackCreate(BaseModel):
@@ -60,19 +61,9 @@ class FeedbackListQuery(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
 
 
-class PaginatedResponse(BaseModel):
-    """Paginated response envelope for feedback list."""
-
-    items: list[FeedbackResponse]
-    total: int
-    page: int
-    limit: int
-    pages: int
-
-
-class ApiResponse(BaseModel):
-    """Standard API response envelope."""
-
-    success: bool
-    data: FeedbackCreateResult | PaginatedResponse | None = None
-    error: str | None = None
+# Re-export generic envelopes specialised for feedback, so existing
+# imports like ``from nfm_db.schemas.feedback import ApiResponse`` keep
+# working.  The concrete aliases below are zero-cost wrappers — they are
+# *not* new classes, just type aliases.
+FeedbackPaginatedResponse = PaginatedResponse[FeedbackResponse]
+FeedbackApiResponse = ApiResponse[FeedbackCreateResult | FeedbackPaginatedResponse]

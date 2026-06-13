@@ -1,6 +1,6 @@
 """Gap scan service: identify missing property tuples in NFMD.
 
-Scans the target property tuples (element_system × phase × property)
+Scans the target property tuples (element_system x phase x property)
 against existing data to find coverage gaps. Supports manual gap scans
 and feeds the summary endpoint.
 
@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
@@ -169,7 +169,7 @@ class GapScanService:
         )
 
         result = await self._session.execute(stmt)
-        return _parse_staging_counts(list(result.all()))
+        return _parse_staging_counts(list(result.all()))  # type: ignore[arg-type]
 
     async def scan_gaps(
         self,
@@ -199,9 +199,9 @@ class GapScanService:
         system_map: dict[tuple[str, str | None], dict[str, int]] = {}
 
         for target in targets:
-            es = target["element_system"]
+            es = cast(str, target["element_system"])
             phase = target.get("phase")
-            prop = target["property_name"]
+            prop = cast(str, target["property_name"])
             key = (es, phase)
 
             if key not in system_map:
@@ -213,6 +213,8 @@ class GapScanService:
                 covered_count += 1
                 system_map[key]["covered"] += 1
             else:
+                # Assert non-None for type safety: element_system and property_name are always strings
+                assert es is not None and prop is not None
                 priority = _compute_priority(es, phase, prop)
                 gaps.append(GapTuple(
                     element_system=es,

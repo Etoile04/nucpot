@@ -11,12 +11,16 @@ dependencies = [
     "alembic>=1.14.0",
     "pydantic[email]>=2.10.0",
     "pydantic-settings>=2.7.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-jose[cryptography]>=3.3.0",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
@@ -32,7 +36,7 @@ src = ["src", "tests"]
 select = [
     "E", "W", "F", "I", "N", "UP", "B", "SIM", "RUF",
 ]
-ignore = ["E501"]
+ignore = ["E501", "UP046", "B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nfm_db"]
@@ -53,6 +57,10 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+addopts = "--cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
+markers = [
+    "e2e: End-to-end tests that exercise the full system",
+]
 
 [build-system]
 requires = ["setuptools>=75.0"]

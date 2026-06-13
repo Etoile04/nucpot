@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.ref_gap_fill import CacheLevel, Confidence, RefGapFillStaging
+from nfm_db.models.ref_gap_fill import CacheLevel, Confidence
 from nfm_db.services.quality_gate import GateDecision, QualityGateService
 
 logger = logging.getLogger(__name__)

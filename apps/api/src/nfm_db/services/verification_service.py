@@ -181,7 +181,8 @@ async def process_verification_results(
     now = datetime.now(timezone.utc)
 
     for item in results:
-        staging_id = UUID(item["staging_id"])
+        raw_id = item["staging_id"]
+        staging_id = raw_id if isinstance(raw_id, UUID) else UUID(raw_id)
         verdict = item["verdict"]
         verified_value = item.get("verified_value")
         verified_uncertainty = item.get("verified_uncertainty")

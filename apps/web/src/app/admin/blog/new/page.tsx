@@ -10,25 +10,54 @@ export default function NewBlogPostPage() {
   const [tags, setTags] = useState("")
   const [summary, setSummary] = useState("")
   const [content, setContent] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSubmitting(true)
+    setError(null)
 
-    // Create frontmatter
-    const frontmatter = `---
-title: ${title}
-date: ${new Date().toISOString().split("T")[0]}
-author: ${author}
-tags: [${tags.split(",").map((t) => t.trim()).join(", ")}]
-summary: ${summary}
----
+    try {
+      const response = await fetch("/api/admin/blog/posts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title,
+          author,
+          tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+          summary,
+          content,
+        }),
+      })
 
-${content}
-`
+      const result = await response.json()
 
-    // In a real implementation, this would upload to the server
-    // For now, just show what would be created
-    alert("文章内容已生成！\n\n在实际实现中，这将上传到服务器。\n\n" + frontmatter.substring(0, 200) + "...")
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "创建文章失败")
+      }
+
+      setSuccess(true)
+
+      // Reset form
+      setTitle("")
+      setAuthor("")
+      setTags("")
+      setSummary("")
+      setContent("")
+
+      // Redirect to posts list after 2 seconds
+      setTimeout(() => {
+        router.push("/admin/blog/posts")
+      }, 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "创建文章失败")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -42,6 +71,36 @@ ${content}
       >
         新建文章
       </h1>
+
+      {error && (
+        <div
+          style={{
+            marginBottom: "1.5rem",
+            padding: "1rem",
+            background: "#fff2f0",
+            border: "1px solid #ffccc7",
+            borderRadius: 4,
+            color: "#ff4d4f",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div
+          style={{
+            marginBottom: "1.5rem",
+            padding: "1rem",
+            background: "#f6ffed",
+            border: "1px solid #b7eb8f",
+            borderRadius: 4,
+            color: "#52c41a",
+          }}
+        >
+          文章创建成功！正在跳转...
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} style={{ maxWidth: 800 }}>
         <div style={{ marginBottom: "1.5rem" }}>
@@ -186,18 +245,19 @@ ${content}
         <div style={{ display: "flex", gap: "1rem" }}>
           <button
             type="submit"
+            disabled={isSubmitting}
             style={{
               padding: "0.625rem 1.25rem",
               fontSize: "1rem",
               fontWeight: 500,
               color: "#fff",
-              background: "#1890ff",
+              background: isSubmitting ? "#bfbfbf" : "#1890ff",
               border: "none",
               borderRadius: 4,
-              cursor: "pointer",
+              cursor: isSubmitting ? "not-allowed" : "pointer",
             }}
           >
-            保存文章
+            {isSubmitting ? "保存中..." : "保存文章"}
           </button>
           <button
             type="button"

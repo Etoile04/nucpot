@@ -13,7 +13,7 @@ from pydantic import BaseModel
 T = TypeVar("T")
 
 
-class ApiResponse(BaseModel, Generic[T]):  # type: ignore[valid-type]  # noqa: UP046
+class ApiResponse(BaseModel, Generic[T]):
     """Standard success/error envelope used by every endpoint."""
 
     success: bool
@@ -21,7 +21,7 @@ class ApiResponse(BaseModel, Generic[T]):  # type: ignore[valid-type]  # noqa: U
     error: str | None = None
 
 
-class PaginatedResponse(BaseModel, Generic[T]):  # type: ignore[valid-type]  # noqa: UP046
+class PaginatedResponse(BaseModel, Generic[T]):
     """Paginated data payload — intended to be wrapped in ``ApiResponse``."""
 
     items: list[T]

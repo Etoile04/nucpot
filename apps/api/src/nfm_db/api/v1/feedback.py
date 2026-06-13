@@ -5,13 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.feedback import (
-    ApiResponse,
     FeedbackCreate,
     FeedbackCreateResult,
     FeedbackListQuery,
     FeedbackResponse,
-    PaginatedResponse,
 )
 from nfm_db.services.feedback import calculate_pages, create_feedback, list_feedback
 

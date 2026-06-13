@@ -4,7 +4,13 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { getAllPosts, getPostBySlug, getAllSlugs } from "@/lib/blog/posts"
 import { formatDate } from "@/lib/blog/format-date"
-import { BlogNavigation } from "@/components/blog"
+import {
+  BlogNavigation,
+  BlogBreadcrumb,
+  BlogTableOfContents,
+  CodeBlock,
+  BlogSidebar,
+} from "@/components/blog"
 import "../blog.css"
 
 interface BlogDetailPageProps {
@@ -67,79 +73,83 @@ export default async function BlogDetailPage({
   const { prev, next } = findAdjacentPosts(slug)
 
   return (
-    <main
-      style={{
-        maxWidth: "var(--max-width)",
-        margin: "0 auto",
-        padding: "3rem 1.5rem",
-      }}
-    >
-      <article>
-        <header style={{ marginBottom: "3rem" }}>
-          <h1
-            style={{
-              fontSize: "2.5rem",
-              fontWeight: 700,
-              lineHeight: 1.2,
-              marginBottom: "1rem",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {post.frontmatter.title}
-          </h1>
+    <>
+      <BlogSidebar />
+      <main className="blog-container">
+        <BlogBreadcrumb />
+        <div className="blog-detail-layout">
+        <article className="blog-article">
+          <header className="blog-article-header">
+            <h1 className="blog-article-title">{post.frontmatter.title}</h1>
 
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "1.5rem",
-              alignItems: "center",
-              color: "var(--color-text-secondary)",
-              fontSize: "0.9375rem",
-              marginBottom: "1rem",
-            }}
-          >
-            <time dateTime={post.frontmatter.date}>
-              {formatDate(post.frontmatter.date)}
-            </time>
-            <span>作者：{post.frontmatter.author}</span>
+            <div className="blog-article-meta">
+              <time dateTime={post.frontmatter.date}>
+                {formatDate(post.frontmatter.date)}
+              </time>
+              <span>作者：{post.frontmatter.author}</span>
+            </div>
+
+            <div className="blog-article-tags">
+              {post.frontmatter.tags.map((tag) => (
+                <span key={tag} className="blog-card-tag">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </header>
+
+          <div className="blog-prose blog-article-content">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                pre({ children, ...props }) {
+                  // Check if this is a code block
+                  const childArray = children as Array<unknown>
+                  if (
+                    childArray.length === 1 &&
+                    typeof childArray[0] === "object" &&
+                    childArray[0] !== null &&
+                    "type" in childArray[0] &&
+                    childArray[0].type === "code"
+                  ) {
+                    const codeElement = childArray[0] as unknown as {
+                      props?: { className?: string; children?: string }
+                    }
+                    const language =
+                      codeElement.props?.className?.replace("language-", "") ||
+                      "text"
+                    return (
+                      <CodeBlock language={language}>
+                        {codeElement.props?.children ?? ""}
+                      </CodeBlock>
+                    )
+                  }
+                  return <pre {...props}>{children}</pre>
+                },
+                code({ className, children, ...props }) {
+                  // Inline code
+                  if (!className) {
+                    return (
+                      <code className="inline-code" {...props}>
+                        {children}
+                      </code>
+                    )
+                  }
+                  // Code block (handled by pre component)
+                  return <code className={className} {...props}>{children}</code>
+                },
+              }}
+            >
+              {post.content}
+            </ReactMarkdown>
           </div>
+        </article>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-            {post.frontmatter.tags.map((tag) => (
-              <span
-                key={tag}
-                style={{
-                  display: "inline-block",
-                  padding: "0.25rem 0.625rem",
-                  fontSize: "0.8125rem",
-                  lineHeight: 1.5,
-                  borderRadius: 4,
-                  background: "var(--color-surface-elevated, #f5f5f5)",
-                  border: "1px solid var(--color-border)",
-                  color: "var(--color-text-secondary)",
-                }}
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        </header>
-
-        <div
-          className="blog-prose"
-          style={{
-            borderTop: "1px solid var(--color-border)",
-            paddingTop: "2rem",
-          }}
-        >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {post.content}
-          </ReactMarkdown>
-        </div>
-      </article>
+        <BlogTableOfContents content={post.content} />
+      </div>
 
       <BlogNavigation prev={prev} next={next} />
-    </main>
+      </main>
+    </>
   )
 }

@@ -13,6 +13,7 @@ Per NFM-54 design Sections 2.2-2.3 and NFM-66:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -150,18 +151,43 @@ async def list_pending_review(
     phase: str | None = Query(default=None, max_length=50),
     property_name: str | None = Query(default=None, max_length=100),
     confidence: Confidence | None = Query(default=None),
+    status: str | None = Query(
+        default=None,
+        description="Filter by status: pending, approved, rejected, promoted, all",
+    ),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Paginated list of staging records pending review.
 
-    Filters: element_system, phase, property_name, confidence.
+    Filters: element_system, phase, property_name, confidence, status.
+    When status is None or 'pending': returns PENDING records only (default).
+    When status is 'approved', 'rejected', 'promoted': returns records with that status.
+    When status is 'all': returns all records regardless of status.
     Standard {success, data} envelope with pagination metadata.
     """
-    base_filter = [
-        RefGapFillStaging.status == StagingStatus.PENDING,
-    ]
+    # Validate status parameter if provided
+    if status is not None:
+        valid_statuses = {"pending", "approved", "rejected", "promoted", "all"}
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}",
+            )
+
+    # Build base filter
+    base_filter = []
+
+    # Apply status filter
+    if status is None or status == "pending":
+        # Default behavior: only pending records
+        base_filter.append(RefGapFillStaging.status == StagingStatus.PENDING)
+    elif status != "all":
+        # Filter by specific status (status is already lowercase)
+        status_enum = StagingStatus(status)
+        base_filter.append(RefGapFillStaging.status == status_enum)
+    # When status == "all", don't add any status filter
 
     if element_system is not None:
         base_filter.append(

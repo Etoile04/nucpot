@@ -33,6 +33,11 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402, F401
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.models.user import (  # noqa: E402, F401
+    BlogRole,
+    Permission,
+    User,
+)
 
 __all__ = [
     "Base",
@@ -45,4 +50,7 @@ __all__ = [
     "Confidence",
     "StagingStatus",
     "CacheLevel",
+    "User",
+    "BlogRole",
+    "Permission",
 ]
