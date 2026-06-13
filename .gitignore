@@ -26,3 +26,8 @@ docker/postgres-data/
 .worktrees/
 *.tsbuildinfo
 test-results/
+
+# Staging deploy pipeline (NFM-111)
+# docker/.env.staging holds real secrets — created from docker/.env.staging.example.
+docker/.env.staging
+.staging-state/
