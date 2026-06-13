@@ -111,7 +111,7 @@ export function getAllPosts(): readonly BlogPostMeta[] {
     .filter((post) => {
       // Filter to show only published posts
       // Check if status field exists in frontmatter and is 'published'
-      const status = (post.frontmatter as any).status
+      const status = post.frontmatter.status
       return !status || status === 'published'
     })
     .map(toMeta)
