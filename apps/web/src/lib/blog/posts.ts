@@ -102,11 +102,19 @@ function toMeta(post: BlogPost): BlogPostMeta {
     summary: post.frontmatter.summary,
     tags: post.frontmatter.tags,
     author: post.frontmatter.author,
+    status: post.frontmatter.status,
   }
 }
 
 export function getAllPosts(): readonly BlogPostMeta[] {
-  return getAllPostsInternal(getContentDir()).map(toMeta)
+  return getAllPostsInternal(getContentDir())
+    .filter((post) => {
+      // Filter to show only published posts
+      // Check if status field exists in frontmatter and is 'published'
+      const status = (post.frontmatter as any).status
+      return !status || status === 'published'
+    })
+    .map(toMeta)
 }
 
 export function getPostBySlug(slug: string): BlogPost | null {

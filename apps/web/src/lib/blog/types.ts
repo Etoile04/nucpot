@@ -4,6 +4,7 @@ export interface BlogPostFrontmatter {
   readonly summary: string
   readonly tags: readonly string[]
   readonly author: string
+  readonly status?: 'draft' | 'under_review' | 'approved' | 'published' | 'rejected'
 }
 
 export interface BlogPost {
@@ -19,4 +20,5 @@ export interface BlogPostMeta {
   readonly summary: string
   readonly tags: readonly string[]
   readonly author: string
+  readonly status?: 'draft' | 'under_review' | 'approved' | 'published' | 'rejected'
 }
