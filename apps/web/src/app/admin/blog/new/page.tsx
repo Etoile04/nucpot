@@ -1,10 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
+import ReactMarkdown from "react-markdown"
+import ImageUpload from "@/components/admin/ImageUpload"
 
 export default function NewBlogPostPage() {
   const router = useRouter()
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [title, setTitle] = useState("")
   const [author, setAuthor] = useState("")
   const [tags, setTags] = useState("")
@@ -13,6 +16,27 @@ export default function NewBlogPostPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [isPreviewMode, setIsPreviewMode] = useState(false)
+
+  const handleImageInsert = (markdown: string) => {
+    setContent((prev) => {
+      const textarea = textareaRef.current
+      if (!textarea) return prev
+
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const newText = prev.substring(0, start) + "\n" + markdown + "\n" + prev.substring(end)
+
+      // Restore focus after state update
+      setTimeout(() => {
+        textarea.focus()
+        const newPosition = start + markdown.length + 2
+        textarea.setSelectionRange(newPosition, newPosition)
+      }, 0)
+
+      return newText
+    })
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,15 +86,40 @@ export default function NewBlogPostPage() {
 
   return (
     <div style={{ padding: "2rem" }}>
-      <h1
+      <div
         style={{
-          fontSize: "1.75rem",
-          fontWeight: 600,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
           marginBottom: "1.5rem",
         }}
       >
-        新建文章
-      </h1>
+        <h1
+          style={{
+            fontSize: "1.75rem",
+            fontWeight: 600,
+            margin: 0,
+          }}
+        >
+          新建文章
+        </h1>
+        <button
+          type="button"
+          onClick={() => setIsPreviewMode(!isPreviewMode)}
+          style={{
+            padding: "0.5rem 1rem",
+            fontSize: "0.875rem",
+            fontWeight: 500,
+            border: "1px solid #d9d9d9",
+            borderRadius: 4,
+            background: isPreviewMode ? "#1890ff" : "#fff",
+            color: isPreviewMode ? "#fff" : "#1890ff",
+            cursor: "pointer",
+          }}
+        >
+          {isPreviewMode ? "编辑模式" : "预览模式"}
+        </button>
+      </div>
 
       {error && (
         <div
@@ -223,7 +272,9 @@ export default function NewBlogPostPage() {
           >
             内容（Markdown）*
           </label>
+          <ImageUpload onImageInsert={handleImageInsert} />
           <textarea
+            ref={textareaRef}
             id="content"
             value={content}
             onChange={(e) => setContent(e.target.value)}
@@ -231,6 +282,7 @@ export default function NewBlogPostPage() {
             rows={15}
             style={{
               width: "100%",
+              marginTop: "1rem",
               padding: "0.5rem",
               border: "1px solid #d9d9d9",
               borderRadius: 4,
@@ -277,6 +329,77 @@ export default function NewBlogPostPage() {
           </button>
         </div>
       </form>
+
+      {/* Preview Mode */}
+      {isPreviewMode && (
+        <div
+          style={{
+            maxWidth: 800,
+            margin: "0 auto",
+            padding: "2rem",
+            background: "#fff",
+            border: "1px solid #d9d9d9",
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ marginBottom: "2rem" }}>
+            <h2
+              style={{
+                fontSize: "2rem",
+                fontWeight: 700,
+                marginBottom: "1rem",
+                color: "#000",
+              }}
+            >
+              {title || "文章标题"}
+            </h2>
+            <div
+              style={{
+                fontSize: "0.875rem",
+                color: "#666",
+                display: "flex",
+                gap: "1rem",
+                marginBottom: "1rem",
+              }}
+            >
+              {author && <span>作者：{author}</span>}
+              {tags && (
+                <span>
+                  标签：{tags
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                    .join(", ")}
+                </span>
+              )}
+            </div>
+            {summary && (
+              <p
+                style={{
+                  fontSize: "1rem",
+                  color: "#666",
+                  lineHeight: 1.6,
+                  padding: "1rem",
+                  background: "#f5f5f5",
+                  borderRadius: 4,
+                }}
+              >
+                {summary}
+              </p>
+            )}
+          </div>
+
+          <div
+            className="blog-prose"
+            style={{
+              fontSize: "1rem",
+              lineHeight: 1.75,
+            }}
+          >
+            <ReactMarkdown>{content || "*文章内容将显示在这里*"}</ReactMarkdown>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

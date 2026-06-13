@@ -3,11 +3,15 @@
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, String, func, CheckConstraint
+from sqlalchemy import DateTime, String, func, CheckConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 class BlogRole(str, enum.Enum):
@@ -41,6 +45,7 @@ class User(TimestampMixin, Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
     )
@@ -48,7 +53,8 @@ class User(TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    blog_role: Mapped[BlogRole | None] = mapped_column(
+    _blog_role: Mapped[str | None] = mapped_column(
+        "blog_role",
         String(20),
         nullable=True,
         default=None,
@@ -58,6 +64,18 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    @property
+    def blog_role(self) -> BlogRole | None:
+        """Get the blog role as an enum."""
+        if self._blog_role is None:
+            return None
+        return BlogRole(self._blog_role)
+
+    @blog_role.setter
+    def blog_role(self, value: BlogRole | None) -> None:
+        """Set the blog role from an enum."""
+        self._blog_role = value.value if value else None
 
     @property
     def permissions(self) -> set[Permission]:

@@ -492,15 +492,15 @@ From NFM-85 (CTO evaluation), the verification system has:
 - ✅ Implementation plan (3-phase: development, deployment, steady state)
 - ✅ Success metrics and risk mitigation
 
-**Follow-up Issues** (CREATED 2026-06-13):
-1. **NFM-97** (NFM-87.1): Build 5 domain skills → `78e07624` → Skills Architect (07090cce) — **todo**
-2. **NFM-98** (NFM-87.2): Build 3 verification workflows → `74c8192a` → Workflow Designer (6fbeddcd) — **todo**
-3. **NFM-99** (NFM-87.3): Integrate with NFM-85 verification API → `61eb2fe3` → CTO (3a0e0b92) — **todo**
-4. **NFM-83**: Final implementation unblocked (proceed once NFM-97/98/99 complete)
+**Follow-up Issues** (ALL COMPLETE 2026-06-13):
+1. **NFM-97** (NFM-87.1): Build 5 domain skills → `78e07624` → Skills Architect (07090cce) — **✅ done**
+2. **NFM-98** (NFM-87.2): Build 3 verification workflows → `74c8192a` → Workflow Designer (6fbeddcd) — **✅ done** (39 tests)
+3. **NFM-99** (NFM-87.3): Integrate with NFM-85 verification API → `61eb2fe3` → CTO (3a0e0b92) — **✅ done**
+4. **NFM-83**: ✅ Unblocked — proceed with final implementation
 
-**Dependency Chain**: NFM-97 (skills) → NFM-98 (workflows) → NFM-99 (integration) → NFM-83 (final)
+**Dependency Chain**: NFM-97 (skills) ✅ → NFM-98 (workflows) ✅ → NFM-99 (integration) ✅ → NFM-83 (final)
 
 ---
 
-*Document Status: HANDOFF COMPLETE — Child issues created, board notified*
-*Next Action: Skills Architect begins NFM-97 (5 domain skills)*
+*Document Status: CLOSED ✅ — All child issues completed, NFM-83 unblocked*
+*NFM-87 Final Disposition: **done***

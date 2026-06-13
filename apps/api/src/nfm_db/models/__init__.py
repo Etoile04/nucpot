@@ -38,6 +38,10 @@ from nfm_db.models.user import (  # noqa: E402, F401
     Permission,
     User,
 )
+from nfm_db.models.blog_post import (  # noqa: E402, F401
+    BlogPostMetadata,
+    PostStatus,
+)
 
 __all__ = [
     "Base",
@@ -53,4 +57,6 @@ __all__ = [
     "User",
     "BlogRole",
     "Permission",
+    "BlogPostMetadata",
+    "PostStatus",
 ]
