@@ -99,9 +99,7 @@ jobs:
         run: uv sync --dev --frozen
 
       - name: Lint (ruff)
-        run: |
-          uv pip install ruff
-          ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Type-check (mypy)
         run: uv run mypy src

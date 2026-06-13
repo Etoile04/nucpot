@@ -265,6 +265,7 @@ export default function BlogPostsAdminPage() {
             border: "1px solid #d9d9d9",
             borderRadius: 4,
           }}
+        )}
         >
           <button
             onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
