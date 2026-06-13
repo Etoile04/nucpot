@@ -14,21 +14,24 @@ deploy/rollback commands, the health gate, smoke tests, and troubleshooting.
 ## 1. Architecture
 
 The staging stack is defined in [`docker-compose.staging.yml`](../../docker-compose.staging.yml)
-and runs three containers on a single host (the ThinkStation staging box). All
+and runs four containers on a single host (the ThinkStation staging box). All
 container names are prefixed `nucpot-staging-*` (the GitHub repo is
 `Etoile04/nucpot`), so `docker ps --filter name=nucpot-staging` shows the whole
 stack.
 
-| Service | Container              | Built from                       | Host → container | Purpose                              |
-|---------|------------------------|----------------------------------|------------------|--------------------------------------|
-| `db`    | `nucpot-staging-db`    | `postgres:16`                    | `5432` → `5432`  | Bundled staging database (`nfm_db`)  |
-| `api`   | `nucpot-staging-api`   | `docker/staging-api.Dockerfile`  | `8001` → `8000`  | NFM-DB FastAPI (`/api/v1/health`)    |
-| `web`   | `nucpot-staging-web`   | `docker/web.Dockerfile`          | `3000` → `3000`  | NFM-DB Next.js front-end             |
+| Service       | Container                    | Built from                       | Host → container            | Purpose                                    |
+|---------------|------------------------------|----------------------------------|-----------------------------|--------------------------------------------|
+| `db`          | `nucpot-staging-db`          | `postgres:16`                    | `5432` → `5432`             | Bundled staging database (`nfm_db`)        |
+| `api`         | `nucpot-staging-api`         | `docker/staging-api.Dockerfile`  | `8001` → `8000`             | NFM-DB FastAPI (`/api/v1/health`)          |
+| `web`         | `nucpot-staging-web`         | `docker/web.Dockerfile`          | `3000` → `3000`             | NFM-DB Next.js front-end                   |
+| `cloudflared` | `nucpot-staging-cloudflared` | `cloudflare/cloudflared:latest`  | `36500` → `36500` (metrics) | Cloudflare Tunnel connector (public ingress) |
 
 The `api` image runs `alembic upgrade head` before serving, so the staging
 schema is migrated automatically on every start.
 
-Public ingress (provisioned once via Cloudflare Tunnel — NFM-112):
+Public ingress is served by the `cloudflared` service — a Cloudflare Tunnel
+connector that runs inside the stack (NFM-112 / NFM-120), so bringing the stack
+up also brings up the public hostnames. The remotely-managed tunnel routes:
 
 - `staging.nucpot.dpdns.org` → `http://web:3000`
 - `staging-api.nucpot.dpdns.org` → `http://api:8000`
@@ -52,8 +55,10 @@ On the staging host:
 
 - Docker Engine + `docker compose` v2
 - `git`, `curl`, `python3`
-- Cloudflared (for the public tunnel)
 - A checkout of this repo at `/opt/nucpot-staging/repo`
+
+> The Cloudflare Tunnel connector runs as the `cloudflared` container in the
+> stack (§3.2), so no host-side `cloudflared` install is required.
 
 Locally (to test the pipeline scripts before pushing): Docker, `python3`, and
 optionally `shellcheck` to lint [`scripts/staging_deploy.sh`](../../scripts/staging_deploy.sh).
@@ -84,18 +89,35 @@ Then set, at minimum:
 
 - `STAGING_API_SECRET_KEY`
 - `STAGING_POSTGRES_PASSWORD`
-- `STAGING_DATABASE_URL` — replace the password placeholder with the value above
+- `STAGING_DATABASE_URL` — interpolates `${STAGING_POSTGRES_PASSWORD}`
+  automatically; no separate password edit is needed
+- `STAGING_CLOUDFLARE_TUNNEL_TOKEN` — Cloudflare Zero Trust tunnel token (see §3.2)
 - `STAGING_CORS_ORIGINS=["https://staging.nucpot.dpdns.org"]`
 
 ### 3.2 Cloudflare staging tunnel
 
-Create a remotely-managed tunnel in Cloudflare Zero Trust; set
-`STAGING_CLOUDFLARE_TUNNEL_TOKEN`. Add dashboard ingress:
+Create a remotely-managed tunnel in Cloudflare Zero Trust; copy its install
+token into `STAGING_CLOUDFLARE_TUNNEL_TOKEN` in `docker/.env.staging`. The
+connector runs as the **`cloudflared`** service in
+[`docker-compose.staging.yml`](../../docker-compose.staging.yml) (on
+`nucpot-staging-net`, so the ingress hostnames below resolve to the `web` and
+`api` services), so `staging_deploy.sh deploy` brings up public ingress as part
+of the stack.
+
+Add the dashboard ingress:
 
 - `staging.nucpot.dpdns.org` → `http://web:3000`
 - `staging-api.nucpot.dpdns.org` → `http://api:8000`
 
 Create the matching DNS records.
+
+Monitor tunnel readiness from the host (the `cloudflared` image is distroless,
+so there is no in-container healthcheck):
+
+```bash
+curl -fsS http://127.0.0.1:36500/ready   # 200 once an edge connection is up
+docker ps --filter name=nucpot-staging-cloudflared
+```
 
 ### 3.3 GitHub secrets + environment
 
@@ -209,9 +231,20 @@ environment from §3.3.
 
 ## 8. Rollback drill
 
-After the first deploy (NFM-112), record a rollback drill:
+After the staging host is set up (NFM-112), record a rollback drill.
+
+> **Two deploys required.** Auto-rollback and the `rollback` subcommand both
+> target the previously-tagged `:prev` image. `staging_deploy.sh deploy` only
+> snapshots `:prev` from an *existing* `:latest`, so the **first** deploy has
+> nothing to roll back to (on a failed first deploy it leaves the stack up for
+> inspection, by design). To exercise the drill you therefore need **deploy #1**
+> (establishes `:prev`) → **deploy #2** (bump `STAGING_IMAGE_TAG`, or any
+> re-deploy) → then `rollback`:
 
 ```bash
+./scripts/staging_deploy.sh deploy            # deploy #1 — builds :latest (:prev does not exist yet)
+# ...change something, or bump STAGING_IMAGE_TAG...
+./scripts/staging_deploy.sh deploy            # deploy #2 — snapshots :prev, rebuilds :latest
 ./scripts/staging_deploy.sh status            # confirm healthy
 ./scripts/staging_deploy.sh rollback          # revert to :prev
 curl -fsS http://127.0.0.1:8001/api/v1/health # confirm still ok
@@ -237,6 +270,8 @@ template.
 | `STAGING_POSTGRES_PASSWORD`     | — (required)                                           | Bundled PG16 password                          |
 | `STAGING_DATABASE_URL`          | `postgresql+asyncpg://…@nucpot-staging-db:5432/nfm_db` | Maps to `NFM_DATABASE_URL`                     |
 | `STAGING_CORS_ORIGINS`          | staging origin                                         | JSON array; maps to `NFM_CORS_ORIGINS`         |
+| `STAGING_CLOUDFLARE_TUNNEL_TOKEN` | — (required)                                         | Drives the `cloudflared` ingress service       |
+| `STAGING_CLOUDFLARED_METRICS_HOST_PORT` | `36500`                                         | Localhost-only metrics port (tunnel readiness) |
 | `STAGING_HEALTH_TIMEOUT`        | `120`                                                  | Seconds the health gate will wait              |
 | `STAGING_ROLLBACK_TAG`          | `prev`                                                 | Tag used as the auto-rollback target           |
 

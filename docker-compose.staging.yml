@@ -94,6 +94,35 @@ services:
       start_period: 30s
     networks: [staging]
 
+  # ---- Cloudflare Tunnel connector (public ingress) --------------------------
+  # Runs the remotely-managed staging tunnel so the whole stack — including
+  # public ingress — is reproducible from the repo (NFM-120, gap 1, option a).
+  # The tunnel's Cloudflare dashboard ingress routes:
+  #   staging.nucpot.dpdns.org     -> http://web:3000
+  #   staging-api.nucpot.dpdns.org -> http://api:8000
+  # Both hostnames resolve because this container shares nucpot-staging-net
+  # with the `web` and `api` services. The token drives a remotely-managed
+  # tunnel, so NO local config file is needed.
+  #
+  # NOTE on healthchecks: cloudflare/cloudflared is a distroless image (only the
+  # `cloudflared` binary — no shell, curl, or wget), so an in-container
+  # HEALTHCHECK is not viable. Tunnel readiness is observed from the host via
+  # the localhost-only metrics port: `curl -fsS http://127.0.0.1:36500/ready`
+  # returns 200 once an edge connection is established. `restart: unless-stopped`
+  # handles process restarts.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nucpot-staging-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:36500 run
+    environment:
+      TUNNEL_TOKEN: ${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?Set STAGING_CLOUDFLARE_TUNNEL_TOKEN in docker/.env.staging}
+    ports:
+      # Localhost-only metrics for host-side readiness monitoring (see NOTE).
+      - "127.0.0.1:${STAGING_CLOUDFLARED_METRICS_HOST_PORT:-36500}:36500"
+    depends_on: [api, web]
+    networks: [staging]
+
 networks:
   staging:
     name: nucpot-staging-net
