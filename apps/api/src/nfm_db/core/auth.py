@@ -1,6 +1,5 @@
 """Authentication and authorization middleware for RBAC."""
 
-from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Security, status

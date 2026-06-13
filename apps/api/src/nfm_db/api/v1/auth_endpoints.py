@@ -11,13 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import (
     get_current_active_user,
-    get_current_user,
-    require_admin,
+)
+from nfm_db.api.v1.auth import (
     require_admin as require_admin_dep,
 )
 from nfm_db.config import get_settings
 from nfm_db.database import get_db
-from nfm_db.models.user import BlogRole, User
+from nfm_db.models.user import User
 from nfm_db.schemas.auth import (
     ApiResponse,
     BlogRoleResponse,

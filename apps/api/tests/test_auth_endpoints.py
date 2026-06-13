@@ -1,11 +1,10 @@
 """Integration tests for authentication endpoints."""
 
-import pytest
 from uuid import uuid4
-from httpx import AsyncClient
-from fastapi import status
 
-from nfm_db.models.user import BlogRole, User
+import pytest
+from fastapi import status
+from httpx import AsyncClient
 
 
 class TestRegisterEndpoint:
@@ -142,10 +141,15 @@ class TestGetCurrentUser:
 
     @pytest.mark.asyncio
     async def test_get_current_user_without_token_fails(self, async_client: AsyncClient) -> None:
-        """Test getting current user without token fails."""
+        """Test getting current user without token fails.
+
+        FastAPI's HTTPBearer raises HTTP 401 (with WWW-Authenticate) for a
+        missing/invalid bearer scheme; 401 is the correct status for an
+        unauthenticated request to a protected endpoint.
+        """
         response = await async_client.get("/api/v1/auth/me")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestRoleAssignment:
@@ -214,13 +218,14 @@ class TestRoleAssignment:
         )
         admin_token = login_response.json()["access_token"]
 
-        # Get regular user ID
-        me_response = await async_client.get(
+        # Confirm the admin token is valid before the role-assignment attempt
+        admin_me_response = await async_client.get(
             "/api/v1/auth/me",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        # This won't work since we need the other user's ID
-        # For now, we'll test with a random UUID
+        assert admin_me_response.status_code == status.HTTP_200_OK
+        # We still need the *other* (target) user's ID, which is unknown here,
+        # so the assignment below is expected to 404 on a random UUID.
 
         # Assign role (this will fail with 404 since we don't have the real user ID)
         response = await async_client.put(

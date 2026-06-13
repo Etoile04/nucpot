@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 
 from nfm_db.models.ref_gap_fill import CacheLevel, Confidence, StagingStatus
 
-
 # ---------------------------------------------------------------------------
 # Input schemas
 # ---------------------------------------------------------------------------

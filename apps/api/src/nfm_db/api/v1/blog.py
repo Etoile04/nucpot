@@ -1,13 +1,13 @@
 """Blog admin API endpoints: CRUD and review workflow."""
 
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.schemas.blog_post import (
     BlogPostCreate,
-    BlogPostListQuery,
     BlogPostResponse,
     WorkflowActionRequest,
     WorkflowActionResponse,
@@ -34,7 +34,7 @@ async def create_post(
 ) -> BlogPostResponse:
     """Create a new blog post (editor/admin only)."""
     # TODO: Verify user has create_post permission
-    metadata, slug = await create_blog_post(
+    metadata, _ = await create_blog_post(
         session,
         author_id=author_id,
         title=payload.title,

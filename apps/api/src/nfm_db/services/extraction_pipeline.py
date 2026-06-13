@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -65,7 +65,7 @@ class ExtractionJob:
     staged_count: int = 0
     rejected_count: int = 0
     error_message: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     completed_at: datetime | None = None
     element_systems: list[str] | None = None
@@ -223,7 +223,7 @@ async def trigger_extraction(
 
     try:
         # Stage 1: Extraction
-        _update_job(job, status=JobStatus.RUNNING, started_at=datetime.now(timezone.utc))
+        _update_job(job, status=JobStatus.RUNNING, started_at=datetime.now(UTC))
         _update_job(job, status=JobStatus.EXTRACTING)
 
         raw_properties = await ontofuel_extract(
@@ -244,7 +244,7 @@ async def trigger_extraction(
             _update_job(
                 job,
                 status=JobStatus.COMPLETED,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
             return job
 
@@ -267,10 +267,10 @@ async def trigger_extraction(
                 await gate.stage_record(matching_raw, gate_result)
                 staged += 1
 
-        for gate_result in bulk_result.rejected:
+        for _ in bulk_result.rejected:
             rejected += 1
 
-        for gate_result in bulk_result.duplicates:
+        for _ in bulk_result.duplicates:
             rejected += 1
 
         _update_job(job, staged_count=staged, rejected_count=rejected)
@@ -296,7 +296,7 @@ async def trigger_extraction(
         _update_job(
             job,
             status=final_status,
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(UTC),
         )
 
     except Exception as exc:
@@ -305,7 +305,7 @@ async def trigger_extraction(
             job,
             status=JobStatus.FAILED,
             error_message=str(exc),
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(UTC),
         )
 
     await session.commit()

@@ -9,7 +9,7 @@ Exposes the three Nuclear Domain Expert workflows:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -17,22 +17,18 @@ from pydantic import BaseModel, Field
 
 from nfm_db.services.domain_expert import (
     AdjudicationRequest as DomainAdjudicationRequest,
-    AdjudicationResult as DomainAdjudicationResult,
+)
+from nfm_db.services.domain_expert import (
     AuditConfig,
-    AuditReport as DomainAuditReport,
-    ReferenceCandidate as DomainReferenceCandidate,
-    ReferenceValidationResult as DomainValidationResult,
     adjudicate_f_grade,
     run_quarterly_audit,
     validate_reference,
 )
+from nfm_db.services.domain_expert import (
+    ReferenceCandidate as DomainReferenceCandidate,
+)
 from nfm_db.services.domain_expert.reference_validation import (
     SourceCredibility,
-    LiteratureMatch,
-)
-from nfm_db.services.domain_expert.f_grade_adjudication import (
-    FixSuggestion,
-    FailureCategory,
 )
 
 logger = logging.getLogger(__name__)
@@ -252,7 +248,7 @@ async def check_reference_gap(
         logger.exception("Reference validation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Reference validation failed: {str(e)}",
+            detail=f"Reference validation failed: {e!s}",
         ) from e
 
 
@@ -314,7 +310,7 @@ async def adjudicate_f_grade_endpoint(
         logger.exception("F-grade adjudication failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"F-grade adjudication failed: {str(e)}",
+            detail=f"F-grade adjudication failed: {e!s}",
         ) from e
 
 
@@ -381,7 +377,7 @@ async def run_quarterly_audit_endpoint(
         logger.exception("Quarterly audit failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Quarterly audit failed: {str(e)}",
+            detail=f"Quarterly audit failed: {e!s}",
         ) from e
 
 
@@ -401,5 +397,5 @@ async def verification_health() -> dict[str, str]:
         "status": "healthy",
         "module": "verification",
         "version": "1.0.0",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }

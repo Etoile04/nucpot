@@ -6,11 +6,6 @@ Provides the three verification workflows:
 - quarterly_audit: Run quarterly quality audits on P0 systems
 """
 
-from nfm_db.services.domain_expert.reference_validation import (
-    ReferenceCandidate,
-    ReferenceValidationResult,
-    validate_reference,
-)
 from nfm_db.services.domain_expert.f_grade_adjudication import (
     AdjudicationRequest,
     AdjudicationResult,
@@ -21,18 +16,20 @@ from nfm_db.services.domain_expert.quarterly_audit import (
     AuditReport,
     run_quarterly_audit,
 )
+from nfm_db.services.domain_expert.reference_validation import (
+    ReferenceCandidate,
+    ReferenceValidationResult,
+    validate_reference,
+)
 
 __all__ = [
-    # Reference validation
-    "ReferenceCandidate",
-    "ReferenceValidationResult",
-    "validate_reference",
-    # F-grade adjudication
     "AdjudicationRequest",
     "AdjudicationResult",
-    "adjudicate_f_grade",
-    # Quarterly audit
     "AuditConfig",
     "AuditReport",
+    "ReferenceCandidate",
+    "ReferenceValidationResult",
+    "adjudicate_f_grade",
     "run_quarterly_audit",
+    "validate_reference",
 ]

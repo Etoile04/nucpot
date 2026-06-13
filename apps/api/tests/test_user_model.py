@@ -1,6 +1,5 @@
 """Unit tests for User model permissions."""
 
-import pytest
 from uuid import uuid4
 
 from nfm_db.models.user import BlogRole, Permission, User

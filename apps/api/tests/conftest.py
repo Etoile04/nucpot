@@ -1,14 +1,14 @@
 """Shared test fixtures for API integration tests."""
 
-import pytest
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from unittest.mock import AsyncMock
 
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from nfm_db.database import get_db
 from nfm_db.main import app
 from nfm_db.models import Base, BlogRole, User
 from nfm_db.services.auth_service import create_access_token
-from nfm_db.database import get_db
 
 
 @pytest.fixture

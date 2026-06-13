@@ -13,7 +13,6 @@ Conventions:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,7 +30,6 @@ from nfm_db.services.extraction_pipeline import (
     ontofuel_extract,
     trigger_extraction,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -472,14 +470,16 @@ class TestTriggerExtraction:
                 statuses_seen.append(kwargs["status"])
             _update_job(job, **kwargs)
 
-        with patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate):
-            with patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner):
-                with patch("nfm_db.services.extraction_pipeline._update_job", side_effect=capture_and_apply):
-                    job = await trigger_extraction(
-                        session=db_session,
-                        source_reference="doi:10.1234/test",
-                        source_type="doi",
-                    )
+        with (
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.extraction_pipeline._update_job", side_effect=capture_and_apply),
+        ):
+            job = await trigger_extraction(
+                session=db_session,
+                source_reference="doi:10.1234/test",
+                source_type="doi",
+            )
 
         # Verify final state
         assert job.status == JobStatus.COMPLETED
@@ -572,20 +572,18 @@ class TestTriggerExtraction:
         with patch(
             "nfm_db.services.extraction_pipeline.QualityGateService",
             return_value=mock_gate,
+        ), patch(
+            "nfm_db.services.extraction_pipeline.GapScanService",
+            return_value=mock_scanner,
+        ), patch(
+            "nfm_db.services.extraction_pipeline._find_matching",
+            side_effect=find_match_side_effect,
         ):
-            with patch(
-                "nfm_db.services.extraction_pipeline.GapScanService",
-                return_value=mock_scanner,
-            ):
-                with patch(
-                    "nfm_db.services.extraction_pipeline._find_matching",
-                    side_effect=find_match_side_effect,
-                ):
-                    job = await trigger_extraction(
-                        session=db_session,
-                        source_reference="partial_source",
-                        source_type="doi",
-                    )
+            job = await trigger_extraction(
+                session=db_session,
+                source_reference="partial_source",
+                source_type="doi",
+            )
 
         assert job.status == JobStatus.PARTIAL
         assert job.staged_count == 1
@@ -609,16 +607,15 @@ class TestTriggerExtraction:
         with patch(
             "nfm_db.services.extraction_pipeline.QualityGateService",
             return_value=mock_gate,
+        ), patch(
+            "nfm_db.services.extraction_pipeline.GapScanService",
+            return_value=mock_scanner,
         ):
-            with patch(
-                "nfm_db.services.extraction_pipeline.GapScanService",
-                return_value=mock_scanner,
-            ):
-                job = await trigger_extraction(
-                    session=db_session,
-                    source_reference="trackable_source",
-                    source_type="doi",
-                )
+            job = await trigger_extraction(
+                session=db_session,
+                source_reference="trackable_source",
+                source_type="doi",
+            )
 
         # Job should be retrievable from the store
         retrieved = get_job(job.job_id)
@@ -666,20 +663,18 @@ class TestTriggerExtraction:
         with patch(
             "nfm_db.services.extraction_pipeline.QualityGateService",
             return_value=mock_gate,
+        ), patch(
+            "nfm_db.services.extraction_pipeline.GapScanService",
+            return_value=mock_scanner,
+        ), patch(
+            "nfm_db.services.extraction_pipeline._find_matching",
+            side_effect=find_match_side_effect,
         ):
-            with patch(
-                "nfm_db.services.extraction_pipeline.GapScanService",
-                return_value=mock_scanner,
-            ):
-                with patch(
-                    "nfm_db.services.extraction_pipeline._find_matching",
-                    side_effect=find_match_side_effect,
-                ):
-                    job = await trigger_extraction(
-                        session=db_session,
-                        source_reference="all_accepted_source",
-                        source_type="doi",
-                    )
+            job = await trigger_extraction(
+                session=db_session,
+                source_reference="all_accepted_source",
+                source_type="doi",
+            )
 
         assert job.status == JobStatus.COMPLETED
         assert job.rejected_count == 0

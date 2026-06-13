@@ -1,5 +1,6 @@
 """Authorization dependencies for role-based access control."""
 
+import uuid
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -28,14 +29,22 @@ async def get_current_user(
             detail="Could not validate credentials",
         )
 
-    user_id: str = payload.get("sub")
+    user_id: str | None = payload.get("sub")
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
         )
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        ) from None
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -99,11 +108,11 @@ require_editor = require_blog_role(BlogRole.ADMIN, BlogRole.EDITOR)
 require_reviewer = require_blog_role(BlogRole.ADMIN, BlogRole.REVIEWER)
 
 __all__ = [
-    "get_current_user",
     "get_current_active_user",
-    "require_blog_role",
-    "require_permission",
+    "get_current_user",
     "require_admin",
+    "require_blog_role",
     "require_editor",
+    "require_permission",
     "require_reviewer",
 ]

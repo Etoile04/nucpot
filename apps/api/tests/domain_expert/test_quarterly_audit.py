@@ -7,17 +7,17 @@ Tests cover:
 - Report generation
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
 from nfm_db.services.domain_expert.quarterly_audit import (
+    P0_CORE_PROPERTIES,
+    P0_SYSTEMS,
     AuditConfig,
     AuditReport,
     CheckType,
     FindingSeverity,
-    P0_CORE_PROPERTIES,
-    P0_SYSTEMS,
     run_quarterly_audit,
 )
 
@@ -30,8 +30,8 @@ class TestQuarterlyAuditWorkflow:
         """Audit with healthy data — no critical findings."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
         )
 
         # Helper to create a complete set of properties for a system
@@ -94,8 +94,8 @@ class TestQuarterlyAuditWorkflow:
         """Detect low uncertainty coverage on P0 systems."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
             min_uncertainty_coverage=0.90,
         )
 
@@ -122,13 +122,13 @@ class TestQuarterlyAuditWorkflow:
         """Detect references not verified within max_days threshold."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
             max_days_since_verification=90,
         )
 
         # Verification from > 90 days ago
-        stale_date = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
+        stale_date = datetime(2026, 1, 1, tzinfo=UTC).isoformat()
         refs_by_system = {
             "Zr": [
                 {
@@ -152,8 +152,8 @@ class TestQuarterlyAuditWorkflow:
         """Detect conflicting values from multiple sources."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
         )
 
         # Two sources with >20% deviation from mean
@@ -177,8 +177,8 @@ class TestQuarterlyAuditWorkflow:
         """Missing P0 core properties triggers critical findings."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
             core_properties=P0_CORE_PROPERTIES,
         )
 
@@ -208,8 +208,8 @@ class TestSeverityClassification:
         """Coverage < 70% triggers CRITICAL severity."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
             min_uncertainty_coverage=0.90,
         )
 
@@ -233,8 +233,8 @@ class TestSeverityClassification:
         """Coverage 70-90% triggers HIGH severity."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
             min_uncertainty_coverage=0.90,
         )
 
@@ -268,8 +268,8 @@ class TestReportGeneration:
         """Generate human-readable summary from findings."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
         )
 
         refs_by_system = {}  # Empty data will trigger findings
@@ -284,8 +284,8 @@ class TestReportGeneration:
         """Compute overall health status from findings."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
         )
 
         refs_by_system = {}  # Empty data — likely critical findings
@@ -300,8 +300,8 @@ class TestReportGeneration:
         """P0 uncertainty coverage metrics are computed."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
             p0_systems=P0_SYSTEMS,
         )
 
@@ -330,8 +330,8 @@ class TestResultStructure:
         """Audit result contains all required fields."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
         )
 
         result = run_quarterly_audit(config)
@@ -352,8 +352,8 @@ class TestFindingStructure:
         """Individual finding contains all required fields."""
         config = AuditConfig(
             quarter="2026-Q2",
-            start_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            end_date=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 1, tzinfo=UTC),
+            end_date=datetime(2026, 6, 30, tzinfo=UTC),
         )
 
         result = run_quarterly_audit(config)

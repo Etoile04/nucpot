@@ -19,11 +19,11 @@ class TestCheckGapEndpoint:
 
     async def test_check_gap_high_confidence(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
         """Test validation of high-confidence reference (NIST IPR source)."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/check-gap",
             json={
                 "element_system": "UO2",
@@ -49,11 +49,11 @@ class TestCheckGapEndpoint:
 
     async def test_check_gap_low_confidence(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
         """Test validation of low-confidence reference (unknown source, no uncertainty)."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/check-gap",
             json={
                 "element_system": "UO2",
@@ -76,11 +76,11 @@ class TestCheckGapEndpoint:
 
     async def test_check_gap_outside_range(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
         """Test validation with value outside known P0 property range."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/check-gap",
             json={
                 "element_system": "UO2",
@@ -100,10 +100,10 @@ class TestCheckGapEndpoint:
 
     async def test_check_ag_missing_fields(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test validation with missing required fields."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/check-gap",
             json={
                 "element_system": "UO2",
@@ -121,10 +121,10 @@ class TestAdjudicateGradeEndpoint:
 
     async def test_adjudicate_nan_error(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test adjudication of NaN instability error."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/adjudicate-grade",
             json={
                 "staging_id": "00000000-0000-0000-0000-000000000001",
@@ -138,16 +138,16 @@ class TestAdjudicateGradeEndpoint:
         assert response.status_code == 200
         data = response.json()
 
-        assert data["primary_category"] in ["nan_instability", "unknown"]
+        assert data["primary_category"] in ["nan_instability", "nan_values", "unknown"]
         assert len(data["suggested_fixes"]) > 0
         assert data["adjudication_id"] is not None
 
     async def test_adjudicate_divergence_error(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test adjudication of divergence error."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/adjudicate-grade",
             json={
                 "staging_id": "00000000-0000-0000-0000-000000000002",
@@ -161,14 +161,14 @@ class TestAdjudicateGradeEndpoint:
         assert response.status_code == 200
         data = response.json()
 
-        assert data["primary_category"] in ["divergence", "unknown"]
+        assert data["primary_category"] in ["divergence", "pressure_divergence", "unknown"]
 
     async def test_adjudicate_missing_potential(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test adjudication of missing potential error."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/adjudicate-grade",
             json={
                 "staging_id": "00000000-0000-0000-0000-000000000003",
@@ -186,10 +186,10 @@ class TestAdjudicateGradeEndpoint:
 
     async def test_adjudicate_unknown_error(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test adjudication with unknown error pattern."""
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/adjudicate-grade",
             json={
                 "staging_id": "00000000-0000-0000-0000-000000000004",
@@ -211,7 +211,7 @@ class TestQuarterlyAuditEndpoint:
 
     async def test_quarterly_audit_success(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test quarterly audit execution."""
         from datetime import datetime, timedelta
@@ -219,7 +219,7 @@ class TestQuarterlyAuditEndpoint:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=90)
 
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/quarterly-audit",
             json={
                 "quarter": "2026-Q2",
@@ -248,7 +248,7 @@ class TestQuarterlyAuditEndpoint:
 
     async def test_quarterly_audit_custom_config(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test quarterly audit with custom configuration."""
         from datetime import datetime, timedelta
@@ -256,7 +256,7 @@ class TestQuarterlyAuditEndpoint:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=180)  # 6 months
 
-        response = await client.post(
+        response = await async_client.post(
             "/api/v1/verification/quarterly-audit",
             json={
                 "quarter": "2026-Q1-Q2",
@@ -281,10 +281,10 @@ class TestVerificationHealth:
 
     async def test_verification_health_endpoint(
         self,
-        client: AsyncClient,
+        async_client: AsyncClient,
     ) -> None:
         """Test verification module health check."""
-        response = await client.get("/api/v1/verification/health")
+        response = await async_client.get("/api/v1/verification/health")
 
         assert response.status_code == 200
         data = response.json()

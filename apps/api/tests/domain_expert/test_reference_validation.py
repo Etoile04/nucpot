@@ -7,7 +7,7 @@ Tests cover:
 - Literature match aggregation
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 import pytest
@@ -15,11 +15,11 @@ import pytest
 from nfm_db.services.domain_expert.reference_validation import (
     ESCALATION_THRESHOLD,
     P0_PROPERTY_RANGES,
+    LiteratureMatch,
     ReferenceCandidate,
     ReferenceValidationResult,
     SourceCredibility,
     validate_reference,
-    LiteratureMatch,
 )
 
 

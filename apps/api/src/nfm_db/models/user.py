@@ -5,13 +5,13 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, func, CheckConstraint, Uuid
+from sqlalchemy import CheckConstraint, DateTime, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+    pass
 
 
 class BlogRole(str, enum.Enum):

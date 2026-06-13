@@ -26,37 +26,42 @@ class TimestampMixin:
     )
 
 
-from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority  # noqa: E402, F401
-from nfm_db.models.ref_gap_fill import (  # noqa: E402, F401
+from nfm_db.models.blog_post import (  # noqa: E402
+    BlogPostMetadata,
+    PostStatus,
+)
+from nfm_db.models.feedback import (  # noqa: E402
+    Feedback,
+    FeedbackStatus,
+    FeedbackType,
+    Priority,
+)
+from nfm_db.models.ref_gap_fill import (  # noqa: E402
     CacheLevel,
     Confidence,
     RefGapFillStaging,
     StagingStatus,
 )
-from nfm_db.models.user import (  # noqa: E402, F401
+from nfm_db.models.user import (  # noqa: E402
     BlogRole,
     Permission,
     User,
 )
-from nfm_db.models.blog_post import (  # noqa: E402, F401
-    BlogPostMetadata,
-    PostStatus,
-)
 
 __all__ = [
     "Base",
-    "TimestampMixin",
-    "Feedback",
-    "FeedbackType",
-    "Priority",
-    "FeedbackStatus",
-    "RefGapFillStaging",
-    "Confidence",
-    "StagingStatus",
-    "CacheLevel",
-    "User",
-    "BlogRole",
-    "Permission",
     "BlogPostMetadata",
+    "BlogRole",
+    "CacheLevel",
+    "Confidence",
+    "Feedback",
+    "FeedbackStatus",
+    "FeedbackType",
+    "Permission",
     "PostStatus",
+    "Priority",
+    "RefGapFillStaging",
+    "StagingStatus",
+    "TimestampMixin",
+    "User",
 ]
