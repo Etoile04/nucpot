@@ -2,13 +2,14 @@
 
 Provides a shared layout with sidebar navigation for:
 - 文章列表
-- 发布管理
+- 审核队列
+- 新建文章
 */
 
 "use client"
 
 import { Layout, Menu } from "antd"
-import { FileTextOutlined, PlusOutlined } from "@ant-design/icons"
+import { CheckCircleOutlined, FileTextOutlined, PlusOutlined } from "@ant-design/icons"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -26,6 +27,11 @@ export default function BlogLayout({
       key: "/admin/blog/posts",
       icon: <FileTextOutlined />,
       label: <Link href="/admin/blog/posts">文章列表</Link>,
+    },
+    {
+      key: "/admin/blog/review",
+      icon: <CheckCircleOutlined />,
+      label: <Link href="/admin/blog/review">审核队列</Link>,
     },
     {
       key: "/admin/blog/new",
