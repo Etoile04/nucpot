@@ -70,11 +70,12 @@ export default async function BlogDetailPage({
     notFound()
   }
 
+  const posts = getAllPosts()
   const { prev, next } = findAdjacentPosts(slug)
 
   return (
     <>
-      <BlogSidebar />
+      <BlogSidebar posts={posts} />
       <main className="blog-container">
         <BlogBreadcrumb />
         <div className="blog-detail-layout">
