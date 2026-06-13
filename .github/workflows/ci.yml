@@ -99,11 +99,11 @@ jobs:
         run: uv sync --dev --frozen
 
       - name: Lint (ruff)
-        run: .venv/bin/ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Type-check (mypy)
-        run: .venv/bin/mypy src
+        run: uv run mypy src
         continue-on-error: true
 
       - name: Tests (pytest)
-        run: .venv/bin/pytest
+        run: uv run pytest
