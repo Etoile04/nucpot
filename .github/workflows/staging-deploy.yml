@@ -66,21 +66,37 @@ jobs:
     name: Deploy to staging
     runs-on: [self-hosted, staging]
     environment: staging
-    # NFM-156: route step traffic (the appleboy/ssh-action drone-ssh download +
-    # any runner-side fetch) through the box's verge-mihomo proxy. The self-hosted
-    # runner sits on a China network where raw github.com/github-releases traffic
-    # is GFW-interfered (run 27506967237: drone-ssh download hit
-    # `curl: (35) ...unexpected eof while reading`). GitHub Actions does not
-    # propagate the runner process env into job steps, so we set it explicitly.
-    # Both cases are set deliberately (curl/git/python honor different cases);
-    # NO_PROXY excludes loopback so the appleboy SSH to 127.0.0.1:22 is unaffected.
+    # NFM-156 / NFM-157: route step traffic (the appleboy/ssh-action drone-ssh
+    # download + any runner-side fetch) through the box's verge-mihomo proxy.
+    # The self-hosted runner sits on a China network where raw
+    # github.com/github-releases traffic is GFW-interfered (run 27506967237:
+    # drone-ssh download hit `curl: (35) ...unexpected eof while reading`).
+    # GitHub Actions does not propagate the runner process env into job steps,
+    # so we set it explicitly.
+    #
+    # UPPERCASE ONLY (NFM-157 fix 1): GitHub Actions `env:` keys are
+    # case-insensitive, so defining both HTTP_PROXY and http_proxy is a 422
+    # parse error on dispatch (regression from NFM-156 / PR #17). Uppercase is
+    # honored by every consumer here — Go's http.ProxyFromEnvironment (appleboy
+    # is a Go action and pulls drone-ssh over HTTPS via HTTPS_PROXY), git,
+    # python urllib, and curl-for-HTTPS — so the lowercase duplicates are
+    # dropped. NO_PROXY excludes loopback so the appleboy SSH to 127.0.0.1:22
+    # is unaffected. These proxy vars are RUNNER-SIDE only; they are NOT
+    # forwarded to the remote SSH session (the host's git fetch is SSH and
+    # works without proxy — see NFM-157 evidence).
+    #
+    # STAGING_REPO_DIR (NFM-157 fix 2, option A): the host checkout lives at
+    # /home/z203/nucpot-staging/repo, not the script default
+    # /opt/nucpot-staging/repo (which does not exist on the host). Job env does
+    # NOT cross the SSH boundary by itself, so each appleboy step lists
+    # STAGING_REPO_DIR in its `envs:` to forward it to the remote, where the
+    # scripts' `REPO_DIR="${STAGING_REPO_DIR:-...}"` resolves it. Only
+    # STAGING_REPO_DIR is forwarded — proxy vars are not needed remotely.
     env:
       HTTP_PROXY: http://127.0.0.1:7897
       HTTPS_PROXY: http://127.0.0.1:7897
-      http_proxy: http://127.0.0.1:7897
-      https_proxy: http://127.0.0.1:7897
       NO_PROXY: 127.0.0.1,localhost
-      no_proxy: 127.0.0.1,localhost
+      STAGING_REPO_DIR: /home/z203/nucpot-staging/repo
     timeout-minutes: 30
     steps:
       - name: Configure SSH + deploy on staging host
@@ -90,6 +106,7 @@ jobs:
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: STAGING_REPO_DIR
           script_stop: true
           script: |
             set -euo pipefail
@@ -124,6 +141,7 @@ jobs:
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: STAGING_REPO_DIR
           script_stop: true
           script: |
             set -euo pipefail
@@ -139,6 +157,7 @@ jobs:
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: STAGING_REPO_DIR
           script_stop: false
           script: |
             set -euo pipefail || true
