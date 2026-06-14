@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
+from pathlib import Path
 import sys
 import time
 import urllib.error
@@ -143,13 +145,47 @@ CHECKS: tuple[Callable[[SmokeConfig], CheckResult], ...] = (
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
+def _load_staging_env_contract() -> None:
+    """Load docker/.env.staging (the staging port/secrets contract) so the
+    URL defaults below match the host ports the deploy actually bound — even
+    when the caller didn't export them (the staging-deploy smoke SSH step only
+    forwards STAGING_REPO_DIR). Only sets vars absent from the environment;
+    an explicit --api-url/--web-url or a pre-exported var always wins. Looks
+    in CWD first (the workflow runs from the repo root), then relative to
+    this script, so it also works when invoked from elsewhere.
+    """
+    candidates = [
+        Path("docker") / ".env.staging",
+        Path(__file__).resolve().parent.parent / "docker" / ".env.staging",
+    ]
+    env_file = next((p for p in candidates if p.is_file()), None)
+    if env_file is None:
+        return
+    for raw in env_file.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key and key not in os.environ:
+            os.environ[key] = val.strip().strip('"').strip("'")
+
+
 def parse_args(argv: Optional[list[str]] = None) -> SmokeConfig:
     p = argparse.ArgumentParser(
         description="NFM-DB staging smoke tests (NFM-111). Exits 0 iff all checks pass."
     )
-    p.add_argument("--api-url", default="http://127.0.0.1:8001/api/v1/health",
+    # Honor the staging port contract (docker/.env.staging) so the smoke test
+    # targets the same host ports the deploy actually bound. The host override
+    # STAGING_WEB_HOST_PORT=3001 previously made web-reachable curl :3000 and
+    # fail with Connection refused even though web was healthy on :3001
+    # (surfaced once NFM-167 let the deploy reach the smoke step).
+    _load_staging_env_contract()
+    api_port = os.environ.get("STAGING_API_HOST_PORT", "8001")
+    web_port = os.environ.get("STAGING_WEB_HOST_PORT", "3000")
+    p.add_argument("--api-url", default=f"http://127.0.0.1:{api_port}/api/v1/health",
                    help="staging API health URL (default: %(default)s)")
-    p.add_argument("--web-url", default="http://127.0.0.1:3000/",
+    p.add_argument("--web-url", default=f"http://127.0.0.1:{web_port}/",
                    help="staging web URL (default: %(default)s)")
     p.add_argument("--timeout", type=float, default=5.0,
                    help="per-request timeout in seconds (default: %(default)s)")
