@@ -101,6 +101,14 @@ jobs:
     steps:
       - name: Configure SSH + deploy on staging host
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # NFM-161 / NFM-158: fetch drone-ssh from the CTO-staged local
+          # file:// cache instead of the GitHub release asset over the
+          # GFW-interfered proxy path. file:// is never proxied by curl, so
+          # this bypasses the intermittent `curl: (35) ...unexpected eof`
+          # that killed run 27508425655. The value MUST have no trailing
+          # slash; the appleboy entrypoint appends /v${VERSION}/${BINARY}.
+          DRONE_SSH_RELEASE_URL: file:///home/z203/drone-ssh-cache
         with:
           host: 127.0.0.1
           port: 22
@@ -136,6 +144,14 @@ jobs:
       - name: Run staging smoke test
         if: ${{ inputs.skip_smoke != true }}
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # NFM-161 / NFM-158: fetch drone-ssh from the CTO-staged local
+          # file:// cache instead of the GitHub release asset over the
+          # GFW-interfered proxy path. file:// is never proxied by curl, so
+          # this bypasses the intermittent `curl: (35) ...unexpected eof`
+          # that killed run 27508425655. The value MUST have no trailing
+          # slash; the appleboy entrypoint appends /v${VERSION}/${BINARY}.
+          DRONE_SSH_RELEASE_URL: file:///home/z203/drone-ssh-cache
         with:
           host: 127.0.0.1
           port: 22
@@ -152,6 +168,14 @@ jobs:
       - name: Report status
         if: always()
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # NFM-161 / NFM-158: fetch drone-ssh from the CTO-staged local
+          # file:// cache instead of the GitHub release asset over the
+          # GFW-interfered proxy path. file:// is never proxied by curl, so
+          # this bypasses the intermittent `curl: (35) ...unexpected eof`
+          # that killed run 27508425655. The value MUST have no trailing
+          # slash; the appleboy entrypoint appends /v${VERSION}/${BINARY}.
+          DRONE_SSH_RELEASE_URL: file:///home/z203/drone-ssh-cache
         with:
           host: 127.0.0.1
           port: 22
