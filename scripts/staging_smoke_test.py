@@ -4,9 +4,16 @@
 Run after a staging deploy to confirm the stack is up and serving:
     python3 scripts/staging_smoke_test.py
 
-Defaults target the staging host contract (NFM-112):
-    API:  http://127.0.0.1:8001/api/v1/health
-    WEB:  http://127.0.0.1:3000/
+Defaults are derived from the staging host contract (NFM-112) and the same
+STAGING_*_HOST_PORT / STAGING_HEALTH_PATH variables the deploy writes into
+docker/.env.staging (see scripts/staging_deploy.sh). When that file is present
+it is auto-loaded so the defaults match the ports the stack actually maps to on
+this host (e.g. STAGING_WEB_HOST_PORT may be 3001 to dodge a host conflict);
+otherwise the documented defaults (API 8001, WEB 3000) are used.
+    API:  http://127.0.0.1:${STAGING_API_HOST_PORT:-8001}${STAGING_HEALTH_PATH:-/api/v1/health}
+    WEB:  http://127.0.0.1:${STAGING_WEB_HOST_PORT:-3000}/
+
+Any default can still be overridden with --api-url / --web-url.
 
 Exits 0 only when every check passes; non-zero otherwise. Uses only the
 standard library so it runs in any python3 on the staging host. Pair with
@@ -18,13 +25,64 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional
+
+
+# --------------------------------------------------------------------------- #
+# Staging env discovery (mirrors scripts/staging_deploy.sh)
+# --------------------------------------------------------------------------- #
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_STAGING_ENV_FILE = _PROJECT_ROOT / "docker" / ".env.staging"
+
+
+def _load_staging_env_file() -> None:
+    """Load docker/.env.staging so smoke defaults match the live deploy.
+
+    The staging deploy writes STAGING_API_HOST_PORT / STAGING_WEB_HOST_PORT /
+    STAGING_HEALTH_PATH into docker/.env.staging (see scripts/staging_deploy.sh).
+    On the staging host that file reflects the actual host ports the stack maps
+    to (e.g. STAGING_WEB_HOST_PORT may be 3001 to dodge a host conflict), which
+    the previous hardcoded defaults (3000/8001) could never match. Values already
+    present in os.environ win; a missing or malformed file is ignored so this
+    never breaks a smoke run in a checkout without the env file.
+    """
+    try:
+        text = _STAGING_ENV_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_staging_env_file()
+
+
+def _default_api_url() -> str:
+    port = os.environ.get("STAGING_API_HOST_PORT", "8001")
+    path = os.environ.get("STAGING_HEALTH_PATH", "/api/v1/health")
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"http://127.0.0.1:{port}{path}"
+
+
+def _default_web_url() -> str:
+    port = os.environ.get("STAGING_WEB_HOST_PORT", "3000")
+    return f"http://127.0.0.1:{port}/"
 
 
 # --------------------------------------------------------------------------- #
@@ -147,9 +205,9 @@ def parse_args(argv: Optional[list[str]] = None) -> SmokeConfig:
     p = argparse.ArgumentParser(
         description="NFM-DB staging smoke tests (NFM-111). Exits 0 iff all checks pass."
     )
-    p.add_argument("--api-url", default="http://127.0.0.1:8001/api/v1/health",
+    p.add_argument("--api-url", default=_default_api_url(),
                    help="staging API health URL (default: %(default)s)")
-    p.add_argument("--web-url", default="http://127.0.0.1:3000/",
+    p.add_argument("--web-url", default=_default_web_url(),
                    help="staging web URL (default: %(default)s)")
     p.add_argument("--timeout", type=float, default=5.0,
                    help="per-request timeout in seconds (default: %(default)s)")
