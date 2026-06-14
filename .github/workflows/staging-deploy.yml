@@ -97,24 +97,31 @@ jobs:
       HTTPS_PROXY: http://127.0.0.1:7897
       NO_PROXY: 127.0.0.1,localhost
       STAGING_REPO_DIR: /home/z203/nucpot-staging/repo
+      # NFM-162: fetch drone-ssh from a DIRECT-reachable GitHub-release mirror
+      # instead of raw github.com release assets. The box's JMS circumvention
+      # nodes are all dead (mihomo delay-test times out → Proxies→US collapses
+      # to DIRECT), so HTTP(S)_PROXY is effectively a no-op and appleboy's
+      # `curl -fsSL --retry 5` hits the intermittent GFW `curl: (35)` TLS reset
+      # on github.com (curl does NOT retry TLS errors). gh-proxy.com serves the
+      # exact official v1.8.0 linux-amd64 ELF (sha 5c37ea6f…, matches appleboy
+      # checksums.txt; cross-checked byte-identical against ghproxy.net) and is
+      # DIRECT-reachable, sidestepping the reset. job-env + step `envs:` ONLY —
+      # no step-level `env:` override, which would shadow this and silently
+      # re-break the download (the NFM-161 local-cache approach is retired: it
+      # needed host prep at `/home/z203/drone-ssh-cache` and "no host change" is
+      # an NFM-162 constraint). Backup mirror if gh-proxy.com is ever down:
+      # https://ghproxy.net/https://github.com/appleboy/drone-ssh/releases/download
+      DRONE_SSH_RELEASE_URL: https://gh-proxy.com/https://github.com/appleboy/drone-ssh/releases/download
     timeout-minutes: 30
     steps:
       - name: Configure SSH + deploy on staging host
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          # NFM-161 / NFM-158: fetch drone-ssh from the CTO-staged local
-          # file:// cache instead of the GitHub release asset over the
-          # GFW-interfered proxy path. file:// is never proxied by curl, so
-          # this bypasses the intermittent `curl: (35) ...unexpected eof`
-          # that killed run 27508425655. The value MUST have no trailing
-          # slash; the appleboy entrypoint appends /v${VERSION}/${BINARY}.
-          DRONE_SSH_RELEASE_URL: file:///home/z203/drone-ssh-cache
         with:
           host: 127.0.0.1
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          envs: STAGING_REPO_DIR
+          envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
           script_stop: true
           script: |
             set -euo pipefail
@@ -144,20 +151,12 @@ jobs:
       - name: Run staging smoke test
         if: ${{ inputs.skip_smoke != true }}
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          # NFM-161 / NFM-158: fetch drone-ssh from the CTO-staged local
-          # file:// cache instead of the GitHub release asset over the
-          # GFW-interfered proxy path. file:// is never proxied by curl, so
-          # this bypasses the intermittent `curl: (35) ...unexpected eof`
-          # that killed run 27508425655. The value MUST have no trailing
-          # slash; the appleboy entrypoint appends /v${VERSION}/${BINARY}.
-          DRONE_SSH_RELEASE_URL: file:///home/z203/drone-ssh-cache
         with:
           host: 127.0.0.1
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          envs: STAGING_REPO_DIR
+          envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
           script_stop: true
           script: |
             set -euo pipefail
@@ -168,20 +167,12 @@ jobs:
       - name: Report status
         if: always()
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          # NFM-161 / NFM-158: fetch drone-ssh from the CTO-staged local
-          # file:// cache instead of the GitHub release asset over the
-          # GFW-interfered proxy path. file:// is never proxied by curl, so
-          # this bypasses the intermittent `curl: (35) ...unexpected eof`
-          # that killed run 27508425655. The value MUST have no trailing
-          # slash; the appleboy entrypoint appends /v${VERSION}/${BINARY}.
-          DRONE_SSH_RELEASE_URL: file:///home/z203/drone-ssh-cache
         with:
           host: 127.0.0.1
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          envs: STAGING_REPO_DIR
+          envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
           script_stop: false
           script: |
             set -euo pipefail || true
