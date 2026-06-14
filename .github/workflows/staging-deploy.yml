@@ -66,21 +66,28 @@ jobs:
     name: Deploy to staging
     runs-on: [self-hosted, staging]
     environment: staging
-    # NFM-156: route step traffic (the appleboy/ssh-action drone-ssh download +
-    # any runner-side fetch) through the box's verge-mihomo proxy. The self-hosted
+    # NFM-156/NFM-157: route runner-side traffic (the appleboy/ssh-action
+    # drone-ssh download) through the box's verge-mihomo proxy. The self-hosted
     # runner sits on a China network where raw github.com/github-releases traffic
     # is GFW-interfered (run 27506967237: drone-ssh download hit
     # `curl: (35) ...unexpected eof while reading`). GitHub Actions does not
     # propagate the runner process env into job steps, so we set it explicitly.
-    # Both cases are set deliberately (curl/git/python honor different cases);
-    # NO_PROXY excludes loopback so the appleboy SSH to 127.0.0.1:22 is unaffected.
+    # UPPERCASE ONLY: GHA env keys are case-insensitive, so HTTP_PROXY + http_proxy
+    # collide and make the workflow un-dispatchable (NFM-157, run 27507566487 ->
+    # HTTP 422). Uppercase is honored by Go's http.ProxyFromEnvironment (appleboy
+    # is Go) and by git/curl. NO_PROXY excludes loopback so the appleboy SSH to
+    # 127.0.0.1:22 is unaffected.
+    # STAGING_REPO_DIR points the remote script at the real host checkout
+    # (/home/z203/nucpot-staging/repo, NOT the /opt/... script default). It must
+    # be forwarded to each remote SSH session via `envs:` on every ssh-action
+    # step below -- GHA job env does not cross the SSH boundary on its own. The
+    # proxy vars are intentionally NOT forwarded: the remote `git fetch` is SSH
+    # and works without a proxy (verified on the host, NFM-157 evidence).
     env:
       HTTP_PROXY: http://127.0.0.1:7897
       HTTPS_PROXY: http://127.0.0.1:7897
-      http_proxy: http://127.0.0.1:7897
-      https_proxy: http://127.0.0.1:7897
       NO_PROXY: 127.0.0.1,localhost
-      no_proxy: 127.0.0.1,localhost
+      STAGING_REPO_DIR: /home/z203/nucpot-staging/repo
     timeout-minutes: 30
     steps:
       - name: Configure SSH + deploy on staging host
@@ -91,6 +98,7 @@ jobs:
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
+          envs: STAGING_REPO_DIR
           script: |
             set -euo pipefail
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
@@ -125,6 +133,7 @@ jobs:
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
+          envs: STAGING_REPO_DIR
           script: |
             set -euo pipefail
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
@@ -140,6 +149,7 @@ jobs:
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: false
+          envs: STAGING_REPO_DIR
           script: |
             set -euo pipefail || true
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
