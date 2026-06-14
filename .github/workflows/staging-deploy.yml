@@ -8,18 +8,34 @@ name: Staging Deploy
 # health gate + auto-rollback), then scripts/staging_smoke_test.py. A failing
 # health gate auto-rolls back on the host; a failing smoke test fails the run.
 #
-# SSH transport (NFM-150): GitHub-hosted runners cannot reach the host's
-# Tailscale IP, so the 3 appleboy/ssh-action steps connect to a local
-# cloudflared TCP forward (127.0.0.1:2222) that tunnels through the NFM-112
-# Cloudflare tunnel. The deploy scripts themselves are unchanged.
+# SSH transport (NFM-150 rev 2 — self-hosted runner): the GHA runner is
+# self-hosted on the ThinkStation itself (registered with labels `self-hosted`
+# + `staging`), so the three appleboy/ssh-action steps SSH to the host over
+# loopback (127.0.0.1:22) using the host's own OpenSSH sshd. No tunnel,
+# bastion, or Access service token is involved. The deploy scripts themselves
+# are unchanged.
+#
+# Why this transport (NFM-150 spec rev 2, decision card fbd66b94, option
+# `app-selfhost`): the Cloudflare Tunnel + Access transport shipped in NFM-151
+# (PR #15) required Cloudflare Access, which is paid-only on the board's tier
+# and therefore unusable. The board pivoted to running the runner on the
+# ThinkStation directly. Full architecture + security review: NFM-150 spec.
 #
 # REQUIRED GitHub secrets (create before first run — see NFM-112 / NFM-150):
-#   STAGING_SSH_HOST         public hostname the cloudflared forward targets
-#   STAGING_SSH_USER         SSH user with docker access on the host
-#   STAGING_SSH_KEY          private key for the SSH user (PEM)
-#   TUNNEL_SERVICE_TOKEN_ID  Cloudflare Access service-token client id
-#   TUNNEL_SERVICE_TOKEN_SECRET  Cloudflare Access service-token client secret
-#   GHCR_TOKEN               GitHub Container Registry token (if using GHCR images)
+#   STAGING_SSH_USER  SSH user with docker access on the host
+#   STAGING_SSH_KEY   private key for the SSH user (PEM)
+#   GHCR_TOKEN        GitHub Container Registry token (if using GHCR images)
+#
+# SSH host: this workflow hardcodes host: 127.0.0.1 (port 22) because the
+# runner runs on the same box, so loopback reaches the host sshd. It no longer
+# reads STAGING_SSH_HOST; that secret was only consumed by the now-removed
+# cloudflared forward and can be deleted from repo secrets. The
+# TUNNEL_SERVICE_TOKEN_* secrets are likewise obsolete and can be deleted.
+#
+# Prerequisite: the host must expose an OpenSSH sshd on :22 that accepts
+# STAGING_SSH_KEY for STAGING_SSH_USER (set up in NFM-112). If only
+# Tailscale-SSH is available, loopback SSH cannot work — the CTO would switch
+# to NFM-150 Variant B (direct-run, no SSH).
 #
 # Runs in the `staging` environment (Actions → Environments → New "staging").
 # =============================================================================
@@ -48,41 +64,15 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to staging
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, staging]
     environment: staging
     timeout-minutes: 30
-    env:
-      TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.TUNNEL_SERVICE_TOKEN_ID }}
-      TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.TUNNEL_SERVICE_TOKEN_SECRET }}
     steps:
-      - name: Install cloudflared
-        run: |
-          set -euo pipefail
-          sudo curl -fsSL -o /usr/local/bin/cloudflared \
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-          sudo chmod +x /usr/local/bin/cloudflared
-          cloudflared --version
-
-      - name: Start cloudflared SSH forward
-        run: |
-          set -euo pipefail
-          cloudflared access tcp \
-            --hostname "${{ secrets.STAGING_SSH_HOST }}" \
-            --url 127.0.0.1:2222 \
-            > /tmp/cloudflared.log 2>&1 &
-          echo $! > /tmp/cloudflared.pid
-          # wait for the local listener to accept connections
-          for i in $(seq 1 30); do
-            if nc -z 127.0.0.1 2222; then echo "cloudflared forward is up"; exit 0; fi
-            sleep 1
-          done
-          echo "cloudflared failed to start:"; cat /tmp/cloudflared.log; exit 1
-
       - name: Configure SSH + deploy on staging host
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: 127.0.0.1
-          port: 2222
+          port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
@@ -116,7 +106,7 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: 127.0.0.1
-          port: 2222
+          port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
@@ -131,7 +121,7 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: 127.0.0.1
-          port: 2222
+          port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: false
@@ -140,8 +130,3 @@ jobs:
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
             cd "$REPO_DIR"
             ./scripts/staging_deploy.sh status || true
-
-      - name: Stop cloudflared
-        if: always()
-        run: |
-          if [ -f /tmp/cloudflared.pid ]; then kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true; fi
