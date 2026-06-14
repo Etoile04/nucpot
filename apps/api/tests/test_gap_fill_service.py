@@ -22,7 +22,6 @@ from nfm_db.models.ref_gap_fill import Confidence
 from nfm_db.services.gap_fill_service import FillResult, FillResultItem, GapFillService
 from nfm_db.services.quality_gate import GateDecision, GateResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

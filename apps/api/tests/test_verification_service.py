@@ -10,12 +10,9 @@ Tests for:
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ref_gap_fill import (
@@ -28,7 +25,6 @@ from nfm_db.services.verification_service import (
     export_for_verification,
     process_verification_results,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

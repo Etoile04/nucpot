@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -116,7 +116,7 @@ async def approve_staging_record(
     if record.status not in _APPROVABLE_STATUSES:
         raise InvalidTransitionError(staging_id, record.status, StagingStatus.PROMOTED)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     record.status = StagingStatus.PROMOTED
     record.review_note = review_note
@@ -165,7 +165,7 @@ async def reject_staging_record(
     if record.status not in _REJECTABLE_STATUSES:
         raise InvalidTransitionError(staging_id, record.status, StagingStatus.REJECTED)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     record.status = StagingStatus.REJECTED
     record.review_note = review_note

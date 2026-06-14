@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.database import get_db
 from nfm_db.main import app
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

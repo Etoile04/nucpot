@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -141,7 +141,7 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         description="Temperature increased without bound",
         suggested_fixes=(
             "Verify thermostat is active (fix nvt or fix npt)",
-            "Check thermostat parameters (Tdamp should be ~100× timestep)",
+            "Check thermostat parameters (Tdamp should be ~100× timestep)",  # noqa: RUF001
             "Reduce timestep if energy is not conserved",
         ),
         common_potentials=("EAM", "MEAM"),
@@ -194,7 +194,7 @@ class AdjudicationResult:
 
     request: AdjudicationRequest
     adjudication_id: UUID = field(default_factory=uuid4)
-    adjudicated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    adjudicated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     matched_patterns: tuple[FailureCategory, ...] = ()
     primary_category: FailureCategory = FailureCategory.UNKNOWN
     suggested_fixes: tuple[FixSuggestion, ...] = ()
@@ -209,7 +209,7 @@ class AdjudicationResult:
 # Pattern matching
 # ---------------------------------------------------------------------------
 
-import re
+import re  # noqa: E402
 
 ESCALATION_THRESHOLD = 0.70
 PATTERN_CONFIDENCE_BOOST = 0.15  # Per matched pattern

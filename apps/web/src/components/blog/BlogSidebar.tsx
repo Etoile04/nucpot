@@ -2,17 +2,19 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { getAllPosts } from "@/lib/blog/posts"
 import type { BlogPostMeta } from "@/lib/blog/types"
+
+interface BlogSidebarProps {
+  readonly posts: readonly BlogPostMeta[]
+}
 
 interface DocumentationSection {
   readonly title: string
   readonly posts: readonly BlogPostMeta[]
 }
 
-export function BlogSidebar() {
+export function BlogSidebar({ posts }: BlogSidebarProps) {
   const pathname = usePathname()
-  const posts = getAllPosts()
 
   // Group posts by documentation sections based on tags
   const sections: readonly DocumentationSection[] = [

@@ -1,0 +1,106 @@
+name: Staging Deploy
+
+# =============================================================================
+# NFM-DB — Staging deployment pipeline (NFM-111)
+# =============================================================================
+# Manually-triggered deploy to the staging host (ThinkStation). Pulls the
+# selected ref, runs scripts/staging_deploy.sh deploy (build + migrate + up +
+# health gate + auto-rollback), then scripts/staging_smoke_test.py. A failing
+# health gate auto-rolls back on the host; a failing smoke test fails the run.
+#
+# REQUIRED GitHub secrets (create before first run — see NFM-112):
+#   STAGING_SSH_HOST   staging host IP/hostname (e.g. the ThinkStation)
+#   STAGING_SSH_USER   SSH user with docker access on the host
+#   STAGING_SSH_KEY    private key for the SSH user (PEM)
+#   GHCR_TOKEN         GitHub Container Registry token (if using GHCR images)
+#
+# Runs in the `staging` environment (Actions → Environments → New "staging").
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to deploy"
+        required: false
+        default: "main"
+      image_tag:
+        description: "Image tag for nucpot-staging-{api,web} (enables rollback)"
+        required: false
+        default: "latest"
+      skip_smoke:
+        description: "Skip the post-deploy smoke test"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Configure SSH + deploy on staging host
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          command: |
+            set -euo pipefail
+            REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
+            REF="${{ inputs.ref }}"
+            TAG="${{ inputs.image_tag }}"
+
+            echo "===> NFM-DB staging deploy: ref=$REF tag=$TAG"
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              echo "ERROR: $REPO_DIR is not a git checkout. Run one-time host prep first (NFM-112)." >&2
+              exit 1
+            fi
+
+            cd "$REPO_DIR"
+            git fetch --all --prune
+            git checkout "$REF"
+            git reset --hard "$(git rev-parse "origin/$REF" 2>/dev/null || echo "$REF")"
+
+            if [ ! -f docker/.env.staging ]; then
+              echo "ERROR: docker/.env.staging missing on host. Run one-time host prep (NFM-112)." >&2
+              exit 1
+            fi
+
+            export STAGING_IMAGE_TAG="$TAG"
+            ./scripts/staging_deploy.sh deploy
+
+      - name: Run staging smoke test
+        if: ${{ inputs.skip_smoke != true }}
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          command: |
+            set -euo pipefail
+            REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
+            cd "$REPO_DIR"
+            python3 scripts/staging_smoke_test.py
+
+      - name: Report status
+        if: always()
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: false
+          command: |
+            set -euo pipefail || true
+            REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
+            cd "$REPO_DIR"
+            ./scripts/staging_deploy.sh status || true

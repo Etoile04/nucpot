@@ -4,15 +4,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.core.blog_state import PostStatus
 from nfm_db.models import BlogRole, User
 from nfm_db.services.blog_post import (
-    create_blog_post,
-    get_blog_post_by_slug,
-    list_blog_posts,
-    submit_for_review,
     approve_post,
-    reject_post,
+    create_blog_post,
+    list_blog_posts,
     publish_post,
+    reject_post,
+    submit_for_review,
 )
 
 
@@ -285,7 +285,7 @@ async def test_list_blog_posts_filters_by_status(db_session: AsyncSession):
     # List only draft posts
     draft_posts = await list_blog_posts(
         session=db_session,
-        status="draft",
+        status=PostStatus.DRAFT,
     )
     assert len(draft_posts) == 2
 

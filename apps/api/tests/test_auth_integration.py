@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 
 from nfm_db.models import BlogRole, User
+from nfm_db.services.auth_service import get_password_hash
 
 
 @pytest.mark.integration
@@ -17,29 +18,28 @@ class TestAuthenticationFlow:
         user = User(
             username="testuser",
             email="test@example.com",
-            hashed_password="$2b$12$hashed_password_here",  # Placeholder
+            hashed_password=get_password_hash("password123"),
         )
         db_session.add(user)
-        db_session.commit()
+        await db_session.commit()
 
         # Test login
         response = await async_client.post(
             "/api/v1/auth/login",
-            json={
+            data={
                 "username": "testuser",
                 "password": "password123",
             },
         )
 
-        # Note: This will fail without proper password hashing implementation
-        # Placeholder test to verify the flow structure
-        assert response.status_code in [200, 401]  # May fail without real auth
+        assert response.status_code == 200
+        assert "access_token" in response.json()
 
     async def test_login_invalid_credentials(self, async_client: AsyncClient):
         """Test login with invalid credentials."""
         response = await async_client.post(
             "/api/v1/auth/login",
-            json={
+            data={
                 "username": "nonexistent",
                 "password": "wrongpassword",
             },
@@ -81,8 +81,8 @@ class TestRoleManagementFlow:
             hashed_password="hashed_password_here",
         )
         db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
+        await db_session.commit()
+        await db_session.refresh(user)
 
         response = await async_client.put(
             f"/api/v1/auth/users/{user.id}/role",
@@ -106,8 +106,8 @@ class TestRoleManagementFlow:
             blog_role=BlogRole.EDITOR,
         )
         db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
+        await db_session.commit()
+        await db_session.refresh(user)
 
         response = await async_client.put(
             f"/api/v1/auth/users/{user.id}/role",
@@ -141,8 +141,8 @@ class TestRoleManagementFlow:
             hashed_password="hashed_password_here",
         )
         db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
+        await db_session.commit()
+        await db_session.refresh(user)
 
         response = await async_client.put(
             f"/api/v1/auth/users/{user.id}/role",
@@ -163,7 +163,7 @@ class TestAuthorizationFlow:
     ):
         """Test admin can access admin-only endpoints."""
         response = await async_client.get(
-            "/api/v1/auth/users",
+            "/api/v1/auth/roles",
             headers=admin_headers,
         )
 
@@ -174,7 +174,7 @@ class TestAuthorizationFlow:
     ):
         """Test editor cannot access admin-only endpoints."""
         response = await async_client.get(
-            "/api/v1/auth/users",
+            "/api/v1/auth/roles",
             headers=editor_headers,
         )
 

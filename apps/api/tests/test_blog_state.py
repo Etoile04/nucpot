@@ -1,15 +1,16 @@
 """Unit tests for blog post state machine."""
 
 import pytest
+
 from nfm_db.core.blog_state import (
+    PermissionError,
     PostStatus,
     StateTransitionError,
-    PermissionError,
     can_transition,
-    get_required_permission,
-    validate_transition,
     get_auto_fields,
     get_next_actions,
+    get_required_permission,
+    validate_transition,
 )
 
 

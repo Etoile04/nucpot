@@ -3,22 +3,16 @@
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.core.blog_state import (
     PermissionError,
     PostStatus,
-    StateTransitionError,
-    can_transition,
-    get_auto_fields,
-    get_required_permission,
     validate_transition,
 )
 from nfm_db.models.blog_post import BlogPostMetadata
-from nfm_db.models.user import User
 
 
 def get_content_dir() -> Path:
@@ -53,7 +47,7 @@ def update_markdown_status(slug: str, status: str) -> None:
     content_dir = get_content_dir()
     file_path = content_dir / f"{slug}.md"
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # Update or add status field in frontmatter

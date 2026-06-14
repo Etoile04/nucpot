@@ -27,7 +27,7 @@ export default function BlogListPage() {
 
   return (
     <>
-      <BlogSidebar />
+      <BlogSidebar posts={posts} />
       <main className="blog-container">
         <header className="blog-header">
         <h1 className="blog-title">技术博客</h1>

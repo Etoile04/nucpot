@@ -13,7 +13,6 @@ Per NFM-54 design Sections 2.2-2.3 and NFM-66:
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 from uuid import UUID
 
@@ -259,9 +258,9 @@ async def approve_reference_value(
             review_note=body.review_note,
         )
     except StagingRecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Staging record not found")
+        raise HTTPException(status_code=404, detail="Staging record not found") from None
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {
         "success": True,
@@ -299,9 +298,9 @@ async def reject_reference_value(
             review_note=body.review_note,
         )
     except StagingRecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Staging record not found")
+        raise HTTPException(status_code=404, detail="Staging record not found") from None
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {
         "success": True,

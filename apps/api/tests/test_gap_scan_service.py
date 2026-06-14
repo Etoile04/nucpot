@@ -8,12 +8,10 @@ Tests per NFM-76 acceptance criteria:
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.ref_gap_fill import Confidence, RefGapFillStaging, StagingStatus
+from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
 from nfm_db.services.gap_scan_service import (
     CoverageStats,
     GapScanService,
@@ -24,9 +22,7 @@ from nfm_db.services.gap_scan_service import (
     _compute_priority,
     _parse_staging_counts,
 )
-
 from test_promotion_service import _make_staging_record_kwargs
-
 
 # ---------------------------------------------------------------------------
 # Helpers
