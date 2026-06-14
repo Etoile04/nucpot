@@ -66,6 +66,21 @@ jobs:
     name: Deploy to staging
     runs-on: [self-hosted, staging]
     environment: staging
+    # NFM-156: route step traffic (the appleboy/ssh-action drone-ssh download +
+    # any runner-side fetch) through the box's verge-mihomo proxy. The self-hosted
+    # runner sits on a China network where raw github.com/github-releases traffic
+    # is GFW-interfered (run 27506967237: drone-ssh download hit
+    # `curl: (35) ...unexpected eof while reading`). GitHub Actions does not
+    # propagate the runner process env into job steps, so we set it explicitly.
+    # Both cases are set deliberately (curl/git/python honor different cases);
+    # NO_PROXY excludes loopback so the appleboy SSH to 127.0.0.1:22 is unaffected.
+    env:
+      HTTP_PROXY: http://127.0.0.1:7897
+      HTTPS_PROXY: http://127.0.0.1:7897
+      http_proxy: http://127.0.0.1:7897
+      https_proxy: http://127.0.0.1:7897
+      NO_PROXY: 127.0.0.1,localhost
+      no_proxy: 127.0.0.1,localhost
     timeout-minutes: 30
     steps:
       - name: Configure SSH + deploy on staging host
@@ -76,7 +91,7 @@ jobs:
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
-          command: |
+          script: |
             set -euo pipefail
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
             REF="${{ inputs.ref }}"
@@ -110,7 +125,7 @@ jobs:
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
-          command: |
+          script: |
             set -euo pipefail
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
             cd "$REPO_DIR"
@@ -125,7 +140,7 @@ jobs:
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: false
-          command: |
+          script: |
             set -euo pipefail || true
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
             cd "$REPO_DIR"
