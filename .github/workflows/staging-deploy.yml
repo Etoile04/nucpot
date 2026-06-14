@@ -8,11 +8,18 @@ name: Staging Deploy
 # health gate + auto-rollback), then scripts/staging_smoke_test.py. A failing
 # health gate auto-rolls back on the host; a failing smoke test fails the run.
 #
-# REQUIRED GitHub secrets (create before first run — see NFM-112):
-#   STAGING_SSH_HOST   staging host IP/hostname (e.g. the ThinkStation)
-#   STAGING_SSH_USER   SSH user with docker access on the host
-#   STAGING_SSH_KEY    private key for the SSH user (PEM)
-#   GHCR_TOKEN         GitHub Container Registry token (if using GHCR images)
+# SSH transport (NFM-150): GitHub-hosted runners cannot reach the host's
+# Tailscale IP, so the 3 appleboy/ssh-action steps connect to a local
+# cloudflared TCP forward (127.0.0.1:2222) that tunnels through the NFM-112
+# Cloudflare tunnel. The deploy scripts themselves are unchanged.
+#
+# REQUIRED GitHub secrets (create before first run — see NFM-112 / NFM-150):
+#   STAGING_SSH_HOST         public hostname the cloudflared forward targets
+#   STAGING_SSH_USER         SSH user with docker access on the host
+#   STAGING_SSH_KEY          private key for the SSH user (PEM)
+#   TUNNEL_SERVICE_TOKEN_ID  Cloudflare Access service-token client id
+#   TUNNEL_SERVICE_TOKEN_SECRET  Cloudflare Access service-token client secret
+#   GHCR_TOKEN               GitHub Container Registry token (if using GHCR images)
 #
 # Runs in the `staging` environment (Actions → Environments → New "staging").
 # =============================================================================
@@ -44,11 +51,38 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 30
+    env:
+      TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.TUNNEL_SERVICE_TOKEN_ID }}
+      TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.TUNNEL_SERVICE_TOKEN_SECRET }}
     steps:
+      - name: Install cloudflared
+        run: |
+          set -euo pipefail
+          sudo curl -fsSL -o /usr/local/bin/cloudflared \
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+          sudo chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
+
+      - name: Start cloudflared SSH forward
+        run: |
+          set -euo pipefail
+          cloudflared access tcp \
+            --hostname "${{ secrets.STAGING_SSH_HOST }}" \
+            --url 127.0.0.1:2222 \
+            > /tmp/cloudflared.log 2>&1 &
+          echo $! > /tmp/cloudflared.pid
+          # wait for the local listener to accept connections
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 2222; then echo "cloudflared forward is up"; exit 0; fi
+            sleep 1
+          done
+          echo "cloudflared failed to start:"; cat /tmp/cloudflared.log; exit 1
+
       - name: Configure SSH + deploy on staging host
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.STAGING_SSH_HOST }}
+          host: 127.0.0.1
+          port: 2222
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
@@ -81,7 +115,8 @@ jobs:
         if: ${{ inputs.skip_smoke != true }}
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.STAGING_SSH_HOST }}
+          host: 127.0.0.1
+          port: 2222
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: true
@@ -95,7 +130,8 @@ jobs:
         if: always()
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.STAGING_SSH_HOST }}
+          host: 127.0.0.1
+          port: 2222
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script_stop: false
@@ -104,3 +140,8 @@ jobs:
             REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
             cd "$REPO_DIR"
             ./scripts/staging_deploy.sh status || true
+
+      - name: Stop cloudflared
+        if: always()
+        run: |
+          if [ -f /tmp/cloudflared.pid ]; then kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true; fi
