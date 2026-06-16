@@ -15,6 +15,10 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+
+# Live deployment secrets — never commit (keep .env.*.example templates tracked)
+docker/.env.*
+!docker/.env.*.example
 *.log
 .DS_Store
 .idea/
