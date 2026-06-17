@@ -9,6 +9,7 @@ from nfm_db.api.v1 import (
     extraction,
     feedback,
     health,
+    ontology,
     reference_gaps,
     reference_values,
     verification,
@@ -35,6 +36,7 @@ app.include_router(reference_values.router, prefix="/api/v1", tags=["reference-v
 app.include_router(reference_gaps.router, prefix="/api/v1", tags=["reference-gaps"])
 app.include_router(extraction.router, prefix="/api/v1", tags=["extraction"])
 app.include_router(viz.router, prefix="/api/v1", tags=["visualization"])
+app.include_router(ontology.router, prefix="/api/v1", tags=["ontology"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["verification"])
 app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
 app.include_router(blog.router, prefix="/api/v1", tags=["blog"])

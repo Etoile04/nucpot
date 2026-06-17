@@ -11,6 +11,16 @@ from nfm_db.models import Base, BlogRole, User
 from nfm_db.services.auth_service import create_access_token
 
 
+@pytest.fixture(autouse=True)
+def _reset_ontology_rate_limiter() -> None:
+    """Isolate the in-process rate limiter between tests (no cross-test 429)."""
+    from nfm_db.services.rate_limit import ontology_limiter
+
+    ontology_limiter.reset()
+    yield
+    ontology_limiter.reset()
+
+
 @pytest.fixture
 async def db_session() -> AsyncSession:
     """Create an in-memory SQLite async session for testing."""
