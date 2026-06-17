@@ -12,6 +12,7 @@ interface ReviewPost {
   author: string
   summary: string
   tags: string[]
+  status: string
 }
 
 export default function ReviewQueuePage() {

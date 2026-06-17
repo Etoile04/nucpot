@@ -2,7 +2,6 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { getAllPosts } from "@/lib/blog/posts"
 import type { BlogPostMeta } from "@/lib/blog/types"
 
 interface DocumentationSection {
@@ -10,9 +9,19 @@ interface DocumentationSection {
   readonly posts: readonly BlogPostMeta[]
 }
 
-export function BlogSidebar() {
+interface BlogSidebarProps {
+  /**
+   * Post list, fetched server-side by the parent and passed down. BlogSidebar
+   * is a client component (it needs `usePathname`), so it must NOT import the
+   * server-only `posts.ts` (which uses Node `fs`) — doing so pulls `fs` into
+   * the client bundle and breaks the build for every route that imports this
+   * component transitively via the blog barrel.
+   */
+  readonly posts: readonly BlogPostMeta[]
+}
+
+export function BlogSidebar({ posts }: BlogSidebarProps) {
   const pathname = usePathname()
-  const posts = getAllPosts()
 
   // Group posts by documentation sections based on tags
   const sections: readonly DocumentationSection[] = [
