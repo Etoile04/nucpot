@@ -8,6 +8,7 @@ interface NavItem {
 
 const mainNavigation: NavItem[] = [
   { label: "浏览", href: "/browse", ariaLabel: "浏览数据" },
+  { label: "本体", href: "/ontology", ariaLabel: "本体可视化浏览" },
   { label: "高级检索", href: "/search", ariaLabel: "高级检索功能" },
   { label: "对比", href: "/compare", ariaLabel: "对比材料数据" },
   { label: "反馈", href: "/feedback", ariaLabel: "提供反馈" },
