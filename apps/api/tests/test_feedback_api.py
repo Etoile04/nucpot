@@ -149,7 +149,7 @@ async def test_list_feedback_returns_created_items(db_session: AsyncSession) -> 
     from nfm_db.main import app
 
     # Create feedback directly via service
-    fb1 = await create_feedback(
+    await create_feedback(
         db_session,
         FeedbackCreate(
             feedback_type="bug_report",
@@ -157,7 +157,7 @@ async def test_list_feedback_returns_created_items(db_session: AsyncSession) -> 
             description="Description 1",
         ),
     )
-    fb2 = await create_feedback(
+    await create_feedback(
         db_session,
         FeedbackCreate(
             feedback_type="feature_request",

@@ -17,20 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ref_gap_fill import (
     Confidence,
-    RefGapFillStaging,
     StagingStatus,
 )
 from nfm_db.services.quality_gate import (
     BulkGateResult,
     GateDecision,
-    GateResult,
     PropertyMappingLoader,
     QualityGateService,
-    ValidationResult,
     compute_dedup_hash,
     validate_range,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,7 +78,6 @@ class TestComputeDedupHash:
 
     def test_deterministic_output(self) -> None:
         """Same inputs always produce the same hash."""
-        ref = _make_ref()
         h1 = compute_dedup_hash("U", "BCC", "lattice_constant", "DFT", "TestSource")
         h2 = compute_dedup_hash("U", "BCC", "lattice_constant", "DFT", "TestSource")
         assert h1 == h2
@@ -227,9 +222,6 @@ class TestConfidenceRouting:
         loader.load()  # Will return empty (no file) — need custom ranges
 
         # Create a loader with strict ranges
-        import json
-        from pathlib import Path
-        from unittest.mock import patch
 
         fake_ranges = {"lattice_constant": {"min": 3.0, "max": 5.0}}
         gate = QualityGateService(db_session, loader)

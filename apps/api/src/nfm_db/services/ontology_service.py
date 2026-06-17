@@ -2,7 +2,6 @@
 
 from nfm_db.schemas.viz import Node, NvlResponse, Relationship, VizStatsResponse
 
-
 # Sample ontology data for demonstration
 SAMPLE_NODES = [
     Node(

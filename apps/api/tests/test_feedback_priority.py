@@ -1,6 +1,5 @@
 """Unit tests for feedback priority auto-classification logic."""
 
-import pytest
 
 from nfm_db.models.feedback import FeedbackType, Priority
 from nfm_db.services.feedback import classify_priority
@@ -29,7 +28,7 @@ class TestClassifyPriority:
 
     # --- Bug report keyword escalation ---
 
-    def test_bug_report_escalates_on_不可用_in_title(self) -> None:
+    def test_bug_report_escalates_on_不可用_in_title(self) -> None:  # noqa: N802
         result = classify_priority(FeedbackType.BUG_REPORT, "网站不可用", "描述")
         assert result == Priority.HIGH
 
@@ -37,7 +36,7 @@ class TestClassifyPriority:
         result = classify_priority(FeedbackType.BUG_REPORT, "标题", "页面显示 500 错误")
         assert result == Priority.HIGH
 
-    def test_bug_report_escalates_on_崩溃_in_title(self) -> None:
+    def test_bug_report_escalates_on_崩溃_in_title(self) -> None:  # noqa: N802
         result = classify_priority(FeedbackType.BUG_REPORT, "程序崩溃了", "描述")
         assert result == Priority.HIGH
 
@@ -61,7 +60,7 @@ class TestClassifyPriority:
         result = classify_priority(FeedbackType.FEATURE_REQUEST, "500", "500错误")
         assert result == Priority.LOW
 
-    def test_usage_inquiry_not_escalated_by_崩溃(self) -> None:
+    def test_usage_inquiry_not_escalated_by_崩溃(self) -> None:  # noqa: N802
         result = classify_priority(FeedbackType.USAGE_INQUIRY, "崩溃", "崩溃了")
         assert result == Priority.MEDIUM
 

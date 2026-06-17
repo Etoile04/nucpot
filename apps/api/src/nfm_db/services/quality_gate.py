@@ -287,7 +287,7 @@ class QualityGateService:
 
         # Step 4: Confidence routing
         confidence = Confidence(ref_data.get("confidence", "medium"))
-        decision, status = self._route_confidence(confidence, range_result.is_valid)
+        decision, _ = self._route_confidence(confidence, range_result.is_valid)
 
         return GateResult(
             decision=decision,

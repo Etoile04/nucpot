@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -88,7 +88,7 @@ class ReferenceValidationResult:
 
     candidate: ReferenceCandidate
     validation_id: UUID = field(default_factory=uuid4)
-    validated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    validated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     confidence_score: float = 0.0
     is_validated: bool = False
     needs_escalation: bool = False

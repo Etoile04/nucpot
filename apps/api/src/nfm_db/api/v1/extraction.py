@@ -20,7 +20,6 @@ from nfm_db.schemas.extraction import (
     ExtractionTriggerResponse,
 )
 from nfm_db.services.extraction_pipeline import (
-    JobStatus,
     get_job,
     trigger_extraction,
 )

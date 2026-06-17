@@ -1,17 +1,18 @@
 """Unit tests for authorization middleware."""
 
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
-from fastapi import HTTPException, status
-from unittest.mock import Mock, AsyncMock
 
-from nfm_db.models.user import BlogRole, Permission, User
+import pytest
+from fastapi import HTTPException, status
+
 from nfm_db.api.v1.auth import (
-    get_current_user,
     get_current_active_user,
+    get_current_user,
     require_blog_role,
     require_permission,
 )
+from nfm_db.models.user import BlogRole, Permission, User
 
 
 class TestGetCurrentUser:
@@ -30,9 +31,9 @@ class TestGetCurrentUser:
         )
         token = create_access_token({"sub": str(user.id)})
 
-        credentials = Mock(type="bearer", credentials=token)
+        credentials = MagicMock(type="bearer", credentials=token)
         mock_db = AsyncMock()
-        mock_result = AsyncMock()
+        mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = user
         mock_db.execute.return_value = mock_result
 
@@ -43,7 +44,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_invalid_token_raises_401(self, db_session) -> None:
         """Test that invalid token raises HTTP 401."""
-        credentials = Mock(type="bearer", credentials="invalid_token")
+        credentials = MagicMock(type="bearer", credentials="invalid_token")
         mock_db = AsyncMock()
 
         with pytest.raises(HTTPException) as exc_info:
@@ -59,9 +60,9 @@ class TestGetCurrentUser:
         user_id = uuid4()
         token = create_access_token({"sub": str(user_id)})
 
-        credentials = Mock(type="bearer", credentials=token)
+        credentials = MagicMock(type="bearer", credentials=token)
         mock_db = AsyncMock()
-        mock_result = AsyncMock()
+        mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 

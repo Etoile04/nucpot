@@ -70,8 +70,8 @@ export default async function BlogDetailPage({
     notFound()
   }
 
-  const { prev, next } = findAdjacentPosts(slug)
   const posts = getAllPosts()
+  const { prev, next } = findAdjacentPosts(slug)
 
   return (
     <>

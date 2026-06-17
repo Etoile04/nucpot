@@ -50,9 +50,9 @@ def authenticate_user(user: User, password: str) -> bool:
 
 
 __all__ = [
-    "verify_password",
-    "get_password_hash",
+    "authenticate_user",
     "create_access_token",
     "decode_access_token",
-    "authenticate_user",
+    "get_password_hash",
+    "verify_password",
 ]

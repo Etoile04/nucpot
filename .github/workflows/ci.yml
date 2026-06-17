@@ -96,12 +96,10 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --dev --frozen
+        run: uv sync --extra dev --frozen
 
       - name: Lint (ruff)
-        run: |
-          uv pip install ruff
-          python -m ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Type-check (mypy)
         run: uv run mypy src

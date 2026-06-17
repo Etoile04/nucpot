@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, Text, func
+from sqlalchemy import DateTime, Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin

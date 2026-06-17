@@ -1,0 +1,181 @@
+name: Staging Deploy
+
+# =============================================================================
+# NFM-DB — Staging deployment pipeline (NFM-111)
+# =============================================================================
+# Manually-triggered deploy to the staging host (ThinkStation). Pulls the
+# selected ref, runs scripts/staging_deploy.sh deploy (build + migrate + up +
+# health gate + auto-rollback), then scripts/staging_smoke_test.py. A failing
+# health gate auto-rolls back on the host; a failing smoke test fails the run.
+#
+# SSH transport (NFM-150 rev 2 — self-hosted runner): the GHA runner is
+# self-hosted on the ThinkStation itself (registered with labels `self-hosted`
+# + `staging`), so the three appleboy/ssh-action steps SSH to the host over
+# loopback (127.0.0.1:22) using the host's own OpenSSH sshd. No tunnel,
+# bastion, or Access service token is involved. The deploy scripts themselves
+# are unchanged.
+#
+# Why this transport (NFM-150 spec rev 2, decision card fbd66b94, option
+# `app-selfhost`): the Cloudflare Tunnel + Access transport shipped in NFM-151
+# (PR #15) required Cloudflare Access, which is paid-only on the board's tier
+# and therefore unusable. The board pivoted to running the runner on the
+# ThinkStation directly. Full architecture + security review: NFM-150 spec.
+#
+# REQUIRED GitHub secrets (create before first run — see NFM-112 / NFM-150):
+#   STAGING_SSH_USER  SSH user with docker access on the host
+#   STAGING_SSH_KEY   private key for the SSH user (PEM)
+#   GHCR_TOKEN        GitHub Container Registry token (if using GHCR images)
+#
+# SSH host: this workflow hardcodes host: 127.0.0.1 (port 22) because the
+# runner runs on the same box, so loopback reaches the host sshd. It no longer
+# reads STAGING_SSH_HOST; that secret was only consumed by the now-removed
+# cloudflared forward and can be deleted from repo secrets. The
+# TUNNEL_SERVICE_TOKEN_* secrets are likewise obsolete and can be deleted.
+#
+# Prerequisite: the host must expose an OpenSSH sshd on :22 that accepts
+# STAGING_SSH_KEY for STAGING_SSH_USER (set up in NFM-112). If only
+# Tailscale-SSH is available, loopback SSH cannot work — the CTO would switch
+# to NFM-150 Variant B (direct-run, no SSH).
+#
+# Runs in the `staging` environment (Actions → Environments → New "staging").
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to deploy"
+        required: false
+        default: "main"
+      image_tag:
+        description: "Image tag for nucpot-staging-{api,web} (enables rollback)"
+        required: false
+        default: "latest"
+      skip_smoke:
+        description: "Skip the post-deploy smoke test"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    runs-on: [self-hosted, staging]
+    environment: staging
+    # NFM-156 / NFM-157: route step traffic (the appleboy/ssh-action drone-ssh
+    # download + any runner-side fetch) through the box's verge-mihomo proxy.
+    # The self-hosted runner sits on a China network where raw
+    # github.com/github-releases traffic is GFW-interfered (run 27506967237:
+    # drone-ssh download hit `curl: (35) ...unexpected eof while reading`).
+    # GitHub Actions does not propagate the runner process env into job steps,
+    # so we set it explicitly.
+    #
+    # UPPERCASE ONLY (NFM-157 fix 1): GitHub Actions `env:` keys are
+    # case-insensitive, so defining both HTTP_PROXY and http_proxy is a 422
+    # parse error on dispatch (regression from NFM-156 / PR #17). Uppercase is
+    # honored by every consumer here — Go's http.ProxyFromEnvironment (appleboy
+    # is a Go action and pulls drone-ssh over HTTPS via HTTPS_PROXY), git,
+    # python urllib, and curl-for-HTTPS — so the lowercase duplicates are
+    # dropped. NO_PROXY excludes loopback so the appleboy SSH to 127.0.0.1:22
+    # is unaffected. These proxy vars are RUNNER-SIDE only; they are NOT
+    # forwarded to the remote SSH session (the host's git fetch is SSH and
+    # works without proxy — see NFM-157 evidence).
+    #
+    # STAGING_REPO_DIR (NFM-157 fix 2, option A): the host checkout lives at
+    # /home/z203/nucpot-staging/repo, not the script default
+    # /opt/nucpot-staging/repo (which does not exist on the host). Job env does
+    # NOT cross the SSH boundary by itself, so each appleboy step lists
+    # STAGING_REPO_DIR in its `envs:` to forward it to the remote, where the
+    # scripts' `REPO_DIR="${STAGING_REPO_DIR:-...}"` resolves it. Only
+    # STAGING_REPO_DIR is forwarded — proxy vars are not needed remotely.
+    env:
+      HTTP_PROXY: http://127.0.0.1:7897
+      HTTPS_PROXY: http://127.0.0.1:7897
+      NO_PROXY: 127.0.0.1,localhost
+      STAGING_REPO_DIR: /home/z203/nucpot-staging/repo
+      # NFM-162: fetch drone-ssh from a DIRECT-reachable GitHub-release mirror
+      # instead of raw github.com release assets. The box's JMS circumvention
+      # nodes are all dead (mihomo delay-test times out → Proxies→US collapses
+      # to DIRECT), so HTTP(S)_PROXY is effectively a no-op and appleboy's
+      # `curl -fsSL --retry 5` hits the intermittent GFW `curl: (35)` TLS reset
+      # on github.com (curl does NOT retry TLS errors). gh-proxy.com serves the
+      # exact official v1.8.0 linux-amd64 ELF (sha 5c37ea6f…, matches appleboy
+      # checksums.txt; cross-checked byte-identical against ghproxy.net) and is
+      # DIRECT-reachable, sidestepping the reset. job-env + step `envs:` ONLY —
+      # no step-level `env:` override, which would shadow this and silently
+      # re-break the download (the NFM-161 local-cache approach is retired: it
+      # needed host prep at `/home/z203/drone-ssh-cache` and "no host change" is
+      # an NFM-162 constraint). Backup mirror if gh-proxy.com is ever down:
+      # https://ghproxy.net/https://github.com/appleboy/drone-ssh/releases/download
+      DRONE_SSH_RELEASE_URL: https://gh-proxy.com/https://github.com/appleboy/drone-ssh/releases/download
+    timeout-minutes: 30
+    steps:
+      - name: Configure SSH + deploy on staging host
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: 127.0.0.1
+          port: 22
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
+          script_stop: true
+          script: |
+            set -euo pipefail
+            REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
+            REF="${{ inputs.ref }}"
+            TAG="${{ inputs.image_tag }}"
+
+            echo "===> NFM-DB staging deploy: ref=$REF tag=$TAG"
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              echo "ERROR: $REPO_DIR is not a git checkout. Run one-time host prep first (NFM-112)." >&2
+              exit 1
+            fi
+
+            cd "$REPO_DIR"
+            git fetch --all --prune
+            git checkout "$REF"
+            git reset --hard "$(git rev-parse "origin/$REF" 2>/dev/null || echo "$REF")"
+
+            if [ ! -f docker/.env.staging ]; then
+              echo "ERROR: docker/.env.staging missing on host. Run one-time host prep (NFM-112)." >&2
+              exit 1
+            fi
+
+            export STAGING_IMAGE_TAG="$TAG"
+            ./scripts/staging_deploy.sh deploy
+
+      - name: Run staging smoke test
+        if: ${{ inputs.skip_smoke != true }}
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: 127.0.0.1
+          port: 22
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
+          script_stop: true
+          script: |
+            set -euo pipefail
+            REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
+            cd "$REPO_DIR"
+            python3 scripts/staging_smoke_test.py
+
+      - name: Report status
+        if: always()
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: 127.0.0.1
+          port: 22
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
+          script_stop: false
+          script: |
+            set -euo pipefail || true
+            REPO_DIR="${STAGING_REPO_DIR:-/opt/nucpot-staging/repo}"
+            cd "$REPO_DIR"
+            ./scripts/staging_deploy.sh status || true

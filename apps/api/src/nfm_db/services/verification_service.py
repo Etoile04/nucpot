@@ -13,7 +13,7 @@ integration surface.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -178,7 +178,7 @@ async def process_verification_results(
     not_found = 0
     result_items: list[dict] = []
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for item in results:
         raw_id = item["staging_id"]

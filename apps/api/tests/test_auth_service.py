@@ -1,16 +1,15 @@
 """Unit tests for authentication service."""
 
-import pytest
-from datetime import timedelta, datetime
+from datetime import timedelta
 
+from nfm_db.models.user import User
 from nfm_db.services.auth_service import (
-    verify_password,
-    get_password_hash,
+    authenticate_user,
     create_access_token,
     decode_access_token,
-    authenticate_user,
+    get_password_hash,
+    verify_password,
 )
-from nfm_db.models.user import User
 
 
 class TestPasswordHashing:

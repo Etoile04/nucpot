@@ -2,7 +2,6 @@
 
 import enum
 from dataclasses import dataclass
-from typing import Literal
 
 
 class PostStatus(str, enum.Enum):

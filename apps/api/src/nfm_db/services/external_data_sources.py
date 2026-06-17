@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -109,7 +109,7 @@ class SimpleCache:
         if entry is None:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (now - entry.cached_at).total_seconds() > entry.ttl_seconds:
             # Expired
             del self._cache[key]
@@ -132,7 +132,7 @@ class SimpleCache:
         """
         self._cache[key] = CacheEntry(
             data=data,
-            cached_at=datetime.now(timezone.utc),
+            cached_at=datetime.now(UTC),
             ttl_seconds=ttl_seconds,
         )
 
@@ -180,7 +180,7 @@ class RateLimiter:
         Returns:
             True if token acquired, False if rate limited
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         window_start = now.replace(second=0, microsecond=0)
 
         # Clean old tokens
@@ -354,7 +354,7 @@ class ExternalDataSourceClient:
         Returns:
             Query results or None
         """
-        config = DATASOURCE_CONFIGS[ExternalDataSource.NIST_IPR]
+        _ = DATASOURCE_CONFIGS[ExternalDataSource.NIST_IPR]
 
         # TODO: Implement actual API call
         # Example implementation:
@@ -393,7 +393,7 @@ class ExternalDataSourceClient:
         Returns:
             Query results or None
         """
-        config = DATASOURCE_CONFIGS[ExternalDataSource.OPENKIM]
+        _ = DATASOURCE_CONFIGS[ExternalDataSource.OPENKIM]
 
         # TODO: Implement actual API call
         # Example implementation:
@@ -432,7 +432,7 @@ class ExternalDataSourceClient:
         Returns:
             Query results or None
         """
-        config = DATASOURCE_CONFIGS[ExternalDataSource.MATERIALS_PROJECT]
+        _ = DATASOURCE_CONFIGS[ExternalDataSource.MATERIALS_PROJECT]
 
         # TODO: Implement actual API call
         # Example implementation:
@@ -469,9 +469,9 @@ class ExternalDataSourceClient:
         """
         return {
             "total_entries": _query_cache.size(),
-            "nist_ipr": sum(1 for k in _query_cache._cache.keys() if k.startswith("nist:")),
-            "openkim": sum(1 for k in _query_cache._cache.keys() if k.startswith("openkim:")),
-            "materials_project": sum(1 for k in _query_cache._cache.keys() if k.startswith("mp:")),
+            "nist_ipr": sum(1 for k in _query_cache._cache if k.startswith("nist:")),
+            "openkim": sum(1 for k in _query_cache._cache if k.startswith("openkim:")),
+            "materials_project": sum(1 for k in _query_cache._cache if k.startswith("mp:")),
         }
 
 
