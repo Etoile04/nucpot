@@ -3,6 +3,7 @@
 ## Completed Work
 
 - [NFM-41 Blog Deployment Complete](nfm41-blog-deployment-complete.md) — Blog successfully deployed to production at https://nucpot.dpdns.org
+- [NFM-274 UX Review: Ontology Phase 0](nfm274-ux-review-ontology-phase0.md) — UX review of NFMD ontology Phase 0 embed interaction: PASS with NICE-TO-HAVE improvements for Phase 1+
 
 ## Consultations
 
