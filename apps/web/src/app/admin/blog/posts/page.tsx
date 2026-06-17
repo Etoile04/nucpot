@@ -315,7 +315,6 @@ export default function BlogPostsAdminPage() {
             <p>{searchQuery.trim() ? "没有找到匹配的文章" : "暂无文章"}</p>
           </div>
         )}
-      </div>
     </div>
   )
 }
