@@ -19,11 +19,15 @@ const IFRAME = 'iframe[title="OntoFuel 本体可视化"]'
 const FAILURE_SIGNATURES = [
   /failed to fetch/i,
   /\bcors\b/i,
-  /\b404\b/,
   /\bnetworkerror\b/i,
   /could not load/i,
   /refused to (execute|connect|apply)/i,
 ]
+// NOTE: a bare "404" console message is intentionally NOT a failure
+// signature — favicon.ico 404s in dev and is irrelevant to the embed. The
+// meaningful 404/CORS check is structural: the corpus-status poll and the
+// `failed` array (which tracks >=400 responses for ontology-viewer/corpus
+// assets) below.
 
 test.describe("Ontology page — Phase 0 static embed", () => {
   test("AC#1/#3: renders the embedded viewer from the same-origin vendored corpus with no errors", async ({
