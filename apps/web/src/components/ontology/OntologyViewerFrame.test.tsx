@@ -54,4 +54,26 @@ describe("OntologyViewerFrame", () => {
     expect(frame.getAttribute("loading")).toBe("lazy");
     expect(frame.hasAttribute("allowfullscreen")).toBe(true);
   });
+
+  it("renders a shareable material-records link when recordRef is provided (Phase 2 NFM-267)", () => {
+    render(
+      <OntologyViewerFrame
+        node="mat:UO2"
+        recordRef="/materials/UO2?corpus=smirnov2014"
+      />
+    );
+    const link = screen.getByText("View material records →");
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe(
+      "/materials/UO2?corpus=smirnov2014"
+    );
+    expect(link.getAttribute("rel")).toBe("noreferrer");
+  });
+
+  it("omits the record link for pre-record_ref data sources (Phase 0 static corpus)", () => {
+    render(<OntologyViewerFrame node="mat:UO2" />);
+    expect(
+      screen.queryByText("View material records →")
+    ).not.toBeInTheDocument();
+  });
 });
