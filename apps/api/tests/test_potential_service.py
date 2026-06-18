@@ -77,3 +77,42 @@ async def test_get_by_id_returns_none_for_missing(db_session) -> None:
     import uuid
 
     assert await get_potential_by_id(db_session, uuid.uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_list_elements_filter_before_pagination(db_session) -> None:
+    """Elements filter is applied BEFORE pagination — correct total/pages.
+
+    Reproduces NFM-286 HIGH: the old code filtered elements on a single
+    paginated page-slice, so ``total`` and ``total_pages`` were wrong when
+    elements + page + limit interacted.
+    """
+    # 10 Zr + 10 Mo, updated_at desc so newly-seeded rows sort last (Zr last)
+    for i in range(1, 11):
+        await _seed(db_session, name=f"mo_{i}", type="EAM", elements=["Mo"])
+    for i in range(1, 11):
+        await _seed(db_session, name=f"zr_{i}", type="EAM", elements=["Zr"])
+
+    # Page 1 of 2 (limit=5, 10 Zr total)
+    page1 = await list_potentials(db_session, page=1, limit=5, elements=["Zr"])
+    assert page1.total == 10, f"total should be 10, got {page1.total}"
+    assert page1.total_pages == 2, f"total_pages should be 2, got {page1.total_pages}"
+    assert len(page1.potentials) == 5
+    assert all("Zr" in p.elements for p in page1.potentials)
+
+    # Page 2 should have the remaining 5 Zr
+    page2 = await list_potentials(db_session, page=2, limit=5, elements=["Zr"])
+    assert page2.total == 10
+    assert page2.total_pages == 2
+    assert len(page2.potentials) == 5
+    assert all("Zr" in p.elements for p in page2.potentials)
+
+    # All 10 Zr names recovered across two pages
+    all_names = {p.name for p in page1.potentials} | {p.name for p in page2.potentials}
+    assert all_names == {f"zr_{i}" for i in range(1, 11)}
+
+    # Page 3 (past end) should be empty but still report correct total
+    page3 = await list_potentials(db_session, page=3, limit=5, elements=["Zr"])
+    assert page3.total == 10
+    assert page3.total_pages == 2
+    assert page3.potentials == []

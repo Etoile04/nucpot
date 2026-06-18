@@ -1,8 +1,8 @@
 """Service layer for potential queries.
 
-Filtering of JSON-stored fields (elements overlap, applicability temperature
-range) is done in Python for cross-database portability (SQLite tests).
-PG-native operators (&&, jsonb ops) + GIN indexes are a Phase 2 optimization.
+Filtering of JSON-stored fields (elements overlap) is done in Python for
+cross-database portability (SQLite tests). PG-native operators (&&, jsonb ops)
++ GIN indexes are a Phase 2 optimization.
 """
 
 import logging
@@ -55,19 +55,23 @@ async def list_potentials(
     }.get(sort, Potential.updated_at)
     stmt = stmt.order_by(sort_column.desc() if sort == "updated" else sort_column.asc())
 
-    # Count before pagination (apply type + query filters; element overlap filtered in Python)
-    count_stmt = select(func.count()).select_from(stmt.subquery())
-    total = (await db.execute(count_stmt)).scalar_one()
-
     offset = (page - 1) * limit
-    stmt = stmt.offset(offset).limit(limit)
-    rows = (await db.execute(stmt)).scalars().all()
 
-    # Element-overlap filter (Python-side; Phase 2: PG array &&)
+    # Materialize all matching rows for in-Python element filtering.
+    # We fetch unfiltered to keep the SQL portable (no PG-specific JSONB ops);
+    # this is acceptable because the corpus is small (≤hundreds).
     if elements:
         wanted = {e.strip() for e in elements if e.strip()}
-        rows = [r for r in rows if wanted.intersection(r.elements or [])]
-        total = len(rows)
+        all_rows = (await db.execute(stmt)).scalars().all()
+        matched = [r for r in all_rows if wanted.intersection(r.elements or [])]
+        total = len(matched)
+        rows = matched[offset : offset + limit]
+    else:
+        # Cross-DB count + paginate (no Python-side element filter needed)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = (await db.execute(count_stmt)).scalar_one()
+        stmt = stmt.offset(offset).limit(limit)
+        rows = (await db.execute(stmt)).scalars().all()
 
     summaries = [PotentialSummary.model_validate(r) for r in rows]
     return PotentialListResponse(
