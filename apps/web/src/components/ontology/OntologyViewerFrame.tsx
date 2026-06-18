@@ -64,7 +64,7 @@ export default function OntologyViewerFrame({
         <a
           href={recordRef}
           className="ontology-record-ref-link"
-          rel="noreferrer"
+          rel="noreferrer noopener"
         >
           View material records →
         </a>

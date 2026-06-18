@@ -180,6 +180,11 @@ def _assert_valid_record_ref(value: Any, where: str) -> None:
         raise ContractViolationError(
             f"{where} record_ref {value!r} must be relative (no scheme/host)",
         )
+    if not value.startswith("/"):
+        raise ContractViolationError(
+            f"{where} record_ref {value!r} "
+            f"must be a root-relative path (start with '/')",
+        )
     lowered = value.lower()
     for key in _RECORD_REF_FORBIDDEN_SUBSTRINGS:
         if key in lowered:

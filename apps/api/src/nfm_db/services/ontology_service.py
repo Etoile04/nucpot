@@ -369,12 +369,14 @@ async def derive_ontology_graph(
     for row in rows:
         material_id = _node_id("mat", row.element_system)
         property_id = _node_id("prop", row.property_name)
-        add_node(
-            "mat",
-            row.element_system,
-            node_type="individual",
-            record_ref=build_record_ref(corpus_id, row.element_system),
-        )
+        if material_id not in nodes:
+            nodes[material_id] = OntologyNode(
+                id=material_id,
+                type="individual",
+                name=row.element_system,
+                label=row.element_system,
+                record_ref=build_record_ref(corpus_id, row.element_system),
+            )
         add_node("prop", row.property_name, node_type="class")
         add_relationship(material_id, "HAS_PROPERTY", property_id)
 

@@ -67,7 +67,7 @@ describe("OntologyViewerFrame", () => {
     expect(link.getAttribute("href")).toBe(
       "/materials/UO2?corpus=smirnov2014"
     );
-    expect(link.getAttribute("rel")).toBe("noreferrer");
+    expect(link.getAttribute("rel")).toBe("noreferrer noopener");
   });
 
   it("omits the record link for pre-record_ref data sources (Phase 0 static corpus)", () => {
