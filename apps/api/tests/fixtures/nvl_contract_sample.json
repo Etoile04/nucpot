@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "generated_at": "2026-06-18T00:00:00Z",
   "source_ontology": "nfmd/ref-gap-fill",
   "source_digest": "a1b2c3d4e5f60718",
@@ -11,8 +11,8 @@
     "individuals": 2
   },
   "nodes": [
-    {"id": "mat:UO2", "type": "individual", "name": "UO2", "label": "UO2"},
-    {"id": "mat:U", "type": "individual", "name": "U", "label": "U"},
+    {"id": "mat:UO2", "type": "individual", "name": "UO2", "label": "UO2", "record_ref": "/materials/UO2?corpus=smirnov2014"},
+    {"id": "mat:U", "type": "individual", "name": "U", "label": "U", "record_ref": "/materials/U?corpus=smirnov2014"},
     {"id": "prop:lattice_constant", "type": "class", "name": "lattice_constant"},
     {"id": "prop:bulk_modulus", "type": "class", "name": "bulk_modulus"},
     {"id": "method:DFT", "type": "class", "name": "DFT"},

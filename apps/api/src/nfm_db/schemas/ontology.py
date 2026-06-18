@@ -19,8 +19,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-# Phase 1 pinned contract version (NFM-227 initial value).
-CONTRACT_SCHEMA_VERSION = "1.0"
+# Contract version (NFM-227). 1.0 = Phase 1 envelope (NFM-266).
+# 1.1 = Phase 2 (NFM-267): the reserved ``record_ref`` slot is now populated on
+# material-individual nodes as a stable, origin-relative deep link. Additive —
+# 1.0 consumers ignore the unknown field; the schema_version pattern already
+# accepts the minor bump.
+CONTRACT_SCHEMA_VERSION = "1.1"
 
 # sha256 short digest: first 16 lowercase hex chars (per nvl_contract.schema.json).
 _SOURCE_DIGEST_PATTERN = r"^[a-f0-9]{16}$"

@@ -25,6 +25,13 @@ const DEFAULT_DATA_URL = "/ontology-viewer/data/nvl_ontology_data.json";
 export interface OntologyViewerFrameProps {
   /** Optional node id for deep-linking (?node=<id>, NFM-237 MUST #3). */
   node?: string;
+  /**
+   * Phase 2 (NFM-267): stable, origin-relative deep link from a material node
+   * to its property records. When present, rendered as a shareable "View
+   * material records" anchor below the viewer. Omitted for class nodes and
+   * pre-record_ref data sources (Phase 0 static corpus) — graceful no-op.
+   */
+  recordRef?: string;
 }
 
 /** Build the determinate iframe src for the embedded viewer. */
@@ -33,7 +40,10 @@ export function buildOntologyViewerSrc(node?: string): string {
   return node ? `${src}&node=${encodeURIComponent(node)}` : src;
 }
 
-export default function OntologyViewerFrame({ node }: OntologyViewerFrameProps) {
+export default function OntologyViewerFrame({
+  node,
+  recordRef,
+}: OntologyViewerFrameProps) {
   return (
     <div style={{ width: "100%", minHeight: "600px" }}>
       <iframe
@@ -48,6 +58,17 @@ export default function OntologyViewerFrame({ node }: OntologyViewerFrameProps) 
           border: "0",
         }}
       />
+      {/* Phase 2 (NFM-267): shareable deep link from node → material records.
+          Omitted for class nodes and pre-record_ref data sources. */}
+      {recordRef && (
+        <a
+          href={recordRef}
+          className="ontology-record-ref-link"
+          rel="noreferrer noopener"
+        >
+          View material records →
+        </a>
+      )}
     </div>
   );
 }
