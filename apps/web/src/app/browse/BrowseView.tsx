@@ -103,7 +103,7 @@ export function BrowseView() {
             style={{ width: 160 }}
             placeholder="选择类型"
           />
-          <Link href="/potential">管理势函数</Link>
+          <Link href="/search">高级检索</Link>
         </Space>
       </Space>
 
