@@ -124,7 +124,7 @@ export function PotentialVerifiedProps({ detail }: PotentialVerifiedPropsProps) 
   const entries = parseVerifiedProps(verified_props)
   const hasRef = entries.some((e) => e.refValue != null)
 
-  const columns: ColumnsType<PropEntry> = [
+  const baseColumns: ColumnsType<PropEntry> = [
     {
       title: "属性名称",
       dataIndex: "label",
@@ -138,26 +138,28 @@ export function PotentialVerifiedProps({ detail }: PotentialVerifiedPropsProps) 
     },
   ]
 
-  if (hasRef) {
-    columns.push(
-      {
-        title: "参考值",
-        dataIndex: "refValue",
-        key: "refValue",
-        render: (v: string | null) => (v ?? "-"),
+  const refColumns: ColumnsType<PropEntry> = [
+    {
+      title: "参考值",
+      dataIndex: "refValue",
+      key: "refValue",
+      render: (v: string | null) => (v ?? "-"),
+    },
+    {
+      title: "偏差",
+      dataIndex: "deviation",
+      key: "deviation",
+      render: (dev: string | null, record: PropEntry) => {
+        if (dev == null || record.deviationPct == null) return "-"
+        const color = deviationColor(record.deviationPct)
+        return <Tag color={color}>{dev}</Tag>
       },
-      {
-        title: "偏差",
-        dataIndex: "deviation",
-        key: "deviation",
-        render: (dev: string | null, record: PropEntry) => {
-          if (dev == null || record.deviationPct == null) return "-"
-          const color = deviationColor(record.deviationPct)
-          return <Tag color={color}>{dev}</Tag>
-        },
-      },
-    )
-  }
+    },
+  ]
+
+  const columns: ColumnsType<PropEntry> = hasRef
+    ? [...baseColumns, ...refColumns]
+    : baseColumns
 
   return (
     <Table<PropEntry>
