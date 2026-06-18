@@ -6,6 +6,11 @@ from nfm_db.schemas.extraction import (  # noqa: F401
     ExtractionTriggerRequest,
     ExtractionTriggerResponse,
 )
+from nfm_db.schemas.potential import (  # noqa: F401
+    PotentialDetail,
+    PotentialListResponse,
+    PotentialSummary,
+)
 from nfm_db.schemas.verification import (  # noqa: F401
     ExportRequest,
     ExportResponse,
