@@ -7,7 +7,6 @@ PG-native operators (&&, jsonb ops) + GIN indexes are a Phase 2 optimization.
 
 import logging
 import uuid
-from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,13 +79,9 @@ async def list_potentials(
     )
 
 
-async def get_potential_by_id(
-    db: AsyncSession, potential_id: uuid.UUID
-) -> PotentialDetail | None:
+async def get_potential_by_id(db: AsyncSession, potential_id: uuid.UUID) -> PotentialDetail | None:
     """Return a single potential by id, or None if not found / not published."""
-    stmt = select(Potential).where(
-        Potential.id == potential_id, Potential.status == "published"
-    )
+    stmt = select(Potential).where(Potential.id == potential_id, Potential.status == "published")
     row = (await db.execute(stmt)).scalar_one_or_none()
     if row is None:
         return None

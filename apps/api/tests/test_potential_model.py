@@ -2,7 +2,7 @@
 
 import pytest
 
-from nfm_db.models import Base, Potential
+from nfm_db.models import Potential
 
 
 def test_potential_model_importable() -> None:
@@ -10,9 +10,22 @@ def test_potential_model_importable() -> None:
     assert Potential.__tablename__ == "potentials"
     columns = {c.name for c in Potential.__table__.columns}
     expected = {
-        "id", "name", "display_name", "type", "format", "elements",
-        "description", "applicability", "lammps_config", "verified_props",
-        "file_url", "source", "version", "status", "created_at", "updated_at",
+        "id",
+        "name",
+        "display_name",
+        "type",
+        "format",
+        "elements",
+        "description",
+        "applicability",
+        "lammps_config",
+        "verified_props",
+        "file_url",
+        "source",
+        "version",
+        "status",
+        "created_at",
+        "updated_at",
     }
     assert expected.issubset(columns), f"missing: {expected - columns}"
 

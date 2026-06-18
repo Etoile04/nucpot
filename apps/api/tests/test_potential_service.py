@@ -11,8 +11,12 @@ from nfm_db.services.potential_service import (
 
 async def _seed(db_session, **overrides):
     defaults = dict(
-        name="EAM_U_Zhou_2004", type="EAM", elements=["U"],
-        status="published", lammps_config={}, applicability={},
+        name="EAM_U_Zhou_2004",
+        type="EAM",
+        elements=["U"],
+        status="published",
+        lammps_config={},
+        applicability={},
     )
     defaults.update(overrides)
     p = Potential(**defaults)
@@ -71,4 +75,5 @@ async def test_get_by_id_returns_detail(db_session) -> None:
 @pytest.mark.asyncio
 async def test_get_by_id_returns_none_for_missing(db_session) -> None:
     import uuid
+
     assert await get_potential_by_id(db_session, uuid.uuid4()) is None

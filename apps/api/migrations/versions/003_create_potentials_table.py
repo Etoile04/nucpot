@@ -4,21 +4,27 @@ Revision ID: 003
 Revises: 9c15710c6321
 Create Date: 2026-06-18
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "003"
-down_revision: Union[str, Sequence[str], None] = "9c15710c6321"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "9c15710c6321"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "potentials",
-        sa.Column("id", sa.Uuid(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "id",
+            sa.Uuid(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("name", sa.String(256), nullable=False, unique=True),
         sa.Column("display_name", sa.String(256), nullable=True),
         sa.Column("type", sa.String(64), nullable=False),
@@ -44,8 +50,12 @@ def upgrade() -> None:
         sa.Column("version", sa.String(16), nullable=False, server_default=sa.text("'1.0'")),
         sa.Column("status", sa.String(16), nullable=False, server_default=sa.text("'published'")),
         sa.Column("extra", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_potentials_type", "potentials", ["type"])
     op.create_index("ix_potentials_status", "potentials", ["status"])
