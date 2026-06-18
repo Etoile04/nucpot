@@ -52,9 +52,9 @@ def test_envelope_has_required_nfm227_fields() -> None:
         assert field in dumped, f"envelope missing required field {field!r}"
 
 
-def test_envelope_defaults_to_contract_version_1_0() -> None:
-    """schema_version defaults to the pinned Phase 1 contract version '1.0'."""
-    assert CONTRACT_SCHEMA_VERSION == "1.0"
+def test_envelope_defaults_to_pinned_contract_version() -> None:
+    """schema_version defaults to the pinned contract version (1.1 in Phase 2)."""
+    assert CONTRACT_SCHEMA_VERSION == "1.1"
     env = OntologyGraphResponse(
         corpus_id="c",
         generated_at="2026-06-18T00:00:00Z",
@@ -62,7 +62,7 @@ def test_envelope_defaults_to_contract_version_1_0() -> None:
         source_digest="0d986d21a5a2b230",
         stats=OntologyStats(),
     )
-    assert env.schema_version == "1.0"
+    assert env.schema_version == "1.1"
 
 
 def test_envelope_rejects_malformed_source_digest() -> None:

@@ -19,6 +19,7 @@ import hashlib
 import json
 from collections import defaultdict
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,6 +173,31 @@ def _relationship_id(source: str, rel_type: str, target: str) -> str:
     return f"{source}|{rel_type}|{target}"
 
 
+def build_record_ref(
+    corpus_id: str,
+    element_system: str,
+    property: str | None = None,
+) -> str:
+    """Origin-relative, intent-encoded deep link to a material's property records.
+
+    Deterministic pure function of the node's stable identity (``element_system``
+    + ``corpus_id``; optional ``property`` narrows to a material→property edge).
+    No DB access, no new storage (NFM-266 invariant #3) — a pure string
+    derivation from existing staging identity.
+
+    Relative by construction ⇒ shareable + session-proof: the same corpus is
+    served from any origin (staging/prod/preview) and the link carries no host
+    or session token. The frontend resolves it against the staging query
+    (``_ref_gap_fill_staging`` filtered by ``element_system`` + ``source``).
+    Phase 2 contract (NFM-267 §3).
+    """
+    encoded_element = quote(element_system, safe="")
+    ref = f"/materials/{encoded_element}?corpus={quote(corpus_id, safe='')}"
+    if property is not None:
+        ref += f"&property={quote(property, safe='')}"
+    return ref
+
+
 def _compute_source_digest(
     nodes: list[OntologyNode],
     relationships: list[OntologyRelationship],
@@ -310,7 +336,13 @@ async def derive_ontology_graph(
     nodes: dict[str, OntologyNode] = {}
     relationships: dict[str, OntologyRelationship] = {}
 
-    def add_node(kind: str, key: str, *, node_type: str) -> None:
+    def add_node(
+        kind: str,
+        key: str,
+        *,
+        node_type: str,
+        record_ref: str | None = None,
+    ) -> None:
         node_id = _node_id(kind, key)
         if node_id not in nodes:
             nodes[node_id] = OntologyNode(
@@ -318,6 +350,7 @@ async def derive_ontology_graph(
                 type=node_type,
                 name=key,
                 label=key,
+                record_ref=record_ref,
             )
 
     def add_relationship(src: str, rel_type: str, dst: str) -> None:
@@ -336,7 +369,12 @@ async def derive_ontology_graph(
     for row in rows:
         material_id = _node_id("mat", row.element_system)
         property_id = _node_id("prop", row.property_name)
-        add_node("mat", row.element_system, node_type="individual")
+        add_node(
+            "mat",
+            row.element_system,
+            node_type="individual",
+            record_ref=build_record_ref(corpus_id, row.element_system),
+        )
         add_node("prop", row.property_name, node_type="class")
         add_relationship(material_id, "HAS_PROPERTY", property_id)
 

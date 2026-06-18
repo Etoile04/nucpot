@@ -38,7 +38,7 @@ async def test_get_corpus_graph_returns_versioned_contract(
     )
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["schema_version"] == "1.0"
+    assert data["schema_version"] == "1.1"
     assert data["corpus_id"] == _CORPUS
     # Relationship endpoints serialize as `from` (viewer-compatible alias).
     assert "from" in data["relationships"][0]

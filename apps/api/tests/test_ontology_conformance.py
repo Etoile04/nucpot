@@ -47,7 +47,7 @@ def _load_json(path: Path) -> dict:
 def test_canonical_fixture_conforms_to_contract() -> None:
     """The frozen static fixture passes full contract conformance."""
     payload = _load_json(_CANONICAL_FIXTURE)
-    assert_nvl_contract(payload, corpus_id=FIXTURE_CORPUS)
+    assert_nvl_contract(payload, corpus_id=FIXTURE_CORPUS, check_record_ref=True)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,12 @@ def test_real_viewer_artifact_conforms_to_element_contract() -> None:
     the contract's element rules match viewer reality — the firewall foundation.
     """
     payload = _load_json(_VIEWER_ARTIFACT)
-    assert_nvl_contract(payload, check_envelope=False, check_stats_consistency=False)
+    assert_nvl_contract(
+        payload,
+        check_envelope=False,
+        check_stats_consistency=False,
+        check_record_ref=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -110,4 +115,71 @@ async def test_backend_endpoint_conforms_to_contract(
         f"/api/v1/ontology/corpora/{FIXTURE_CORPUS}/graph",
     )
     assert response.status_code == 200, response.text
-    assert_nvl_contract(response.json(), corpus_id=FIXTURE_CORPUS)
+    assert_nvl_contract(
+        response.json(),
+        corpus_id=FIXTURE_CORPUS,
+        check_record_ref=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — record_ref deep-link stability across both green providers
+# ---------------------------------------------------------------------------
+
+
+_SEED_ROWS = [
+    {
+        "element_system": "UO2",
+        "property_name": "lattice_constant",
+        "value": 5.47,
+        "unit": "angstrom",
+        "method": "DFT",
+    },
+    {
+        "element_system": "U",
+        "property_name": "bulk_modulus",
+        "value": 200.0,
+        "unit": "GPa",
+        "method": "EXP",
+    },
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["canonical_fixture", "backend_endpoint"])
+async def test_record_ref_stability(
+    provider: str,
+    async_client,
+    db_session: AsyncSession,
+) -> None:
+    """record_ref is a stable, shareable deep link for both green providers.
+
+    Same material identity ⇒ the same deterministic, origin-relative URL — no
+    scheme/host, no transient/auth keys. The fixture (frozen reference) and the
+    backend endpoint (live derivation) must agree (NFM-267 §3).
+    """
+    if provider == "canonical_fixture":
+        payload = _load_json(_CANONICAL_FIXTURE)
+    else:
+        await seed_corpus(db_session, source=FIXTURE_CORPUS, rows=_SEED_ROWS)
+        response = await async_client.get(
+            f"/api/v1/ontology/corpora/{FIXTURE_CORPUS}/graph",
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+    # Full conformance incl. the record_ref firewall.
+    assert_nvl_contract(payload, corpus_id=FIXTURE_CORPUS, check_record_ref=True)
+
+    individuals = {
+        n["id"]: n["record_ref"]
+        for n in payload["nodes"]
+        if n.get("type") == "individual"
+    }
+    # Deterministic per material identity, identical across providers.
+    assert individuals["mat:UO2"] == "/materials/UO2?corpus=smirnov2014"
+    assert individuals["mat:U"] == "/materials/U?corpus=smirnov2014"
+    # Relative + shareable by construction.
+    assert individuals["mat:UO2"].startswith("/")
+    assert "://" not in individuals["mat:UO2"]
+

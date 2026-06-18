@@ -26,6 +26,19 @@ _ALLOWED_NODE_TYPES = {"class", "individual"}
 _SCHEMA_VERSION_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
 _SOURCE_DIGEST_RE = re.compile(r"^[a-f0-9]{16}$")
 
+# Phase 2 record_ref stability firewall (NFM-267 §3.1). A relative URL has no
+# scheme: it must not start with ``<scheme>://``. Transient/auth keys would make
+# a deep link session-bound rather than shareable — they are forbidden.
+_RECORD_REF_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_RECORD_REF_FORBIDDEN_SUBSTRINGS = (
+    "session",
+    "token",
+    "sid",
+    "auth",
+    "ts",
+    "expires",
+)
+
 
 class ContractViolationError(AssertionError):
     """Raised when a payload drifts from the versioned NVL contract."""
@@ -37,6 +50,7 @@ def assert_nvl_contract(
     corpus_id: str | None = None,
     check_envelope: bool = True,
     check_stats_consistency: bool = True,
+    check_record_ref: bool = True,
 ) -> None:
     """Assert ``payload`` conforms to the versioned NFM-227 NVL contract.
 
@@ -45,6 +59,10 @@ def assert_nvl_contract(
         corpus_id: if given, assert the envelope echoes it.
         check_envelope: assert envelope metadata (skip for the legacy artifact).
         check_stats_consistency: assert stats counts match nodes/relationships.
+        check_record_ref: assert the Phase 2 record_ref deep-link invariant
+            (NFM-267): material individuals carry a stable, shareable link and
+            every present record_ref is well-formed. Opt-out for pre-record_ref
+            artifacts (the vendored viewer artifact).
     """
     if not isinstance(payload, dict):
         raise ContractViolationError("payload must be a JSON object")
@@ -61,6 +79,9 @@ def assert_nvl_contract(
 
     node_ids = _assert_nodes(nodes)
     _assert_relationships(relationships, node_ids)
+
+    if check_record_ref:
+        _assert_record_ref(nodes, relationships)
 
     if check_envelope and check_stats_consistency:
         _assert_stats_consistency(payload, nodes, relationships)
@@ -147,6 +168,51 @@ def _assert_relationships(
                     f"relationship[{idx}] {endpoint} {rel[endpoint]!r} "
                     "does not reference a known node id",
                 )
+
+
+def _assert_valid_record_ref(value: Any, where: str) -> None:
+    """Phase 2 stability rules for a single record_ref (NFM-267 §3.1)."""
+    if not isinstance(value, str) or not value:
+        raise ContractViolationError(
+            f"{where} record_ref must be a non-empty string",
+        )
+    if _RECORD_REF_SCHEME_RE.match(value):
+        raise ContractViolationError(
+            f"{where} record_ref {value!r} must be relative (no scheme/host)",
+        )
+    lowered = value.lower()
+    for key in _RECORD_REF_FORBIDDEN_SUBSTRINGS:
+        if key in lowered:
+            raise ContractViolationError(
+                f"{where} record_ref {value!r} must not carry "
+                f"transient/auth key {key!r}",
+            )
+
+
+def _assert_record_ref(nodes: list[Any], relationships: list[Any]) -> None:
+    """Phase 2 deep-link firewall (NFM-267 §3.1 / §3.2).
+
+    Material-individual nodes MUST carry a stable, shareable record_ref deep link.
+    Any record_ref that IS present (on any node or relationship) must conform to
+    the stability rules — non-empty, relative, free of transient/auth keys — so a
+    link can never expire with a session. Class nodes omit it (no single record).
+    """
+    for node in nodes:
+        ntype = node.get("type")
+        nid = node.get("id")
+        ref = node.get("record_ref")
+        if ntype == "individual":
+            if ref is None:
+                raise ContractViolationError(
+                    f"individual node {nid!r} must carry a record_ref deep link",
+                )
+            _assert_valid_record_ref(ref, f"node {nid!r}")
+        elif ref is not None:
+            _assert_valid_record_ref(ref, f"node {nid!r}")
+    for rel in relationships:
+        ref = rel.get("record_ref")
+        if ref is not None:
+            _assert_valid_record_ref(ref, f"relationship {rel.get('id')!r}")
 
 
 def _assert_stats_consistency(

@@ -106,7 +106,8 @@ async def test_derive_envelope_is_versioned_and_conforms(
 
     graph = await derive_ontology_graph(db_session, _CORPUS)
 
-    assert graph.schema_version == "1.0"
+    # Phase 2 (NFM-267): additive minor bump — record_ref now populated.
+    assert graph.schema_version == "1.1"
     assert graph.corpus_id == _CORPUS
     assert _DIGEST_RE.match(graph.source_digest), graph.source_digest
     # Cross-check with the dual-provider conformance checker.
@@ -174,3 +175,74 @@ async def test_derive_unknown_corpus_raises(db_session: AsyncSession) -> None:
     """An empty/unknown corpus raises CorpusNotFoundError (endpoint maps to 404)."""
     with pytest.raises(CorpusNotFoundError):
         await derive_ontology_graph(db_session, "no-such-corpus")
+
+
+@pytest.mark.asyncio
+async def test_derive_populates_record_ref_on_material_individuals(
+    db_session: AsyncSession,
+) -> None:
+    """mat: individual nodes carry a deterministic, relative record_ref deep link;
+    class nodes (prop/method/src) omit it — no single material record (Phase 2 NFM-267)."""
+    await seed_corpus(
+        db_session,
+        source=_CORPUS,
+        rows=[
+            {
+                "element_system": "UO2",
+                "property_name": "lattice_constant",
+                "value": 5.47,
+                "unit": "angstrom",
+                "method": "DFT",
+            },
+            {
+                "element_system": "U",
+                "property_name": "bulk_modulus",
+                "value": 200.0,
+                "unit": "GPa",
+                "method": "EXP",
+            },
+        ],
+    )
+    graph = await derive_ontology_graph(db_session, _CORPUS)
+    nodes = _node_map(graph)
+
+    # Material individuals carry an origin-relative, intent-encoded deep link.
+    assert nodes["mat:UO2"]["record_ref"] == "/materials/UO2?corpus=smirnov2014"
+    assert nodes["mat:U"]["record_ref"] == "/materials/U?corpus=smirnov2014"
+
+    # Class nodes carry no single-material record link.
+    for class_node in (
+        "prop:lattice_constant",
+        "method:DFT",
+        f"src:{_CORPUS}",
+    ):
+        assert nodes[class_node]["record_ref"] is None, class_node
+
+
+def test_build_record_ref_is_deterministic_relative_and_encoded() -> None:
+    """The pure deep-link builder is a deterministic, origin-relative, encoded URL.
+
+    No DB, no new storage — a pure function of the node's stable identity. Relative
+    by construction ⇒ shareable + session-proof (Phase 2 NFM-267 §3).
+    """
+    from nfm_db.services.ontology_service import build_record_ref
+
+    # Deterministic: same identity ⇒ same link.
+    expected = "/materials/UO2?corpus=smirnov2014"
+    assert build_record_ref("smirnov2014", "UO2") == expected
+    assert build_record_ref("smirnov2014", "UO2") == build_record_ref("smirnov2014", "UO2")
+
+    # Origin-relative (no scheme/host) — shareable + session-proof.
+    ref = build_record_ref("smirnov2014", "UO2")
+    assert ref.startswith("/")
+    assert "://" not in ref
+
+    # Optional property narrows to a material+property edge.
+    assert build_record_ref("smirnov2014", "UO2", property="lattice_constant") == (
+        "/materials/UO2?corpus=smirnov2014&property=lattice_constant"
+    )
+
+    # URL-encodes unsafe path/query segments.
+    assert build_record_ref("smirnov 2014", "U O2") == (
+        "/materials/U%20O2?corpus=smirnov%202014"
+    )
