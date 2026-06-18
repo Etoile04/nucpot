@@ -67,6 +67,7 @@ describe("OntologyViewerFrame", () => {
     expect(link.getAttribute("href")).toBe(
       "/materials/UO2?corpus=smirnov2014"
     );
+    expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noreferrer noopener");
   });
 

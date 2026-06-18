@@ -176,12 +176,12 @@ def _relationship_id(source: str, rel_type: str, target: str) -> str:
 def build_record_ref(
     corpus_id: str,
     element_system: str,
-    property: str | None = None,
+    property_name: str | None = None,
 ) -> str:
     """Origin-relative, intent-encoded deep link to a material's property records.
 
     Deterministic pure function of the node's stable identity (``element_system``
-    + ``corpus_id``; optional ``property`` narrows to a material→property edge).
+    + ``corpus_id``; optional ``property_name`` narrows to a material→property edge).
     No DB access, no new storage (NFM-266 invariant #3) — a pure string
     derivation from existing staging identity.
 
@@ -193,8 +193,8 @@ def build_record_ref(
     """
     encoded_element = quote(element_system, safe="")
     ref = f"/materials/{encoded_element}?corpus={quote(corpus_id, safe='')}"
-    if property is not None:
-        ref += f"&property={quote(property, safe='')}"
+    if property_name is not None:
+        ref += f"&property={quote(property_name, safe='')}"
     return ref
 
 

@@ -238,7 +238,7 @@ def test_build_record_ref_is_deterministic_relative_and_encoded() -> None:
     assert "://" not in ref
 
     # Optional property narrows to a material+property edge.
-    assert build_record_ref("smirnov2014", "UO2", property="lattice_constant") == (
+    assert build_record_ref("smirnov2014", "UO2", property_name="lattice_constant") == (
         "/materials/UO2?corpus=smirnov2014&property=lattice_constant"
     )
 
