@@ -36,6 +36,7 @@ from nfm_db.models.feedback import (  # noqa: E402
     FeedbackType,
     Priority,
 )
+from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.ref_gap_fill import (  # noqa: E402
     CacheLevel,
     Confidence,
@@ -58,6 +59,7 @@ __all__ = [
     "FeedbackStatus",
     "FeedbackType",
     "Permission",
+    "Potential",
     "PostStatus",
     "Priority",
     "RefGapFillStaging",
