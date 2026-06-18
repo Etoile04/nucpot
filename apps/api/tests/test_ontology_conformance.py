@@ -21,7 +21,11 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from tests.nvl_conformance import assert_nvl_contract
+from tests.nvl_conformance import (
+    ContractViolationError,
+    _assert_valid_record_ref,
+    assert_nvl_contract,
+)
 from tests.ontology_seed import seed_corpus
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -182,4 +186,40 @@ async def test_record_ref_stability(
     # Relative + shareable by construction.
     assert individuals["mat:UO2"].startswith("/")
     assert "://" not in individuals["mat:UO2"]
+
+
+# ---------------------------------------------------------------------------
+# record_ref forbidden-key firewall — regression coverage (NFM-282 follow-up)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "/materials/stats-alloy?corpus=constants-db",  # 'ts' inside 'stats'/'constants'
+        "/materials/nts-specimen?corpus=x",            # 'ts' inside 'nts'
+        "/materials/Ts?corpus=x",                       # standalone 'Ts' segment
+    ],
+)
+def test_record_ref_does_not_false_positive_on_ts_substrings(ref: str) -> None:
+    """NFM-282: bare ``"ts"`` substring-matched legitimate names ('stats',
+    'nts', 'constants') and rejected valid record_refs. After narrowing to
+    ``"timestamp"``, these scientific/material names must pass the firewall."""
+    _assert_valid_record_ref(ref, where="test")  # must not raise
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "/materials/UO2?corpus=x&timestamp=1700000000",  # transient key (was bare 'ts')
+        "/materials/UO2?corpus=x&session=abc",
+        "/materials/UO2?corpus=x&token=abc",
+        "/materials/UO2?corpus=x&expires=123",
+    ],
+)
+def test_record_ref_still_rejects_transient_keys(ref: str) -> None:
+    """NFM-282: narrowing ``"ts"`` → ``"timestamp"`` must not weaken rejection
+    of the actual transient/auth keys that make a deep link session-bound."""
+    with pytest.raises(ContractViolationError):
+        _assert_valid_record_ref(ref, where="test")
 

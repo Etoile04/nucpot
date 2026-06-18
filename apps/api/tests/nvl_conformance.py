@@ -28,14 +28,17 @@ _SOURCE_DIGEST_RE = re.compile(r"^[a-f0-9]{16}$")
 
 # Phase 2 record_ref stability firewall (NFM-267 §3.1). A relative URL has no
 # scheme: it must not start with ``<scheme>://``. Transient/auth keys would make
-# a deep link session-bound rather than shareable — they are forbidden.
+# a deep link session-bound rather than shareable — they are forbidden. NOTE:
+# the short transient key is matched as ``"timestamp"`` (not bare ``"ts"``) so
+# legitimate names containing the letters "ts" (e.g. "stats", "nts",
+# "constants") are not false-positived by substring search (NFM-282 follow-up).
 _RECORD_REF_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _RECORD_REF_FORBIDDEN_SUBSTRINGS = (
     "session",
     "token",
     "sid",
     "auth",
-    "ts",
+    "timestamp",
     "expires",
 )
 
