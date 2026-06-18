@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import OntologyViewerFrame from '@/components/ontology/OntologyViewerFrame';
+import OntologyRecordRef from '@/components/ontology/OntologyRecordRef';
 
 export const metadata: Metadata = {
   title: '本体可视化 - NFMD',
@@ -7,17 +7,18 @@ export const metadata: Metadata = {
 };
 
 interface OntologyPageProps {
-  searchParams: Promise<{ node?: string }>;
+  searchParams: Promise<{ node?: string; corpus?: string }>;
 }
 
 export default async function OntologyPage({ searchParams }: OntologyPageProps) {
-  const { node } = await searchParams;
-  // Boundary validation: node only becomes an encoded ?node= deep-link value
-  // into our same-origin viewer; cap length to bound the iframe URL.
+  const { node, corpus } = await searchParams;
+  // Boundary validation: node/corpus only become encoded deep-link values into
+  // our same-origin viewer / backend graph fetch; cap length to bound the URLs.
   const safeNode = node && node.length <= 200 ? node : undefined;
+  const safeCorpus = corpus && corpus.length <= 200 ? corpus : undefined;
   return (
     <div className="ontology-page">
-      <OntologyViewerFrame node={safeNode} />
+      <OntologyRecordRef node={safeNode} corpus={safeCorpus} />
     </div>
   );
 }
