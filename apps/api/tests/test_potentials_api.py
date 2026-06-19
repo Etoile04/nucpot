@@ -57,6 +57,7 @@ async def test_detail_endpoint_returns_full_record(async_client, db_session) -> 
     payload = data["data"]
     assert payload["name"] == "detail1"
     assert payload["verified_props"] == {"lattice": 3.5}
+    assert payload["verification_status"] == "unverified"
 
 
 @pytest.mark.asyncio
