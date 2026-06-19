@@ -71,13 +71,13 @@ export function SearchView() {
   }, [runSearch])
 
   return (
-    <main style={{ maxWidth: 1200, margin: "0 auto", padding: "2rem 1.5rem" }}>
+    <main className="max-w-[1200px] mx-auto px-6 py-8">
       <Space
         direction="vertical"
         size="middle"
-        style={{ width: "100%", marginBottom: "1.5rem" }}
+        className="w-full mb-6"
       >
-        <Title level={2} style={{ margin: 0 }}>
+        <Title level={2} className="!m-0 text-white">
           高级检索
         </Title>
         <Text type="secondary">按类型、元素或关键字检索势函数库</Text>
@@ -108,7 +108,7 @@ export function SearchView() {
       </Spin>
 
       {!state.error && state.total > 0 && (
-        <Text type="secondary" style={{ display: "block", marginTop: "1.5rem", textAlign: "center" }}>
+        <Text type="secondary" className="block mt-6 text-center">
           共 {state.total} 条结果
         </Text>
       )}

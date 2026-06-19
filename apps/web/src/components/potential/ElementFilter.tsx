@@ -18,7 +18,7 @@ export function ElementFilter({ value, onChange }: ElementFilterProps) {
       options={ELEMENT_OPTIONS}
       allowClear
       showSearch
-      style={{ minWidth: 180 }}
+      className="min-w-[180px]"
       maxTagCount={5}
       filterOption={(input, option) =>
         ((option?.label as string) ?? "").toLowerCase().includes(input.toLowerCase())

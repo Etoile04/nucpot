@@ -107,7 +107,7 @@ export default function UploadForm() {
   }
 
   return (
-    <Card title="上传势函数" style={{ maxWidth: 720, margin: "2rem auto" }}>
+    <Card title="上传势函数" className="max-w-[720px] mx-auto my-8">
       <Form
         form={form}
         layout="vertical"
@@ -235,7 +235,7 @@ export default function UploadForm() {
         <Card
           size="small"
           title="上传成功"
-          style={{ background: "#f6ffed", marginTop: 16 }}
+          className="!bg-green-900/30 mt-4"
         >
           <p>ID: {result.potential.id}</p>
           <p>名称: {result.potential.name}</p>

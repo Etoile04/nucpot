@@ -85,13 +85,13 @@ export function BrowseView() {
   }
 
   return (
-    <main style={{ maxWidth: 1200, margin: "0 auto", padding: "2rem 1.5rem" }}>
+    <main className="max-w-[1200px] mx-auto px-6 py-8">
       <Space
         direction="vertical"
         size="middle"
-        style={{ width: "100%", marginBottom: "1.5rem" }}
+        className="w-full mb-6"
       >
-        <Title level={2} style={{ margin: 0 }}>
+        <Title level={2} className="!m-0 text-white">
           浏览势函数
         </Title>
         <Space wrap>
@@ -100,7 +100,7 @@ export function BrowseView() {
             value={typeFilter}
             onChange={onTypeChange}
             options={TYPE_OPTIONS}
-            style={{ width: 160 }}
+            className="w-40"
             placeholder="选择类型"
           />
           <Link href="/search">高级检索</Link>
@@ -131,7 +131,7 @@ export function BrowseView() {
           onChange={onPageChange}
           showSizeChanger={false}
           showTotal={(total) => `共 ${total} 条`}
-          style={{ marginTop: "2rem", textAlign: "center" }}
+          className="mt-8 text-center"
         />
       )}
     </main>

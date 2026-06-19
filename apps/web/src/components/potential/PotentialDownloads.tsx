@@ -48,7 +48,7 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
 
   return (
     <Card title="文件下载">
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space direction="vertical" size="middle" className="w-full">
         <Space align="center" size="middle">
           <FileOutlined style={{ fontSize: 24 }} />
           <div>
