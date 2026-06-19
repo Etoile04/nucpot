@@ -2,8 +2,6 @@
 
 import uuid
 
-import pytest
-
 
 class TestPotentialSchemaProvider:
     """Provider field on potential schemas (NFM-296 Task 1)."""

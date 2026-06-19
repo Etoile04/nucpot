@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.schemas.potential import (
     PotentialDetail,
     PotentialListResponse,
-    PotentialSummary,
 )
 from nfm_db.services.providers.base import PotentialFilters
 from nfm_db.services.providers.local import LocalPotentialProvider
