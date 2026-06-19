@@ -74,7 +74,7 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
       <Descriptions.Item label="类型">
         <Tag color={typeColor(type)}>{type}</Tag>
       </Descriptions.Item>
-      <Descriptions.Item label="验证状态">
+      <Descriptions.Item label="验证状态" span={2}>
         <Tag color={STATUS_COLORS[verification_status] ?? "default"}>
           {STATUS_LABELS[verification_status] ?? verification_status}
         </Tag>
