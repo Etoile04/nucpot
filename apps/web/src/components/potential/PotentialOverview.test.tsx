@@ -15,6 +15,7 @@ const baseDetail: PotentialDetail = {
   applicability: {},
   references: [],
   developers: [],
+  verified_props: null,
   sim_software: [],
   lammps_config: {},
   extra: {},
