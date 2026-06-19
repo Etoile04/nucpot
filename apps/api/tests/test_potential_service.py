@@ -6,6 +6,7 @@ from nfm_db.models import Potential
 from nfm_db.services.potential_service import (
     get_potential_by_id,
     list_potentials,
+    update_potential_verification,
 )
 
 
@@ -116,3 +117,72 @@ async def test_list_elements_filter_before_pagination(db_session) -> None:
     assert page3.total == 10
     assert page3.total_pages == 2
     assert page3.potentials == []
+
+
+@pytest.mark.asyncio
+async def test_update_verification_status_sets_pending(db_session) -> None:
+    """update_potential_verification flips status and persists the change."""
+    p = Potential(name="verify-me", type="EAM", elements=["U"], status="published")
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    assert p.verification_status == "unverified"
+
+    updated = await update_potential_verification(
+        db_session, p.id, "pending", message="autovc queued"
+    )
+    assert updated is not None
+    assert updated.verification_status == "pending"
+    assert updated.extra["verification_message"] == "autovc queued"
+
+
+@pytest.mark.asyncio
+async def test_update_verification_status_stores_evidence_url(db_session) -> None:
+    """The helper records the evidence URL in the extra audit blob."""
+    p = Potential(name="verify-evidence", type="EAM", elements=["U"], status="published")
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    updated = await update_potential_verification(
+        db_session,
+        p.id,
+        "verified",
+        message="all props within tolerance",
+        evidence_url="https://example.org/report/1",
+    )
+    assert updated is not None
+    assert updated.verification_status == "verified"
+    assert updated.extra["verification_evidence_url"] == "https://example.org/report/1"
+
+
+@pytest.mark.asyncio
+async def test_update_verification_status_returns_none_for_missing(db_session) -> None:
+    """Updating a non-existent potential returns None (no raise)."""
+    import uuid
+
+    result = await update_potential_verification(db_session, uuid.uuid4(), "pending")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_update_verification_status_preserves_existing_extra(db_session) -> None:
+    """Writing verification audit data must not clobber other extra fields."""
+    p = Potential(
+        name="verify-preserve",
+        type="EAM",
+        elements=["U"],
+        status="published",
+        extra={"custom_note": "keep me"},
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    updated = await update_potential_verification(
+        db_session, p.id, "failed", message="divergence in lattice"
+    )
+    assert updated is not None
+    assert updated.verification_status == "failed"
+    assert updated.extra["custom_note"] == "keep me"
+    assert updated.extra["verification_message"] == "divergence in lattice"
