@@ -15,6 +15,7 @@ interface SearchFiltersProps {
   readonly onTypeChange: (v: string | undefined) => void
   readonly elements: string[]
   readonly onElementsChange: (v: string[]) => void
+  readonly allElements?: readonly string[]
   readonly query: string
   readonly onQueryChange: (v: string) => void
 }
@@ -24,9 +25,18 @@ export function SearchFilters({
   onTypeChange,
   elements,
   onElementsChange,
+  allElements,
   query,
   onQueryChange,
 }: SearchFiltersProps) {
+  const handleToggle = (el: string) => {
+    if (elements.includes(el)) {
+      onElementsChange(elements.filter((e) => e !== el))
+    } else {
+      onElementsChange([...elements, el])
+    }
+  }
+
   return (
     <Space wrap>
       <Select
@@ -37,7 +47,11 @@ export function SearchFilters({
         allowClear
         className="min-w-[120px]"
       />
-      <ElementFilter value={elements} onChange={onElementsChange} />
+      <ElementFilter
+        allElements={allElements ?? elements}
+        selected={elements}
+        onToggle={handleToggle}
+      />
       <Input.Search
         placeholder="搜索势函数"
         value={query}
