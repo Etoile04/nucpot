@@ -43,6 +43,7 @@ class PotentialDetail(PotentialSummary):
     source_doi: str | None = None
     license: str | None = None
     extra: dict = {}
+    verification_status: str = "unverified"
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
