@@ -1,7 +1,8 @@
 """NFM-DB API application entry point."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from nfm_db.api.v1 import (
     auth_endpoints,
@@ -16,6 +17,7 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
+from nfm_db.services.upload_service import PotentialUploadError
 
 app = FastAPI(
     title="核燃料与材料物性数据库 API",
@@ -30,6 +32,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(PotentialUploadError)
+async def _upload_error_handler(_request: Request, exc: PotentialUploadError) -> JSONResponse:
+    """Return upload errors in the ApiResponse envelope for consistency."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "error": exc.message},
+    )
+
 
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["feedback"])
