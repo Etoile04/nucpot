@@ -17,7 +17,9 @@ from nfm_db.schemas.potential import (
     PotentialListResponse,
 )
 from nfm_db.services.providers.base import PotentialFilters
+from nfm_db.services.providers.composite import CompositeProvider
 from nfm_db.services.providers.local import LocalPotentialProvider
+from nfm_db.services.providers.openkim import OpenKIMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,14 @@ logger = logging.getLogger(__name__)
 # depend on any single provider.
 def _compute_total_pages(total: int, limit: int) -> int:
     return max(1, -(-total // limit))  # ceil
+
+
+def build_composite_provider(db: AsyncSession) -> CompositeProvider:
+    """Construct the dual-provider composite used by the service wrappers.
+
+    Local is authoritative; OpenKIM is additive + degrade-safe.
+    """
+    return CompositeProvider(LocalPotentialProvider(db), OpenKIMProvider())
 
 
 async def list_potentials(
@@ -39,7 +49,7 @@ async def list_potentials(
 ) -> PotentialListResponse:
     """Return a paginated, filtered list of published potentials."""
 
-    provider = LocalPotentialProvider(db)
+    provider = build_composite_provider(db)
     filters = PotentialFilters(
         page=page,
         limit=limit,
@@ -68,4 +78,4 @@ async def get_potential_by_id(
     db: AsyncSession, potential_id: uuid.UUID
 ) -> PotentialDetail | None:
     """Return a single potential by id, or None if not found / not published."""
-    return await LocalPotentialProvider(db).get_detail(potential_id)
+    return await build_composite_provider(db).get_detail(potential_id)

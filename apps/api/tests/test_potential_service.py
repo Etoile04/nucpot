@@ -1,12 +1,30 @@
-"""Tests for the potential service layer."""
+"""Tests for the potential service layer.
+
+All tests patch ``build_composite_provider`` to local-only so the
+service-layer tests are not affected by the OpenKIM mock transport.
+"""
+
+from unittest.mock import patch
 
 import pytest
 
 from nfm_db.models import Potential
 from nfm_db.services.potential_service import (
+    build_composite_provider,
     get_potential_by_id,
     list_potentials,
 )
+from nfm_db.services.providers.local import LocalPotentialProvider
+
+
+@pytest.fixture(autouse=True)
+def _local_only(db_session):
+    """Replace the composite with a local-only provider for isolated tests."""
+    with patch(
+        "nfm_db.services.potential_service.build_composite_provider",
+        return_value=LocalPotentialProvider(db_session),
+    ):
+        yield
 
 
 async def _seed(db_session, **overrides):
