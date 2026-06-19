@@ -24,6 +24,7 @@ def test_potential_model_importable() -> None:
         "source",
         "version",
         "status",
+        "verification_status",
         "created_at",
         "updated_at",
     }
@@ -47,3 +48,23 @@ async def test_potential_can_be_created(db_session) -> None:
     assert p.id is not None
     assert p.elements == ["U"]
     assert p.status == "published"
+
+
+@pytest.mark.asyncio
+async def test_potential_verification_status_default(db_session) -> None:
+    """verification_status defaults to 'unverified' on insert (model column default)."""
+    p = Potential(name="test-default", type="EAM")
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    assert p.verification_status == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_potential_verification_status_custom(db_session) -> None:
+    """verification_status can be set explicitly at construction and persists to DB."""
+    p = Potential(name="test-custom", type="EAM", verification_status="verified")
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    assert p.verification_status == "verified"

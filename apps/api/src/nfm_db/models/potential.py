@@ -46,4 +46,5 @@ class Potential(TimestampMixin, Base):
     tags: Mapped[list] = mapped_column(JSON, default=list)
     version: Mapped[str] = mapped_column(String(16), default="1.0")
     status: Mapped[str] = mapped_column(String(16), default="published")
+    verification_status: Mapped[str] = mapped_column(String(16), default="unverified")
     extra: Mapped[dict] = mapped_column(JSON, default=dict)
