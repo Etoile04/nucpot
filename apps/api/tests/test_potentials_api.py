@@ -110,9 +110,7 @@ async def test_patch_verification_accepts_message_and_evidence(async_client, db_
         "message": "all clear",
         "evidence_url": "https://example.org/ev",
     }
-    response = await async_client.patch(
-        f"/api/v1/potentials/{p.id}/verification", json=payload
-    )
+    response = await async_client.patch(f"/api/v1/potentials/{p.id}/verification", json=payload)
     assert response.status_code == 200
     data = response.json()
     assert data["data"]["verification_status"] == "verified"
