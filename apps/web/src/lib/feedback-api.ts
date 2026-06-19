@@ -1,6 +1,6 @@
-/** API client for the feedback endpoint. */
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
+/**
+ * API client for the feedback endpoint.
+ * Uses same-origin BFF route (consistent with potentials-api). */
 
 export const FEEDBACK_TYPES = [
   { value: "bug_report", label: "Bug 报告" },
@@ -25,16 +25,10 @@ interface FeedbackCreateResult {
   created_at: string
 }
 
-interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-}
-
 export async function submitFeedback(
   payload: FeedbackPayload,
 ): Promise<FeedbackCreateResult> {
-  const response = await fetch(`${API_BASE}/api/v1/feedback`, {
+  const response = await fetch(`/api/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -43,17 +37,10 @@ export async function submitFeedback(
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null)
     const message =
-      errorBody?.detail?.[0]?.msg ??
       errorBody?.error ??
       `提交失败 (${response.status})`
     throw new Error(message)
   }
 
-  const result: ApiResponse<FeedbackCreateResult> = await response.json()
-
-  if (!result.success || !result.data) {
-    throw new Error(result.error ?? "提交失败")
-  }
-
-  return result.data
+  return (await response.json()) as FeedbackCreateResult
 }
