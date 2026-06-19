@@ -99,31 +99,21 @@ export function PotentialLammpsGen({ detail }: PotentialLammpsGenProps) {
       </Paragraph>
       <Paragraph
         copyable={{ text: script }}
-        style={{
-          background: "#0d1117",
-          color: "#c9d1d9",
-          padding: 16,
-          borderRadius: 8,
-          fontFamily:
-            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: 13,
-          whiteSpace: "pre-wrap",
-          margin: 0,
-        }}
+        className="!bg-[#0d1117] !text-[#c9d1d9] p-4 rounded-lg font-mono text-[13px] whitespace-pre-wrap !m-0"
       >
         {script}
       </Paragraph>
 
       {note && (
         <Alert
-          style={{ marginTop: 12 }}
+          className="mt-3"
           type="warning"
           showIcon
           message={`⚠️ ${note}`}
         />
       )}
       <Alert
-        style={{ marginTop: 8 }}
+        className="mt-2"
         type="info"
         showIcon
         message="此脚本为模板，请根据实际模拟需求修改参数"

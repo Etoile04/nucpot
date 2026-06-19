@@ -35,14 +35,14 @@ export function SearchFilters({
         onChange={onTypeChange}
         options={TYPE_OPTIONS}
         allowClear
-        style={{ minWidth: 120 }}
+        className="min-w-[120px]"
       />
       <ElementFilter value={elements} onChange={onElementsChange} />
       <Input.Search
         placeholder="搜索势函数"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
-        style={{ minWidth: 200 }}
+        className="min-w-[200px]"
         allowClear
       />
     </Space>
