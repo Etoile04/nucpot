@@ -17,13 +17,15 @@
     "@ant-design/icons": "^6.2.5",
     "@ant-design/nextjs-registry": "^1.0.0",
     "@supabase/supabase-js": "^2.108.2",
+    "@tailwindcss/postcss": "^4",
     "antd": "^5.22.0",
     "gray-matter": "^4.0.3",
     "next": "^15.1.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
