@@ -65,3 +65,55 @@ async def test_detail_endpoint_404_for_missing(async_client) -> None:
 
     response = await async_client.get(f"/api/v1/potentials/{uuid.uuid4()}")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_verification_sets_status(async_client, db_session) -> None:
+    p = await _seed(db_session, name="patch-me")
+    response = await async_client.patch(
+        f"/api/v1/potentials/{p.id}/verification",
+        json={"verification_status": "pending"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["verification_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_patch_verification_404_for_missing(async_client) -> None:
+    import uuid
+
+    response = await async_client.patch(
+        f"/api/v1/potentials/{uuid.uuid4()}/verification",
+        json={"verification_status": "pending"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_verification_rejects_invalid_status(async_client, db_session) -> None:
+    p = await _seed(db_session, name="reject-me")
+    response = await async_client.patch(
+        f"/api/v1/potentials/{p.id}/verification",
+        json={"verification_status": "bogus"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_verification_accepts_message_and_evidence(async_client, db_session) -> None:
+    p = await _seed(db_session, name="ev-me")
+    payload = {
+        "verification_status": "verified",
+        "message": "all clear",
+        "evidence_url": "https://example.org/ev",
+    }
+    response = await async_client.patch(
+        f"/api/v1/potentials/{p.id}/verification", json=payload
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"]["verification_status"] == "verified"
+    assert data["data"]["extra"]["verification_message"] == "all clear"
+    assert data["data"]["extra"]["verification_evidence_url"] == "https://example.org/ev"

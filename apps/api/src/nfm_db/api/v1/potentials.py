@@ -1,7 +1,8 @@
 """Potential API endpoints.
 
-- GET /api/v1/potentials         — paginated, filtered list
-- GET /api/v1/potentials/{id}    — full detail
+- GET  /api/v1/potentials                  — paginated, filtered list
+- GET  /api/v1/potentials/{id}             — full detail
+- PATCH /api/v1/potentials/{id}/verification — autovc verification seam
 """
 
 from __future__ import annotations
@@ -17,10 +18,12 @@ from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.potential import (
     PotentialDetail,
     PotentialListResponse,
+    VerificationUpdate,
 )
 from nfm_db.services.potential_service import (
     get_potential_by_id,
     list_potentials,
+    update_potential_verification,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,3 +63,30 @@ async def get_potential_endpoint(
     if detail is None:
         raise HTTPException(status_code=404, detail="Potential not found")
     return ApiResponse(success=True, data=detail)
+
+
+@router.patch(
+    "/potentials/{potential_id}/verification",
+    response_model=ApiResponse[PotentialDetail],
+)
+async def patch_verification_endpoint(
+    potential_id: UUID,
+    body: VerificationUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[PotentialDetail]:
+    """Update a potential's verification status — defensive autovc callback seam.
+
+    Called by nucpot-autovc after async verification completes. No auth guard
+    yet (deferred per ADR-2). Validation of the status enum happens on the
+    ``VerificationUpdate`` schema (invalid values return 422).
+    """
+    updated = await update_potential_verification(
+        db,
+        potential_id,
+        body.verification_status,
+        message=body.message,
+        evidence_url=body.evidence_url,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Potential not found")
+    return ApiResponse(success=True, data=PotentialDetail.model_validate(updated))

@@ -1,6 +1,7 @@
 """Pydantic schemas for potential endpoints."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -56,3 +57,20 @@ class PotentialListResponse(BaseModel):
     page: int
     limit: int
     total_pages: int
+
+
+# Verification lifecycle values the data model can hold.
+VerificationStatus = Literal["unverified", "pending", "verified", "failed"]
+
+
+class VerificationUpdate(BaseModel):
+    """Request body for PATCH /potentials/{id}/verification (autovc seam).
+
+    Only terminal states ``pending | verified | failed`` are accepted here:
+    ``unverified`` is the insert default (set by the column), never a PATCH
+    target. nucpot-autovc calls this after async verification completes.
+    """
+
+    verification_status: Literal["pending", "verified", "failed"]
+    message: str | None = None
+    evidence_url: str | None = None
