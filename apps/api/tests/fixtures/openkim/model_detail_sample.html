@@ -1,0 +1,3217 @@
+<!doctype html>
+<html lang=en>
+<head>
+  <meta charset=utf-8>
+  <meta name=viewport content="width=device-width, initial-scale=1">
+  <link rel="icon" href="//openkim.org/favicon.ico" />
+  <link href="/news.xml" type="application/atom+xml" rel="alternate" title="OpenKIM News Atom Feed" />
+  <title>OpenKIM · EAM Dynamo ErcolessiAdams 1994 Al MO_123629422045_006 MO_123629422045 · Interatomic Potentials and Force Fields</title>
+  <meta name="description" content="EAM potential (LAMMPS cubic hermite tabulation) for Al developed by Ercolessi and Adams (1994) v006; This is an EAM parameterization for pure aluminum due to F. Ercolessi and J. B. Adams. The potential was developed using the &quot;force-matching method&quot;, which includes forces from first-principles calculations in the fitting data base. The potential was fitted to properties of face-centered cubic (fcc) crystals.; EAM Dynamo ErcolessiAdams 1994 Al MO_123629422045_006 MO_123629422045" />
+  <meta name="citation_title" content="EAM potential (LAMMPS cubic hermite tabulation) for Al developed by Ercolessi and Adams (1994) v006">
+
+<meta name="citation_author" content="F. Ercolessi">
+<meta name="citation_author" content="J. B. Adams">
+<meta name="citation_publication_date" content="2025">
+<meta name="citation_publisher" content="OpenKIM">
+<meta name="citation_abstract_html_url" content="https://openkim.org/cite/MO_123629422045_006">
+<meta name="citation_doi" content="10.25950/6ab99cd5">
+<meta name="citation_keywords" content="Software; KIM Model; MO_123629422045_006; EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+<meta name="citation_language" content="en">
+  <link rel="canonical" href="https://openkim.org/id/EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "logo": "https://openkim.org/images/kim-logo.png",
+    "url": "https://openkim.org"
+  }
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" integrity="sha384-xOolHFLEh07PJGoPkLv1IbcEPTNtaed2xpHsD9ESMhqIYd0nLMwNLD69Npy4HI+N" crossorigin="anonymous">
+
+
+  <link rel=stylesheet href=//openkim.org/js/select2-3.5.1/select2.css>
+
+  <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+  <link rel=stylesheet href=//openkim.org/css/added.css?1764807150>
+  <style>
+    @font-face {
+      font-family: 'FontAwesome';
+      src: url('/fonts/fontawesome-webfont.eot?v=4.7.0');
+      src: url('/fonts/fontawesome-webfont.eot?#iefix&v=4.7.0') format('embedded-opentype'), url('/fonts/fontawesome-webfont.woff2?v=4.7.0') format('woff2'), url('/fonts/fontawesome-webfont.woff?v=4.7.0') format('woff'), url('/fonts/fontawesome-webfont.ttf?v=4.7.0') format('truetype'), url('/fonts/fontawesome-webfont.svg?v=4.7.0#fontawesomeregular') format('svg');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'Montserrat';
+      font-style: normal;
+      font-weight: 400;
+      font-display: optional;
+      src: local('Montserrat-Regular'), url(https://themes.googleusercontent.com/static/fonts/montserrat/v3/zhcz-_WihjSQC0oHJ9TCYBsxEYwM7FgeyaSgU71cLG0.woff) format('woff');
+    }
+    @font-face {
+      font-family: 'Montserrat';
+      font-style: normal;
+      font-weight: 700;
+      font-display: optional;
+      src: local('Montserrat-Bold'), url(https://themes.googleusercontent.com/static/fonts/montserrat/v3/IQHow_FEYlDC4Gzy_m8fcgFhaRv2pGgT5Kf0An0s4MM.woff) format('woff');
+    }
+  </style>
+  <link rel=stylesheet href=//openkim.org/css/font-awesome.min.css?4.7.0>
+  <script src=//openkim.org/js/username.js?1431622151></script>
+  <script src=//openkim.org/js/added-top.js?1431622150></script>
+  <!-- Need non-slim version of jquery for Ajax functions such as $.post and $.getJSON -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-Fy6S3B9q64WdZWQUiU+q4/2Lc9npb8tCaSX9FK7E8HnRr0Jz8D6OP9dO5Vg3Q9ct" crossorigin="anonymous"></script>
+
+  
+  <script src=//openkim.org/js/select2-3.5.1/select2.min.js></script>
+
+  
+  <script src=//openkim.org/js/parsley.min.js?1.1.18></script>
+
+
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-0S005S9QYZ"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-0S005S9QYZ');
+  </script>
+</head>
+<body>
+
+<div id="xhr-whoami"
+     data-whoami-name-mixedcase
+     data-whoami-user-email
+     data-whoami-unread-notifications></div>
+
+<nav class="navbar navbar-expand-md navbar-light bg-light">
+<div class="container-fluid" id="navbar-inner-div">
+
+  <a class="navbar-brand" style="" href="//openkim.org">
+    <img src="https://openkim.org/images/kim_bw_logo_48x32.png" style="" width="36" height="24"  alt="openkim logo" />
+    <span class="navbar-brand-text">OpenKIM</span>
+  </a>
+
+  <!-- data-bs-toggle= for Bootstrap 5,  data-toggle= for Bootstrap 4 -->
+  <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-toggle="collapse" data-bs-target="#navbarSupportedContent" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+    <span class="navbar-toggler-icon"></span>
+  </button>
+
+  <div class="collapse navbar-collapse" id="navbarSupportedContent">
+    <!-- ms-auto for Bootstrap 4, ms-auto for Bootstrap 5 -->
+    <ul class="nav navbar-nav ml-auto ms-auto navbar-user-recognized navbar-user-unrecognized" style="display:none">
+      <li class="nav-item"><a class="nav-link" href="//openkim.org/doc/overview/getting-started/">Getting Started</a></li>
+
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownAbout" role="button" data-bs-toggle="dropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+          About
+        </a>
+        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownAbout">
+          <a class="dropdown-item" href="//openkim.org/about/">About OpenKIM</a>
+          <a class="dropdown-item" href="//openkim.org/kim-api/">KIM API</a>
+          <a class="dropdown-item" href="//openkim.org/projects-using-kim/">Software and Projects Using KIM</a>
+          <a class="dropdown-item" href="//openkim.org/code-of-conduct/">Code of Conduct</a>
+        </div>
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownCiting" role="button" data-bs-toggle="dropdown" data-toggle="dropdown"aria-haspopup="true" aria-expanded="false">
+          Citing
+        </a>
+        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownCiting">
+          <a class="dropdown-item" href="//openkim.org/how-to-cite/">How to Cite KIM</a>
+          <a class="dropdown-item" href="//openkim.org/doc/reading-material/publications/">Publications by the KIM Project</a>
+          <!--
+          <a class="dropdown-item" href="//openkim.org/publications-citing-kim">External Publications Citing KIM</a>
+          -->
+        </div>
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownDownload" role="button" data-bs-toggle="dropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+          Download/Upload
+        </a>
+        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownDownload">
+          <a class="dropdown-item" href="//openkim.org/doc/usage/obtaining-models/">Obtaining KIM models</a>
+          <a class="dropdown-item" href="//openkim.org/doc/evaluation/kim-developer-platform/">KIM Developer Platform Docker Image</a>
+          <a class="dropdown-item" href="//openkim.org/contribute/select-model-type">Contribute Model</a>
+          <a class="dropdown-item" href="//openkim.org/contribute">Contribute Other Content</a>
+        </div>
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownBrowse" role="button" data-bs-toggle="dropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+          Explore
+        </a>
+        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownBrowse">
+          <a class="dropdown-item" href="//openkim.org/browse/models/by-species">Browse the OpenKIM Repository</a>
+          <a class="dropdown-item" href="//openkim.org/material-search/">Search for Materials</a>
+          <a class="dropdown-item" href="https://query.openkim.org/">Query the OpenKIM Repository</a>
+          <a class="dropdown-item" href="//openkim.org/properties">KIM Property Definitions</a>
+          <a class="dropdown-item" href="//openkim.org/property-table/">Property Table</a>
+        </div>
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownSupport" role="button" data-bs-toggle="dropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+          Support
+        </a>
+        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownSupport">
+          <a class="dropdown-item" href="//openkim.org/doc/">Documentation</a>
+          <a class="dropdown-item" href="//openkim.org/model-developer-directory/">Directory of Model Developers</a>
+          <a class="dropdown-item" target=_blank href="https://matsci.org/openkim/">OpenKIM Forum</a>
+          <a class="dropdown-item" target=_blank href="https://kimreview.org/">KIM REVIEW</a>
+          <a class="dropdown-item" href="//openkim.org/contact/">Contact</a>
+          <div class="dropdown-divider"></div>
+          <h6 class="dropdown-header">Quick Links</h6>
+          <!--
+          <a class="dropdown-item" href="//openkim.org/doc/usage/selecting-models/">How to use a select a potential?</a>
+        -->
+          <a class="dropdown-item" href="//openkim.org/doc/usage/using-models/">How to use a potential?</a>
+          <a class="dropdown-item" href="//openkim.org/doc/repository/kim-citation/">How to cite a potential?</a>
+          <a class="dropdown-item" href="//openkim.org/doc/repository/adding-content/">How to contribute a potential?</a>
+        </div>
+      </li>
+
+      <li class="nav-item navbar-user-recognized" style="display:none" id="link-profile"><a class="nav-link" id="navbar-name-mixedcase" style="font-size: 80%;"></a></li>
+
+<!--
+      <li class="nav-item navbar-user-recognized" style="display:none" id="link-notifications"><a class="nav-link" data-bs-toggle="tooltip" data-placement="bottom" title="Notifications" href="//openkim.org/notifications"><i class="fa fa-bell"></i><span id="navbar-unread-notifications"></span></a></li>
+-->
+
+      <li class="nav-item navbar-user-recognized" style="display:none"><a class="nav-link" data-bs-toggle="tooltip" data-placement="bottom" title="Upload" href="//openkim.org/contribute"><i class="fa fa-cloud-upload"></i></a></li>
+
+      <li class="nav-item navbar-user-recognized" style="display:none"><a class="nav-link" data-bs-toggle="tooltip" data-placement="bottom" title="Settings" href="//openkim.org/settings/profile"><i class="fa fa-gear"></i></a></li>
+
+      <li class="nav-item navbar-user-recognized" style="display:none"><a class="nav-link" href="//openkim.org/logout" data-bs-toggle="tooltip" data-placement="bottom" title="Signout" id="signout"><i class="fa fa-sign-out"></i></a></li>
+
+      <li class="navbar-user-unrecognized" style="display:none"><a class="nav-link" id="loginlink" href="//openkim.org/member-login">Member Login</a></li>
+
+    </ul>
+
+  </div> <!-- div navbar-collapse -->
+
+</div> <!-- div navbar-inner-div -->
+</nav>
+
+
+<script>
+(function() {
+  let s = '';
+  if( window.location.host == "query.openkim.org" ) {
+    s = window.location.href;
+  } else if( window.location.host == "compare.openkim.org" ) {
+    s = window.location.href;
+  } else {
+    s = window.location.pathname;
+  }
+  document.getElementById('loginlink').setAttribute('href', '//openkim.org/member-login?destination=' + s);
+
+
+  if( Number(bootstrap.Tooltip.VERSION.split('.')[0]) == 4 ) {
+    let e = document.getElementById('navbar-inner-div');
+    // remove containing div for Bootstrap 4
+    e.outerHTML = e.innerHTML;
+  }
+})();
+
+</script>
+
+<noscript>
+<div class="container-fluid">
+<div class=row>
+<div class="col-md-8 offset-md-2" style="text-align: center">
+<br>
+<div class="alert alert-danger" role="alert">
+<b>Please enable JavaScript to use this site.</b>
+</div>
+</div>
+</div>
+</div>
+</noscript>
+
+
+<!--
+
+-->
+
+  <div class="container-fluid main-body-content" style="padding-top: 2em">
+    <div class="row">
+      <div class="col-md-12">
+  <div class="row">
+  <div class="col">
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/browse/models/alphabetical">Browse</a></li>
+        <li class="breadcrumb-item"><a href="/browse/models/alphabetical">Models</a></li>
+      </ol>
+    </nav>
+  </div>
+</div>
+<div class="row">
+  <div class="col-10 offset-1 pull-right">
+    <div class="pull-right">
+      Jump to: <a href="#tests">Tests</a> | <a href="#visualizers-live">Visualizers</a> | <a href="#files">Files</a> | <a href="#wiki">Wiki</a>
+    </div>
+  </div>
+</div>
+
+
+<br>
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+<h4 style="white-space: nowrap">
+
+  <img data-toggle="tooltip" data-placement="right" data-animation="true" title="This model conforms to the KIM API and can be used with any KIM-compliant simulation code." src="https://openkim.org/images/kim-check-logo.png" style="height: 30px; padding-right: 10px">
+
+  EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006
+</h4>
+</div>
+</div>
+
+
+
+
+
+
+
+
+<script>
+function show_and_hide( id_to_show, id_to_hide ) {
+  document.querySelector(id_to_show).style.display = "block";
+  document.querySelector(id_to_hide).style.display = "none";
+}
+</script>
+
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+<span style="font-size: 120%">Interatomic potential for Aluminum (Al).</span><br>
+<a class="btn btn-info" style="color: #fff" target="_blank" href="/doc/usage/using-models/">Use this Potential</a>
+</div>
+</div>
+<br>
+
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+<table class="kim-item-info table table-striped table-sm">
+
+
+<tr><th><span class=title>Title
+<i onclick='$("#moreinfo-title").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id=moreinfo-title>A single sentence description.</div>
+</th>
+
+<td>
+  <span id="metadata-editable-field-title-view">
+    EAM potential (LAMMPS cubic hermite tabulation) for Al developed by Ercolessi and Adams (1994) v006
+
+  </span>
+
+</td></tr>
+
+
+
+
+<tr><th><span class=title>Description
+
+<i onclick='$("#moreinfo-description").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo id=moreinfo-description>
+A short description of the Model describing its key features including for example: type of model (pair potential, 3-body potential, EAM, etc.), modeled species (Ac, Ag, ..., Zr), intended purpose, origin, and so on.
+</div>
+
+</span>
+</th>
+
+<td>
+  <span id="metadata-editable-field-description-view">
+    This is an EAM parameterization for pure aluminum due to F. Ercolessi and J. B. Adams. The potential was developed using the &quot;force-matching method&quot;, which includes forces from first-principles calculations in the fitting data base. The potential was fitted to properties of face-centered cubic (fcc) crystals.
+
+  </span>
+
+</td></tr>
+
+
+
+<tr><th><span class=title>Species
+<i onclick='$("#moreinfo-species").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id=moreinfo-species>
+The supported atomic species.
+</div></th><td>
+Al
+</td></tr>
+
+
+
+<tr><th><span class=title>Disclaimer
+<i onclick='$("#moreinfo-disclaimer").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id=moreinfo-disclaimer>
+A statement of applicability provided by the contributor, informing users of the intended use of this KIM Item.
+</div>
+</th>
+
+<td>
+  <span id="metadata-editable-field-disclaimer-view">
+By design, this potential is not expected to be accurate for geometries with extremely low coordination -- such as small molecules -- which were not included in the input set.
+
+
+
+  </span>
+
+</td></tr>
+
+
+
+
+
+
+
+
+
+<tr><td colspan=2 style="border-top: 4px solid #999; padding: 0"></td></tr>
+<tr><th><span class=title>Contributor</span>
+</th><td>
+
+<a href="/profile/Ryan">Ryan S. Elliott</a><br>
+
+</td></tr>
+
+<tr><th><span class=title>Maintainer</span>
+</th><td>
+
+<a href="/profile/Ryan">Ryan S. Elliott</a><br>
+
+</td></tr>
+
+
+
+
+<tr><th><span class=title>Developer</span>
+</th><td>
+<a href="/profile/Furio-Ercolessi">F. Ercolessi</a><br>
+<a href="/profile/james-adams">J. B. Adams</a>
+</td></tr>
+
+
+
+
+<tr><th><span class=title>Published on KIM</span>
+</th><td>2025</td></tr>
+
+
+
+
+
+<script>
+function show_div_cition_table(btn_id, div_id, kimid) {
+  let ln = `/citation-bibtex`;
+  ln += `/1759171175`;
+  ln += `/${kimid}`;
+  window.location.href = ln;
+}
+</script>
+
+
+<tr><th><span id="item-citation" class=title>How to Cite
+</span>
+</th>
+<td>
+
+
+
+
+
+<p>This Model originally published in [1] is archived in OpenKIM [2-5].</p>
+<p class="formatted-source-citation">[1] Ercolessi F, Adams JB. Interatomic Potentials from First-Principles Calculations: The Force-Matching Method. Europhysics Letters. 1994;26(8):583.  <a class="doi-link" target="_blank" href="https://doi.org/10.1209/0295-5075/26/8/005"><span>doi:10.1209/0295-5075/26/8/005</span> <i class="fa fa-external-link"></i></a> — (Primary Source) <i onclick='$("#moreinfo-primarysource-MO_123629422045_006a").toggle();' class='fa fa-question-circle'></i><span class='moreinfo' style='text-decoration: none' id='moreinfo-primarysource-MO_123629422045_006a' style='display: none;'>A primary source is a reference directly related to the item documenting its development, as opposed to other sources that are provided as background information.</span></p>
+<p class="formatted-source-citation">[2] Ercolessi F, Adams JB. EAM potential (LAMMPS cubic hermite tabulation) for Al developed by Ercolessi and Adams (1994) v006. OpenKIM; 2025.  <a class="doi-link" target="_blank" href="https://doi.org/10.25950/6ab99cd5"><span>doi:10.25950/6ab99cd5</span> <i class="fa fa-external-link"></i></a></p>
+<p class="formatted-source-citation">[3] Foiles SM, Baskes MI, Daw MS, Plimpton SJ. EAM Model Driver for tabulated potentials with cubic Hermite spline interpolation as used in LAMMPS v006. OpenKIM; 2025.  <a class="doi-link" target="_blank" href="https://doi.org/10.25950/233cb735"><span>doi:10.25950/233cb735</span> <i class="fa fa-external-link"></i></a></p>
+<p class="formatted-source-citation">[4] Tadmor EB, Elliott RS, Sethna JP, Miller RE, Becker CA. The potential of atomistic simulations and the Knowledgebase of Interatomic Models. JOM. 2011;63(7):17.  <a class="doi-link" target="_blank" href="https://doi.org/10.1007/s11837-011-0102-6"><span>doi:10.1007/s11837-011-0102-6</span> <i class="fa fa-external-link"></i></a></p>
+<p class="formatted-source-citation">[5] Elliott RS, Tadmor EB. Knowledgebase of Interatomic Models (KIM) Application Programming Interface (API). OpenKIM; 2011.  <a class="doi-link" target="_blank" href="https://doi.org/10.25950/ff8f563a"><span>doi:10.25950/ff8f563a</span> <i class="fa fa-external-link"></i></a></p>
+
+<div id="div-citation-table"></div>
+<button id="div-citation-table-button" class="btn btn-outline-secondary btn-sm"
+        onclick="show_div_cition_table('div-citation-table-button','div-citation-table', 'MO_123629422045_006');">
+Click here to download the above citation in BibTeX format</button>
+
+
+</td></tr>
+
+
+
+
+
+
+<tr><th><span class=title>Funding</span>
+
+</th><td>
+
+
+Not available
+</td>
+</tr>
+
+
+
+
+
+
+<tr><td colspan=2 style="border-top: 4px solid #999; padding: 0"></td></tr>
+<tr><th><span class=title>Short KIM ID
+<i onclick='$("#moreinfo-short-id").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id=moreinfo-short-id>
+The unique KIM identifier code.
+</div>
+</th><td><a href="/id/MO_123629422045_006">MO_123629422045_006</a></td></tr>
+
+
+
+
+
+<tr><th><span class=title>Extended KIM ID
+<i onclick='$("#moreinfo-extended-id").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id=moreinfo-extended-id>
+The long form of the KIM ID including a human readable prefix (100 characters max), two underscores, and the Short KIM ID. Extended KIM IDs can only contain alpha-numeric characters (letters and digits) and underscores and must begin with a letter.
+</div>
+</th><td><a href="/id/EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006</a></td></tr>
+
+
+
+
+
+
+<tr><th><span class=title>DOI</span>
+</th><td>
+10.25950/6ab99cd5<br>
+<a target="_blank" href="https://doi.org/10.25950/6ab99cd5">https://doi.org/10.25950/6ab99cd5</a><br>
+<a target="_blank" href="https://commons.datacite.org/doi.org/10.25950/6ab99cd5">https://commons.datacite.org/doi.org/10.25950/6ab99cd5</a>
+</td></tr>
+
+
+
+
+
+
+
+
+<tr><th><span class=title>KIM Item Type
+<i onclick='$("#moreinfo-kim-item-type").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id=moreinfo-kim-item-type>
+Specifies whether this is a Portable Model (software implementation of an interatomic model); Portable Model with parameter file (parameter file to be read in by a Model Driver); Model Driver (software implementation of an interatomic model that reads in parameters).
+</div></th><td>Portable Model using Model Driver <a href="/id/EAM_Dynamo__MD_120291908751_006">EAM_Dynamo__MD_120291908751_006</a></td></tr>
+
+
+
+
+
+
+<tr><th><span class=title>Driver</span></th><td><a href="/id/EAM_Dynamo__MD_120291908751_006">EAM_Dynamo__MD_120291908751_006</a></td></tr>
+
+
+
+
+
+
+<tr><th><span class=title>KIM API Version</span></th><td>2.0</td></tr>
+
+
+
+
+
+
+
+
+
+<tr><th><span class=title>Potential Type</span>
+</th><td>eam</td></tr>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<tr><td colspan=2 style="border-top: 4px solid #999; padding: 0"></td></tr>
+
+<tr><th><span class=title>Previous Version</span>
+</th><td><a href="/id/EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_005">EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_005</a></td></tr>
+
+
+</table>
+</div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<br>
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#vcresults" id="vcresults" style="text-transform: uppercase; font-weight: bold; color: #000;" title="">Verification Check Dashboard</a>
+</h3>
+</div>
+
+
+<a href="/doc/evaluation/kim-verification-checks">(Click here to learn more about Verification Checks)</a>
+<br><br>
+<table class="table table-sm table-striped table-bordered">
+  <tr>
+    <th>Grade</th>
+    <th>Name</th>
+    <th>Category</th>
+    <th>Brief Description</th>
+    <th>Full Results</th>
+    <th>Aux File(s)</th>
+  </tr>
+
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_651200051721_002-and-MO_123629422045_006-1756924046-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_651200051721_002-and-MO_123629422045_006-1756924046-vr">
+All elements claimed by model are supported in at least one of the tested configurations.
+</div>
+    </td>
+    <td><strong>vc-species-supported-as-stated</strong></td>
+    <td>mandatory</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">The model supports all species it claims to support; see <a href="https://openkim.org/id/SpeciesSupportedAsStated__VC_651200051721_002">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_651200051721_002-and-MO_123629422045_006-1756924046-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_651200051721_002-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_895061507745_004-and-MO_123629422045_006-1756924050-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_895061507745_004-and-MO_123629422045_006-1756924050-vr">
+Periodic boundary conditions were correctly supported for all configurations that the model was able to compute.
+</div>
+    </td>
+    <td><strong>vc-periodicity-support</strong></td>
+    <td>mandatory</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">Periodic boundary conditions are handled correctly; see <a href="https://openkim.org/id/PeriodicitySupport__VC_895061507745_002">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_895061507745_004-and-MO_123629422045_006-1756924050-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_895061507745_004-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_903502816694_002-and-MO_123629422045_006-1756924042-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_903502816694_002-and-MO_123629422045_006-1756924042-vr">
+Model energy has permutation symmetry for all configurations the model was able to compute.
+</div>
+    </td>
+    <td><strong>vc-permutation-symmetry</strong></td>
+    <td>mandatory</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">Total energy and forces are unchanged when swapping atoms of the same species; see <a href="https://openkim.org/id/PermutationSymmetry__VC_903502816694_002">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_903502816694_002-and-MO_123629422045_006-1756924042-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_903502816694_002-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        class="bg-success"
+        
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">A</span>
+<i onclick='$("#moreinfo-grade-VC_710586816390_003-and-MO_123629422045_006-1756924045-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_710586816390_003-and-MO_123629422045_006-1756924045-vr">
+The letter grade A was assigned because the normalized error in the computation was 2.81397e-09 compared with a machine precision of 2.22045e-16. The letter grade was based on &#39;score=log10(error/eps)&#39;, with ranges A=[0, 7.5], B=(7.5, 10.0], C=(10.0, 12.5], D=(12.5, 15.0), F&gt;15.0.  &#39;A&#39; is the best grade, and &#39;F&#39; indicates failure.
+</div>
+    </td>
+    <td><strong>vc-forces-numerical-derivative</strong></td>
+    <td>consistency</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">Forces computed by the model agree with numerical derivatives of the energy; see <a href="https://openkim.org/id/ForcesNumerDeriv__VC_710586816390_003">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_710586816390_003-and-MO_123629422045_006-1756924045-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_710586816390_003-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        
+        
+        
+        
+        class="bg-danger"
+        
+        ><span style="font-size: 150%">F</span>
+<i onclick='$("#moreinfo-grade-VC_303890932454_005-and-MO_123629422045_006-1756924052-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_303890932454_005-and-MO_123629422045_006-1756924052-vr">
+The model is C^0 continuous. This means that the model has continuous energy, but a discontinuous first derivative.
+</div>
+    </td>
+    <td><strong>vc-dimer-continuity-c1</strong></td>
+    <td>informational</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">The energy versus separation relation of a pair of atoms is C1 continuous (i.e. the function and its first derivative are continuous); see <a href="https://openkim.org/id/DimerContinuityC1__VC_303890932454_004">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_303890932454_005-and-MO_123629422045_006-1756924052-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_303890932454_005-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_813478999433_002-and-MO_123629422045_006-1756924044-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_813478999433_002-and-MO_123629422045_006-1756924044-vr">
+Model energy and forces are invariant with respect to rigid-body motion (translation and rotation) for all configurations the model was able to compute.
+</div>
+    </td>
+    <td><strong>vc-objectivity</strong></td>
+    <td>informational</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">Total energy is unchanged and forces transform correctly under rigid-body translation and rotation; see <a href="https://openkim.org/id/Objectivity__VC_813478999433_002">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_813478999433_002-and-MO_123629422045_006-1756924044-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_813478999433_002-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_021653764022_002-and-MO_123629422045_006-1756924049-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_021653764022_002-and-MO_123629422045_006-1756924049-vr">
+Model energy has inversion symmetry for all configurations the model was able to compute.
+</div>
+    </td>
+    <td><strong>vc-inversion-symmetry</strong></td>
+    <td>informational</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">Total energy is unchanged and forces change sign when inverting a configuration through the origin; see <a href="https://openkim.org/id/InversionSymmetry__VC_021653764022_002">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_021653764022_002-and-MO_123629422045_006-1756924049-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_021653764022_002-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_561022993723_004-and-MO_123629422045_006-1756924051-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_561022993723_004-and-MO_123629422045_006-1756924051-vr">
+No memory leak detected.
+</div>
+    </td>
+    <td><strong>vc-memory-leak</strong></td>
+    <td>informational</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">The model code does not have memory leaks (i.e. it releases all allocated memory at the end); see <a href="https://openkim.org/id/MemoryLeak__VC_561022993723_003">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_561022993723_004-and-MO_123629422045_006-1756924051-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_561022993723_004-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_881176209980_005-and-MO_123629422045_006-1756924043-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_881176209980_005-and-MO_123629422045_006-1756924043-vr">
+All threads give identical results for tested case. Model appears to be thread-safe.
+</div>
+    </td>
+    <td><strong>vc-thread-safe</strong></td>
+    <td>mandatory</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">The model returns the same energy and forces when computed in serial and when using parallel threads for a set of configurations. Note that this is not a guarantee of thread safety; see <a href="https://openkim.org/id/ThreadSafety__VC_881176209980_004">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_881176209980_005-and-MO_123629422045_006-1756924043-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_881176209980_005-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_128739598203_001-and-MO_123629422045_006-1756924048-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_128739598203_001-and-MO_123629422045_006-1756924048-vr">
+Unit conversion successful
+</div>
+    </td>
+    <td><strong>vc-unit-conversion</strong></td>
+    <td>mandatory</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">The model is able to correctly convert its energy and/or forces to different unit sets; see <a href="https://openkim.org/id/UnitConversion__VC_128739598203_000">full description</a>.</div></td>
+    <td><a href="/files/1759075555/VC_128739598203_001-and-MO_123629422045_006-1756924048-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_128739598203_001-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+  <tr>
+    <td 
+        
+        class="bg-success"
+        
+        
+        
+        
+        
+        ><span style="font-size: 150%">P</span>
+<i onclick='$("#moreinfo-grade-VC_154044441161_000-and-MO_123629422045_006-1772483917-vr").toggle();' class="fa fa-question-circle"></i>
+<div class=moreinfo style="display:none; max-height: 5em; overflow-y:auto" id="moreinfo-grade-VC_154044441161_000-and-MO_123629422045_006-1772483917-vr">
+Model correctly computes per-atom energy for all particles.
+</div>
+    </td>
+    <td><strong>vc-contributing-atom-energy</strong></td>
+    <td>informational</td>
+    <td style="padding-bottom: 1em"><div style="max-height: 5em; overflow-y:auto">other</div></td>
+    <td><a href="/files/1759075555/VC_154044441161_000-and-MO_123629422045_006-1772483917-vr/report.txt" target=_blank>Results</a></td>
+    <td><a href="/id/VC_154044441161_000-and-MO_123629422045_006-vr">Files</a></td>
+  </tr>
+
+
+</table>
+</div>
+</div>
+
+<!--
+
+-->
+<br>
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#visualizers-live" id="visualizers-live" style="text-transform: uppercase; font-weight: bold; color: #000;" title="">Visualizers (in-page)</a>
+</h3>
+</div>
+
+
+  <br>
+
+  <h4><a style="color:black" href="#viz-bcc-horiz-chart" id="viz-bcc-horiz-chart">BCC Lattice Constant</a></h4>
+
+  <p>This bar chart plot shows the mono-atomic body-centered cubic (bcc) lattice constant predicted by the current model (shown in the unique color) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/bcc-horiz-chart/?viz-height=2000px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---bcc-horiz-chart.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-cohesive-energy-graph" id="viz-cohesive-energy-graph">Cohesive Energy Graph</a></h4>
+
+  <p>This graph shows the cohesive energy versus volume-per-atom for the current mode for four mono-atomic cubic phases (body-centered cubic (bcc), face-centered cubic (fcc), simple cubic (sc), and diamond). The curve with the lowest minimum is the ground state of the crystal if stable. (The crystal structure is enforced in these calculations, so the phase may not be stable.) Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/cohesive-energy-graph/?viz-height=760px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---cohesive-energy-graph.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-diamond-horiz-chart" id="viz-diamond-horiz-chart">Diamond Lattice Constant</a></h4>
+
+  <p>This bar chart plot shows the mono-atomic face-centered diamond lattice constant predicted by the current model (shown in the unique color) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/diamond-horiz-chart/?viz-height=2000px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---diamond-horiz-chart.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-dislocation-energies" id="viz-dislocation-energies">Dislocation Core Energies</a></h4>
+
+  <p>This graph shows the dislocation core energy of a cubic crystal at zero temperature and pressure for a specific set of dislocation core cutoff radii. After obtaining the total energy of the system from conjugate gradient minimizations, non-singular, isotropic and anisotropic elasticity are applied to obtain the dislocation core energy for each of these supercells with different dipole distances. Graphs are generated for each species supported by the model.</p>
+
+
+(No matching species)
+
+
+
+
+
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-fcc-elastic-constants" id="viz-fcc-elastic-constants">FCC Elastic Constants</a></h4>
+
+  <p>This bar chart plot shows the mono-atomic face-centered cubic (fcc) elastic constants predicted by the current model (shown in blue) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/fcc-elastic-constants/?viz-height=2000px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---fcc-elastic-constants.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-fcc-horiz-chart" id="viz-fcc-horiz-chart">FCC Lattice Constant</a></h4>
+
+  <p>This bar chart plot shows the mono-atomic face-centered cubic (fcc) lattice constant predicted by the current model (shown in red) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/fcc-horiz-chart/?viz-height=2000px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---fcc-horiz-chart.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-fcc-stacking-fault-energies" id="viz-fcc-stacking-fault-energies">FCC Stacking Fault Energies</a></h4>
+
+  <p>This bar chart plot shows the intrinsic and extrinsic stacking fault energies as well as the unstable stacking and unstable twinning energies for face-centered cubic (fcc) predicted by the current model (shown in blue) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+(No matching species)
+
+
+
+
+
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-fcc-surface-energies" id="viz-fcc-surface-energies">FCC Surface Energies</a></h4>
+
+  <p>This bar chart plot shows the mono-atomic face-centered cubic (fcc) relaxed surface energies predicted by the current model (shown in blue) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/fcc-surface-energies/?viz-height=2000px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---fcc-surface-energies.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+  <h4><a style="color:black" href="#viz-sc-horiz-chart" id="viz-sc-horiz-chart">SC Lattice Constant</a></h4>
+
+  <p>This bar chart plot shows the mono-atomic simple cubic (sc) lattice constant predicted by the current model (shown in the unique color) compared with the predictions for all other models in the OpenKIM Repository that support the species. The vertical bars show the average and standard deviation (one sigma) bounds for all model predictions. Graphs are generated for each species supported by the model.</p>
+
+
+
+
+
+
+
+  <div style="display: inline-block; padding: 2px;">
+    Species: Al<br>
+    <div style="position: relative">
+      <div style="background: #fff; border: 1px solid #000; padding: 3px;">
+              <a id="link-Al"
+         target="_blank"
+         href="/visualizer-wrapped/sc-horiz-chart/?viz-height=2000px&species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+         >
+        <img src="https://openkim.org/visualizer-thumbnail/MO_123629422045_006/MO_123629422045_006---Al---sc-horiz-chart.png">
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  
+  <br><br>
+
+
+
+
+<h4><a style="color:black" href="#viz-cubic-crystal-basic-properties-table" id="viz-cubic-crystal-basic-properties-table">Cubic Crystal Basic Properties Table</a></h4>
+
+Species: Al<br>
+<div style="display: block; left: 0; background: #fff; padding: 6px; width: 100%; height: ">
+<iframe sandbox="allow-forms allow-scripts"
+        scrolling="yes"
+        style="overflow: hidden; width: 100%; height: 400px"
+        id="visualizer-iframe"
+        src="https://openkim.org/vizapps/cubic-crystal-basic-properties-table?species=Al&model=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"></iframe>
+</div>
+<br>
+
+
+
+</div>
+</div>
+
+
+
+<br><br>
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#tests" id="tests" style="text-transform: uppercase; font-weight: bold; color: #000;" title="Tests are paired to Models through Test Results">Tests</a>
+</h3>
+</div>
+
+
+
+<div class="card border-danger mb-3">
+  <div class="card-body text-danger">
+    <h5 class="card-title">Disclaimer From Model Developer
+    <i onclick='$("#moreinfo-disclaimer-modeldeveloper").toggle();' class="fa fa-question-circle"></i></h5>
+
+<div class=moreinfo id=moreinfo-disclaimer-modeldeveloper style="color: #000; display:none">
+A statement of applicability provided by the contributor, informing users of the intended use of this KIM Item.
+  <br><br>
+</div>
+
+    <p class="card-text">By design, this potential is not expected to be accurate for geometries with extremely low coordination -- such as small molecules -- which were not included in the input set.</p>
+  </div>
+</div>
+
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/CohesiveEnergyVsLatticeConstant__TD_554653289799_003"
+       id="CohesiveEnergyVsLatticeConstant__TD_554653289799_003">CohesiveEnergyVsLatticeConstant__TD_554653289799_003</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Cohesive energy versus lattice constant curve for monoatomic cubic lattices v003</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/karls">karls</a><br>
+    Publication Year: 2019<br>
+    DOI: <a href="https://doi.org/10.25950/64cb38c5" target=_blank>https://doi.org/10.25950/64cb38c5</a><br>
+    <br>
+    This Test Driver uses LAMMPS to compute the cohesive energy of a given monoatomic cubic lattice (fcc, bcc, sc, or diamond) at a variety of lattice spacings.  The lattice spacings range from a_min (=a_min_frac*a_0) to a_max (=a_max_frac*a_0) where a_0, a_min_frac, and a_max_frac are read from stdin (a_0 is typically approximately equal to the equilibrium lattice constant).  The precise scaling and number of lattice spacings sampled between a_min and a_0 (a_0 and a_max) is specified by two additional parameters passed from stdin: N_lower and samplespacing_lower (N_upper and samplespacing_upper).  Please see README.txt for further details.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-CohesiveEnergyVsLatticeConstant__TD_554653289799_003").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-CohesiveEnergyVsLatticeConstant__TD_554653289799_003">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr">
+  <td><a href="/id/CohesiveEnergyVsLatticeConstant_bcc_Al__TE_320860761056_004">Cohesive energy versus lattice constant curve for bcc Al v004</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr"
+            onclick="$('#synopsis-parent-tr-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr').after(
+                     '<tr id=\'synopsis-tr-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr\'><td colspan=4 id=\'synopsis-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr').toggle();
+                     $('#synopsis-expand-button-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr').toggle();
+                     get_test_result_synopsis('TE_320860761056_004-and-MO_123629422045_006-1760168067-tr', 'synopsis-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr"
+            onclick="$('#synopsis-tr-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr').remove();
+                     $('#synopsis-expand-button-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr').toggle();
+                     $('#synopsis-collapse-button-TE_320860761056_004-and-MO_123629422045_006-1760168067-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_320860761056_004-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">2482</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr">
+  <td><a href="/id/CohesiveEnergyVsLatticeConstant_diamond_Al__TE_024193005713_004">Cohesive energy versus lattice constant curve for diamond Al v004</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr"
+            onclick="$('#synopsis-parent-tr-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr').after(
+                     '<tr id=\'synopsis-tr-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr\'><td colspan=4 id=\'synopsis-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr').toggle();
+                     $('#synopsis-expand-button-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr').toggle();
+                     get_test_result_synopsis('TE_024193005713_004-and-MO_123629422045_006-1756962645-tr', 'synopsis-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr"
+            onclick="$('#synopsis-tr-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr').remove();
+                     $('#synopsis-expand-button-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr').toggle();
+                     $('#synopsis-collapse-button-TE_024193005713_004-and-MO_123629422045_006-1756962645-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_024193005713_004-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">2820</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr">
+  <td><a href="/id/CohesiveEnergyVsLatticeConstant_fcc_Al__TE_380539271142_004">Cohesive energy versus lattice constant curve for fcc Al v004</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr"
+            onclick="$('#synopsis-parent-tr-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr').after(
+                     '<tr id=\'synopsis-tr-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr\'><td colspan=4 id=\'synopsis-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr').toggle();
+                     $('#synopsis-expand-button-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr').toggle();
+                     get_test_result_synopsis('TE_380539271142_004-and-MO_123629422045_006-1760167528-tr', 'synopsis-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr"
+            onclick="$('#synopsis-tr-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr').remove();
+                     $('#synopsis-expand-button-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr').toggle();
+                     $('#synopsis-collapse-button-TE_380539271142_004-and-MO_123629422045_006-1760167528-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_380539271142_004-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">3000</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr">
+  <td><a href="/id/CohesiveEnergyVsLatticeConstant_sc_Al__TE_549565909158_004">Cohesive energy versus lattice constant curve for sc Al v004</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr"
+            onclick="$('#synopsis-parent-tr-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr').after(
+                     '<tr id=\'synopsis-tr-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr\'><td colspan=4 id=\'synopsis-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr').toggle();
+                     $('#synopsis-expand-button-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr').toggle();
+                     get_test_result_synopsis('TE_549565909158_004-and-MO_123629422045_006-1756962457-tr', 'synopsis-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr"
+            onclick="$('#synopsis-tr-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr').remove();
+                     $('#synopsis-expand-button-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr').toggle();
+                     $('#synopsis-collapse-button-TE_549565909158_004-and-MO_123629422045_006-1756962457-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_549565909158_004-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">2309</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/ElasticConstantsCrystal__TD_034002468289_001"
+       id="ElasticConstantsCrystal__TD_034002468289_001">ElasticConstantsCrystal__TD_034002468289_001</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Elastic constants for arbitrary crystals at zero temperature and pressure v001</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/ilia">ilia</a><br>
+    Publication Year: 2025<br>
+    DOI: <a href="https://doi.org/10.25950/922d328f" target=_blank>https://doi.org/10.25950/922d328f</a><br>
+    <br>
+    Computes the elastic constants for an arbitrary crystal. A robust computational protocol is used, attempting multiple methods and step sizes to achieve an acceptably low error in numerical differentiation and deviation from material symmetry. The crystal structure is specified using the AFLOW prototype designation as part of the Crystal Genome testing framework. In addition, the distance from the obtained elasticity tensor to the nearest isotropic tensor is computed.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-ElasticConstantsCrystal__TD_034002468289_001").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-ElasticConstantsCrystal__TD_034002468289_001">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr">
+  <td><a href="/id/ElasticConstantsCrystal_A_cF4_225_a_Al__TE_037797715743_001">Elastic constants for Al in AFLOW crystal prototype A_cF4_225_a at zero temperature and pressure v001</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr"
+            onclick="$('#synopsis-parent-tr-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr').after(
+                     '<tr id=\'synopsis-tr-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr\'><td colspan=4 id=\'synopsis-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr').toggle();
+                     $('#synopsis-expand-button-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr').toggle();
+                     get_test_result_synopsis('TE_037797715743_001-and-MO_123629422045_006-1771018483-tr', 'synopsis-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr"
+            onclick="$('#synopsis-tr-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr').remove();
+                     $('#synopsis-expand-button-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr').toggle();
+                     $('#synopsis-collapse-button-TE_037797715743_001-and-MO_123629422045_006-1771018483-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_037797715743_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">444550</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr">
+  <td><a href="/id/ElasticConstantsCrystal_A_cI2_229_a_Al__TE_344440596789_001">Elastic constants for Al in AFLOW crystal prototype A_cI2_229_a at zero temperature and pressure v001</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr"
+            onclick="$('#synopsis-parent-tr-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr').after(
+                     '<tr id=\'synopsis-tr-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr\'><td colspan=4 id=\'synopsis-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr').toggle();
+                     $('#synopsis-expand-button-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr').toggle();
+                     get_test_result_synopsis('TE_344440596789_001-and-MO_123629422045_006-1771022267-tr', 'synopsis-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr"
+            onclick="$('#synopsis-tr-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr').remove();
+                     $('#synopsis-expand-button-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr').toggle();
+                     $('#synopsis-collapse-button-TE_344440596789_001-and-MO_123629422045_006-1771022267-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_344440596789_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">395227</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/ElasticConstantsCubic__TD_011862047401_006"
+       id="ElasticConstantsCubic__TD_011862047401_006">ElasticConstantsCubic__TD_011862047401_006</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Elastic constants for cubic crystals at zero temperature and pressure v006</b><br><br>
+    Creators: <span style="font-weight: 520">Junhao Li and Ellad Tadmor</span><br>
+    Contributor: <a href="/profile/tadmor">tadmor</a><br>
+    Publication Year: 2019<br>
+    DOI: <a href="https://doi.org/10.25950/5853fb8f" target=_blank>https://doi.org/10.25950/5853fb8f</a><br>
+    <br>
+    Computes the cubic elastic constants for some common crystal types (fcc, bcc, sc, diamond) by calculating the hessian of the energy density with respect to strain.  An estimate of the error associated with the numerical differentiation performed is reported.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-ElasticConstantsCubic__TD_011862047401_006").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-ElasticConstantsCubic__TD_011862047401_006">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr">
+  <td><a href="/id/ElasticConstantsCubic_bcc_Al__TE_143620255826_006">Elastic constants for bcc Al at zero temperature v006</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr"
+            onclick="$('#synopsis-parent-tr-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr').after(
+                     '<tr id=\'synopsis-tr-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr\'><td colspan=4 id=\'synopsis-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr').toggle();
+                     $('#synopsis-expand-button-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr').toggle();
+                     get_test_result_synopsis('TE_143620255826_006-and-MO_123629422045_006-1760168067-tr', 'synopsis-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr"
+            onclick="$('#synopsis-tr-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr').remove();
+                     $('#synopsis-expand-button-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr').toggle();
+                     $('#synopsis-collapse-button-TE_143620255826_006-and-MO_123629422045_006-1760168067-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_143620255826_006-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">10380</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr">
+  <td><a href="/id/ElasticConstantsCubic_diamond_Al__TE_677832100573_001">Elastic constants for diamond Al at zero temperature v001</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr"
+            onclick="$('#synopsis-parent-tr-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr').after(
+                     '<tr id=\'synopsis-tr-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr\'><td colspan=4 id=\'synopsis-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr').toggle();
+                     $('#synopsis-expand-button-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr').toggle();
+                     get_test_result_synopsis('TE_677832100573_001-and-MO_123629422045_006-1756962645-tr', 'synopsis-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr"
+            onclick="$('#synopsis-tr-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr').remove();
+                     $('#synopsis-expand-button-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr').toggle();
+                     $('#synopsis-collapse-button-TE_677832100573_001-and-MO_123629422045_006-1756962645-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_677832100573_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">33840</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr">
+  <td><a href="/id/ElasticConstantsCubic_fcc_Al__TE_944469580177_006">Elastic constants for fcc Al at zero temperature v006</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-parent-tr-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr').after(
+                     '<tr id=\'synopsis-tr-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr\'><td colspan=4 id=\'synopsis-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-expand-button-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr').toggle();
+                     get_test_result_synopsis('TE_944469580177_006-and-MO_123629422045_006-1760167529-tr', 'synopsis-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-tr-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr').remove();
+                     $('#synopsis-expand-button-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-collapse-button-TE_944469580177_006-and-MO_123629422045_006-1760167529-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_944469580177_006-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">19057</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr">
+  <td><a href="/id/ElasticConstantsCubic_sc_Al__TE_566227372929_006">Elastic constants for sc Al at zero temperature v006</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr"
+            onclick="$('#synopsis-parent-tr-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr').after(
+                     '<tr id=\'synopsis-tr-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr\'><td colspan=4 id=\'synopsis-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr').toggle();
+                     $('#synopsis-expand-button-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr').toggle();
+                     get_test_result_synopsis('TE_566227372929_006-and-MO_123629422045_006-1756962457-tr', 'synopsis-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr"
+            onclick="$('#synopsis-tr-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr').remove();
+                     $('#synopsis-expand-button-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr').toggle();
+                     $('#synopsis-collapse-button-TE_566227372929_006-and-MO_123629422045_006-1756962457-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_566227372929_006-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">5605</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/EquilibriumCrystalStructure__TD_457028483760_003"
+       id="EquilibriumCrystalStructure__TD_457028483760_003">EquilibriumCrystalStructure__TD_457028483760_003</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Equilibrium structure and energy for a crystal structure at zero temperature and pressure v003</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/ilia">ilia</a><br>
+    Publication Year: 2025<br>
+    DOI: <a href="https://doi.org/10.25950/866c7cfa" target=_blank>https://doi.org/10.25950/866c7cfa</a><br>
+    <br>
+    Computes the equilibrium crystal structure and energy for an arbitrary crystal at zero temperature and applied stress by performing symmetry-constrained relaxation. The crystal structure is specified using the AFLOW prototype designation. Multiple sets of free parameters corresponding to the crystal prototype may be specified as initial guesses for structure optimization. No guarantee is made regarding the stability of computed equilibria, nor that any are the ground state.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-EquilibriumCrystalStructure__TD_457028483760_003").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-EquilibriumCrystalStructure__TD_457028483760_003">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr">
+  <td><a href="/id/EquilibriumCrystalStructure_A_cF4_225_a_Al__TE_761937896122_003">Equilibrium crystal structure and energy for Al in AFLOW crystal prototype A_cF4_225_a v003</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr"
+            onclick="$('#synopsis-parent-tr-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr').after(
+                     '<tr id=\'synopsis-tr-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr\'><td colspan=4 id=\'synopsis-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr').toggle();
+                     $('#synopsis-expand-button-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr').toggle();
+                     get_test_result_synopsis('TE_761937896122_003-and-MO_123629422045_006-1759184171-tr', 'synopsis-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr"
+            onclick="$('#synopsis-tr-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr').remove();
+                     $('#synopsis-expand-button-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr').toggle();
+                     $('#synopsis-collapse-button-TE_761937896122_003-and-MO_123629422045_006-1759184171-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_761937896122_003-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">197693</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr">
+  <td><a href="/id/EquilibriumCrystalStructure_A_cI2_229_a_Al__TE_258644009221_003">Equilibrium crystal structure and energy for Al in AFLOW crystal prototype A_cI2_229_a v003</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr"
+            onclick="$('#synopsis-parent-tr-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr').after(
+                     '<tr id=\'synopsis-tr-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr\'><td colspan=4 id=\'synopsis-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr').toggle();
+                     $('#synopsis-expand-button-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr').toggle();
+                     get_test_result_synopsis('TE_258644009221_003-and-MO_123629422045_006-1756924041-tr', 'synopsis-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr"
+            onclick="$('#synopsis-tr-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr').remove();
+                     $('#synopsis-expand-button-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr').toggle();
+                     $('#synopsis-collapse-button-TE_258644009221_003-and-MO_123629422045_006-1756924041-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_258644009221_003-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">182160</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle__TD_410381120771_003"
+       id="GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle__TD_410381120771_003">GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle__TD_410381120771_003</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Relaxed energy as a function of tilt angle for a symmetric tilt grain boundary within a cubic crystal v003</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/brunnels">brunnels</a><br>
+    Publication Year: 2022<br>
+    DOI: <a href="https://doi.org/10.25950/2c59c9d6" target=_blank>https://doi.org/10.25950/2c59c9d6</a><br>
+    <br>
+    Computes grain boundary energy for a range of tilt angles given a crystal structure, tilt axis, and material.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle__TD_410381120771_003").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle__TD_410381120771_003">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr">
+  <td><a href="/id/GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle_fcc100_Al__TE_918853243284_003">Relaxed energy as a function of tilt angle for a 100 symmetric tilt grain boundary in fcc Al v003</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-parent-tr-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr').after(
+                     '<tr id=\'synopsis-tr-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr\'><td colspan=4 id=\'synopsis-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-expand-button-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr').toggle();
+                     get_test_result_synopsis('TE_918853243284_003-and-MO_123629422045_006-1760343824-tr', 'synopsis-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-tr-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr').remove();
+                     $('#synopsis-expand-button-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-collapse-button-TE_918853243284_003-and-MO_123629422045_006-1760343824-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_918853243284_003-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">4734551</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr">
+  <td><a href="/id/GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle_fcc110_Al__TE_202986963854_001">Relaxed energy as a function of tilt angle for a 110 symmetric tilt grain boundary in fcc Al v001</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-parent-tr-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr').after(
+                     '<tr id=\'synopsis-tr-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr\'><td colspan=4 id=\'synopsis-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-expand-button-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     get_test_result_synopsis('TE_202986963854_001-and-MO_123629422045_006-1760343824-tr', 'synopsis-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-tr-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr').remove();
+                     $('#synopsis-expand-button-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-collapse-button-TE_202986963854_001-and-MO_123629422045_006-1760343824-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_202986963854_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">16054075</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr">
+  <td><a href="/id/GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle_fcc111_Al__TE_117904176283_001">Relaxed energy as a function of tilt angle for a 111 symmetric tilt grain boundary in fcc Al v001</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-parent-tr-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr').after(
+                     '<tr id=\'synopsis-tr-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr\'><td colspan=4 id=\'synopsis-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-expand-button-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     get_test_result_synopsis('TE_117904176283_001-and-MO_123629422045_006-1760343824-tr', 'synopsis-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-tr-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr').remove();
+                     $('#synopsis-expand-button-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-collapse-button-TE_117904176283_001-and-MO_123629422045_006-1760343824-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_117904176283_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">8193103</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr">
+  <td><a href="/id/GrainBoundaryCubicCrystalSymmetricTiltRelaxedEnergyVsAngle_fcc112_Al__TE_641102822364_001">Relaxed energy as a function of tilt angle for a 112 symmetric tilt grain boundary in fcc Al v001</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-parent-tr-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr').after(
+                     '<tr id=\'synopsis-tr-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr\'><td colspan=4 id=\'synopsis-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-expand-button-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     get_test_result_synopsis('TE_641102822364_001-and-MO_123629422045_006-1760343824-tr', 'synopsis-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr"
+            onclick="$('#synopsis-tr-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr').remove();
+                     $('#synopsis-expand-button-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr').toggle();
+                     $('#synopsis-collapse-button-TE_641102822364_001-and-MO_123629422045_006-1760343824-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_641102822364_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">32560867</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/GroundStateCrystalStructure__TD_099540502402_000"
+       id="GroundStateCrystalStructure__TD_099540502402_000">GroundStateCrystalStructure__TD_099540502402_000</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Test driver for computing reference ground state structures and energies for each element at zero temperature and applied stress v000</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/efuem">efuem</a><br>
+    Publication Year: 2025<br>
+    DOI: <a href="https://doi.org/10.25950/fa5ed729" target=_blank>https://doi.org/10.25950/fa5ed729</a><br>
+    <br>
+    This test returns reference ground state structures and energies for each element at zero temperature and applied stress. The results from this test are useful when a reference structure is required in some downstream test, such as vacancy tests (used as a reservoir). This test driver works by querying results from the EquilibriumCrystalStructure test driver using element specific reference structures following CHIPS-FF. Although the reference prototypes are independent of model, the resulting structure and energy of the prototypes are model-dependent.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-GroundStateCrystalStructure__TD_099540502402_000").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-GroundStateCrystalStructure__TD_099540502402_000">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr">
+  <td><a href="/id/GroundStateCrystalStructure_Al__TE_011852404080_000">Reference elemental energy for Al v000</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr"
+            onclick="$('#synopsis-parent-tr-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr').after(
+                     '<tr id=\'synopsis-tr-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr\'><td colspan=4 id=\'synopsis-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr').toggle();
+                     $('#synopsis-expand-button-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr').toggle();
+                     get_test_result_synopsis('TE_011852404080_000-and-MO_123629422045_006-1767791625-tr', 'synopsis-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr"
+            onclick="$('#synopsis-tr-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr').remove();
+                     $('#synopsis-expand-button-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr').toggle();
+                     $('#synopsis-collapse-button-TE_011852404080_000-and-MO_123629422045_006-1767791625-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_011852404080_000-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">26674</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/LatticeConstantCubicEnergy__TD_475411767977_007"
+       id="LatticeConstantCubicEnergy__TD_475411767977_007">LatticeConstantCubicEnergy__TD_475411767977_007</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Equilibrium lattice constant and cohesive energy of a cubic lattice at zero temperature and pressure v007</b><br><br>
+    Creators: <span style="font-weight: 520">Daniel S. Karls and Junhao Li</span><br>
+    Contributor: <a href="/profile/karls">karls</a><br>
+    Publication Year: 2019<br>
+    DOI: <a href="https://doi.org/10.25950/2765e3bf" target=_blank>https://doi.org/10.25950/2765e3bf</a><br>
+    <br>
+    Equilibrium lattice constant and cohesive energy of a cubic lattice at zero temperature and pressure.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-LatticeConstantCubicEnergy__TD_475411767977_007").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-LatticeConstantCubicEnergy__TD_475411767977_007">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr">
+  <td><a href="/id/LatticeConstantCubicEnergy_bcc_Al__TE_201065028814_007">Equilibrium zero-temperature lattice constant for bcc Al v007</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr"
+            onclick="$('#synopsis-parent-tr-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr').after(
+                     '<tr id=\'synopsis-tr-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr\'><td colspan=4 id=\'synopsis-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr').toggle();
+                     $('#synopsis-expand-button-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr').toggle();
+                     get_test_result_synopsis('TE_201065028814_007-and-MO_123629422045_006-1756924016-tr', 'synopsis-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr"
+            onclick="$('#synopsis-tr-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr').remove();
+                     $('#synopsis-expand-button-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr').toggle();
+                     $('#synopsis-collapse-button-TE_201065028814_007-and-MO_123629422045_006-1756924016-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_201065028814_007-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">7620</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr">
+  <td><a href="/id/LatticeConstantCubicEnergy_diamond_Al__TE_586085652256_007">Equilibrium zero-temperature lattice constant for diamond Al v007</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr"
+            onclick="$('#synopsis-parent-tr-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr').after(
+                     '<tr id=\'synopsis-tr-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr\'><td colspan=4 id=\'synopsis-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr').toggle();
+                     $('#synopsis-expand-button-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr').toggle();
+                     get_test_result_synopsis('TE_586085652256_007-and-MO_123629422045_006-1756924008-tr', 'synopsis-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr"
+            onclick="$('#synopsis-tr-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr').remove();
+                     $('#synopsis-expand-button-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr').toggle();
+                     $('#synopsis-collapse-button-TE_586085652256_007-and-MO_123629422045_006-1756924008-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_586085652256_007-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">14893</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr">
+  <td><a href="/id/LatticeConstantCubicEnergy_fcc_Al__TE_156715955670_007">Equilibrium zero-temperature lattice constant for fcc Al v007</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr"
+            onclick="$('#synopsis-parent-tr-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr').after(
+                     '<tr id=\'synopsis-tr-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr\'><td colspan=4 id=\'synopsis-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr').toggle();
+                     $('#synopsis-expand-button-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr').toggle();
+                     get_test_result_synopsis('TE_156715955670_007-and-MO_123629422045_006-1756924006-tr', 'synopsis-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr"
+            onclick="$('#synopsis-tr-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr').remove();
+                     $('#synopsis-expand-button-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr').toggle();
+                     $('#synopsis-collapse-button-TE_156715955670_007-and-MO_123629422045_006-1756924006-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_156715955670_007-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">7140</td>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr">
+  <td><a href="/id/LatticeConstantCubicEnergy_sc_Al__TE_272202056996_007">Equilibrium zero-temperature lattice constant for sc Al v007</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr"
+            onclick="$('#synopsis-parent-tr-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr').after(
+                     '<tr id=\'synopsis-tr-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr\'><td colspan=4 id=\'synopsis-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr').toggle();
+                     $('#synopsis-expand-button-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr').toggle();
+                     get_test_result_synopsis('TE_272202056996_007-and-MO_123629422045_006-1756924011-tr', 'synopsis-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr"
+            onclick="$('#synopsis-tr-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr').remove();
+                     $('#synopsis-expand-button-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr').toggle();
+                     $('#synopsis-collapse-button-TE_272202056996_007-and-MO_123629422045_006-1756924011-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_272202056996_007-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">6319</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/LatticeConstantHexagonalEnergy__TD_942334626465_005"
+       id="LatticeConstantHexagonalEnergy__TD_942334626465_005">LatticeConstantHexagonalEnergy__TD_942334626465_005</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Equilibrium lattice constants for hexagonal bulk structures at zero temperature and pressure v005</b><br><br>
+    Creators: <span style="font-weight: 520">Daniel S. Karls and Junhao Li</span><br>
+    Contributor: <a href="/profile/karls">karls</a><br>
+    Publication Year: 2019<br>
+    DOI: <a href="https://doi.org/10.25950/c339ca32" target=_blank>https://doi.org/10.25950/c339ca32</a><br>
+    <br>
+    Calculates lattice constant of hexagonal bulk structures at zero temperature and pressure by using simplex minimization to minimize the potential energy.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-LatticeConstantHexagonalEnergy__TD_942334626465_005").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-LatticeConstantHexagonalEnergy__TD_942334626465_005">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr">
+  <td><a href="/id/LatticeConstantHexagonalEnergy_hcp_Al__TE_248740869817_005">Equilibrium lattice constants for hcp Al v005</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr"
+            onclick="$('#synopsis-parent-tr-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr').after(
+                     '<tr id=\'synopsis-tr-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr\'><td colspan=4 id=\'synopsis-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr').toggle();
+                     $('#synopsis-expand-button-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr').toggle();
+                     get_test_result_synopsis('TE_248740869817_005-and-MO_123629422045_006-1756924015-tr', 'synopsis-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr"
+            onclick="$('#synopsis-tr-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr').remove();
+                     $('#synopsis-expand-button-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr').toggle();
+                     $('#synopsis-collapse-button-TE_248740869817_005-and-MO_123629422045_006-1756924015-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_248740869817_005-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">36180</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/LinearThermalExpansionCoeffCubic__TD_522633393614_002"
+       id="LinearThermalExpansionCoeffCubic__TD_522633393614_002">LinearThermalExpansionCoeffCubic__TD_522633393614_002</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Linear thermal expansion coefficient of cubic crystal structures v002</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/mjwen">mjwen</a><br>
+    Publication Year: 2024<br>
+    DOI: <a href="https://doi.org/10.25950/9d9822ec" target=_blank>https://doi.org/10.25950/9d9822ec</a><br>
+    <br>
+    This Test Driver uses LAMMPS to compute the linear thermal expansion coefficient at a finite temperature under a given pressure for a cubic lattice (fcc, bcc, sc, diamond) of a single given species.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-LinearThermalExpansionCoeffCubic__TD_522633393614_002").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-LinearThermalExpansionCoeffCubic__TD_522633393614_002">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr">
+  <td><a href="/id/LinearThermalExpansionCoeff_fcc_Al__TE_957040092249_002">Linear thermal expansion coefficient of fcc Al at 293.15 K under a pressure of 0 MPa v002</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-parent-tr-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr').after(
+                     '<tr id=\'synopsis-tr-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr\'><td colspan=4 id=\'synopsis-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-expand-button-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr').toggle();
+                     get_test_result_synopsis('TE_957040092249_002-and-MO_123629422045_006-1760167529-tr', 'synopsis-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-tr-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr').remove();
+                     $('#synopsis-expand-button-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-collapse-button-TE_957040092249_002-and-MO_123629422045_006-1760167529-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_957040092249_002-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">453197</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/PhononDispersionCurve__TD_530195868545_004"
+       id="PhononDispersionCurve__TD_530195868545_004">PhononDispersionCurve__TD_530195868545_004</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Phonon dispersion relations for an fcc lattice v004</b><br><br>
+    Creators: <span style="font-weight: 520">Matt Bierbaum</span><br>
+    Contributor: <a href="/profile/mattbierbaum">mattbierbaum</a><br>
+    Publication Year: 2019<br>
+    DOI: <a href="https://doi.org/10.25950/64f4999b" target=_blank>https://doi.org/10.25950/64f4999b</a><br>
+    <br>
+    Calculates the phonon dispersion relations for fcc lattices and records the results as curves.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-PhononDispersionCurve__TD_530195868545_004").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-PhononDispersionCurve__TD_530195868545_004">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr">
+  <td><a href="/id/PhononDispersionCurve_fcc_Al__TE_363050395011_004">Phonon dispersion relations for fcc Al v004</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-parent-tr-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr').after(
+                     '<tr id=\'synopsis-tr-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr\'><td colspan=4 id=\'synopsis-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-expand-button-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr').toggle();
+                     get_test_result_synopsis('TE_363050395011_004-and-MO_123629422045_006-1760167529-tr', 'synopsis-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-tr-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr').remove();
+                     $('#synopsis-expand-button-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-collapse-button-TE_363050395011_004-and-MO_123629422045_006-1760167529-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_363050395011_004-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">120265</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/SurfaceEnergyCubicCrystalBrokenBondFit__TD_955413365818_004"
+       id="SurfaceEnergyCubicCrystalBrokenBondFit__TD_955413365818_004">SurfaceEnergyCubicCrystalBrokenBondFit__TD_955413365818_004</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>High-symmetry surface energies in cubic lattices and broken bond model v004</b><br><br>
+    Creators: <span style="font-weight: 520">Matt Bierbaum</span><br>
+    Contributor: <a href="/profile/mattbierbaum">mattbierbaum</a><br>
+    Publication Year: 2019<br>
+    DOI: <a href="https://doi.org/10.25950/6c43a4e6" target=_blank>https://doi.org/10.25950/6c43a4e6</a><br>
+    <br>
+    Calculates the surface energy of several high symmetry surfaces and produces a broken-bond model fit. In latex form, the fit equations are given by:<br>
+<br>
+E_{FCC} (\vec{n}) = p_1 (4 \left( |x+y| + |x-y| + |x+z| + |x-z| + |z+y| +|z-y|\right)) + p_2 (8 \left( |x| + |y| + |z|\right))  + p_3 (2 ( |x+ 2y + z| + |x+2y-z| + |x-2y + z| + |x-2y-z| + |2x+y+z| + |2x+y-z| +|2x-y+z| +|2x-y-z| +|x+y+2z| +|x+y-2z| +|x-y+2z| +|x-y-2z| ) + c<br>
+<br>
+E_{BCC} (\vec{n}) = p_1 (6 \left( | x+y+z| + |x+y-z| + |-x+y-z| + |x-y+z| \right)) + p_2 (8 \left( |x| + |y| + |z|\right)) + p_3 (4 \left( |x+y| + |x-y| + |x+z| + |x-z| + |z+y| +|z-y|\right)) +c.<br>
+<br>
+In Python, these two fits take the following form:<br>
+<br>
+def BrokenBondFCC(params, index):<br>
+<br>
+    import numpy<br>
+    x, y, z = index<br>
+    x = x / numpy.sqrt(x**2.+y**2.+z**2.)<br>
+    y = y / numpy.sqrt(x**2.+y**2.+z**2.)<br>
+    z = z / numpy.sqrt(x**2.+y**2.+z**2.)<br>
+<br>
+    return params[0]*4* (abs(x+y) + abs(x-y) + abs(x+z) + abs(x-z) + abs(z+y) + abs(z-y)) + params[1]*8*(abs(x) + abs(y) + abs(z)) + params[2]*(abs(x+2*y+z) + abs(x+2*y-z) +abs(x-2*y+z) +abs(x-2*y-z) + abs(2*x+y+z) +abs(2*x+y-z) +abs(2*x-y+z) +abs(2*x-y-z) + abs(x+y+2*z) +abs(x+y-2*z) +abs(x-y+2*z) +abs(x-y-2*z))+params[3]<br>
+<br>
+def BrokenBondBCC(params, x, y, z):<br>
+<br>
+<br>
+    import numpy<br>
+    x, y, z = index<br>
+    x = x / numpy.sqrt(x**2.+y**2.+z**2.)<br>
+    y = y / numpy.sqrt(x**2.+y**2.+z**2.)<br>
+    z = z / numpy.sqrt(x**2.+y**2.+z**2.)<br>
+<br>
+    return params[0]*6*(abs(x+y+z) + abs(x-y-z) + abs(x-y+z) + abs(x+y-z)) + params[1]*8*(abs(x) + abs(y) + abs(z)) + params[2]*4* (abs(x+y) + abs(x-y) + abs(x+z) + abs(x-z) + abs(z+y) + abs(z-y)) + params[3]
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-SurfaceEnergyCubicCrystalBrokenBondFit__TD_955413365818_004").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-SurfaceEnergyCubicCrystalBrokenBondFit__TD_955413365818_004">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr">
+  <td><a href="/id/SurfaceEnergyCubicCrystalBrokenBondFit_fcc_Al__TE_761372278666_004">Broken-bond fit of high-symmetry surface energies in fcc Al v004</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-parent-tr-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr').after(
+                     '<tr id=\'synopsis-tr-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr\'><td colspan=4 id=\'synopsis-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-expand-button-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr').toggle();
+                     get_test_result_synopsis('TE_761372278666_004-and-MO_123629422045_006-1760167529-tr', 'synopsis-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr"
+            onclick="$('#synopsis-tr-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr').remove();
+                     $('#synopsis-expand-button-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr').toggle();
+                     $('#synopsis-collapse-button-TE_761372278666_004-and-MO_123629422045_006-1760167529-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_761372278666_004-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">51360</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/VacancyFormationEnergyRelaxationVolume__TD_647413317626_001"
+       id="VacancyFormationEnergyRelaxationVolume__TD_647413317626_001">VacancyFormationEnergyRelaxationVolume__TD_647413317626_001</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Monovacancy formation energy and relaxation volume for cubic and hcp monoatomic crystals v001</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/efuem">efuem</a><br>
+    Publication Year: 2023<br>
+    DOI: <a href="https://doi.org/10.25950/fca89cea" target=_blank>https://doi.org/10.25950/fca89cea</a><br>
+    <br>
+    Computes the monovacancy formation energy and relaxation volume for cubic and hcp monoatomic crystals.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-VacancyFormationEnergyRelaxationVolume__TD_647413317626_001").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-VacancyFormationEnergyRelaxationVolume__TD_647413317626_001">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr">
+  <td><a href="/id/VacancyFormationEnergyRelaxationVolume_fcc_Al__TE_472472909360_001">Monovacancy formation energy and relaxation volume for fcc Al</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr"
+            onclick="$('#synopsis-parent-tr-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr').after(
+                     '<tr id=\'synopsis-tr-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr\'><td colspan=4 id=\'synopsis-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr').toggle();
+                     $('#synopsis-expand-button-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr').toggle();
+                     get_test_result_synopsis('TE_472472909360_001-and-MO_123629422045_006-1760167528-tr', 'synopsis-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr"
+            onclick="$('#synopsis-tr-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr').remove();
+                     $('#synopsis-expand-button-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr').toggle();
+                     $('#synopsis-collapse-button-TE_472472909360_001-and-MO_123629422045_006-1760167528-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_472472909360_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">276082</td>
+</tr>
+
+</table>
+</div>
+
+
+
+<hr>
+<br>
+<div class="card bg-info border-light" style="margin-bottom: 2px;">
+  <div class="card-header text-white bg-info">
+    <a style="font-weight: 520; color: #fff;" class=""
+       href="/id/VacancyFormationMigration__TD_554849987965_001"
+       id="VacancyFormationMigration__TD_554849987965_001">VacancyFormationMigration__TD_554849987965_001</a>
+    <i style="font-size: 14px;" class="fa fa-external-link-square"></i>
+    <br>
+  </div>
+  <div class="card-body bg-light" style="max-height: 16em; overflow-y: auto; font-size: 14px;">
+    <b>Vacancy formation and migration energies for cubic and hcp monoatomic crystals v001</b><br><br>
+    Creators: <span style="font-weight: 520"></span><br>
+    Contributor: <a href="/profile/efuem">efuem</a><br>
+    Publication Year: 2023<br>
+    DOI: <a href="https://doi.org/10.25950/c27ba3cd" target=_blank>https://doi.org/10.25950/c27ba3cd</a><br>
+    <br>
+    Computes the monovacancy formation and migration energies for cubic and hcp monoatomic crystals.
+  </div>
+</div>
+
+
+
+
+
+<script>
+  function get_test_result_synopsis( test_result_id, dest ) {
+    $.getJSON( "/test-result-synopsis/" + test_result_id, function( data ) {
+      var items = [];
+      $.each( data, function( key, val ) {
+        items.push(
+                   "instance-id: " + val["instance-id"] + "<br>" +
+                   "<b>" + val["property-title"] + "</b><br>" +
+                   "(For more information, see the property definition <a target=_blank href=\"/properties/show/" + val["property-id-as-url-path"] + "\">" + val["property-id-simple"] + "</a>)<br><br>" +
+                   "<p style=\"white-space: pre-wrap\">" + val["text"] + "</p>" );
+      });
+      items = items.join("<hr>");
+      $( "#" + dest ).html( items );
+    });
+  }
+</script>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>Test</th>
+<th style="text-align:center">Test Results</th>
+<th style="text-align:center">Link to Test Results page</th>
+<th><span class=title><!-- Usertime &times; Whetstone Benchmark -->Benchmark time
+<i onclick='$("#moreinfo-usertime-times-benchmark-whet-VacancyFormationMigration__TD_554849987965_001").toggle();' class="fa fa-question-circle"></i></span>
+<div class=moreinfo id="moreinfo-usertime-times-benchmark-whet-VacancyFormationMigration__TD_554849987965_001">
+Usertime multiplied by the Whetstone Benchmark. This number can be used (approximately) to compare the performance of different models independently of the architecture on which the test was run.<br><br>
+Measured in Millions of Whetstone Instructions (MWI)
+</div>
+</th>
+</tr>
+
+<tr id="synopsis-parent-tr-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr">
+  <td><a href="/id/VacancyFormationMigration_fcc_Al__TE_209799619356_001">Vacancy formation and migration energy for fcc Al</a></td>
+  <td style="text-align: center">
+    <button type="button"
+            class="synopsis-expand btn btn-success btn-sm"
+            id="synopsis-expand-button-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr"
+            onclick="$('#synopsis-parent-tr-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr').after(
+                     '<tr id=\'synopsis-tr-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr\'><td colspan=4 id=\'synopsis-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr\' style=\'border-top: 0px;\'></td></tr>');
+                     $('#synopsis-collapse-button-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr').toggle();
+                     $('#synopsis-expand-button-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr').toggle();
+                     get_test_result_synopsis('TE_209799619356_001-and-MO_123629422045_006-1760167528-tr', 'synopsis-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr');"><i class="fa fa-expand"></i> expand</button>
+
+    <button type="button" style="display: none"
+            class="synopsis-collapse btn btn-warning btn-sm"
+            id="synopsis-collapse-button-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr"
+            onclick="$('#synopsis-tr-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr').remove();
+                     $('#synopsis-expand-button-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr').toggle();
+                     $('#synopsis-collapse-button-TE_209799619356_001-and-MO_123629422045_006-1760167528-tr').toggle();"><i class="fa fa-compress"></i> collapse</button>
+
+
+  </td>
+  <td style="text-align: center;"><a href="/id/TE_209799619356_001-and-MO_123629422045_006-tr"><span class="fa fa-search"></span> view</a></td>
+  <td style="text-align: right">477939</td>
+</tr>
+
+</table>
+</div>
+
+
+
+
+</div>
+</div>
+
+
+<br><br>
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#errors" id="errors" style="text-transform: uppercase; font-weight: bold; color: #000;" title="Models are paired to Tests through Test Results">Errors</a>
+</h3>
+</div>
+
+
+
+
+<a style="margin-top: 1.5em; margin-bottom: 0.5em;" class="btn btn-danger btn-sm" disabled
+   
+   href="/id/StackingFaultFccCrystal__TD_228501831190_002"
+   
+   id="StackingFaultFccCrystal__TD_228501831190_002">StackingFaultFccCrystal__TD_228501831190_002</a>
+
+<br>
+
+<div style="max-height: 300px; overflow: auto;">
+<table class="items table table-sm table-striped table-bordered">
+<tr>
+<th>
+Test
+
+</th>
+<th>Error Categories</th>
+<th style="text-align:center">Link to Error page</th>
+</tr>
+
+<tr>
+
+<td><a href="/id/StackingFaultFccCrystal_0bar_Al__TE_104913236993_002">Stacking and twinning fault energies for fcc Al v002</a></td>
+<td>
+
+other
+
+</td>
+<td style="text-align: center;"><a href="/id/TE_104913236993_002-and-MO_123629422045_006-er"><span class="fa fa-search"></span> view</a></td>
+
+
+</tr>
+
+</table>
+</div>
+<br>
+
+
+
+
+</div>
+</div>
+
+
+
+<!--
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+<h3 style="width:100%; border-bottom: 1px solid #ddd;">
+ <a style="color:black" href="#visualizers" id="visualizers"><i style="font-size: 50%; vertical-align:top;" class="fa fa-circle-o"></i> Visualizers</a>
+</h3>
+<table class="table table-striped">
+  <tr>
+    <td><a target="_blank" rel="nofollow" href="https://viz.openkim.org/applications/atomconfig/atomconfig.html?mo=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+  Atomic Configurations</a></td>
+  </tr>
+
+  <tr>
+    <td><a target="_blank" rel="nofollow" href="https://viz.openkim.org/applications/latconst/latconst.html?mo=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+  Lattice Constant</a></td>
+  </tr>
+
+  <tr>
+    <td><a target="_blank" rel="nofollow" href="https://viz.openkim.org/applications/cohen/cohen.html?mo=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+  Cohesive Energy</a></td>
+  </tr>
+
+  <tr>
+    <td><a target="_blank" rel="nofollow" href="https://viz.openkim.org/applications/surfen/surfen.html?mo=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+  Surface Energy</a></td>
+  </tr>
+
+  <tr>
+    <td><a target="_blank" rel="nofollow" href="https://viz.openkim.org/applications/phondisp/phondisp.html?mo=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+  Phonon Dispersion Relation Curve</a></td>
+  </tr>
+
+  <tr>
+    <td><a target="_blank" rel="nofollow" href="https://viz.openkim.org/applications/elaconst/elaconst.html?mo=EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006">
+  Elastic Constant</a></td>
+  </tr>
+
+</table>
+</div>
+</div>
+-->
+
+
+
+<br>
+<script>
+function show_div_files_table(btn_id, div_id) {
+  document.getElementById( btn_id ).style.display = 'none';
+  let s = `<table class="table">`;
+
+
+  s += `<tr><td style="border-top-width: 0px; padding-top: 0px"><span style="margin-right:1em" class="fa fa-file-o"></span> <a target="_blank" href="/files/1759075555/MO_123629422045_006/Al_EA.eam.alloy">Al_EA.eam.alloy</a></td></tr>`;
+
+  s += `<tr><td style="border-top-width: 0px; padding-top: 0px"><span style="margin-right:1em" class="fa fa-file-o"></span> <a target="_blank" href="/files/1759075555/MO_123629422045_006/CMakeLists.txt">CMakeLists.txt</a></td></tr>`;
+
+  s += `<tr><td style="border-top-width: 0px; padding-top: 0px"><span style="margin-right:1em" class="fa fa-file-o"></span> <a target="_blank" href="/files/1759075555/MO_123629422045_006/LICENSE.CDDL">LICENSE.CDDL</a></td></tr>`;
+
+  s += `<tr><td style="border-top-width: 0px; padding-top: 0px"><span style="margin-right:1em" class="fa fa-file-o"></span> <a target="_blank" href="/files/1759075555/MO_123629422045_006/kimprovenance.edn">kimprovenance.edn</a></td></tr>`;
+
+  s += `<tr><td style="border-top-width: 0px; padding-top: 0px"><span style="margin-right:1em" class="fa fa-file-o"></span> <a target="_blank" href="/files/1759075555/MO_123629422045_006/kimspec.edn">kimspec.edn</a></td></tr>`;
+
+
+  s += `</table>`;
+  document.getElementById( div_id ).innerHTML = s;
+}
+</script>
+
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#files" id="files" style="text-transform: uppercase; font-weight: bold; color: #000;" title="">Files</a>
+</h3>
+</div>
+
+
+
+<div id="div-files-table"></div>
+<button id="div-files-table-button" class="btn btn-primary" style="margin-bottom: 2em;"
+        onclick="show_div_files_table('div-files-table-button','div-files-table');">
+Click to view files</button>
+
+
+
+</div>
+</div>
+
+
+<br>
+<script>
+function show_div_download_table(btn_id, div_id, kimid) {
+  document.getElementById( btn_id ).style.display = 'none';
+  let s = `
+<table class="table">
+<tr>
+  <td style="border-top-width: 0px; padding-top: 0px;"><a rel="nofollow" href="/download/${kimid}.txz">${kimid}.txz</a></td>
+  <td style="border-top-width: 0px; padding-top: 0px;">Tar+XZ</td>
+  <td style="border-top-width: 0px; padding-top: 0px;">Linux and OS X archive</td>
+</tr>
+<tr>
+  <td style="border-top-width: 0px; padding-top: 0px;"><a rel="nofollow" href="/download/${kimid}.zip">${kimid}.zip</a></td>
+  <td style="border-top-width: 0px; padding-top: 0px;">Zip</td>
+  <td style="border-top-width: 0px; padding-top: 0px;">Windows archive</td>
+</tr>
+</table>`;
+  document.getElementById( div_id ).innerHTML = s;
+}
+</script>
+
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#download" id="download" style="text-transform: uppercase; font-weight: bold; color: #000;" title="">Download</a>
+</h3>
+</div>
+
+<div id="div-download-table"></div>
+<button id="div-download-table-button" class="btn btn-primary" style="margin-bottom: 2em;"
+        onclick="show_div_download_table('div-download-table-button','div-download-table','EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006');">
+Click to view download archives</button>
+
+</div>
+</div>
+
+
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#download-dependency" id="download-dependency" style="text-transform: uppercase; font-weight: bold; color: #000;" title="">Download Dependency</a>
+</h3>
+</div>
+
+
+<p>This Model requires a Model Driver. Click below for the Model Driver <a href="/id/EAM_Dynamo__MD_120291908751_006">EAM_Dynamo__MD_120291908751_006</a> archive.</p>
+
+<div id="div-download-dependency-table"></div>
+<button id="div-download-dependency-table-button" class="btn btn-primary" style="margin-bottom: 2em;"
+        onclick="show_div_download_table('div-download-dependency-table-button','div-download-dependency-table','EAM_Dynamo__MD_120291908751_006');">
+Click to view download archives</button>
+
+</div>
+</div>
+
+
+
+<br>
+
+<div class="row">
+<div class="offset-sm-1 col-sm-10">
+
+<div class="alert alert-dark">
+<h3>
+ <a href="#wiki" id="wiki" style="text-transform: uppercase; font-weight: bold; color: #000;" title="">Wiki</a>
+</h3>
+</div>
+
+
+
+<div style="padding-left: 8px">
+Wiki is ready to accept new content.
+</div>
+
+
+<textarea id="wiki-unformatted-content" style="display:none;"></textarea>
+
+<div id="wiki-display">
+  <div id="wiki-display-original">
+    <div id="wiki-display-original-formatted"></div>
+  </div>
+
+  <hr>
+
+  <a id="wikiloginlink" class="pull-right" href="/member-login">Login to edit Wiki content</a>
+  <script>
+  $('#wikiloginlink').attr('href','/member-login?destination=' + window.location.pathname);
+  </script>
+
+
+</div>
+
+<!-- -->
+
+<!-- -->
+
+<br><br><br><br>
+
+<script>
+function update_wiki_unformatted_content() {
+  var data2 = $("#wiki-unformatted-content").val();
+
+  $.post("https://markdown-service.openkim.org/kramdown/79612a8e56fe47f866d10b67b8b893d8", data2).done(
+    function( data ) {
+      $( "#wiki-display-original-formatted" ).html( data );
+      //MathJax.Hub.Configured();
+
+      // skip if `data` is an empty string
+      if( data && (data != "\n") ) {
+        /*
+        console.log(JSON.stringify(data))
+        MathJax.startup.document.state(0);
+        MathJax.texReset();
+        MathJax.typeset();
+        */
+      }
+
+      let script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js';
+      script.async = true;
+      document.head.appendChild(script);
+
+    }
+  );
+}
+
+// see layout instead
+// $(document).ready(update_wiki_unformatted_content);
+
+function update_wiki_editor_preview() {
+  var data2 = $('#wiki-updated-content').val();
+
+
+  $.post("https://markdown-service.openkim.org/kramdown/79612a8e56fe47f866d10b67b8b893d8", data2).done(
+    function( data ) {
+      $( "#wiki-editor-preview-content" ).html( data );
+      var math = document.getElementById('wiki-editor-preview-content');
+      //MathJax.Hub.Queue(['Typeset',MathJax.Hub,math]);
+      MathJax.startup.document.state(0);
+      MathJax.texReset();
+      MathJax.typeset();
+    }
+  );
+}
+</script>
+
+
+<script>
+
+window.MathJax = {
+  tex: {
+    inlineMath: [['\\(', '\\)']],
+    displayMath: [['\\[', '\\]']],
+    processEscapes: true,
+    macros: {
+      href: "{}"
+    },
+    autoload: {
+      color: [],
+      colorV2: ['color']
+    },
+    packages: {'[+]': ['noerrors']}
+  },
+  options: {
+    ignoreHtmlClass: "tex2jax_ignore|dno",
+    processHtmlClass: 'tex2jax_process'
+  },
+  loader: {
+    load: ['[tex]/noerrors']
+  }
+};
+/*
+window.MathJax = {
+  tex: {
+    inlineMath: [ ],
+    displayMath: [ ],
+    processEscapes: true,
+    macros: {
+      href: "{}"
+    },
+    autoload: {
+      color: [],
+      colorV2: ['color']
+    },
+    packages: {'[+]': ['noerrors']}
+  },
+  options: {
+    ignoreHtmlClass: "tex2jax_ignore|dno",
+    processHtmlClass: 'tex2jax_process'
+  },
+  loader: {
+    load: ['[tex]/noerrors']
+  }
+};
+*/
+</script>
+
+<script type="text/x-mathjax-config">
+/*
+MathJax.Hub.Config({"HTML-CSS": { preferredFont: "TeX", availableFonts: ["STIX","TeX"], linebreaks: { automatic:true }, EqnChunk: (MathJax.Hub.Browser.isMobile ? 10 : 50) },
+tex2jax: { inlineMath: [ ], displayMath: [ ], processEscapes: true, ignoreClass: "tex2jax_ignore|dno" },
+TeX: {  noUndefined: { attributes: { mathcolor: "red", mathbackground: "#FFEEEE", mathsize: "90%" } }, Macros: { href: "{}" } },
+messageStyle: "none"
+});
+config=TeX-AMS_HTML-full,Safe&delayStartupUntil=configured
+*/
+/* keeping $$ out since kramdown automatically adds tags <script type="math/tex"> and <script type="math/tex; mode=display"> */
+/*
+MathJax.Hub.Config({"HTML-CSS": { preferredFont: "TeX", availableFonts: ["STIX","TeX"], linebreaks: { automatic:true }, EqnChunk: (MathJax.Hub.Browser.isMobile ? 10 : 50) },
+tex2jax: { inlineMath: [ ["$", "$"], ["\\\\(","\\\\)"] ], displayMath: [ ["$$","$$"], ["\\[", "\\]"] ], processEscapes: true, ignoreClass: "tex2jax_ignore|dno" },
+TeX: {  noUndefined: { attributes: { mathcolor: "red", mathbackground: "#FFEEEE", mathsize: "90%" } }, Macros: { href: "{}" } },
+messageStyle: "none"
+});
+*/
+</script>
+<!--
+<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+<script type="text/javascript" id="MathJax-script" async
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js">
+</script>
+-->
+
+
+
+
+
+</div>
+</div>
+
+
+
+
+
+
+      </div>
+    </div>
+  </div>
+
+<footer style="overflow: auto;">
+  <hr>
+
+  <div class=container-fluid>
+    <div class=row>
+
+      <div class="col-sm offset-sm-1">
+        <h5>Getting Started</h5>
+        <ul>
+          <li><a href="//openkim.org/doc/overview/getting-started/">Guide to Getting Started with KIM</a></li>
+        </ul>
+
+        <h5>About</h5>
+        <ul>
+          <li><a href="//openkim.org/kim-initiative/">KIM Initiative</a></li>
+          <li><a href="//openkim.org/about/">About OpenKIM</a></li>
+          <li><a href="//openkim.org/doc/">Documentation</a></li>
+          <li><a href="//openkim.org/survey/2018-future/">2018 Survey Results</a></li>
+          <li><a href="//openkim.org/news/">News Archive</a></li>
+       	  <li><a href="//openkim.org/kim-api/">KIM API</a></li>
+          <li><a href="//openkim.org/projects-using-kim/">Software and Projects Using KIM</a></li>
+          <li><a href="//openkim.org/doc/overview/what-people-are-saying/">What People Are Saying</a></li>
+          <li><a href="//openkim.org/code-of-conduct/">Code of Conduct</a></li>
+          <li><a href="https://en.wikipedia.org/wiki/Open_Knowledgebase_of_Interatomic_Models" target=_blank>OpenKIM Wikipedia Entry</a></li>
+        </ul>
+
+        <h5>Citing</h5>
+        <ul>
+          <li><a href="//openkim.org/how-to-cite/">How to Cite KIM</a></li>
+          <li><a href="//openkim.org/doc/reading-material/publications/">Publications by the KIM Project</a></li>
+        </ul>
+
+      </div>
+
+      <div class="col-sm">
+        <h5>Download/Upload</h5>
+        <ul>
+          <li><a href="//openkim.org/doc/usage/obtaining-models/">Obtaining KIM models</a></li>
+          <li><a href="//openkim.org/doc/evaluation/kim-developer-platform/">KIM Developer Platform Docker Image</a></li>
+          <li><a href="//openkim.org/contribute/select-model-type/">Contribute Model</a></li>
+          <li><a href="//openkim.org/contribute/">Contribute Other Content</a></li>
+        </ul>
+
+        <h5>Popular Documentation</h5>
+        <ul>
+          <li><a href="//openkim.org/doc/repository/kim-citation/">Citing KIM Content</a></li>
+          <li><a href="//openkim.org/doc/usage/obtaining-models/">Obtaining KIM Models</a></li>
+          <li><a href="//openkim.org/doc/schema/edn-format/">EDN Format</a></li>
+          <li><a href="//openkim.org/doc/schema/kim-ids/">Guide to KIM IDs</a></li>
+          <li><a href="//openkim.org/doc/schema/kimspec/">kimspec.edn Reference</a></li>
+          <li><a href="//openkim.org/doc/schema/kimprovenance/">kimprovenance.edn Reference</a></li>
+          <li><a href="//openkim.org/doc/schema/properties-framework/">KIM Properties Framework</a></li>
+          <li><a href="//openkim.org/doc/">All Documentation Topics</a></li>
+        </ul>
+      </div>
+
+      <div class="col-sm">
+        <h5>Browse</h5>
+        <ul>
+          <li><a href="//openkim.org/browse/model-drivers/alphabetical">Model Drivers</a></li>
+          <li><a href="//openkim.org/browse/models/alphabetical">Models</a></li>
+          <li><a href="//openkim.org/browse/test-drivers/alphabetical">Test Drivers</a></li>
+          <li><a href="//openkim.org/browse/tests/alphabetical">Tests</a></li>
+          <li><a href="//openkim.org/browse/verification-checks/alphabetical">Verification Checks</a></li>
+          <li><a href="//openkim.org/browse/reference-data/alphabetical">Reference Data</a></li>
+          <li><a href="https://query.openkim.org/">Query the KIM Repository</a></li>
+          <li><a href="//openkim.org/properties">KIM Property Definitions</a></li>
+          <li><a href="//openkim.org/property-table/">Property Table</a></li>
+        </ul>
+
+        <h4>Support</h4>
+        <ul>
+          <li><a href="//openkim.org/doc/">Documentation</a></li>
+          <li><a href="//openkim.org/model-developer-directory/">Directory of Model Developers</a></li>
+          <li><a target=_blank href="https://matsci.org/openkim/">OpenKIM Forum</a></li>
+          <li><a target=_blank href="https://kimreview.org/">KIM REVIEW</a></li>
+          <li><a href="//openkim.org/contact/">Contact</a></li>
+        </ul>
+      </div>
+
+    </div> <!-- div class=row -->
+
+    <div class="row" style="padding-bottom: 4em; padding-top: 4em;">
+      <div class="col-md-5 offset-md-1" style="padding-top: 1em;">
+
+        <div style="white-space: nowrap;">
+          <a style="text-decoration: none" target="_blank" href="https://www.nsf.gov/"><img src="//openkim.org/images/nsf.png" width="50" alt="NSF logo" style="background: #ccc"></a>
+          <span style="color: #aaa">The KIM project is supported by</span> <a style="text-decoration: underline; color: #aaa" href="//openkim.org/about/#funding">NSF funding</a>
+        </div>
+
+        <br>
+        <div style="white-space: nowrap;">
+          <a style="text-decoration: none" target="_blank" href="https://kim-initiative.org/"><img src="//openkim.org/images/kim-initiative-logo-small-grayscale.jpg" width="50" alt="KIM Initiative logo" style="background: #ccc"></a>
+          <span style="color: #aaa">OpenKIM is a <a style="text-decoration: underline; color: #aaa" target="_blank" href="https://kim-initiative.org/">KIM Initiative</a> project</span>
+        </div>
+
+        <br>
+        <div style="white-space: nowrap;">
+          <a style="text-decoration: none" target="_blank" href="https://clarivate.com/products/scientific-and-academic-research/research-discovery-and-workflow-solutions/webofscience-platform/data-citation-index/"><img src="//openkim.org/images/clarivate.png" width="50" alt="Clarivate Data Citation Index" style="background: #ccc"></a>
+          <span style="color: #aaa">KIM content is indexed by</span>
+          <a style="text-decoration: underline; color: #aaa" target="_blank" href="https://clarivate.com/products/scientific-and-academic-research/research-discovery-and-workflow-solutions/webofscience-platform/data-citation-index/">Clarivate on Web of Science</a>
+        </div>
+      </div>
+
+      <div class="col-md-5" style="padding-top: 1em;">
+        <div style="white-space: nowrap;">
+          <a style="text-decoration: none" target="_blank" href="https://datacite.org"><img src="//openkim.org/images/datacite.svg" width="100" alt="DataCite logo" style="background: #ccc"></a>
+          <span style="color: #aaa">KIM is a member of the</span> <a style="text-decoration: underline; color: #aaa" href="https://datacite.org" target=_blank>DataCite DOI registrar</a>
+        </div>
+
+        <br><br>
+        <div style="white-space: nowrap;">
+          <a style="text-decoration: none" target="_blank" href="https://access-ci.org/"><img src="//openkim.org/images/nsf_access_logo_grayscale.png" width="140" alt="ACCESS logo" style="background: #ccc"></a>
+          <span style="color: #aaa">KIM is a member of</span>
+          <a style="text-decoration: underline; color: #aaa" target="_blank" href="https://access-ci.org/">ACCESS</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</footer>
+
+<script src=//openkim.org/js/added.js?1431622150></script>
+
+
+  </body>
+    <script>
+    // For Verification Check page
+    $("#verification-check-species-select2").select2({
+      width: "100%",
+      allowClear: true,
+      matcher: function(term, text) { return text.toUpperCase().indexOf(term.toUpperCase())==0; }
+    });
+
+    // For Model browser page
+    $("#species-select2").select2({
+      width: "100%",
+      allowClear: true,
+      matcher: function(term, text) { return text.toUpperCase().indexOf(term.toUpperCase())==0; }
+    });;
+
+    // For /contribute/select-model-type
+    $("#contribute-select-model-type-all-model-drivers").select2({width: "100%",allowClear: true});
+    $("#contribute-select-model-type-simulator-and-potential").select2({width: "100%",allowClear: true});
+    $("#simulator-name-and-potential-select2").select2({data: {
+      id: "",
+      text: ""
+    }, width: "100% !important",allowClear: true});;
+
+    // For KIM Item upload
+    $("#species-step2-select2").select2({width: "100%",allowClear: true});
+    $("#properties-step2-select2").select2({width: "100%",allowClear: true});
+    $("#test-driver-step2-select2").select2({width: "100%",allowClear: true});
+    $("#model-driver-step2-select2").select2({width: "100%",allowClear: true});
+
+    $("#simulator-select2").select2({width: "100%",allowClear: true});
+    $("#native-potential-select2").select2({data: {
+      id: "",
+      text: ""
+    }, width: "100%",allowClear: true});;
+
+    // For user signups
+    $("#sector").select2({width: "100%",allowClear: true});
+    $("#country").select2({width: "100%",allowClear: true});
+    $('#signup-content-form').parsley({
+      successClass: 'has-success',
+      errorClass: 'has-error',
+      errors: {
+        classHandler: function ( elem, isRadioOrCheckbox ) {
+          return $( elem ).parent().parent();
+        }
+      }
+    });
+
+    // needed to catch focusout that hasn't yet triggered parsley's data-validation-minlength
+    function validateUsername(e) {
+      $(e).parsley('validate')
+    }
+  </script>
+</html>
