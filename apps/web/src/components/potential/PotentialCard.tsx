@@ -18,8 +18,11 @@ interface PotentialCardProps {
 }
 
 export function PotentialCard({ potential }: PotentialCardProps) {
-  const { id, name, type, elements, description } = potential
+  const { id, name, type, elements, description, provider } = potential
   const tagColor = TYPE_COLOR[type] ?? "default"
+  const isOpenKIM = provider === "openkim"
+  const providerTagColor = isOpenKIM ? "blue" : "default"
+  const providerLabel = isOpenKIM ? "OpenKIM" : "本地"
 
   return (
     <Card
@@ -28,6 +31,7 @@ export function PotentialCard({ potential }: PotentialCardProps) {
     >
       <Space wrap size={[0, 4]}>
         <Tag color={tagColor}>{type}</Tag>
+        <Tag color={providerTagColor}>{providerLabel}</Tag>
       </Space>
 
       <Link href={`/potential/${id}`} style={{ textDecoration: "none" }}>

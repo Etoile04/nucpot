@@ -44,6 +44,7 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
     version,
     tags,
     references,
+    provider,
   } = detail
 
   const doi = source_doi ?? asString(references?.[0]?.doi)
@@ -60,6 +61,13 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
         <Tag color={typeColor(type)}>{type}</Tag>
       </Descriptions.Item>
       <Descriptions.Item label="格式">{format || "-"}</Descriptions.Item>
+      <Descriptions.Item label="数据源">
+        {provider === "openkim" ? (
+          <Tag color="blue">OpenKIM</Tag>
+        ) : (
+          <Tag color="default">本地</Tag>
+        )}
+      </Descriptions.Item>
       <Descriptions.Item label="版本">{version || "-"}</Descriptions.Item>
       <Descriptions.Item label="元素" span={2}>
         <Space wrap size={[0, 4]}>

@@ -13,6 +13,7 @@ export interface PotentialSummary {
   version: string
   tags: string[]
   file_url?: string
+  provider?: "local" | "openkim"
 }
 
 export interface PotentialDetail extends PotentialSummary {

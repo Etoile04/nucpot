@@ -50,4 +50,18 @@ describe("PotentialCard", () => {
     const nameLink = screen.getByText("Nb-EAM-FS-001").closest("a")
     expect(nameLink?.getAttribute("href")).toBe("/potential/pot-001")
   })
+
+  it("renders the local provider tag by default", () => {
+    render(<PotentialCard potential={mockPotential} />)
+    expect(screen.getByText("本地")).toBeDefined()
+  })
+
+  it("renders the openkim provider tag when provider is openkim", () => {
+    render(
+      <PotentialCard
+        potential={{ ...mockPotential, provider: "openkim" }}
+      />,
+    )
+    expect(screen.getByText("OpenKIM")).toBeDefined()
+  })
 })

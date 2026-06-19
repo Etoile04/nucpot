@@ -34,4 +34,27 @@ describe("potentials-api", () => {
       expect.any(Object),
     )
   })
+
+  it("listPotentials passes provider field through to PotentialSummary", async () => {
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          potentials: [
+            { id: "p1", name: "local-1", type: "EAM", provider: "local" },
+            { id: "p2", name: "ok-1", type: "EAM", provider: "openkim" },
+          ],
+          total: 2,
+          page: 1,
+          limit: 20,
+          total_pages: 1,
+        },
+      }),
+    })
+    const { listPotentials } = await import("./potentials-api")
+    const result = await listPotentials()
+    expect(result.potentials[0]?.provider).toBe("local")
+    expect(result.potentials[1]?.provider).toBe("openkim")
+  })
 })
