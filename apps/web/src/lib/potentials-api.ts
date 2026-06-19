@@ -1,6 +1,10 @@
-/** API client for potential endpoints. Follows feedback-api.ts pattern. */
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
+/**
+ * API client for potential endpoints.
+ *
+ * Uses same-origin Next.js API routes (BFF pattern) that query Supabase
+ * directly. This avoids the need for a separate Python API server in
+ * serverless deployments (Vercel).
+ */
 
 export interface PotentialSummary {
   id: string
@@ -41,11 +45,7 @@ export interface PotentialListResult {
   total_pages: number
 }
 
-interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-}
+/** Types for potential browse/search/detail endpoints. */
 
 export interface ListParams {
   type?: string
@@ -64,21 +64,18 @@ export async function listPotentials(params: ListParams = {}): Promise<Potential
   sp.set("page", String(params.page ?? 1))
   sp.set("limit", String(params.limit ?? 20))
   sp.set("sort", params.sort ?? "updated")
-  const response = await fetch(`${API_BASE}/api/v1/potentials?${sp.toString()}`, {
+  const response = await fetch(`/api/potentials?${sp.toString()}`, {
     headers: { "Content-Type": "application/json" },
   })
   if (!response.ok) throw new Error(`Failed to list potentials: ${response.status}`)
-  const json: ApiResponse<PotentialListResult> = await response.json()
-  if (!json.success || !json.data) throw new Error(json.error ?? "Unknown error")
-  return json.data
+  // The BFF route returns data directly (not wrapped in ApiResponse)
+  return (await response.json()) as PotentialListResult
 }
 
 export async function getPotential(id: string): Promise<PotentialDetail> {
-  const response = await fetch(`${API_BASE}/api/v1/potentials/${id}`, {
+  const response = await fetch(`/api/potentials/${id}`, {
     headers: { "Content-Type": "application/json" },
   })
   if (!response.ok) throw new Error(`Failed to fetch potential: ${response.status}`)
-  const json: ApiResponse<PotentialDetail> = await response.json()
-  if (!json.success || !json.data) throw new Error(json.error ?? "Unknown error")
-  return json.data
+  return (await response.json()) as PotentialDetail
 }
