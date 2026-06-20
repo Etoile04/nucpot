@@ -36,14 +36,14 @@ from nfm_db.services.md_verification import MDVerificationService
 
 @pytest.fixture
 async def md_job_with_results(
-    async_session: AsyncSession,
+    db_session: AsyncSession,
 ) -> dict[str, str]:
     """Create a test MD verification job with complete results.
 
     Returns:
         Dictionary with job_id and related result IDs
     """
-    service = MDVerificationService(async_session)
+    service = MDVerificationService(db_session)
 
     # Create job
     job = await service.create_job(
@@ -106,21 +106,21 @@ async def md_job_with_results(
         }
     )
 
-    await async_session.commit()
+    await db_session.commit()
 
     return {"job_id": str(job.id)}
 
 
 @pytest.fixture
 async def pending_md_job(
-    async_session: AsyncSession,
+    db_session: AsyncSession,
 ) -> dict[str, str]:
     """Create a test MD verification job in PENDING status.
 
     Returns:
         Dictionary with job_id
     """
-    service = MDVerificationService(async_session)
+    service = MDVerificationService(db_session)
 
     job = await service.create_job(
         {
@@ -133,7 +133,7 @@ async def pending_md_job(
         }
     )
 
-    await async_session.commit()
+    await db_session.commit()
 
     return {"job_id": str(job.id)}
 
