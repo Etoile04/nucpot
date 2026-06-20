@@ -12,10 +12,11 @@ export async function proxyFetch(path: string, init?: RequestInit) {
       status: upstream.status,
       headers: { 'Content-Type': upstream.headers.get('content-type') || 'application/json' },
     })
-  } catch (error: any) {
-    console.error(`[verify-proxy] ${path}:`, error?.message || error)
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.error(`[verify-proxy] ${path}:`, msg)
     return Response.json(
-      { error: 'Verification service unavailable', detail: error?.message },
+      { error: 'Verification service unavailable', detail: msg },
       { status: 502 }
     )
   }
