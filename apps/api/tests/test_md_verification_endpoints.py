@@ -20,6 +20,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.core.auth import get_current_user
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
@@ -138,6 +139,22 @@ async def pending_md_job(
     return {"job_id": str(job.id)}
 
 
+@pytest.fixture
+async def async_client_with_auth(async_client: AsyncClient, admin_user):
+    """Create async client with authentication override for MD verification tests."""
+    from nfm_db.models import User
+    from nfm_db.main import app
+
+    async def override_get_current_user():
+        return admin_user
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    yield async_client
+
+    app.dependency_overrides.clear()
+
+
 # ---------------------------------------------------------------------------
 # Endpoint Tests
 # ---------------------------------------------------------------------------
@@ -165,10 +182,8 @@ class TestSubmitMDVerificationJob:
 
     async def test_submit_job_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         db_session: AsyncSession,
-        admin_user,
-        admin_headers: dict[str, str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test successful job submission creates job and returns 201."""
@@ -185,7 +200,7 @@ class TestSubmitMDVerificationJob:
             md_verification_module, "run_md_verification_task", type("obj", (object,), {"delay": mock_delay})()
         )
 
-        response = await async_client.post(
+        response = await async_client_with_auth.post(
                 "/api/v1/md-verification/jobs",
                 json={
                     "potential_id": "EAM_U_test",
@@ -200,7 +215,6 @@ class TestSubmitMDVerificationJob:
                     },
                     "priority": 5,
                 },
-                headers=admin_headers,
             )
 
         assert response.status_code == 201
