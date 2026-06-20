@@ -189,7 +189,7 @@ class TestSubmitMDVerificationJob:
         """Test successful job submission creates job and returns 201."""
 
         # Mock Celery task submission
-        async def mock_delay(*args: object, **kwargs: object) -> object:
+        def mock_delay(*args: object, **kwargs: object) -> object:
             mock_task = type("MockTask", (), {"id": "test-task-id"})()
             return mock_task
 

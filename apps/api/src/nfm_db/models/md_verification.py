@@ -6,10 +6,12 @@ Provides SQLAlchemy ORM models for the 5-table MD verification schema.
 
 import enum
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -113,13 +115,16 @@ class MDVerificationJob(TimestampMixin, Base):
         nullable=False,
         default=5,
     )
-    submitted_at: Mapped[uuid.UUID | None] = mapped_column(
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
-    started_at: Mapped[uuid.UUID | None] = mapped_column(
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
-    completed_at: Mapped[uuid.UUID | None] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
 
@@ -212,13 +217,16 @@ class HpcJob(TimestampMixin, Base):
         Integer,
         nullable=True,
     )
-    submitted_at: Mapped[uuid.UUID | None] = mapped_column(
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
-    started_at: Mapped[uuid.UUID | None] = mapped_column(
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
-    completed_at: Mapped[uuid.UUID | None] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
 
