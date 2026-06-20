@@ -11,8 +11,13 @@ import {
   Upload,
   Space,
   Card,
+  Alert,
 } from "antd"
-import { UploadOutlined } from "@ant-design/icons"
+import {
+  UploadOutlined,
+  FileTextOutlined,
+} from "@ant-design/icons"
+import { useAuth } from "@/components/AuthProvider"
 import { submitPotential, uploadPotentialFile } from "@/lib/upload-api"
 import type { CreatedPotential, FileInfo } from "@/lib/upload-api"
 
@@ -42,10 +47,44 @@ const LICENSE_TYPES = [
 
 export default function UploadForm() {
   const [form] = Form.useForm()
+  const { profile } = useAuth()
   const [loading, setLoading] = useState(false)
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const [licenseType, setLicenseType] = useState<string | undefined>()
   const [result, setResult] = useState<{ potential: CreatedPotential; fileInfo?: FileInfo } | null>(null)
+  const [templateLoading, setTemplateLoading] = useState(false)
+
+  // Generate authorization template with form data pre-filled
+  const generateTemplate = async (lang: 'zh' | 'en') => {
+    setTemplateLoading(true)
+    try {
+      const values = form.getFieldsValue()
+      const params = new URLSearchParams({
+        lang,
+        name: (values.name as string) || '',
+        type: (values.type as string) || '',
+        elements: Array.isArray(values.elements) ? values.elements.join(', ') : (values.elements as string) || '',
+        systemName: (values.system_name as string) || '',
+        doiRefs: '',
+        userName: profile?.full_name || profile?.email || '',
+        userEmail: profile?.email || '',
+        print: '1',
+      })
+      const res = await fetch(`/api/auth/template?${params}`)
+      const data = await res.json()
+      if (data.html) {
+        const w = window.open('', '_blank')
+        if (w) {
+          w.document.write(data.html)
+          w.document.close()
+        }
+      }
+    } catch {
+      message.error('模板生成失败')
+    } finally {
+      setTemplateLoading(false)
+    }
+  }
 
   const handleFinish = async (values: Record<string, unknown>) => {
     setLoading(true)
@@ -196,13 +235,49 @@ export default function UploadForm() {
         )}
 
         {licenseType === "author_permission" && (
-          <Form.Item
-            name="auth_file_path"
-            label="授权证明"
-            rules={[{ required: true, message: "作者授权需提供授权证明" }]}
-          >
-            <Input placeholder="授权证明文件路径或链接" />
-          </Form.Item>
+          <>
+            <Alert
+              type="info"
+              showIcon
+              message="需要作者授权书"
+              description={
+                <div className="text-sm">
+                  <p className="mb-2">
+                    请下载授权书模板，填写势函数信息后<strong>打印、签字、扫描</strong>，
+                    再上传扫描件。模板会自动填入当前表单中的信息。
+                  </p>
+                  <Space>
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      icon={<FileTextOutlined />}
+                      loading={templateLoading}
+                      onClick={() => generateTemplate('zh')}
+                    >
+                      生成中文授权书
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<FileTextOutlined />}
+                      loading={templateLoading}
+                      onClick={() => generateTemplate('en')}
+                    >
+                      English Authorization
+                    </Button>
+                  </Space>
+                </div>
+              }
+              className="!mb-4"
+            />
+            <Form.Item
+              name="auth_file_path"
+              label="授权证明文件路径或链接"
+              rules={[{ required: true, message: "作者授权需提供授权证明" }]}
+            >
+              <Input placeholder="上传扫描件后填入路径，或填写外部链接" />
+            </Form.Item>
+          </>
         )}
 
         <Form.Item label="文件上传（可选）">
