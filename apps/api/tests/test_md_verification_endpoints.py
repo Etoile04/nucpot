@@ -176,6 +176,18 @@ class TestMDVerificationHealth:
         assert "timestamp" in data
 
 
+    async def test_health_check(self, async_client: AsyncClient) -> None:
+        """Test GET /api/v1/md-verification/health returns healthy status."""
+        response = await async_client.get("/api/v1/md-verification/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert data["module"] == "md-verification"
+        assert "version" in data
+        assert "timestamp" in data
+
+
 @pytest.mark.integration
 class TestSubmitMDVerificationJob:
     """Test POST /api/v1/md-verification/jobs endpoint."""
@@ -230,16 +242,29 @@ class TestSubmitMDVerificationJob:
         assert job is not None
         assert job.status == JobStatus.SUBMITTED
 
-    async def test_submit_job_validation_error(self, async_client: AsyncClient, admin_headers: dict[str, str]) -> None:
+    async def test_submit_job_validation_error(self, async_client_with_auth: AsyncClient) -> None:
         """Test job submission with invalid data returns 400."""
-        response = await async_client.post(
+        response = await async_client_with_auth.post(
             "/api/v1/md-verification/jobs",
             json={
                 # Missing required fields
                 "potential_id": "EAM_U_test",
                 # Missing element_system, potential_file, structure_file
             },
-            headers=admin_headers,
+        )
+
+        assert response.status_code == 422  # Validation error
+
+
+    async def test_submit_job_validation_error(self, async_client_with_auth: AsyncClient) -> None:
+        """Test job submission with invalid data returns 400."""
+        response = await async_client_with_auth.post(
+            "/api/v1/md-verification/jobs",
+            json={
+                # Missing required fields
+                "potential_id": "EAM_U_test",
+                # Missing element_system, potential_file, structure_file
+            },
         )
 
         assert response.status_code == 422  # Validation error
@@ -251,15 +276,13 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_all(
         self,
-        async_client: AsyncClient,
-        admin_headers: dict[str, str],
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing all jobs returns both jobs."""
         response = await async_client.get(
-                "/api/v1/md-verification/jobs",
-                headers=admin_headers,
+                "/api/v1/md-verification/jobs"
             )
 
         assert response.status_code == 200
@@ -272,15 +295,13 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_filter_by_status(
         self,
-        async_client: AsyncClient,
-        admin_headers: dict[str, str],
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by status."""
         response = await async_client.get(
-            "/api/v1/md-verification/jobs?status=completed",
-            headers=admin_headers,
+            "/api/v1/md-verification/jobs?status=completed"
         )
 
         assert response.status_code == 200
@@ -289,14 +310,12 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_filter_by_element_system(
         self,
-        async_client: AsyncClient,
-        admin_headers: dict[str, str],
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by element system."""
         response = await async_client.get(
-            "/api/v1/md-verification/jobs?element_system=U",
-            headers=admin_headers,
+            "/api/v1/md-verification/jobs?element_system=U"
         )
 
         assert response.status_code == 200
@@ -305,12 +324,78 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_pagination(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
     ) -> None:
         """Test listing jobs with pagination."""
-        response = await async_client.get(
-            "/api/v1/md-verification/jobs?limit=1&offset=0",
-            headers=admin_headers,
+        response = await async_client_with_auth.get(
+            "/api/v1/md-verification/jobs?limit=1&offset=0"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["limit"] == 1
+        assert data["offset"] == 0
+        assert len(data["jobs"]) <= 1
+
+
+
+    """Test GET /api/v1/md-verification/jobs endpoint."""
+
+    async def test_list_jobs_all(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+        pending_md_job: dict[str, str],
+    ) -> None:
+        """Test listing all jobs returns both jobs."""
+        response = await async_client_with_auth.get(
+                "/api/v1/md-verification/jobs"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "jobs" in data
+        assert len(data["jobs"]) >= 2
+        assert data["total"] >= 2
+        assert data["limit"] == 100
+        assert data["offset"] == 0
+
+    async def test_list_jobs_filter_by_status(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+        pending_md_job: dict[str, str],
+    ) -> None:
+        """Test listing jobs filtered by status."""
+        response = await async_client_with_auth.get(
+            "/api/v1/md-verification/jobs?status=completed"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert all(job["status"] == "completed" for job in data["jobs"])
+
+    async def test_list_jobs_filter_by_element_system(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+    ) -> None:
+        """Test listing jobs filtered by element system."""
+        response = await async_client_with_auth.get(
+            "/api/v1/md-verification/jobs?element_system=U"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert all(job["element_system"] == "U" for job in data["jobs"])
+
+    async def test_list_jobs_pagination(
+        self,
+        async_client_with_auth: AsyncClient,
+    ) -> None:
+        """Test listing jobs with pagination."""
+        response = await async_client_with_auth.get(
+            "/api/v1/md-verification/jobs?limit=1&offset=0"
         )
 
         assert response.status_code == 200
@@ -326,15 +411,14 @@ class TestGetMDVerificationJob:
 
     async def test_get_job_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting existing job returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-            f"/api/v1/md-verification/jobs/{job_id}",
-            headers=admin_headers,
+        response = await async_client_with_auth.get(
+            f"/api/v1/md-verification/jobs/{job_id}"
         )
 
         assert response.status_code == 200
@@ -343,13 +427,24 @@ class TestGetMDVerificationJob:
         assert data["potential_id"] == "test_potential"
         assert data["element_system"] == "U"
 
-    async def test_get_job_not_found(self, async_client: AsyncClient, admin_headers: dict[str, str]) -> None:
+    async def test_get_job_not_found(self, async_client_with_auth: AsyncClient) -> None:
         """Test getting non-existent job returns 404."""
         job_id = uuid.uuid4()
 
         response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}",
-                headers=admin_headers,
+                f"/api/v1/md-verification/jobs/{job_id}"
+            )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+
+    async def test_get_job_not_found(self, async_client_with_auth: AsyncClient) -> None:
+        """Test getting non-existent job returns 404."""
+        job_id = uuid.uuid4()
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}"
             )
 
         assert response.status_code == 404
@@ -362,15 +457,14 @@ class TestGetJobStatus:
 
     async def test_get_job_status_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting job status returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/status",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/status"
             )
 
         assert response.status_code == 200
@@ -381,15 +475,53 @@ class TestGetJobStatus:
 
     async def test_get_job_status_pending(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting status of pending job returns 200."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/status",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/status"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "pending"
+        assert data["submitted_at"] is None
+
+
+
+    """Test GET /api/v1/md-verification/jobs/{id}/status endpoint."""
+
+    async def test_get_job_status_success(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+    ) -> None:
+        """Test getting job status returns 200."""
+        job_id = md_job_with_results["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/status"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == job_id
+        assert data["status"] == "completed"
+        assert "completed_at" in data
+
+    async def test_get_job_status_pending(
+        self,
+        async_client_with_auth: AsyncClient,
+        pending_md_job: dict[str, str],
+    ) -> None:
+        """Test getting status of pending job returns 200."""
+        job_id = pending_md_job["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/status"
             )
 
         assert response.status_code == 200
@@ -404,16 +536,15 @@ class TestCancelMDVerificationJob:
 
     async def test_cancel_pending_job_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         pending_md_job: dict[str, str],
-        async_session: AsyncSession,
+        db_session: AsyncSession,
     ) -> None:
         """Test cancelling pending job returns 200."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client.delete(
-                f"/api/v1/md-verification/jobs/{job_id}",
-                headers=admin_headers,
+        response = await async_client_with_auth.delete(
+                f"/api/v1/md-verification/jobs/{job_id}"
             )
 
         assert response.status_code == 200
@@ -424,34 +555,43 @@ class TestCancelMDVerificationJob:
         assert "cancelled_at" in data
 
         # Verify job was updated in database
-        service = MDVerificationService(async_session)
+        service = MDVerificationService(db_session)
         job = await service.get_job(uuid.UUID(job_id))
         assert job.status == JobStatus.FAILED
         assert "cancelled" in job.error_message.lower()
 
     async def test_cancel_completed_job_fails(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test cancelling completed job returns 400."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.delete(
-                f"/api/v1/md-verification/jobs/{job_id}",
-                headers=admin_headers,
+        response = await async_client_with_auth.delete(
+                f"/api/v1/md-verification/jobs/{job_id}"
             )
 
         assert response.status_code == 400
         assert "cancel" in response.json()["detail"].lower()
 
-    async def test_cancel_job_not_found(self, async_client: AsyncClient, admin_headers: dict[str, str]) -> None:
+    async def test_cancel_job_not_found(self, async_client_with_auth: AsyncClient) -> None:
         """Test cancelling non-existent job returns 404."""
         job_id = uuid.uuid4()
 
         response = await async_client.delete(
-                f"/api/v1/md-verification/jobs/{job_id}",
-                headers=admin_headers,
+                f"/api/v1/md-verification/jobs/{job_id}"
+            )
+
+        assert response.status_code == 404
+
+
+    async def test_cancel_job_not_found(self, async_client_with_auth: AsyncClient) -> None:
+        """Test cancelling non-existent job returns 404."""
+        job_id = uuid.uuid4()
+
+        response = await async_client_with_auth.delete(
+                f"/api/v1/md-verification/jobs/{job_id}"
             )
 
         assert response.status_code == 404
@@ -463,15 +603,14 @@ class TestGetSimulationResults:
 
     async def test_get_simulation_results_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting simulation results returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/simulation",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/simulation"
             )
 
         assert response.status_code == 200
@@ -484,15 +623,49 @@ class TestGetSimulationResults:
 
     async def test_get_simulation_results_not_found(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting simulation results for job without results returns 404."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/simulation",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/simulation"
+            )
+
+        assert response.status_code == 404
+        assert "no simulation results" in response.json()["detail"].lower()
+
+    async def test_get_simulation_results_success(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+    ) -> None:
+        """Test getting simulation results returns 200."""
+        job_id = md_job_with_results["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/simulation"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["verification_job_id"] == job_id
+        assert data["simulation_time_ps"] == 100.0
+        assert data["steps_completed"] == 100000
+        assert data["final_energy"] == -1000.5
+        assert "thermodynamic_data" in data
+
+    async def test_get_simulation_results_not_found(
+        self,
+        async_client_with_auth: AsyncClient,
+        pending_md_job: dict[str, str],
+    ) -> None:
+        """Test getting simulation results for job without results returns 404."""
+        job_id = pending_md_job["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/simulation"
             )
 
         assert response.status_code == 404
@@ -505,15 +678,14 @@ class TestGetDefectAnalysisResults:
 
     async def test_get_defect_results_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting defect analysis results returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/defects",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/defects"
             )
 
         assert response.status_code == 200
@@ -526,15 +698,14 @@ class TestGetDefectAnalysisResults:
 
     async def test_get_defect_results_filter_by_type(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting defect results filtered by type."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy"
             )
 
         assert response.status_code == 200
@@ -544,15 +715,71 @@ class TestGetDefectAnalysisResults:
 
     async def test_get_defect_results_empty(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting defect results for job without results returns empty list."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/defects",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/defects"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 0
+
+
+
+    """Test GET /api/v1/md-verification/jobs/{id}/defects endpoint."""
+
+    async def test_get_defect_results_success(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+    ) -> None:
+        """Test getting defect analysis results returns 200."""
+        job_id = md_job_with_results["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/defects"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["verification_job_id"] == job_id
+        assert data[0]["defect_type"] == DefectType.VACANCY.value
+        assert data[0]["concentration"] == 0.001
+        assert data[1]["defect_type"] == DefectType.INTERSTITIAL.value
+
+    async def test_get_defect_results_filter_by_type(
+        self,
+        async_client_with_auth: AsyncClient,
+        md_job_with_results: dict[str, str],
+    ) -> None:
+        """Test getting defect results filtered by type."""
+        job_id = md_job_with_results["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["defect_type"] == DefectType.VACANCY.value
+
+    async def test_get_defect_results_empty(
+        self,
+        async_client_with_auth: AsyncClient,
+        pending_md_job: dict[str, str],
+    ) -> None:
+        """Test getting defect results for job without results returns empty list."""
+        job_id = pending_md_job["job_id"]
+
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/defects"
             )
 
         assert response.status_code == 200
@@ -566,15 +793,14 @@ class TestGetFittingResults:
 
     async def test_get_fitting_results_success(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting fitting results returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/fitting",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/fitting"
             )
 
         assert response.status_code == 200
@@ -589,15 +815,14 @@ class TestGetFittingResults:
 
     async def test_get_fitting_results_filter_by_method(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting fitting results filtered by method."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/fitting?fitting_method=arc-dpa",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/fitting?fitting_method=arc-dpa"
             )
 
         assert response.status_code == 200
@@ -607,15 +832,14 @@ class TestGetFittingResults:
 
     async def test_get_fitting_results_empty(
         self,
-        async_client: AsyncClient,
+        async_client_with_auth: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting fitting results for job without results returns empty list."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client.get(
-                f"/api/v1/md-verification/jobs/{job_id}/fitting",
-                headers=admin_headers,
+        response = await async_client_with_auth.get(
+                f"/api/v1/md-verification/jobs/{job_id}/fitting"
             )
 
         assert response.status_code == 200
