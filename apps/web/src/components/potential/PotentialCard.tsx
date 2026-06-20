@@ -15,9 +15,11 @@ const TYPE_COLOR: Record<string, string> = {
 
 interface PotentialCardProps {
   readonly potential: PotentialSummary
+  readonly compareSelected?: boolean
+  readonly onCompareToggle?: (id: string) => void
 }
 
-export function PotentialCard({ potential }: PotentialCardProps) {
+export function PotentialCard({ potential, compareSelected, onCompareToggle }: PotentialCardProps) {
   const { id, name, type, elements, description } = potential
   const tagColor = TYPE_COLOR[type] ?? "default"
 
@@ -54,8 +56,19 @@ export function PotentialCard({ potential }: PotentialCardProps) {
         </Paragraph>
       )}
 
-      <div className="mt-auto pt-1">
+      <div className="mt-auto pt-1 flex items-center justify-between">
         <Link href={`/potential/${id}`} className="text-blue-400 hover:text-blue-300">查看详情</Link>
+        {onCompareToggle && (
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-white transition">
+            <input
+              type="checkbox"
+              checked={compareSelected ?? false}
+              onChange={() => onCompareToggle(id)}
+              className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
+            />
+            对比
+          </label>
+        )}
       </div>
     </Card>
   )

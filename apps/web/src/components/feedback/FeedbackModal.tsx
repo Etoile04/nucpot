@@ -83,7 +83,7 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
       open={open}
       onCancel={handleClose}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
       width={520}
     >
       <Form

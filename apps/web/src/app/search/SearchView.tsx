@@ -1,21 +1,37 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Row, Col, Spin, Empty, Space, Typography } from "antd"
-import { SearchFilters } from "@/components/potential/SearchFilters"
+import Link from "next/link"
+import { Spin, Empty, Space, Typography } from "antd"
 import { PotentialCard } from "@/components/potential/PotentialCard"
+import { ElementFilter } from "@/components/potential/ElementFilter"
 import { useDebounce } from "@/components/potential/useDebounce"
 import {
   listPotentials,
   type ListParams,
-  type PotentialSummary,
   type PotentialListResult,
+  type PotentialSummary,
 } from "@/lib/potentials-api"
 
 const { Title, Text } = Typography
 
 const DEBOUNCE_MS = 300
 const SEARCH_LIMIT = 24
+
+const TYPE_OPTIONS = [
+  { label: "全部类型", value: "" },
+  { label: "EAM", value: "EAM" },
+  { label: "MEAM", value: "MEAM" },
+  { label: "ML", value: "ML" },
+  { label: "MTP", value: "MTP" },
+  { label: "ACE", value: "ACE" },
+  { label: "Buckingham", value: "Buckingham" },
+  { label: "other", value: "other" },
+]
+
+interface StatsData {
+  readonly elements: readonly string[]
+}
 
 interface SearchState {
   readonly potentials: readonly PotentialSummary[]
@@ -32,11 +48,19 @@ const INITIAL_STATE: SearchState = {
 }
 
 export function SearchView() {
-  const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-  const [elements, setElements] = useState<string[]>([])
-  const [query, setQuery] = useState<string>("")
-  const debouncedQuery = useDebounce(query.trim(), DEBOUNCE_MS)
+  const [allElements, setAllElements] = useState<string[]>([])
+  const [keyword, setKeyword] = useState<string>("")
+  const [selectedElements, setSelectedElements] = useState<string[]>([])
+  const [selectedType, setSelectedType] = useState<string>("")
+  const debouncedKeyword = useDebounce(keyword.trim(), DEBOUNCE_MS)
   const [state, setState] = useState<SearchState>(INITIAL_STATE)
+
+  useEffect(() => {
+    fetch('/api/stats')
+      .then(res => res.json() as Promise<StatsData>)
+      .then(data => setAllElements([...data.elements]))
+      .catch(() => { /* ignore */ })
+  }, [])
 
   const runSearch = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }))
@@ -45,9 +69,9 @@ export function SearchView() {
       limit: SEARCH_LIMIT,
       sort: "updated",
     }
-    if (typeFilter) params.type = typeFilter
-    if (elements.length > 0) params.elements = [...elements]
-    if (debouncedQuery) params.q = debouncedQuery
+    if (selectedType) params.type = selectedType
+    if (selectedElements.length > 0) params.elements = [...selectedElements]
+    if (debouncedKeyword) params.q = debouncedKeyword
     try {
       const result: PotentialListResult = await listPotentials(params)
       setState({
@@ -64,46 +88,105 @@ export function SearchView() {
         error: err instanceof Error ? err.message : "搜索失败",
       })
     }
-  }, [typeFilter, elements, debouncedQuery])
+  }, [selectedType, selectedElements, debouncedKeyword])
 
   useEffect(() => {
     void runSearch()
   }, [runSearch])
 
+  const toggleElement = useCallback((el: string) => {
+    setSelectedElements(prev =>
+      prev.includes(el) ? prev.filter(e => e !== el) : [...prev, el]
+    )
+  }, [])
+
+  const resetFilters = useCallback(() => {
+    setKeyword("")
+    setSelectedElements([])
+    setSelectedType("")
+  }, [])
+
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
-      <Space
-        direction="vertical"
-        size="middle"
-        className="w-full mb-6"
-      >
-        <Title level={2} className="!m-0 text-white">
-          高级检索
-        </Title>
-        <Text type="secondary">按类型、元素或关键字检索势函数库</Text>
-        <SearchFilters
-          type={typeFilter}
-          onTypeChange={setTypeFilter}
-          elements={elements}
-          onElementsChange={setElements}
-          query={query}
-          onQueryChange={setQuery}
-        />
+      <Space direction="vertical" size="middle" className="w-full mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <Title level={2} className="!m-0 text-white">
+              高级检索
+            </Title>
+            <Text type="secondary">按类型、元素或关键字检索势函数库</Text>
+          </div>
+          <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
+            浏览全部
+          </Link>
+        </div>
       </Space>
 
+      {/* Search form */}
+      <div className="p-4 rounded-lg bg-gray-800 border border-gray-700 mb-6 space-y-4">
+        {/* Keyword */}
+        <div>
+          <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">关键词</label>
+          <input
+            type="text"
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            placeholder="输入关键词..."
+            className="w-full px-3 py-1.5 rounded bg-gray-700 border border-gray-600 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+
+        {/* Elements */}
+        <div>
+          <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">元素筛选</label>
+          <ElementFilter
+            allElements={allElements}
+            selected={selectedElements}
+            onToggle={toggleElement}
+          />
+        </div>
+
+        {/* Type + buttons */}
+        <div className="flex items-end gap-3">
+          <div className="flex-1">
+            <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">函数形式</label>
+            <select
+              value={selectedType}
+              onChange={e => setSelectedType(e.target.value)}
+              className="w-full px-3 py-1.5 rounded bg-gray-700 border border-gray-600 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+            >
+              {TYPE_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => void runSearch()}
+            className="px-4 py-1.5 rounded bg-blue-600 border border-blue-500 text-sm text-white font-medium hover:bg-blue-700 transition"
+          >
+            搜索
+          </button>
+          <button
+            onClick={resetFilters}
+            className="px-4 py-1.5 rounded bg-gray-700 border border-gray-600 text-sm text-gray-300 hover:border-blue-500/50 transition"
+          >
+            重置
+          </button>
+        </div>
+      </div>
+
+      {/* Results */}
       <Spin spinning={state.loading} tip="加载中...">
         {state.error ? (
           <Empty description={`搜索失败：${state.error}`} />
         ) : state.potentials.length === 0 && !state.loading ? (
           <Empty description="未找到匹配的势函数" />
         ) : (
-          <Row gutter={[16, 16]}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {state.potentials.map((p) => (
-              <Col key={p.id} xs={24} sm={12} md={8} lg={6}>
-                <PotentialCard potential={p} />
-              </Col>
+              <PotentialCard key={p.id} potential={p} />
             ))}
-          </Row>
+          </div>
         )}
       </Spin>
 
