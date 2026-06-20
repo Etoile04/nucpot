@@ -88,7 +88,7 @@ function gradeColor(grade: string): string {
   return c[grade.toUpperCase()] || 'text-gray-400'
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'https://verify.nucpot.dpdns.org'
+// Use Next.js BFF proxy routes to avoid CORS and handle upstream downtime
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -148,7 +148,7 @@ export default function AdminVerifyPage() {
     // 并行提交所有验证任务
     const results = await Promise.allSettled(
       potentialsToVerify.map(async (p) => {
-        const r = await fetch(`${API_BASE}/api/verify`, {
+        const r = await fetch(`/api/verify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ potential_id: p.id, template: batchTemplate }),
@@ -186,7 +186,7 @@ export default function AdminVerifyPage() {
       batchPollRef.current = setInterval(async () => {
         const pollResults = await Promise.allSettled(
           pollTargets.map(async ({ jobId, potentialId }) => {
-            const r = await fetch(`${API_BASE}/api/verify/${jobId}`)
+            const r = await fetch(`/api/verify/${jobId}`)
             if (!r.ok) throw new Error('Poll failed')
             return { potentialId, job: await r.json() as VerifyJob }
           })
@@ -305,7 +305,7 @@ export default function AdminVerifyPage() {
 
     pollingRef.current = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/verify/${jobId}`)
+        const r = await fetch(`/api/verify/${jobId}`)
         if (!r.ok) throw new Error('Poll failed')
         const job: VerifyJob = await r.json()
         setActiveJob(job)
@@ -342,7 +342,7 @@ export default function AdminVerifyPage() {
     setError(null)
 
     try {
-      const r = await fetch(`${API_BASE}/api/verify`, {
+      const r = await fetch(`/api/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

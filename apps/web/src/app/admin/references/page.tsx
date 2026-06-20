@@ -45,7 +45,8 @@ type TabId = 'list' | 'review' | 'matrix'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const API_BASE = process.env.NEXT_PUBLIC_AUTOCV_API_URL || 'https://verify.nucpot.dpdns.org'
+// Use Next.js BFF routes instead of direct external API calls
+// BFF routes proxy to autovc service server-side (avoids CORS + handles downtime)
 
 const PROPERTY_LABELS: Record<string, string> = {
   lattice_constant: '晶格常数',
@@ -157,7 +158,7 @@ export default function AdminReferencesPage() {
     setLoadingRefs(true)
     setRefsError(null)
     try {
-      const r = await fetch(`${API_BASE}/api/references`)
+      const r = await fetch(`/api/ref-values`)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
       setRefs(Array.isArray(data) ? data : [])
@@ -171,7 +172,7 @@ export default function AdminReferencesPage() {
   const fetchReviewItems = useCallback(async () => {
     setLoadingReview(true)
     try {
-      const r = await fetch(`${API_BASE}/api/admin/reference-values`)
+      const r = await fetch(`/api/admin/ref-values`)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
       // Admin ref-values returns { data: [...], total, page, limit }
@@ -188,7 +189,7 @@ export default function AdminReferencesPage() {
   const fetchMatrix = useCallback(async () => {
     setLoadingMatrix(true)
     try {
-      const r = await fetch(`${API_BASE}/api/admin/reference-values/matrix`)
+      const r = await fetch(`/api/admin/ref-values/matrix`)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
       setMatrixData(data)
@@ -283,14 +284,14 @@ export default function AdminReferencesPage() {
       }
 
       if (editingRef) {
-        const r = await fetch(`${API_BASE}/api/references/${editingRef.id}`, {
+        const r = await fetch(`/api/ref-values/${editingRef.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         })
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
       } else {
-        const r = await fetch(`${API_BASE}/api/references`, {
+        const r = await fetch(`/api/ref-values`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -310,7 +311,7 @@ export default function AdminReferencesPage() {
   const handleDelete = async () => {
     if (!deleteTarget) return
     try {
-      const r = await fetch(`${API_BASE}/api/references/${deleteTarget.id}`, { method: 'DELETE' })
+      const r = await fetch(`/api/ref-values/${deleteTarget.id}`, { method: 'DELETE' })
       if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`)
       setDeleteTarget(null)
       await fetchRefs()
@@ -327,7 +328,7 @@ export default function AdminReferencesPage() {
       const body: Record<string, unknown> = action === 'approve'
         ? { confidence: 'A', review_notes: notes }
         : { reason: notes }
-      const r = await fetch(`${API_BASE}/api/admin/reference-values/${id}/${action}`, {
+      const r = await fetch(`/api/admin/ref-values/${id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -354,7 +355,7 @@ export default function AdminReferencesPage() {
       if (reviewAction.type === 'approve') (body as Record<string, unknown>).confidence = 'A'
       if (reviewAction.notes) body[reviewAction.type === 'approve' ? 'review_notes' : 'reason'] = reviewAction.notes
 
-      const r = await fetch(`${API_BASE}/api/admin/reference-values/batch`, {
+      const r = await fetch(`/api/admin/ref-values/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
