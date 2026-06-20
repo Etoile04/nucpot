@@ -14,10 +14,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
@@ -95,7 +96,7 @@ class MDVerificationJob(TimestampMixin, Base):
     # --- Configuration ---
 
     config: Mapped[dict[str, Any]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=False,
     )
 
@@ -275,7 +276,7 @@ class MDSimulationResult(TimestampMixin, Base):
     # --- Thermodynamic data ---
 
     thermodynamic_data: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
     )
 
@@ -356,7 +357,7 @@ class DefectAnalysisResult(TimestampMixin, Base):
 
     analysis_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata",
-        JSONB,
+        JSON,
         nullable=True,
     )
 
@@ -408,11 +409,11 @@ class PotentialFittingResult(TimestampMixin, Base):
         nullable=False,
     )
     parameters: Mapped[dict[str, Any]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=False,
     )
     quality_metrics: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
     )
 
