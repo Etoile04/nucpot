@@ -147,12 +147,9 @@ async def pending_md_job(
 class TestMDVerificationHealth:
     """Test MD verification health check endpoint."""
 
-    async def test_health_check(self, base_url: str) -> None:
+    async def test_health_check(self, async_client: AsyncClient) -> None:
         """Test GET /api/v1/md-verification/health returns healthy status."""
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get("/api/v1/md-verification/health")
+        response = await async_client.get("/api/v1/md-verification/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -168,8 +165,8 @@ class TestSubmitMDVerificationJob:
 
     async def test_submit_job_success(
         self,
-        base_url: str,
-        async_session: AsyncSession,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test successful job submission creates job and returns 201."""
@@ -186,10 +183,7 @@ class TestSubmitMDVerificationJob:
             md_verification_module, "run_md_verification_task", type("obj", (object,), {"delay": mock_delay})()
         )
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.post(
+        response = await async_client.post(
                 "/api/v1/md-verification/jobs",
                 json={
                     "potential_id": "EAM_U_test",
@@ -215,25 +209,22 @@ class TestSubmitMDVerificationJob:
         assert data["status"] == JobStatus.SUBMITTED.value
 
         # Verify job was created in database
-        service = MDVerificationService(async_session)
+        service = MDVerificationService(db_session)
         job = await service.get_job(uuid.UUID(data["id"]))
         assert job is not None
         assert job.status == JobStatus.SUBMITTED
 
-    async def test_submit_job_validation_error(self, base_url: str) -> None:
+    async def test_submit_job_validation_error(self, async_client: AsyncClient) -> None:
         """Test job submission with invalid data returns 400."""
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.post(
-                "/api/v1/md-verification/jobs",
-                json={
-                    # Missing required fields
-                    "potential_id": "EAM_U_test",
-                    # Missing element_system, potential_file, structure_file
-                },
-                headers={"Authorization": "Bearer test-token"},
-            )
+        response = await async_client.post(
+            "/api/v1/md-verification/jobs",
+            json={
+                # Missing required fields
+                "potential_id": "EAM_U_test",
+                # Missing element_system, potential_file, structure_file
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
 
         assert response.status_code == 422  # Validation error
 
@@ -244,15 +235,12 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_all(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing all jobs returns both jobs."""
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+        response = await async_client.get(
                 "/api/v1/md-verification/jobs",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -267,15 +255,12 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_filter_by_status(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by status."""
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 "/api/v1/md-verification/jobs?status=completed",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -286,14 +271,11 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_filter_by_element_system(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by element system."""
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 "/api/v1/md-verification/jobs?element_system=U",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -304,13 +286,10 @@ class TestListMDVerificationJobs:
 
     async def test_list_jobs_pagination(
         self,
-        base_url: str,
+        async_client: AsyncClient,
     ) -> None:
         """Test listing jobs with pagination."""
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 "/api/v1/md-verification/jobs?limit=1&offset=0",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -328,16 +307,13 @@ class TestGetMDVerificationJob:
 
     async def test_get_job_success(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting existing job returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -348,14 +324,11 @@ class TestGetMDVerificationJob:
         assert data["potential_id"] == "test_potential"
         assert data["element_system"] == "U"
 
-    async def test_get_job_not_found(self, base_url: str) -> None:
+    async def test_get_job_not_found(self, async_client: AsyncClient) -> None:
         """Test getting non-existent job returns 404."""
         job_id = uuid.uuid4()
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -370,16 +343,13 @@ class TestGetJobStatus:
 
     async def test_get_job_status_success(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting job status returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/status",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -392,16 +362,13 @@ class TestGetJobStatus:
 
     async def test_get_job_status_pending(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting status of pending job returns 200."""
         job_id = pending_md_job["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/status",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -418,17 +385,14 @@ class TestCancelMDVerificationJob:
 
     async def test_cancel_pending_job_success(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         pending_md_job: dict[str, str],
         async_session: AsyncSession,
     ) -> None:
         """Test cancelling pending job returns 200."""
         job_id = pending_md_job["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.delete(
+            response = await async_client.delete(
                 f"/api/v1/md-verification/jobs/{job_id}",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -448,16 +412,13 @@ class TestCancelMDVerificationJob:
 
     async def test_cancel_completed_job_fails(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test cancelling completed job returns 400."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.delete(
+            response = await async_client.delete(
                 f"/api/v1/md-verification/jobs/{job_id}",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -465,14 +426,11 @@ class TestCancelMDVerificationJob:
         assert response.status_code == 400
         assert "cancel" in response.json()["detail"].lower()
 
-    async def test_cancel_job_not_found(self, base_url: str) -> None:
+    async def test_cancel_job_not_found(self, async_client: AsyncClient) -> None:
         """Test cancelling non-existent job returns 404."""
         job_id = uuid.uuid4()
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.delete(
+            response = await async_client.delete(
                 f"/api/v1/md-verification/jobs/{job_id}",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -486,16 +444,13 @@ class TestGetSimulationResults:
 
     async def test_get_simulation_results_success(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting simulation results returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/simulation",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -510,16 +465,13 @@ class TestGetSimulationResults:
 
     async def test_get_simulation_results_not_found(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting simulation results for job without results returns 404."""
         job_id = pending_md_job["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/simulation",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -534,16 +486,13 @@ class TestGetDefectAnalysisResults:
 
     async def test_get_defect_results_success(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting defect analysis results returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/defects",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -558,16 +507,13 @@ class TestGetDefectAnalysisResults:
 
     async def test_get_defect_results_filter_by_type(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting defect results filtered by type."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -579,16 +525,13 @@ class TestGetDefectAnalysisResults:
 
     async def test_get_defect_results_empty(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting defect results for job without results returns empty list."""
         job_id = pending_md_job["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/defects",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -604,16 +547,13 @@ class TestGetFittingResults:
 
     async def test_get_fitting_results_success(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting fitting results returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/fitting",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -630,16 +570,13 @@ class TestGetFittingResults:
 
     async def test_get_fitting_results_filter_by_method(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test getting fitting results filtered by method."""
         job_id = md_job_with_results["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/fitting?fitting_method=arc-dpa",
                 headers={"Authorization": "Bearer test-token"},
             )
@@ -651,16 +588,13 @@ class TestGetFittingResults:
 
     async def test_get_fitting_results_empty(
         self,
-        base_url: str,
+        async_client: AsyncClient,
         pending_md_job: dict[str, str],
     ) -> None:
         """Test getting fitting results for job without results returns empty list."""
         job_id = pending_md_job["job_id"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=base_url), base_url=base_url
-        ) as client:
-            response = await client.get(
+            response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/fitting",
                 headers={"Authorization": "Bearer test-token"},
             )
