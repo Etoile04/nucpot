@@ -6,6 +6,7 @@ import { Pagination, Spin, Empty, Space, Typography } from "antd"
 import type { PaginationProps } from "antd"
 import { PotentialCard } from "@/components/potential/PotentialCard"
 import { ElementFilter } from "@/components/potential/ElementFilter"
+import { CompareBar } from "@/components/potential/CompareBar"
 import {
   listPotentials,
   type ListParams,
@@ -53,6 +54,7 @@ export function BrowseView() {
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<SortField>("updated")
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
+  const [compareIds, setCompareIds] = useState<string[]>([])
   const [state, setState] = useState<BrowseState>(INITIAL_STATE)
 
   useEffect(() => {
@@ -122,6 +124,12 @@ export function BrowseView() {
   const resetFilters = useCallback(() => {
     setSelectedElements([])
     setSelectedTypes(new Set())
+  }, [])
+
+  const toggleCompare = useCallback((id: string) => {
+    setCompareIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 4 ? [...prev, id] : prev
+    )
   }, [])
 
   const sidebar = (
@@ -222,7 +230,12 @@ export function BrowseView() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {state.potentials.map((p) => (
-                  <PotentialCard key={p.id} potential={p} />
+                  <PotentialCard
+                    key={p.id}
+                    potential={p}
+                    compareSelected={compareIds.includes(p.id)}
+                    onCompareToggle={toggleCompare}
+                  />
                 ))}
               </div>
             )}
@@ -241,6 +254,15 @@ export function BrowseView() {
           )}
         </div>
       </div>
+      <CompareBar
+        selectedIds={compareIds}
+        potentials={Object.fromEntries(
+          state.potentials.map(p => [p.id, { name: p.name, display_name: p.display_name }])
+        )}
+        onRemove={(id) => setCompareIds(prev => prev.filter(x => x !== id))}
+        onClear={() => setCompareIds([])}
+      />
+      {compareIds.length > 0 && <div className="h-16" />}
     </main>
   )
 }
