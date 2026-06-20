@@ -167,6 +167,8 @@ class TestSubmitMDVerificationJob:
         self,
         async_client: AsyncClient,
         db_session: AsyncSession,
+        admin_user,
+        admin_headers: dict[str, str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test successful job submission creates job and returns 201."""
@@ -198,7 +200,7 @@ class TestSubmitMDVerificationJob:
                     },
                     "priority": 5,
                 },
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 201
@@ -214,7 +216,7 @@ class TestSubmitMDVerificationJob:
         assert job is not None
         assert job.status == JobStatus.SUBMITTED
 
-    async def test_submit_job_validation_error(self, async_client: AsyncClient) -> None:
+    async def test_submit_job_validation_error(self, async_client: AsyncClient, admin_headers: dict[str, str]) -> None:
         """Test job submission with invalid data returns 400."""
         response = await async_client.post(
             "/api/v1/md-verification/jobs",
@@ -223,7 +225,7 @@ class TestSubmitMDVerificationJob:
                 "potential_id": "EAM_U_test",
                 # Missing element_system, potential_file, structure_file
             },
-            headers={"Authorization": "Bearer test-token"},
+            headers=admin_headers,
         )
 
         assert response.status_code == 422  # Validation error
@@ -236,13 +238,14 @@ class TestListMDVerificationJobs:
     async def test_list_jobs_all(
         self,
         async_client: AsyncClient,
+        admin_headers: dict[str, str],
         md_job_with_results: dict[str, str],
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing all jobs returns both jobs."""
         response = await async_client.get(
                 "/api/v1/md-verification/jobs",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -256,13 +259,14 @@ class TestListMDVerificationJobs:
     async def test_list_jobs_filter_by_status(
         self,
         async_client: AsyncClient,
+        admin_headers: dict[str, str],
         md_job_with_results: dict[str, str],
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by status."""
         response = await async_client.get(
             "/api/v1/md-verification/jobs?status=completed",
-            headers={"Authorization": "Bearer test-token"},
+            headers=admin_headers,
         )
 
         assert response.status_code == 200
@@ -272,12 +276,13 @@ class TestListMDVerificationJobs:
     async def test_list_jobs_filter_by_element_system(
         self,
         async_client: AsyncClient,
+        admin_headers: dict[str, str],
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by element system."""
         response = await async_client.get(
             "/api/v1/md-verification/jobs?element_system=U",
-            headers={"Authorization": "Bearer test-token"},
+            headers=admin_headers,
         )
 
         assert response.status_code == 200
@@ -291,7 +296,7 @@ class TestListMDVerificationJobs:
         """Test listing jobs with pagination."""
         response = await async_client.get(
             "/api/v1/md-verification/jobs?limit=1&offset=0",
-            headers={"Authorization": "Bearer test-token"},
+            headers=admin_headers,
         )
 
         assert response.status_code == 200
@@ -315,7 +320,7 @@ class TestGetMDVerificationJob:
 
         response = await async_client.get(
             f"/api/v1/md-verification/jobs/{job_id}",
-            headers={"Authorization": "Bearer test-token"},
+            headers=admin_headers,
         )
 
         assert response.status_code == 200
@@ -324,13 +329,13 @@ class TestGetMDVerificationJob:
         assert data["potential_id"] == "test_potential"
         assert data["element_system"] == "U"
 
-    async def test_get_job_not_found(self, async_client: AsyncClient) -> None:
+    async def test_get_job_not_found(self, async_client: AsyncClient, admin_headers: dict[str, str]) -> None:
         """Test getting non-existent job returns 404."""
         job_id = uuid.uuid4()
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 404
@@ -351,7 +356,7 @@ class TestGetJobStatus:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/status",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -370,7 +375,7 @@ class TestGetJobStatus:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/status",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -394,7 +399,7 @@ class TestCancelMDVerificationJob:
 
         response = await async_client.delete(
                 f"/api/v1/md-verification/jobs/{job_id}",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -420,19 +425,19 @@ class TestCancelMDVerificationJob:
 
         response = await async_client.delete(
                 f"/api/v1/md-verification/jobs/{job_id}",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 400
         assert "cancel" in response.json()["detail"].lower()
 
-    async def test_cancel_job_not_found(self, async_client: AsyncClient) -> None:
+    async def test_cancel_job_not_found(self, async_client: AsyncClient, admin_headers: dict[str, str]) -> None:
         """Test cancelling non-existent job returns 404."""
         job_id = uuid.uuid4()
 
         response = await async_client.delete(
                 f"/api/v1/md-verification/jobs/{job_id}",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 404
@@ -452,7 +457,7 @@ class TestGetSimulationResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/simulation",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -473,7 +478,7 @@ class TestGetSimulationResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/simulation",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 404
@@ -494,7 +499,7 @@ class TestGetDefectAnalysisResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/defects",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -515,7 +520,7 @@ class TestGetDefectAnalysisResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -533,7 +538,7 @@ class TestGetDefectAnalysisResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/defects",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -555,7 +560,7 @@ class TestGetFittingResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/fitting",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -578,7 +583,7 @@ class TestGetFittingResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/fitting?fitting_method=arc-dpa",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200
@@ -596,7 +601,7 @@ class TestGetFittingResults:
 
         response = await async_client.get(
                 f"/api/v1/md-verification/jobs/{job_id}/fitting",
-                headers={"Authorization": "Bearer test-token"},
+                headers=admin_headers,
             )
 
         assert response.status_code == 200

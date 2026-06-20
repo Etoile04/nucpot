@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -207,9 +207,9 @@ class DefectAnalysisResultUpdate(BaseModel):
 class DefectAnalysisResultResponse(BaseModel):
     """Schema for defect analysis result API response.
 
-    Note: The model uses 'analysis_metadata' as the Python attribute to avoid
+    Note: The database model uses 'analysis_metadata' as the column name to avoid
     conflicts with SQLAlchemy's internal metadata, but the API schema exposes
-    this as 'metadata' for consistency with the database schema.
+    this as 'metadata' for consistency.
     """
 
     model_config = ConfigDict(
@@ -222,20 +222,11 @@ class DefectAnalysisResultResponse(BaseModel):
     defect_type: DefectType
     concentration: float
     formation_energy: float | None
-    metadata: dict[str, Any] | None = None
-
-    @classmethod
-    def model_validate(cls, obj: Any) -> "DefectAnalysisResultResponse":
-        """Custom validation to map analysis_metadata -> metadata."""
-        if hasattr(obj, "analysis_metadata"):
-            obj = type(
-                "Proxy",
-                (obj,),
-                {
-                    "metadata": getattr(obj, "analysis_metadata"),
-                },
-            )()
-        return super().model_validate(obj)
+    metadata: dict[str, Any] = Field(
+        default=None,
+        validation_alias="analysis_metadata",
+        serialization_alias="metadata",
+    )
 
 
 class PotentialFittingResultCreate(BaseModel):
