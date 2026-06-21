@@ -340,6 +340,35 @@ def _get_redis_client():
     return _redis_client
 
 
+def _validate_hpc_environment():
+    """Validate HPC environment variables required for monitoring.
+
+    Raises:
+        ValueError: If required environment variables are missing
+        FileNotFoundError: If SSH key path doesn't exist
+    """
+    from pathlib import Path
+
+    required_vars = [
+        "NFM_HPC_PRIMARY_HOST",
+        "NFM_HPC_PRIMARY_USER",
+        "NFM_HPC_PRIMARY_SSH_KEY_PATH"
+    ]
+
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        raise ValueError(
+            f"Required HPC environment variables not set: {', '.join(missing_vars)}"
+        )
+
+    # Validate SSH key path exists
+    ssh_key_path = os.getenv("NFM_HPC_PRIMARY_SSH_KEY_PATH")
+    if not Path(ssh_key_path).exists():
+        raise FileNotFoundError(f"SSH key not found: {ssh_key_path}")
+
+    logger.info("HPC environment variables validated successfully")
+
+
 def increment_failure_count() -> int:
     """Increment primary cluster failure count in Redis.
 
@@ -352,10 +381,12 @@ def increment_failure_count() -> int:
         return 1  # Fallback to in-memory
 
     try:
-        # Increment counter
-        count = redis_client.incr("hpc:primary_failure_count")
-        # Set 10-minute expiry (600 seconds)
-        redis_client.expire("hpc:primary_failure_count", 600)
+        # Use pipeline for atomic incr + expire operation
+        pipe = redis_client.pipeline()
+        pipe.incr("hpc:primary_failure_count")
+        pipe.expire("hpc:primary_failure_count", 600)
+        results = pipe.execute()
+        count = results[0]
         return count
     except Exception as e:
         logger.error(f"Failed to increment failure count: {e}")
@@ -391,6 +422,10 @@ def monitor_primary_cluster_health() -> dict:
         from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
 
         try:
+            # Validate environment variables first
+            _validate_hpc_environment()
+
+            try:
             # Create orchestrator with environment config
             config = SSHConnectionConfig(
                 hosts=[os.getenv("NFM_HPC_PRIMARY_HOST", "login.example.com")],
@@ -464,19 +499,18 @@ def monitor_primary_cluster_health() -> dict:
                 "error_type": type(e).__name__
             }
 
-    # Try to detect if we're already in an event loop (pytest async context)
+    # Handle both Celery (sync) and pytest (async) contexts
     try:
         loop = asyncio.get_running_loop()
-        # Already in event loop - create task and await it
+        # Already in event loop (pytest async context) - run in thread with own loop
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, _monitor())
             return future.result()
     except RuntimeError:
-        # No event loop running - normal Celery context
+        # No event loop running (normal Celery context) - run directly
         try:
-            result = asyncio.run(_monitor())
-            return result
+            return asyncio.run(_monitor())
         except Exception as e:
             logger.error(f"Failed to run health monitoring: {e}")
             return {

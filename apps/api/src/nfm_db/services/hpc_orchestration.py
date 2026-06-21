@@ -403,28 +403,24 @@ class HPCOrchestrator:
         from nfm_db.models.hpc_failover_event import HPCFailoverEvent
 
         # Use async generator pattern for database session
-        db_gen = get_db()
-        db = None
-
         try:
-            # Get database session
-            db = await db_gen.__anext__()
+            # Use async context manager for proper session cleanup
+            async with get_db() as db:
+                # Create failover event record
+                event = HPCFailoverEvent(
+                    event_type=event_type,
+                    source_cluster=source_cluster,
+                    target_cluster=target_cluster,
+                    reason=reason,
+                    failure_count=failure_count,
+                    success=success,
+                    event_metadata=event_metadata or {}
+                )
 
-            # Create failover event record
-            event = HPCFailoverEvent(
-                event_type=event_type,
-                source_cluster=source_cluster,
-                target_cluster=target_cluster,
-                reason=reason,
-                failure_count=failure_count,
-                success=success,
-                event_metadata=event_metadata or {}
-            )
+                db.add(event)
+                await db.commit()
 
-            db.add(event)
-            await db.commit()
-
-            logger.info(f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}")
+                logger.info(f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}")
 
         except Exception as e:
             # Fallback to stdout logging if database fails
@@ -433,17 +429,6 @@ class HPCOrchestrator:
                 f"FAILOVER EVENT (stdout fallback): {event_type} - "
                 f"{source_cluster} -> {target_cluster} - {reason}"
             )
-            if db:
-                try:
-                    await db.rollback()
-                except Exception:
-                    pass
-        finally:
-            # Close database session
-            try:
-                await db_gen.__anext__()
-            except StopAsyncIteration:
-                pass
 
     def _generate_slurm_script(self, params: Dict[str, Any]) -> str:
         """Generate SLURM batch script from parameters.
@@ -974,7 +959,11 @@ echo "Job completed at $(date)"
             # Extract numeric job ID (remove 'slurm-' prefix)
             job_id = hpc_job_id.replace("slurm-", "")
 
-            # Execute squeue command
+            # Validate job_id is numeric to prevent command injection
+            if not job_id.isdigit():
+                raise ValueError(f"Invalid job ID format (must be numeric): {hpc_job_id}")
+
+            # Execute squeue command (now safe since job_id is validated numeric)
             cmd = f"squeue -j {job_id} -o '%T %j'"
             stdin, stdout, stderr = client.exec_command(cmd)
             exit_status = stdout.channel.recv_exit_status()
