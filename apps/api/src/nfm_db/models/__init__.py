@@ -54,6 +54,9 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.models.hpc_failover_event import (  # noqa: E402
+    HPCFailoverEvent,
+)
 from nfm_db.models.user import (  # noqa: E402
     BlogRole,
     Permission,
@@ -72,6 +75,7 @@ __all__ = [
     "FeedbackStatus",
     "FeedbackType",
     "FittingMethod",
+    "HPCFailoverEvent",
     "HpcJob",
     "HpcJobStatus",
     "JobStatus",

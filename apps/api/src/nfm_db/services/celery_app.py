@@ -1,6 +1,10 @@
 """Celery application configuration for NFMD async task processing.
 
 Phase 2.5 of NFM-337: Celery configuration for MD verification tasks.
+Phase 4.5 of NFM-346: Celery Beat monitoring for HPC failover.
+Configures Celery app with Redis broker, result backend, and task registration.
+
+Phase 2.5 of NFM-337: Celery configuration for MD verification tasks.
 Configures Celery app with Redis broker, result backend, and task registration.
 
 Usage:
@@ -199,6 +203,12 @@ celery_app.conf.beat_schedule = {
         'schedule': 30.0,  # Every 30 seconds
         'options': {'expires': 60},
     },
+    # NFM-346: Periodic HPC health monitoring
+    'monitor-primary-cluster-every-30-seconds': {
+        'task': 'hpc.monitor_primary_cluster_health',
+        'schedule': 30.0,  # Every 30 seconds
+        'options': {'expires': 60},
+    },
 }
 
 
@@ -293,3 +303,183 @@ def on_task_failure(request, context, exception, *args, **kwargs):
 if __name__ == '__main__':
     # Run Celery worker directly
     celery_app.worker_main(['worker', '--loglevel=info'])
+
+
+# =============================================================================
+# NFM-346 Phase 4.5: HPC Failover Monitoring
+# =============================================================================
+
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Redis client for failure counter (initialized when needed)
+_redis_client = None
+
+
+def _get_redis_client():
+    """Get or create Redis client for failure counter.
+
+    Returns:
+        Redis client instance
+    """
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis
+            _redis_client = redis.Redis(
+                host=os.getenv('REDIS_HOST', 'localhost'),
+                port=int(os.getenv('REDIS_PORT', '6379')),
+                db=0,
+                decode_responses=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            _redis_client = None
+    return _redis_client
+
+
+def increment_failure_count() -> int:
+    """Increment primary cluster failure count in Redis.
+
+    Returns:
+        Current failure count after increment
+    """
+    redis_client = _get_redis_client()
+    if not redis_client:
+        logger.warning("Redis not available - using in-memory counter")
+        return 1  # Fallback to in-memory
+
+    try:
+        # Increment counter
+        count = redis_client.incr("hpc:primary_failure_count")
+        # Set 10-minute expiry (600 seconds)
+        redis_client.expire("hpc:primary_failure_count", 600)
+        return count
+    except Exception as e:
+        logger.error(f"Failed to increment failure count: {e}")
+        return 1  # Fallback
+
+
+def reset_failure_count() -> None:
+    """Reset primary cluster failure count."""
+    redis_client = _get_redis_client()
+    if not redis_client:
+        logger.warning("Redis not available - counter not reset")
+        return
+
+    try:
+        redis_client.delete("hpc:primary_failure_count")
+    except Exception as e:
+        logger.error(f"Failed to reset failure count: {e}")
+
+
+@celery_app.task(name='hpc.monitor_primary_cluster_health')
+def monitor_primary_cluster_health() -> dict:
+    """Periodic health check for primary HPC cluster.
+
+    Runs every 30 seconds via Celery beat.
+    Triggers failover if primary cluster unhealthy for 5 consecutive checks.
+
+    Returns:
+        Dictionary with monitoring status and statistics
+    """
+    import asyncio
+
+    async def _monitor():
+        from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
+
+        try:
+            # Create orchestrator with environment config
+            config = SSHConnectionConfig(
+                hosts=[os.getenv("NFM_HPC_PRIMARY_HOST", "login.example.com")],
+                username=os.getenv("NFM_HPC_PRIMARY_USER", "user"),
+                ssh_key_path=os.getenv("NFM_HPC_PRIMARY_SSH_KEY_PATH", "/path/to/key"),
+                max_connections=int(os.getenv("NFM_HPC_MAX_CONNECTIONS", "10")),
+                backup_hosts=[os.getenv("NFM_HPC_BACKUP_HOST", "backup.example.com")] if os.getenv("NFM_HPC_BACKUP_HOST") else None,
+                backup_username=os.getenv("NFM_HPC_BACKUP_USER"),
+                backup_ssh_key_path=os.getenv("NFM_HPC_BACKUP_SSH_KEY_PATH"),
+                failover_threshold_seconds=int(os.getenv("NFM_HPC_FAILOVER_THRESHOLD_SECONDS", "300")),
+                skip_key_validation=True  # For Celery task context
+            )
+
+            orchestrator = HPCOrchestrator(config)
+
+            try:
+                # Check primary cluster health
+                is_healthy = orchestrator.check_primary_health()
+
+                if not is_healthy:
+                    # Increment failure counter
+                    failure_count = increment_failure_count()
+
+                    # Check if we should trigger failover (5 consecutive failures)
+                    if orchestrator.should_trigger_failover():
+                        # Trigger failover
+                        success = await orchestrator.trigger_failover()
+
+                        if success:
+                            reset_failure_count()
+                            logger.error(f"Automatic failover triggered after {failure_count} failures")
+                            return {
+                                "status": "failover_triggered",
+                                "failover_count": failure_count,
+                                "message": "Successfully failed over to backup cluster"
+                            }
+                        else:
+                            logger.error(f"Failover attempted after {failure_count} failures but failed")
+                            return {
+                                "status": "failover_failed",
+                                "failover_count": failure_count,
+                                "message": "Failover attempt failed"
+                            }
+                    else:
+                        logger.warning(f"Primary unhealthy (failure #{failure_count}), threshold not yet reached")
+                else:
+                    # Primary is healthy - reset counter
+                    reset_failure_count()
+
+                # If we're on backup cluster, try to recover primary
+                if orchestrator.current_cluster == "backup":
+                    recovered = await orchestrator.try_recover_primary()
+                    if recovered:
+                        logger.info("Primary cluster recovered - new jobs will use primary")
+
+                return {
+                    "status": "success",
+                    "primary_healthy": is_healthy,
+                    "current_cluster": orchestrator.current_cluster,
+                    "message": "Health check completed"
+                }
+
+            finally:
+                orchestrator.cleanup()
+
+        except Exception as e:
+            logger.error(f"HPC health monitoring failed: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "error_type": type(e).__name__
+            }
+
+    # Try to detect if we're already in an event loop (pytest async context)
+    try:
+        loop = asyncio.get_running_loop()
+        # Already in event loop - create task and await it
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, _monitor())
+            return future.result()
+    except RuntimeError:
+        # No event loop running - normal Celery context
+        try:
+            result = asyncio.run(_monitor())
+            return result
+        except Exception as e:
+            logger.error(f"Failed to run health monitoring: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }

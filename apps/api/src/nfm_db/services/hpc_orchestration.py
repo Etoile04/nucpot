@@ -379,6 +379,72 @@ class HPCOrchestrator:
         except Exception:
             pass  # Ignore errors during cleanup
 
+    async def _log_failover_event(
+        self,
+        event_type: str,
+        source_cluster: str,
+        reason: str,
+        success: bool = True,
+        target_cluster: str = None,
+        failure_count: int = 0,
+        event_metadata: dict = None
+    ) -> None:
+        """Log failover event to database.
+
+        Args:
+            event_type: Type of event (failover_triggered, failover_failed, primary_recovered, etc.)
+            source_cluster: Cluster where failover initiated from
+            reason: Human-readable description of why failover occurred
+            success: Whether the operation succeeded
+            target_cluster: Cluster where failover switched to (if successful)
+            failure_count: Number of consecutive failures that triggered failover
+            event_metadata: Additional metadata (JSONB field)
+        """
+        from nfm_db.models.hpc_failover_event import HPCFailoverEvent
+
+        # Use async generator pattern for database session
+        db_gen = get_db()
+        db = None
+
+        try:
+            # Get database session
+            db = await db_gen.__anext__()
+
+            # Create failover event record
+            event = HPCFailoverEvent(
+                event_type=event_type,
+                source_cluster=source_cluster,
+                target_cluster=target_cluster,
+                reason=reason,
+                failure_count=failure_count,
+                success=success,
+                event_metadata=event_metadata or {}
+            )
+
+            db.add(event)
+            await db.commit()
+
+            logger.info(f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}")
+
+        except Exception as e:
+            # Fallback to stdout logging if database fails
+            logger.error(f"Failed to log failover event to database: {e}")
+            logger.info(
+                f"FAILOVER EVENT (stdout fallback): {event_type} - "
+                f"{source_cluster} -> {target_cluster} - {reason}"
+            )
+            if db:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+        finally:
+            # Close database session
+            try:
+                await db_gen.__anext__()
+            except StopAsyncIteration:
+                pass
+
     def _generate_slurm_script(self, params: Dict[str, Any]) -> str:
         """Generate SLURM batch script from parameters.
 
@@ -483,7 +549,7 @@ echo "Job completed at $(date)"
 
         return False
 
-    def trigger_failover(self) -> bool:
+    async def trigger_failover(self) -> bool:
         """Trigger failover to backup cluster.
 
         Returns:
@@ -491,6 +557,16 @@ echo "Job completed at $(date)"
         """
         if not self.backup_ssh_manager:
             logger.error("Cannot trigger failover - no backup cluster configured")
+            # Log failed failover attempt
+            await self._log_failover_event(
+                event_type="failover_failed",
+                source_cluster=self.hpc_cluster,
+                target_cluster=None,
+                reason="No backup cluster configured",
+                success=False,
+                failure_count=self.failover_count,
+                event_metadata={"error": "No backup cluster configured"}
+            )
             return False
 
         try:
@@ -498,6 +574,16 @@ echo "Job completed at $(date)"
             client = self.backup_ssh_manager.acquire_connection_with_retry(max_retries=2)
             if not client:
                 logger.error("Backup cluster connectivity test failed")
+                # Log failed failover attempt
+                await self._log_failover_event(
+                    event_type="failover_failed",
+                    source_cluster=self.hpc_cluster,
+                    target_cluster=self.config.backup_hosts[0],
+                    reason="Backup cluster connectivity test failed",
+                    success=False,
+                    failure_count=self.failover_count,
+                    event_metadata={"error": "Backup cluster unreachable"}
+                )
                 return False
 
             self.backup_ssh_manager.release_connection(client)
@@ -506,6 +592,17 @@ echo "Job completed at $(date)"
             self.failover_count += 1
             from_cluster = self.hpc_cluster
             to_cluster = self.config.backup_hosts[0]
+
+            await self._log_failover_event(
+                event_type="failover_triggered",
+                source_cluster=from_cluster,
+                target_cluster=to_cluster,
+                reason=f"Primary cluster down after {self.failover_count} consecutive failures",
+                success=True,
+                failure_count=self.failover_count,
+                event_metadata={"failover_number": self.failover_count}
+            )
+
             logger.error(f"FAILOVER #{self.failover_count}: {from_cluster} -> {to_cluster}")
 
             # Update Prometheus metrics
@@ -521,9 +618,19 @@ echo "Job completed at $(date)"
 
         except Exception as e:
             logger.error(f"Failover failed: {e}")
+            # Log failed failover attempt
+            await self._log_failover_event(
+                event_type="failover_failed",
+                source_cluster=self.hpc_cluster,
+                target_cluster=self.config.backup_hosts[0] if self.config.backup_hosts else None,
+                reason=f"Exception during failover: {str(e)}",
+                success=False,
+                failure_count=self.failover_count,
+                event_metadata={"exception": str(e), "exception_type": type(e).__name__}
+            )
             return False
 
-    def try_recover_primary(self) -> bool:
+    async def try_recover_primary(self) -> bool:
         """Attempt to recover connection to primary cluster.
 
         Returns:
@@ -532,7 +639,31 @@ echo "Job completed at $(date)"
         if self.check_primary_health():
             logger.info("Primary cluster recovered - will switch back on next job submission")
             self.primary_healthy = True
+
+            # Log recovery event
+            await self._log_failover_event(
+                event_type="primary_recovered",
+                source_cluster=self.hpc_cluster,
+                target_cluster=None,
+                reason="Primary cluster health restored",
+                success=True,
+                failure_count=0,
+                event_metadata={"recovery_timestamp": datetime.now().isoformat()}
+            )
+
             return True
+
+        # Log failed recovery attempt
+        await self._log_failover_event(
+            event_type="recovery_attempted",
+            source_cluster=self.hpc_cluster,
+            target_cluster=None,
+            reason="Primary cluster still unhealthy",
+            success=False,
+            failure_count=0,
+            event_metadata={"health_check_failed": True}
+        )
+
         return False
 
     async def submit_job(
@@ -557,15 +688,16 @@ echo "Job completed at $(date)"
         """
         # Phase 4.5: Check if we should trigger failover
         if self.should_trigger_failover():
-            if self.trigger_failover():
+            if await self.trigger_failover():
                 logger.warning(f"Using backup cluster for job {task_id}")
             else:
                 raise HPCConnectionError("Both primary and backup clusters unavailable")
 
         # Try to recover primary if we're on backup
-        if self.current_cluster == "backup" and self.try_recover_primary():
-            logger.info(f"Switching back to primary cluster for job {task_id}")
-            self.current_cluster = "primary"
+        if self.current_cluster == "backup":
+            if await self.try_recover_primary():
+                logger.info(f"Switching back to primary cluster for job {task_id}")
+                self.current_cluster = "primary"
 
         # Validate required parameters
         self._validate_simulation_params(params)
@@ -579,10 +711,13 @@ echo "Job completed at $(date)"
             cluster_used = self.current_cluster
         except Exception as e:
             # If submission failed and we're on primary, try failover
-            if self.current_cluster == "primary" and self.trigger_failover():
-                logger.warning(f"Primary submission failed, retrying on backup: {e}")
-                hpc_job_id = await self._submit_to_slurm(task_id, slurm_script)
-                cluster_used = "backup"
+            if self.current_cluster == "primary":
+                if await self.trigger_failover():
+                    logger.warning(f"Primary submission failed, retrying on backup: {e}")
+                    hpc_job_id = await self._submit_to_slurm(task_id, slurm_script)
+                    cluster_used = "backup"
+                else:
+                    raise HPCConnectionError(f"Job submission failed on all clusters: {e}")
             else:
                 raise HPCConnectionError(f"Job submission failed on all clusters: {e}")
 
