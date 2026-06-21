@@ -441,54 +441,54 @@ def monitor_primary_cluster_health() -> dict:
 
             orchestrator = HPCOrchestrator(config)
 
-            try:
-                # Check primary cluster health
-                is_healthy = orchestrator.check_primary_health()
-
-                if not is_healthy:
-                    # Increment failure counter
-                    failure_count = increment_failure_count()
-
-                    # Check if we should trigger failover (5 consecutive failures)
-                    if orchestrator.should_trigger_failover():
-                        # Trigger failover
-                        success = await orchestrator.trigger_failover()
-
-                        if success:
-                            reset_failure_count()
-                            logger.error(f"Automatic failover triggered after {failure_count} failures")
-                            return {
-                                "status": "failover_triggered",
-                                "failover_count": failure_count,
-                                "message": "Successfully failed over to backup cluster"
-                            }
+                    try:
+                    # Check primary cluster health
+                    is_healthy = orchestrator.check_primary_health()
+    
+                    if not is_healthy:
+                        # Increment failure counter
+                        failure_count = increment_failure_count()
+    
+                        # Check if we should trigger failover (5 consecutive failures)
+                        if orchestrator.should_trigger_failover():
+                            # Trigger failover
+                            success = await orchestrator.trigger_failover()
+    
+                            if success:
+                                reset_failure_count()
+                                logger.error(f"Automatic failover triggered after {failure_count} failures")
+                                return {
+                                    "status": "failover_triggered",
+                                    "failover_count": failure_count,
+                                    "message": "Successfully failed over to backup cluster"
+                                }
+                            else:
+                                logger.error(f"Failover attempted after {failure_count} failures but failed")
+                                return {
+                                    "status": "failover_failed",
+                                    "failover_count": failure_count,
+                                    "message": "Failover attempt failed"
+                                }
                         else:
-                            logger.error(f"Failover attempted after {failure_count} failures but failed")
-                            return {
-                                "status": "failover_failed",
-                                "failover_count": failure_count,
-                                "message": "Failover attempt failed"
-                            }
+                            logger.warning(f"Primary unhealthy (failure #{failure_count}), threshold not yet reached")
                     else:
-                        logger.warning(f"Primary unhealthy (failure #{failure_count}), threshold not yet reached")
-                else:
-                    # Primary is healthy - reset counter
-                    reset_failure_count()
-
-                # If we're on backup cluster, try to recover primary
-                if orchestrator.current_cluster == "backup":
-                    recovered = await orchestrator.try_recover_primary()
-                    if recovered:
-                        logger.info("Primary cluster recovered - new jobs will use primary")
-
-                return {
-                    "status": "success",
-                    "primary_healthy": is_healthy,
-                    "current_cluster": orchestrator.current_cluster,
-                    "message": "Health check completed"
-                }
-
-            finally:
+                        # Primary is healthy - reset counter
+                        reset_failure_count()
+    
+                    # If we're on backup cluster, try to recover primary
+                    if orchestrator.current_cluster == "backup":
+                        recovered = await orchestrator.try_recover_primary()
+                        if recovered:
+                            logger.info("Primary cluster recovered - new jobs will use primary")
+    
+                    return {
+                        "status": "success",
+                        "primary_healthy": is_healthy,
+                        "current_cluster": orchestrator.current_cluster,
+                        "message": "Health check completed"
+                    }
+    
+                finally:
                 orchestrator.cleanup()
 
         except Exception as e:
