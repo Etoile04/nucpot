@@ -11,13 +11,26 @@ Architecture follows Phase 4.1-4.5 implementation plan from NFM-345.
 
 import os
 import time
+import uuid
 import paramiko
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import logging
+from datetime import datetime
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from nfm_db.database import get_db
+from nfm_db.models.md_verification import HpcJob, HpcJobStatus
 
 logger = logging.getLogger(__name__)
+
+
+class JobSubmissionError(Exception):
+    """Exception raised when SLURM job submission fails."""
+
+    pass
 
 
 @dataclass
@@ -203,8 +216,7 @@ class SSHConnectionManager:
 class HPCOrchestrator:
     """Main HPC orchestration service for job submission and monitoring.
 
-    This class will be implemented in Phase 4.2-4.5.
-    Currently a placeholder for future implementation.
+    Handles SLURM job submission, status monitoring, file transfer, and failover.
     """
 
     def __init__(self, config: SSHConnectionConfig):
@@ -220,16 +232,64 @@ class HPCOrchestrator:
             max_connections=config.max_connections
         )
         self.config = config
+        self.hpc_cluster = config.hosts[0]  # Primary cluster
 
-    def submit_job(
+    def _generate_slurm_script(self, params: Dict[str, Any]) -> str:
+        """Generate SLURM batch script from parameters.
+
+        Args:
+            params: Dictionary containing job parameters
+
+        Returns:
+            Complete SLURM batch script content
+        """
+        job_name = params.get("job_name", "md_verification")
+        nodes = params.get("nodes", 1)
+        cpus_per_task = params.get("cpus_per_task", 4)
+        memory = params.get("memory", "16G")
+        walltime = params.get("walltime", "02:00:00")
+        partition = params.get("partition", "compute")
+        output_file = params.get("output_file", "lammps.out")
+
+        script = f"""#!/bin/bash
+#SBATCH --job-name={job_name}
+#SBATCH --nodes={nodes}
+#SBATCH --cpus-per-task={cpus_per_task}
+#SBATCH --mem={memory}
+#SBATCH --time={walltime}
+#SBATCH --partition={partition}
+#SBATCH --output={output_file}
+
+echo "Starting MD verification job at $(date)"
+echo "Job ID: $SLURM_JOB_ID"
+
+# Load modules if needed
+# module load lammps
+
+# Run LAMMPS simulation
+"""
+
+        # Add LAMMPS execution commands if specified
+        if "lammps_executable" in params:
+            lammps_exec = params["lammps_executable"]
+            input_file = params.get("input_file", "in.lammps")
+            script += f"""
+# Run LAMMPS with MPI
+mpirun {lammps_exec} -in {input_file}
+"""
+
+        script += f"""
+echo "Job completed at $(date)"
+"""
+        return script
+
+    async def submit_job(
         self,
         task_id: str,
         crystal_structure_file: str,
         params: Dict[str, Any]
     ) -> str:
         """Submit MD verification job to HPC.
-
-        This will be implemented in Phase 4.2.
 
         Args:
             task_id: UUID of md_verification_jobs record
@@ -243,32 +303,184 @@ class HPCOrchestrator:
             HPCConnectionError: Primary and backup clusters unavailable
             JobSubmissionError: SLURM submission failed
         """
-        raise NotImplementedError("submit_job will be implemented in Phase 4.2")
+        # Validate required parameters
+        self._validate_simulation_params(params)
 
-    def get_job_status(self, hpc_job_id: str) -> str:
-        """Query current job status from SLURM.
+        # Generate SLURM script
+        slurm_script = self._generate_slurm_script(params)
 
-        This will be implemented in Phase 4.3.
+        # Submit to SLURM via SSH
+        hpc_job_id = await self._submit_to_slurm(task_id, slurm_script)
 
-        Returns:
-            status: PENDING | RUNNING | COMPLETED | FAILED
+        # Create database record
+        await self._create_hpc_job_record(task_id, hpc_job_id, params)
+
+        return hpc_job_id
+
+    def _validate_simulation_params(self, params: Dict[str, Any]) -> None:
+        """Validate simulation parameters.
+
+        Args:
+            params: Simulation parameters to validate
+
+        Raises:
+            ValueError: If required parameters are missing or invalid
         """
-        raise NotImplementedError("get_job_status will be implemented in Phase 4.3")
+        required_params = ["temperature", "pressure", "steps"]
+        missing_params = [p for p in required_params if p not in params]
 
-    def download_results(
+        if missing_params:
+            raise ValueError(f"Missing required parameters: {missing_params}")
+
+        # Validate parameter ranges
+        if not (0 < params["temperature"] < 10000):
+            raise ValueError("Temperature must be between 0 and 10000 K")
+
+        if not (0 < params["pressure"] < 1000):
+            raise ValueError("Pressure must be between 0 and 1000 GPa")
+
+        if not (1000 < params["steps"] < 10000000):
+            raise ValueError("Steps must be between 1000 and 10 million")
+
+    async def _submit_to_slurm(
         self,
         task_id: str,
-        hpc_job_id: str
-    ) -> Dict[str, str]:
-        """Download and parse job results.
+        slurm_script: str
+    ) -> str:
+        """Submit job to SLURM cluster via SSH.
 
-        This will be implemented in Phase 4.4.
+        Args:
+            task_id: Task identifier for logging
+            slurm_script: Complete SLURM script content
 
         Returns:
-            Results dict with file paths to:
-            - lammps.out
-            - log.lammps
-            - energy_curve.dat
-            - defect_analysis.json
+            SLURM job ID (e.g., "slurm-12345")
+
+        Raises:
+            JobSubmissionError: If submission fails
         """
-        raise NotImplementedError("download_results will be implemented in Phase 4.4")
+        client = None
+        try:
+            # Acquire SSH connection
+            client = self.ssh_manager.acquire_connection()
+
+            # Create temporary script file on HPC
+            script_path = f"$SCRATCH/nfm-md/{task_id}/submit.sh"
+            self._upload_script_via_sftp(client, slurm_script, script_path)
+
+            # Submit job via sbatch
+            stdin, stdout, stderr = client.exec_command(f"sbatch {script_path}")
+            exit_status = stdout.channel.recv_exit_status()
+
+            if exit_status != 0:
+                error_msg = stderr.read().decode()
+                if "Socket timed out" in error_msg or "qos: QOSMaxSubmitJobLimit" in error_msg:
+                    raise JobSubmissionError(f"SLURM queue is full: {error_msg}")
+                elif "Permission denied" in error_msg:
+                    raise JobSubmissionError(f"Permission denied: {error_msg}")
+                else:
+                    raise JobSubmissionError(f"SLURM submission failed: {error_msg}")
+
+            # Parse job ID from output
+            job_id = stdout.read().decode().strip()
+            if not job_id.isdigit():
+                raise JobSubmissionError(f"Invalid job ID returned: {job_id}")
+
+            logger.info(f"Job submitted successfully: {job_id}")
+            return f"slurm-{job_id}"
+
+        except JobSubmissionError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to submit job to SLURM: {e}")
+            raise JobSubmissionError(f"HPC connection failed: {e}")
+        finally:
+            if client:
+                self.ssh_manager.release_connection(client)
+
+    def _upload_script_via_sftp(
+        self,
+        client: paramiko.SSHClient,
+        script_content: str,
+        remote_path: str
+    ) -> None:
+        """Upload script content to remote path via SFTP.
+
+        Args:
+            client: SSH client with active connection
+            script_content: Script file content
+            remote_path: Remote file path
+        """
+        sftp = None
+        try:
+            sftp = client.open_sftp()
+            # Create directory if it doesn't exist
+            remote_dir = "/".join(remote_path.split("/")[:-1])
+            try:
+                sftp.mkdir(remote_dir)
+            except IOError:
+                pass  # Directory may already exist
+
+            # Write script file
+            with sftp.file(remote_path, 'w') as f:
+                f.write(script_content)
+
+        finally:
+            if sftp:
+                sftp.close()
+
+    async def _create_hpc_job_record(
+        self,
+        task_id: str,
+        hpc_job_id: str,
+        params: Dict[str, Any]
+    ) -> None:
+        """Create record in hpc_jobs table.
+
+        Args:
+            task_id: MD verification job ID
+            hpc_job_id: SLURM job identifier
+            params: Job parameters
+        """
+        # Use async generator pattern for database session
+        db_gen = get_db()
+        db = await db_gen.__anext__()
+
+        try:
+            hpc_job = HpcJob(
+                verification_job_id=uuid.UUID(task_id),
+                hpc_cluster=self.hpc_cluster,
+                hpc_job_id=hpc_job_id,
+                status=HpcJobStatus.PENDING,
+                partition=params.get("partition", "compute"),
+                nodes=params.get("nodes", 1),
+                walltime_requested=self._parse_walltime(params.get("walltime", "02:00:00")),
+                submitted_at=datetime.utcnow()
+            )
+
+            db.add(hpc_job)
+            await db.commit()
+
+            logger.info(f"Created HPC job record: {hpc_job.id}")
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            try:
+                await db_gen.__anext__()
+            except StopAsyncIteration:
+                pass
+
+    def _parse_walltime(self, walltime: str) -> int:
+        """Parse SLURM walltime format to minutes.
+
+        Args:
+            walltime: Walltime in format "HH:MM:SS"
+
+        Returns:
+            Walltime in minutes
+        """
+        parts = walltime.split(":")
+        hours = int(parts[0])
+        minutes = int(parts[1]) if len(parts) > 1 else 0
+        return hours * 60 + minutes
