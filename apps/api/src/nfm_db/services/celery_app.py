@@ -194,6 +194,11 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(hour=2, minute=0),  # 2 AM UTC daily
         'options': {'expires': 3600},
     },
+    'sync-hpc-job-status': {
+        'task': 'nfm_db.services.hpc_orchestration.sync_hpc_job_status',
+        'schedule': 30.0,  # Every 30 seconds
+        'options': {'expires': 60},
+    },
 }
 
 

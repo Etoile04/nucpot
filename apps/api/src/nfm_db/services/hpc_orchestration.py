@@ -22,7 +22,8 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models.md_verification import HpcJob, HpcJobStatus
+from nfm_db.models.md_verification import HpcJob, HpcJobStatus, MDVerificationJob
+from nfm_db.services.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -484,3 +485,260 @@ echo "Job completed at $(date)"
         hours = int(parts[0])
         minutes = int(parts[1]) if len(parts) > 1 else 0
         return hours * 60 + minutes
+
+    async def poll_job_status(self, hpc_job_id: str) -> str:
+        """Poll SLURM for current job status.
+
+        Args:
+            hpc_job_id: SLURM job identifier (e.g., "slurm-12345")
+
+        Returns:
+            Job status: PENDING, RUNNING, COMPLETED, or FAILED
+
+        Raises:
+            ConnectionError: If SSH connection fails
+        """
+        try:
+            # Execute squeue command to check job status
+            squeue_output = await self._execute_squeue(hpc_job_id)
+
+            if squeue_output and "RUNNING" in squeue_output:
+                return "RUNNING"
+            elif squeue_output and "PENDING" in squeue_output:
+                return "PENDING"
+            elif squeue_output is None:
+                # Job not in queue, check if completed successfully
+                task_id = hpc_job_id.split("-")[-1]  # Extract task ID
+                if await self._check_job_completion(task_id):
+                    return "COMPLETED"
+                else:
+                    return "FAILED"
+            else:
+                return "FAILED"
+
+        except Exception as e:
+            logger.error(f"Failed to poll job status for {hpc_job_id}: {e}")
+            return "FAILED"
+
+    async def _execute_squeue(self, hpc_job_id: str) -> Optional[str]:
+        """Execute squeue command via SSH to check job status.
+
+        Args:
+            hpc_job_id: SLURM job identifier
+
+        Returns:
+            squeue output string, or None if job not found in queue
+        """
+        client = None
+        try:
+            client = self.ssh_manager.acquire_connection()
+
+            # Extract numeric job ID (remove 'slurm-' prefix)
+            job_id = hpc_job_id.replace("slurm-", "")
+
+            # Execute squeue command
+            cmd = f"squeue -j {job_id} -o '%T %j'"
+            stdin, stdout, stderr = client.exec_command(cmd)
+            exit_status = stdout.channel.recv_exit_status()
+
+            if exit_status != 0:
+                error_msg = stderr.read().decode()
+                if "slurm_load_error" in error_msg or "Invalid job id" in error_msg:
+                    # Job not found in queue (may be completed)
+                    return None
+                else:
+                    raise Exception(f"squeue command failed: {error_msg}")
+
+            output = stdout.read().decode().strip()
+            return output if output else None
+
+        finally:
+            if client:
+                self.ssh_manager.release_connection(client)
+
+    async def update_job_status(self, task_id: str, hpc_job_id: str) -> None:
+        """Update job status in database.
+
+        Args:
+            task_id: MD verification job ID
+            hpc_job_id: HPC job identifier
+
+        Raises:
+            Exception: If database update fails
+        """
+        try:
+            # Poll current status
+            status = await self.poll_job_status(hpc_job_id)
+
+            # Update database with new status
+            db_gen = get_db()
+            db = await db_gen.__anext__()
+
+            try:
+                # Update hpc_jobs table
+                from sqlalchemy import select, update
+                # Use query instead of get for hpc_job_id which is a string, not the primary key
+                hpc_result = await db.execute(
+                    select(HpcJob).where(HpcJob.hpc_job_id == hpc_job_id)
+                )
+                hpc_job = hpc_result.scalar_one_or_none()
+
+                if hpc_job:
+                    hpc_job.status = HpcJobStatus[status]
+                    await db.commit()
+
+                # Update md_verification_jobs table
+                verification_job = await db.get(MDVerificationJob, uuid.UUID(task_id))
+                if verification_job:
+                    verification_job.status = status
+                    await db.commit()
+
+                logger.info(f"Updated job status: {task_id} -> {status}")
+
+            except Exception:
+                await db.rollback()
+                raise
+            finally:
+                try:
+                    await db_gen.__anext__()
+                except StopAsyncIteration:
+                    pass
+
+        except Exception as e:
+            logger.error(f"Failed to update job status: {e}")
+            raise
+
+    async def _check_job_completion(self, task_id: str) -> bool:
+        """Check if job has completed successfully by checking output files.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            True if job completed successfully, False otherwise
+        """
+        client = None
+        try:
+            client = self.ssh_manager.acquire_connection()
+
+            # Check for output files
+            remote_dir = f"$SCRATCH/nfm-md/{task_id}"
+            output_files = ["lammps.out", "log.lammps"]
+
+            sftp = None
+            try:
+                sftp = client.open_sftp()
+
+                # Check if output files exist and have content
+                for output_file in output_files:
+                    remote_path = f"{remote_dir}/{output_file}"
+                    try:
+                        file_stat = sftp.stat(remote_path)
+                        if file_stat.st_size > 0:
+                            return True
+                    except IOError:
+                        # File doesn't exist
+                        pass
+
+                return False
+
+            finally:
+                if sftp:
+                    sftp.close()
+
+        except Exception as e:
+            logger.warning(f"Failed to check job completion: {e}")
+            return False
+        finally:
+            if client:
+                self.ssh_manager.release_connection(client)
+
+    async def _get_active_jobs(self) -> List[HpcJob]:
+        """Get all active HPC jobs from database.
+
+        Returns:
+            List of active HpcJob objects
+        """
+        db_gen = get_db()
+        db = await db_gen.__anext__()
+
+        try:
+            # Query for active jobs (PENDING or RUNNING)
+            from sqlalchemy import select
+            result = await db.execute(
+                select(HpcJob).where(
+                    HpcJob.status.in_([HpcJobStatus.PENDING, HpcJobStatus.RUNNING])
+                )
+            )
+            return result.scalars().all()
+        finally:
+            try:
+                await db_gen.__anext__()
+            except StopAsyncIteration:
+                pass
+
+    async def sync_all_active_jobs(self) -> None:
+        """Sync status for all active HPC jobs (called by Celery beat).
+
+        This method is called periodically by Celery beat to update the status
+        of all active jobs in the system.
+        """
+        try:
+            active_jobs = await self._get_active_jobs()
+
+            for job in active_jobs:
+                try:
+                    await self.update_job_status(str(job.verification_job_id), job.hpc_job_id)
+                except Exception as e:
+                    logger.error(f"Failed to sync job {job.hpc_job_id}: {e}")
+                    # Continue with other jobs even if one fails
+
+            logger.info(f"Synced {len(active_jobs)} active jobs")
+
+        except Exception as e:
+            logger.error(f"Failed to sync active jobs: {e}")
+
+
+# =============================================================================
+# Celery Task for Periodic Status Sync
+# =============================================================================
+
+
+@celery_app.task
+def sync_hpc_job_status() -> dict:
+    """Celery task for periodic HPC job status synchronization.
+
+    This task is called by Celery beat every 30 seconds to update the status
+    of all active HPC jobs in the system.
+
+    Returns:
+        Dictionary with sync status and statistics
+    """
+    import asyncio
+
+    # Get HPC orchestrator configuration
+    try:
+        config = SSHConnectionConfig(
+            hosts=[os.getenv("NFM_HPC_PRIMARY_HOST", "login.example.com")],
+            username=os.getenv("NFM_HPC_PRIMARY_USER", "user"),
+            ssh_key_path=os.getenv("NFM_HPC_PRIMARY_SSH_KEY_PATH", "/path/to/key"),
+            max_connections=int(os.getenv("NFM_HPC_MAX_CONNECTIONS", "10"))
+        )
+
+        orchestrator = HPCOrchestrator(config)
+
+        # Run async sync function
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(orchestrator.sync_all_active_jobs())
+
+        return {
+            "status": "success",
+            "message": "HPC job status sync completed"
+        }
+
+    except Exception as e:
+        logger.error(f"HPC job status sync failed: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
