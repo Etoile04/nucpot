@@ -5,6 +5,8 @@ Tests environment variable loading, validation, and security checks.
 """
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Generator
 from unittest.mock import patch
@@ -153,12 +155,56 @@ def test_verify_environment_ovito_incomplete(clean_env):
         verify_environment()
 
 
-def test_directory_creation(clean_env, tmp_path):
-    """Test that configured directories are created"""
-    os.environ["NFM_WORKSPACE_DIR"] = str(tmp_path / "workspace")
-    os.environ["NFM_OUTPUT_DIR"] = str(tmp_path / "output")
+def test_settings_construction_does_not_create_directories(clean_env, tmp_path):
+    """NFM-394: Settings() must NOT create directories at import/construction time.
+
+    This decouples import from filesystem mutation and enables dependency injection.
+    """
+    non_existent_dir = tmp_path / "should_not_exist" / "workspace"
+    os.environ["NFM_WORKSPACE_DIR"] = str(non_existent_dir)
 
     test_settings = Settings()
 
-    assert test_settings.workspace_dir.exists()
-    assert test_settings.output_dir.exists()
+    assert test_settings.workspace_dir == non_existent_dir
+    assert not non_existent_dir.exists(), (
+        "Settings() must not create directories at construction time"
+    )
+
+
+def test_ensure_directories_creates_configured_dirs(clean_env, tmp_path):
+    """NFM-394: ensure_directories() explicitly creates directories on demand."""
+    ws_dir = tmp_path / "workspace"
+    out_dir = tmp_path / "output"
+    os.environ["NFM_WORKSPACE_DIR"] = str(ws_dir)
+    os.environ["NFM_OUTPUT_DIR"] = str(out_dir)
+
+    test_settings = Settings()
+
+    # Directories should NOT exist yet
+    assert not ws_dir.exists()
+    assert not out_dir.exists()
+
+    # After ensure_directories, they should exist
+    test_settings.ensure_directories()
+
+    assert ws_dir.exists()
+    assert out_dir.exists()
+
+
+def test_ensure_directories_skips_none_paths(clean_env):
+    """ensure_directories() should skip None directory paths gracefully."""
+    test_settings = Settings()
+    # hpc_work_dir defaults to None — should not raise
+    test_settings.ensure_directories()
+
+
+def test_main_block_no_name_error(clean_env):
+    """Regression: __main__ block must not raise NameError (NFM-395)"""
+    config_path = Path(__file__).resolve().parent.parent / "src" / "nfm_md_runner" / "config.py"
+    result = subprocess.run(
+        [sys.executable, str(config_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"config.py __main__ failed: {result.stderr}"
+    assert "Environment configuration is valid" in result.stdout

@@ -158,12 +158,13 @@ def verify_environment() -> bool:
 if __name__ == "__main__":
     # Test environment configuration
     try:
+        main_settings = Settings()
         verify_environment()
         print("✅ Environment configuration is valid")
-        print(f"  Workspace: {current_settings.workspace_dir}")
-        print(f"  Output: {current_settings.output_dir}")
-        if current_settings.hpc_host:
-            print(f"  HPC: {current_settings.hpc_connection_string()}")
+        print(f"  Workspace: {main_settings.workspace_dir}")
+        print(f"  Output: {main_settings.output_dir}")
+        if main_settings.hpc_host:
+            print(f"  HPC: {main_settings.hpc_connection_string()}")
     except ValueError as e:
         print(f"❌ {e}")
         exit(1)
