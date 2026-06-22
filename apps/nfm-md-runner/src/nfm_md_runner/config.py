@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr, field_validator, ValidationInfo
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 # Load environment variables from .env file (for local development)
@@ -70,13 +70,17 @@ class Settings(BaseSettings):
     celery_broker_url: Optional[SecretStr] = None
     celery_result_backend: Optional[SecretStr] = None
 
-    @field_validator("workspace_dir", "output_dir", "temp_dir", "hpc_work_dir")
-    @classmethod
-    def create_directories(cls, v: Optional[Path]) -> Optional[Path]:
-        """Create directories if they don't exist"""
-        if v is not None:
-            v.mkdir(parents=True, exist_ok=True)
-        return v
+    def ensure_directories(self) -> None:
+        """Explicitly create working directories on demand.
+
+        Call this at application startup instead of relying on validators.
+        This decouples Settings construction from filesystem mutation.
+        """
+        for directory in (self.workspace_dir, self.output_dir, self.temp_dir):
+            if directory is not None:
+                directory.mkdir(parents=True, exist_ok=True)
+        if self.hpc_work_dir is not None:
+            self.hpc_work_dir.mkdir(parents=True, exist_ok=True)
 
     def hpc_connection_string(self) -> str:
         """Generate SSH connection string for HPC"""
@@ -113,7 +117,7 @@ class Settings(BaseSettings):
         return all(checks)
 
 
-# Global settings instance
+# Global settings instance (no filesystem side effects — see ensure_directories)
 settings = Settings()
 
 
@@ -159,6 +163,7 @@ if __name__ == "__main__":
     # Test environment configuration
     try:
         main_settings = Settings()
+        main_settings.ensure_directories()
         verify_environment()
         print("✅ Environment configuration is valid")
         print(f"  Workspace: {main_settings.workspace_dir}")
