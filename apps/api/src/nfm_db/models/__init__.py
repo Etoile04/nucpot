@@ -39,13 +39,16 @@ from nfm_db.models.feedback import (  # noqa: E402
 from nfm_db.models.md_verification import (  # noqa: E402
     DefectAnalysisResult,
     DefectType,
+    ExecutionStatus,
     FittingMethod,
     HpcJob,
     HpcJobStatus,
     JobStatus,
+    JobType,
     MDVerificationJob,
     MDSimulationResult,
     PotentialFittingResult,
+    VerificationResultMD,
 )
 from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.ref_gap_fill import (  # noqa: E402
@@ -71,6 +74,7 @@ __all__ = [
     "Confidence",
     "DefectAnalysisResult",
     "DefectType",
+    "ExecutionStatus",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
@@ -79,6 +83,7 @@ __all__ = [
     "HpcJob",
     "HpcJobStatus",
     "JobStatus",
+    "JobType",
     "MDVerificationJob",
     "MDSimulationResult",
     "Permission",
@@ -86,6 +91,7 @@ __all__ = [
     "Potential",
     "PotentialFittingResult",
     "Priority",
+    "VerificationResultMD",
     "RefGapFillStaging",
     "StagingStatus",
     "TimestampMixin",

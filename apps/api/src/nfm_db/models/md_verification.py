@@ -34,6 +34,7 @@ class JobStatus(str, enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class HpcJobStatus(str, enum.Enum):
@@ -62,6 +63,24 @@ class FittingMethod(str, enum.Enum):
     ARC_DPA = "arc-dpa"
     RPA = "RPA"
     OTHER = "other"
+
+
+class JobType(str, enum.Enum):
+    """Verification job type discriminator."""
+
+    LOOKUP = "lookup"
+    MD_SIMULATION = "md_simulation"
+
+
+class ExecutionStatus(str, enum.Enum):
+    """HPC execution status for the overall job."""
+
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class MDVerificationJob(TimestampMixin, Base):
@@ -95,11 +114,35 @@ class MDVerificationJob(TimestampMixin, Base):
         nullable=True,
     )
 
+    # --- Job type ---
+
+    job_type: Mapped[JobType] = mapped_column(
+        String(50),
+        nullable=False,
+        default=JobType.LOOKUP,
+    )
+
     # --- Configuration ---
 
     config: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         nullable=False,
+    )
+
+    # --- HPC integration ---
+
+    hpc_job_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    hpc_backend: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    execution_status: Mapped[ExecutionStatus | None] = mapped_column(
+        String(50),
+        nullable=True,
+        default=None,
     )
 
     # --- Job lifecycle ---
@@ -139,7 +182,7 @@ class MDVerificationJob(TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'submitted', 'running', 'completed', 'failed')",
+            "status IN ('pending', 'submitted', 'running', 'completed', 'failed', 'cancelled')",
             name="check_md_job_status",
         ),
     )
@@ -438,6 +481,89 @@ class PotentialFittingResult(TimestampMixin, Base):
         return (
             f"<PotentialFittingResult id={self.id!s} "
             f"method={self.fitting_method.value!r}>"
+        )
+
+
+class VerificationResultMD(TimestampMixin, Base):
+    """MD cascade simulation result metrics.
+
+    Stores PKA cascade defect analysis results including
+    vacancy/interstitial counts, Frenkel pairs, displacement
+    statistics, and arc-DPA fitting quality metrics.
+    """
+
+    __tablename__ = "verification_results_md"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    # --- Relationship ---
+
+    simulation_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("md_simulation_results.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # --- Defect counts ---
+
+    vacancies: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    interstitials: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    frenkel_pairs: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    displaced_atoms: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    replaced_atoms: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    # --- arc-DPA fitting metrics ---
+
+    arc_dpa_b: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    arc_dpa_c: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    r_squared: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    sample_size: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    # --- Raw data reference ---
+
+    raw_dump_ref: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<VerificationResultMD id={self.id!s} "
+            f"vacancies={self.vacancies} "
+            f"frenkel_pairs={self.frenkel_pairs} "
+            f"r_squared={self.r_squared}>"
         )
 
 
