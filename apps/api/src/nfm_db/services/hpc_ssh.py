@@ -40,6 +40,7 @@ class SSHConnectionConfig:
     max_connections: int = 10
     heartbeat_interval: int = 30
     skip_key_validation: bool = False
+    known_hosts_path: Optional[str] = None
     backup_hosts: Optional[tuple[str, ...]] = None
     backup_username: Optional[str] = None
     backup_ssh_key_path: Optional[str] = None
@@ -55,6 +56,7 @@ class SSHConnectionConfig:
         max_connections: int = 10,
         heartbeat_interval: int = 30,
         skip_key_validation: bool = False,
+        known_hosts_path: Optional[str] = None,
         backup_hosts: Optional[List[str]] = None,
         backup_username: Optional[str] = None,
         backup_ssh_key_path: Optional[str] = None,
@@ -69,6 +71,7 @@ class SSHConnectionConfig:
             max_connections=max_connections,
             heartbeat_interval=heartbeat_interval,
             skip_key_validation=skip_key_validation,
+            known_hosts_path=known_hosts_path,
             backup_hosts=tuple(backup_hosts) if backup_hosts else None,
             backup_username=backup_username,
             backup_ssh_key_path=backup_ssh_key_path,
@@ -95,7 +98,8 @@ class SSHConnectionManager:
         ssh_key_path: str = None,
         max_connections: int = 10,
         hosts: str | List[str] = None,
-        skip_key_validation: bool = False
+        skip_key_validation: bool = False,
+        known_hosts_path: Optional[str] = None,
     ) -> None:
         """Initialize SSH connection manager.
 
@@ -106,6 +110,7 @@ class SSHConnectionManager:
             max_connections: Maximum concurrent connections (default: 10)
             hosts: Alternative parameter name for multi-login support
             skip_key_validation: Skip SSH key file validation (for testing)
+            known_hosts_path: Path to known_hosts file for host key verification
         """
         host_value = hosts if hosts is not None else host
 
@@ -118,6 +123,7 @@ class SSHConnectionManager:
         self.ssh_key_path = ssh_key_path
         self.max_connections = max_connections
         self._skip_key_validation = skip_key_validation
+        self._known_hosts_path = known_hosts_path
 
         self._active_connections: set = set()
         self._connection_lock = threading.Lock()
@@ -243,6 +249,11 @@ class SSHConnectionManager:
     def _create_ssh_connection(self) -> paramiko.SSHClient:
         """Create a new SSH connection using key authentication.
 
+        Host key policy:
+        - Default: RejectPolicy (rejects unknown keys, prevents MITM)
+        - skip_key_validation=True: AutoAddPolicy (for test/local only)
+        - known_hosts_path set: loads known keys, then uses RejectPolicy
+
         Returns:
             Connected SSH client
 
@@ -250,7 +261,13 @@ class SSHConnectionManager:
             ConnectionError: If connection fails
         """
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        if self._skip_key_validation:
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        else:
+            if self._known_hosts_path:
+                client.load_host_keys(self._known_hosts_path)
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
         host = self.hosts[0]
 

@@ -177,6 +177,27 @@ class TestSSHConnectionConfig:
         )
         assert config.backup_hosts is None
 
+    def test_known_hosts_path_default_is_none(self, default_config: SSHConnectionConfig) -> None:
+        assert default_config.known_hosts_path is None
+
+    def test_known_hosts_path_custom(self) -> None:
+        config = SSHConnectionConfig(
+            hosts=("hpc-01",),
+            username="u",
+            ssh_key_path="/k",
+            known_hosts_path="/etc/hpc/known_hosts",
+        )
+        assert config.known_hosts_path == "/etc/hpc/known_hosts"
+
+    def test_from_lists_supports_known_hosts_path(self) -> None:
+        config = SSHConnectionConfig.from_lists(
+            hosts=["hpc-01"],
+            username="u",
+            ssh_key_path="/k",
+            known_hosts_path="/home/user/.ssh/known_hosts",
+        )
+        assert config.known_hosts_path == "/home/user/.ssh/known_hosts"
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -284,6 +305,17 @@ class TestSSHConnectionManagerInit:
         mgr = SSHConnectionManager(host="hpc", username="u", ssh_key_path="/k")
         assert mgr._skip_key_validation is False
 
+    def test_known_hosts_path_default(self) -> None:
+        mgr = SSHConnectionManager(host="hpc", username="u", ssh_key_path="/k")
+        assert mgr._known_hosts_path is None
+
+    def test_known_hosts_path_custom(self) -> None:
+        mgr = SSHConnectionManager(
+            host="hpc", username="u", ssh_key_path="/k",
+            known_hosts_path="/etc/hpc/known_hosts",
+        )
+        assert mgr._known_hosts_path == "/etc/hpc/known_hosts"
+
     def test_skip_key_validation_true(self) -> None:
         mgr = SSHConnectionManager(
             host="hpc", username="u", ssh_key_path="/k", skip_key_validation=True
@@ -375,9 +407,10 @@ class TestSSHConnectionManagerAcquire:
             hostname="hpc-01", username="u", key_filename="/k", timeout=10,
         )
 
-    def test_acquire_sets_auto_add_policy(
+    def test_acquire_sets_auto_add_policy_when_skip_key_validation(
         self, mock_paramiko_constructor, mock_prometheus
     ) -> None:
+        """When skip_key_validation=True, AutoAddPolicy should be used."""
         with patch("nfm_db.services.hpc_ssh.paramiko.AutoAddPolicy") as mock_policy:
             mgr = SSHConnectionManager(
                 host="hpc-01", username="u", ssh_key_path="/k",
@@ -386,6 +419,47 @@ class TestSSHConnectionManagerAcquire:
             mgr.acquire_connection()
             mock_policy.assert_called_once()
             mock_paramiko_constructor.set_missing_host_key_policy.assert_called_once()
+
+    def test_acquire_sets_reject_policy_by_default(
+        self, mock_paramiko_constructor, mock_prometheus
+    ) -> None:
+        """Default (no skip_key_validation) must use RejectPolicy for security."""
+        with patch("nfm_db.services.hpc_ssh.paramiko.RejectPolicy") as mock_reject:
+            with patch.object(Path, "exists", return_value=True):
+                mgr = SSHConnectionManager(
+                    host="hpc-01", username="u", ssh_key_path="/k",
+                )
+                mgr.acquire_connection()
+                mock_reject.assert_called_once()
+                mock_paramiko_constructor.set_missing_host_key_policy.assert_called_once()
+
+    def test_acquire_with_known_hosts_path_loads_keys(
+        self, mock_paramiko_constructor, mock_prometheus
+    ) -> None:
+        """When known_hosts_path is set, load_host_keys should be called."""
+        with patch("nfm_db.services.hpc_ssh.paramiko.RejectPolicy") as mock_reject:
+            with patch.object(Path, "exists", return_value=True):
+                mgr = SSHConnectionManager(
+                    host="hpc-01", username="u", ssh_key_path="/k",
+                    known_hosts_path="/etc/hpc/known_hosts",
+                )
+                mgr.acquire_connection()
+                mock_reject.assert_called_once()
+                mock_paramiko_constructor.load_host_keys.assert_called_once_with(
+                    "/etc/hpc/known_hosts"
+                )
+
+    def test_acquire_without_known_hosts_path_skips_load(
+        self, mock_paramiko_constructor, mock_prometheus
+    ) -> None:
+        """When no known_hosts_path, load_host_keys should NOT be called."""
+        with patch("nfm_db.services.hpc_ssh.paramiko.RejectPolicy"):
+            with patch.object(Path, "exists", return_value=True):
+                mgr = SSHConnectionManager(
+                    host="hpc-01", username="u", ssh_key_path="/k",
+                )
+                mgr.acquire_connection()
+                mock_paramiko_constructor.load_host_keys.assert_not_called()
 
     def test_pool_exhausted_raises_connection_error(
         self, mock_prometheus
