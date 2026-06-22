@@ -23,6 +23,7 @@ from nfm_db.services.hpc_file_transfer import (
     upload_file_with_resume,
     upload_file_with_retry,
     upload_files,
+    validate_remote_path,
     verify_checksum,
 )
 
@@ -63,7 +64,7 @@ def sample_local_file() -> str:
 @pytest.fixture
 def sample_remote_file() -> str:
     """Return a sample remote file path."""
-    return "$SCRATCH/nfm-md/task-001/input.dat"
+    return "/scratch/nfm-md/task-001/input.dat"
 
 
 def _make_ssh_client_with_sftp(mock_sftp_client: MagicMock) -> MagicMock:
@@ -1058,3 +1059,231 @@ class TestGetRemoteFilePosition:
 
         assert result == 0
         mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+
+# ---------------------------------------------------------------------------
+# validate_remote_path() Tests (C2: Remote Checksum Command Injection Fix)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateRemotePath:
+    """Test suite for validate_remote_path function."""
+
+    @pytest.mark.unit
+    def test_simple_alphanumeric_passes(self) -> None:
+        """Simple alphanumeric path should pass."""
+        result = validate_remote_path("file123")
+        assert result == "file123"
+
+    @pytest.mark.unit
+    def test_path_with_slashes_passes(self) -> None:
+        """Path with forward slashes should pass."""
+        result = validate_remote_path("/home/user/data/file.txt")
+        assert result == "/home/user/data/file.txt"
+
+    @pytest.mark.unit
+    def test_relative_path_with_dots_passes(self) -> None:
+        """Relative path with dots should pass."""
+        result = validate_remote_path("../data/input.dat")
+        assert result == "../data/input.dat"
+
+    @pytest.mark.unit
+    def test_filename_with_dashes_passes(self) -> None:
+        """Filename with dashes should pass."""
+        result = validate_remote_path("checkpoint-001.dat")
+        assert result == "checkpoint-001.dat"
+
+    @pytest.mark.unit
+    def test_filename_with_underscores_passes(self) -> None:
+        """Filename with underscores should pass."""
+        result = validate_remote_path("results_final.csv")
+        assert result == "results_final.csv"
+
+    @pytest.mark.unit
+    def test_windows_style_path_with_colon_passes(self) -> None:
+        """Path with colon (for port or Windows drive) should pass."""
+        result = validate_remote_path("server:8080/path")
+        assert result == "server:8080/path"
+
+    @pytest.mark.unit
+    def test_complex_valid_path_passes(self) -> None:
+        """Complex path with all allowed characters should pass."""
+        result = validate_remote_path("/home/user_name/data-123/file_v2.txt:8080")
+        assert result == "/home/user_name/data-123/file_v2.txt:8080"
+
+    @pytest.mark.unit
+    def test_command_substitution_rejected(self) -> None:
+        """Command substitution $(whoami) should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("$(whoami)")
+
+    @pytest.mark.unit
+    def test_backtick_substitution_rejected(self) -> None:
+        """Backtick command substitution should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("`whoami`")
+
+    @pytest.mark.unit
+    def test_semicolon_command_injection_rejected(self) -> None:
+        """Semicolon command injection should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file.txt; rm -rf /")
+
+    @pytest.mark.unit
+    def test_pipe_operator_rejected(self) -> None:
+        """Pipe operator should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file | cat /etc/passwd")
+
+    @pytest.mark.unit
+    def test_ampersand_rejected(self) -> None:
+        """Ampersand should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file&whoami")
+
+    @pytest.mark.unit
+    def test_newline_rejected(self) -> None:
+        """Newline should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file.txt\nwhoami")
+
+    @pytest.mark.unit
+    def test_null_byte_rejected(self) -> None:
+        """Null byte should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file.txt\x00whoami")
+
+    @pytest.mark.unit
+    def test_space_rejected(self) -> None:
+        """Space character should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file.txt whoami")
+
+    @pytest.mark.unit
+    def test_empty_string_rejected(self) -> None:
+        """Empty string should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("")
+
+    @pytest.mark.unit
+    def test_special_chars_rejected(self) -> None:
+        """Other special characters should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file@host.com")
+
+    @pytest.mark.unit
+    def test_exclamation_mark_rejected(self) -> None:
+        """Exclamation mark should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file!.txt")
+
+    @pytest.mark.unit
+    def test_hash_rejected(self) -> None:
+        """Hash character should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("file#123.txt")
+
+    @pytest.mark.unit
+    def test_dollar_sign_rejected(self) -> None:
+        """Dollar sign should be rejected."""
+        with pytest.raises(ValueError, match="Unsafe remote path"):
+            validate_remote_path("$HOME/file.txt")
+
+
+# ---------------------------------------------------------------------------
+# Injection rejection in upload/download/get_remote_checksum
+# ---------------------------------------------------------------------------
+
+
+class TestPathValidationInTransferFunctions:
+    """Verify that upload/download/checksum functions reject injected paths."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_upload_rejects_command_substitution(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+    ) -> None:
+        """upload_file returns False when remote path contains injection."""
+        result = await upload_file(
+            mock_ssh_manager, sample_task_id, sample_local_file, "$(whoami)"
+        )
+        assert result is False
+        mock_ssh_manager.acquire_connection.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_upload_rejects_semicolon_injection(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+    ) -> None:
+        """upload_file returns False for semicolon injection."""
+        result = await upload_file(
+            mock_ssh_manager,
+            sample_task_id,
+            sample_local_file,
+            "file.txt; rm -rf /",
+        )
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_upload_rejects_pipe_injection(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+    ) -> None:
+        """upload_file returns False for pipe injection."""
+        result = await upload_file(
+            mock_ssh_manager,
+            sample_task_id,
+            sample_local_file,
+            "file | cat /etc/passwd",
+        )
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_download_rejects_command_substitution(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """download_file returns None when remote path contains injection."""
+        result = await download_file(
+            mock_ssh_manager, sample_task_id, "$(whoami)", "/local/out.dat"
+        )
+        assert result is None
+        mock_ssh_manager.acquire_connection.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_download_rejects_backtick_injection(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """download_file returns None for backtick injection."""
+        result = await download_file(
+            mock_ssh_manager, sample_task_id, "`whoami`", "/local/out.dat"
+        )
+        assert result is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_remote_checksum_rejects_injection(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """get_remote_checksum returns None when path contains injection."""
+        result = await get_remote_checksum(
+            mock_ssh_manager, sample_task_id, "file; rm -rf /"
+        )
+        assert result is None
+        mock_ssh_manager.acquire_connection.assert_not_called()

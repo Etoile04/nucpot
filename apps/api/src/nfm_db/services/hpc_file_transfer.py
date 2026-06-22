@@ -8,11 +8,40 @@ import os
 import hashlib
 import asyncio
 import logging
+import re
 from typing import Dict, List, Any, Optional
 
 from nfm_db.database import get_db
 
 logger = logging.getLogger(__name__)
+
+# Pattern for safe remote file paths (alphanumeric, /, ., -, _, and :)
+_REMOTE_PATH_SAFE_PATTERN = re.compile(r'^[a-zA-Z0-9/.:_-]+$')
+
+
+def validate_remote_path(path: str) -> str:
+    """Validate that a remote file path contains only safe characters.
+
+    Prevents command injection in SSH commands by allowing only
+    alphanumeric characters, forward slashes, dots, dashes, underscores,
+    and colons (used in Windows paths or port specifications).
+
+    Args:
+        path: The remote file path to validate.
+
+    Returns:
+        The validated path (unchanged).
+
+    Raises:
+        ValueError: If the path contains unsafe characters.
+    """
+    if not _REMOTE_PATH_SAFE_PATTERN.match(path):
+        raise ValueError(
+            f"Unsafe remote path: only alphanumeric, slashes, dots, "
+            f"dashes, underscores, and colons are permitted. "
+            f"Received: {path}"
+        )
+    return path
 
 
 async def upload_file(
@@ -34,6 +63,7 @@ async def upload_file(
     """
     client = None
     try:
+        safe_remote_file = validate_remote_path(remote_file)
         client = ssh_manager.acquire_connection()
 
         await create_task_directory(ssh_manager, task_id)
@@ -41,7 +71,7 @@ async def upload_file(
         sftp = None
         try:
             sftp = client.open_sftp()
-            sftp.put(local_file, remote_file)
+            sftp.put(local_file, safe_remote_file)
             logger.info(f"Uploaded file: {local_file} -> {remote_file}")
             return True
 
@@ -130,6 +160,7 @@ async def download_file(
     """
     client = None
     try:
+        safe_remote_file = validate_remote_path(remote_file)
         client = ssh_manager.acquire_connection()
 
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -137,7 +168,7 @@ async def download_file(
         sftp = None
         try:
             sftp = client.open_sftp()
-            sftp.get(remote_file, local_path)
+            sftp.get(safe_remote_file, local_path)
             logger.info(f"Downloaded file: {remote_file} -> {local_path}")
             return local_path
 
@@ -220,9 +251,11 @@ async def get_remote_checksum(ssh_manager, task_id: str, remote_file: str) -> Op
     """
     client = None
     try:
+        # Validate remote path to prevent command injection
+        safe_remote_file = validate_remote_path(remote_file)
         client = ssh_manager.acquire_connection()
 
-        cmd = f"sha256sum {remote_file}"
+        cmd = f"sha256sum {safe_remote_file}"
         stdin, stdout, stderr = client.exec_command(cmd)
         output = stdout.read().decode().strip()
 
