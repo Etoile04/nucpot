@@ -89,6 +89,36 @@ def validate_remote_path(path: str) -> str:
     return path
 
 
+def validate_positive_int(value: Any, field_name: str) -> int:
+    """Validate that a value is a positive integer.
+
+    Prevents shell injection by ensuring the value is a strict positive
+    integer (``int`` type, ``>= 1``) before it is interpolated into
+    SLURM batch script directives such as ``--nodes`` and
+    ``--ntasks-per-node``.
+
+    Args:
+        value: The value to validate.
+        field_name: Human-readable field name for error messages.
+
+    Returns:
+        The validated integer.
+
+    Raises:
+        ValueError: If the value is not a positive integer.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(
+            f"{field_name} must be a positive integer, "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    if value < 1:
+        raise ValueError(
+            f"{field_name} must be a positive integer (>= 1), got: {value}"
+        )
+    return value
+
+
 def validate_job_id(job_id: str | int) -> str:
     """Validate that a SLURM job ID is a non-empty numeric string.
 
@@ -312,16 +342,17 @@ class SSHConnectionManager:
                 pass
     
     def close_all(self):
-        """Close all persistent connections"""
-        for cluster, connections in self._connections.items():
-            for conn in connections:
-                try:
-                    conn.close()
-                except Exception as e:
-                    logger.debug(f"Error closing connection: {e}")
-        self._connections.clear()
-        self._connection_last_used.clear()
-        logger.info("All SSH connections closed")
+        """Close all persistent connections. Thread-safe."""
+        with self._lock:
+            for cluster, connections in self._connections.items():
+                for conn in connections:
+                    try:
+                        conn.close()
+                    except Exception as e:
+                        logger.debug(f"Error closing connection: {e}")
+            self._connections.clear()
+            self._connection_last_used.clear()
+            logger.info("All SSH connections closed")
     
     def __enter__(self):
         return self
@@ -426,6 +457,7 @@ class SLURMJobManager:
         Returns:
             HPCJob with current status
         """
+        job_id = validate_job_id(job_id)
         conn = self.conn_manager.get_connection(cluster)
         
         # Try squeue first (for active jobs)
@@ -469,9 +501,7 @@ class SLURMJobManager:
         """
         conn = self.conn_manager.get_connection(cluster)
 
-        # Validate job_id to prevent command injection
-        if not re.match(r'^\d+$', str(job_id)):
-            raise ValueError(f"Invalid SLURM job ID (must be numeric): {job_id}")
+        job_id = validate_job_id(job_id)
 
         try:
             result = self._exec_command(conn, f"scancel {job_id}")
@@ -833,6 +863,7 @@ class HPCAdapter:
         Returns:
             List of downloaded file paths
         """
+        job_id = validate_job_id(job_id)
         cluster_config = self._get_cluster_config(cluster)
         work_dir = cluster_config.work_dir or settings.hpc_work_dir
         job_dir = work_dir / f"job_{job_id}"
@@ -891,8 +922,13 @@ class HPCAdapter:
         partition = validate_shell_safe(
             str(config.get('partition', settings.slurm_partition)), "partition"
         )
-        nodes = config.get('nodes', settings.slurm_nodes)
-        ntasks = config.get('ntasks_per_node', settings.slurm_ntasks_per_node)
+        nodes = validate_positive_int(
+            config.get('nodes', settings.slurm_nodes), "nodes"
+        )
+        ntasks = validate_positive_int(
+            config.get('ntasks_per_node', settings.slurm_ntasks_per_node),
+            "ntasks_per_node",
+        )
         walltime = validate_shell_safe(
             str(config.get('walltime', '24:00:00')), "walltime"
         )
