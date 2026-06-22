@@ -103,7 +103,17 @@ jobs:
 
       - name: Type-check (mypy)
         run: uv run mypy src
-        continue-on-error: true
 
-      - name: Tests (pytest)
+      - name: Tests (pytest) with coverage (≥80%)
         run: uv run pytest
+
+      - name: File size guard (≤800 lines)
+        run: |
+          echo "Checking file sizes..."
+          oversized=$(find src tests -name '*.py' -exec wc -l {} + | awk '$1 > 800 {print $1, $2}')
+          if [ -n "$oversized" ]; then
+            echo "::error::Files exceeding 800-line limit detected:"
+            echo "$oversized"
+            exit 1
+          fi
+          echo "OK: all Python files under 800 lines"
