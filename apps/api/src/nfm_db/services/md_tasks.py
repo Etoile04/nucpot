@@ -225,16 +225,14 @@ def run_md_verification_task(
         except FileNotFoundError as e:
             # Retry: File might be temporarily unavailable due to network/storage
             logger.warning(f"File access error (retryable): {e}")
-            exc = Retry(f"File access error: {e}", countdown=60)
-            exc.retry_count = getattr(self.request, "retries", 0) + 1
-            raise exc
+            raise self.retry(exc=e, countdown=60)
 
         except ConnectionError as e:
             # Retry: HPC connection issues
+            retry_count = getattr(self.request, "retries", 0)
+            backoff = 120 * (2 ** retry_count)
             logger.warning(f"HPC connection error (retryable): {e}")
-            exc = Retry(f"HPC connection error: {e}", countdown=120 * (2 ** getattr(self.request, "retries", 0)))
-            exc.retry_count = getattr(self.request, "retries", 0) + 1
-            raise exc
+            raise self.retry(exc=e, countdown=backoff)
 
         except Exception as e:
             error_msg = f"Verification pipeline failed: {str(e)}"
