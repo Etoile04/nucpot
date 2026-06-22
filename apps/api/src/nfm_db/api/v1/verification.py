@@ -12,8 +12,11 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+
+from nfm_db.core.auth import get_current_user
+from nfm_db.models import User
 
 from nfm_db.services.domain_expert import (
     AdjudicationRequest as DomainAdjudicationRequest,
@@ -191,6 +194,7 @@ class QuarterlyAuditResponse(BaseModel):
 )
 async def check_reference_gap(
     request: ReferenceCandidateRequest,
+    current_user: User = Depends(get_current_user),
 ) -> ReferenceValidationResponse:
     """Validate a new reference candidate.
 
@@ -262,6 +266,7 @@ async def check_reference_gap(
 )
 async def adjudicate_f_grade_endpoint(
     request: AdjudicationRequest,
+    current_user: User = Depends(get_current_user),
 ) -> AdjudicationResponse:
     """Adjudicate an F-grade verification failure.
 
@@ -324,6 +329,7 @@ async def adjudicate_f_grade_endpoint(
 )
 async def run_quarterly_audit_endpoint(
     request: QuarterlyAuditRequest,
+    current_user: User = Depends(get_current_user),
 ) -> QuarterlyAuditResponse:
     """Run quarterly audit on P0 safety-critical systems.
 
