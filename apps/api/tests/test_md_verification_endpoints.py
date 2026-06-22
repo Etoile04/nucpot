@@ -180,18 +180,6 @@ class TestMDVerificationHealth:
         assert "timestamp" in data
 
 
-    async def test_health_check(self, async_client: AsyncClient) -> None:
-        """Test GET /api/v1/md-verification/health returns healthy status."""
-        response = await async_client.get("/api/v1/md-verification/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "healthy"
-        assert data["module"] == "md-verification"
-        assert "version" in data
-        assert "timestamp" in data
-
-
 @pytest.mark.integration
 class TestSubmitMDVerificationJob:
     """Test POST /api/v1/md-verification/jobs endpoint."""
@@ -276,73 +264,6 @@ class TestSubmitMDVerificationJob:
 
 @pytest.mark.integration
 class TestListMDVerificationJobs:
-    """Test GET /api/v1/md-verification/jobs endpoint."""
-
-    async def test_list_jobs_all(
-        self,
-        async_client_with_auth: AsyncClient,
-        md_job_with_results: dict[str, str],
-        pending_md_job: dict[str, str],
-    ) -> None:
-        """Test listing all jobs returns both jobs."""
-        response = await async_client.get(
-                "/api/v1/md-verification/jobs"
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "jobs" in data
-        assert len(data["jobs"]) >= 2
-        assert data["total"] >= 2
-        assert data["limit"] == 100
-        assert data["offset"] == 0
-
-    async def test_list_jobs_filter_by_status(
-        self,
-        async_client_with_auth: AsyncClient,
-        md_job_with_results: dict[str, str],
-        pending_md_job: dict[str, str],
-    ) -> None:
-        """Test listing jobs filtered by status."""
-        response = await async_client.get(
-            "/api/v1/md-verification/jobs?status=completed"
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert all(job["status"] == "completed" for job in data["jobs"])
-
-    async def test_list_jobs_filter_by_element_system(
-        self,
-        async_client_with_auth: AsyncClient,
-        md_job_with_results: dict[str, str],
-    ) -> None:
-        """Test listing jobs filtered by element system."""
-        response = await async_client.get(
-            "/api/v1/md-verification/jobs?element_system=U"
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert all(job["element_system"] == "U" for job in data["jobs"])
-
-    async def test_list_jobs_pagination(
-        self,
-        async_client_with_auth: AsyncClient,
-    ) -> None:
-        """Test listing jobs with pagination."""
-        response = await async_client_with_auth.get(
-            "/api/v1/md-verification/jobs?limit=1&offset=0"
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["limit"] == 1
-        assert data["offset"] == 0
-        assert len(data["jobs"]) <= 1
-
-
-
     """Test GET /api/v1/md-verification/jobs endpoint."""
 
     async def test_list_jobs_all(

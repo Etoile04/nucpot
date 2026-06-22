@@ -70,6 +70,15 @@ class JobType(str, enum.Enum):
 
     LOOKUP = "lookup"
     MD_SIMULATION = "md_simulation"
+    MD_CASCADE = "md_cascade"
+
+
+class HpcBackend(str, enum.Enum):
+    """Supported HPC scheduler backends."""
+
+    SLURM = "slurm"
+    PBS = "pbs"
+    LOCAL = "local"
 
 
 class ExecutionStatus(str, enum.Enum):

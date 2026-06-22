@@ -28,10 +28,11 @@ from nfm_db.services.rate_limit import md_verification_rate_limit
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
+    HpcBackend,
     HpcJobStatus,
     JobStatus,
 )
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from nfm_db.services.hpc_file_transfer import validate_remote_path
 
@@ -72,6 +73,32 @@ class MDVerificationJobSubmitRequest(BaseModel):
     structure_file: str  # Path to atomic structure file
     config: dict[str, str | int | float]  # Simulation parameters
     priority: int = 5
+
+    # NFM-374: PK analysis parameters
+    pk_energy_min: float | None = None
+    pk_energy_max: float | None = None
+    pk_range_min: float | None = None
+    pk_range_max: float | None = None
+    hpc_backend: HpcBackend | None = None
+
+    @field_validator("pk_energy_min", "pk_energy_max", "pk_range_min", "pk_range_max")
+    @classmethod
+    def validate_positive(cls, v: float | None) -> float | None:
+        """Validate that PK parameters are positive when provided."""
+        if v is not None and v <= 0:
+            raise ValueError("must be greater than 0")
+        return v
+
+    @model_validator(mode="after")
+    def validate_pk_energy_range(self) -> MDVerificationJobSubmitRequest:
+        """Validate pk_energy_min <= pk_energy_max when both are provided."""
+        if (
+            self.pk_energy_min is not None
+            and self.pk_energy_max is not None
+            and self.pk_energy_min > self.pk_energy_max
+        ):
+            raise ValueError("pk_energy_min must not exceed pk_energy_max")
+        return self
 
 
 class MDVerificationJobListResponse(BaseModel):
@@ -149,6 +176,19 @@ async def submit_md_verification_job(
         )
 
     try:
+        # Merge NFM-374 optional fields into config for storage
+        config = dict(request.config)
+        if request.pk_energy_min is not None:
+            config["pk_energy_min"] = request.pk_energy_min
+        if request.pk_energy_max is not None:
+            config["pk_energy_max"] = request.pk_energy_max
+        if request.pk_range_min is not None:
+            config["pk_range_min"] = request.pk_range_min
+        if request.pk_range_max is not None:
+            config["pk_range_max"] = request.pk_range_max
+        if request.hpc_backend is not None:
+            config["hpc_backend"] = request.hpc_backend.value
+
         # Create job record with ownership
         service = MDVerificationService(session)
         job = await service.create_job(
@@ -156,7 +196,7 @@ async def submit_md_verification_job(
                 potential_id=request.potential_id,
                 element_system=request.element_system,
                 phase=request.phase,
-                config=request.config,
+                config=config,
                 priority=request.priority,
                 status=JobStatus.PENDING,
                 owner_id=current_user.id,
@@ -618,6 +658,79 @@ async def get_fitting_results(
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get fitting results: {e!s}",
+        ) from e
+
+
+# ---------------------------------------------------------------------------
+# Composite Results Endpoint (NFM-374)
+# ---------------------------------------------------------------------------
+
+
+class CompositeJobResultsResponse(BaseModel):
+    """Composite response containing job + all associated results."""
+
+    job: MDVerificationJobResponse
+    simulation_result: MDSimulationResultResponse | None = None
+    defect_results: list[DefectAnalysisResultResponse] = []
+    fitting_results: list[PotentialFittingResultResponse] = []
+
+
+@router.get(
+    "/jobs/{job_id}/results",
+    response_model=CompositeJobResultsResponse,
+    status_code=http_status.HTTP_200_OK,
+    summary="Get composite job results",
+    description="Get job details together with simulation, defect, and fitting results in a single call.",
+)
+async def get_composite_job_results(
+    job_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CompositeJobResultsResponse:
+    """Get composite results for a job in a single API call.
+
+    Args:
+        job_id: Job UUID
+        session: Database session
+        current_user: Authenticated user
+
+    Returns:
+        Job details with simulation, defect, and fitting results
+
+    Raises:
+        HTTPException: If job not found (404)
+    """
+    try:
+        service = MDVerificationService(session)
+        # Verify job exists and belongs to user
+        job = await service.get_job(job_id, owner_id=current_user.id)
+        if job is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Job {job_id} not found",
+            )
+        results = await service.get_job_with_results(job_id)
+        if results is None:
+            # Should not happen after owner check, but handle gracefully
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Job {job_id} results not found",
+            )
+
+        return CompositeJobResultsResponse(
+            job=results["job"],
+            simulation_result=results.get("simulation_result"),
+            defect_results=results.get("defect_results", []),
+            fitting_results=results.get("fitting_results", []),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to get composite results for job {job_id}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get composite results: {e!s}",
         ) from e
 
 
