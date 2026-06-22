@@ -1,448 +1,1060 @@
-"""Tests for HPC Orchestration System - Phase 4.4: File Transfer."""
+"""Comprehensive unit tests for HPC file transfer operations.
 
-import uuid
+Covers upload, download, checksum verification, resume transfer,
+retry logic, and object storage integration.
+"""
+
+import hashlib
+import os
+from typing import Any, Dict
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-import gc
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
-from nfm_db.models.md_verification import HpcJob, HpcJobStatus
+
+from nfm_db.services.hpc_file_transfer import (
+    create_task_directory,
+    download_file,
+    download_results,
+    get_remote_checksum,
+    get_remote_file_position,
+    save_metadata,
+    save_to_object_storage,
+    upload_file,
+    upload_file_with_resume,
+    upload_file_with_retry,
+    upload_files,
+    verify_checksum,
+)
 
 
-@pytest.fixture(autouse=True)
-def cleanup_after_test():
-    """Auto-cleanup after each test to prevent memory leaks."""
-    yield
-    # Force garbage collection after each test
-    gc.collect()
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def hpc_orchestrator():
-    """Fixture that provides a shared HPC orchestrator for all tests.
-
-    Uses module scope to reduce object creation and prevent memory leaks.
-    All tests in this module share the same orchestrator instance.
-    """
-    import gc
-    config = SSHConnectionConfig(
-        hosts=["login01.example.com"],
-        username="testuser",
-        ssh_key_path="/path/to/key",
-        skip_key_validation=True  # Skip validation for test environment
-    )
-    orchestrator = HPCOrchestrator(config)
-
-    yield orchestrator
-
-    # Critical cleanup to prevent memory leaks
-    orchestrator.cleanup()
-    del orchestrator
-    del config
-
-    # Force garbage collection to ensure Paramiko objects are collected
-    gc.collect()
+@pytest.fixture
+def mock_ssh_manager() -> MagicMock:
+    """Create a mock SSHConnectionManager."""
+    manager = MagicMock()
+    client = MagicMock()
+    manager.acquire_connection.return_value = client
+    manager.release_connection = MagicMock()
+    return manager
 
 
-class TestFileUpload:
-    """Test file upload to HPC $SCRATCH directory."""
+@pytest.fixture
+def mock_sftp() -> MagicMock:
+    """Create a mock SFTP client."""
+    return MagicMock()
 
+
+@pytest.fixture
+def sample_task_id() -> str:
+    """Return a sample task identifier."""
+    return "task-001"
+
+
+@pytest.fixture
+def sample_local_file() -> str:
+    """Return a sample local file path."""
+    return "/local/path/input.dat"
+
+
+@pytest.fixture
+def sample_remote_file() -> str:
+    """Return a sample remote file path."""
+    return "$SCRATCH/nfm-md/task-001/input.dat"
+
+
+def _make_ssh_client_with_sftp(mock_sftp_client: MagicMock) -> MagicMock:
+    """Attach an SFTP mock to an SSH client mock."""
+    client = MagicMock()
+    client.open_sftp.return_value = mock_sftp_client
+    return client
+
+
+# ---------------------------------------------------------------------------
+# upload_file
+# ---------------------------------------------------------------------------
+
+
+class TestUploadFile:
+    """Tests for upload_file()."""
+
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_upload_input_files_to_scratch(self, hpc_orchestrator):
-        """Test uploading input files to $SCRATCH/task_id/."""
-        task_id = str(uuid.uuid4())
-        local_file = "/path/to/structure.cif"
-        remote_file = f"$SCRATCH/nfm-md/{task_id}/structure.cif"
+    async def test_upload_file_success(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Successful upload returns True and cleans up resources."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file(
+                mock_ssh_manager, sample_task_id, sample_local_file, sample_remote_file
+            )
 
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                # Mock SFTP upload
-                mock_sftp = MagicMock()
-                mock_client.open_sftp.return_value = mock_sftp
+        assert result is True
+        mock_sftp.put.assert_called_once_with(sample_local_file, sample_remote_file)
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
-                await hpc_orchestrator.upload_file(task_id, local_file, remote_file)
-
-                # Verify SFTP operations
-                mock_sftp.mkdir.assert_called_once()
-                mock_sftp.put.assert_called_once()
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_create_task_specific_subdirectory(self, hpc_orchestrator):
-        """Test creation of task-specific subdirectory."""
-        task_id = str(uuid.uuid4())
-        remote_dir = f"$SCRATCH/nfm-md/{task_id}"
+    async def test_upload_file_exception_returns_false(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Exception during upload returns False and releases connection."""
+        client = MagicMock()
+        client.open_sftp.side_effect = RuntimeError("SFTP failure")
+        mock_ssh_manager.acquire_connection.return_value = client
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file(
+                mock_ssh_manager, sample_task_id, sample_local_file, sample_remote_file
+            )
 
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                # Mock SFTP directory creation
-                mock_sftp = MagicMock()
-                mock_client.open_sftp.return_value = mock_sftp
+        assert result is False
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
-                await hpc_orchestrator._create_task_directory(task_id)
-
-                # Verify directory creation
-                mock_sftp.mkdir.assert_called_once()
-                call_args = mock_sftp.mkdir.call_args
-                assert remote_dir in str(call_args)
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_upload_multiple_files(self, hpc_orchestrator):
-        """Test uploading multiple input files."""
-        task_id = str(uuid.uuid4())
+    async def test_upload_file_closes_sftp_on_put_error(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """SFTP client is closed even when put() raises."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+        mock_sftp.put.side_effect = IOError("disk full")
+
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file(
+                mock_ssh_manager, sample_task_id, sample_local_file, sample_remote_file
+            )
+
+        assert result is False
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_upload_file_releases_connection_when_acquire_fails(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Connection release is skipped when acquire_connection raises."""
+        mock_ssh_manager.acquire_connection.side_effect = RuntimeError("pool exhausted")
+
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file(
+                mock_ssh_manager, sample_task_id, sample_local_file, sample_remote_file
+            )
+
+        assert result is False
+        mock_ssh_manager.release_connection.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# upload_files
+# ---------------------------------------------------------------------------
+
+
+class TestUploadFiles:
+    """Tests for upload_files()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_upload_files_all_succeed(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """All files upload successfully."""
         files = [
-            ("/local/structure.cif", "$SCRATCH/nfm-md/{task_id}/structure.cif"),
-            ("/local/potential.file", "$SCRATCH/nfm-md/{task_id}/potential.file"),
+            ("/local/a.dat", "/remote/a.dat"),
+            ("/local/b.dat", "/remote/b.dat"),
         ]
 
-        with patch.object(hpc_orchestrator, 'upload_file') as mock_upload:
-            mock_upload.return_value = True
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_upload:
+            result = await upload_files(mock_ssh_manager, sample_task_id, files)
 
-            results = await hpc_orchestrator.upload_files(task_id, files)
+        assert result == {"/local/a.dat": True, "/local/b.dat": True}
+        assert mock_upload.call_count == 2
 
-            assert len(results) == len(files)
-            assert all(results.values())
-
-
-class TestFileDownload:
-    """Test file download from HPC to object storage."""
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_download_lammps_output(self, hpc_orchestrator):
-        """Test downloading lammps.out file."""
-        task_id = str(uuid.uuid4())
-        remote_file = f"$SCRATCH/nfm-md/{task_id}/lammps.out"
-        local_path = f"/tmp/results/{task_id}/lammps.out"
+    async def test_upload_files_mixed_results(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """Mixed success/failure returns per-file status."""
+        files = [
+            ("/local/a.dat", "/remote/a.dat"),
+            ("/local/b.dat", "/remote/b.dat"),
+            ("/local/c.dat", "/remote/c.dat"),
+        ]
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
+        call_count = 0
 
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                # Mock SFTP download
-                mock_sftp = MagicMock()
-                mock_client.open_sftp.return_value = mock_sftp
+        async def _fake_upload(ssh_mgr, tid, local, remote):
+            nonlocal call_count
+            call_count += 1
+            return call_count % 2 == 1
 
-                result_path = await hpc_orchestrator.download_file(task_id, remote_file, local_path)
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            side_effect=_fake_upload,
+        ):
+            result = await upload_files(mock_ssh_manager, sample_task_id, files)
 
-                # Verify download
-                mock_sftp.get.assert_called_once()
-                assert result_path == local_path
-
-    @pytest.mark.asyncio
-    async def test_download_all_results(self, hpc_orchestrator):
-        """Test downloading all result files."""
-        task_id = str(uuid.uuid4())
-        expected_files = {
-            "lammps.out": f"/tmp/results/{task_id}/lammps.out",
-            "log.lammps": f"/tmp/results/{task_id}/log.lammps",
-            "energy_curve.dat": f"/tmp/results/{task_id}/energy_curve.dat",
+        assert result == {
+            "/local/a.dat": True,
+            "/local/b.dat": False,
+            "/local/c.dat": True,
         }
 
-        with patch.object(hpc_orchestrator, 'download_results') as mock_download:
-            mock_download.return_value = expected_files
-
-            results = await hpc_orchestrator.download_results(task_id)
-
-            assert results == expected_files
-            mock_download.assert_called_once_with(task_id)
-
-
-class TestChecksumVerification:
-    """Test checksum verification for file transfers."""
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_verify_file_checksum(self, hpc_orchestrator):
-        """Test file checksum verification after transfer."""
+    async def test_upload_files_empty_list(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """Empty file list returns empty result dict."""
+        result = await upload_files(mock_ssh_manager, sample_task_id, [])
+        assert result == {}
 
-        local_file = "/tmp/results/test.dat"
-        expected_checksum = "abc123"
 
-        with patch('hashlib.sha256') as mock_sha256:
-            mock_hash = MagicMock()
-            mock_sha256.return_value = mock_hash
-            mock_hash.hexdigest.return_value = expected_checksum
+# ---------------------------------------------------------------------------
+# create_task_directory
+# ---------------------------------------------------------------------------
 
-            with patch('builtins.open', create=True) as mock_open:
-                # Simulate file reading
-                mock_open.return_value.__enter__.return_value.read.return_value = b"data"
 
-                is_valid = await hpc_orchestrator.verify_checksum(local_file, expected_checksum)
+class TestCreateTaskDirectory:
+    """Tests for create_task_directory()."""
 
-                assert is_valid is True
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_checksum_mismatch_detection(self, hpc_orchestrator):
-        """Test checksum mismatch detection."""
+    async def test_create_directory_success(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """Directory created and resources cleaned up."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
 
-        local_file = "/tmp/results/test.dat"
-        expected_checksum = "abc123"
-        actual_checksum = "wrong456"
+        await create_task_directory(mock_ssh_manager, sample_task_id)
 
-        with patch('hashlib.sha256') as mock_sha256:
-            mock_hash = MagicMock()
-            mock_sha256.return_value = mock_hash
-            mock_hash.hexdigest.return_value = actual_checksum
+        expected_dir = f"$SCRATCH/nfm-md/{sample_task_id}"
+        mock_sftp.mkdir.assert_called_once_with(expected_dir)
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
-            with patch('builtins.open', create=True) as mock_open:
-                mock_open.return_value.__enter__.return_value.read.return_value = b"data"
-
-                is_valid = await hpc_orchestrator.verify_checksum(local_file, expected_checksum)
-
-                assert is_valid is False
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_generate_checksum_for_remote_file(self, hpc_orchestrator):
-        """Test generating checksum for remote file before download."""
+    async def test_create_directory_already_exists(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """IOError from mkdir (dir exists) is silently ignored."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+        mock_sftp.mkdir.side_effect = IOError("File exists")
 
-        task_id = str(uuid.uuid4())
-        remote_file = f"$SCRATCH/nfm-md/{task_id}/lammps.out"
+        await create_task_directory(mock_ssh_manager, sample_task_id)
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                # Mock sha256sum command
-                stdin, stdout, stderr = mock_client.exec_command.return_value = (None, MagicMock(), MagicMock())
-                stdout.read.return_value = b"abc123  $SCRATCH/nfm-md/{task_id}/lammps.out"
-
-                checksum = await hpc_orchestrator.get_remote_checksum(task_id, remote_file)
-
-                assert checksum == "abc123"
-
-
-class TestFileTransferSuccess:
-    """Test file transfer success rate and reliability."""
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_file_transfer_success_rate_above_threshold(self, hpc_orchestrator):
-        """Test file transfer success rate exceeds 95% threshold."""
+    async def test_create_directory_exception_releases_client(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """Non-IOError exceptions propagate but still release the connection."""
+        client = MagicMock()
+        client.open_sftp.side_effect = RuntimeError("connection reset")
+        mock_ssh_manager.acquire_connection.return_value = client
 
-        successful_transfers = 0
-        total_transfers = 20
+        with pytest.raises(RuntimeError, match="connection reset"):
+            await create_task_directory(mock_ssh_manager, sample_task_id)
 
-        for i in range(total_transfers):
-            task_id = str(uuid.uuid4())
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
-            with patch.object(hpc_orchestrator, 'upload_file') as mock_upload:
-                # Simulate 95% success rate (1 failure)
-                if i == 10:
-                    mock_upload.return_value = False
-                else:
-                    mock_upload.return_value = True
 
-                result = await hpc_orchestrator.upload_file(task_id, "/local/file", "/remote/file")
-                if result:
-                    successful_transfers += 1
+# ---------------------------------------------------------------------------
+# download_file
+# ---------------------------------------------------------------------------
 
-        success_rate = successful_transfers / total_transfers
-        assert success_rate >= 0.95, f"Success rate {success_rate:.2%} below 95% threshold"
 
+class TestDownloadFile:
+    """Tests for download_file()."""
+
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_retry_failed_transfers(self, hpc_orchestrator):
-        """Test retry mechanism for failed file transfers."""
+    async def test_download_file_success(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Successful download returns local path."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+        local_path = "/tmp/results/task-001/lammps.out"
 
-        task_id = str(uuid.uuid4())
-
-        with patch.object(hpc_orchestrator, 'upload_file') as mock_upload:
-            # First attempt fails, second succeeds
-            mock_upload.side_effect = [False, True]
-
-            result = await hpc_orchestrator.upload_file_with_retry(
-                task_id, "/local/file", "/remote/file", max_retries=2
+        with patch("nfm_db.services.hpc_file_transfer.os.makedirs") as mock_makedirs:
+            result = await download_file(
+                mock_ssh_manager, sample_task_id, sample_remote_file, local_path
             )
 
-            assert result is True
-            assert mock_upload.call_count == 2
+        assert result == local_path
+        mock_makedirs.assert_called_once_with("/tmp/results/task-001", exist_ok=True)
+        mock_sftp.get.assert_called_once_with(sample_remote_file, local_path)
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_transfer_timeout_handling(self, hpc_orchestrator):
-        """Test timeout handling for stalled transfers."""
+    async def test_download_file_sftp_error_returns_none(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """SFTP get failure returns None."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+        mock_sftp.get.side_effect = IOError("No such file")
+        local_path = "/tmp/results/task-001/lammps.out"
 
-        task_id = str(uuid.uuid4())
-
-        with patch.object(hpc_orchestrator, 'upload_file') as mock_upload:
-            # Simulate timeout
-            import asyncio
-            mock_upload.side_effect = asyncio.TimeoutError("Transfer timeout")
-
-            result = await hpc_orchestrator.upload_file_with_retry(
-                task_id, "/local/file", "/remote/file", max_retries=1
+        with patch("nfm_db.services.hpc_file_transfer.os.makedirs"):
+            result = await download_file(
+                mock_ssh_manager, sample_task_id, sample_remote_file, local_path
             )
 
-            assert result is False
+        assert result is None
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
-
-class TestObjectStorageIntegration:
-    """Test integration with NFMD object storage."""
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_save_results_to_object_storage(self, hpc_orchestrator):
-        """Test saving downloaded results to object storage."""
+    async def test_download_file_exception_returns_none(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """Unexpected exception returns None."""
+        mock_ssh_manager.acquire_connection.side_effect = RuntimeError("broken")
 
-        task_id = str(uuid.uuid4())
-        downloaded_files = {
-            "lammps.out": f"/tmp/{task_id}/lammps.out",
-            "log.lammps": f"/tmp/{task_id}/log.lammps",
+        result = await download_file(
+            mock_ssh_manager, sample_task_id, "/remote/file", "/local/file"
+        )
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# download_results
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadResults:
+    """Tests for download_results()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_download_all_files(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """All three result files are downloaded."""
+        with patch(
+            "nfm_db.services.hpc_file_transfer.download_file",
+            new_callable=AsyncMock,
+            return_value="/tmp/results/task-001/file",
+        ) as mock_dl:
+            result = await download_results(mock_ssh_manager, sample_task_id)
+
+        assert len(result) == 3
+        assert "lammps.out" in result
+        assert "log.lammps" in result
+        assert "energy_curve.dat" in result
+        assert mock_dl.call_count == 3
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_download_partial_files(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """Only successfully downloaded files appear in result."""
+        call_idx = 0
+
+        async def _fake_download(ssh, tid, remote, local):
+            nonlocal call_idx
+            call_idx += 1
+            return local if call_idx % 2 == 1 else None
+
+        with patch(
+            "nfm_db.services.hpc_file_transfer.download_file",
+            side_effect=_fake_download,
+        ):
+            result = await download_results(mock_ssh_manager, sample_task_id)
+
+        assert len(result) == 2
+        assert "lammps.out" in result
+        assert "energy_curve.dat" in result
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_download_no_files(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+    ) -> None:
+        """All downloads fail returns empty dict."""
+        with patch(
+            "nfm_db.services.hpc_file_transfer.download_file",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await download_results(mock_ssh_manager, sample_task_id)
+
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# verify_checksum
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyChecksum:
+    """Tests for verify_checksum()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_matching_checksum(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """Matching checksum returns True."""
+        test_file = tmp_path / "test.dat"
+        content = b"hello world"
+        test_file.write_bytes(content)
+        expected = hashlib.sha256(content).hexdigest()
+
+        result = await verify_checksum(str(test_file), expected)
+        assert result is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_mismatching_checksum(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """Mismatching checksum returns False."""
+        test_file = tmp_path / "test.dat"
+        test_file.write_bytes(b"hello world")
+
+        result = await verify_checksum(str(test_file), "0" * 64)
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_file_not_found(self) -> None:
+        """Non-existent file returns False."""
+        result = await verify_checksum("/nonexistent/file.dat", "abc")
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_file_checksum(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """Empty file produces correct SHA256 hash."""
+        test_file = tmp_path / "empty.dat"
+        test_file.write_bytes(b"")
+        expected = hashlib.sha256(b"").hexdigest()
+
+        result = await verify_checksum(str(test_file), expected)
+        assert result is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_large_file_checksum(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """Large file (>4096 bytes) reads in chunks correctly."""
+        test_file = tmp_path / "large.dat"
+        content = os.urandom(10000)
+        test_file.write_bytes(content)
+        expected = hashlib.sha256(content).hexdigest()
+
+        result = await verify_checksum(str(test_file), expected)
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# get_remote_checksum
+# ---------------------------------------------------------------------------
+
+
+class TestGetRemoteChecksum:
+    """Tests for get_remote_checksum()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_success(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Successful checksum retrieval returns SHA256 hash."""
+        client = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_stdout.read.return_value = b"abc123def456  /remote/file\n"
+        client.exec_command.return_value = (MagicMock(), mock_stdout, MagicMock())
+        mock_ssh_manager.acquire_connection.return_value = client
+
+        result = await get_remote_checksum(mock_ssh_manager, sample_task_id, sample_remote_file)
+
+        assert result == "abc123def456"
+        client.exec_command.assert_called_once_with(f"sha256sum {sample_remote_file}")
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_status(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Non-zero exit status returns None."""
+        client = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+        mock_stderr.read.return_value = b"file not found\n"
+        mock_stdout.channel.recv_exit_status.return_value = 1
+        mock_stdout.read.return_value = b""
+        client.exec_command.return_value = (MagicMock(), mock_stdout, mock_stderr)
+        mock_ssh_manager.acquire_connection.return_value = client
+
+        result = await get_remote_checksum(mock_ssh_manager, sample_task_id, sample_remote_file)
+
+        assert result is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_exception_returns_none(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Exception during SSH command returns None."""
+        client = MagicMock()
+        client.exec_command.side_effect = RuntimeError("connection lost")
+        mock_ssh_manager.acquire_connection.return_value = client
+
+        result = await get_remote_checksum(mock_ssh_manager, sample_task_id, sample_remote_file)
+
+        assert result is None
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+
+# ---------------------------------------------------------------------------
+# save_to_object_storage
+# ---------------------------------------------------------------------------
+
+
+class TestSaveToObjectStorage:
+    """Tests for save_to_object_storage()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_generates_storage_urls(
+        self,
+        sample_task_id: str,
+    ) -> None:
+        """Generates correct storage URLs for each file."""
+        downloaded_files: Dict[str, str] = {
+            "lammps.out": "/tmp/results/task-001/lammps.out",
+            "log.lammps": "/tmp/results/task-001/log.lammps",
         }
 
-        with patch.object(hpc_orchestrator, '_save_to_object_storage') as mock_save:
-            mock_save.return_value = {
-                "lammps.out": f"https://storage.example.com/{task_id}/lammps.out",
-                "log.lammps": f"https://storage.example.com/{task_id}/log.lammps",
-            }
+        result = await save_to_object_storage(sample_task_id, downloaded_files)
 
-            storage_urls = await hpc_orchestrator.save_to_object_storage(task_id, downloaded_files)
-
-            assert "lammps.out" in storage_urls
-            assert "log.lammps" in storage_urls
-            assert "https://storage.example.com" in storage_urls["lammps.out"]
-
-    @pytest.mark.asyncio
-    async def test_object_storage_metadata(self, hpc_orchestrator):
-        """Test metadata storage with file information."""
-
-        task_id = str(uuid.uuid4())
-        file_metadata = {
-            "lammps.out": {"size": 12345, "checksum": "abc123"},
-            "log.lammps": {"size": 6789, "checksum": "def456"},
+        assert result == {
+            "lammps.out": f"https://storage.example.com/{sample_task_id}/lammps.out",
+            "log.lammps": f"https://storage.example.com/{sample_task_id}/log.lammps",
         }
 
-        with patch.object(hpc_orchestrator, '_save_metadata') as mock_meta:
-            await hpc_orchestrator.save_metadata(task_id, file_metadata)
-
-            mock_meta.assert_called_once()
-
-
-class TestResumableTransfers:
-    """Test resumable file transfers (断点续传)."""
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_resume_interrupted_upload(self, hpc_orchestrator):
-        """Test resuming interrupted upload from last position."""
+    async def test_empty_dict(self) -> None:
+        """Empty downloaded files dict returns empty URLs dict."""
+        result = await save_to_object_storage("task-002", {})
+        assert result == {}
 
-        task_id = str(uuid.uuid4())
-        local_file = "/local/largefile.dat"
-        remote_file = f"$SCRATCH/nfm-md/{task_id}/largefile.dat"
-        resume_position = 1024  # Resume from byte 1024
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
+# ---------------------------------------------------------------------------
+# save_metadata
+# ---------------------------------------------------------------------------
 
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                with patch('builtins.open', create=True) as mock_open:
-                    # Simulate resuming from position
-                    await hpc_orchestrator.upload_file_with_resume(
-                        task_id, local_file, remote_file, resume_position
-                    )
 
-                    # Verify file opened in binary append mode
-                    # (In real implementation, would seek to resume_position)
+class TestSaveMetadata:
+    """Tests for save_metadata()."""
 
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_check_partial_file_exists(self, hpc_orchestrator):
-        """Test checking for partial file on remote system."""
+    async def test_logs_metadata(
+        self,
+        sample_task_id: str,
+    ) -> None:
+        """Metadata is logged via the logger."""
+        metadata: Dict[str, Dict[str, Any]] = {
+            "lammps.out": {"size": 1024, "checksum": "abc123"},
+        }
 
-        task_id = str(uuid.uuid4())
-        remote_file = f"$SCRATCH/nfm-md/{task_id}/largefile.dat"
+        mock_db = AsyncMock()
+        mock_gen = _make_async_gen([mock_db])
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
+        with patch(
+            "nfm_db.services.hpc_file_transfer.get_db",
+            return_value=mock_gen,
+        ):
+            await save_metadata(sample_task_id, metadata)
 
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                mock_sftp = MagicMock()
-                mock_client.open_sftp.return_value = mock_sftp
-
-                # File exists with partial content
-                mock_stat = MagicMock()
-                mock_stat.st_size = 1024
-                mock_sftp.stat.return_value = mock_stat
-
-                position = await hpc_orchestrator.get_remote_file_position(task_id, remote_file)
-
-                assert position == 1024
-                mock_sftp.stat.assert_called_once()
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_no_partial_file_starts_from_beginning(self, hpc_orchestrator):
-        """Test starting from beginning when no partial file exists."""
+    async def test_handles_db_cleanup(
+        self,
+        sample_task_id: str,
+    ) -> None:
+        """Database generator is exhausted (cleanup runs)."""
+        metadata: Dict[str, Dict[str, Any]] = {"file": {}}
+        mock_db = AsyncMock()
+        mock_gen = _make_async_gen([mock_db])
 
-        task_id = str(uuid.uuid4())
-        remote_file = f"$SCRATCH/nfm-md/{task_id}/largefile.dat"
-
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
-
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                mock_sftp = MagicMock()
-                mock_client.open_sftp.return_value = mock_sftp
-
-                # File doesn't exist
-                mock_sftp.stat.side_effect = IOError("File not found")
-
-                position = await hpc_orchestrator.get_remote_file_position(task_id, remote_file)
-
-                assert position == 0  # Start from beginning
+        with patch(
+            "nfm_db.services.hpc_file_transfer.get_db",
+            return_value=mock_gen,
+        ):
+            await save_metadata(sample_task_id, metadata)
 
 
-class TestErrorHandling:
-    """Test error handling for file transfer operations."""
+def _make_async_gen(values: list) -> Any:
+    """Create a simple async generator that yields values then stops."""
 
+    async def _gen() -> Any:
+        for v in values:
+            yield v
+
+    return _gen()
+
+
+# ---------------------------------------------------------------------------
+# upload_file_with_retry
+# ---------------------------------------------------------------------------
+
+
+class TestUploadFileWithRetry:
+    """Tests for upload_file_with_retry()."""
+
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_handle_upload_permission_denied(self, hpc_orchestrator):
-        """Test handling of permission denied errors during upload."""
+    async def test_success_on_first_try(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """First attempt succeeds without sleeping."""
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_upload:
+            with patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep:
+                result = await upload_file_with_retry(
+                    mock_ssh_manager,
+                    sample_task_id,
+                    sample_local_file,
+                    sample_remote_file,
+                    max_retries=3,
+                )
 
-        task_id = str(uuid.uuid4())
+        assert result is True
+        mock_upload.assert_called_once()
+        mock_sleep.assert_not_called()
 
-        with patch.object(hpc_orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
-            mock_client = MagicMock()
-            mock_acquire.return_value = mock_client
-
-            with patch.object(hpc_orchestrator.ssh_manager, 'release_connection'):
-                mock_sftp = MagicMock()
-                mock_client.open_sftp.return_value = mock_sftp
-
-                # Simulate permission error
-                mock_sftp.put.side_effect = PermissionError("Permission denied")
-
-                with pytest.raises(PermissionError):
-                    await orchestrator.upload_file(task_id, "/local/file", "/remote/file")
-
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_handle_disk_space_full(self, hpc_orchestrator):
-        """Test handling of disk space full errors."""
+    async def test_retries_then_succeeds(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Fails first two attempts, succeeds on third."""
+        call_count = 0
 
-        task_id = str(uuid.uuid4())
+        async def _fake_upload(ssh, tid, local, remote):
+            nonlocal call_count
+            call_count += 1
+            return call_count == 3
 
-        with patch.object(hpc_orchestrator, 'upload_file') as mock_upload:
-            # Simulate disk full error
-            mock_upload.side_effect = OSError("No space left on device")
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            side_effect=_fake_upload,
+        ):
+            with patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep:
+                result = await upload_file_with_retry(
+                    mock_ssh_manager,
+                    sample_task_id,
+                    sample_local_file,
+                    sample_remote_file,
+                    max_retries=3,
+                )
 
-            result = await hpc_orchestrator.upload_file_with_retry(
-                task_id, "/local/file", "/remote/file", max_retries=1
+        assert result is True
+        assert call_count == 3
+        assert mock_sleep.call_count == 2
+        # Exponential backoff: 2^0=1, 2^1=2
+        mock_sleep.assert_any_call(1)
+        mock_sleep.assert_any_call(2)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_all_retries_fail(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """All retries exhausted returns False."""
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_upload:
+            with patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep:
+                result = await upload_file_with_retry(
+                    mock_ssh_manager,
+                    sample_task_id,
+                    sample_local_file,
+                    sample_remote_file,
+                    max_retries=3,
+                )
+
+        assert result is False
+        assert mock_upload.call_count == 3
+        assert mock_sleep.call_count == 3
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_exception_in_upload_retries(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Exceptions during upload trigger retry, last attempt returns False."""
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("connection reset"),
+        ):
+            with patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
+                result = await upload_file_with_retry(
+                    mock_ssh_manager,
+                    sample_task_id,
+                    sample_local_file,
+                    sample_remote_file,
+                    max_retries=2,
+                )
+
+        assert result is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_single_retry_allowed(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """max_retries=1 tries exactly once."""
+        with patch(
+            "nfm_db.services.hpc_file_transfer.upload_file",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_upload:
+            with patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
+                result = await upload_file_with_retry(
+                    mock_ssh_manager,
+                    sample_task_id,
+                    sample_local_file,
+                    sample_remote_file,
+                    max_retries=1,
+                )
+
+        assert result is False
+        assert mock_upload.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# upload_file_with_resume
+# ---------------------------------------------------------------------------
+
+
+class TestUploadFileWithResume:
+    """Tests for upload_file_with_resume()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_resume_from_position(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+        tmp_path: Any,
+    ) -> None:
+        """Resumes upload from the given byte position."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+
+        # Create a real local file for the open() call
+        real_local_file = tmp_path / "resume_test.dat"
+        real_local_file.write_bytes(b"A" * 100 + b"B" * 50)
+
+        # Setup the SFTP file context manager mock
+        mock_remote_f = MagicMock()
+        mock_sftp.file.return_value.__enter__ = MagicMock(return_value=mock_remote_f)
+        mock_sftp.file.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file_with_resume(
+                mock_ssh_manager,
+                sample_task_id,
+                str(real_local_file),
+                sample_remote_file,
+                resume_position=100,
             )
 
-            assert result is False
+        assert result is True
+        mock_sftp.file.assert_called_once_with(sample_remote_file, "ab")
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
 
+    @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_log_transfer_errors(self, hpc_orchestrator):
-        """Test error logging for transfer failures."""
+    async def test_resume_from_position_zero(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+        tmp_path: Any,
+    ) -> None:
+        """Resume from position 0 uploads entire file."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
 
-        task_id = str(uuid.uuid4())
+        real_local_file = tmp_path / "full_test.dat"
+        content = b"X" * 65536 * 2 + b"Y"
+        real_local_file.write_bytes(content)
 
-        with patch.object(hpc_orchestrator, 'upload_file') as mock_upload:
-            mock_upload.side_effect = Exception("Connection lost")
+        mock_remote_f = MagicMock()
+        mock_sftp.file.return_value.__enter__ = MagicMock(return_value=mock_remote_f)
+        mock_sftp.file.return_value.__exit__ = MagicMock(return_value=False)
 
-            with pytest.raises(Exception):
-                await orchestrator.upload_file(task_id, "/local/file", "/remote/file")
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file_with_resume(
+                mock_ssh_manager,
+                sample_task_id,
+                str(real_local_file),
+                sample_remote_file,
+                resume_position=0,
+            )
 
-            # Verify error was logged (in real implementation)
-            # Check logs contain error details
+        assert result is True
+        mock_sftp.file.assert_called_once_with(sample_remote_file, "ab")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_exception_returns_false(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_local_file: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Exception during resume upload returns False."""
+        client = MagicMock()
+        client.open_sftp.side_effect = RuntimeError("connection lost")
+        mock_ssh_manager.acquire_connection.return_value = client
+
+        with patch(
+            "nfm_db.services.hpc_file_transfer.create_task_directory",
+            new_callable=AsyncMock,
+        ):
+            result = await upload_file_with_resume(
+                mock_ssh_manager,
+                sample_task_id,
+                sample_local_file,
+                sample_remote_file,
+                resume_position=0,
+            )
+
+        assert result is False
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+
+# ---------------------------------------------------------------------------
+# get_remote_file_position
+# ---------------------------------------------------------------------------
+
+
+class TestGetRemoteFilePosition:
+    """Tests for get_remote_file_position()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_file_exists_returns_size(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Existing file returns its size."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+        mock_stat = MagicMock()
+        mock_stat.st_size = 1048576
+        mock_sftp.stat.return_value = mock_stat
+
+        result = await get_remote_file_position(mock_ssh_manager, sample_task_id, sample_remote_file)
+
+        assert result == 1048576
+        mock_sftp.stat.assert_called_once_with(sample_remote_file)
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_file_not_found_returns_zero(
+        self,
+        mock_ssh_manager: MagicMock,
+        mock_sftp: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Non-existent file returns 0."""
+        client = _make_ssh_client_with_sftp(mock_sftp)
+        mock_ssh_manager.acquire_connection.return_value = client
+        mock_sftp.stat.side_effect = IOError("No such file")
+
+        result = await get_remote_file_position(mock_ssh_manager, sample_task_id, sample_remote_file)
+
+        assert result == 0
+        mock_sftp.close.assert_called_once()
+        mock_ssh_manager.release_connection.assert_called_once_with(client)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_exception_returns_zero(
+        self,
+        mock_ssh_manager: MagicMock,
+        sample_task_id: str,
+        sample_remote_file: str,
+    ) -> None:
+        """Unexpected exception returns 0."""
+        client = MagicMock()
+        client.open_sftp.side_effect = RuntimeError("broken")
+        mock_ssh_manager.acquire_connection.return_value = client
+
+        result = await get_remote_file_position(mock_ssh_manager, sample_task_id, sample_remote_file)
+
+        assert result == 0
+        mock_ssh_manager.release_connection.assert_called_once_with(client)

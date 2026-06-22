@@ -73,6 +73,8 @@ pythonpath = ["src", "."]
 addopts = "--cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
 markers = [
     "e2e: End-to-end tests that exercise the full system",
+    "unit: Unit tests (isolated, no external dependencies)",
+    "integration: Integration tests (require external services)",
 ]
 
 [build-system]

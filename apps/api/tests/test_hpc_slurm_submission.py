@@ -3,7 +3,8 @@
 import uuid
 import pytest
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
+from nfm_db.services.hpc_orchestration import HPCOrchestrator
+from nfm_db.services.hpc_ssh import SSHConnectionConfig, JobSubmissionError, HPCConnectionError
 from nfm_db.models.md_verification import HpcJob, MDVerificationJob
 
 
@@ -13,7 +14,7 @@ class TestSLURMScriptGeneration:
     def test_generate_slurm_script_with_basic_params(self):
         """Test SLURM script generation with basic parameters."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -43,7 +44,7 @@ class TestSLURMScriptGeneration:
     def test_generate_slurm_script_with_lammps_commands(self):
         """Test SLURM script includes LAMMPS execution commands."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -70,7 +71,7 @@ class TestJobSubmissionInterface:
     async def test_submit_job_creates_database_record(self):
         """Test submit_job creates record in hpc_jobs table."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -89,10 +90,10 @@ class TestJobSubmissionInterface:
         }
 
         # Mock both SLURM submission and database operations
-        with patch.object(orchestrator, '_submit_to_slurm') as mock_submit:
+        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
             mock_submit.return_value = "slurm-job-12345"
 
-            with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+            with patch('nfm_db.database.get_db') as mock_get_db:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
@@ -113,7 +114,7 @@ class TestJobSubmissionInterface:
     async def test_submit_job_queue_full_error(self):
         """Test submit_job raises error when SLURM queue is full."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -122,18 +123,19 @@ class TestJobSubmissionInterface:
         task_id = str(uuid.uuid4())
         params = {"temperature": 300, "pressure": 1.0, "steps": 10000}
 
-        with patch.object(orchestrator, '_submit_to_slurm') as mock_submit:
+        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
             # Simulate SLURM queue full error
             mock_submit.side_effect = JobSubmissionError("Slurm queue is full")
 
-            with pytest.raises(JobSubmissionError, match="queue.*full"):
+            # Orchestrator wraps submission errors in HPCConnectionError
+            with pytest.raises(HPCConnectionError, match="Job submission failed"):
                 await orchestrator.submit_job(task_id, "/path/to/file", params)
 
     @pytest.mark.asyncio
     async def test_submit_job_permission_error(self):
         """Test submit_job raises error on permission denied."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -142,18 +144,19 @@ class TestJobSubmissionInterface:
         task_id = str(uuid.uuid4())
         params = {"temperature": 300, "pressure": 1.0, "steps": 10000}
 
-        with patch.object(orchestrator, '_submit_to_slurm') as mock_submit:
+        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
             # Simulate permission error
             mock_submit.side_effect = JobSubmissionError("Permission denied")
 
-            with pytest.raises(JobSubmissionError, match="Permission"):
+            # Orchestrator wraps submission errors in HPCConnectionError
+            with pytest.raises(HPCConnectionError, match="Job submission failed"):
                 await orchestrator.submit_job(task_id, "/path/to/file", params)
 
     @pytest.mark.asyncio
     async def test_submit_job_invalid_parameters(self):
         """Test submit_job validates input parameters."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -177,7 +180,7 @@ class TestHPCJobsTablePopulation:
     async def test_submit_job_populates_hpc_jobs_table(self):
         """Test submit_job creates record in hpc_jobs table."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -187,10 +190,10 @@ class TestHPCJobsTablePopulation:
         crystal_structure_file = "/path/to/structure.cif"
         params = {"temperature": 300, "pressure": 1.0, "steps": 10000, "walltime": "02:00:00"}
 
-        with patch.object(orchestrator, '_submit_to_slurm') as mock_submit:
+        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
             mock_submit.return_value = "slurm-67890"
 
-            with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+            with patch('nfm_db.database.get_db') as mock_get_db:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
@@ -211,7 +214,7 @@ class TestHPCJobsTablePopulation:
     async def test_hpc_job_record_contains_required_fields(self):
         """Test hpc_jobs record contains all required fields."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -220,10 +223,10 @@ class TestHPCJobsTablePopulation:
         task_id = str(uuid.uuid4())
         params = {"temperature": 300, "pressure": 1.0, "steps": 5000, "walltime": "01:00:00"}
 
-        with patch.object(orchestrator, '_submit_to_slurm') as mock_submit:
+        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
             mock_submit.return_value = "slurm-11111"
 
-            with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+            with patch('nfm_db.database.get_db') as mock_get_db:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
@@ -248,7 +251,7 @@ class TestJobSubmissionSuccessRate:
     async def test_submit_job_success_rate_above_threshold(self):
         """Test job submission success rate exceeds 90% threshold."""
         config = SSHConnectionConfig(
-            hosts=["login01.example.com"],
+            hosts=("login01.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
@@ -260,7 +263,7 @@ class TestJobSubmissionSuccessRate:
 
         for i in range(total_attempts):
             task_id = str(uuid.uuid4())
-            with patch.object(orchestrator, '_submit_to_slurm') as mock_submit:
+            with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
                 # Simulate 95% success rate (only 1 failure)
                 if i == 5:
                     mock_submit.side_effect = JobSubmissionError("Transient error")
@@ -268,7 +271,7 @@ class TestJobSubmissionSuccessRate:
                     mock_submit.return_value = f"slurm-{i}"
 
                 # Mock database to avoid connection errors
-                with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+                with patch('nfm_db.database.get_db') as mock_get_db:
                     async def mock_db_gen():
                         mock_db = AsyncMock()
                         yield mock_db
@@ -278,13 +281,8 @@ class TestJobSubmissionSuccessRate:
                     try:
                         await orchestrator.submit_job(task_id, "/path/file", params)
                         successful_submissions += 1
-                    except JobSubmissionError:
+                    except (JobSubmissionError, HPCConnectionError):
                         pass
 
         success_rate = successful_submissions / total_attempts
         assert success_rate >= 0.90, f"Success rate {success_rate:.2%} below 90% threshold"
-
-
-class JobSubmissionError(Exception):
-    """Custom exception for job submission failures."""
-    pass

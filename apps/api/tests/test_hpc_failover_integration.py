@@ -22,10 +22,10 @@ class TestPrimarySSHTimeoutFailover:
     def orchestrator_with_backup(self):
         """Create orchestrator with backup cluster configured."""
         config = SSHConnectionConfig(
-            hosts=["guangzhou.example.com"],
+            hosts=("guangzhou.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["tianjin.example.com"],
+            backup_hosts=("tianjin.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             failover_threshold_seconds=300,  # 5 minutes
@@ -44,9 +44,9 @@ class TestPrimarySSHTimeoutFailover:
         AND: Failover time is <5 minutes from first failure
         """
         # Mock primary cluster to fail health checks
-        with patch.object(orchestrator_with_backup, 'check_primary_health', return_value=False):
+        with patch.object(orchestrator_with_backup.failover_manager, 'check_primary_health', return_value=False):
             # Set last health check to 6 minutes ago (exceeds 5-minute threshold)
-            orchestrator_with_backup.last_health_check = datetime.now() - timedelta(seconds=360)
+            orchestrator_with_backup.failover_manager.last_health_check = datetime.now() - timedelta(seconds=360)
 
             # Check if failover should be triggered
             should_failover = orchestrator_with_backup.should_trigger_failover()
@@ -64,9 +64,9 @@ class TestPrimarySSHTimeoutFailover:
         THEN: Failover is NOT triggered
         """
         # Mock primary cluster to have recent successful health check
-        with patch.object(orchestrator_with_backup, 'check_primary_health', return_value=True):
+        with patch.object(orchestrator_with_backup.failover_manager, 'check_primary_health', return_value=True):
             # Set last health check to 1 minute ago (within threshold)
-            orchestrator_with_backup.last_health_check = datetime.now() - timedelta(seconds=60)
+            orchestrator_with_backup.failover_manager.last_health_check = datetime.now() - timedelta(seconds=60)
 
             # Check if failover should be triggered
             should_failover = orchestrator_with_backup.should_trigger_failover()
@@ -83,10 +83,10 @@ class TestSLURMQueueOverflowFailover:
     def orchestrator_with_backup(self):
         """Create orchestrator with backup cluster."""
         config = SSHConnectionConfig(
-            hosts=["guangzhou.example.com"],
+            hosts=("guangzhou.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["tianjin.example.com"],
+            backup_hosts=("tianjin.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             skip_key_validation=True
@@ -106,7 +106,7 @@ class TestSLURMQueueOverflowFailover:
         # For now, we test that the orchestrator can handle failover on demand
 
         # Mock backup cluster to be available
-        with patch.object(orchestrator_with_backup.backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(orchestrator_with_backup.failover_manager._backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
@@ -115,7 +115,7 @@ class TestSLURMQueueOverflowFailover:
 
             # Verify failover succeeded
             assert result is True, "Failover should succeed when backup cluster available"
-            assert orchestrator_with_backup.current_cluster == "backup", \
+            assert orchestrator_with_backup.failover_manager.current_cluster == "backup", \
                 "Current cluster should be set to backup after failover"
 
 
@@ -126,10 +126,10 @@ class TestPrimaryRecoveryAndSwitchback:
     def orchestrator(self):
         """Create orchestrator with backup cluster."""
         config = SSHConnectionConfig(
-            hosts=["guangzhou.example.com"],
+            hosts=("guangzhou.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["tianjin.example.com"],
+            backup_hosts=("tianjin.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             skip_key_validation=True
@@ -147,18 +147,19 @@ class TestPrimaryRecoveryAndSwitchback:
         AND: Active backup jobs continue on backup
         """
         # Set orchestrator to be on backup cluster
-        orchestrator.current_cluster = "backup"
-        orchestrator.primary_healthy = False
+        orchestrator.failover_manager.current_cluster = "backup"
+        orchestrator.failover_manager.primary_healthy = False
 
         # Mock primary cluster health check to succeed
-        with patch.object(orchestrator, 'check_primary_health', return_value=True):
-            # Try to recover primary
-            recovered = await orchestrator.try_recover_primary()
+        with patch.object(orchestrator.failover_manager, 'check_primary_health', return_value=True):
+            with patch.object(orchestrator.failover_manager, 'log_failover_event'):
+                # Try to recover primary
+                recovered = await orchestrator.try_recover_primary()
 
-            # Verify recovery detected
-            assert recovered is True, "Primary recovery should be detected"
-            assert orchestrator.primary_healthy is True, \
-                "Primary should be marked as healthy after recovery"
+                # Verify recovery detected
+                assert recovered is True, "Primary recovery should be detected"
+                assert orchestrator.failover_manager.primary_healthy is True, \
+                    "Primary should be marked as healthy after recovery"
 
     @pytest.mark.asyncio
     async def test_primary_not_yet_recovered(self, orchestrator):
@@ -170,19 +171,19 @@ class TestPrimaryRecoveryAndSwitchback:
         AND: No switchback occurs
         """
         # Set orchestrator to be on backup cluster
-        orchestrator.current_cluster = "backup"
-        orchestrator.primary_healthy = False
+        orchestrator.failover_manager.current_cluster = "backup"
+        orchestrator.failover_manager.primary_healthy = False
 
         # Mock primary cluster health check to fail
-        with patch.object(orchestrator, 'check_primary_health', return_value=False):
+        with patch.object(orchestrator.failover_manager, 'check_primary_health', return_value=False):
             # Try to recover primary
             recovered = await orchestrator.try_recover_primary()
 
             # Verify recovery NOT detected
             assert recovered is False, "Primary recovery should NOT be detected when still down"
-            assert orchestrator.primary_healthy is False, \
+            assert orchestrator.failover_manager.primary_healthy is False, \
                 "Primary should remain marked as unhealthy"
-            assert orchestrator.current_cluster == "backup", \
+            assert orchestrator.failover_manager.current_cluster == "backup", \
                 "Should remain on backup cluster when primary still down"
 
 
@@ -193,10 +194,10 @@ class TestFailoverTiming:
     def orchestrator(self):
         """Create orchestrator."""
         config = SSHConnectionConfig(
-            hosts=["guangzhou.example.com"],
+            hosts=("guangzhou.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["tianjin.example.com"],
+            backup_hosts=("tianjin.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             failover_threshold_seconds=300,  # 5 minutes
@@ -215,7 +216,7 @@ class TestFailoverTiming:
         import time
 
         # Mock backup cluster connectivity
-        with patch.object(orchestrator.backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(orchestrator.failover_manager._backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
