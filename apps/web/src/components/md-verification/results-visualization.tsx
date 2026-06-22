@@ -1,18 +1,45 @@
 "use client"
 
-import { Card, Table, Progress, Alert, Space, Button } from "antd"
+import { Card, Alert, Space, Button } from "antd"
 import { DownloadOutlined } from "@ant-design/icons"
-import type { ColumnsType } from "antd/es/table"
 import type {
   MDSimulationResultResponse,
   DefectAnalysisResultResponse,
   PotentialFittingResultResponse,
 } from "@/lib/md-verification-api"
+import {
+  EnergyConvergenceChart,
+  DefectBarChart,
+} from "@/components/md-verification/charts"
 
 interface ResultsVisualizationProps {
   simulationResults: MDSimulationResultResponse | null
   defectResults: DefectAnalysisResultResponse[]
   fittingResults: PotentialFittingResultResponse[]
+}
+
+/**
+ * Extract and type-narrow thermodynamic data from the API response.
+ */
+interface ThermodynamicData {
+  energy?: Array<{ step: number; energy: number }>
+  temperature?: Array<{ step: number; temperature: number }>
+  pressure?: Array<{ step: number; pressure: number }>
+}
+
+function extractThermoData(
+  raw: Record<string, unknown> | null,
+): ThermodynamicData {
+  if (!raw) return {}
+  return {
+    energy: Array.isArray(raw.energy) ? raw.energy as ThermodynamicData["energy"] : undefined,
+    temperature: Array.isArray(raw.temperature)
+      ? raw.temperature as ThermodynamicData["temperature"]
+      : undefined,
+    pressure: Array.isArray(raw.pressure)
+      ? raw.pressure as ThermodynamicData["pressure"]
+      : undefined,
+  }
 }
 
 export function ResultsVisualization({
@@ -21,56 +48,42 @@ export function ResultsVisualization({
   fittingResults,
 }: ResultsVisualizationProps) {
   // ============================================================================
-  // Energy Convergence Chart (placeholder - needs chart library)
+  // Energy Convergence + Temperature/Pressure Chart
   // ============================================================================
 
-  const renderEnergyConvergenceChart = () => {
+  const thermoData = extractThermoData(simulationResults?.thermodynamic_data ?? null)
+
+  const hasEnergyData = (thermoData.energy?.length ?? 0) > 0
+  const hasTemperatureData = (thermoData.temperature?.length ?? 0) > 0
+  const hasPressureData = (thermoData.pressure?.length ?? 0) > 0
+  const hasAnyThermoData = hasEnergyData || hasTemperatureData || hasPressureData
+
+  const renderThermodynamicChart = () => {
     if (!simulationResults?.thermodynamic_data) {
       return (
         <Alert
-          message="能量收敛数据不可用"
-          description="请等待模拟完成后查看能量收敛曲线"
+          message="热力学数据不可用"
+          description="请等待模拟完成后查看曲线"
           type="info"
           showIcon
         />
       )
     }
 
-    // Extract energy data from thermodynamic_data
-    const thermoData = simulationResults.thermodynamic_data as {
-      energy?: Array<{ step: number; energy: number }>
-      temperature?: Array<{ step: number; temperature: number }>
-      pressure?: Array<{ step: number; pressure: number }>
-    }
-
-    if (!thermoData.energy || thermoData.energy.length === 0) {
+    if (!hasAnyThermoData) {
       return (
         <Alert
-          message="能量收敛数据不可用"
-          description="模拟结果中未包含能量数据"
+          message="热力学数据不可用"
+          description="模拟结果中未包含能量、温度或压力数据"
           type="warning"
           showIcon
         />
       )
     }
 
-    // TODO: Replace with Chart.js or ECharts integration
-    // For now, show data in table format
-    const energyColumns: ColumnsType<{ step: number; energy: number }> = [
-      {
-        title: "步数",
-        dataIndex: "step",
-        key: "step",
-        width: 100,
-      },
-      {
-        title: "能量 (eV)",
-        dataIndex: "energy",
-        key: "energy",
-        width: 150,
-        render: (energy: number) => energy.toFixed(4),
-      },
-    ]
+    const hasMultipleAxes =
+      [hasEnergyData, hasTemperatureData, hasPressureData].filter(Boolean).length > 1
+    const chartHeight = hasMultipleAxes ? 360 : 280
 
     return (
       <Card
@@ -82,114 +95,20 @@ export function ResultsVisualization({
             size="small"
             icon={<DownloadOutlined />}
             onClick={() => {
-              // TODO: Implement chart export
-              console.info("Download energy convergence chart")
+              // TODO: Implement chart export via ECharts getDataURL()
             }}
           >
             导出图表
           </Button>
         }
       >
-        <Alert
-          message="图表库集成待完成"
-          description="能量收敛曲线图需要集成 Chart.js 或 ECharts。当前显示数据表格。"
-          type="info"
-          showIcon
-          closable
-          style={{ marginBottom: 16 }}
-        />
-        <Table
-          columns={energyColumns}
-          dataSource={thermoData.energy}
-          rowKey="step"
-          size="small"
-          pagination={false}
-          scroll={{ y: 300 }}
-        />
+        <EnergyConvergenceChart thermoData={thermoData} height={chartHeight} />
       </Card>
     )
   }
 
   // ============================================================================
-  // Temperature/Pressure Charts (placeholder - needs chart library)
-  // ============================================================================
-
-  const renderTemperaturePressureChart = () => {
-    if (!simulationResults?.thermodynamic_data) {
-      return (
-        <Alert
-          message="温度/压力数据不可用"
-          description="请等待模拟完成后查看温度和压力曲线"
-          type="info"
-          showIcon
-        />
-      )
-    }
-
-    const thermoData = simulationResults.thermodynamic_data as {
-      temperature?: Array<{ step: number; temperature: number }>
-      pressure?: Array<{ step: number; pressure: number }>
-    }
-
-    const hasTemperature = thermoData.temperature && thermoData.temperature.length > 0
-    const hasPressure = thermoData.pressure && thermoData.pressure.length > 0
-
-    if (!hasTemperature && !hasPressure) {
-      return (
-        <Alert
-          message="温度/压力数据不可用"
-          description="模拟结果中未包含温度或压力数据"
-          type="warning"
-          showIcon
-        />
-      )
-    }
-
-    // TODO: Replace with Chart.js or ECharts integration
-    return (
-      <Card
-        title="温度/压力曲线"
-        size="small"
-        extra={
-          <Button
-            type="link"
-            size="small"
-            icon={<DownloadOutlined />}
-            onClick={() => {
-              // TODO: Implement chart export
-              console.info("Download temperature/pressure chart")
-            }}
-          >
-            导出图表
-          </Button>
-        }
-      >
-        <Alert
-          message="图表库集成待完成"
-          description="温度和压力曲线图需要集成 Chart.js 或 ECharts。当前显示最终值。"
-          type="info"
-          showIcon
-          closable
-          style={{ marginBottom: 16 }}
-        />
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          {hasTemperature && (
-            <div>
-              <strong>最终温度:</strong> {simulationResults.final_temperature} K
-            </div>
-          )}
-          {hasPressure && (
-            <div>
-              <strong>最终压力:</strong> {simulationResults.final_pressure} GPa
-            </div>
-          )}
-        </Space>
-      </Card>
-    )
-  }
-
-  // ============================================================================
-  // Structural Analysis Visualization
+  // Structural Analysis — Defect Bar Chart
   // ============================================================================
 
   const renderStructuralAnalysis = () => {
@@ -204,12 +123,6 @@ export function ResultsVisualization({
       )
     }
 
-    // TODO: Add defect table visualization with columns
-    // const defectColumns: ColumnsType<DefectAnalysisResultResponse> = [...]
-
-    // Calculate concentration distribution for progress bars
-    const totalConcentration = defectResults.reduce((sum, r) => sum + r.concentration, 0)
-
     return (
       <Card
         title="缺陷分析结果"
@@ -221,33 +134,13 @@ export function ResultsVisualization({
             icon={<DownloadOutlined />}
             onClick={() => {
               // TODO: Implement defect analysis export
-              console.info("Download defect analysis results")
             }}
           >
             导出数据
           </Button>
         }
       >
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
-          {defectResults.map((result) => (
-            <div key={result.id}>
-              <div style={{ marginBottom: 8 }}>
-                <strong>{result.defect_type}</strong>
-                <Progress
-                  percent={(result.concentration / totalConcentration) * 100}
-                  status="active"
-                  showInfo={false}
-                />
-                <span style={{ marginLeft: 8, fontSize: "0.9em" }}>
-                  {result.concentration.toFixed(6)} (
-                  {((result.concentration / totalConcentration) * 100).toFixed(2)}%)
-                  {result.formation_energy && ` • 形成能: ${result.formation_energy.toFixed(4)} eV`}
-                  )
-                </span>
-              </div>
-            </div>
-          ))}
-        </Space>
+        <DefectBarChart data={defectResults} height={280} />
       </Card>
     )
   }
@@ -279,7 +172,6 @@ export function ResultsVisualization({
             icon={<DownloadOutlined />}
             onClick={() => {
               // TODO: Implement fitting results export
-              console.info("Download fitting results")
             }}
           >
             导出参数
@@ -291,7 +183,8 @@ export function ResultsVisualization({
             <Card key={result.id} type="inner" size="small" title={result.fitting_method}>
               <pre
                 style={{
-                  background: "#f5f5f5",
+                  background: "var(--color-surface-elevated, #374151)",
+                  color: "var(--color-text, #f9fafb)",
                   padding: "1rem",
                   borderRadius: "4px",
                   fontSize: "0.9em",
@@ -304,7 +197,8 @@ export function ResultsVisualization({
                   <strong>质量指标:</strong>
                   <pre
                     style={{
-                      background: "#f5f5f5",
+                      background: "var(--color-surface-elevated, #374151)",
+                      color: "var(--color-text, #f9fafb)",
                       padding: "1rem",
                       borderRadius: "4px",
                       fontSize: "0.9em",
@@ -327,8 +221,7 @@ export function ResultsVisualization({
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      {renderEnergyConvergenceChart()}
-      {renderTemperaturePressureChart()}
+      {renderThermodynamicChart()}
       {renderStructuralAnalysis()}
       {renderFittingResults()}
 
@@ -340,7 +233,6 @@ export function ResultsVisualization({
               icon={<DownloadOutlined />}
               onClick={() => {
                 // TODO: Implement raw LAMMPS output file download
-                console.info("Download LAMMPS output files")
               }}
             >
               下载 LAMMPS 输出文件
@@ -349,7 +241,6 @@ export function ResultsVisualization({
               icon={<DownloadOutlined />}
               onClick={() => {
                 // TODO: Implement trajectory file download
-                console.info("Download trajectory file")
               }}
             >
               下载轨迹文件

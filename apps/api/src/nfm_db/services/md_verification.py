@@ -26,7 +26,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from nfm_db.models.md_verification import (
     DefectAnalysisResult,
@@ -1052,9 +1051,6 @@ class MDVerificationService:
         """
         result = await self._session.execute(
             select(MDVerificationJob)
-            .options(
-                selectinload(MDVerificationJob._sa_instance_state),
-            )
             .where(MDVerificationJob.id == job_id),
         )
         job = result.scalar_one_or_none()
