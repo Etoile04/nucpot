@@ -12,6 +12,7 @@ Security: All credentials loaded from environment variables via config module
 import logging
 import os
 import re
+import socket
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -451,15 +452,44 @@ class SLURMJobManager:
             logger.error(f"Failed to cancel job {job_id}: {e}")
             return False
     
-    def _exec_command(self, conn: SSHClient, command: str) -> str:
-        """Execute command and return output"""
+    # Default timeout for SLURM commands (seconds)
+    DEFAULT_COMMAND_TIMEOUT: int = 60
+
+    def _exec_command(
+        self,
+        conn: SSHClient,
+        command: str,
+        timeout: Optional[int] = None,
+    ) -> str:
+        """Execute command and return output with a channel timeout.
+
+        Args:
+            conn: Active SSH client connection.
+            command: Shell command to execute.
+            timeout: Seconds before the channel read times out.
+                     Defaults to DEFAULT_COMMAND_TIMEOUT.
+
+        Returns:
+            Stdout output with trailing whitespace stripped.
+
+        Raises:
+            RuntimeError: If the command exits non-zero or the channel times out.
+        """
+        effective_timeout = timeout if timeout is not None else self.DEFAULT_COMMAND_TIMEOUT
         stdin, stdout, stderr = conn.exec_command(command)
-        exit_status = stdout.channel.recv_exit_status()
-        
+        stdout.channel.settimeout(effective_timeout)
+
+        try:
+            exit_status = stdout.channel.recv_exit_status()
+        except socket.timeout:
+            raise RuntimeError(
+                f"Command timed out after {effective_timeout}s: {command}"
+            )
+
         if exit_status != 0:
             error = stderr.read().decode('utf-8')
             raise RuntimeError(f"Command failed with exit code {exit_status}: {error}")
-        
+
         return stdout.read().decode('utf-8').strip()
     
     def _write_remote_file(self, conn: SSHClient, content: str, remote_path: Path):
@@ -655,8 +685,9 @@ class HPCFileTransfer:
                 stdout.channel.recv_exit_status()
             finally:
                 sftp.close()
-        except Exception as e:
+        except (IOError, OSError) as e:
             logger.error(f"Failed to create remote directory: {e}")
+            raise
 
 
 class HPCAdapter:

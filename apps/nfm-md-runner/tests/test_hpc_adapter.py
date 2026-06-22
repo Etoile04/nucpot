@@ -19,7 +19,7 @@ from nfm_md_runner.hpc_adapter import (
     JobStatus,
     ClusterType,
     HPCJob,
-    ClusterConfig
+    ClusterConfig,
 )
 
 
@@ -509,6 +509,71 @@ class TestHPCFileTransferAdditional:
             )
 
 
+class TestEnsureRemoteDirectory:
+    """Tests for _ensure_remote_directory (NFM-393: no silent exception swallowing)"""
+
+    @pytest.fixture
+    def file_transfer(self, mock_ssh_client):
+        conn_manager = MagicMock()
+        conn_manager.get_connection.return_value = mock_ssh_client
+        return HPCFileTransfer(conn_manager)
+
+    def test_directory_already_exists(self, file_transfer, mock_ssh_client):
+        """When directory exists, stat succeeds and no mkdir is called"""
+        mock_sftp = MagicMock()
+        mock_ssh_client.open_sftp.return_value = mock_sftp
+
+        file_transfer._ensure_remote_directory(mock_ssh_client, Path("/scratch/test"))
+
+        mock_sftp.stat.assert_called_once_with("/scratch/test")
+        mock_ssh_client.exec_command.assert_not_called()
+
+    def test_directory_created_when_missing(self, file_transfer, mock_cluster_config, mock_ssh_client):
+        """When stat raises IOError, mkdir -p is executed"""
+        mock_sftp = MagicMock()
+        mock_sftp.stat.side_effect = IOError("No such file")
+        mock_ssh_client.open_sftp.return_value = mock_sftp
+        mock_channel = MagicMock()
+        mock_channel.recv_exit_status.return_value = 0
+        mock_ssh_client.exec_command.return_value = (MagicMock(), MagicMock(channel=mock_channel), MagicMock())
+
+        file_transfer._ensure_remote_directory(mock_ssh_client, Path("/scratch/new_dir"))
+
+        mock_ssh_client.exec_command.assert_called_once()
+        call_args = mock_ssh_client.exec_command.call_args
+        assert "mkdir -p" in call_args[0][0]
+
+    def test_ioerror_is_re_raised(self, file_transfer, mock_ssh_client):
+        """IOError from SFTP (e.g. permission denied) must propagate, not be swallowed"""
+        mock_sftp = MagicMock()
+        mock_sftp.stat.side_effect = IOError("Permission denied")
+        mock_ssh_client.open_sftp.return_value = mock_sftp
+        mock_channel = MagicMock()
+        mock_channel.recv_exit_status.return_value = 1  # mkdir fails
+        mock_ssh_client.exec_command.return_value = (MagicMock(), MagicMock(channel=mock_channel), MagicMock())
+        # Make the outer try hit IOError after mkdir fails
+        mock_sftp.close.side_effect = IOError("SFTP session error")
+
+        with pytest.raises(IOError):
+            file_transfer._ensure_remote_directory(mock_ssh_client, Path("/scratch/test"))
+
+    def test_ssh_exception_is_not_swallowed(self, file_transfer, mock_ssh_client):
+        """paramiko SSHException (auth failure) must propagate, not be swallowed"""
+        import paramiko
+
+        mock_ssh_client.open_sftp.side_effect = paramiko.SSHException("Authentication failed")
+
+        with pytest.raises(paramiko.SSHException, match="Authentication failed"):
+            file_transfer._ensure_remote_directory(mock_ssh_client, Path("/scratch/test"))
+
+    def test_unexpected_exception_is_not_swallowed(self, file_transfer, mock_ssh_client):
+        """Unexpected exceptions (e.g. RuntimeError) must propagate, not be swallowed"""
+        mock_ssh_client.open_sftp.side_effect = RuntimeError("Unexpected error")
+
+        with pytest.raises(RuntimeError, match="Unexpected error"):
+            file_transfer._ensure_remote_directory(mock_ssh_client, Path("/scratch/test"))
+
+
 class TestHPCAdapterAdditional:
     """Additional adapter tests for coverage"""
 
@@ -616,11 +681,74 @@ class TestHPCAdapterAdditional:
                         manager._create_connection(config)
 
 
+class TestExecCommandTimeout:
+    """Tests for NFM-397: timeout on SLURM command execution."""
+
+    @pytest.fixture
+    def job_manager(self):
+        conn_manager = MagicMock()
+        return SLURMJobManager(conn_manager)
+
+    def test_exec_command_sets_channel_timeout(self, job_manager):
+        """_exec_command must set a timeout on the SSH channel."""
+        mock_conn = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+        mock_channel = MagicMock()
+        mock_channel.recv_exit_status.return_value = 0
+        mock_stdout.channel = mock_channel
+        mock_stdout.read.return_value.decode.return_value = "ok"
+        mock_conn.exec_command.return_value = (MagicMock(), mock_stdout, mock_stderr)
+
+        job_manager._exec_command(mock_conn, "echo hello")
+
+        mock_channel.settimeout.assert_called_once()
+        timeout_val = mock_channel.settimeout.call_args[0][0]
+        assert timeout_val > 0
+
+    def test_exec_command_raises_on_timeout(self, job_manager):
+        """_exec_command must raise RuntimeError (not hang) when channel times out."""
+        import socket
+
+        mock_conn = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+        mock_channel = MagicMock()
+        mock_channel.recv_exit_status.side_effect = socket.timeout("timed out")
+        mock_stdout.channel = mock_channel
+        mock_conn.exec_command.return_value = (MagicMock(), mock_stdout, mock_stderr)
+
+        with pytest.raises(RuntimeError, match="timed out"):
+            job_manager._exec_command(mock_conn, "squeue -j 12345")
+
+    def test_get_job_status_timeout_returns_unknown(self, job_manager, mock_cluster_config):
+        """Hung squeue/sacct must not block the Celery worker; return UNKNOWN."""
+        import socket
+
+        mock_conn = MagicMock()
+        mock_channel = MagicMock()
+        mock_channel.recv_exit_status.side_effect = socket.timeout("timed out")
+        mock_stdout = MagicMock()
+        mock_stdout.channel = mock_channel
+        mock_conn.exec_command.return_value = (
+            MagicMock(),
+            mock_stdout,
+            MagicMock(),
+        )
+
+        job_manager.conn_manager.get_connection.return_value = mock_conn
+
+        job = job_manager.get_job_status(mock_cluster_config, "12345")
+
+        assert job.status == JobStatus.UNKNOWN
+        assert job.job_id == "12345"
+
+
 @pytest.mark.integration
 class TestHPCAdapterIntegration:
     """
     Integration tests (require actual HPC access)
-    
+
     These tests are skipped by default. Run with:
         pytest tests/test_hpc_adapter.py -v -m integration
     """
