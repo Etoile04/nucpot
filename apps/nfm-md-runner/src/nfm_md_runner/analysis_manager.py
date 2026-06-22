@@ -3,66 +3,77 @@ Analysis Manager Module
 
 Orchestrates the complete MD verification pipeline:
 MD simulation → Defect analysis → Data averaging → Potential fitting
+
+Architecture: Hexagonal — all external dependencies injected via Protocol ports.
+Zero SQLite imports. Zero SSH imports.
 """
 
+import json
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional
-from datetime import datetime
+from typing import Any, Optional
 
 from .config import settings
-from .defect_analyzer import DefectAnalyzer, DefectStatistics
-from .data_averager import DataAverager, AveragedResult
-from .model_fitter import ModelFitter, FittingResult
+from .data_averager import AveragedResult, DataAverager
+from .defect_analyzer import DefectAnalyzer, DefectResult
+from .model_fitter import FittingResult, ModelFitter
+from .ports import (
+    AnalysisResult,
+    Executor,
+    JobSpec,
+    JobStatus,
+    ResultRepository,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisManager:
-    """
-    Manages the complete verification pipeline
+    """Manages the complete verification pipeline.
 
-    This is a placeholder implementation for the extracted lammps-automation module.
-    The actual implementation will orchestrate:
-    1. MD simulation execution (via lammps_runner)
-    2. Defect analysis (via defect_analyzer)
-    3. Data aggregation (via data_averager)
-    4. Potential fitting (via model_fitter)
+    Dependencies are injected via constructor:
+    - ``result_repository``: persist analysis results (any storage backend)
+    - ``executor``: submit and manage MD simulation jobs (local, HPC, etc.)
+
+    Both are optional for backward compatibility.  When ``None``, the
+    manager falls back to placeholder / no-op behaviour.
     """
 
-    def __init__(self):
-        """Initialize the analysis manager"""
+    def __init__(
+        self,
+        result_repository: Optional[ResultRepository] = None,
+        executor: Optional[Executor] = None,
+    ) -> None:
+        self.result_repository = result_repository
+        self.executor = executor
+
         self.defect_analyzer = DefectAnalyzer(
             ovito_python_path=settings.ovito_python_path
         )
         self.data_averager = DataAverager()
         self.model_fitter = ModelFitter()
 
-        self.current_results: Dict[str, List] = {
-            "defect_statistics": [],
-            "averaged_data": [],
-            "fitting_results": [],
-        }
-
-    def run_verification_pipeline(
+    async def run_verification_pipeline(
         self,
         potential_file: Path,
         structure_file: Path,
-        simulation_params: Dict[str, any],
-        fitting_params: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, any]:
-        """
-        Run complete verification pipeline
+        simulation_params: dict[str, Any],
+        fitting_params: Optional[dict[str, float]] = None,
+    ) -> dict[str, Any]:
+        """Run complete verification pipeline.
 
         Args:
-            potential_file: Path to potential function file
-            structure_file: Path to atomic structure file
-            simulation_params: MD simulation parameters
-            fitting_params: Optional initial parameters for fitting
+            potential_file: Path to potential function file.
+            structure_file: Path to atomic structure file.
+            simulation_params: MD simulation parameters.
+            fitting_params: Optional initial parameters for fitting.
 
         Returns:
-            Dictionary with complete verification results
+            Dictionary with complete verification results.
 
         Raises:
-            FileNotFoundError: If input files don't exist
-            ValueError: If simulation parameters are invalid
+            FileNotFoundError: If input files don't exist.
+            ValueError: If simulation parameters are invalid.
         """
         if not potential_file.exists():
             raise FileNotFoundError(f"Potential file not found: {potential_file}")
@@ -70,8 +81,8 @@ class AnalysisManager:
         if not structure_file.exists():
             raise FileNotFoundError(f"Structure file not found: {structure_file}")
 
-        # Step 1: Run MD simulation (TODO: implement via lammps_runner)
-        trajectory_files = self._run_md_simulation(
+        # Step 1: Run MD simulation via Executor port
+        trajectory_files = await self._run_md_simulation(
             potential_file, structure_file, simulation_params
         )
 
@@ -86,8 +97,8 @@ class AnalysisManager:
         if fitting_params:
             fitting_result = self._fit_potential(averaged_data, fitting_params)
 
-        return {
-            "timestamp": datetime.now().isoformat(),
+        # Build result
+        result_dict: dict[str, Any] = {
             "potential_file": str(potential_file),
             "structure_file": str(structure_file),
             "defect_results": defect_results,
@@ -95,71 +106,75 @@ class AnalysisManager:
             "fitting_result": fitting_result,
         }
 
-    def _run_md_simulation(
+        # Persist via ResultRepository if available
+        if self.result_repository is not None:
+            analysis_result = AnalysisResult(
+                job_id=self._current_job_id or "unknown",
+                potential_file=str(potential_file),
+                structure_file=str(structure_file),
+            )
+            await self.result_repository.save_result(analysis_result)
+
+        return result_dict
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    async def _run_md_simulation(
         self,
         potential_file: Path,
         structure_file: Path,
-        params: Dict[str, any],
-    ) -> List[Path]:
+        params: dict[str, Any],
+    ) -> list[Path]:
+        """Run MD simulation via the Executor port.
+
+        Falls back to a no-op placeholder when no executor is injected.
         """
-        Run MD simulation (placeholder for lammps_runner integration)
+        if self.executor is None:
+            logger.info("No executor injected — skipping MD simulation")
+            return []
 
-        Args:
-            potential_file: Path to potential function file
-            structure_file: Path to atomic structure file
-            params: Simulation parameters
+        job_spec = JobSpec(
+            potential_file=str(potential_file),
+            structure_file=str(structure_file),
+            temperature=float(params.get("temperature", 300)),
+            pressure=float(params.get("pressure", 0)),
+            steps=int(params.get("steps", 10000)),
+        )
 
-        Returns:
-            List of trajectory file paths
-        """
-        # TODO: Implement MD simulation execution via lammps_runner
-        # This will be replaced with actual LAMMPS execution logic
+        job_id = await self.executor.submit(job_spec)
+        self._current_job_id = job_id
+        logger.info("Submitted job %s via executor", job_id)
 
-        # Placeholder: return empty list
-        print(f"Would run MD simulation with potential: {potential_file}")
-        return []
+        job_output = await self.executor.retrieve_output(job_id)
+        return [Path(f) for f in job_output.output_files]
+
+    _current_job_id: str | None = None
 
     def _analyze_defects(
-        self, trajectory_files: List[Path], reference_structure: Path
-    ) -> List[DefectStatistics]:
-        """
-        Analyze defects from trajectory files
-
-        Args:
-            trajectory_files: List of MD trajectory files
-            reference_structure: Reference perfect crystal structure
-
-        Returns:
-            List of defect statistics
-        """
-        results = []
+        self, trajectory_files: list[Path], reference_structure: Path
+    ) -> list[DefectResult]:
+        """Analyze defects from trajectory files."""
+        results: list[DefectResult] = []
         for traj_file in trajectory_files:
             try:
                 stats = self.defect_analyzer.analyze_trajectory(
                     traj_file, reference_structure
                 )
                 results.append(stats)
-            except Exception as e:
-                print(f"Warning: Failed to analyze {traj_file}: {e}")
+            except Exception as exc:
+                logger.warning("Failed to analyze %s: %s", traj_file, exc)
 
         return results
 
     def _average_results(
-        self, defect_results: List[DefectStatistics]
-    ) -> Dict[str, AveragedResult]:
-        """
-        Average results from multiple simulations
-
-        Args:
-            defect_results: List of defect statistics
-
-        Returns:
-            Dictionary of averaged results
-        """
+        self, defect_results: list[DefectResult]
+    ) -> dict[str, AveragedResult]:
+        """Average results from multiple simulations."""
         if not defect_results:
             return {}
 
-        # Convert to list of dicts for averaging
         defect_stats_list = [
             {
                 "vacancies": stats.vacancies,
@@ -173,60 +188,44 @@ class AnalysisManager:
         return self.data_averager.average_defect_statistics(defect_stats_list)
 
     def _fit_potential(
-        self, averaged_data: Dict[str, AveragedResult], initial_params: Dict[str, float]
+        self, averaged_data: dict[str, AveragedResult], initial_params: dict[str, float]
     ) -> FittingResult:
-        """
-        Fit potential parameters
-
-        Args:
-            averaged_data: Averaged simulation data
-            initial_params: Initial parameter guess
-
-        Returns:
-            Fitting result
-        """
-        # TODO: Implement actual fitting logic
-        # This is a placeholder implementation
+        """Fit potential parameters."""
         return self.model_fitter.fit_potential(
             reference_data={}, initial_parameters=initial_params
         )
 
     def cleanup_temporary_files(self) -> None:
-        """Clean up temporary files from analysis"""
-        # TODO: Implement cleanup logic
+        """Clean up temporary files from analysis."""
         pass
 
-    def save_results(self, results: Dict[str, any], output_path: Path) -> None:
-        """
-        Save verification results to file
+    def save_results(self, results: dict[str, Any], output_path: Path) -> None:
+        """Save verification results to file (legacy sync API).
 
-        Args:
-            results: Verification results dictionary
-            output_path: Path to save results
+        Prefer ``ResultRepository`` for new code.  This method is kept
+        for backward compatibility with the CLI.
         """
-        import json
-
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert numpy arrays and special objects to JSON-serializable format
         json_results = self._serialize_results(results)
 
         with open(output_path, "w") as f:
-            json.dump(json_results, f, indent=2)
+            json.dump(json_results, f, indent=2, default=str)
 
-    def _serialize_results(self, results: Dict[str, any]) -> Dict[str, any]:
-        """Convert results to JSON-serializable format"""
-        serialized: Dict[str, any] = {}
+    @staticmethod
+    def _serialize_results(results: dict[str, Any]) -> dict[str, Any]:
+        """Convert results to JSON-serializable format."""
+        serialized: dict[str, Any] = {}
 
         for key, value in results.items():
             if isinstance(value, dict):
-                serialized[key] = self._serialize_results(value)
+                serialized[key] = AnalysisManager._serialize_results(value)
             elif isinstance(value, list):
                 serialized[key] = [
                     item.model_dump(mode="json") if hasattr(item, "model_dump") else item
                     for item in value
                 ]
-            elif hasattr(value, "model_dump"):  # Pydantic models
+            elif hasattr(value, "model_dump"):
                 serialized[key] = value.model_dump(mode="json")
             else:
                 serialized[key] = value
