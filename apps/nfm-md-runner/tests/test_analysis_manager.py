@@ -132,16 +132,15 @@ class TestRunVerificationPipeline:
 class TestInternalPipelineSteps:
     """Test internal pipeline step methods"""
 
-    def test_run_md_simulation_placeholder(self, manager, mock_files):
+    @pytest.mark.asyncio
+    async def test_run_md_simulation_placeholder(self, manager, mock_files):
         """Test _run_md_simulation returns empty list (no executor)"""
-        result = manager._run_md_simulation(
+        result = await manager._run_md_simulation(
             mock_files["potential_file"],
             mock_files["structure_file"],
             {"temperature": 300},
         )
-        # Returns a coroutine because it's async — need to await
-        import asyncio
-        assert asyncio.iscoroutine(result)
+        assert result == []
 
     def test_analyze_defects_empty_trajectories(self, manager, mock_files):
         """Test _analyze_defects with empty trajectory list"""

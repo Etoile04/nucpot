@@ -5,7 +5,7 @@ Tests CLI commands using click.testing.CliRunner with mocked backends.
 """
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -137,60 +137,66 @@ class TestRunCommand:
 
     def test_run_success(self, runner, mock_files):
         """Test run command with valid inputs"""
+        mock_result = {
+            "timestamp": "2026-06-23T00:00:00Z",
+            "potential_file": str(mock_files["potential"]),
+            "structure_file": str(mock_files["structure"]),
+            "defect_results": [],
+            "averaged_data": {},
+            "fitting_result": None,
+            # Include keys the CLI reads in the no-output branch
+            "error_message": None,
+        }
+        mock_manager = MagicMock()
+        mock_manager.save_results = MagicMock()
         with patch("nfm_md_runner.cli.verify_environment", return_value=True):
-            with patch("nfm_md_runner.cli.AnalysisManager") as MockManager:
-                mock_mgr = MockManager.return_value
-                mock_mgr.run_verification_pipeline.return_value = {
-                    "timestamp": "2026-06-23T00:00:00Z",
-                    "potential_file": str(mock_files["potential"]),
-                    "structure_file": str(mock_files["structure"]),
-                    "defect_results": [],
-                    "averaged_data": {},
-                    "fitting_result": None,
-                }
+            with patch("nfm_md_runner.cli.AnalysisManager", return_value=mock_manager):
+                with patch("nfm_md_runner.cli.asyncio.run", return_value=mock_result) as mock_run:
+                    result = runner.invoke(
+                        cli,
+                        [
+                            "run",
+                            str(mock_files["potential"]),
+                            str(mock_files["structure"]),
+                            "--temperature", "300",
+                            "--steps", "1000",
+                        ],
+                    )
 
-                result = runner.invoke(
-                    cli,
-                    [
-                        "run",
-                        str(mock_files["potential"]),
-                        str(mock_files["structure"]),
-                        "--temperature", "300",
-                        "--steps", "1000",
-                    ],
-                )
-
-                assert result.exit_code == 0
-                assert "verification for potential" in result.output
+                    assert result.exit_code == 0
+                    assert "verification for potential" in result.output
+                    # Verify asyncio.run was called with a coroutine
+                    assert mock_run.called
 
     def test_run_with_output(self, runner, mock_files, tmp_path):
         """Test run command saves output to file"""
         output_file = tmp_path / "results.json"
 
+        mock_result = {
+            "timestamp": "2026-06-23T00:00:00Z",
+            "potential_file": str(mock_files["potential"]),
+            "structure_file": str(mock_files["structure"]),
+            "defect_results": [],
+            "averaged_data": {},
+            "fitting_result": None,
+        }
+        mock_manager = MagicMock()
+        mock_manager.save_results = MagicMock()
         with patch("nfm_md_runner.cli.verify_environment", return_value=True):
-            with patch("nfm_md_runner.cli.AnalysisManager") as MockManager:
-                mock_mgr = MockManager.return_value
-                mock_mgr.run_verification_pipeline.return_value = {
-                    "timestamp": "2026-06-23T00:00:00Z",
-                    "potential_file": str(mock_files["potential"]),
-                    "structure_file": str(mock_files["structure"]),
-                    "defect_results": [],
-                    "averaged_data": {},
-                    "fitting_result": None,
-                }
+            with patch("nfm_md_runner.cli.AnalysisManager", return_value=mock_manager):
+                with patch("nfm_md_runner.cli.asyncio.run", return_value=mock_result):
+                    result = runner.invoke(
+                        cli,
+                        [
+                            "run",
+                            str(mock_files["potential"]),
+                            str(mock_files["structure"]),
+                            "--output", str(output_file),
+                        ],
+                    )
 
-                result = runner.invoke(
-                    cli,
-                    [
-                        "run",
-                        str(mock_files["potential"]),
-                        str(mock_files["structure"]),
-                        "--output", str(output_file),
-                    ],
-                )
-
-                assert result.exit_code == 0
-                assert "Results saved" in result.output
+                    assert result.exit_code == 0
+                    assert "Results saved" in result.output
 
     def test_run_with_fitting(self, runner, mock_files):
         """Test run command with --fit flag"""
@@ -200,29 +206,29 @@ class TestRunCommand:
             method=FittingMethod.ARC_DPA, converged=True, iterations=50
         )
 
+        mock_manager = MagicMock()
         with patch("nfm_md_runner.cli.verify_environment", return_value=True):
-            with patch("nfm_md_runner.cli.AnalysisManager") as MockManager:
-                mock_mgr = MockManager.return_value
-                mock_mgr.run_verification_pipeline.return_value = {
-                    "timestamp": "2026-06-23T00:00:00Z",
-                    "potential_file": str(mock_files["potential"]),
-                    "structure_file": str(mock_files["structure"]),
-                    "defect_results": [],
-                    "averaged_data": {},
-                    "fitting_result": mock_fitting,
-                }
+            mock_result = {
+                "timestamp": "2026-06-23T00:00:00Z",
+                "potential_file": str(mock_files["potential"]),
+                "structure_file": str(mock_files["structure"]),
+                "defect_results": [],
+                "averaged_data": {},
+                "fitting_result": mock_fitting,
+            }
+            with patch("nfm_md_runner.cli.AnalysisManager", return_value=mock_manager):
+                with patch("nfm_md_runner.cli.asyncio.run", return_value=mock_result):
+                    result = runner.invoke(
+                        cli,
+                        [
+                            "run",
+                            str(mock_files["potential"]),
+                            str(mock_files["structure"]),
+                            "--fit",
+                        ],
+                    )
 
-                result = runner.invoke(
-                    cli,
-                    [
-                        "run",
-                        str(mock_files["potential"]),
-                        str(mock_files["structure"]),
-                        "--fit",
-                    ],
-                )
-
-                assert result.exit_code == 0
+                    assert result.exit_code == 0
 
     def test_run_env_failure(self, runner, mock_files):
         """Test run command with environment verification failure"""
