@@ -792,3 +792,184 @@ class TestHPCAdapterIntegration:
         
         assert 'slurm' in version.lower()
         print(f"SLURM version: {version}")
+
+
+class TestSSHConnectionManagerThreadSafety:
+    """Tests for NFM-396: _connections dict must be thread-safe."""
+
+    def test_lock_protects_get_connection(self):
+        """get_connection must acquire and release the lock around dict access."""
+        import threading
+
+        manager = SSHConnectionManager(max_connections=2)
+        assert isinstance(manager._lock, type(threading.Lock()))
+
+    def test_lock_protects_close_all(self):
+        """close_all must acquire and release the lock."""
+        manager = SSHConnectionManager()
+        mock_client = MagicMock()
+        manager._connections = {ClusterType.GUANGZHOU: [mock_client]}
+
+        with manager._lock:
+            # Simulate lock being held — close_all should not deadlock
+            pass
+
+        manager.close_all()
+        mock_client.close.assert_called_once()
+        assert manager._connections == {}
+
+    def test_concurrent_get_connection_no_corruption(self):
+        """Concurrent get_connection calls must not corrupt the dict."""
+        import threading
+
+        manager = SSHConnectionManager(max_connections=3)
+        cluster_config = ClusterConfig(
+            name=ClusterType.GUANGZHOU,
+            host="test.example.com",
+            username="testuser",
+            ssh_key_path=Path("/tmp/test_key"),
+        )
+
+        errors = []
+        results = []
+        barrier = threading.Barrier(4)
+
+        def create_mock_connection():
+            """Helper to create and return a mock SSH client."""
+            mock_client = MagicMock()
+            transport = MagicMock()
+            transport.is_active.return_value = True
+            transport.send_ignore.return_value = None
+            mock_client.get_transport.return_value = transport
+            return mock_client
+
+        def worker():
+            try:
+                barrier.wait(timeout=2)
+                with patch('nfm_md_runner.hpc_adapter.SSHClient', return_value=create_mock_connection()), \
+                     patch('pathlib.Path.exists', return_value=True), \
+                     patch('pathlib.Path.stat') as mock_stat:
+                    mock_stat_mode = MagicMock()
+                    mock_stat_mode.st_mode = 0o600
+                    mock_stat.return_value = mock_stat_mode
+                    conn = manager._create_connection(cluster_config)
+                    results.append(conn)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert len(errors) == 0, f"Thread errors: {errors}"
+        # All connections should be stored without corruption
+        assert len(manager._connections.get(ClusterType.GUANGZHOU, [])) <= manager.max_connections
+
+
+class TestValidatePositiveInt:
+    """Tests for the validate_positive_int helper (NFM-391)."""
+
+    def test_valid_positive_integer(self):
+        """Accepts a normal positive integer."""
+        assert validate_positive_int(4, "nodes") == 4
+
+    def test_valid_one(self):
+        """Accepts 1 as a positive integer."""
+        assert validate_positive_int(1, "ntasks_per_node") == 1
+
+    def test_valid_large_integer(self):
+        """Accepts a large positive integer."""
+        assert validate_positive_int(1024, "nodes") == 1024
+
+    def test_rejects_zero(self):
+        """Rejects zero — not a valid node/task count."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int(0, "nodes")
+
+    def test_rejects_negative(self):
+        """Rejects negative integers."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int(-1, "nodes")
+
+    def test_rejects_float(self):
+        """Rejects float values."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int(2.5, "nodes")
+
+    def test_rejects_string_injection(self):
+        """Rejects string injection payloads."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int("1; rm -rf /", "nodes")
+
+    def test_rejects_empty_string(self):
+        """Rejects empty strings."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int("", "ntasks_per_node")
+
+    def test_rejects_shell_command_substitution(self):
+        """Rejects shell command substitution in string form."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int("1$(whoami)", "nodes")
+
+    def test_rejects_none(self):
+        """Rejects None."""
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_positive_int(None, "nodes")
+
+
+class TestSLURMScriptInjectionPrevention:
+    """Tests that SLURM script rejects injected nodes/ntasks (NFM-391)."""
+
+    @pytest.fixture
+    def adapter(self):
+        with patch('nfm_md_runner.hpc_adapter.settings') as mock_settings:
+            mock_settings.hpc_host = "test.example.com"
+            mock_settings.hpc_port = 22
+            mock_settings.hpc_user = "testuser"
+            mock_settings.hpc_ssh_key_path = Path("/tmp/test_key")
+            mock_settings.hpc_work_dir = Path("/scratch/test")
+            mock_settings.lammps_modules = "module load lammps"
+            mock_settings.ovito_enabled = False
+            mock_settings.slurm_partition = "compute"
+            mock_settings.slurm_nodes = 1
+            mock_settings.slurm_ntasks_per_node = 32
+            return HPCAdapter()
+
+    def test_nodes_string_injection_rejected(self, adapter):
+        """Rejects shell injection via nodes parameter."""
+        config = {'nodes': "1; rm -rf /", 'ntasks_per_node': 32}
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._generate_slurm_script(config)
+
+    def test_ntasks_string_injection_rejected(self, adapter):
+        """Rejects shell injection via ntasks_per_node parameter."""
+        config = {'nodes': 2, 'ntasks_per_node': "32$(whoami)"}
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._generate_slurm_script(config)
+
+    def test_nodes_negative_rejected(self, adapter):
+        """Rejects negative nodes value."""
+        config = {'nodes': -1, 'ntasks_per_node': 32}
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._generate_slurm_script(config)
+
+    def test_ntasks_zero_rejected(self, adapter):
+        """Rejects zero ntasks_per_node value."""
+        config = {'nodes': 2, 'ntasks_per_node': 0}
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._generate_slurm_script(config)
+
+    def test_nodes_command_substitution_rejected(self, adapter):
+        """Rejects command substitution in nodes."""
+        config = {'nodes': "$(cat /etc/passwd)", 'ntasks_per_node': 32}
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._generate_slurm_script(config)
+
+    def test_valid_int_nodes_accepted(self, adapter):
+        """Accepts valid integer nodes parameter."""
+        config = {'nodes': 4, 'ntasks_per_node': 64}
+        script = adapter._generate_slurm_script(config)
+        assert '#SBATCH --nodes=4' in script
+        assert '#SBATCH --ntasks-per-node=64' in script

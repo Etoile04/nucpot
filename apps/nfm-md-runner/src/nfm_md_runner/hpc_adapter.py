@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import socket
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -88,6 +89,30 @@ def validate_remote_path(path: str) -> str:
     return path
 
 
+def validate_job_id(job_id: str | int) -> str:
+    """Validate that a SLURM job ID is a non-empty numeric string.
+
+    Prevents command injection by ensuring the job ID contains only
+    digits before it is interpolated into shell commands (squeue,
+    sacct, scancel, scp).
+
+    Args:
+        job_id: The SLURM job ID to validate.
+
+    Returns:
+        The validated job ID as a string.
+
+    Raises:
+        ValueError: If the job ID is empty or contains non-numeric characters.
+    """
+    job_id_str = str(job_id)
+    if not re.match(r'^\d+$', job_id_str):
+        raise ValueError(
+            f"Invalid SLURM job ID (must be numeric): {job_id!r}"
+        )
+    return job_id_str
+
+
 class JobStatus(Enum):
     """SLURM job status enumeration"""
     PENDING = "pending"
@@ -161,36 +186,40 @@ class SSHConnectionManager:
         self.max_connections = max_connections
         self._skip_key_validation = skip_key_validation
         self._known_hosts_path = known_hosts_path
+        self._lock = threading.Lock()
         self._connections: Dict[ClusterType, List[SSHClient]] = {}
         self._connection_last_used: Dict[ClusterType, List[datetime]] = {}
         
     def get_connection(self, cluster: ClusterConfig) -> SSHClient:
         """
         Get or create SSH connection
-        
+
+        Thread-safe: acquires _lock for all dict access.
+
         Args:
             cluster: Cluster configuration
-            
+
         Returns:
             Active SSH client connection
         """
-        # Check if we have an existing persistent connection
-        if cluster.name in self._connections and self._connections[cluster.name]:
-            conn_idx = self._get_least_recently_used(cluster.name)
-            conn = self._connections[cluster.name][conn_idx]
-            
-            # Test connection is still alive
-            if self._test_connection(conn):
-                self._connection_last_used[cluster.name][conn_idx] = datetime.now()
-                logger.debug(f"Reusing existing SSH connection to {cluster.host}")
-                return conn
-            else:
-                # Remove stale connection
-                logger.warning(f"Stale SSH connection to {cluster.host}, recreating")
-                self._remove_connection(cluster.name, conn_idx)
-        
-        # Create new connection
-        return self._create_connection(cluster)
+        with self._lock:
+            # Check if we have an existing persistent connection
+            if cluster.name in self._connections and self._connections[cluster.name]:
+                conn_idx = self._get_least_recently_used(cluster.name)
+                conn = self._connections[cluster.name][conn_idx]
+
+                # Test connection is still alive
+                if self._test_connection(conn):
+                    self._connection_last_used[cluster.name][conn_idx] = datetime.now()
+                    logger.debug(f"Reusing existing SSH connection to {cluster.host}")
+                    return conn
+                else:
+                    # Remove stale connection
+                    logger.warning(f"Stale SSH connection to {cluster.host}, recreating")
+                    self._remove_connection(cluster.name, conn_idx)
+
+            # Create new connection (called under lock to protect pool insertion)
+            return self._create_connection(cluster)
     
     def _get_least_recently_used(self, cluster: ClusterType) -> int:
         """Get index of least recently used connection"""
@@ -681,8 +710,7 @@ class HPCFileTransfer:
                 sftp.stat(safe_path)
             except IOError:
                 # Directory doesn't exist, create it
-                stdin, stdout, stderr = conn.exec_command(f"mkdir -p {safe_path}")
-                stdout.channel.recv_exit_status()
+                self._exec_command(conn, f"mkdir -p {safe_path}")
             finally:
                 sftp.close()
         except (IOError, OSError) as e:
