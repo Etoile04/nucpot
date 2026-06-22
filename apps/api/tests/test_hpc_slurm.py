@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from nfm_db.services.hpc_slurm import (
     generate_slurm_script,
+    validate_shell_safe,
     validate_simulation_params,
     parse_walltime,
     upload_script_via_sftp,
@@ -970,3 +971,164 @@ class TestCreateHpcJobRecord:
 
         # The generator should have been fully consumed (cleanup __anext__)
         # No assertion needed -- just ensuring no StopAsyncIteration leak
+
+
+# ---------------------------------------------------------------------------
+# validate_shell_safe
+# ---------------------------------------------------------------------------
+
+
+class TestValidateShellSafe:
+    """Tests for validate_shell_safe — shell injection prevention."""
+
+    @pytest.mark.unit
+    def test_simple_alphanumeric_passes(self) -> None:
+        """Simple alphanumeric value passes validation."""
+        result = validate_shell_safe("md_verification", "job_name")
+        assert result == "md_verification"
+
+    @pytest.mark.unit
+    def test_underscores_and_dashes_pass(self) -> None:
+        """Values with underscores and dashes pass validation."""
+        result = validate_shell_safe("my-custom_job_01", "job_name")
+        assert result == "my-custom_job_01"
+
+    @pytest.mark.unit
+    def test_path_with_slashes_passes(self) -> None:
+        """Absolute path values pass validation."""
+        result = validate_shell_safe("/opt/lammps/bin/lmp_mpi", "lammps_executable")
+        assert result == "/opt/lammps/bin/lmp_mpi"
+
+    @pytest.mark.unit
+    def test_filename_with_extension_passes(self) -> None:
+        """Filename with extension passes validation."""
+        result = validate_shell_safe("lammps.out", "output_file")
+        assert result == "lammps.out"
+
+    @pytest.mark.unit
+    def test_filename_with_percent_j_passes(self) -> None:
+        """SLURM pattern %j in filename passes validation."""
+        result = validate_shell_safe("results/%j.out", "output_file")
+        assert result == "results/%j.out"
+
+    @pytest.mark.unit
+    def test_semicolon_rejected(self) -> None:
+        """Semicolon injection is rejected."""
+        with pytest.raises(ValueError, match="job_name"):
+            validate_shell_safe("'; rm -rf /", "job_name")
+
+    @pytest.mark.unit
+    def test_command_substitution_rejected(self) -> None:
+        """$() command substitution is rejected."""
+        with pytest.raises(ValueError, match="lammps_executable"):
+            validate_shell_safe("$(malicious)", "lammps_executable")
+
+    @pytest.mark.unit
+    def test_pipe_rejected(self) -> None:
+        """Pipe operator is rejected."""
+        with pytest.raises(ValueError, match="input_file"):
+            validate_shell_safe("value | cat /etc/passwd", "input_file")
+
+    @pytest.mark.unit
+    def test_backtick_rejected(self) -> None:
+        """Backtick command substitution is rejected."""
+        with pytest.raises(ValueError, match="partition"):
+            validate_shell_safe("`cat /etc/shadow`", "partition")
+
+    @pytest.mark.unit
+    def test_newline_rejected(self) -> None:
+        """Newline injection is rejected."""
+        with pytest.raises(ValueError, match="job_name"):
+            validate_shell_safe("job\nrm -rf /", "job_name")
+
+    @pytest.mark.unit
+    def test_null_byte_rejected(self) -> None:
+        """Null byte injection is rejected."""
+        with pytest.raises(ValueError, match="output_file"):
+            validate_shell_safe("job\0malicious", "output_file")
+
+    @pytest.mark.unit
+    def test_background_ampersand_rejected(self) -> None:
+        """Background operator & is rejected."""
+        with pytest.raises(ValueError, match="partition"):
+            validate_shell_safe("compute & malicious", "partition")
+
+    @pytest.mark.unit
+    def test_logical_and_rejected(self) -> None:
+        """Logical && operator is rejected."""
+        with pytest.raises(ValueError, match="job_name"):
+            validate_shell_safe("job && rm -rf /", "job_name")
+
+    @pytest.mark.unit
+    def test_empty_string_passes(self) -> None:
+        """Empty string passes (caller decides if empty is meaningful)."""
+        result = validate_shell_safe("", "field")
+        assert result == ""
+
+    @pytest.mark.unit
+    def test_field_name_in_error_message(self) -> None:
+        """ValueError message includes the field name."""
+        with pytest.raises(ValueError, match="partition"):
+            validate_shell_safe("bad;value", "partition")
+
+
+# ---------------------------------------------------------------------------
+# generate_slurm_script — injection prevention integration
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSlurmScriptInjectionPrevention:
+    """Tests that generate_slurm_script rejects shell-injectable parameters."""
+
+    @pytest.mark.unit
+    def test_job_name_semicolon_rejected(self, default_params: dict) -> None:
+        """job_name with semicolon raises ValueError."""
+        params = {**default_params, "job_name": "job; rm -rf /"}
+        with pytest.raises(ValueError, match="job_name"):
+            generate_slurm_script(params)
+
+    @pytest.mark.unit
+    def test_partition_pipe_rejected(self, default_params: dict) -> None:
+        """partition with pipe raises ValueError."""
+        params = {**default_params, "partition": "gpu | cat /etc/passwd"}
+        with pytest.raises(ValueError, match="partition"):
+            generate_slurm_script(params)
+
+    @pytest.mark.unit
+    def test_output_file_backtick_rejected(self, default_params: dict) -> None:
+        """output_file with backtick raises ValueError."""
+        params = {**default_params, "output_file": "`malicious`.out"}
+        with pytest.raises(ValueError, match="output_file"):
+            generate_slurm_script(params)
+
+    @pytest.mark.unit
+    def test_lammps_executable_command_sub_rejected(
+        self, default_params: dict
+    ) -> None:
+        """lammps_executable with $() raises ValueError."""
+        params = {**default_params, "lammps_executable": "$(whoami)"}
+        with pytest.raises(ValueError, match="lammps_executable"):
+            generate_slurm_script(params)
+
+    @pytest.mark.unit
+    def test_input_file_newline_rejected(self, default_params: dict) -> None:
+        """input_file with newline raises ValueError."""
+        params = {
+            **default_params,
+            "lammps_executable": "/opt/lammps/bin/lmp",
+            "input_file": "in.lammps\nevil",
+        }
+        with pytest.raises(ValueError, match="input_file"):
+            generate_slurm_script(params)
+
+    @pytest.mark.unit
+    def test_valid_params_still_generate(self, default_params: dict) -> None:
+        """Valid params still produce correct script after validation added."""
+        script = generate_slurm_script(default_params)
+        assert "#SBATCH --job-name=md_verification" in script
+
+    @pytest.mark.unit
+    def test_default_params_still_work(self) -> None:
+        """Empty params (all defaults) still produce a valid script."""
+        script = generate_slurm_script({})
+        assert "#!/bin/bash" in script

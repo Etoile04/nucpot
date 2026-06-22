@@ -12,7 +12,38 @@ from datetime import datetime
 from nfm_db.services.hpc_metrics import PROMETHEUS_AVAILABLE, hpc_job_submissions
 from nfm_db.services.hpc_ssh import JobSubmissionError
 
+import re
+
 logger = logging.getLogger(__name__)
+
+# Characters/patterns that enable shell injection
+_SHELL_DANGEROUS_PATTERN = re.compile(r"[;&\n\0`$|]")
+
+
+def validate_shell_safe(value: str, field_name: str) -> str:
+    """Validate that a value is safe for shell script interpolation.
+
+    Rejects values containing shell metacharacters that could enable
+    command injection: semicolons, newlines, null bytes, backticks,
+    dollar signs (for $() and $var), and pipes.
+
+    Args:
+        value: The string to validate.
+        field_name: Human-readable field name for error messages.
+
+    Returns:
+        The validated string (unchanged).
+
+    Raises:
+        ValueError: If the value contains shell-unsafe characters.
+    """
+    if _SHELL_DANGEROUS_PATTERN.search(value):
+        raise ValueError(
+            f"Unsafe shell character in {field_name}: "
+            f"only alphanumeric, dashes, underscores, dots, slashes, "
+            f"and percent signs are permitted"
+        )
+    return value
 
 
 def generate_slurm_script(params: Dict[str, Any]) -> str:
@@ -23,14 +54,24 @@ def generate_slurm_script(params: Dict[str, Any]) -> str:
 
     Returns:
         Complete SLURM batch script content
+
+    Raises:
+        ValueError: If any user-controlled string parameter contains
+            shell-unsafe characters.
     """
-    job_name = params.get("job_name", "md_verification")
+    job_name = validate_shell_safe(
+        str(params.get("job_name", "md_verification")), "job_name"
+    )
     nodes = params.get("nodes", 1)
     cpus_per_task = params.get("cpus_per_task", 4)
     memory = params.get("memory", "16G")
     walltime = params.get("walltime", "02:00:00")
-    partition = params.get("partition", "compute")
-    output_file = params.get("output_file", "lammps.out")
+    partition = validate_shell_safe(
+        str(params.get("partition", "compute")), "partition"
+    )
+    output_file = validate_shell_safe(
+        str(params.get("output_file", "lammps.out")), "output_file"
+    )
 
     script = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
@@ -51,8 +92,12 @@ echo "Job ID: $SLURM_JOB_ID"
 """
 
     if "lammps_executable" in params:
-        lammps_exec = params["lammps_executable"]
-        input_file = params.get("input_file", "in.lammps")
+        lammps_exec = validate_shell_safe(
+            str(params["lammps_executable"]), "lammps_executable"
+        )
+        input_file = validate_shell_safe(
+            str(params.get("input_file", "in.lammps")), "input_file"
+        )
         script += f"""
 # Run LAMMPS with MPI
 mpirun {lammps_exec} -in {input_file}
