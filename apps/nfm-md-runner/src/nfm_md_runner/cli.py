@@ -4,6 +4,7 @@ CLI Interface for nfm-md-runner
 Command-line interface for molecular dynamics verification pipeline.
 """
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Optional
@@ -84,12 +85,12 @@ def run(
 
         # Run verification pipeline
         click.echo(f"Running verification for potential: {potential_file.name}")
-        results = manager.run_verification_pipeline(
+        results = asyncio.run(manager.run_verification_pipeline(
             potential_file=potential_file,
             structure_file=structure_file,
             simulation_params=simulation_params,
             fitting_params={"method": "arc-dpa"} if fit else None,
-        )
+        ))
 
         # Save results if output path provided
         if output:
@@ -167,7 +168,7 @@ def fit_potential(potential_file: Path, method: str, output: Optional[Path]) -> 
 
         from .model_fitter import ModelFitter
 
-        fitter = ModelFitter(fitting_method=method)
+        fitter = ModelFitter(method=method)
         # TODO: Implement actual fitting logic
         click.echo(f"Potential fitting with {method} method")
         click.echo(f"Potential file: {potential_file}")
