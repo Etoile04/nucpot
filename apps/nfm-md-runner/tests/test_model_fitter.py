@@ -91,43 +91,68 @@ def test_fit_potential_least_squares():
     assert result.computation_time >= 0
 
 
-def test_fit_potential_with_bounds():
-    """Test fitting with parameter bounds"""
+def test_fit_potential_with_constraints():
+    """Test fitting with parameter constraints (bounds).
+
+    NOTE: fit_potential signature is (reference_data, initial_parameters, constraints=None).
+    The `constraints` param expects Optional[dict[str, tuple[float, float]]] mapping
+    parameter names to (min, max) bounds. Use keyword argument to avoid positional
+    confusion — previously `param_bounds` was passed positionally mapping to `constraints`.
+    """
     fitter = ModelFitter(method=FittingMethod.ARC_DPA)
 
     target_data = {"energies": np.array([1.0, 2.0, 3.0])}
     initial_params = {"param1": 1.0}
-    param_bounds = {"param1": (0.0, 10.0)}  # Min, max
+    param_constraints = {"param1": (0.0, 10.0)}  # (min, max)
 
-    result = fitter.fit_potential(target_data, initial_params, param_bounds)
+    result = fitter.fit_potential(
+        target_data, initial_params, constraints=param_constraints
+    )
 
     assert isinstance(result, FittingResult)
 
 
 def test_validate_fitting_not_converged():
-    """Test validation fails for unconverged fitting"""
+    """Test validation fails for unconverged fitting.
+
+    NOTE: validate_fitting signature is (fitted_parameters, validation_data, tolerance=0.01).
+    The first arg must be dict[str, float] (the fitted parameters), NOT a FittingResult.
+    Extract parameters via .parameters to match the implementation contract.
+    """
     fitter = ModelFitter()
 
     fitting_result = FittingResult(
-        method=FittingMethod.ARC_DPA, converged=False
+        method=FittingMethod.ARC_DPA,
+        converged=False,
+        parameters={"param1": 1.0, "param2": 2.0},
     )
     validation_data = {"energies": np.array([1.0, 2.0, 3.0])}
 
-    result = fitter.validate_fitting(fitting_result, validation_data)
+    result = fitter.validate_fitting(
+        fitting_result.parameters, validation_data
+    )
 
     assert result is False
 
 
 def test_validate_fitting_converged():
-    """Test validation for converged fitting (placeholder)"""
+    """Test validation for converged fitting (placeholder).
+
+    NOTE: validate_fitting expects dict[str, float] for fitted_parameters,
+    not a FittingResult object. Pass fitting_result.parameters.
+    """
     fitter = ModelFitter()
 
     fitting_result = FittingResult(
-        method=FittingMethod.ARC_DPA, converged=True
+        method=FittingMethod.ARC_DPA,
+        converged=True,
+        parameters={"param1": 1.0},
     )
     validation_data = {"energies": np.array([1.0, 2.0, 3.0])}
 
-    result = fitter.validate_fitting(fitting_result, validation_data)
+    result = fitter.validate_fitting(
+        fitting_result.parameters, validation_data
+    )
 
     # Placeholder returns False even when converged
     assert result is False
