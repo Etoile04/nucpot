@@ -605,18 +605,46 @@ class SLURMJobManager:
 class HPCFileTransfer:
     """
     Manages file uploads and downloads to/from HPC clusters
-    
+
     Uses SFTP for reliable file transfer with resume capability
     """
-    
+
+    DEFAULT_COMMAND_TIMEOUT: int = 60
+
     def __init__(self, connection_manager: SSHConnectionManager):
         """
         Initialize file transfer manager
-        
+
         Args:
             connection_manager: SSH connection manager instance
         """
         self.conn_manager = connection_manager
+
+    def _exec_command(
+        self,
+        conn: SSHClient,
+        command: str,
+        timeout: Optional[int] = None,
+    ) -> str:
+        """Execute command and return output with a channel timeout."""
+        effective_timeout = timeout if timeout is not None else self.DEFAULT_COMMAND_TIMEOUT
+        stdin, stdout, stderr = conn.exec_command(command)
+        stdout.channel.settimeout(effective_timeout)
+
+        try:
+            exit_status = stdout.channel.recv_exit_status()
+        except socket.timeout:
+            raise RuntimeError(
+                f"Command timed out after {effective_timeout}s: {command}"
+            )
+
+        output = stdout.read().decode("utf-8").strip()
+        error_output = stderr.read().decode("utf-8").strip()
+
+        if exit_status != 0:
+            raise RuntimeError(f"Command failed with exit code {exit_status}: {error_output}")
+
+        return output
     
     def upload_file(
         self,
