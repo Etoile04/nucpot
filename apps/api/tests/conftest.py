@@ -1,8 +1,10 @@
 """Shared test fixtures for API integration tests."""
 
+from __future__ import annotations
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event, Text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nfm_db.database import get_db
@@ -11,14 +13,43 @@ from nfm_db.models import Base, BlogRole, User
 from nfm_db.services.auth_service import create_access_token
 
 
+# ---------------------------------------------------------------------------
+# SQLite compatibility: JSONB is PG-only — fall back to TEXT for test DDL.
+# This must run before the first ``create_all`` in any fixture.
+# ---------------------------------------------------------------------------
+@event.listens_for(Base.metadata, "before_create")
+def _map_jsonb_to_text_for_sqlite(
+    target,
+    connection,
+    **_kw,
+) -> None:
+    """Replace JSONB columns with TEXT so ``create_all`` succeeds on SQLite.
+
+    Runs on every ``before_create`` event (not once-only) because each test
+    re-creates the database from scratch.
+    """
+    from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+    from sqlalchemy.dialects.sqlite.base import SQLiteDialect
+
+    if not isinstance(connection.dialect, SQLiteDialect):
+        return
+
+    for table in target.sorted_tables:
+        for col in table.columns:
+            if isinstance(col.type, PG_JSONB):
+                col.type = Text()
+
+
 @pytest.fixture(autouse=True)
-def _reset_ontology_rate_limiter() -> None:
-    """Isolate the in-process rate limiter between tests (no cross-test 429)."""
-    from nfm_db.services.rate_limit import ontology_limiter
+def _reset_rate_limiters() -> None:
+    """Isolate all in-process rate limiters between tests (no cross-test 429)."""
+    from nfm_db.services.rate_limit import md_verification_limiter, ontology_limiter
 
     ontology_limiter.reset()
+    md_verification_limiter.reset()
     yield
     ontology_limiter.reset()
+    md_verification_limiter.reset()
 
 
 @pytest.fixture

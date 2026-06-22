@@ -71,6 +71,15 @@ def client_key(request: Request, *, route: str = "ontology") -> str:
 # Production singleton — overridden or reset in tests.
 ontology_limiter = InProcessRateLimiter()
 
+# MD verification: tighter limit (5/min) since jobs dispatch expensive SSH+SLURM ops.
+MD_VERIFICATION_MAX_REQUESTS = 5
+MD_VERIFICATION_WINDOW_SECONDS = 60
+
+md_verification_limiter = InProcessRateLimiter(
+    max_requests=MD_VERIFICATION_MAX_REQUESTS,
+    window_seconds=MD_VERIFICATION_WINDOW_SECONDS,
+)
+
 
 def make_rate_limit_dependency(
     limiter: InProcessRateLimiter,
@@ -87,3 +96,11 @@ def make_rate_limit_dependency(
 
 # Production dependency — enforces the per-IP limit on the ontology route.
 ontology_rate_limit = make_rate_limit_dependency(ontology_limiter)
+
+# Production dependency — enforces the per-IP limit on MD verification job
+# submission (NFM-401). Tighter than ontology because each request dispatches
+# an SSH+SLURM job on shared HPC hardware.
+md_verification_rate_limit = make_rate_limit_dependency(
+    md_verification_limiter,
+    route="md-verification",
+)

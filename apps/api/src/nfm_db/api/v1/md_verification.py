@@ -24,13 +24,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.core.auth import get_current_user
 from nfm_db.database import get_db
 from nfm_db.models import User
+from nfm_db.services.rate_limit import md_verification_rate_limit
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
     HpcJobStatus,
     JobStatus,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from nfm_db.services.hpc_file_transfer import validate_remote_path
 
 from nfm_db.services.md_verification import (
     DefectAnalysisResultResponse,
@@ -116,6 +119,7 @@ class CancelJobResponse(BaseModel):
 )
 async def submit_md_verification_job(
     request: MDVerificationJobSubmitRequest,
+    _rate: None = Depends(md_verification_rate_limit),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobResponse:
@@ -145,7 +149,7 @@ async def submit_md_verification_job(
         )
 
     try:
-        # Create job record
+        # Create job record with ownership
         service = MDVerificationService(session)
         job = await service.create_job(
             MDVerificationJobCreate(
@@ -155,6 +159,7 @@ async def submit_md_verification_job(
                 config=request.config,
                 priority=request.priority,
                 status=JobStatus.PENDING,
+                owner_id=current_user.id,
             )
         )
 
@@ -179,7 +184,7 @@ async def submit_md_verification_job(
             )
 
             # Refresh job to get updated status
-            updated_job = await service.get_job(job.id)
+            updated_job = await service.get_job(job.id, owner_id=current_user.id)
             if updated_job is not None:
                 job = updated_job
 
@@ -242,6 +247,7 @@ async def list_md_verification_jobs(
             element_system=element_system,
             limit=limit,
             offset=offset,
+            owner_id=current_user.id,
         )
 
         return MDVerificationJobListResponse(
@@ -286,7 +292,7 @@ async def get_md_verification_job(
     """
     try:
         service = MDVerificationService(session)
-        job = await service.get_job(job_id)
+        job = await service.get_job(job_id, owner_id=current_user.id)
 
         if job is None:
             raise HTTPException(
@@ -333,7 +339,7 @@ async def get_md_verification_job_status(
     """
     try:
         service = MDVerificationService(session)
-        job = await service.get_job(job_id)
+        job = await service.get_job(job_id, owner_id=current_user.id)
 
         if job is None:
             raise HTTPException(
@@ -393,7 +399,7 @@ async def cancel_md_verification_job(
     """
     try:
         service = MDVerificationService(session)
-        job = await service.get_job(job_id)
+        job = await service.get_job(job_id, owner_id=current_user.id)
 
         if job is None:
             raise HTTPException(
@@ -414,13 +420,19 @@ async def cancel_md_verification_job(
                 detail="Cannot cancel failed job",
             )
 
+        if job.status == JobStatus.CANCELLED:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail="Job already cancelled",
+            )
+
         previous_status = job.status
 
-        # Update job status to CANCELLED (using FAILED for cancelled state)
+        # Update job status to CANCELLED
         await service.update_job(
             job_id,
             {
-                "status": JobStatus.FAILED,
+                "status": JobStatus.CANCELLED,
                 "error_message": "Job cancelled by user",
                 "completed_at": datetime.now(UTC),
             },
@@ -431,7 +443,7 @@ async def cancel_md_verification_job(
         return CancelJobResponse(
             job_id=job_id,
             previous_status=previous_status,
-            new_status=JobStatus.FAILED,
+            new_status=JobStatus.CANCELLED,
             cancelled_at=datetime.now(UTC),
         )
 
@@ -472,7 +484,7 @@ async def get_simulation_results(
     """
     try:
         service = MDVerificationService(session)
-        job = await service.get_job(job_id)
+        job = await service.get_job(job_id, owner_id=current_user.id)
 
         if job is None:
             raise HTTPException(
@@ -529,7 +541,7 @@ async def get_defect_analysis_results(
     """
     try:
         service = MDVerificationService(session)
-        job = await service.get_job(job_id)
+        job = await service.get_job(job_id, owner_id=current_user.id)
 
         if job is None:
             raise HTTPException(
@@ -583,7 +595,7 @@ async def get_fitting_results(
     """
     try:
         service = MDVerificationService(session)
-        job = await service.get_job(job_id)
+        job = await service.get_job(job_id, owner_id=current_user.id)
 
         if job is None:
             raise HTTPException(
