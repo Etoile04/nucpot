@@ -21,6 +21,7 @@ from nfm_md_runner.hpc_adapter import (
     HPCJob,
     ClusterConfig,
     validate_positive_int,
+    validate_job_id,
 )
 
 
@@ -918,6 +919,128 @@ class TestValidatePositiveInt:
         """Rejects None."""
         with pytest.raises(ValueError, match="positive integer"):
             validate_positive_int(None, "nodes")
+
+
+class TestValidateJobId:
+    """Tests for validate_job_id helper (NFM-392: HQ1 command injection fix)."""
+
+    def test_valid_numeric_string(self):
+        """Accepts a normal numeric job ID string."""
+        assert validate_job_id("12345") == "12345"
+
+    def test_valid_integer_input(self):
+        """Accepts an integer and returns it as a string."""
+        assert validate_job_id(42) == "42"
+
+    def test_valid_single_digit(self):
+        """Accepts single-digit job IDs."""
+        assert validate_job_id("1") == "1"
+
+    def test_valid_large_job_id(self):
+        """Accepts large numeric job IDs."""
+        assert validate_job_id("999999999") == "999999999"
+
+    def test_rejects_empty_string(self):
+        """Rejects empty string — no job ID at all."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("")
+
+    def test_rejects_semicolon_injection(self):
+        """Rejects semicolon command injection: '123; rm -rf /'."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("123; rm -rf /")
+
+    def test_rejects_pipe_injection(self):
+        """Rejects pipe command injection: '123 | cat /etc/passwd'."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("123 | cat /etc/passwd")
+
+    def test_rejects_backtick_injection(self):
+        """Rejects backtick command substitution: '123`whoami`'."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("123`whoami`")
+
+    def test_rejects_dollar_sign_injection(self):
+        """Rejects dollar-sign variable expansion: '$(whoami)'."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("$(whoami)")
+
+    def test_rejects_newline_injection(self):
+        """Rejects newline injection."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("123\ncat /etc/shadow")
+
+    def test_rejects_alphanumeric_mix(self):
+        """Rejects job IDs with letters mixed in."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("abc123")
+
+    def test_rejects_spaces(self):
+        """Rejects job IDs containing spaces."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("123 456")
+
+    def test_rejects_null_byte(self):
+        """Rejects null byte injection."""
+        with pytest.raises(ValueError, match="numeric"):
+            validate_job_id("123\x00malicious")
+
+
+class TestSLURMJobIdInjectionPrevention:
+    """Tests that SLURM methods reject malicious job IDs (NFM-392)."""
+
+    @pytest.fixture
+    def job_manager(self, mock_ssh_client):
+        conn_manager = MagicMock()
+        conn_manager.get_connection.return_value = mock_ssh_client
+        return SLURMJobManager(conn_manager)
+
+    def test_get_job_status_rejects_injection(self, job_manager, mock_cluster_config):
+        """get_job_status must reject shell-injected job IDs."""
+        with pytest.raises(ValueError, match="numeric"):
+            job_manager.get_job_status(mock_cluster_config, "123; cat /etc/passwd")
+
+    def test_get_job_status_rejects_command_substitution(self, job_manager, mock_cluster_config):
+        """get_job_status must reject $(...) command substitution."""
+        with pytest.raises(ValueError, match="numeric"):
+            job_manager.get_job_status(mock_cluster_config, "$(whoami)")
+
+    def test_cancel_job_rejects_injection(self, job_manager, mock_cluster_config):
+        """cancel_job must reject shell-injected job IDs."""
+        with pytest.raises(ValueError, match="numeric"):
+            job_manager.cancel_job(mock_cluster_config, "123|rm -rf /")
+
+    def test_cancel_job_rejects_backtick(self, job_manager, mock_cluster_config):
+        """cancel_job must reject backtick injection."""
+        with pytest.raises(ValueError, match="numeric"):
+            job_manager.cancel_job(mock_cluster_config, "`id`")
+
+    @pytest.fixture
+    def adapter(self):
+        with patch('nfm_md_runner.hpc_adapter.settings') as mock_settings:
+            mock_settings.hpc_host = "test.example.com"
+            mock_settings.hpc_port = 22
+            mock_settings.hpc_user = "testuser"
+            mock_settings.hpc_ssh_key_path = Path("/tmp/test_key")
+            mock_settings.hpc_work_dir = Path("/scratch/test")
+            mock_settings.lammps_modules = "module load lammps"
+            mock_settings.ovito_enabled = False
+            mock_settings.slurm_partition = "compute"
+            mock_settings.slurm_nodes = 1
+            mock_settings.slurm_ntasks_per_node = 32
+            return HPCAdapter()
+
+    def test_download_results_rejects_injection(self, adapter, mock_cluster_config, tmp_path):
+        """download_results must reject shell-injected job IDs."""
+        with patch.object(adapter, '_get_cluster_config', return_value=mock_cluster_config):
+            with pytest.raises(ValueError, match="numeric"):
+                adapter.download_results("123; rm -rf /", ClusterType.GUANGZHOU, tmp_path)
+
+    def test_download_results_rejects_empty(self, adapter, mock_cluster_config, tmp_path):
+        """download_results must reject empty job IDs."""
+        with patch.object(adapter, '_get_cluster_config', return_value=mock_cluster_config):
+            with pytest.raises(ValueError, match="numeric"):
+                adapter.download_results("", ClusterType.GUANGZHOU, tmp_path)
 
 
 class TestSLURMScriptInjectionPrevention:
