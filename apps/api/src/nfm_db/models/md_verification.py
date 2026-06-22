@@ -98,6 +98,15 @@ class MDVerificationJob(TimestampMixin, Base):
         default=uuid.uuid4,
     )
 
+    # --- Ownership ---
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # --- Identification ---
 
     potential_id: Mapped[str] = mapped_column(
@@ -190,6 +199,7 @@ class MDVerificationJob(TimestampMixin, Base):
     def __repr__(self) -> str:
         return (
             f"<MDVerificationJob id={self.id!s} "
+            f"owner={self.owner_id!s} "
             f"potential={self.potential_id!r} "
             f"element={self.element_system!r} "
             f"status={self.status.value}>"

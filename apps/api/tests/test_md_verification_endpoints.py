@@ -38,6 +38,7 @@ from nfm_db.services.md_verification import MDVerificationService
 @pytest.fixture
 async def md_job_with_results(
     db_session: AsyncSession,
+    admin_user,
 ) -> dict[str, str]:
     """Create a test MD verification job with complete results.
 
@@ -55,6 +56,7 @@ async def md_job_with_results(
             "config": {"temperature": 300, "pressure": 0},
             "priority": 5,
             "status": JobStatus.COMPLETED,
+            "owner_id": admin_user.id,
         }
     )
 
@@ -115,6 +117,7 @@ async def md_job_with_results(
 @pytest.fixture
 async def pending_md_job(
     db_session: AsyncSession,
+    admin_user,
 ) -> dict[str, str]:
     """Create a test MD verification job in PENDING status.
 
@@ -131,6 +134,7 @@ async def pending_md_job(
             "config": {"temperature": 300, "pressure": 0},
             "priority": 5,
             "status": JobStatus.PENDING,
+            "owner_id": admin_user.id,
         }
     )
 
@@ -539,6 +543,7 @@ class TestCancelMDVerificationJob:
         async_client_with_auth: AsyncClient,
         pending_md_job: dict[str, str],
         db_session: AsyncSession,
+        admin_user,
     ) -> None:
         """Test cancelling pending job returns 200."""
         job_id = pending_md_job["job_id"]
@@ -551,13 +556,13 @@ class TestCancelMDVerificationJob:
         data = response.json()
         assert data["job_id"] == job_id
         assert data["previous_status"] == "pending"
-        assert data["new_status"] == "failed"  # Cancelled jobs marked as failed
+        assert data["new_status"] == "cancelled"
         assert "cancelled_at" in data
 
         # Verify job was updated in database
         service = MDVerificationService(db_session)
-        job = await service.get_job(uuid.UUID(job_id))
-        assert job.status == JobStatus.FAILED
+        job = await service.get_job(uuid.UUID(job_id), owner_id=admin_user.id)
+        assert job.status == JobStatus.CANCELLED
         assert "cancelled" in job.error_message.lower()
 
     async def test_cancel_completed_job_fails(
