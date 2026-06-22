@@ -1,5 +1,6 @@
 /** MD verification components for Phase 3 frontend integration. */
 
+export { TaskSubmissionWizard } from "./task-submission-wizard"
 export { TaskSubmissionForm } from "./task-submission-form"
 export { TaskList } from "./task-list"
 export { TaskDetailPage } from "./task-detail-page"

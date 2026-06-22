@@ -438,7 +438,11 @@ class SLURMJobManager:
             True if cancelled successfully
         """
         conn = self.conn_manager.get_connection(cluster)
-        
+
+        # Validate job_id to prevent command injection
+        if not re.match(r'^\d+$', str(job_id)):
+            raise ValueError(f"Invalid SLURM job ID (must be numeric): {job_id}")
+
         try:
             result = self._exec_command(conn, f"scancel {job_id}")
             logger.info(f"Cancelled job {job_id}")
@@ -623,11 +627,14 @@ class HPCFileTransfer:
             List of file names
         """
         conn = self.conn_manager.get_connection(cluster)
-        
+
+        # Validate remote path to prevent command injection
+        safe_remote_path = validate_remote_path(str(remote_path))
+
         try:
             sftp = conn.open_sftp()
             try:
-                return sftp.listdir(str(remote_path))
+                return sftp.listdir(safe_remote_path)
             finally:
                 sftp.close()
         except Exception as e:
