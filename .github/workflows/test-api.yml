@@ -23,7 +23,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --frozen
 
       - name: Enforce single alembic head (no forked migration graph)
         # Prevents a forked migration graph from merging again. `alembic heads`
