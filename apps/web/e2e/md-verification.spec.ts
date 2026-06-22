@@ -176,19 +176,19 @@ test.describe("MD Verification", () => {
       await expect(page.locator('button:has-text("刷新")')).toBeVisible()
     })
 
-    test("has cancel button for active jobs", async ({ page }) => {
+    test("has cancel button for active jobs", async () => {
       // This would require a job in active state
       // Skipping for now as it requires specific test data setup
       test.skip(true, "Requires active job test data")
     })
 
-    test("shows results for completed jobs", async ({ page }) => {
+    test("shows results for completed jobs", async () => {
       // This would require a completed job
       // Skipping for now as it requires specific test data setup
       test.skip(true, "Requires completed job test data")
     })
 
-    test("displays error message for failed jobs", async ({ page }) => {
+    test("displays error message for failed jobs", async () => {
       // This would require a failed job
       // Skipping for now as it requires specific test data setup
       test.skip(true, "Requires failed job test data")
@@ -196,7 +196,7 @@ test.describe("MD Verification", () => {
   })
 
   test.describe("Real-time Status Updates", () => {
-    test("polls status for active jobs", async ({ page }) => {
+    test("polls status for active jobs", async () => {
       // This test would require:
       // 1. Setting up mock API responses
       // 2. Verifying polling behavior
