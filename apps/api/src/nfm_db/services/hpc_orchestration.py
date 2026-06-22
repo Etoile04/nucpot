@@ -404,8 +404,8 @@ class HPCOrchestrator:
 
         # Use async generator pattern for database session
         try:
-            # Use async context manager for proper session cleanup
-            async with get_db() as db:
+            # Consume the async generator to get a session
+            async for db in get_db():
                 # Create failover event record
                 event = HPCFailoverEvent(
                     event_type=event_type,
@@ -421,6 +421,7 @@ class HPCOrchestrator:
                 await db.commit()
 
                 logger.info(f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}")
+                break  # get_db() yields once, so break after first iteration
 
         except Exception as e:
             # Fallback to stdout logging if database fails

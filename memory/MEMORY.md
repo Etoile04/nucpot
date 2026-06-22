@@ -16,6 +16,7 @@
 - [NFM-264 UX Improvement](nfm264-ux-improvement.md) — Ontology visualization user comprehension: UX design review and implementation path (awaiting UXDesigner & Creative Director input)
 - [NFM-41 Blog Deployment Complete](nfm41-blog-deployment-complete.md) — Blog successfully deployed to production at https://nucpot.dpdns.org
 - [NFM-274 UX Review: Ontology Phase 0](nfm274-ux-review-ontology-phase0.md) — UX review of NFMD ontology Phase 0 embed interaction: PASS with NICE-TO-HAVE improvements for Phase 1+
+- [NFM-346 Tianjin Backup Failover Complete](nfm346-tianjin-failover-complete.md) — ✅ CTO Complete: Phase 4.5 Tianjin backup cluster failover technical planning (52-page spec, 4 components, API blocker documented, implementation delegated to CPO)
 
 ## Consultations
 
