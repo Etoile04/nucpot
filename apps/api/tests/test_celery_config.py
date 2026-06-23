@@ -54,7 +54,6 @@ class TestCeleryAppConfiguration:
 
         from nfm_db.services.celery_app import celery_app as reloaded_app
 
-        expected_broker = "redis://redis.example.com:6380/0"
         # Note: patch.dict above sets the default; the NFM_ prefix env var
         # would need to be read by the celery_app module to override.
         # This test verifies the env-based configuration mechanism exists.
