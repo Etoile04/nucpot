@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
+from nfm_db.models.ref_gap_fill import Confidence, RefGapFillStaging, StagingStatus
 from nfm_db.services.gap_scan_service import (
     CoverageStats,
     GapScanService,
@@ -22,7 +22,30 @@ from nfm_db.services.gap_scan_service import (
     _compute_priority,
     _parse_staging_counts,
 )
-from test_promotion_service import _make_staging_record_kwargs
+
+
+def _make_staging_record_kwargs(
+    *,
+    status: StagingStatus = StagingStatus.PENDING,
+    confidence: Confidence = Confidence.MEDIUM,
+    element_system: str = "U",
+    phase: str | None = "BCC",
+    property_name: str = "lattice_constant",
+) -> dict:
+    """Build kwargs for creating a RefGapFillStaging record."""
+    return {
+        "element_system": element_system,
+        "phase": phase,
+        "property_name": property_name,
+        "value": 2.85,
+        "unit": "angstrom",
+        "method": "DFT",
+        "source": "TestSource",
+        "confidence": confidence,
+        "dedup_hash": "a" * 64,
+        "range_validated": True,
+        "status": status,
+    }
 
 # ---------------------------------------------------------------------------
 # Helpers

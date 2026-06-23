@@ -17,7 +17,7 @@ export const DEFAULT_FILTERS: HistoryFilters = {
   dateRange: null,
 }
 
-/** Sort comparator for history jobs */
+/** Sort comparator factory for history jobs */
 export function compareJobs(
   field: HistorySortField,
   order: HistorySortOrder,
@@ -27,13 +27,15 @@ export function compareJobs(
 ) => number {
   const direction = order === "ascend" ? 1 : -1
 
-  if (field === "created_at") {
-    const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
-    const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
-    return (dateA - dateB) * direction
-  }
+  return (a, b) => {
+    if (field === "created_at") {
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
+      return (dateA - dateB) * direction
+    }
 
-  return 0
+    return 0
+  }
 }
 
 /** Diff row for the comparison table */

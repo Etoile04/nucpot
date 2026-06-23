@@ -58,7 +58,7 @@ describe("DefectBarChart", () => {
   })
 
   it("renders with single defect type", () => {
-    const singleDefect = [MOCK_DEFECT_DATA[0]]
+    const singleDefect = [MOCK_DEFECT_DATA[0]!]
     render(<DefectBarChart data={singleDefect} />)
     expect(screen.getByTestId("defect-bar-chart")).toBeInTheDocument()
   })

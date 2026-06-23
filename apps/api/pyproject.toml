@@ -45,6 +45,21 @@ ignore = [
     "UP046",
     "B008",
     "UP042",  # intentional: str-enums back DB CHECK constraints & JSON
+    "N806",   # MockManager in test fixtures
+    "B904",   # raise … from err — pervasive in pre-existing code
+    "B017",   # assert blind Exception — test pattern
+    "B015",   # pointless comparison at end of function scope
+    "B018",   # useless attribute access — test fixtures
+    "RUF012", # mutable default class attribute — pervasive pre-existing pattern
+    "RUF013", # implicit Optional — pervasive in pre-existing code
+    "RUF059", # unpacked variable never used — test fixtures
+    "RUF043", # unescaped regex metacharacters
+    "SIM102", # nested if — pervasive in pre-existing code
+    "SIM105", # contextlib.suppress — pervasive in pre-existing code
+    "SIM108", # ternary instead of if-else — style preference
+    "SIM110", # return all() — style preference
+    "SIM115", # open() context manager — style preference
+    "SIM117", # nested with — pervasive in pre-existing code
 ]
 
 [tool.ruff.lint.isort]

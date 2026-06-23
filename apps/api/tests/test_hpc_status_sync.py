@@ -9,10 +9,11 @@ module-level names that no longer exist in hpc_orchestration.
 
 import time
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+
 from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
-from nfm_db.models.md_verification import HpcJob, HpcJobStatus, MDVerificationJob
 
 
 def _make_orchestrator() -> HPCOrchestrator:
@@ -196,7 +197,7 @@ class TestOutputFileDetection:
                 mock_sftp = MagicMock()
                 mock_client.open_sftp.return_value = mock_sftp
 
-                mock_sftp.stat.side_effect = IOError("File not found")
+                mock_sftp.stat.side_effect = OSError("File not found")
 
                 is_complete = await orchestrator._check_job_completion(task_id)
                 assert is_complete is False

@@ -11,10 +11,9 @@ Tests the new features added by NFM-374:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,16 +21,14 @@ from nfm_db.core.auth import get_current_user
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
-    HpcJobStatus,
     HpcBackend,
+    HpcJobStatus,
     JobStatus,
     JobType,
 )
 from nfm_db.services.md_verification import (
-    MDVerificationJobCreate,
     MDVerificationService,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for model enums

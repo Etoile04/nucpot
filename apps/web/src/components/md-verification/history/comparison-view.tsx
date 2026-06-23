@@ -218,7 +218,7 @@ export function ComparisonView({
 
     const fetchJob = async (
       jobId: string,
-      setResult: (data: JobResultData) => void,
+      setResult: React.Dispatch<React.SetStateAction<JobResultData>>,
     ) => {
       setResult((prev) => ({ ...prev, loading: true, error: null }))
 

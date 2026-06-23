@@ -19,12 +19,12 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.core.auth import get_current_user
 from nfm_db.database import get_db
 from nfm_db.models import User
-from nfm_db.services.rate_limit import md_verification_rate_limit
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
@@ -32,18 +32,15 @@ from nfm_db.models.md_verification import (
     HpcJobStatus,
     JobStatus,
 )
-from pydantic import BaseModel, field_validator, model_validator
-
-from nfm_db.services.hpc_file_transfer import validate_remote_path
-
 from nfm_db.services.md_verification import (
     DefectAnalysisResultResponse,
+    MDSimulationResultResponse,
     MDVerificationJobCreate,
     MDVerificationJobResponse,
     MDVerificationService,
-    MDSimulationResultResponse,
     PotentialFittingResultResponse,
 )
+from nfm_db.services.rate_limit import md_verification_rate_limit
 
 # Try to import Celery task (may not be available in all environments)
 try:

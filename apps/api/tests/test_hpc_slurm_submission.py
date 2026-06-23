@@ -1,11 +1,12 @@
 """Tests for HPC Orchestration System - Phase 4.2: SLURM Job Submission."""
 
 import uuid
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
+
 from nfm_db.services.hpc_orchestration import HPCOrchestrator
-from nfm_db.services.hpc_ssh import SSHConnectionConfig, JobSubmissionError, HPCConnectionError
-from nfm_db.models.md_verification import HpcJob, MDVerificationJob
+from nfm_db.services.hpc_ssh import HPCConnectionError, JobSubmissionError, SSHConnectionConfig
 
 
 class TestSLURMScriptGeneration:

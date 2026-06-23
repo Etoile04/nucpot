@@ -6,9 +6,9 @@ Tests follow TDD principles:
 - REFACTOR: Clean up while keeping tests green
 """
 
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime, timedelta
 
 
 class TestCeleryBeatMonitoring:
@@ -110,7 +110,6 @@ class TestCeleryBeatMonitoring:
         THEN: Task tries to recover primary cluster
         """
         from nfm_db.services.celery_app import monitor_primary_cluster_health
-        from unittest.mock import AsyncMock
         from nfm_db.services.hpc_orchestration import HPCOrchestrator
 
         # Patch Redis functions to avoid connection errors

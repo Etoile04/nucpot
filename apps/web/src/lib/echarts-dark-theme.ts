@@ -5,7 +5,8 @@
  * When NFM-378 (UX Design Spec) is finalized, update these tokens to match.
  */
 
-import type { ThemeOption } from "echarts"
+/** ECharts theme option type (not exported by echarts, declared here) */
+type ThemeOption = Record<string, unknown>
 
 /** Palette derived from globals.css dark-theme tokens */
 export const DARK_PALETTE = {

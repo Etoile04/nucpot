@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { generateDefectCsv, generateFittingCsv, triggerDownload } from "../export-csv"
 import type { DefectAnalysisResultResponse, PotentialFittingResultResponse } from "@/lib/md-verification-api"
 import { DefectType, FittingMethod } from "@/lib/md-verification-api"
@@ -77,7 +77,7 @@ describe("triggerDownload", () => {
     const originalRevokeObjectURL = URL.revokeObjectURL
     const createdUrls: string[] = []
 
-    URL.createObjectURL = (blob: Blob) => {
+    URL.createObjectURL = (_blob: Blob) => {
       const url = `blob:test-${createdUrls.length}`
       createdUrls.push(url)
       return url

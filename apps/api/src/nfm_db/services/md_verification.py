@@ -34,8 +34,8 @@ from nfm_db.models.md_verification import (
     HpcJob,
     HpcJobStatus,
     JobStatus,
-    MDVerificationJob,
     MDSimulationResult,
+    MDVerificationJob,
     PotentialFittingResult,
 )
 

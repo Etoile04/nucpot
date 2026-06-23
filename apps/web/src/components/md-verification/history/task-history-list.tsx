@@ -179,7 +179,8 @@ export function TaskHistoryList({ onCompare, className }: TaskHistoryListProps) 
     }
 
     // Sort
-    return filtered.sort((a, b) => compareJobs(sortField, sortOrder))
+    const comparator = compareJobs(sortField, sortOrder)
+    return filtered.sort(comparator)
   }, [jobs, filters, potentialSearch, sortField, sortOrder])
 
   // ---------------------------------------------------------------------------
@@ -239,8 +240,9 @@ export function TaskHistoryList({ onCompare, className }: TaskHistoryListProps) 
       return
     }
 
-    const [jobA, jobB] = selectedRowKeys
-    if (onCompare) {
+    const jobA = selectedRowKeys[0]
+    const jobB = selectedRowKeys[1]
+    if (onCompare && jobA && jobB) {
       onCompare(jobA, jobB)
     }
   }
@@ -253,7 +255,7 @@ export function TaskHistoryList({ onCompare, className }: TaskHistoryListProps) 
     () => ({
       type: "checkbox" as const,
       selectedRowKeys,
-      onChange: (keys: string[]) => setSelectedRowKeys(keys),
+      onChange: (keys: React.Key[]) => setSelectedRowKeys(keys.map(String)),
       getCheckboxProps: (record: MDVerificationJobResponse) => ({
         disabled: record.status !== JobStatus.COMPLETED,
       }),

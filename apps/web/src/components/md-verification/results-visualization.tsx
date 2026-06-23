@@ -10,7 +10,6 @@ import {
   Col,
   Skeleton,
   Empty,
-  Spin,
 } from "antd"
 import { DownloadOutlined } from "@ant-design/icons"
 import type {
@@ -79,7 +78,7 @@ function extractThermoData(
   }
 }
 
-/** Extract arc-dpa scatter data from fitting results metadata */
+/** Extract arc-dpa scatter data from fitting results parameters */
 function extractArcDpaData(
   fittingResults: PotentialFittingResultResponse[],
 ): {
@@ -98,12 +97,12 @@ function extractArcDpaData(
     return { scatterData: [] }
   }
 
-  const meta = arcDpaResult.metadata as Record<string, unknown> | null
-  if (!meta) {
+  const params = arcDpaResult.parameters as Record<string, unknown> | null
+  if (!params) {
     return { scatterData: [] }
   }
 
-  const scatterRaw = meta.data_points as Array<{
+  const scatterRaw = params.data_points as Array<{
     arc: number
     dpa: number
   }> | null
@@ -112,11 +111,11 @@ function extractArcDpaData(
     ? scatterRaw.map((p) => ({ arc: p.arc, dpa: p.dpa }))
     : []
 
-  const fitRaw = meta.fit as { slope: number; intercept: number } | null
+  const fitRaw = params.fit as { slope: number; intercept: number } | null
   const fitLine = fitRaw ? { slope: fitRaw.slope, intercept: fitRaw.intercept } : undefined
 
-  const upperRaw = meta.confidence_upper as ArcDpaPoint[] | null
-  const lowerRaw = meta.confidence_lower as ArcDpaPoint[] | null
+  const upperRaw = params.confidence_upper as ArcDpaPoint[] | null
+  const lowerRaw = params.confidence_lower as ArcDpaPoint[] | null
   const confidenceBand =
     upperRaw && lowerRaw
       ? { upper: upperRaw, lower: lowerRaw }

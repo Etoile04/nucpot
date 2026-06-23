@@ -9,7 +9,6 @@ Verifies that ownership checks prevent cross-user access:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,7 +18,6 @@ from nfm_db.core.auth import get_current_user
 from nfm_db.models import User
 from nfm_db.models.md_verification import JobStatus
 from nfm_db.services.md_verification import MDVerificationService
-
 
 # ---------------------------------------------------------------------------
 # Helpers

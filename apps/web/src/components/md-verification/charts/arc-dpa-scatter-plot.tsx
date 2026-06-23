@@ -47,14 +47,14 @@ export function ArcDpaScatterPlot({
   height = 400,
   className,
 }: ArcDpaScatterPlotProps) {
-  const option: EChartsOption = useMemo(() => {
+  const option = useMemo((): EChartsOption => {
     const series: EChartsOption["series"] = []
 
     // Confidence band shading (rendered first, behind scatter)
     if (confidenceBand && confidenceBand.upper.length > 0) {
-      const bandData: Array<[number, number]> = [
-        ...confidenceBand.upper.map((p) => [p.arc, p.dpa]),
-        ...confidenceBand.lower.slice().reverse().map((p) => [p.arc, p.dpa]),
+      const bandData = [
+        ...confidenceBand.upper.map((p) => [p.arc, p.dpa] as [number, number]),
+        ...confidenceBand.lower.slice().reverse().map((p) => [p.arc, p.dpa] as [number, number]),
       ]
 
       series.push({
@@ -100,7 +100,7 @@ export function ArcDpaScatterPlot({
     series.push({
       name: "arc-dpa 数据点",
       type: "scatter",
-      data: scatterData.map((p) => [p.arc, p.dpa]),
+      data: scatterData.map((p) => [p.arc, p.dpa] as [number, number]),
       itemStyle: {
         color: DARK_PALETTE.accent,
         opacity: 0.7,
@@ -119,15 +119,16 @@ export function ArcDpaScatterPlot({
     return {
       tooltip: {
         trigger: "item",
-        formatter: (params: { seriesName: string; value: Array<number> }) => {
-          const [arc, dpa] = params.value
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        formatter: (params: any) => {
+          const [arc, dpa] = params?.value ?? []
           return [
-            `<strong>${params.seriesName}</strong>`,
+            `<strong>${params?.seriesName ?? ""}</strong>`,
             `arc 位移: ${typeof arc === "number" ? arc.toFixed(4) : arc}`,
             `DPA: ${typeof dpa === "number" ? dpa.toExponential(4) : dpa}`,
           ].join("<br/>")
         },
-      },
+      } as EChartsOption["tooltip"],
       grid: {
         left: "3%",
         right: "4%",

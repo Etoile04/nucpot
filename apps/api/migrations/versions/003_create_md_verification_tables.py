@@ -1,6 +1,6 @@
 """create MD verification tables for LAMMPS integration
 
-Revision ID: 003
+Revision ID: 003b
 Revises: 9c15710c6321
 Create Date: 2026-06-21
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 # revision identifiers, used by Alembic.
-revision: str = '003'
+revision: str = '003b'
 down_revision: Union[str, Sequence[str], None] = '9c15710c6321'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

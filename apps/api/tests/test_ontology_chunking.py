@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from tests.nvl_conformance import assert_nvl_contract
 from tests.ontology_seed import seed_corpus
 

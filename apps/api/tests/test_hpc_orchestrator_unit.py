@@ -9,13 +9,12 @@ Tests cover:
 All external submodule imports are mocked to isolate the composition root.
 """
 
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nfm_db.services.hpc_ssh import SSHConnectionConfig
-
 
 # ---------------------------------------------------------------------------
 # Helper: names as they appear in hpc_orchestration module namespace
@@ -65,14 +64,14 @@ _ORCH_NAMES: list[str] = [
 ]
 
 
-def _build_orchestrator(config: SSHConnectionConfig) -> tuple[Any, Dict[str, Any], list]:
+def _build_orchestrator(config: SSHConnectionConfig) -> tuple[Any, dict[str, Any], list]:
     """Build an HPCOrchestrator with all submodule imports patched.
 
     Returns (orchestrator, mock_map, patchers).
     Call _cleanup(patchers) when done.
     """
     patchers: list[Any] = []
-    mock_map: Dict[str, Any] = {}
+    mock_map: dict[str, Any] = {}
 
     for name in _ORCH_NAMES:
         target = f"nfm_db.services.hpc_orchestration.{name}"
@@ -420,7 +419,7 @@ class TestSlurmDelegates:
         """_validate_simulation_params should call validate_simulation_params."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
-            params: Dict[str, Any] = {"temperature": 300, "pressure": 0}
+            params: dict[str, Any] = {"temperature": 300, "pressure": 0}
             orchestrator._validate_simulation_params(params)
             mock_map["validate_simulation_params"].assert_called_once_with(params)
         finally:
@@ -431,7 +430,7 @@ class TestSlurmDelegates:
         """_generate_slurm_script should call generate_slurm_script."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             result = orchestrator._generate_slurm_script(params)
             mock_map["generate_slurm_script"].assert_called_once_with(params)
             assert result == "#!/bin/bash\necho hello"
@@ -668,7 +667,7 @@ class TestFileTransferDelegates:
         """save_to_object_storage should delegate to _save_to_object_storage."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
-            downloaded: Dict[str, str] = {"out.txt": "/local/out.txt"}
+            downloaded: dict[str, str] = {"out.txt": "/local/out.txt"}
             result = await orchestrator.save_to_object_storage("task-1", downloaded)
             mock_map["_save_to_object_storage"].assert_called_once_with(
                 "task-1", downloaded,
@@ -683,7 +682,7 @@ class TestFileTransferDelegates:
         """_save_metadata should delegate to _save_metadata."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
-            metadata: Dict[str, Dict[str, Any]] = {"out.txt": {"size": 1024}}
+            metadata: dict[str, dict[str, Any]] = {"out.txt": {"size": 1024}}
             await orchestrator._save_metadata("task-1", metadata)
             mock_map["_save_metadata"].assert_called_once_with("task-1", metadata)
         finally:
@@ -756,7 +755,7 @@ class TestSubmitJobFlow:
             mock_failover.current_ssh_manager = MagicMock()
             mock_failover.current_cluster_name = "primary"
 
-            params: Dict[str, Any] = {"temperature": 300, "pressure": 0}
+            params: dict[str, Any] = {"temperature": 300, "pressure": 0}
             await orchestrator.submit_job("task-1", "/input.cif", params)
 
             mock_map["validate_simulation_params"].assert_called_once_with(params)
@@ -775,7 +774,7 @@ class TestSubmitJobFlow:
             mock_failover.current_ssh_manager = MagicMock()
             mock_failover.current_cluster_name = "primary"
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             await orchestrator.submit_job("task-1", "/input.cif", params)
 
             mock_map["generate_slurm_script"].assert_called_once_with(params)
@@ -794,7 +793,7 @@ class TestSubmitJobFlow:
             mock_failover.current_ssh_manager = MagicMock()
             mock_failover.current_cluster_name = "primary"
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             hpc_job_id = await orchestrator.submit_job("task-1", "/input.cif", params)
 
             mock_map["create_hpc_job_record"].assert_called_once_with(
@@ -818,7 +817,7 @@ class TestSubmitJobFlow:
 
             mock_map["submit_to_slurm"].return_value = "slurm-99999"
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             result = await orchestrator.submit_job("task-1", "/input.cif", params)
 
             assert result == "slurm-99999"
@@ -829,7 +828,7 @@ class TestSubmitJobFlow:
     @pytest.mark.asyncio
     async def test_submit_job_triggers_failover_when_needed(self, primary_config: SSHConnectionConfig) -> None:
         """submit_job should trigger failover when should_trigger_failover returns True."""
-        orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
+        orchestrator, _mock_map, patchers = _build_orchestrator(primary_config)
         try:
             mock_failover = orchestrator.failover_manager
             mock_failover.should_trigger_failover.return_value = True
@@ -839,7 +838,7 @@ class TestSubmitJobFlow:
             mock_failover.current_ssh_manager = MagicMock()
             mock_failover.current_cluster_name = "backup"
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             await orchestrator.submit_job("task-1", "/input.cif", params)
 
             mock_failover.trigger_failover.assert_called_once()
@@ -850,13 +849,13 @@ class TestSubmitJobFlow:
     @pytest.mark.asyncio
     async def test_submit_job_raises_when_failover_fails(self, primary_config: SSHConnectionConfig) -> None:
         """submit_job should raise when failover and submission both fail."""
-        orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
+        orchestrator, _mock_map, patchers = _build_orchestrator(primary_config)
         try:
             mock_failover = orchestrator.failover_manager
             mock_failover.should_trigger_failover.return_value = True
             mock_failover.trigger_failover = AsyncMock(return_value=False)
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             with pytest.raises(Exception):
                 await orchestrator.submit_job("task-1", "/input.cif", params)
         finally:
@@ -883,7 +882,7 @@ class TestSubmitJobFlow:
                 "slurm-55555",
             ]
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             result = await orchestrator.submit_job("task-1", "/input.cif", params)
 
             assert result == "slurm-55555"
@@ -897,7 +896,7 @@ class TestSubmitJobFlow:
         self, primary_config: SSHConnectionConfig,
     ) -> None:
         """submit_job should try to recover primary when currently on backup."""
-        orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
+        orchestrator, _mock_map, patchers = _build_orchestrator(primary_config)
         try:
             mock_failover = orchestrator.failover_manager
             mock_failover.should_trigger_failover.return_value = True
@@ -907,7 +906,7 @@ class TestSubmitJobFlow:
             mock_failover.current_ssh_manager = MagicMock()
             mock_failover.current_cluster_name = "primary"
 
-            params: Dict[str, Any] = {"temperature": 300}
+            params: dict[str, Any] = {"temperature": 300}
             await orchestrator.submit_job("task-1", "/input.cif", params)
 
             mock_failover.try_recover_primary.assert_called_once()

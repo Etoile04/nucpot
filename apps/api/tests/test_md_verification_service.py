@@ -21,42 +21,33 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.md_verification import (
-    DefectAnalysisResult,
     DefectType,
     FittingMethod,
-    HpcJob,
     HpcJobStatus,
     JobStatus,
-    MDVerificationJob,
-    MDSimulationResult,
-    PotentialFittingResult,
 )
 from nfm_db.services.md_verification import (
     DefectAnalysisResultCreate,
     DefectAnalysisResultResponse,
-    DefectAnalysisResultUpdate,
     HpcJobCreate,
     HpcJobResponse,
     HpcJobUpdate,
-    MDVerificationService,
+    MDSimulationResultCreate,
+    MDSimulationResultResponse,
     MDVerificationJobCreate,
     MDVerificationJobResponse,
     MDVerificationJobUpdate,
-    MDSimulationResultCreate,
-    MDSimulationResultResponse,
-    MDSimulationResultUpdate,
+    MDVerificationService,
     PotentialFittingResultCreate,
     PotentialFittingResultResponse,
-    PotentialFittingResultUpdate,
 )
 
 # ===========================================================================
@@ -715,7 +706,7 @@ class TestCompositeQueries:
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
-        result = await svc.get_simulation_result_by_job(job_id)
+        await svc.get_simulation_result_by_job(job_id)
 
         # Verify query was constructed
         mock_session.execute.assert_called()

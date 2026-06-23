@@ -24,7 +24,6 @@ from celery.schedules import crontab
 from nfm_db.services.celery_app import celery_app
 from nfm_db.services.md_tasks import run_md_verification_task
 
-
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -201,7 +200,7 @@ class TestHappyPath:
             task_instance = MagicMock()
             task_instance.request = mock_task_request
 
-            result = run_md_verification_task(
+            run_md_verification_task(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -378,7 +377,7 @@ class TestRetryLogic:
             task_instance.request = mock_task_request
             task_instance.retry.side_effect = Retry("Temporary NFS timeout")
 
-            with pytest.raises(Retry) as exc_info:
+            with pytest.raises(Retry):
                 run_md_verification_task(
                     task_instance,
                     mock_job_id,
@@ -416,7 +415,7 @@ class TestRetryLogic:
             task_instance.request = mock_task_request
             task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
-            with pytest.raises(Retry) as exc_info:
+            with pytest.raises(Retry):
                 run_md_verification_task(
                     task_instance,
                     mock_job_id,

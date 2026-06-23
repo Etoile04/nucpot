@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from nfm_db.core.auth import get_current_user
 from nfm_db.models import User
-
 from nfm_db.services.domain_expert import (
     AdjudicationRequest as DomainAdjudicationRequest,
 )

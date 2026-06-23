@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Prometheus availability flag
 try:
-    from prometheus_client import Counter, Histogram, Gauge
+    from prometheus_client import Counter, Gauge, Histogram
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False

@@ -4,13 +4,14 @@ Provides SSH connection pooling with multi-login node support,
 health monitoring, and auto-reconnect capabilities.
 """
 
-import time
-import threading
-import paramiko
-from pathlib import Path
-from typing import List, Optional
-from dataclasses import dataclass
+import contextlib
 import logging
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import paramiko
 
 from nfm_db.services.hpc_metrics import (
     PROMETHEUS_AVAILABLE,
@@ -40,26 +41,26 @@ class SSHConnectionConfig:
     max_connections: int = 10
     heartbeat_interval: int = 30
     skip_key_validation: bool = False
-    known_hosts_path: Optional[str] = None
-    backup_hosts: Optional[tuple[str, ...]] = None
-    backup_username: Optional[str] = None
-    backup_ssh_key_path: Optional[str] = None
+    known_hosts_path: str | None = None
+    backup_hosts: tuple[str, ...] | None = None
+    backup_username: str | None = None
+    backup_ssh_key_path: str | None = None
     failover_threshold_seconds: int = 300
     work_dir: str = "/scratch/{username}/nfm-md"
 
     @classmethod
     def from_lists(
         cls,
-        hosts: List[str],
+        hosts: list[str],
         username: str,
         ssh_key_path: str,
         max_connections: int = 10,
         heartbeat_interval: int = 30,
         skip_key_validation: bool = False,
-        known_hosts_path: Optional[str] = None,
-        backup_hosts: Optional[List[str]] = None,
-        backup_username: Optional[str] = None,
-        backup_ssh_key_path: Optional[str] = None,
+        known_hosts_path: str | None = None,
+        backup_hosts: list[str] | None = None,
+        backup_username: str | None = None,
+        backup_ssh_key_path: str | None = None,
         failover_threshold_seconds: int = 300,
         work_dir: str = "/scratch/{username}/nfm-md",
     ) -> "SSHConnectionConfig":
@@ -93,13 +94,13 @@ class SSHConnectionManager:
 
     def __init__(
         self,
-        host: str | List[str] = None,
-        username: str = None,
-        ssh_key_path: str = None,
+        host: str | list[str] | None = None,
+        username: str | None = None,
+        ssh_key_path: str | None = None,
         max_connections: int = 10,
-        hosts: str | List[str] = None,
+        hosts: str | list[str] | None = None,
         skip_key_validation: bool = False,
-        known_hosts_path: Optional[str] = None,
+        known_hosts_path: str | None = None,
     ) -> None:
         """Initialize SSH connection manager.
 
@@ -163,7 +164,7 @@ class SSHConnectionManager:
         self,
         max_retries: int = 3,
         backoff_base: float = 1.0
-    ) -> Optional[paramiko.SSHClient]:
+    ) -> paramiko.SSHClient | None:
         """Acquire connection with automatic retry on failure.
 
         Args:
@@ -199,10 +200,8 @@ class SSHConnectionManager:
         with self._connection_lock:
             if client in self._active_connections:
                 self._active_connections.remove(client)
-                try:
+                with contextlib.suppress(Exception):
                     client.close()
-                except Exception:
-                    pass
 
             if PROMETHEUS_AVAILABLE:
                 hpc_active_connections.labels(cluster=self.host).set(len(self._active_connections))
@@ -239,7 +238,7 @@ class SSHConnectionManager:
             True if connection is healthy, False otherwise
         """
         try:
-            stdin, stdout, stderr = client.exec_command("echo 'health_check'")
+            _stdin, stdout, _stderr = client.exec_command("echo 'health_check'")
             stdout.read()
             return True
         except Exception as e:

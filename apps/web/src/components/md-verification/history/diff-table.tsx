@@ -1,8 +1,8 @@
 "use client"
 
-import { Table, Tag, Typography } from "antd"
+import { Table, Typography } from "antd"
 import type { ColumnsType } from "antd/es/table"
-import { computeDiff, type DiffRow } from "./history-types"
+import type { DiffRow } from "./history-types"
 
 const { Text } = Typography
 
@@ -30,7 +30,7 @@ function formatPercent(value: number | null): string {
 
 function getDiffStyle(
   diff: number | null,
-  diffPercent: number | null,
+  _diffPercent: number | null,
 ): React.CSSProperties {
   if (diff === null || diff === 0) {
     return { color: "#6b7280" } // gray — neutral

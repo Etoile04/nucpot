@@ -392,7 +392,7 @@ export function TaskDetailPage() {
                 </Descriptions.Item>
                 <Descriptions.Item label="HPC 任务状态">
                   <StatusBadge
-                    status={jobStatus.hpc_job_status as JobStatus}
+                    status={String(jobStatus.hpc_job_status ?? "pending") as JobStatus}
                   />
                 </Descriptions.Item>
               </Descriptions>

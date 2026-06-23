@@ -81,7 +81,7 @@ export function TaskProgressBar({
         status,
         submittedAt,
         startedAt,
-        estimatedDurationMs ?? TYPICAL_DURATIONS_MINUTES.default * 60_000,
+        estimatedDurationMs ?? (TYPICAL_DURATIONS_MINUTES.default ?? 120) * 60_000,
       ),
     [status, submittedAt, startedAt, estimatedDurationMs],
   )

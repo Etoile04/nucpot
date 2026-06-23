@@ -6,21 +6,18 @@ and extended md_verification_jobs columns.
 Uses SQLite in-memory via conftest.py fixtures (no PostgreSQL required).
 """
 
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nfm_db.models import (
-    Base,
     ExecutionStatus,
     JobType,
-    MDVerificationJob,
     MDSimulationResult,
+    MDVerificationJob,
     VerificationResultMD,
 )
-from nfm_db.models.md_verification import JobStatus
 
 
 @pytest.fixture

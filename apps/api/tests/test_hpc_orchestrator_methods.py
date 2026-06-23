@@ -5,20 +5,16 @@ file transfer delegates, _log_failover_event, __del__,
 and private helper methods.
 """
 
-import asyncio
-from typing import Dict, Any
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from nfm_db.services.hpc_ssh import (
-    SSHConnectionConfig,
-    SSHConnectionManager,
-    HPCConnectionError,
-    JobSubmissionError,
-)
 from nfm_db.services.hpc_orchestration import HPCOrchestrator
-
+from nfm_db.services.hpc_ssh import (
+    HPCConnectionError,
+    SSHConnectionConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -63,7 +59,7 @@ def orchestrator_with_backup(config_with_backup: SSHConnectionConfig) -> HPCOrch
     return HPCOrchestrator(config_with_backup)
 
 
-def _valid_params() -> Dict[str, Any]:
+def _valid_params() -> dict[str, Any]:
     """Return valid simulation parameters."""
     return {
         "temperature": 300,

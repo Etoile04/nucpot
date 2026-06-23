@@ -10,7 +10,6 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -23,16 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
-    HpcJob,
-    HpcJobStatus,
     JobStatus,
-    MDVerificationJob,
-    MDSimulationResult,
-    PotentialFittingResult,
 )
 from nfm_db.services.md_tasks import run_md_verification_task
 from nfm_db.services.md_verification import MDVerificationService
-
 
 # =============================================================================
 # Test Fixtures
@@ -55,9 +48,8 @@ def mock_db_session():
 
     async def mock_refresh(obj: Any) -> None:
         # Simulate database setting generated fields
-        if hasattr(obj, 'id'):
-            if not obj.id:
-                obj.id = uuid.uuid4()
+        if hasattr(obj, 'id') and not obj.id:
+            obj.id = uuid.uuid4()
         if hasattr(obj, 'created_at'):
             obj.created_at = datetime.now()
         if hasattr(obj, 'updated_at'):
@@ -257,7 +249,7 @@ class TestMockedHPCIntegration:
             task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
             # Task should raise Retry exception for HPC errors
-            with pytest.raises(Retry) as exc_info:
+            with pytest.raises(Retry):
                 run_md_verification_task(
                     task_instance,
                     str(job_id),
@@ -282,7 +274,7 @@ class TestMockedHPCIntegration:
         job_id = uuid.uuid4()
 
         with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager:
+             patch("nfm_db.services.md_tasks.AnalysisManager"):
 
             task_instance = MagicMock()
             task_instance.request = mock_task_request

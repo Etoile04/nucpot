@@ -4,8 +4,9 @@ Handles SLURM job status polling, database status updates,
 completion checks, and periodic sync of all active jobs.
 """
 
+import contextlib
 import logging
-from typing import List, Optional
+
 from sqlalchemy import select
 
 from nfm_db.models.md_verification import HpcJob, HpcJobStatus, MDVerificationJob
@@ -13,7 +14,7 @@ from nfm_db.models.md_verification import HpcJob, HpcJobStatus, MDVerificationJo
 logger = logging.getLogger(__name__)
 
 
-async def execute_squeue(ssh_manager, hpc_job_id: str) -> Optional[str]:
+async def execute_squeue(ssh_manager, hpc_job_id: str) -> str | None:
     """Execute squeue command via SSH to check job status.
 
     Args:
@@ -33,7 +34,7 @@ async def execute_squeue(ssh_manager, hpc_job_id: str) -> Optional[str]:
             raise ValueError(f"Invalid job ID format (must be numeric): {hpc_job_id}")
 
         cmd = f"squeue -j {job_id} -o '%T %j'"
-        stdin, stdout, stderr = client.exec_command(cmd)
+        _stdin, stdout, stderr = client.exec_command(cmd)
         exit_status = stdout.channel.recv_exit_status()
 
         if exit_status != 0:
@@ -78,7 +79,7 @@ async def check_job_completion(ssh_manager, task_id: str) -> bool:
                     file_stat = sftp.stat(remote_path)
                     if file_stat.st_size > 0:
                         return True
-                except IOError:
+                except OSError:
                     pass
 
             return False
@@ -142,6 +143,7 @@ async def update_job_status(
         Exception: If database update fails
     """
     import uuid as uuid_module
+
     from nfm_db.database import get_db
 
     try:
@@ -171,17 +173,15 @@ async def update_job_status(
             await db.rollback()
             raise
         finally:
-            try:
+            with contextlib.suppress(StopAsyncIteration):
                 await db_gen.__anext__()
-            except StopAsyncIteration:
-                pass
 
     except Exception as e:
         logger.error(f"Failed to update job status: {e}")
         raise
 
 
-async def get_active_jobs() -> List[HpcJob]:
+async def get_active_jobs() -> list[HpcJob]:
     """Get all active HPC jobs from database.
 
     Returns:
@@ -200,10 +200,8 @@ async def get_active_jobs() -> List[HpcJob]:
         )
         return result.scalars().all()
     finally:
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await db_gen.__anext__()
-        except StopAsyncIteration:
-            pass
 
 
 async def sync_all_active_jobs(ssh_manager) -> None:

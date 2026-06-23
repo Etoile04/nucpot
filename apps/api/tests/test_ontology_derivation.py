@@ -12,13 +12,13 @@ import re
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from tests.nvl_conformance import assert_nvl_contract
-from tests.ontology_seed import seed_corpus
 
 from nfm_db.services.ontology_service import (
     CorpusNotFoundError,
     derive_ontology_graph,
 )
+from tests.nvl_conformance import assert_nvl_contract
+from tests.ontology_seed import seed_corpus
 
 _CORPUS = "smirnov2014"
 _DIGEST_RE = re.compile(r"^[a-f0-9]{16}$")

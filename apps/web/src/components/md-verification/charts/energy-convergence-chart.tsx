@@ -44,7 +44,7 @@ export function EnergyConvergenceChart({
   height = 300,
   className,
 }: EnergyConvergenceChartProps) {
-  const option: EChartsOption = useMemo(() => {
+  const option = useMemo((): EChartsOption => {
     const series: EChartsOption["series"] = []
     const yAxisIndexMap = new Map<string, number>()
     let yAxisIndex = 0
@@ -151,7 +151,8 @@ export function EnergyConvergenceChart({
     return {
       tooltip: {
         trigger: "axis",
-        formatter: (params: Array<{ seriesName: string; value: Array<number>; axisValue: string }>) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        formatter: (params: any) => {
           const step = params[0]?.axisValue ?? ""
           const lines = [`<strong>步数: ${step}</strong>`]
           for (const p of params) {
@@ -162,9 +163,9 @@ export function EnergyConvergenceChart({
           }
           return lines.join("<br/>")
         },
-      },
+      } as EChartsOption["tooltip"],
       legend: {
-        data: series.map((s) => (s as { name?: string }).name),
+        data: series.map((s) => (s as { name?: string }).name).filter((n): n is string => n !== undefined),
         bottom: 0,
       },
       grid: {

@@ -12,7 +12,7 @@ Extends:
   execution_status columns for MD runner integration
 
 Revision ID: 005
-Revises: 004
+Revises: 003b, 004
 Create Date: 2026-06-23
 
 """
@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import UUID
 
 # revision identifiers, used by Alembic.
 revision: str = "005"
-down_revision: str | Sequence[str] | None = "004"
+down_revision: str | Sequence[str] | None = ("003b", "004")
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

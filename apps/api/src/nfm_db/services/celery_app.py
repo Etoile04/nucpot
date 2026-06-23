@@ -1,8 +1,8 @@
 """Celery Beat tasks for HPC orchestration monitoring."""
 
-import os
-import logging
 import asyncio
+import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +71,14 @@ def _validate_hpc_environment():
 
     logger.info("HPC environment variables validated successfully")
 
-from celery import Celery
+from celery import Celery  # noqa: E402
 
 celery_app = Celery('nfm_tasks')
 
 @celery_app.task(name='hpc.monitor_primary_cluster_health')
 def monitor_primary_cluster_health() -> dict:
     """Periodic health check for primary HPC cluster."""
-    import asyncio
-    
+
     async def _monitor():
         from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
 
@@ -171,7 +170,7 @@ def monitor_primary_cluster_health() -> dict:
 
     # Handle both Celery (sync) and pytest (async) contexts
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # Already in event loop (pytest async context) - run in thread with own loop
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as pool:

@@ -48,7 +48,7 @@ export function DefectBarChart({
   height = 300,
   className,
 }: DefectBarChartProps) {
-  const option: EChartsOption = useMemo(() => {
+  const option = useMemo((): EChartsOption => {
     if (data.length === 0) {
       return {}
     }
@@ -60,20 +60,21 @@ export function DefectBarChart({
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        formatter: (params: Array<{ name: string; value: number; dataIndex: number }>) => {
-          const item = params[0]
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        formatter: (params: any) => {
+          const item = Array.isArray(params) ? params[0] : params
           if (!item) return ""
           const result = data[item.dataIndex]
           const lines = [
             `<strong>${item.name}</strong>`,
-            `浓度: ${item.value.toExponential(4)}`,
+            `浓度: ${(item.value as number).toExponential(4)}`,
           ]
-          if (result.formation_energy !== null) {
+          if (result && result.formation_energy !== null) {
             lines.push(`形成能: ${result.formation_energy.toFixed(4)} eV`)
           }
           return lines.join("<br/>")
         },
-      },
+      } as EChartsOption["tooltip"],
       grid: {
         left: "3%",
         right: "4%",
@@ -100,7 +101,7 @@ export function DefectBarChart({
           name: "缺陷浓度",
           type: "bar",
           data: data.map((d, idx) => ({
-            value: concentrations[idx],
+            value: concentrations[idx] ?? 0,
             itemStyle: {
               color: DEFECT_COLORS[d.defect_type] ?? "#6b7280",
               borderRadius: [4, 4, 0, 0],
@@ -109,8 +110,9 @@ export function DefectBarChart({
           barMaxWidth: 60,
           label: {
             show: true,
-            position: "top",
-            formatter: (params: { value: number }) => params.value.toExponential(2),
+            position: "top" as const,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            formatter: (params: any) => (params.value as number).toExponential(2),
             fontSize: 11,
           },
         },

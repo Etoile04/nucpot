@@ -144,7 +144,6 @@ export function ResultsDataTable({
             <VerificationBadge
               grade={overallGrade}
               size="sm"
-              style={{ marginLeft: 8 }}
             />
           )}
         </span>

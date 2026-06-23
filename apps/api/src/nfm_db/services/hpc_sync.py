@@ -4,9 +4,9 @@ Periodic Celery beat task that syncs status for all active HPC jobs.
 Imports are deferred to avoid circular dependencies with hpc_orchestration.
 """
 
-import os
 import asyncio
 import logging
+import os
 
 from nfm_db.services.celery_app import celery_app
 
@@ -24,8 +24,8 @@ def sync_hpc_job_status() -> dict:
         Dictionary with sync status and statistics
     """
     # Deferred imports to avoid circular dependency with hpc_orchestration
-    from nfm_db.services.hpc_ssh import SSHConnectionConfig, SSHConnectionManager
     from nfm_db.services.hpc_job_monitor import sync_all_active_jobs
+    from nfm_db.services.hpc_ssh import SSHConnectionConfig, SSHConnectionManager
 
     async def _sync_jobs() -> dict:
         try:

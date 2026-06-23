@@ -77,7 +77,7 @@ export function SimulationConfigStep({
             <Select
               value={formData.ensemble}
               onChange={(v) => update("ensemble", v)}
-              options={ENSEMBLE_OPTIONS}
+              options={[...ENSEMBLE_OPTIONS]}
             />
           </Form.Item>
 
@@ -113,7 +113,7 @@ export function SimulationConfigStep({
             <Select
               value={formData.phase}
               onChange={(v) => update("phase", v)}
-              options={PHASE_OPTIONS}
+              options={[...PHASE_OPTIONS]}
             />
           </Form.Item>
 
@@ -139,7 +139,7 @@ export function SimulationConfigStep({
               mode="multiple"
               value={formData.defectTypes}
               onChange={(v) => update("defectTypes", v)}
-              options={DEFECT_TYPE_OPTIONS}
+              options={[...DEFECT_TYPE_OPTIONS]}
               placeholder="选择缺陷类型（可选）"
               allowClear
             />
@@ -149,7 +149,7 @@ export function SimulationConfigStep({
             <Select
               value={formData.hpcBackend || undefined}
               onChange={(v) => update("hpcBackend", v)}
-              options={HPC_BACKEND_OPTIONS}
+              options={[...HPC_BACKEND_OPTIONS]}
               placeholder="选择计算后端"
               allowClear
             />

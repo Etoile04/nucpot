@@ -11,13 +11,13 @@ Covers all methods of the HPCFailoverManager class including:
 - Resource cleanup
 """
 
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from nfm_db.services.hpc_failover import HPCFailoverManager
 from nfm_db.services.hpc_ssh import SSHConnectionConfig
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -391,7 +391,7 @@ class TestLogFailoverEvent:
         """
         async def broken_db_gen():
             raise RuntimeError("DB connection lost")
-            yield  # noqa: unreachable - makes this an async generator
+            yield
 
         with patch(
             "nfm_db.database.get_db",
@@ -445,16 +445,15 @@ class TestLogFailoverEvent:
             yield mock_db_session
 
         mock_event_cls = MagicMock(return_value=MagicMock())
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()):
-            with patch(
-                "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
-                mock_event_cls,
-            ):
-                await manager_with_backup.log_failover_event(
-                    event_type="failover_triggered",
-                    source_cluster="guangzhou.example.com",
-                    reason="Test",
-                )
+        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
+            "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
+            mock_event_cls,
+        ):
+            await manager_with_backup.log_failover_event(
+                event_type="failover_triggered",
+                source_cluster="guangzhou.example.com",
+                reason="Test",
+            )
 
         # Verify HPCFailoverEvent was called with event_metadata={}
         _, kwargs = mock_event_cls.call_args if mock_event_cls.call_args else (None, {})
@@ -475,18 +474,17 @@ class TestLogFailoverEvent:
             yield mock_db_session
 
         mock_event_cls = MagicMock(return_value=MagicMock())
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()):
-            with patch(
-                "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
-                mock_event_cls,
-            ):
-                custom_meta: dict = {"failover_duration": 12.5, "retries": 3}
-                await manager_with_backup.log_failover_event(
-                    event_type="failover_triggered",
-                    source_cluster="guangzhou.example.com",
-                    reason="Test",
-                    event_metadata=custom_meta,
-                )
+        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
+            "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
+            mock_event_cls,
+        ):
+            custom_meta: dict = {"failover_duration": 12.5, "retries": 3}
+            await manager_with_backup.log_failover_event(
+                event_type="failover_triggered",
+                source_cluster="guangzhou.example.com",
+                reason="Test",
+                event_metadata=custom_meta,
+            )
 
         _, kwargs = mock_event_cls.call_args if mock_event_cls.call_args else (None, {})
         assert kwargs.get("event_metadata") == custom_meta

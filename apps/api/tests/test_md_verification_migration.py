@@ -8,16 +8,13 @@ Tests the creation of 5 new tables for LAMMPS integration:
 - potential_fitting_results
 """
 
-import asyncio
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import async_sessionmaker
-
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 @pytest.fixture

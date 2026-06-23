@@ -75,7 +75,7 @@ describe("ArcDpaScatterPlot", () => {
   })
 
   it("renders with single data point", () => {
-    render(<ArcDpaScatterPlot scatterData={[MOCK_SCATTER[0]]} />)
+    render(<ArcDpaScatterPlot scatterData={[MOCK_SCATTER[0]!]} />)
     expect(screen.getByTestId("arc-dpa-scatter-plot")).toBeInTheDocument()
   })
 })

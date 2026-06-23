@@ -38,6 +38,7 @@ class TestCeleryAppConfiguration:
         """Test custom Redis broker configuration from environment."""
         # Test with custom environment variable
         import importlib
+
         from nfm_db.services import celery_app
         importlib.reload(celery_app)
 
@@ -102,10 +103,10 @@ class TestCeleryAppConfiguration:
 
     def test_result_expiration(self) -> None:
         """Test result expiration configuration."""
-        from nfm_db.services.celery_app import celery_app
-
         # Check that result expiration is configured
         from datetime import timedelta
+
+        from nfm_db.services.celery_app import celery_app
         assert celery_app.conf.result_expires == timedelta(days=1)
 
 

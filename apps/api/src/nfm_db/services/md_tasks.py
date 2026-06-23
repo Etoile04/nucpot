@@ -22,7 +22,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,9 +41,6 @@ except ImportError:
     AnalysisManager = None  # type: ignore
 
 from nfm_db.models.md_verification import (
-    DefectType,
-    FittingMethod,
-    HpcJobStatus,
     JobStatus,
 )
 from nfm_db.services.md_verification import MDVerificationService
@@ -236,7 +232,7 @@ def run_md_verification_task(
             raise self.retry(exc=e, countdown=backoff)
 
         except Exception as e:
-            error_msg = f"Verification pipeline failed: {str(e)}"
+            error_msg = f"Verification pipeline failed: {e!s}"
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
@@ -369,7 +365,7 @@ def run_md_verification_task(
     except Exception as e:
         # Unexpected errors - log and don't retry
         logger.error(f"Unexpected error in MD verification task: {e}", exc_info=True)
-        raise RuntimeError(f"MD verification task failed: {str(e)}") from e
+        raise RuntimeError(f"MD verification task failed: {e!s}") from e
 
 
 # =============================================================================
