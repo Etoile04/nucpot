@@ -137,3 +137,13 @@ body {
   border-top: 1px solid var(--color-border);
   margin: 2rem 0;
 }
+
+/* Task status pulse animation */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-badge-running {
+  animation: status-pulse 1.5s ease-in-out infinite;
+}
