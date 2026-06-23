@@ -10,10 +10,15 @@ import {
   Tag,
   Typography,
   message,
+  Flex,
+  Statistic,
 } from "antd"
 import {
   SendOutlined,
   ExclamationCircleOutlined,
+  ArrowLeftOutlined,
+  ClockCircleOutlined,
+  CloudServerOutlined,
 } from "@ant-design/icons"
 import {
   submitMDVerificationJob,
@@ -30,6 +35,7 @@ const { Text } = Typography
 interface ConfirmationStepProps {
   formData: WizardFormData
   onSuccess?: (jobId: string) => void
+  onPrev?: () => void
 }
 
 function getHpcBackendLabel(value: string): string {
@@ -68,14 +74,31 @@ function buildSubmitPayload(
   }
 }
 
+function estimateResources(formData: WizardFormData): {
+  coreHours: number
+  estimatedTime: string
+} {
+  const baseHours = formData.simulationTime / 10
+  const defectMultiplier = Math.max(1, formData.defectTypes.length)
+  const coreHours = Math.round(baseHours * defectMultiplier)
+  const hours = Math.round(coreHours / 64)
+  if (hours < 1) return { coreHours, estimatedTime: "<1 小时" }
+  if (hours < 24) return { coreHours, estimatedTime: `约 ${hours} 小时` }
+  return { coreHours, estimatedTime: `约 ${Math.round(hours / 24)} 天` }
+}
+
 export function ConfirmationStep({
   formData,
   onSuccess,
+  onPrev,
 }: ConfirmationStepProps) {
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
 
   const potential = formData.selectedPotential
+  const isRemoteHpc =
+    formData.hpcBackend !== "" && formData.hpcBackend !== "local"
+  const estimate = estimateResources(formData)
 
   const handleSubmit = async () => {
     setLoading(true)
@@ -102,9 +125,6 @@ export function ConfirmationStep({
     }
   }
 
-  const isRemoteHpc =
-    formData.hpcBackend !== "" && formData.hpcBackend !== "local"
-
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
       {/* Read-only summary */}
@@ -112,9 +132,9 @@ export function ConfirmationStep({
         title="任务配置摘要"
         bordered
         size="small"
-        column={{ xs: 1, sm: 1, md: 2 }}
+        column={1}
       >
-        <Descriptions.Item label="势函数" span={2}>
+        <Descriptions.Item label="势函数">
           <Space>
             <Text strong>{potential?.name ?? "未选择"}</Text>
             {potential?.type && (
@@ -129,6 +149,7 @@ export function ConfirmationStep({
         <Descriptions.Item label="元素体系">
           {formData.elementSystem}
         </Descriptions.Item>
+
         <Descriptions.Item label="相结构">
           {formData.phase || "未指定"}
         </Descriptions.Item>
@@ -136,6 +157,7 @@ export function ConfirmationStep({
         <Descriptions.Item label="温度">
           {formData.temperature} K
         </Descriptions.Item>
+
         <Descriptions.Item label="压力">
           {formData.pressure} GPa
         </Descriptions.Item>
@@ -143,6 +165,7 @@ export function ConfirmationStep({
         <Descriptions.Item label="系综类型">
           {formData.ensemble}
         </Descriptions.Item>
+
         <Descriptions.Item label="模拟时间">
           {formData.simulationTime} ps
         </Descriptions.Item>
@@ -150,6 +173,7 @@ export function ConfirmationStep({
         <Descriptions.Item label="时间步长">
           {formData.timestep} ps
         </Descriptions.Item>
+
         <Descriptions.Item label="缺陷类型">
           {formData.defectTypes.length > 0
             ? formatDefectTypes(formData.defectTypes)
@@ -161,10 +185,30 @@ export function ConfirmationStep({
             ? getHpcBackendLabel(formData.hpcBackend)
             : "本地计算"}
         </Descriptions.Item>
+
         <Descriptions.Item label="优先级">
           {formData.priority}
         </Descriptions.Item>
       </Descriptions>
+
+      {/* Resource estimation */}
+      {isRemoteHpc && (
+        <Flex gap="large" justify="space-around">
+          <Statistic
+            title="预估算力"
+            value={estimate.coreHours}
+            suffix="核时"
+            prefix={<CloudServerOutlined />}
+            valueStyle={{ color: "var(--step-process-color)" }}
+          />
+          <Statistic
+            title="预估耗时"
+            value={estimate.estimatedTime}
+            prefix={<ClockCircleOutlined />}
+            valueStyle={{ color: "var(--step-process-color)" }}
+          />
+        </Flex>
+      )}
 
       {/* HPC budget warning */}
       {isRemoteHpc && (
@@ -176,17 +220,21 @@ export function ConfirmationStep({
         />
       )}
 
-      {/* Submit button */}
-      <Button
-        type="primary"
-        size="large"
-        block
-        icon={<SendOutlined />}
-        loading={loading}
-        onClick={() => setModalVisible(true)}
-      >
-        提交任务
-      </Button>
+      {/* Navigation buttons */}
+      <Flex justify="space-between" gap="small">
+        <Button icon={<ArrowLeftOutlined />} onClick={onPrev}>
+          上一步
+        </Button>
+        <Button
+          type="primary"
+          size="large"
+          icon={<SendOutlined />}
+          loading={loading}
+          onClick={() => setModalVisible(true)}
+        >
+          {loading ? "提交中..." : "提交任务"}
+        </Button>
+      </Flex>
 
       {/* Confirmation modal */}
       <Modal
@@ -205,9 +253,7 @@ export function ConfirmationStep({
       >
         <p>请确认以下任务配置正确：</p>
         <ul style={{ paddingLeft: 20 }}>
-          <li>
-            势函数: {potential?.name ?? "未选择"}
-          </li>
+          <li>势函数: {potential?.name ?? "未选择"}</li>
           <li>温度: {formData.temperature} K</li>
           <li>压力: {formData.pressure} GPa</li>
           <li>模拟时间: {formData.simulationTime} ps</li>
@@ -216,7 +262,7 @@ export function ConfirmationStep({
         {isRemoteHpc && (
           <Alert
             type="warning"
-            message={`将提交至 ${getHpcBackendLabel(formData.hpcBackend)}，请确认算力预算充足。`}
+            message={`将提交至 ${getHpcBackendLabel(formData.hpcBackend)}，预计消耗 ${estimate.coreHours} 核时，请确认算力预算充足。`}
             style={{ marginTop: 16 }}
           />
         )}

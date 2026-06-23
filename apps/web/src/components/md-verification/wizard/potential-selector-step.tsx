@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Input,
-  Select,
   Table,
   Tag,
   Card,
@@ -11,8 +10,8 @@ import {
   Spin,
   Typography,
   Space,
+  Checkbox,
 } from "antd"
-import { SearchOutlined } from "@ant-design/icons"
 import { listPotentials } from "@/lib/potentials-api"
 import type { PotentialSummary, ListParams } from "@/lib/potentials-api"
 import type { WizardFormData } from "./wizard-types"
@@ -27,11 +26,11 @@ interface PotentialSelectorStepProps {
 const PAGE_SIZE = 10
 
 const POTENTIAL_TYPE_OPTIONS = [
-  { value: "EAM", label: "EAM" },
-  { value: "MEAM", label: "MEAM" },
-  { value: "ADP", label: "ADP" },
-  { value: "Morse", label: "Morse" },
-  { value: "FS", label: "Finnis-Sinclair" },
+  { label: "EAM", value: "EAM" },
+  { label: "MEAM", value: "MEAM" },
+  { label: "ADP", value: "ADP" },
+  { label: "Morse", value: "Morse" },
+  { label: "Finnis-Sinclair", value: "FS" },
 ]
 
 export function PotentialSelectorStep({
@@ -39,7 +38,7 @@ export function PotentialSelectorStep({
   onUpdateField,
 }: PotentialSelectorStepProps) {
   const [searchQuery, setSearchQuery] = useState("")
-  const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
+  const [typeFilters, setTypeFilters] = useState<string[]>([])
   const [results, setResults] = useState<PotentialSummary[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -48,6 +47,8 @@ export function PotentialSelectorStep({
   const fetchPotentials = useCallback(async () => {
     setLoading(true)
     try {
+      const typeFilter =
+        typeFilters.length > 0 ? typeFilters.join(",") : undefined
       const params: ListParams = {
         q: searchQuery || undefined,
         type: typeFilter,
@@ -63,7 +64,7 @@ export function PotentialSelectorStep({
     } finally {
       setLoading(false)
     }
-  }, [searchQuery, typeFilter, page])
+  }, [searchQuery, typeFilters, page])
 
   useEffect(() => {
     const timer = setTimeout(fetchPotentials, 300)
@@ -80,8 +81,8 @@ export function PotentialSelectorStep({
     setPage(1)
   }
 
-  const handleTypeFilterChange = (value: string) => {
-    setTypeFilter(value || undefined)
+  const handleTypeFilterChange = (checkedValues: string[]) => {
+    setTypeFilters(checkedValues)
     setPage(1)
   }
 
@@ -135,32 +136,33 @@ export function PotentialSelectorStep({
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      {/* Search & Filter bar */}
-      <Space wrap>
-        <Input
-          placeholder="搜索势函数名称或描述..."
-          prefix={<SearchOutlined />}
-          value={searchQuery}
-          onChange={(e) => handleSearchChange(e.target.value)}
-          style={{ width: 300 }}
-          allowClear
-        />
-        <Select
-          placeholder="类型筛选"
-          value={typeFilter}
-          onChange={handleTypeFilterChange}
-          style={{ width: 150 }}
-          allowClear
-          options={POTENTIAL_TYPE_OPTIONS}
-        />
-      </Space>
+      {/* Search bar */}
+      <Input.Search
+        placeholder="搜索势函数名称/元素..."
+        value={searchQuery}
+        onSearch={handleSearchChange}
+        onChange={(e) => handleSearchChange(e.target.value)}
+        allowClear
+        enterButton
+        style={{ width: "100%" }}
+      />
+
+      {/* Type filter using Checkbox.Group (vertical layout per NFM-378) */}
+      <Checkbox.Group
+        options={POTENTIAL_TYPE_OPTIONS}
+        value={typeFilters}
+        onChange={handleTypeFilterChange}
+      />
 
       {/* Selected potential card */}
       {formData.selectedPotential && (
         <Card
           size="small"
           title="已选势函数"
-          style={{ background: "#f6ffed", borderColor: "#b7eb8f" }}
+          style={{
+            background: "var(--wizard-border-color)",
+            borderColor: "var(--step-finish-color)",
+          }}
         >
           <Space wrap>
             <Text strong>{formData.selectedPotential.name}</Text>
@@ -169,7 +171,10 @@ export function PotentialSelectorStep({
               <Tag key={el}>{el}</Tag>
             ))}
             {formData.selectedPotential.description && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
+              <Text
+                type="secondary"
+                style={{ fontSize: "var(--hint-text-size)" }}
+              >
                 {formData.selectedPotential.description}
               </Text>
             )}
@@ -192,7 +197,9 @@ export function PotentialSelectorStep({
             showTotal: (t) => `共 ${t} 条`,
             size: "small",
           }}
-          locale={{ emptyText: <Empty description="暂无匹配势函数" /> }}
+          locale={{
+            emptyText: <Empty description="未找到匹配的势函数" />,
+          }}
           rowClassName={(record) =>
             formData.selectedPotential?.id === record.id
               ? "ant-table-row-selected"
