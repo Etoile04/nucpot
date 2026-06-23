@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Table,
   Button,
@@ -66,7 +66,7 @@ export function TaskList() {
   const [cancelingIds, setCancelingIds] = useState<Set<string>>(new Set())
 
   // Polling hook for real-time status updates
-  const { isPolling, refresh: pollRefresh } = useTaskPolling({
+  const { isPolling } = useTaskPolling({
     interval: POLLING_INTERVAL,
     elementSystem: filters.element_system || undefined,
     enabled: true,
@@ -105,13 +105,15 @@ export function TaskList() {
     fetchJobs()
   }, [fetchJobs])
 
-  // Merge polling data with paginated data
+  // Refetch paginated list when polling cycle completes
+  const prevIsPollingRef = useRef(false)
   useEffect(() => {
-    if (pollRefresh && jobs.length > 0) {
+    const wasPolling = prevIsPollingRef.current
+    prevIsPollingRef.current = isPolling
+    if (wasPolling && !isPolling && jobs.length > 0) {
       fetchJobs(pagination.current, pagination.pageSize)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPolling])
+  }, [isPolling, jobs.length, fetchJobs, pagination])
 
   const handleTableChange = (newPagination: TablePaginationConfig) => {
     fetchJobs(newPagination.current ?? 1, newPagination.pageSize ?? 10)
@@ -123,7 +125,7 @@ export function TaskList() {
       setSelectedRowKeys([])
       fetchJobs(1, pagination.pageSize)
     },
-    [fetchJobs, pagination.pageSize],
+    [fetchJobs, pagination],
   )
 
   const cancelSingleJob = useCallback(
