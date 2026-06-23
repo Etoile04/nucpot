@@ -58,7 +58,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: docker/api.Dockerfile
+      dockerfile: docker/prod-api.Dockerfile
     image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-api
     restart: unless-stopped
@@ -72,12 +72,12 @@ services:
       NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${PROD_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       REDIS_HOST: nucpot-prod-redis
       REDIS_PORT: "6379"
+      CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
       # HPC SSH key (mount as secret in production)
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
       NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
-    volumes:
-      - ./migrations:/app/migrations:ro
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -97,13 +97,13 @@ services:
   worker:
     build:
       context: .
-      dockerfile: docker/api.Dockerfile
+      dockerfile: docker/prod-api.Dockerfile
     image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-worker
     restart: unless-stopped
     command: >
       python -m celery -A nfm_db.services.celery_app:celery_app worker
-      --queue=md_verification
+      --queues=md_verification
       --concurrency=${PROD_WORKER_CONCURRENCY:-1}
       --loglevel=INFO
       --max-tasks-per-child=1
@@ -112,11 +112,11 @@ services:
       NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
       REDIS_HOST: nucpot-prod-redis
       REDIS_PORT: "6379"
+      CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
       NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
-    volumes:
-      - ./migrations:/app/migrations:ro
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }

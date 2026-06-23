@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ENUM, UUID
+from sqlalchemy.dialects.postgresql import UUID
 
 # revision identifiers, used by Alembic.
 revision: str = '001'
@@ -20,61 +20,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create users table with blog role support."""
-    # Create blog_role enum type
-    blog_role_enum = ENUM(
-        'admin',
-        'editor',
-        'reviewer',
-        name='blog_role_enum',
-        create_type=True,
-    )
-    blog_role_enum.create(op.get_bind(), checkfirst=True)
+    # Create enum via raw SQL to avoid duplicate CREATE TYPE in async migrations
+    op.execute("""
+        CREATE TYPE blog_role_enum AS ENUM ('admin', 'editor', 'reviewer')
+    """)
 
-    # Create users table
-    op.create_table(
-        'users',
-        sa.Column(
-            'id',
-            UUID(as_uuid=True),
-            primary_key=True,
-            server_default=sa.text('gen_random_uuid()'),
-        ),
-        sa.Column('username', sa.String(100), nullable=False),
-        sa.Column('email', sa.String(255), nullable=False),
-        sa.Column('full_name', sa.String(255), nullable=True),
-        sa.Column(
-            'hashed_password',
-            sa.String(255),
-            nullable=False,
-        ),
-        sa.Column(
-            'blog_role',
-            blog_role_enum,
-            nullable=True,
-        ),
-        sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'),
-        sa.Column(
-            'last_login',
-            sa.DateTime(timezone=True),
-            nullable=True,
-        ),
-        sa.Column(
-            'created_at',
-            sa.DateTime(timezone=True),
-            server_default=sa.text('now()'),
-            nullable=False,
-        ),
-        sa.Column(
-            'updated_at',
-            sa.DateTime(timezone=True),
-            server_default=sa.text('now()'),
-            nullable=False,
-        ),
-        sa.CheckConstraint(
-            "blog_role IN ('admin', 'editor', 'reviewer')",
-            name='check_blog_role',
-        ),
-    )
+    op.execute("""
+        CREATE TABLE users (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            username VARCHAR(100) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            full_name VARCHAR(255),
+            hashed_password VARCHAR(255) NOT NULL,
+            blog_role blog_role_enum,
+            is_active BOOLEAN NOT NULL DEFAULT true,
+            last_login TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT check_blog_role CHECK (blog_role IN ('admin', 'editor', 'reviewer'))
+        )
+    """)
     op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
     op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
@@ -86,6 +51,4 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_username'), table_name='users')
     op.drop_index(op.f('ix_users_id'), table_name='users')
     op.drop_table('users')
-
-    # Drop blog_role enum
-    ENUM(name='blog_role_enum').drop(op.get_bind(), checkfirst=True)
+    op.execute("DROP TYPE IF EXISTS blog_role_enum")
