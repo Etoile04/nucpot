@@ -107,7 +107,7 @@ export function TaskList() {
 
   // Merge polling data with paginated data
   useEffect(() => {
-    if (pollingRefresh && jobs.length > 0) {
+    if (pollRefresh && jobs.length > 0) {
       fetchJobs(pagination.current, pagination.pageSize)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -151,7 +151,7 @@ export function TaskList() {
         })
       }
     },
-    [fetchJobs, pagination.current, pagination.pageSize],
+    [fetchJobs, pagination],
   )
 
   const handleBatchCancel = useCallback(async () => {
@@ -192,7 +192,7 @@ export function TaskList() {
 
     setSelectedRowKeys([])
     fetchJobs(pagination.current, pagination.pageSize)
-  }, [selectedRowKeys, jobs, fetchJobs, pagination.current, pagination.pageSize])
+  }, [selectedRowKeys, jobs, fetchJobs, pagination])
 
   // Memoize row selection config
   const rowSelection = useMemo(
@@ -305,8 +305,9 @@ export function TaskList() {
                         {
                           key: "cancel",
                           icon: <PauseCircleOutlined />,
-                          label: "取消任务",
+                          label: isCanceling ? "取消中..." : "取消任务",
                           danger: true,
+                          disabled: isCanceling,
                           onClick: () =>
                             cancelSingleJob(record.id, record.status),
                         } as const,

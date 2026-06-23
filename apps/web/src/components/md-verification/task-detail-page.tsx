@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
   Card,
@@ -10,6 +10,7 @@ import {
   Alert,
   Spin,
   Tabs,
+  Tag,
   message,
 } from "antd"
 import {
@@ -54,7 +55,9 @@ export function TaskDetailPage() {
     PotentialFittingResultResponse[]
   >([])
 
-  const fetchData = async (showRefreshLoading = false) => {
+  const isPollableRef = useRef(false)
+
+  const fetchData = useCallback(async (showRefreshLoading = false) => {
     if (showRefreshLoading) {
       setRefreshing(true)
     } else {
@@ -100,20 +103,28 @@ export function TaskDetailPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [jobId])
 
+  // Update pollable ref when job status changes (avoids stale closure in interval)
+  useEffect(() => {
+    isPollableRef.current = !!(
+      job &&
+      (job.status === JobStatus.RUNNING || job.status === JobStatus.SUBMITTED)
+    )
+  }, [job])
+
+  // Initial fetch + polling for running jobs
   useEffect(() => {
     fetchData()
 
-    // Set up polling for running jobs
     const interval = setInterval(() => {
-      if (job && (job.status === JobStatus.RUNNING || job.status === JobStatus.SUBMITTED)) {
+      if (isPollableRef.current) {
         fetchData(true)
       }
     }, 5000) // Poll every 5 seconds
 
     return () => clearInterval(interval)
-  }, [jobId, job?.status])
+  }, [jobId, fetchData])
 
   const renderSimulationTab = () => {
     if (!simulationResults) {
