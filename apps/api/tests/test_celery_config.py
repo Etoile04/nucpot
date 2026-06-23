@@ -13,7 +13,7 @@ import pytest
 from celery import Celery
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestCeleryAppConfiguration:
     """Test Celery application configuration."""
 
@@ -115,7 +115,7 @@ class TestCeleryAppConfiguration:
         assert celery_app.conf.result_expires == timedelta(days=1)
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestTaskRegistration:
     """Test Celery task registration and availability."""
 

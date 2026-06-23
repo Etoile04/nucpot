@@ -3,11 +3,11 @@ import type { FileInfo, PotentialMetadata } from "./upload-api"
 
 describe("upload-api", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE", "http://localhost:8000")
+    vi.stubEnv("NEXT_PUBLIC_API_BASE", "")
     global.fetch = vi.fn()
   })
 
-  it("submitPotential POSTs metadata to /api/v1/potentials", async () => {
+  it("submitPotential POSTs metadata to /api/potentials/upload", async () => {
     const fakePotential = {
       id: "abc-123",
       name: "Test Potential",
@@ -34,7 +34,7 @@ describe("upload-api", () => {
     expect(result.success).toBe(true)
     expect((result as { potential: unknown }).potential).toBeTruthy()
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:8000/api/v1/potentials",
+      "/api/potentials/upload",
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining('"name"'),
@@ -73,7 +73,7 @@ describe("upload-api", () => {
     expect((result as { error: string }).error).toContain("license_type")
   })
 
-  it("uploadPotentialFile POSTs file to /api/v1/potentials/{id}/file", async () => {
+  it("uploadPotentialFile POSTs file to /api/potentials/upload-file", async () => {
     const fileResp = {
       file_name: "test.eam.alloy",
       file_url: "/uploads/id123/test.eam.alloy",
@@ -91,7 +91,7 @@ describe("upload-api", () => {
     expect(result.success).toBe(true)
     expect(((result as { file_info: FileInfo }).file_info).file_name).toBe("test.eam.alloy")
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:8000/api/v1/potentials/id123/file",
+      "/api/potentials/upload-file?id=id123",
       expect.objectContaining({ method: "POST" }),
     )
   })

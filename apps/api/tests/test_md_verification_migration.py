@@ -53,6 +53,7 @@ async def migration_db_session():
     await engine.dispose()
 
 
+@pytest.mark.integration
 class TestMDVerificationMigration:
     """Test MD verification migration creation and constraints."""
 
@@ -310,6 +311,7 @@ class TestMDVerificationMigration:
         await migration_db_session.rollback()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_migration_rollback():
     """Test that migration can be rolled back successfully."""

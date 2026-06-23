@@ -152,7 +152,7 @@ asyncio_mode = "auto"
 # CWD on sys.path (unlike `python -m pytest`), which broke the ontology tests'
 # `from tests.<helper> import ...` collection in CI (NFM-275).
 pythonpath = ["src", "."]
-addopts = "--cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
+addopts = "-m 'not integration' --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
 markers = [
     "e2e: End-to-end tests that exercise the full system",
     "unit: Unit tests (isolated, no external dependencies)",

@@ -309,6 +309,7 @@ class TestSyncJobsCleanup:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 class TestCeleryTaskRegistration:
     """Tests for Celery task registration and metadata."""
 

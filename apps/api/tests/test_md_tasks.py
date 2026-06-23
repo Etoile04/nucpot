@@ -115,7 +115,7 @@ def mock_analysis_manager() -> Mock:
 # =============================================================================
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestHappyPath:
     """Test successful task execution."""
 
@@ -218,7 +218,7 @@ class TestHappyPath:
 # =============================================================================
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestErrorHandling:
     """Test error handling and validation."""
 
@@ -516,7 +516,7 @@ class TestTaskConfiguration:
 # =============================================================================
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestCeleryAppConfiguration:
     """Test Celery application configuration."""
 

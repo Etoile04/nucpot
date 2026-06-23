@@ -153,3 +153,23 @@ async def reviewer_headers(reviewer_user: User):
     """Create headers with reviewer authentication token."""
     token = create_access_token(data={"sub": str(reviewer_user.id)})
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def authenticated_client(db_session: AsyncSession, admin_user: User):
+    """Create an async test client with admin authentication headers."""
+    from nfm_db.services.auth_service import create_access_token
+
+    token = create_access_token(data={"sub": str(admin_user.id)})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=headers) as client:
+        yield client
+
+    app.dependency_overrides.clear()
