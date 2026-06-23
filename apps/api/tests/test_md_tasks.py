@@ -24,7 +24,6 @@ from celery.schedules import crontab
 from nfm_db.services.celery_app import celery_app
 from nfm_db.services.md_tasks import run_md_verification_task
 
-
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -201,7 +200,7 @@ class TestHappyPath:
             task_instance = MagicMock()
             task_instance.request = mock_task_request
 
-            result = run_md_verification_task(
+            run_md_verification_task(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -376,8 +375,9 @@ class TestRetryLogic:
 
             task_instance = MagicMock()
             task_instance.request = mock_task_request
+            task_instance.retry.side_effect = Retry("Temporary NFS timeout")
 
-            with pytest.raises(Retry) as exc_info:
+            with pytest.raises(Retry):
                 run_md_verification_task(
                     task_instance,
                     mock_job_id,
@@ -386,9 +386,10 @@ class TestRetryLogic:
                     mock_config,
                 )
 
-            # Verify retry exception
-            assert "File access error" in str(exc_info.value)
-            assert exc_info.value.retry_count == 1
+            # Verify retry was called with the FileNotFoundError exc
+            task_instance.retry.assert_called_once()
+            call_kwargs = task_instance.retry.call_args.kwargs
+            assert "countdown" in call_kwargs
 
     @pytest.mark.asyncio
     async def test_hpc_connection_retry(
@@ -412,8 +413,9 @@ class TestRetryLogic:
 
             task_instance = MagicMock()
             task_instance.request = mock_task_request
+            task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
-            with pytest.raises(Retry) as exc_info:
+            with pytest.raises(Retry):
                 run_md_verification_task(
                     task_instance,
                     mock_job_id,
@@ -422,8 +424,11 @@ class TestRetryLogic:
                     mock_config,
                 )
 
-            # Verify retry with exponential backoff
-            assert "HPC connection error" in str(exc_info.value)
+            # Verify retry was called with exponential backoff countdown
+            task_instance.retry.assert_called_once()
+            call_kwargs = task_instance.retry.call_args.kwargs
+            assert "countdown" in call_kwargs
+            assert call_kwargs["countdown"] == 120  # 120 * 2^0
 
     @pytest.mark.asyncio
     async def test_exponential_backoff(
@@ -450,8 +455,9 @@ class TestRetryLogic:
 
                 task_instance = MagicMock()
                 task_instance.request = mock_task_request
+                task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
-                with pytest.raises(Retry) as exc_info:
+                with pytest.raises(Retry):
                     run_md_verification_task(
                         task_instance,
                         mock_job_id,
@@ -462,8 +468,8 @@ class TestRetryLogic:
 
                 # Verify exponential backoff: 120 * 2^retry_count
                 expected_countdown = 120 * (2 ** retry_count)
-                # The countdown should be set (implementation detail)
-                assert exc_info.value.retry_count == retry_count + 1
+                call_kwargs = task_instance.retry.call_args.kwargs
+                assert call_kwargs["countdown"] == expected_countdown
 
 
 # =============================================================================

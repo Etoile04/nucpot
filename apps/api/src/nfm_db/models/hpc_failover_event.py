@@ -4,9 +4,8 @@ This model tracks failover events between primary and backup HPC clusters.
 """
 
 from datetime import datetime
-from typing import Optional
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,7 +46,7 @@ class HPCFailoverEvent(Base):
     )
 
     # Target cluster (where failover switched to, if successful)
-    target_cluster: Mapped[Optional[str]] = mapped_column(
+    target_cluster: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True
     )

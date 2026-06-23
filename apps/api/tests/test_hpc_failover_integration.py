@@ -8,9 +8,10 @@ Tests follow TDD principles:
 These are integration tests that verify end-to-end failover behavior.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
 

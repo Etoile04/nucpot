@@ -5,8 +5,8 @@ including health monitoring, failover triggering, and primary recovery.
 """
 
 import logging
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any
 
 from nfm_db.services.hpc_metrics import PROMETHEUS_AVAILABLE, hpc_failover_events
 
@@ -33,7 +33,7 @@ class HPCFailoverManager:
         self._backup_ssh_manager = backup_ssh_manager
         self.current_cluster = "primary"
         self.primary_healthy = True
-        self.last_health_check: Optional[datetime] = None
+        self.last_health_check: datetime | None = None
         self.failover_count = 0
 
     @property
@@ -69,9 +69,9 @@ class HPCFailoverManager:
         source_cluster: str,
         reason: str,
         success: bool = True,
-        target_cluster: Optional[str] = None,
+        target_cluster: str | None = None,
         failure_count: int = 0,
-        event_metadata: Optional[Dict[str, Any]] = None,
+        event_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Log failover event to database.
 
@@ -84,8 +84,8 @@ class HPCFailoverManager:
             failure_count: Number of consecutive failures
             event_metadata: Additional metadata (JSONB field)
         """
-        from nfm_db.models.hpc_failover_event import HPCFailoverEvent
         from nfm_db.database import get_db
+        from nfm_db.models.hpc_failover_event import HPCFailoverEvent
 
         try:
             async for db in get_db():
@@ -233,7 +233,7 @@ class HPCFailoverManager:
                 event_type="failover_failed",
                 source_cluster=self.hpc_cluster,
                 target_cluster=backup_hosts[0] if backup_hosts else None,
-                reason=f"Exception during failover: {str(e)}",
+                reason=f"Exception during failover: {e!s}",
                 success=False,
                 failure_count=self.failover_count,
                 event_metadata={"exception": str(e), "exception_type": type(e).__name__},

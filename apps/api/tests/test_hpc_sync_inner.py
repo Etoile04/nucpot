@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -87,13 +86,12 @@ class TestSyncJobsInnerCoroutine:
     @pytest.mark.unit
     def test_sync_jobs_calls_cleanup_in_finally(self) -> None:
         """_sync_jobs should call manager.cleanup() in finally block."""
-        from nfm_db.services.hpc_ssh import SSHConnectionManager
 
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
         with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config):
-            with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager) as mock_cls:
+            with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
                 with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         from nfm_db.services.hpc_sync import sync_hpc_job_status

@@ -1,14 +1,16 @@
 """Tests for HPC Orchestration System - Phase 4.1-4.5."""
 
 import asyncio
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
-from nfm_db.services.hpc_ssh import (
-    SSHConnectionManager,
-    SSHConnectionConfig,
-)
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from nfm_db.services.hpc_orchestration import HPCOrchestrator
+from nfm_db.services.hpc_ssh import (
+    SSHConnectionConfig,
+    SSHConnectionManager,
+)
 
 
 class TestSSHConnectionManager:
@@ -59,7 +61,7 @@ class TestSSHConnectionManager:
         )
 
         # Acquire the only connection
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch('paramiko.SSHClient'):
             manager.acquire_connection()
 
             # Try to acquire another - should fail
@@ -76,7 +78,7 @@ class TestSSHConnectionManager:
             skip_key_validation=True
         )
 
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch('paramiko.SSHClient'):
             conn = manager.acquire_connection()
             assert manager.available_connections == 1
 
@@ -367,7 +369,6 @@ class TestThreadSafety:
 
     def test_connection_lock_is_threading_lock(self):
         """Test connection manager uses threading.Lock for thread safety."""
-        import threading
 
         manager = SSHConnectionManager(
             host="test.example.com",

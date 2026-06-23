@@ -14,8 +14,6 @@ Requirements:
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock
@@ -29,7 +27,6 @@ from nfm_db.models.md_verification import (
 )
 from nfm_db.services.md_tasks import run_md_verification_task
 from nfm_db.services.md_verification import MDVerificationService
-
 
 # =============================================================================
 # Test Fixtures
@@ -132,6 +129,7 @@ async def test_job(
 
     # Convert back to ORM model for tests
     from sqlalchemy import select
+
     from nfm_db.models.md_verification import MDVerificationJob
 
     stmt = select(MDVerificationJob).where(MDVerificationJob.id == job_response.id)
@@ -179,7 +177,7 @@ class TestMDVerificationIntegration:
         """
         # Import nfm-md-runner to verify availability
         try:
-            from nfm_md_runner import AnalysisManager
+            import nfm_md_runner  # noqa: F401
         except ImportError as e:
             pytest.skip(f"nfm-md-runner not installed: {e}")
 
@@ -220,7 +218,7 @@ class TestMDVerificationIntegration:
     ) -> None:
         """Test pipeline error handling with invalid files."""
         try:
-            from nfm_md_runner import AnalysisManager
+            import nfm_md_runner  # noqa: F401
         except ImportError as e:
             pytest.skip(f"nfm-md-runner not installed: {e}")
 
@@ -254,6 +252,7 @@ class TestDatabasePersistence:
     ) -> None:
         """Test that job status is updated after task completion."""
         from sqlalchemy import select
+
         from nfm_db.models.md_verification import MDVerificationJob
 
         # Verify initial status
@@ -333,7 +332,7 @@ class TestTaskPerformance:
         import time
 
         try:
-            from nfm_md_runner import AnalysisManager
+            import nfm_md_runner  # noqa: F401
         except ImportError as e:
             pytest.skip(f"nfm-md-runner not installed: {e}")
 
@@ -416,11 +415,7 @@ def verify_fixture_files(integration_test_dir: Path) -> bool:
         "BCC_U.cif",
     ]
 
-    for filename in required_files:
-        if not (integration_test_dir / filename).exists():
-            return False
-
-    return True
+    return all((integration_test_dir / filename).exists() for filename in required_files)
 
 
 def create_minimal_fixtures(integration_test_dir: Path) -> None:
@@ -446,10 +441,7 @@ if __name__ == "__main__":
     # Allow running fixture creation directly
     import sys
 
-    if len(sys.argv) > 1:
-        test_dir = Path(sys.argv[1])
-    else:
-        test_dir = Path("tests/fixtures")
+    test_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("tests/fixtures")
 
     test_dir.mkdir(parents=True, exist_ok=True)
     create_minimal_fixtures(test_dir)

@@ -17,60 +17,65 @@ Architecture follows Phase 4.1-4.5 implementation plan from NFM-345.
 Refactored in NFM-355 to comply with ≤800 line file size limit.
 """
 
+import contextlib
 import logging
-from typing import Dict, Any, Optional
+from typing import Any
 
 from nfm_db.database import get_db
-
-from nfm_db.services.hpc_ssh import (
-    JobSubmissionError,
-    HPCConnectionError,
-    SSHConnectionConfig,
-    SSHConnectionManager,
-)
 from nfm_db.services.hpc_failover import HPCFailoverManager
-from nfm_db.services.hpc_slurm import (
-    generate_slurm_script,
-    validate_simulation_params,
-    parse_walltime,
-    submit_to_slurm,
-    create_hpc_job_record,
+from nfm_db.services.hpc_file_transfer import (
+    create_task_directory as _create_task_directory,
 )
-from nfm_db.services.hpc_job_monitor import (
-    poll_job_status,
-    execute_squeue,
-    update_job_status,
-    check_job_completion,
-    get_active_jobs,
-    sync_all_active_jobs,
+from nfm_db.services.hpc_file_transfer import (
+    download_file as _download_file,
+)
+from nfm_db.services.hpc_file_transfer import (
+    download_results as _download_results,
+)
+from nfm_db.services.hpc_file_transfer import (
+    get_remote_checksum as _get_remote_checksum,
+)
+from nfm_db.services.hpc_file_transfer import (
+    get_remote_file_position as _get_remote_file_position,
+)
+from nfm_db.services.hpc_file_transfer import (
+    save_metadata as _save_metadata,
+)
+from nfm_db.services.hpc_file_transfer import (
+    save_to_object_storage as _save_to_object_storage,
 )
 from nfm_db.services.hpc_file_transfer import (
     upload_file as _upload_file,
-    upload_files as _upload_files,
-    create_task_directory as _create_task_directory,
-    download_file as _download_file,
-    download_results as _download_results,
-    verify_checksum as _verify_checksum,
-    get_remote_checksum as _get_remote_checksum,
-    save_to_object_storage as _save_to_object_storage,
-    save_metadata as _save_metadata,
-    upload_file_with_retry as _upload_file_with_retry,
-    upload_file_with_resume as _upload_file_with_resume,
-    get_remote_file_position as _get_remote_file_position,
 )
-from nfm_db.services.hpc_sync import sync_hpc_job_status
-from nfm_db.services.hpc_metrics import (
-    PROMETHEUS_AVAILABLE,
-    hpc_job_submissions,
-    hpc_job_duration,
-    hpc_file_transfer_bytes,
-    hpc_connection_errors,
-    hpc_failover_events,
-    hpc_active_connections,
-    # NFM-346 failover metrics
-    failover_total,
-    failover_duration_seconds,
-    health_check_success,
+from nfm_db.services.hpc_file_transfer import (
+    upload_file_with_resume as _upload_file_with_resume,
+)
+from nfm_db.services.hpc_file_transfer import (
+    upload_file_with_retry as _upload_file_with_retry,
+)
+from nfm_db.services.hpc_file_transfer import (
+    upload_files as _upload_files,
+)
+from nfm_db.services.hpc_file_transfer import (
+    verify_checksum as _verify_checksum,
+)
+from nfm_db.services.hpc_job_monitor import (
+    check_job_completion,
+    execute_squeue,
+    get_active_jobs,
+    update_job_status,
+)
+from nfm_db.services.hpc_slurm import (
+    create_hpc_job_record,
+    generate_slurm_script,
+    parse_walltime,
+    submit_to_slurm,
+    validate_simulation_params,
+)
+from nfm_db.services.hpc_ssh import (
+    HPCConnectionError,
+    SSHConnectionConfig,
+    SSHConnectionManager,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,10 +129,8 @@ class HPCOrchestrator:
 
     def __del__(self) -> None:
         """Destructor to ensure cleanup on garbage collection."""
-        try:
+        with contextlib.suppress(Exception):
             self.cleanup()
-        except Exception:
-            pass
 
     # =========================================================================
     # Failover delegates
@@ -139,9 +142,9 @@ class HPCOrchestrator:
         source_cluster: str,
         reason: str,
         success: bool = True,
-        target_cluster: Optional[str] = None,
+        target_cluster: str | None = None,
         failure_count: int = 0,
-        event_metadata: Optional[Dict[str, Any]] = None,
+        event_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Log failover event to database using module-level get_db.
 
@@ -205,7 +208,7 @@ class HPCOrchestrator:
         self,
         task_id: str,
         crystal_structure_file: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
     ) -> str:
         """Submit MD verification job to HPC.
 
@@ -257,11 +260,11 @@ class HPCOrchestrator:
 
         return hpc_job_id
 
-    def _validate_simulation_params(self, params: Dict[str, Any]) -> None:
+    def _validate_simulation_params(self, params: dict[str, Any]) -> None:
         """Validate simulation parameters."""
         validate_simulation_params(params)
 
-    def _generate_slurm_script(self, params: Dict[str, Any]) -> str:
+    def _generate_slurm_script(self, params: dict[str, Any]) -> str:
         """Generate SLURM batch script from parameters."""
         return generate_slurm_script(params)
 
@@ -276,7 +279,7 @@ class HPCOrchestrator:
         from nfm_db.services.hpc_slurm import upload_script_via_sftp
         upload_script_via_sftp(client, script_content, remote_path)
 
-    async def _create_hpc_job_record(self, task_id: str, hpc_job_id: str, params: Dict[str, Any], cluster_used: str = "primary") -> None:
+    async def _create_hpc_job_record(self, task_id: str, hpc_job_id: str, params: dict[str, Any], cluster_used: str = "primary") -> None:
         """Create record in hpc_jobs table."""
         hpc_cluster = self.hpc_cluster if cluster_used == "primary" else (
             self.config.backup_hosts[0] if self.config.backup_hosts else "unknown"
@@ -363,7 +366,7 @@ class HPCOrchestrator:
         """Upload a single file to HPC cluster."""
         return await _upload_file(self.ssh_manager, task_id, local_file, remote_file)
 
-    async def upload_files(self, task_id: str, files: list) -> Dict[str, bool]:
+    async def upload_files(self, task_id: str, files: list) -> dict[str, bool]:
         """Upload multiple files to HPC cluster."""
         return await _upload_files(self.ssh_manager, task_id, files)
 
@@ -375,7 +378,7 @@ class HPCOrchestrator:
         """Download a single file from HPC cluster."""
         return await _download_file(self.ssh_manager, task_id, remote_file, local_path)
 
-    async def download_results(self, task_id: str) -> Dict[str, str]:
+    async def download_results(self, task_id: str) -> dict[str, str]:
         """Download all result files for a task."""
         return await _download_results(self.ssh_manager, task_id)
 
@@ -387,11 +390,11 @@ class HPCOrchestrator:
         """Get checksum of remote file via SSH."""
         return await _get_remote_checksum(self.ssh_manager, task_id, remote_file)
 
-    async def save_to_object_storage(self, task_id: str, downloaded_files: Dict[str, str]) -> Dict[str, str]:
+    async def save_to_object_storage(self, task_id: str, downloaded_files: dict[str, str]) -> dict[str, str]:
         """Save downloaded files to NFMD object storage."""
         return await _save_to_object_storage(task_id, downloaded_files)
 
-    async def _save_metadata(self, task_id: str, file_metadata: Dict[str, Dict[str, Any]]) -> None:
+    async def _save_metadata(self, task_id: str, file_metadata: dict[str, dict[str, Any]]) -> None:
         """Save file metadata to database."""
         return await _save_metadata(task_id, file_metadata)
 

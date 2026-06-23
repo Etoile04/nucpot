@@ -36,16 +36,22 @@ from nfm_db.models.feedback import (  # noqa: E402
     FeedbackType,
     Priority,
 )
+from nfm_db.models.hpc_failover_event import (  # noqa: E402
+    HPCFailoverEvent,
+)
 from nfm_db.models.md_verification import (  # noqa: E402
     DefectAnalysisResult,
     DefectType,
+    ExecutionStatus,
     FittingMethod,
     HpcJob,
     HpcJobStatus,
     JobStatus,
-    MDVerificationJob,
+    JobType,
     MDSimulationResult,
+    MDVerificationJob,
     PotentialFittingResult,
+    VerificationResultMD,
 )
 from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.ref_gap_fill import (  # noqa: E402
@@ -53,9 +59,6 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     Confidence,
     RefGapFillStaging,
     StagingStatus,
-)
-from nfm_db.models.hpc_failover_event import (  # noqa: E402
-    HPCFailoverEvent,
 )
 from nfm_db.models.user import (  # noqa: E402
     BlogRole,
@@ -71,6 +74,7 @@ __all__ = [
     "Confidence",
     "DefectAnalysisResult",
     "DefectType",
+    "ExecutionStatus",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
@@ -79,8 +83,9 @@ __all__ = [
     "HpcJob",
     "HpcJobStatus",
     "JobStatus",
-    "MDVerificationJob",
+    "JobType",
     "MDSimulationResult",
+    "MDVerificationJob",
     "Permission",
     "PostStatus",
     "Potential",
@@ -90,4 +95,5 @@ __all__ = [
     "StagingStatus",
     "TimestampMixin",
     "User",
+    "VerificationResultMD",
 ]

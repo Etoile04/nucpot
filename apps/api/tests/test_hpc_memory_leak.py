@@ -7,11 +7,12 @@ CRITICAL: Run these tests before and after applying ADR-004 fix to verify
 the memory leak is resolved.
 """
 
-import pytest
 import gc
-import tracemalloc
-from unittest.mock import patch, MagicMock
 import time
+import tracemalloc
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestOrchestratorMemoryLeak:
@@ -34,7 +35,7 @@ class TestOrchestratorMemoryLeak:
         snapshot1 = tracemalloc.take_snapshot()
 
         # Run 100 iterations of orchestrator lifecycle (simulates 50 minutes of Celery beat)
-        for i in range(100):
+        for _i in range(100):
             config = SSHConnectionConfig(
                 hosts=("test.example.com",),
                 username="test",
@@ -79,7 +80,7 @@ class TestOrchestratorMemoryLeak:
         snapshot1 = tracemalloc.take_snapshot()
 
         # Create orchestrators WITHOUT calling cleanup (simulating the bug)
-        for i in range(10):  # Only 10 iterations to avoid excessive memory usage
+        for _i in range(10):  # Only 10 iterations to avoid excessive memory usage
             config = SSHConnectionConfig(
                 hosts=("test.example.com",),
                 username="test",
@@ -87,7 +88,7 @@ class TestOrchestratorMemoryLeak:
                 max_connections=5,
                 skip_key_validation=True
             )
-            orchestrator = HPCOrchestrator(config)
+            HPCOrchestrator(config)
             # Keep reference to prevent GC (simulates real-world leak)
             # ❌ NO cleanup() call - this simulates the bug
 
@@ -120,8 +121,9 @@ class TestCeleryTaskMemoryLeak:
         with 0.1s delay instead of 30s real delay).
         """
         try:
-            import psutil
             import os
+
+            import psutil
         except ImportError:
             pytest.skip("psutil not installed - required for memory monitoring")
 
@@ -134,7 +136,7 @@ class TestCeleryTaskMemoryLeak:
         baseline_memory = process.memory_info().rss
 
         # Run sync task 10 times (simulating 5 minutes of Celery beat)
-        for i in range(10):
+        for _i in range(10):
             with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
                 # Mock database operations
                 mock_db = MagicMock()
@@ -171,14 +173,14 @@ class TestCeleryTaskMemoryLeak:
         This is the integration test that will FAIL before ADR-004 fix
         and PASS after the fix is applied.
         """
-        from nfm_db.services.hpc_orchestration import sync_hpc_job_status, SSHConnectionConfig
+        from nfm_db.services.hpc_orchestration import sync_hpc_job_status
 
         tracemalloc.start()
         gc.collect()
         snapshot1 = tracemalloc.take_snapshot()
 
         # Run sync task 5 times
-        for i in range(5):
+        for _i in range(5):
             with patch.dict('os.environ', {
                 'NFM_HPC_PRIMARY_HOST': 'test.example.com',
                 'NFM_HPC_PRIMARY_USER': 'testuser',
@@ -211,7 +213,7 @@ class TestEventLoopResourceLeak:
         import asyncio
 
         # Create and close multiple event loops (simulating Celery task pattern)
-        for i in range(10):
+        for _i in range(10):
             loop = asyncio.new_event_loop()
 
             # Simulate async operation
@@ -229,14 +231,13 @@ class TestEventLoopResourceLeak:
         This demonstrates why we need to use asyncio.new_event_loop() instead.
         """
         import asyncio
-        import warnings
 
         tracemalloc.start()
         gc.collect()
         snapshot1 = tracemalloc.take_snapshot()
 
         # Use deprecated get_event_loop() 10 times
-        for i in range(10):
+        for _i in range(10):
             loop = asyncio.new_event_loop()
 
             # Simulate operation

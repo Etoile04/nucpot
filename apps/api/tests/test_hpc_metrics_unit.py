@@ -6,7 +6,7 @@ Tests cover:
 - NFM-345 core orchestration metrics and NFM-346 failover monitoring metrics
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -22,7 +22,6 @@ from nfm_db.services.hpc_metrics import (
     hpc_job_duration,
     hpc_job_submissions,
 )
-
 
 # ---------------------------------------------------------------------------
 # PROMETHEUS_AVAILABLE flag

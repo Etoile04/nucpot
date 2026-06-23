@@ -1,18 +1,18 @@
 """Tests for HPC SSH Connection Management module."""
 
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
-from pathlib import Path
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import paramiko
+import pytest
 
 from nfm_db.services.hpc_ssh import (
+    HPCConnectionError,
+    JobSubmissionError,
     SSHConnectionConfig,
     SSHConnectionManager,
-    JobSubmissionError,
-    HPCConnectionError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -688,7 +688,7 @@ class TestSSHConnectionManagerAcquireWithRetry:
         self, mock_prometheus
     ) -> None:
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
-            mock_client = MagicMock()
+            MagicMock()
             mock_cls.side_effect = Exception("always fail")
 
             mgr = SSHConnectionManager(
@@ -881,7 +881,7 @@ class TestSSHConnectionManagerCleanup:
             mock_client.close.assert_called_once()
 
     def test_cleanup_no_transport_attribute(self, mock_prometheus) -> None:
-        with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
+        with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient"):
             # Create a minimal mock that truly lacks 'transport'
             mock_client = MagicMock()
             mock_client.__dict__.pop("transport", None)
@@ -999,7 +999,7 @@ class TestSSHConnectionManagerCheckHealth:
     def test_health_check_read_exception_returns_false(self, mock_prometheus) -> None:
         client = MagicMock()
         mock_stdout = MagicMock()
-        mock_stdout.read.side_effect = IOError("read fail")
+        mock_stdout.read.side_effect = OSError("read fail")
         client.exec_command.return_value = (MagicMock(), mock_stdout, MagicMock())
 
         mgr = SSHConnectionManager(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from tests.ontology_seed import seed_corpus
 
 _CORPUS = "smirnov2014"

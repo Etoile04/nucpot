@@ -1,6 +1,6 @@
 "use client"
 
-import { TaskSubmissionForm } from "@/components/md-verification/task-submission-form"
+import { TaskSubmissionWizard } from "@/components/md-verification/task-submission-wizard"
 import { TaskList } from "@/components/md-verification/task-list"
 import { Tabs } from "antd"
 import { useState } from "react"
@@ -24,7 +24,7 @@ export default function MDVerificationPage() {
           {
             key: "submit",
             label: "提交任务",
-            children: <TaskSubmissionForm onSuccess={handleSubmissionSuccess} />,
+            children: <TaskSubmissionWizard onSuccess={handleSubmissionSuccess} />,
           },
           {
             key: "list",

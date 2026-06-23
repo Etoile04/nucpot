@@ -10,6 +10,44 @@
   --color-surface-elevated: #374151; /* gray-700 */
   --max-width: 960px;
   --space-section: 3rem;
+
+  /* Wizard Design Tokens (NFM-378) */
+  --wizard-modal-bg: #1f2937;
+  --wizard-border-color: #374151;
+
+  /* Step indicator colors */
+  --step-todo-color: #6b7280;
+  --step-process-color: #3b82f6;
+  --step-finish-color: #10b981;
+
+  /* Form area */
+  --form-label-color: #e5e7eb;
+  --form-input-bg: #111827;
+  --form-input-border: #374151;
+  --form-input-focus-border: #3b82f6;
+
+  /* Warning / Alert */
+  --warning-bg: #92400e;
+  --warning-border: #b45309;
+  --warning-text: #fef3c7;
+
+  /* Buttons */
+  --btn-primary-bg: #2563eb;
+  --btn-primary-hover: #1d4ed8;
+  --btn-secondary-bg: #374151;
+
+  /* Spacing */
+  --wizard-padding-lg: 1.5rem;
+  --wizard-padding-md: 1rem;
+  --wizard-padding-sm: 0.75rem;
+  --step-gap: 2rem;
+  --form-item-gap: 1rem;
+
+  /* Typography */
+  --wizard-title-size: 1.25rem;
+  --step-label-size: 0.875rem;
+  --form-label-size: 1rem;
+  --hint-text-size: 0.75rem;
 }
 
 *, *::before, *::after {
@@ -136,4 +174,36 @@ body {
   border: none;
   border-top: 1px solid var(--color-border);
   margin: 2rem 0;
+}
+
+/* Task status pulse animation */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-badge-running {
+  animation: status-pulse 1.5s ease-in-out infinite;
+}
+
+/* Wizard responsive breakpoints (NFM-378) */
+@media (max-width: 767px) {
+  .wizard-modal .ant-modal {
+    max-width: 95vw !important;
+  }
+  .wizard-modal .ant-steps {
+    font-size: 12px;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .wizard-modal .ant-modal {
+    max-width: 800px !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .wizard-modal .ant-modal {
+    max-width: 900px !important;
+  }
 }

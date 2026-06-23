@@ -6,9 +6,9 @@ Tests follow TDD principles:
 - REFACTOR: Clean up while keeping tests green
 """
 
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
@@ -161,7 +161,7 @@ class TestFailoverEventLogging:
                 # Check for guangzhou (or the test cluster name)
                 source = call_kwargs.get('source_cluster')
                 assert source == 'guangzhou.example.com' or source == orchestrator.hpc_cluster
-                assert call_kwargs['success'] == True
+                assert call_kwargs['success']
 
     @pytest.mark.asyncio
     async def test_try_recover_primary_logs_recovery_event(self, orchestrator, db_session):
@@ -180,7 +180,7 @@ class TestFailoverEventLogging:
 
                 call_kwargs = mock_log.call_args[1]
                 assert call_kwargs['event_type'] in ['primary_recovered', 'recovery_attempted']
-                assert call_kwargs['success'] == True
+                assert call_kwargs['success']
 
 
 class TestHPCFailoverEventModel:

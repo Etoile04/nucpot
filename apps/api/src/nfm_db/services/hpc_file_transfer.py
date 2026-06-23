@@ -4,12 +4,13 @@ Handles upload, download, checksum verification, resume transfer,
 and object storage integration for HPC cluster file operations.
 """
 
-import os
-import hashlib
 import asyncio
+import contextlib
+import hashlib
 import logging
+import os
 import re
-from typing import Dict, List, Any, Optional
+from typing import Any
 
 from nfm_db.database import get_db
 
@@ -90,8 +91,8 @@ async def upload_file(
 async def upload_files(
     ssh_manager,
     task_id: str,
-    files: List[tuple[str, str]],
-) -> Dict[str, bool]:
+    files: list[tuple[str, str]],
+) -> dict[str, bool]:
     """Upload multiple files to HPC cluster.
 
     Args:
@@ -102,7 +103,7 @@ async def upload_files(
     Returns:
         Dictionary mapping file paths to success status
     """
-    results: Dict[str, bool] = {}
+    results: dict[str, bool] = {}
     for local_file, remote_file in files:
         success = await upload_file(ssh_manager, task_id, local_file, remote_file)
         results[local_file] = success
@@ -127,7 +128,7 @@ async def create_task_directory(ssh_manager, task_id: str) -> None:
             sftp = client.open_sftp()
             try:
                 sftp.mkdir(remote_dir)
-            except IOError:
+            except OSError:
                 pass  # Directory already exists
 
             logger.info(f"Task directory ready: {remote_dir}")
@@ -146,7 +147,7 @@ async def download_file(
     task_id: str,
     remote_file: str,
     local_path: str,
-) -> Optional[str]:
+) -> str | None:
     """Download a single file from HPC cluster.
 
     Args:
@@ -184,7 +185,7 @@ async def download_file(
             ssh_manager.release_connection(client)
 
 
-async def download_results(ssh_manager, task_id: str) -> Dict[str, str]:
+async def download_results(ssh_manager, task_id: str) -> dict[str, str]:
     """Download all result files for a task.
 
     Args:
@@ -203,7 +204,7 @@ async def download_results(ssh_manager, task_id: str) -> Dict[str, str]:
         "energy_curve.dat": f"{remote_dir}/energy_curve.dat",
     }
 
-    downloaded: Dict[str, str] = {}
+    downloaded: dict[str, str] = {}
     for name, remote_path in result_files.items():
         local_path = f"{local_dir}/{name}"
         result = await download_file(ssh_manager, task_id, remote_path, local_path)
@@ -238,7 +239,7 @@ async def verify_checksum(local_file: str, expected_checksum: str) -> bool:
         return False
 
 
-async def get_remote_checksum(ssh_manager, task_id: str, remote_file: str) -> Optional[str]:
+async def get_remote_checksum(ssh_manager, task_id: str, remote_file: str) -> str | None:
     """Get checksum of remote file via SSH.
 
     Args:
@@ -256,10 +257,10 @@ async def get_remote_checksum(ssh_manager, task_id: str, remote_file: str) -> Op
         client = ssh_manager.acquire_connection()
 
         cmd = f"sha256sum {safe_remote_file}"
-        stdin, stdout, stderr = client.exec_command(cmd)
+        _stdin, stdout, stderr = client.exec_command(cmd)
         output = stdout.read().decode().strip()
 
-        if exit_status := stdout.channel.recv_exit_status() == 0:
+        if _exit_status := stdout.channel.recv_exit_status() == 0:
             checksum = output.split()[0]
             return checksum
         else:
@@ -274,7 +275,7 @@ async def get_remote_checksum(ssh_manager, task_id: str, remote_file: str) -> Op
             ssh_manager.release_connection(client)
 
 
-async def save_to_object_storage(task_id: str, downloaded_files: Dict[str, str]) -> Dict[str, str]:
+async def save_to_object_storage(task_id: str, downloaded_files: dict[str, str]) -> dict[str, str]:
     """Save downloaded files to NFMD object storage.
 
     Args:
@@ -284,9 +285,9 @@ async def save_to_object_storage(task_id: str, downloaded_files: Dict[str, str])
     Returns:
         Dictionary of file names to storage URLs
     """
-    storage_urls: Dict[str, str] = {}
+    storage_urls: dict[str, str] = {}
 
-    for filename, local_path in downloaded_files.items():
+    for filename, _local_path in downloaded_files.items():
         storage_url = f"https://storage.example.com/{task_id}/{filename}"
         storage_urls[filename] = storage_url
         logger.info(f"Saved to object storage: {filename} -> {storage_url}")
@@ -294,7 +295,7 @@ async def save_to_object_storage(task_id: str, downloaded_files: Dict[str, str])
     return storage_urls
 
 
-async def save_metadata(task_id: str, file_metadata: Dict[str, Dict[str, Any]]) -> None:
+async def save_metadata(task_id: str, file_metadata: dict[str, dict[str, Any]]) -> None:
     """Save file metadata to database.
 
     Args:
@@ -302,15 +303,13 @@ async def save_metadata(task_id: str, file_metadata: Dict[str, Dict[str, Any]]) 
         file_metadata: Dictionary of file metadata
     """
     db_gen = get_db()
-    db = await db_gen.__anext__()
+    await db_gen.__anext__()
 
     try:
         logger.info(f"Saving metadata for task {task_id}: {file_metadata}")
     finally:
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await db_gen.__anext__()
-        except StopAsyncIteration:
-            pass
 
 
 async def upload_file_with_retry(
@@ -425,7 +424,7 @@ async def get_remote_file_position(ssh_manager, task_id: str, remote_file: str) 
             try:
                 file_stat = sftp.stat(remote_file)
                 return file_stat.st_size
-            except IOError:
+            except OSError:
                 return 0
 
         finally:

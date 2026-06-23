@@ -4,15 +4,15 @@ Handles SLURM script generation, parameter validation, job submission
 via SSH/SFTP, and HPC job database record creation.
 """
 
-import uuid
+import contextlib
 import logging
-from typing import Dict, Any, Optional
+import re
+import uuid
 from datetime import datetime
+from typing import Any
 
 from nfm_db.services.hpc_metrics import PROMETHEUS_AVAILABLE, hpc_job_submissions
 from nfm_db.services.hpc_ssh import JobSubmissionError
-
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def validate_shell_safe(value: str, field_name: str) -> str:
     return value
 
 
-def generate_slurm_script(params: Dict[str, Any]) -> str:
+def generate_slurm_script(params: dict[str, Any]) -> str:
     """Generate SLURM batch script from parameters.
 
     Args:
@@ -103,13 +103,13 @@ echo "Job ID: $SLURM_JOB_ID"
 mpirun {lammps_exec} -in {input_file}
 """
 
-    script += f"""
+    script += """
 echo "Job completed at $(date)"
 """
     return script
 
 
-def validate_simulation_params(params: Dict[str, Any]) -> None:
+def validate_simulation_params(params: dict[str, Any]) -> None:
     """Validate simulation parameters.
 
     Args:
@@ -167,7 +167,7 @@ def upload_script_via_sftp(
         remote_dir = "/".join(remote_path.split("/")[:-1])
         try:
             sftp.mkdir(remote_dir)
-        except IOError:
+        except OSError:
             pass  # Directory may already exist
 
         with sftp.file(remote_path, 'w') as f:
@@ -204,7 +204,7 @@ async def submit_to_slurm(
         script_path = f"$SCRATCH/nfm-md/{task_id}/submit.sh"
         upload_script_via_sftp(client, slurm_script, script_path)
 
-        stdin, stdout, stderr = client.exec_command(f"sbatch {script_path}")
+        _stdin, stdout, stderr = client.exec_command(f"sbatch {script_path}")
         exit_status = stdout.channel.recv_exit_status()
 
         if exit_status != 0:
@@ -250,7 +250,7 @@ async def submit_to_slurm(
 async def create_hpc_job_record(
     task_id: str,
     hpc_job_id: str,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     hpc_cluster: str,
 ) -> None:
     """Create record in hpc_jobs table.
@@ -287,7 +287,5 @@ async def create_hpc_job_record(
         await db.rollback()
         raise
     finally:
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await db_gen.__anext__()
-        except StopAsyncIteration:
-            pass

@@ -9,12 +9,11 @@ Tests cover:
 
 import ast
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from nfm_db.services.hpc_sync import sync_hpc_job_status
-
 
 # ---------------------------------------------------------------------------
 # sync_hpc_job_status success path

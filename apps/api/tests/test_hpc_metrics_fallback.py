@@ -6,12 +6,9 @@ Covers:
 - MockMetric.labels(), inc(), set(), observe(), collect(), _samples()
 """
 
-import sys
 from types import ModuleType
-from unittest.mock import MagicMock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Test real Prometheus metrics (when prometheus_client IS available)
@@ -64,13 +61,13 @@ class TestRealPrometheusMetrics:
         """When prometheus_client is available, failover metrics should be real Prometheus types."""
         from nfm_db.services.hpc_metrics import (
             PROMETHEUS_AVAILABLE,
-            failover_total,
             failover_duration_seconds,
+            failover_total,
             health_check_success,
         )
 
         if PROMETHEUS_AVAILABLE:
-            from prometheus_client import Counter, Histogram, Gauge
+            from prometheus_client import Counter, Gauge, Histogram
             assert isinstance(failover_total, Counter)
             assert isinstance(failover_duration_seconds, Histogram)
             assert isinstance(health_check_success, Gauge)
