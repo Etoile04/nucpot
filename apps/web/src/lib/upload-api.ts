@@ -64,7 +64,8 @@ export async function submitPotential(metadata: PotentialMetadata): Promise<Subm
   if (!response.ok) {
     return { success: false, error: data.error ?? `Request failed: ${response.status}`, status: response.status }
   }
-  return { success: true, potential: data as CreatedPotential }
+  const body = data as { data?: CreatedPotential }
+  return { success: true, potential: body.data! }
 }
 
 /** Upload the potential file after metadata creation.  Returns file info or an error. */
@@ -81,5 +82,6 @@ export async function uploadPotentialFile(potentialId: string, file: File): Prom
   if (!response.ok) {
     return { success: false, error: data.error ?? `Request failed: ${response.status}`, status: response.status }
   }
-  return { success: true, file_info: data as FileInfo }
+  const body = data as { data?: FileInfo }
+  return { success: true, file_info: body.data! }
 }
