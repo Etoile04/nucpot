@@ -84,7 +84,7 @@ class RefGapFillStaging(TimestampMixin, Base):
     # --- Quality gate columns ---
 
     confidence: Mapped[Confidence] = mapped_column(
-        Enum(Confidence, name="confidence_enum"),
+        Enum(Confidence, name="confidence_enum", values_callable=lambda e: [x.value for x in e]),
         nullable=False,
         default=Confidence.MEDIUM,
     )
@@ -96,7 +96,7 @@ class RefGapFillStaging(TimestampMixin, Base):
     # --- Review workflow ---
 
     status: Mapped[StagingStatus] = mapped_column(
-        Enum(StagingStatus, name="staging_status_enum"),
+        Enum(StagingStatus, name="staging_status_enum", values_callable=lambda e: [x.value for x in e]),
         nullable=False,
         default=StagingStatus.PENDING,
     )
@@ -120,7 +120,7 @@ class RefGapFillStaging(TimestampMixin, Base):
     # --- Metadata ---
 
     cache_level: Mapped[CacheLevel | None] = mapped_column(
-        Enum(CacheLevel, name="cache_level_enum"),
+        Enum(CacheLevel, name="cache_level_enum", values_callable=lambda e: [x.value for x in e]),
         nullable=True,
     )
     fill_batch_id: Mapped[uuid.UUID | None] = mapped_column(
