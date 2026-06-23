@@ -1,0 +1,137 @@
+# =============================================================================
+# NFM-DB — Production deployment stack
+# =============================================================================
+# Can run on Mac Studio (primary) or any Docker-capable host.
+# Usage:
+#   cp docker/.env.prod.example docker/.env.prod   # then fill secrets
+#   docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d --build
+#
+# Services:
+#   - nucpot-prod-db: PostgreSQL 16
+#   - nucpot-prod-redis: Redis (Celery broker + cache)
+#   - nucpot-prod-api: FastAPI backend
+#   - nucpot-prod-worker: Celery worker for MD verification
+# =============================================================================
+
+name: nucpot-prod
+
+services:
+  # ---- PostgreSQL 16 ---------------------------------------------------------
+  db:
+    image: postgres:16
+    container_name: nucpot-prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PROD_POSTGRES_USER:-nfm}
+      POSTGRES_PASSWORD: ${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PROD_POSTGRES_DB:-nfm_db}
+    ports:
+      - "${PROD_DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - prod-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PROD_POSTGRES_USER:-nfm} -d ${PROD_POSTGRES_DB:-nfm_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [prod]
+
+  # ---- Redis (Celery broker + cache) -----------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: nucpot-prod-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${PROD_REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - prod-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [prod]
+
+  # ---- FastAPI backend -------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-api
+    restart: unless-stopped
+    ports:
+      - "${PROD_API_HOST_PORT:-8001}:8000"
+    environment:
+      NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
+      NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
+      NFM_CORS_ORIGINS: ${PROD_CORS_ORIGINS:-["https://nucpot.dpdns.org"]}
+      NFM_DEBUG: "false"
+      NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${PROD_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REDIS_HOST: nucpot-prod-redis
+      REDIS_PORT: "6379"
+      # HPC SSH key (mount as secret in production)
+      NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
+      NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
+      NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
+    volumes:
+      - ./migrations:/app/migrations:ro
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    networks: [prod]
+
+  # ---- Celery worker (MD verification tasks) ---------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-worker
+    restart: unless-stopped
+    command: >
+      python -m celery -A nfm_db.services.celery_app:celery_app worker
+      --queue=md_verification
+      --concurrency=${PROD_WORKER_CONCURRENCY:-1}
+      --loglevel=INFO
+      --max-tasks-per-child=1
+    environment:
+      NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
+      NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
+      REDIS_HOST: nucpot-prod-redis
+      REDIS_PORT: "6379"
+      NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
+      NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
+      NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
+    volumes:
+      - ./migrations:/app/migrations:ro
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -m celery -A nfm_db.services.celery_app:celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks: [prod]
+
+volumes:
+  prod-db-data:
+  prod-redis-data:
+
+networks:
+  prod:
+    driver: bridge
