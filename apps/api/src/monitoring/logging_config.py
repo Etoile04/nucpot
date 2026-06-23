@@ -8,8 +8,10 @@ import logging
 import logging.config
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from types import TracebackType
 
 
 class StructuredFormatter(logging.Formatter):
@@ -87,7 +89,7 @@ def setup_logging(
 
     # Default log file if not specified
     if not log_file:
-        log_file = log_dir / f"nfmd-{environment}.log"
+        log_file = str(log_dir / f"nfmd-{environment}.log")
 
     # Ensure log file directory exists
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +181,7 @@ def get_logger(name: str) -> logging.Logger:
 class LogContext:
     """Context manager for adding contextual information to logs."""
 
-    def __init__(self, **context):
+    def __init__(self, **context: str) -> None:
         """
         Initialize log context.
 
@@ -188,14 +190,16 @@ class LogContext:
         """
         self.context = context
         self.logger = logging.getLogger(__name__)
-        self.old_factory = None
+        self.old_factory: Callable[..., logging.LogRecord] | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> "LogContext":
         """Add context to current logger."""
         self.old_factory = logging.getLogRecordFactory()
 
-        def record_factory(*args, **kwargs):
-            record = self.old_factory(*args, **kwargs)
+        old_factory = self.old_factory
+
+        def record_factory(*args: object, **kwargs: object) -> logging.LogRecord:
+            record = old_factory(*args, **kwargs)
             for key, value in self.context.items():
                 setattr(record, key, value)
             return record
@@ -203,9 +207,15 @@ class LogContext:
         logging.setLogRecordFactory(record_factory)
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Remove context from logger."""
-        logging.setLogRecordFactory(self.old_factory)
+        if self.old_factory is not None:
+            logging.setLogRecordFactory(self.old_factory)
 
 
 def log_request(
@@ -214,7 +224,7 @@ def log_request(
     status_code: int,
     duration_ms: float,
     user_id: str | None = None,
-    **kwargs
+    **kwargs: object
 ) -> None:
     """
     Log HTTP request with structured data.
@@ -252,7 +262,7 @@ def log_task_event(
     event_type: str,
     status: str,
     duration_seconds: float | None = None,
-    **kwargs
+    **kwargs: object
 ) -> None:
     """
     Log MD task event with structured data.
@@ -288,7 +298,7 @@ def log_hpc_event(
     event_type: str,
     success: bool,
     duration_seconds: float | None = None,
-    **kwargs
+    **kwargs: object
 ) -> None:
     """
     Log HPC cluster event with structured data.
@@ -322,7 +332,7 @@ def log_database_query(
     table: str,
     duration_ms: float,
     rows_affected: int | None = None,
-    **kwargs
+    **kwargs: object
 ) -> None:
     """
     Log database query with structured data.
@@ -352,7 +362,7 @@ def log_database_query(
 
 
 # Environment-based logging setup
-def initialize_logging():
+def initialize_logging() -> None:
     """Initialize logging based on environment variable."""
     environment = os.getenv("ENVIRONMENT", "development")
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()

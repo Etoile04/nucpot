@@ -184,7 +184,7 @@ security_events_total = Counter(
 # =============================================================================
 # Metrics Update Functions
 # =============================================================================
-def update_job_metrics(status: str, queue_size: int, running: int):
+def update_job_metrics(status: str, queue_size: int, running: int) -> None:
     """Update job-related metrics"""
     md_jobs_in_queue.set(queue_size)
     md_jobs_running.set(running)
@@ -197,13 +197,13 @@ def update_job_metrics(status: str, queue_size: int, running: int):
         md_job_completions_total.labels(status="failed").inc()
 
 
-def update_hpc_metrics(cluster: str, queue_depth: int, nodes_in_use: int):
+def update_hpc_metrics(cluster: str, queue_depth: int, nodes_in_use: int) -> None:
     """Update HPC-related metrics"""
     hpc_queue_depth.labels(cluster=cluster).set(queue_depth)
     hpc_compute_node_usage.labels(cluster=cluster).set(nodes_in_use)
 
 
-def record_hpc_failure(cluster: str, failure_type: str):
+def record_hpc_failure(cluster: str, failure_type: str) -> None:
     """Record HPC failure"""
     if failure_type == "connection":
         hpc_connection_failures_total.labels(cluster=cluster).inc()
@@ -214,7 +214,7 @@ def record_hpc_failure(cluster: str, failure_type: str):
 # =============================================================================
 # Startup Metrics Server
 # =============================================================================
-def start_metrics_server(port: int = 9090):
+def start_metrics_server(port: int = 9090) -> None:
     """Start Prometheus metrics server"""
     try:
         start_http_server(port)
@@ -226,7 +226,7 @@ def start_metrics_server(port: int = 9090):
 # =============================================================================
 # Cleanup
 # =============================================================================
-def clear_metrics():
+def clear_metrics() -> None:
     """Clear all metrics (useful for testing)"""
     for collector in [http_requests_total, md_job_submissions_total,
                      md_job_completions_total, hpc_connection_failures_total,
