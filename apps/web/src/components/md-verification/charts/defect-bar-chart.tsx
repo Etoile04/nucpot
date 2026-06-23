@@ -3,7 +3,7 @@
 import ReactECharts from "echarts-for-react"
 import type { EChartsOption } from "echarts"
 import { useMemo } from "react"
-import { nfmDarkTheme } from "@/lib/echarts-dark-theme"
+import { nfmDarkTheme, DARK_PALETTE } from "@/lib/echarts-dark-theme"
 import type { DefectAnalysisResultResponse } from "@/lib/md-verification-api"
 
 interface DefectBarChartProps {
@@ -22,6 +22,19 @@ const DEFECT_LABELS: Record<string, string> = {
   dislocation: "位错",
   grain_boundary: "晶界",
   other: "其他",
+}
+
+/**
+ * Per-bar colors aligned with UX spec Section 3.3.
+ * vacancies=blue, interstitials=green, Frenkel-pairs-style=amber,
+ * dislocation=red, grain_boundary=violet, other=gray.
+ */
+const DEFECT_COLORS: Record<string, string> = {
+  vacancy: DARK_PALETTE.accent,      // blue-400
+  interstitial: DARK_PALETTE.success, // emerald-400
+  dislocation: DARK_PALETTE.error,   // red-400
+  grain_boundary: DARK_PALETTE.warning, // amber-400
+  other: "#6b7280",                    // gray-500
 }
 
 /**
@@ -86,11 +99,14 @@ export function DefectBarChart({
         {
           name: "缺陷浓度",
           type: "bar",
-          data: concentrations,
+          data: data.map((d, idx) => ({
+            value: concentrations[idx],
+            itemStyle: {
+              color: DEFECT_COLORS[d.defect_type] ?? "#6b7280",
+              borderRadius: [4, 4, 0, 0],
+            },
+          })),
           barMaxWidth: 60,
-          itemStyle: {
-            borderRadius: [4, 4, 0, 0],
-          },
           label: {
             show: true,
             position: "top",
