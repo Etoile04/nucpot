@@ -22,8 +22,10 @@ ENV PORT=3000
 
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
-COPY --from=builder /app/apps/web/public ./apps/web/public
-COPY --from=builder /app/apps/web/content ./content
+
+# Note: standalone output already includes public/ content;
+# do not COPY public separately (fails when public is empty or cleaned).
+COPY --from=builder /app/apps/web/content ./content || true
 
 EXPOSE 3000
 
