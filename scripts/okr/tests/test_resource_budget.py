@@ -353,6 +353,42 @@ class TestCheckBudget:
         assert budget.in_progress == 4
         assert budget.over_budget is True
 
+    def test_exact_creation_budget_not_over(self, sample_config: BudgetConfig) -> None:
+        """At exactly the creation budget limit, agent should NOT be over-budget."""
+        issues = [
+            {"id": f"i-{i}", "status": "todo", "createdAt": "2026-06-24T00:00:00Z"}
+            for i in range(5)
+        ]
+        budget = check_budget(issues, "agent-boundary", "At-Limit Agent", sample_config)
+        assert budget.created_this_sprint == 5
+        assert budget.creation_used == 1.0
+        assert budget.over_budget is False
+
+    def test_exact_wip_budget_not_over(self, sample_config: BudgetConfig) -> None:
+        """At exactly the WIP budget limit, agent should NOT be over-budget."""
+        issues = [
+            {"id": f"i-{i}", "status": "in_progress", "createdAt": "2026-06-15T00:00:00Z"}
+            for i in range(3)
+        ]
+        budget = check_budget(issues, "agent-wip-boundary", "At-Limit WIP Agent", sample_config)
+        assert budget.in_progress == 3
+        assert budget.wip_used == 1.0
+        assert budget.over_budget is False
+
+    def test_both_budgets_at_limit_not_over(self, sample_config: BudgetConfig) -> None:
+        """At exactly both limits, agent should NOT be over-budget."""
+        issues = [
+            {"id": f"i-{i}", "status": "in_progress", "createdAt": "2026-06-24T00:00:00Z"}
+            for i in range(3)
+        ] + [
+            {"id": f"i-{i+3}", "status": "todo", "createdAt": "2026-06-24T00:00:00Z"}
+            for i in range(2)
+        ]
+        budget = check_budget(issues, "agent-both-boundary", "At-Limit Both Agent", sample_config)
+        assert budget.created_this_sprint == 5
+        assert budget.in_progress == 3
+        assert budget.over_budget is False
+
 
 # ---------------------------------------------------------------------------
 # format_report
@@ -743,3 +779,37 @@ class TestMain:
                     "--sprint-end", "2026-07-06",
                 ])
         assert result == 0
+
+    def test_create_alerts_without_cto_id_returns_1(self) -> None:
+        """--create-alerts with no PAPERCLIP_CTO_AGENT_ID should fail."""
+        env = {
+            "PAPERCLIP_API_URL": "http://localhost:3100",
+            "PAPERCLIP_API_KEY": "test-key",
+            "PAPERCLIP_COMPANY_ID": "co-1",
+        }
+
+        agents_resp = {"agents": [{"id": "a1", "name": "Agent1"}]}
+        issues_resp = {"issues": [
+            {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
+            for i in range(6)
+        ]}
+
+        mock_agents = mock.MagicMock()
+        mock_agents.read.return_value = json.dumps(agents_resp).encode()
+        mock_agents.__enter__ = mock.Mock(return_value=mock_agents)
+        mock_agents.__exit__ = mock.Mock(return_value=False)
+
+        mock_issues = mock.MagicMock()
+        mock_issues.read.return_value = json.dumps(issues_resp).encode()
+        mock_issues.__enter__ = mock.Mock(return_value=mock_issues)
+        mock_issues.__exit__ = mock.Mock(return_value=False)
+
+        with mock.patch.dict("os.environ", env, clear=True):
+            with mock.patch("urllib.request.urlopen", side_effect=[mock_agents, mock_issues]):
+                result = main([
+                    "check",
+                    "--sprint-start", "2026-06-23",
+                    "--sprint-end", "2026-07-06",
+                    "--create-alerts",
+                ])
+        assert result == 1

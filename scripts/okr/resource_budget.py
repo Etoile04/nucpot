@@ -25,13 +25,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data Models
@@ -205,7 +209,7 @@ def _api_get(
     """
     base = f"{api_url}/api/companies/{company_id}{path}"
     if params:
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        qs = urllib.parse.urlencode(params)
         base = f"{base}?{qs}"
 
     req = urllib.request.Request(base, method="GET")
@@ -215,7 +219,8 @@ def _api_get(
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        logger.error("API GET %s failed: %s", base, exc)
         return {}
 
 
@@ -334,7 +339,8 @@ def create_budget_alert(
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        logger.error("API POST %s failed: %s", url, exc)
         return None
 
 
@@ -436,6 +442,12 @@ def main(argv: list[str] | None = None) -> int:
     # Create alerts for over-budget agents
     if args.create_alerts:
         cto_id = os.environ.get("PAPERCLIP_CTO_AGENT_ID", "")
+        if not cto_id:
+            print(
+                "Error: --create-alerts requires PAPERCLIP_CTO_AGENT_ID env var.",
+                file=sys.stderr,
+            )
+            return 1
         parent_id = os.environ.get("PAPERCLIP_PARENT_ISSUE_ID")
         for budget in budgets:
             if budget.over_budget:
