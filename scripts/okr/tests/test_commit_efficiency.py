@@ -12,7 +12,7 @@ Functions under test:
 from __future__ import annotations
 
 import json
-import subprocess
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -126,6 +126,12 @@ class TestFetchIssueStatuses:
         mock_urlopen.side_effect = Exception("API down")
         result = fetch_issue_statuses(["NFM-999"], "http://localhost:3000")
         assert result["NFM-999"] == "unknown"
+
+    @patch("scripts.okr.commit_efficiency.urllib.request.urlopen")
+    def test_returns_unknown_on_network_error(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = urllib.error.URLError("network unreachable")
+        result = fetch_issue_statuses(["NFM-888"], "http://localhost:3000")
+        assert result["NFM-888"] == "unknown"
 
     def test_returns_empty_dict_for_empty_refs(self) -> None:
         result = fetch_issue_statuses([], "http://localhost:3000")

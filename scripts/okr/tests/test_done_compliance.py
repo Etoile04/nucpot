@@ -6,7 +6,8 @@ Tests use mocked Paperclip API responses to verify each role's check logic.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import os
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,8 +29,10 @@ from scripts.okr.done_compliance import (
     fetch_issue,
     fetch_issue_comments,
     fetch_child_issues,
+    main,
     parse_args,
     ROLE_CHECKS,
+    _validate_issue_id,
 )
 
 # ---------------------------------------------------------------------------
@@ -98,11 +101,18 @@ def child_issues() -> list[dict]:
     ]
 
 
+@pytest.fixture
+def empty_args() -> dict:
+    """Empty extra args passed to unified check signature."""
+    return {"issue": {}, "children": []}
+
+
 # ---------------------------------------------------------------------------
 # CLI Argument Parsing
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestParseArgs:
     def test_parses_issue_id_and_role(self) -> None:
         args = parse_args(["--issue-id", "NFM-439", "--role", "cto"])
@@ -119,10 +129,37 @@ class TestParseArgs:
 
 
 # ---------------------------------------------------------------------------
+# Issue ID Validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestValidateIssueId:
+    def test_accepts_valid_identifier(self) -> None:
+        assert _validate_issue_id("NFM-439") == "NFM-439"
+
+    def test_accepts_lowercase(self) -> None:
+        assert _validate_issue_id("nfm-100") == "nfm-100"
+
+    def test_rejects_missing_dash(self) -> None:
+        with pytest.raises(ValueError, match="Invalid issue identifier"):
+            _validate_issue_id("NFM439")
+
+    def test_rejects_injection_attempt(self) -> None:
+        with pytest.raises(ValueError, match="Invalid issue identifier"):
+            _validate_issue_id("NFM-439&foo=bar")
+
+    def test_rejects_path_traversal(self) -> None:
+        with pytest.raises(ValueError, match="Invalid issue identifier"):
+            _validate_issue_id("../other")
+
+
+# ---------------------------------------------------------------------------
 # Role Detection
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestDetectRole:
     def test_detects_lead_engineer(self, sample_issue: dict) -> None:
         assert detect_role(sample_issue) == "lead_engineer"
@@ -149,34 +186,44 @@ class TestDetectRole:
         issue = {"assigneeAgent": None}
         assert detect_role(issue) == "unknown"
 
+    def test_returns_unknown_for_string_assignee(self) -> None:
+        issue = {"assigneeAgent": "some-string"}
+        assert detect_role(issue) == "unknown"
+
 
 # ---------------------------------------------------------------------------
-# Individual Check Functions
+# Individual Check Functions (unified signature: comments, issue, children)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestCheckCodeReviewApproved:
-    def test_passes_with_approved_comment(self, sample_comments: list[dict]) -> None:
-        result = check_code_review_approved(sample_comments)
+    def test_passes_with_approved_comment(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
+        result = check_code_review_approved(sample_comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_approved_comment(self) -> None:
+    def test_fails_without_approved_comment(self, empty_args: dict) -> None:
         comments = [
             {"id": "c1", "authorAgent": {"name": "dev"}, "body": "Please fix typo."},
         ]
-        result = check_code_review_approved(comments)
+        result = check_code_review_approved(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
-    def test_passes_with_case_insensitive_approve(self) -> None:
+    def test_passes_with_case_insensitive_approve(self, empty_args: dict) -> None:
         comments = [
             {"id": "c1", "authorAgent": {"name": "Code Reviewer"}, "body": "approved"},
         ]
-        result = check_code_review_approved(comments)
+        result = check_code_review_approved(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
 
+@pytest.mark.unit
 class TestCheckTestsPassing:
-    def test_passes_with_test_evidence(self, sample_comments: list[dict]) -> None:
+    def test_passes_with_test_evidence(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
         comments_with_tests = sample_comments + [
             {
                 "id": "c3",
@@ -184,142 +231,161 @@ class TestCheckTestsPassing:
                 "body": "All 42 tests passing. CI green.",
             },
         ]
-        result = check_tests_passing(comments_with_tests)
+        result = check_tests_passing(comments_with_tests, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_test_evidence(self, sample_comments: list[dict]) -> None:
-        result = check_tests_passing(sample_comments)
+    def test_fails_without_test_evidence(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
+        result = check_tests_passing(sample_comments, empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
-    def test_detects_pytest_failure(self) -> None:
+    def test_detects_pytest_failure(self, empty_args: dict) -> None:
         comments = [
             {"id": "c1", "body": "pytest: 3 failed, 12 passed"},
         ]
-        result = check_tests_passing(comments)
+        result = check_tests_passing(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
 
+@pytest.mark.unit
 class TestCheckCoverageGe80:
-    def test_passes_with_high_coverage(self, sample_comments: list[dict]) -> None:
+    def test_passes_with_high_coverage(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
         comments = sample_comments + [
             {"id": "c3", "body": "Coverage: 92%. All green."},
         ]
-        result = check_coverage_ge_80(comments)
+        result = check_coverage_ge_80(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_with_low_coverage(self, sample_comments: list[dict]) -> None:
+    def test_fails_with_low_coverage(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
         comments = sample_comments + [
             {"id": "c3", "body": "Coverage: 65%. Need more tests."},
         ]
-        result = check_coverage_ge_80(comments)
+        result = check_coverage_ge_80(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is False
         assert "65%" in (result.reason or "")
 
-    def test_fails_without_coverage_mention(self) -> None:
-        result = check_coverage_ge_80([])
+    def test_fails_without_coverage_mention(self, empty_args: dict) -> None:
+        result = check_coverage_ge_80([], empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
 
+@pytest.mark.unit
 class TestCheckCiGreen:
-    def test_passes_with_ci_green_mention(self, sample_comments: list[dict]) -> None:
+    def test_passes_with_ci_green_mention(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
         comments = sample_comments + [
             {"id": "c3", "body": "CI: all green ✅"},
         ]
-        result = check_ci_green(comments)
+        result = check_ci_green(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_ci_mention(self) -> None:
-        result = check_ci_green([])
+    def test_fails_without_ci_mention(self, empty_args: dict) -> None:
+        result = check_ci_green([], empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
 
+@pytest.mark.unit
 class TestCheckTechDocsUpdated:
-    def test_passes_with_doc_update_mention(self) -> None:
+    def test_passes_with_doc_update_mention(self, empty_args: dict) -> None:
         comments = [
             {"id": "c1", "body": "Updated DEVELOPMENT.md and API docs."},
         ]
-        result = check_tech_docs_updated(comments)
+        result = check_tech_docs_updated(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_doc_update(self) -> None:
-        result = check_tech_docs_updated([])
+    def test_fails_without_doc_update(self, empty_args: dict) -> None:
+        result = check_tech_docs_updated([], empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
 
+@pytest.mark.unit
 class TestCheckStagingVerified:
-    def test_passes_with_staging_mention(self) -> None:
+    def test_passes_with_staging_mention(self, empty_args: dict) -> None:
         comments = [
             {"id": "c1", "body": "Verified on staging environment. Works correctly."},
         ]
-        result = check_staging_verified(comments)
+        result = check_staging_verified(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_staging_mention(self) -> None:
-        result = check_staging_verified([])
+    def test_fails_without_staging_mention(self, empty_args: dict) -> None:
+        result = check_staging_verified([], empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
 
+@pytest.mark.unit
 class TestCheckChildrenComplete:
-    def test_passes_when_all_children_done(self, child_issues: list[dict]) -> None:
-        result = check_children_complete(child_issues)
+    def test_passes_when_all_children_done(
+        self, child_issues: list[dict], empty_args: dict
+    ) -> None:
+        result = check_children_complete([], empty_args["issue"], child_issues)
         assert result.passed is True
 
-    def test_passes_when_no_children_exist(self) -> None:
-        result = check_children_complete([])
+    def test_passes_when_no_children_exist(self, empty_args: dict) -> None:
+        result = check_children_complete([], empty_args["issue"], [])
         assert result.passed is True
 
-    def test_fails_when_child_in_progress(self) -> None:
+    def test_fails_when_child_in_progress(self, empty_args: dict) -> None:
         children = [
             {"id": "c1", "status": "done"},
             {"id": "c2", "status": "in_progress"},
         ]
-        result = check_children_complete(children)
+        result = check_children_complete([], empty_args["issue"], children)
         assert result.passed is False
         assert result.reason is not None
 
-    def test_passes_when_children_done_or_cancelled(self) -> None:
+    def test_passes_when_children_done_or_cancelled(self, empty_args: dict) -> None:
         children = [
             {"id": "c1", "status": "done"},
             {"id": "c2", "status": "cancelled"},
         ]
-        result = check_children_complete(children)
+        result = check_children_complete([], empty_args["issue"], children)
         assert result.passed is True
 
 
+@pytest.mark.unit
 class TestCheckCpoAccepted:
-    def test_passes_with_cpo_accept_comment(self, sample_comments: list[dict]) -> None:
-        result = check_cpo_accepted(sample_comments)
+    def test_passes_with_cpo_accept_comment(
+        self, sample_comments: list[dict], empty_args: dict
+    ) -> None:
+        result = check_cpo_accepted(sample_comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_cpo_accept(self) -> None:
+    def test_fails_without_cpo_accept(self, empty_args: dict) -> None:
         comments = [
             {"id": "c1", "authorAgent": {"name": "Dev"}, "body": "Implementation done."},
         ]
-        result = check_cpo_accepted(comments)
+        result = check_cpo_accepted(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
-    def test_fails_with_empty_comments(self) -> None:
-        result = check_cpo_accepted([])
+    def test_fails_with_empty_comments(self, empty_args: dict) -> None:
+        result = check_cpo_accepted([], empty_args["issue"], empty_args["children"])
         assert result.passed is False
 
 
+@pytest.mark.unit
 class TestCheckAcceptanceCriteriaDefined:
-    def test_passes_with_ac_section(self, sample_issue: dict) -> None:
-        result = check_acceptance_criteria_defined(sample_issue)
+    def test_passes_with_ac_section(self, sample_issue: dict, empty_args: dict) -> None:
+        result = check_acceptance_criteria_defined([], sample_issue, empty_args["children"])
         assert result.passed is True
 
-    def test_fails_without_ac_section(self) -> None:
+    def test_fails_without_ac_section(self, empty_args: dict) -> None:
         issue = {
             "description": "## Objective\nDo the thing.\n\nNo AC here.",
         }
-        result = check_acceptance_criteria_defined(issue)
+        result = check_acceptance_criteria_defined([], issue, empty_args["children"])
         assert result.passed is False
 
-    def test_passes_with_checklist_in_ac(self) -> None:
+    def test_passes_with_checklist_in_ac(self, empty_args: dict) -> None:
         issue = {
             "description": "## Acceptance Criteria\n- [x] Done\n- [ ] TODO",
         }
-        result = check_acceptance_criteria_defined(issue)
+        result = check_acceptance_criteria_defined([], issue, empty_args["children"])
         assert result.passed is True
 
 
@@ -328,6 +394,7 @@ class TestCheckAcceptanceCriteriaDefined:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestRoleChecksRegistry:
     def test_cto_has_four_checks(self) -> None:
         assert len(ROLE_CHECKS["cto"]) == 4
@@ -340,9 +407,16 @@ class TestRoleChecksRegistry:
 
     def test_all_check_names_are_strings(self) -> None:
         for role_checks in ROLE_CHECKS.values():
-            for name, _ in role_checks:
+            for name, fn in role_checks:
                 assert isinstance(name, str)
                 assert len(name) > 0
+                assert callable(fn)
+
+    def test_no_none_check_functions(self) -> None:
+        """All check entries should have a callable function (no None dispatch)."""
+        for role, checks in ROLE_CHECKS.items():
+            for name, fn in checks:
+                assert fn is not None, f"{role}/{name} has None function"
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +424,7 @@ class TestRoleChecksRegistry:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestFetchIssue:
     def test_fetches_issue_by_identifier(
         self, base_url: str, api_key: str, sample_issue: dict
@@ -367,7 +442,12 @@ class TestFetchIssue:
             result = fetch_issue(base_url, api_key, "NFM-999")
             assert result is None
 
+    def test_rejects_invalid_identifier(self, base_url: str, api_key: str) -> None:
+        with pytest.raises(ValueError):
+            fetch_issue(base_url, api_key, "BAD_ID")
 
+
+@pytest.mark.unit
 class TestFetchIssueComments:
     def test_fetches_comments(
         self, base_url: str, api_key: str, sample_comments: list[dict]
@@ -385,6 +465,7 @@ class TestFetchIssueComments:
             assert result == []
 
 
+@pytest.mark.unit
 class TestFetchChildIssues:
     def test_fetches_children(
         self, base_url: str, api_key: str, child_issues: list[dict]
@@ -408,6 +489,7 @@ class TestFetchChildIssues:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestComplianceReport:
     def test_json_output_matches_schema(self) -> None:
         checks = [
@@ -419,7 +501,7 @@ class TestComplianceReport:
             role="lead_engineer",
             compliant=False,
             checked_at="2026-06-25T12:00:00Z",
-            checks=checks,
+            checks=tuple(checks),
         )
         output = json.loads(report.to_json())
         assert output["issueId"] == "NFM-439"
@@ -441,10 +523,20 @@ class TestComplianceReport:
             role="cto",
             compliant=False,
             checked_at="2026-06-25T12:00:00Z",
-            checks=checks,
+            checks=tuple(checks),
         )
         output = json.loads(report.to_json())
         assert output["missingItems"] == ["b"]
+
+    def test_is_frozen(self) -> None:
+        report = ComplianceReport(
+            issue_id="NFM-1",
+            role="cto",
+            compliant=True,
+            checked_at="2026-06-25T12:00:00Z",
+        )
+        with pytest.raises(AttributeError):
+            report.compliant = False
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +544,7 @@ class TestComplianceReport:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestBuildReport:
     def test_builds_compliant_report_for_lead_engineer(
         self,
@@ -483,6 +576,7 @@ class TestBuildReport:
             assert report is not None
             assert report.role == "lead_engineer"
             assert report.issue_id == "NFM-439"
+            assert report.compliant is True
 
     def test_builds_non_compliant_report(
         self,
@@ -507,3 +601,108 @@ class TestBuildReport:
             assert report is not None
             assert report.compliant is False
             assert len(report.missing_items) > 0
+
+
+# ---------------------------------------------------------------------------
+# main() Entry Point
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMain:
+    def test_exits_0_when_compliant(self) -> None:
+        compliant_issue = {
+            "id": "issue-1",
+            "identifier": "NFM-439",
+            "assigneeAgent": {"role": "lead_engineer", "urlKey": "lead-engineer"},
+            "description": "## Acceptance Criteria\n- [x] All done",
+        }
+        good_comments = [
+            {"authorAgent": {"name": "Code Reviewer"}, "body": "APPROVED"},
+            {"body": "All 42 tests passing. Coverage: 90%. CI: green."},
+        ]
+        with (
+            patch.dict(os.environ, {
+                "PAPERCLIP_API_URL": "https://example.com",
+                "PAPERCLIP_API_KEY": "test-key",
+                "PAPERCLIP_COMPANY_ID": "company-1",
+            }),
+            patch("scripts.okr.done_compliance._api_get") as mock_api,
+        ):
+            mock_api.side_effect = [[compliant_issue], good_comments, []]
+            exit_code = main(["--issue-id", "NFM-439", "--role", "lead_engineer"])
+            assert exit_code == 0
+
+    def test_exits_1_when_non_compliant(self) -> None:
+        issue = {
+            "id": "issue-1",
+            "identifier": "NFM-439",
+            "assigneeAgent": {"role": "lead_engineer", "urlKey": "lead-engineer"},
+            "description": "## Acceptance Criteria\n- [ ] TODO",
+        }
+        with (
+            patch.dict(os.environ, {
+                "PAPERCLIP_API_URL": "https://example.com",
+                "PAPERCLIP_API_KEY": "test-key",
+                "PAPERCLIP_COMPANY_ID": "company-1",
+            }),
+            patch("scripts.okr.done_compliance._api_get") as mock_api,
+        ):
+            mock_api.side_effect = [[issue], [], []]
+            exit_code = main(["--issue-id", "NFM-439", "--role", "lead_engineer"])
+            assert exit_code == 1
+
+    def test_exits_1_when_env_missing(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            exit_code = main(["--issue-id", "NFM-439"])
+            assert exit_code == 1
+
+    def test_exits_1_when_issue_not_found(self) -> None:
+        with (
+            patch.dict(os.environ, {
+                "PAPERCLIP_API_URL": "https://example.com",
+                "PAPERCLIP_API_KEY": "test-key",
+                "PAPERCLIP_COMPANY_ID": "company-1",
+            }),
+            patch("scripts.okr.done_compliance._api_get") as mock_api,
+        ):
+            mock_api.return_value = None
+            exit_code = main(["--issue-id", "NFM-999"])
+            assert exit_code == 1
+
+    def test_exits_1_when_invalid_issue_id(self) -> None:
+        with patch.dict(os.environ, {
+            "PAPERCLIP_API_URL": "https://example.com",
+            "PAPERCLIP_API_KEY": "test-key",
+            "PAPERCLIP_COMPANY_ID": "company-1",
+        }):
+            exit_code = main(["--issue-id", "INVALID"])
+            assert exit_code == 1
+
+    def test_outputs_json_on_success(self) -> None:
+        compliant_issue = {
+            "id": "issue-1",
+            "identifier": "NFM-439",
+            "assigneeAgent": {"role": "cto", "urlKey": "cto"},
+            "description": "## Objective",
+        }
+        good_comments = [
+            {"body": "APPROVED. CI: all green."},
+            {"body": "Updated docs. Staging verified successfully."},
+        ]
+        with (
+            patch.dict(os.environ, {
+                "PAPERCLIP_API_URL": "https://example.com",
+                "PAPERCLIP_API_KEY": "test-key",
+                "PAPERCLIP_COMPANY_ID": "company-1",
+            }),
+            patch("scripts.okr.done_compliance._api_get") as mock_api,
+            patch("scripts.okr.done_compliance.sys.stdout", new_callable=StringIO) as mock_stdout,
+        ):
+            mock_api.side_effect = [[compliant_issue], good_comments, []]
+            exit_code = main(["--issue-id", "NFM-439", "--role", "cto"])
+            assert exit_code == 0
+            output = mock_stdout.getvalue()
+            parsed = json.loads(output)
+            assert parsed["compliant"] is True
+            assert parsed["issueId"] == "NFM-439"

@@ -3,6 +3,10 @@
 Extracts git log data for a given period, resolves Paperclip issue
 statuses via the REST API, and outputs a structured JSON report.
 
+Metrics (as defined in NFM-434 spec):
+    commitEfficiency     = completed-issues / total-commits
+    structuralWasteRate = commits-without-issue-ref / total-commits
+
 Usage:
     python scripts/okr/commit_efficiency.py --since 2026-06-23 --until 2026-06-29
 """
@@ -11,11 +15,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import subprocess
 import urllib.request
+from datetime import datetime
 from typing import Any
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Git log parsing
@@ -88,7 +95,7 @@ def fetch_issue_statuses(
     """Query the Paperclip API for issue statuses.
 
     Returns a mapping of issue key → status string.
-    On any failure, the issue gets status ``"unknown"``.
+    On failure, logs a warning and the issue gets status ``"unknown"``.
     """
     statuses: dict[str, str] = {}
     if not issue_refs:
@@ -101,7 +108,16 @@ def fetch_issue_statuses(
             body = json.loads(resp.read().decode())
         for issue in body.get("issues", []):
             statuses[issue["key"]] = issue.get("status", "unknown")
-    except Exception:
+    except urllib.error.URLError as exc:
+        logger.warning("Paperclip API unreachable at %s: %s", api_url, exc)
+        for ref in issue_refs:
+            statuses[ref] = "unknown"
+    except (json.JSONDecodeError, KeyError) as exc:
+        logger.warning("Paperclip API returned malformed response: %s", exc)
+        for ref in issue_refs:
+            statuses[ref] = "unknown"
+    except Exception as exc:
+        logger.warning("Unexpected error fetching issue statuses: %s", exc)
         for ref in issue_refs:
             statuses[ref] = "unknown"
 
@@ -122,9 +138,14 @@ def calculate_metrics(
 ) -> dict[str, Any]:
     """Compute commit efficiency and structural waste rate.
 
-    Formulas:
-        commitEfficiency   = completed / total
-        structuralWasteRate = withoutIssueRef / total
+    Formulas (per NFM-434 spec):
+        commitEfficiency     = completed-issues / total-commits
+        structuralWasteRate = commits-without-issue-ref / total-commits
+
+    Note: commitEfficiency intentionally mixes issue-count (numerator)
+    with commit-count (denominator) per the CTO-defined formula. This
+    measures how many completed issues the team shipped relative to
+    total commit volume — a productivity density metric.
     """
     total = len(commits)
     if total == 0:
@@ -198,8 +219,22 @@ def build_report(
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point
+# CLI helpers
 # ---------------------------------------------------------------------------
+
+_DATE_FORMAT = "%Y-%m-%d"
+
+
+def _validate_date(value: str, arg_name: str) -> str:
+    """Validate that a date string matches YYYY-MM-DD format."""
+    try:
+        datetime.strptime(value, _DATE_FORMAT)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"{arg_name} must be {_DATE_FORMAT}, got: {value}"
+        ) from exc
+    return value
+
 
 def run_git_log(since: str, until: str) -> str:
     """Execute ``git log --oneline`` for the given date range."""
@@ -220,8 +255,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Calculate commit efficiency and structural waste rate.",
     )
-    parser.add_argument("--since", required=True, help="Period start (YYYY-MM-DD)")
-    parser.add_argument("--until", required=True, help="Period end (YYYY-MM-DD)")
+    parser.add_argument(
+        "--since",
+        required=True,
+        type=lambda v: _validate_date(v, "--since"),
+        help="Period start (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--until",
+        required=True,
+        type=lambda v: _validate_date(v, "--until"),
+        help="Period end (YYYY-MM-DD)",
+    )
     parser.add_argument(
         "--api-url",
         default="http://localhost:3000",
