@@ -113,27 +113,58 @@ class ExtractionStatusResponse(BaseModel):
 
 
 class ExtractedProperty(BaseModel):
-    """A single property extracted by the OntoFuel module."""
+    """A single property extracted by the OntoFuel module (v4-aligned).
 
-    element_system: str
-    phase: str | None = None
-    property_name: str
-    value: float
-    unit: str
-    method: str | None = None
-    source: str
-    source_doi: str | None = None
-    confidence: str = "medium"
-    uncertainty: float | None = None
-    temperature: float | None = None
-    cache_level: str | None = None
+    Field order (NFM-526):
+    source_file → material_name → composition → phase → element →
+    property_category → property → value → unit → conditions →
+    context → confidence → reference
+    """
 
-    # --- v4 output fields (CTO evaluation §3.1) ---
-    source_file: str | None = None
-    composition: str | None = None
-    element: str | None = None
-    property_category: str | None = None
-    context: str | None = None
+    # --- v4 core fields (NFM-526) ---
+    source_file: str | None = Field(
+        default=None, description="Source Markdown file path relative to project root"
+    )
+    material_name: str | None = Field(
+        default=None, description="Material name, alloy grade, or sample material"
+    )
+    composition: str | None = Field(
+        default=None,
+        description="Composition from source text or material name itself",
+    )
+    phase: str | None = Field(default=None, description="Material phase (alpha, beta, gamma, etc.)")
+    element: str | None = Field(
+        default=None, description="Element if property is element-specific"
+    )
+    property_category: str | None = Field(
+        default=None, description="Property category from fixed catalog"
+    )
+    property: str = Field(..., description="Property name")
+    value: str = Field(..., description="Numeric value as string (preserves precision)")
+    unit: str = Field(..., description="Unit of measurement")
+    conditions: dict[str, Any] | None = Field(
+        default=None, description="Measurement conditions (temp, pressure, etc.)"
+    )
+    context: str | None = Field(
+        default=None, description="Additional context for understanding the value"
+    )
+    confidence: str = Field(default="medium", description="Confidence level: high/medium/low")
+    reference: str | None = Field(default=None, description="Reference: Author, Title")
+
+    # --- Legacy v3 fields (for backward compatibility) ---
+    element_system: str | None = Field(default=None, deprecated=True)
+    property_name: str | None = Field(default=None, deprecated=True)
+    method: str | None = Field(default=None, description="Extraction method")
+    source: str | None = Field(default=None, deprecated=True)
+    source_doi: str | None = Field(default=None, description="DOI of source")
+    uncertainty: float | None = Field(default=None, description="Measurement uncertainty")
+    temperature: float | None = Field(default=None, deprecated=True)
+    cache_level: str | None = Field(default=None, description="Cache level (L1, L2, L3A, L3B)")
+
+    # --- Optional v4 field ---
+    property_note: str | None = Field(
+        default=None, description="Note for catalog-excluded properties"
+    )
 
 
 class ExtractionResult(BaseModel):
