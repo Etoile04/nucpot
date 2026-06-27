@@ -128,6 +128,13 @@ class ExtractedProperty(BaseModel):
     temperature: float | None = None
     cache_level: str | None = None
 
+    # --- v4 output fields (CTO evaluation §3.1) ---
+    source_file: str | None = None
+    composition: str | None = None
+    element: str | None = None
+    property_category: str | None = None
+    context: str | None = None
+
 
 class ExtractionResult(BaseModel):
     """Summary of an extraction run's output."""
