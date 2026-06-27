@@ -175,6 +175,9 @@ def parse_value(raw_string: str) -> ParsedValue:
     # Clean LaTeX first
     text = clean_latex(raw_string.strip())
 
+    # Strip trailing units like Å, MPa, GWd/t, etc. (including non-ASCII)
+    text = re.sub(r"\s+[A-Za-z/°μ²²%ÅÅ]+\.?$", "", text)
+
     # Pattern 1: Range values (e.g., "3 to 4", "3-4", "ranged from 5 to 15")
     range_patterns = [
         r"(\d+\.?\d*)\s+to\s+(\d+\.?\d*)",
