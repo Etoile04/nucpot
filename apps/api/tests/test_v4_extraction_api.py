@@ -268,6 +268,35 @@ class TestExtractionResult:
         assert "not found" in body["error"]
 
     @pytest.mark.asyncio
+    async def test_result_returns_409_for_non_completed_job(
+        self, v4_client: AsyncClient
+    ):
+        """Accessing results on a running job must return 409 Conflict."""
+        from nfm_db.services.extraction_pipeline import (
+            ExtractionJob,
+            JobStatus,
+            _job_store,
+        )
+
+        job_id = "test-409-result-job"
+        _job_store[job_id] = ExtractionJob(
+            job_id=job_id,
+            source_reference="test://ref",
+            source_type="url",
+            status=JobStatus.RUNNING,
+        )
+        try:
+            response = await v4_client.get(
+                f"/api/v4/extraction/{job_id}/result"
+            )
+            assert response.status_code == 409
+            body = response.json()
+            assert body["success"] is False
+            assert "not 'completed'" in body["error"]
+        finally:
+            _job_store.pop(job_id, None)
+
+    @pytest.mark.asyncio
     async def test_result_returns_200_for_completed_job(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
@@ -433,6 +462,36 @@ class TestValidateExtraction:
         body = response.json()
         assert body["success"] is False
         assert "not found" in body["error"]
+
+    @pytest.mark.asyncio
+    async def test_validate_returns_409_for_non_completed_job(
+        self, v4_client: AsyncClient, validate_payload: dict
+    ):
+        """Triggering validation on a non-completed job must return 409 Conflict."""
+        from nfm_db.services.extraction_pipeline import (
+            ExtractionJob,
+            JobStatus,
+            _job_store,
+        )
+
+        job_id = "test-409-validate-job"
+        _job_store[job_id] = ExtractionJob(
+            job_id=job_id,
+            source_reference="test://ref",
+            source_type="url",
+            status=JobStatus.EXTRACTING,
+        )
+        try:
+            response = await v4_client.post(
+                f"/api/v4/extraction/{job_id}/validate",
+                json=validate_payload,
+            )
+            assert response.status_code == 409
+            body = response.json()
+            assert body["success"] is False
+            assert "not 'completed'" in body["error"]
+        finally:
+            _job_store.pop(job_id, None)
 
     @pytest.mark.asyncio
     async def test_validate_returns_202_for_completed_job(

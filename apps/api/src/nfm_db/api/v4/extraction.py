@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -280,6 +279,13 @@ async def get_extraction_result(
             f"Extraction job '{job_id}' not found.",
         )
 
+    if job.status != JobStatus.COMPLETED:
+        return _error_response(
+            409,
+            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            "Results are only available for completed jobs.",
+        )
+
     raw_properties = _get_job_properties(job_id)
 
     if confidence is not None and confidence in VALID_CONFIDENCE:
@@ -439,8 +445,14 @@ async def validate_extraction(
             f"Extraction job '{job_id}' not found.",
         )
 
+    if job.status != JobStatus.COMPLETED:
+        return _error_response(
+            409,
+            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            "Validation can only be triggered on completed jobs.",
+        )
+
     auto_approve = payload.auto_approve if payload else True
-    scope = payload.scope if payload else "pending_only"
 
     raw_properties = _get_job_properties(job_id)
     total_properties = len(raw_properties)
