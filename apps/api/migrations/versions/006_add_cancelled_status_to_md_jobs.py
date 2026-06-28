@@ -12,15 +12,15 @@ Create Date: 2026-06-23
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "006"
-down_revision: Union[str, Sequence[str], None] = "005"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "005"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 _OLD_CONSTRAINT = "status IN ('pending', 'submitted', 'running', 'completed', 'failed')"
 _NEW_CONSTRAINT = "status IN ('pending', 'submitted', 'running', 'completed', 'failed', 'cancelled')"

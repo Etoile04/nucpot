@@ -23,13 +23,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nfm_db.services.extraction_pipeline import (
-    ExtractionJob,
-    JobStatus,
     _is_stub_mode,
     _job_store,
     _load_source_content,
     _post_process_extracted,
-    _stub_extraction_results,
     ontofuel_extract,
 )
 

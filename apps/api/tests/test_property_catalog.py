@@ -10,8 +10,6 @@ TDD: These tests are written FIRST, before any production code.
 
 from __future__ import annotations
 
-import pytest
-
 from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory, UnitNormalizer
 
 # ---------------------------------------------------------------------------

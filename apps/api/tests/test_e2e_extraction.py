@@ -32,7 +32,6 @@ from nfm_db.models.ref_gap_fill import (
     StagingStatus,
 )
 from nfm_db.services.extraction_pipeline import (
-    ExtractionJob,
     JobStatus,
     _apply_property_mapping,
     _job_store,
@@ -43,7 +42,6 @@ from nfm_db.services.quality_gate import (
     GateDecision,
     QualityGateService,
     compute_dedup_hash,
-    validate_range,
 )
 
 # ---------------------------------------------------------------------------

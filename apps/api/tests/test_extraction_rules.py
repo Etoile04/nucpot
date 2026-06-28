@@ -13,7 +13,6 @@ from nfm_db.core.extraction_rules import (
     Conditions,
     ConditionType,
     Confidence,
-    ParsedValue,
     assess_confidence,
     clean_latex,
     is_extractable,

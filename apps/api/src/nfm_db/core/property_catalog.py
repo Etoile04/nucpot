@@ -71,7 +71,7 @@ def _build_case_insensitive_mapping(
 
 STANDARD_PROPERTIES: dict[str, str] = _build_case_insensitive_mapping(_raw_aliases)
 
-STANDARD_PROPERTIES  # noqa: B018 — exported for public import
+STANDARD_PROPERTIES
 
 
 # ---------------------------------------------------------------------------
