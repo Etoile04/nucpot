@@ -1,3 +1,0 @@
-# Keeps apps/web/public in git so docker/web.Dockerfile's
-# `COPY --from=builder /app/apps/web/public ./apps/web/public` resolves.
-# Standard Next.js public static-assets dir (empty until assets are added).

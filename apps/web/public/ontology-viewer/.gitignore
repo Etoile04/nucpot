@@ -1,7 +1,0 @@
-# Vendored OntoFuel NVL viewer build (Phase 0 static embed).
-# Regenerate via apps/web/scripts/sync_ontology_assets.sh.
-# Exclude source maps and dev-only artifacts to keep the committed footprint
-# lean — they are not required to serve the viewer (browsers 404 harmlessly on
-# the .map requests) and would otherwise bloat git history by ~9MB.
-*.map
-test-export.html
