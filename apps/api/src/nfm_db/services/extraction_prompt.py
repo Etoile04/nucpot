@@ -12,6 +12,8 @@ Public API:
 
 from __future__ import annotations
 
+__all__ = ["build_extraction_system_prompt"]
+
 from nfm_db.core.property_catalog import PropertyCategory, STANDARD_PROPERTIES
 
 
@@ -22,8 +24,13 @@ from nfm_db.core.property_catalog import PropertyCategory, STANDARD_PROPERTIES
 
 def _build_categories_block() -> str:
     """Build the 11 property categories block from the live enum."""
-    core = [c for c in PropertyCategory][:9]
-    supporting = [c for c in PropertyCategory][9:]
+    all_categories = list(PropertyCategory)
+    assert len(all_categories) == 11, (
+        f"PropertyCategory count changed ({len(all_categories)}); "
+        "review core/supporting boundary in _build_categories_block"
+    )
+    core = all_categories[:9]
+    supporting = all_categories[9:]
     lines = ["## Property Categories (property_category)", ""]
     for cat in core:
         lines.append(f"- {cat.value} [核心]")

@@ -7,11 +7,7 @@ Tests validate:
 - Token count stays under 4000 tokens
 """
 
-import json
-import pytest
-
-from nfm_db.core.property_catalog import PropertyCategory, STANDARD_PROPERTIES
-from nfm_db.core.phase_rules import PhaseMapper
+from nfm_db.core.property_catalog import PropertyCategory
 from nfm_db.services.extraction_prompt import build_extraction_system_prompt
 
 
@@ -174,10 +170,8 @@ class TestPhase2AInjection:
         for name in representative:
             assert name in self.prompt, f"Standard property '{name}' not injected"
 
-    def test_phase_mapper_canonical_phases_injected(self) -> None:
-        """Canonical phase names from PhaseMapper must appear."""
-        mapper = PhaseMapper.from_dict(_minimal_phase_data())
-        # Just verify the prompt references phases (not necessarily every alias)
+    def test_phase_keywords_in_prompt(self) -> None:
+        """Prompt template references canonical phase names (alpha/beta/etc.)."""
         assert "alpha" in self.prompt.lower() or "α" in self.prompt
 
 
@@ -251,34 +245,3 @@ class TestPromptStructure:
         # Should have at least one string value in quotes
         assert '"' in self.prompt
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _minimal_phase_data() -> dict:
-    """Minimal phase mapping data for testing."""
-    return {
-        "mappings": [
-            {
-                "canonical": "alpha",
-                "category": "equilibrium",
-                "aliases": ["α", "alpha-Zr"],
-            },
-            {
-                "canonical": "beta",
-                "category": "high_temp",
-                "aliases": ["β"],
-            },
-            {
-                "canonical": "oxide",
-                "category": "corrosion",
-                "aliases": ["ZrO2"],
-            },
-        ],
-        "laTeX_patterns": [
-            {"pattern": "$", "replacement": ""},
-        ],
-        "not_phase": ["phase field", "phase diagram"],
-    }

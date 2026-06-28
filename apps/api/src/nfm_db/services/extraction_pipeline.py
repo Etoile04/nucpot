@@ -422,7 +422,11 @@ async def trigger_extraction(
             matching_raw = _find_matching(mapped, gate_result.dedup_hash)
             if matching_raw is not None:
                 matching_raw["fill_batch_id"] = fill_batch_id
-                await gate.stage_record(matching_raw, gate_result)
+                await gate.stage_record(
+                    matching_raw,
+                    gate_result,
+                    fill_batch_id=uuid.UUID(fill_batch_id),
+                )
                 staged += 1
 
         for _ in bulk_result.rejected:
