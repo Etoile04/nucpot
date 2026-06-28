@@ -8,7 +8,6 @@ import {
   Row,
   Col,
   Statistic,
-  Tag,
   Button,
   Space,
   Spin,
@@ -26,7 +25,7 @@ import {
   validateExtractionResults,
 } from "@/lib/v4-extraction/api"
 import type { V4PropertyResponse, Confidence, V4ResultResponse } from "@/lib/v4-extraction/types"
-import { CONFIDENCE_COLORS, CONFIDENCE_LABELS } from "@/lib/v4-extraction/constants"
+
 import PropertyFiltersSidebar from "@/components/v4-extraction/property-filters-sidebar"
 import PropertyTable from "@/components/v4-extraction/property-table"
 import PropertyDetailDrawer from "@/components/v4-extraction/property-detail-drawer"
@@ -228,9 +227,9 @@ export default function ResultPage() {
             pagination={
               meta
                 ? {
-                    current: meta.page,
-                    pageSize: meta.limit,
-                    total: meta.total,
+                    current: Number(meta.page) || 1,
+                    pageSize: Number(meta.limit) || 20,
+                    total: Number(meta.total) || 0,
                     onChange: (p) => setPage(p),
                     showSizeChanger: false,
                     showTotal: (total, range) =>
