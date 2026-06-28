@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 # ---------------------------------------------------------------------------
 # PropertyCategory Enum (v4 §3)
@@ -49,10 +49,11 @@ _CONFIG_PATH: Final[Path] = (
 )
 
 
-def _load_config() -> dict:
+def _load_config() -> dict[str, Any]:
     """Load property mapping JSON config from disk (hot-reloadable)."""
     with open(_CONFIG_PATH) as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+        return data
 
 
 # ---------------------------------------------------------------------------
