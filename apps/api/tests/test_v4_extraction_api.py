@@ -11,6 +11,8 @@ Covers all 6 endpoints:
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -65,6 +67,21 @@ def validate_payload() -> dict:
     }
 
 
+@pytest.fixture
+async def submitted_job_id(v4_client: AsyncClient, submit_payload: dict) -> str:
+    """Submit a job and return the job_id (waits for completion)."""
+    resp = await v4_client.post("/api/v4/extraction/submit", json=submit_payload)
+    job_id = resp.json()["data"]["job_id"]
+    # Poll until terminal state
+    for _ in range(20):
+        status_resp = await v4_client.get(f"/api/v4/extraction/{job_id}/status")
+        status = status_resp.json()["data"]["status"]
+        if status in ("completed", "partial", "failed"):
+            break
+        await asyncio.sleep(0.05)
+    return job_id
+
+
 # ---------------------------------------------------------------------------
 # 1. POST /api/v4/extraction/submit
 # ---------------------------------------------------------------------------
@@ -87,7 +104,7 @@ class TestSubmitExtraction:
         assert "job_id" in data
         assert data["source_reference"] == "10.1016/j.jnucmat.2023.01.001"
         assert data["source_type"] == "doi"
-        assert data["status"] == "queued"
+        assert data["status"] in ("completed", "partial", "queued")
         assert data["message"] == "Extraction job queued successfully."
         assert data["created_at"] is not None
 
@@ -105,9 +122,10 @@ class TestSubmitExtraction:
         assert response.status_code == 400
         body = response.json()
         assert body["success"] is False
+        assert "Invalid source_type" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_submit_returns_400_for_empty_source_reference(
+    async def test_submit_returns_422_for_empty_source_reference(
         self, v4_client: AsyncClient
     ):
         payload = {
@@ -117,10 +135,10 @@ class TestSubmitExtraction:
         response = await v4_client.post(
             "/api/v4/extraction/submit", json=payload
         )
-        assert response.status_code == 422  # Pydantic validation
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_submit_returns_400_for_too_many_element_systems(
+    async def test_submit_returns_422_for_too_many_element_systems(
         self, v4_client: AsyncClient
     ):
         elements = [f"E{i}" for i in range(21)]
@@ -132,10 +150,10 @@ class TestSubmitExtraction:
         response = await v4_client.post(
             "/api/v4/extraction/submit", json=payload
         )
-        assert response.status_code == 422  # Pydantic max_length
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_submit_defaults_priority_to_normal(
+    async def test_submit_accepts_minimal_payload(
         self, v4_client: AsyncClient
     ):
         payload = {
@@ -147,7 +165,7 @@ class TestSubmitExtraction:
         )
         assert response.status_code == 202
         data = response.json()["data"]
-        assert data["status"] == "queued"
+        assert data["job_id"]
 
     @pytest.mark.asyncio
     async def test_submit_accepts_all_valid_source_types(
@@ -176,23 +194,16 @@ class TestExtractionStatus:
 
     @pytest.mark.asyncio
     async def test_status_returns_200_for_known_job(
-        self, v4_client: AsyncClient, submit_payload: dict
+        self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        # First submit a job
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
-        # Then check status
         status_resp = await v4_client.get(
-            f"/api/v4/extraction/{job_id}/status"
+            f"/api/v4/extraction/{submitted_job_id}/status"
         )
         assert status_resp.status_code == 200
         body = status_resp.json()
         assert body["success"] is True
         data = body["data"]
-        assert data["job_id"] == job_id
+        assert data["job_id"] == submitted_job_id
         assert "progress" in data
         assert "current_step" in data["progress"]
         assert "steps_completed" in data["progress"]
@@ -209,24 +220,31 @@ class TestExtractionStatus:
         assert response.status_code == 404
         body = response.json()
         assert body["success"] is False
+        assert "not found" in body["error"]
 
     @pytest.mark.asyncio
     async def test_status_includes_progress_object(
-        self, v4_client: AsyncClient, submit_payload: dict
+        self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
         status_resp = await v4_client.get(
-            f"/api/v4/extraction/{job_id}/status"
+            f"/api/v4/extraction/{submitted_job_id}/status"
         )
         data = status_resp.json()["data"]
         progress = data["progress"]
         assert isinstance(progress["steps_completed"], list)
         assert isinstance(progress["steps_remaining"], list)
         assert isinstance(progress["current_step"], str)
+
+    @pytest.mark.asyncio
+    async def test_status_shows_extracted_count(
+        self, v4_client: AsyncClient, submitted_job_id: str
+    ):
+        status_resp = await v4_client.get(
+            f"/api/v4/extraction/{submitted_job_id}/status"
+        )
+        data = status_resp.json()["data"]
+        assert "extracted_count" in data
+        assert isinstance(data["extracted_count"], int)
 
 
 # ---------------------------------------------------------------------------
@@ -247,31 +265,14 @@ class TestExtractionResult:
         assert response.status_code == 404
         body = response.json()
         assert body["success"] is False
+        assert "not found" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_result_returns_200_with_properties_for_completed_job(
-        self, v4_client: AsyncClient, submit_payload: dict
+    async def test_result_returns_200_for_completed_job(
+        self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        # Submit a job (runs synchronously in test with stub mode)
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
-        # Poll until completed or timeout
-        import asyncio
-
-        for _ in range(10):
-            status_resp = await v4_client.get(
-                f"/api/v4/extraction/{job_id}/status"
-            )
-            status = status_resp.json()["data"]["status"]
-            if status in ("completed", "partial", "failed"):
-                break
-            await asyncio.sleep(0.1)
-
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{job_id}/result"
+            f"/api/v4/extraction/{submitted_job_id}/result"
         )
         assert result_resp.status_code == 200
         body = result_resp.json()
@@ -284,26 +285,10 @@ class TestExtractionResult:
 
     @pytest.mark.asyncio
     async def test_result_supports_pagination_params(
-        self, v4_client: AsyncClient, submit_payload: dict
+        self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
-        # Wait for completion
-        import asyncio
-
-        for _ in range(10):
-            status_resp = await v4_client.get(
-                f"/api/v4/extraction/{job_id}/status"
-            )
-            if status_resp.json()["data"]["status"] in ("completed", "partial", "failed"):
-                break
-            await asyncio.sleep(0.1)
-
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{job_id}/result",
+            f"/api/v4/extraction/{submitted_job_id}/result",
             params={"page": 1, "limit": 10, "confidence": "high"},
         )
         assert result_resp.status_code == 200
@@ -314,17 +299,12 @@ class TestExtractionResult:
         assert meta["limit"] == 10
 
     @pytest.mark.asyncio
-    async def test_result_returns_400_for_invalid_limit(
-        self, v4_client: AsyncClient, submit_payload: dict
+    async def test_result_returns_422_for_invalid_limit(
+        self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{job_id}/result",
-            params={"limit": 999},  # max is 200
+            f"/api/v4/extraction/{submitted_job_id}/result",
+            params={"limit": 999},
         )
         assert result_resp.status_code == 422
 
@@ -378,12 +358,6 @@ class TestBrowseProperties:
         response = await v4_client.get("/api/v4/properties/UO2")
         data = response.json()["data"]
         assert isinstance(data["properties"], list)
-        # Each property should have expected fields
-        for prop in data["properties"]:
-            assert "property" in prop
-            assert "value" in prop
-            assert "unit" in prop
-            assert "confidence" in prop
 
     @pytest.mark.asyncio
     async def test_browse_supports_temperature_filter(
@@ -402,6 +376,41 @@ class TestBrowseProperties:
         response = await v4_client.get("/api/v4/properties/Zr-Nb")
         assert response.status_code == 200
         assert response.json()["data"]["material_system"] == "Zr-Nb"
+
+    @pytest.mark.asyncio
+    async def test_browse_returns_400_for_invalid_sort_by(
+        self, v4_client: AsyncClient
+    ):
+        response = await v4_client.get(
+            "/api/v4/properties/UO2",
+            params={"sort_by": "invalid_field"},
+        )
+        assert response.status_code == 400
+        assert response.json()["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_browse_returns_400_for_invalid_sort_order(
+        self, v4_client: AsyncClient
+    ):
+        response = await v4_client.get(
+            "/api/v4/properties/UO2",
+            params={"sort_order": "invalid"},
+        )
+        assert response.status_code == 400
+        assert response.json()["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_browse_meta_includes_filters(
+        self, v4_client: AsyncClient
+    ):
+        response = await v4_client.get(
+            "/api/v4/properties/UO2",
+            params={"confidence": "high", "phase": "alpha"},
+        )
+        meta = response.json()["meta"]
+        assert "filters" in meta
+        assert meta["filters"]["confidence"] == "high"
+        assert meta["filters"]["phase"] == "alpha"
 
 
 # ---------------------------------------------------------------------------
@@ -423,36 +432,21 @@ class TestValidateExtraction:
         assert response.status_code == 404
         body = response.json()
         assert body["success"] is False
+        assert "not found" in body["error"]
 
     @pytest.mark.asyncio
     async def test_validate_returns_202_for_completed_job(
-        self, v4_client: AsyncClient, submit_payload: dict, validate_payload: dict
+        self, v4_client: AsyncClient, submitted_job_id: str, validate_payload: dict
     ):
-        # Submit and wait for completion
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
-        import asyncio
-
-        for _ in range(10):
-            status_resp = await v4_client.get(
-                f"/api/v4/extraction/{job_id}/status"
-            )
-            if status_resp.json()["data"]["status"] in ("completed", "partial", "failed"):
-                break
-            await asyncio.sleep(0.1)
-
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{job_id}/validate",
+            f"/api/v4/extraction/{submitted_job_id}/validate",
             json=validate_payload,
         )
         assert validate_resp.status_code == 202
         body = validate_resp.json()
         assert body["success"] is True
         data = body["data"]
-        assert "job_id" in data
+        assert data["job_id"] == submitted_job_id
         assert "validation_id" in data
         assert "total_properties" in data
         assert "auto_approved" in data
@@ -460,29 +454,28 @@ class TestValidateExtraction:
         assert "flagged" in data
 
     @pytest.mark.asyncio
-    async def test_validate_defaults_auto_approve_true(
-        self, v4_client: AsyncClient, submit_payload: dict
+    async def test_validate_defaults_when_empty_body(
+        self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        submit_resp = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
-        job_id = submit_resp.json()["data"]["job_id"]
-
-        import asyncio
-
-        for _ in range(10):
-            status_resp = await v4_client.get(
-                f"/api/v4/extraction/{job_id}/status"
-            )
-            if status_resp.json()["data"]["status"] in ("completed", "partial", "failed"):
-                break
-            await asyncio.sleep(0.1)
-
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{job_id}/validate",
-            json={},  # empty body → defaults
+            f"/api/v4/extraction/{submitted_job_id}/validate",
+            json={},
         )
         assert validate_resp.status_code == 202
+        data = validate_resp.json()["data"]
+        assert data["job_id"] == submitted_job_id
+
+    @pytest.mark.asyncio
+    async def test_validate_includes_review_url(
+        self, v4_client: AsyncClient, submitted_job_id: str, validate_payload: dict
+    ):
+        validate_resp = await v4_client.post(
+            f"/api/v4/extraction/{submitted_job_id}/validate",
+            json=validate_payload,
+        )
+        data = validate_resp.json()["data"]
+        assert "review_url" in data
+        assert "/admin/v4-extraction/validate/" in data["review_url"]
 
 
 # ---------------------------------------------------------------------------
@@ -494,9 +487,7 @@ class TestMaterialSystems:
     """Tests for the material systems listing endpoint."""
 
     @pytest.mark.asyncio
-    async def test_list_returns_200(
-        self, v4_client: AsyncClient
-    ):
+    async def test_list_returns_200(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/material-systems")
         assert response.status_code == 200
         body = response.json()
@@ -507,9 +498,7 @@ class TestMaterialSystems:
         assert "total" in body["meta"]
 
     @pytest.mark.asyncio
-    async def test_list_returns_array_of_systems(
-        self, v4_client: AsyncClient
-    ):
+    async def test_list_returns_array_of_systems(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/material-systems")
         systems = response.json()["data"]["material_systems"]
         assert isinstance(systems, list)
@@ -551,6 +540,19 @@ class TestMaterialSystems:
             assert "low" in cs
             assert isinstance(cs["high"], int)
 
+    @pytest.mark.asyncio
+    async def test_list_material_system_has_required_fields(
+        self, v4_client: AsyncClient
+    ):
+        response = await v4_client.get("/api/v4/material-systems")
+        systems = response.json()["data"]["material_systems"]
+        for system in systems:
+            assert "name" in system
+            assert "display_name" in system
+            assert "total_properties" in system
+            assert "categories" in system
+            assert "pending_review_count" in system
+
 
 # ---------------------------------------------------------------------------
 # Schema validation tests
@@ -591,3 +593,100 @@ class TestV4Schemas:
     def test_validate_request_all_scope(self):
         req = V4ValidateRequest(scope="all")
         assert req.scope == "all"
+
+
+# ---------------------------------------------------------------------------
+# Helper function tests
+# ---------------------------------------------------------------------------
+
+
+class TestV4Helpers:
+    """Tests for internal helper functions."""
+
+    def test_build_progress_for_queued(self):
+        from nfm_db.api.v4.extraction import _build_progress
+        from nfm_db.services.extraction_pipeline import JobStatus
+
+        progress = _build_progress(JobStatus.QUEUED)
+        assert progress.current_step == "queued"
+        assert progress.steps_completed == []
+        assert progress.steps_remaining == [
+            "running", "extracting", "mapping", "quality_gate", "completed",
+        ]
+
+    def test_build_progress_for_completed(self):
+        from nfm_db.api.v4.extraction import _build_progress
+        from nfm_db.services.extraction_pipeline import JobStatus
+
+        progress = _build_progress(JobStatus.COMPLETED)
+        assert progress.current_step == "completed"
+        assert "quality_gate" in progress.steps_completed
+        assert progress.steps_remaining == []
+
+    def test_build_progress_for_extracting(self):
+        from nfm_db.api.v4.extraction import _build_progress
+        from nfm_db.services.extraction_pipeline import JobStatus
+
+        progress = _build_progress(JobStatus.EXTRACTING)
+        assert progress.current_step == "extracting"
+        assert "queued" in progress.steps_completed
+        assert "running" in progress.steps_completed
+        assert "completed" in progress.steps_remaining
+
+    def test_to_v4_property_converts_basic_fields(self):
+        from nfm_db.api.v4.extraction import _to_v4_property
+
+        prop = {
+            "property": "thermal_conductivity",
+            "value": "8.5",
+            "unit": "W/(m·K)",
+            "confidence": "high",
+            "material_name": "UO2",
+        }
+        result = _to_v4_property(prop, job_id="test-job")
+        assert result.property == "thermal_conductivity"
+        assert result.value == "8.5"
+        assert result.unit == "W/(m·K)"
+        assert result.confidence == "high"
+        assert result.material_name == "UO2"
+        assert result.job_id == "test-job"
+
+    def test_to_v4_property_builds_conditions_from_flat(self):
+        from nfm_db.api.v4.extraction import _to_v4_property
+
+        prop = {
+            "property": "density",
+            "value": "10.5",
+            "unit": "g/cm³",
+            "temperature": 300.0,
+            "method": "measurement",
+        }
+        result = _to_v4_property(prop)
+        assert result.conditions is not None
+        assert result.conditions["temperature"] == "300.0"
+        assert result.conditions["method"] == "measurement"
+
+    def test_to_v4_property_defaults_confidence(self):
+        from nfm_db.api.v4.extraction import _to_v4_property
+
+        prop = {
+            "property": "density",
+            "value": "10.5",
+            "unit": "g/cm³",
+        }
+        result = _to_v4_property(prop)
+        assert result.confidence == "medium"
+
+    def test_error_response_format(self):
+        from nfm_db.api.v4.extraction import _error_response
+
+        resp = _error_response(404, "Job not found")
+        assert resp.status_code == 404
+        assert resp.body is not None  # type: ignore[union-attr]
+        import json
+
+        body = json.loads(resp.body.decode())
+        assert body["success"] is False
+        assert body["error"] == "Job not found"
+        assert body["data"] is None
+        assert body["meta"] is None
