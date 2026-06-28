@@ -27,7 +27,6 @@ import pytest
 from nfm_db.core.extraction_rules import (
     assess_confidence,
     clean_latex,
-    is_extractable,
     parse_value,
 )
 from nfm_db.services.quality_gate import compute_dedup_hash
