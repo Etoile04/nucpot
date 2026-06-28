@@ -350,6 +350,13 @@ class QualityGateService:
             source_doi=ref_data.get("source_doi"),
             uncertainty=ref_data.get("uncertainty"),
             temperature=ref_data.get("temperature"),
+            # v4 output fields from LLM extraction
+            source_file=ref_data.get("source_file"),
+            composition=ref_data.get("composition"),
+            element=ref_data.get("element"),
+            property_category=ref_data.get("property_category"),
+            context=ref_data.get("context"),
+            # Quality gate fields
             confidence=gate_result.confidence,
             dedup_hash=gate_result.dedup_hash,
             range_validated=gate_result.range_validated,

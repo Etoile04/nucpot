@@ -81,6 +81,14 @@ class RefGapFillStaging(TimestampMixin, Base):
         Float, nullable=True,
     )
 
+    # --- v4 output fields (CTO evaluation §3.1) ---
+
+    source_file: Mapped[str | None] = mapped_column(Text, nullable=True)
+    composition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    element: Mapped[str | None] = mapped_column(Text, nullable=True)
+    property_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # --- Quality gate columns ---
 
     confidence: Mapped[Confidence] = mapped_column(
