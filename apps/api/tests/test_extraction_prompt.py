@@ -10,7 +10,6 @@ Tests validate:
 from nfm_db.core.property_catalog import PropertyCategory
 from nfm_db.services.extraction_prompt import build_extraction_system_prompt
 
-
 # ---------------------------------------------------------------------------
 # Section presence tests (§0 through §15)
 # ---------------------------------------------------------------------------

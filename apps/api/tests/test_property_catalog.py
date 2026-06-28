@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from nfm_db.core.property_catalog import PropertyCategory, STANDARD_PROPERTIES, UnitNormalizer
-
+from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory, UnitNormalizer
 
 # ---------------------------------------------------------------------------
 # PropertyCategory Enum
@@ -268,7 +267,6 @@ class TestUnitNormalizer:
     def test_normalizer_reads_from_config(self):
         """UnitNormalizer loads rules from JSON config, not hardcoded."""
         import json
-
         from pathlib import Path
 
         config_path = (

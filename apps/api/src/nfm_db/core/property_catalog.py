@@ -15,7 +15,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
-
 # ---------------------------------------------------------------------------
 # PropertyCategory Enum (v4 §3)
 # ---------------------------------------------------------------------------

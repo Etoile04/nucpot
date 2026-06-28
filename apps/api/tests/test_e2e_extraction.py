@@ -46,7 +46,6 @@ from nfm_db.services.quality_gate import (
     validate_range,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -341,7 +340,7 @@ class TestFullPipelineWithStubMode:
         mock_gap_scan,
     ) -> None:
         """trigger_extraction inserts rows into the staging table."""
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
 
         with (
             patch(

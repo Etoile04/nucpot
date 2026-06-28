@@ -8,8 +8,8 @@ Revises: 0003
 Create Date: 2025-06-28
 
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '0004_add_staging_v4_fields'
