@@ -350,6 +350,16 @@ class TestNullFieldHandling:
         assert result["source"] is None
         assert result["context"] is None
 
+    def test_unit_none_produces_none(self) -> None:
+        """Explicit unit=None should produce None, not string 'None'."""
+        record = {
+            "property": "热导率",
+            "value": "16.5",
+            "unit": None,
+        }
+        result = v4_record_to_staging(record)
+        assert result["unit"] is None
+
     def test_empty_string_treated_as_none(self) -> None:
         """Empty strings for optional fields should produce None."""
         record = {

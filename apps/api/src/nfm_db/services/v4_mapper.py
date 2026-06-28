@@ -105,7 +105,7 @@ def v4_record_to_staging(record: dict[str, Any]) -> dict[str, Any]:
     context = _coalesce_empty(record.get("context"))
     source_file = _coalesce_empty(record.get("source_file"))
     reference = _coalesce_empty(record.get("reference"))
-    unit = str(record.get("unit", ""))
+    unit = _coalesce_empty(record.get("unit"))
 
     return {
         "source_file": source_file,
