@@ -36,8 +36,8 @@ jobs:
           build-mode: none
           config: |
             paths:
-              - src
-              - e2e
+              - apps/web/src
+              - apps/web/e2e
             paths-ignore:
               - "**/*.test.ts"
               - "**/*.spec.ts"
