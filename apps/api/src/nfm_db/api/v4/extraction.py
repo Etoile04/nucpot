@@ -286,9 +286,16 @@ async def get_extraction_result(
             "Results are only available for completed jobs.",
         )
 
+    if confidence is not None and confidence not in VALID_CONFIDENCE:
+        return _error_response(
+            400,
+            f"Invalid confidence '{confidence}'. "
+            f"Must be one of: {', '.join(sorted(VALID_CONFIDENCE))}",
+        )
+
     raw_properties = _get_job_properties(job_id)
 
-    if confidence is not None and confidence in VALID_CONFIDENCE:
+    if confidence is not None:
         raw_properties = [
             p for p in raw_properties if p.get("confidence") == confidence
         ]
@@ -360,10 +367,23 @@ async def browse_properties(
             f"Invalid sort_order '{sort_order}'. Must be 'asc' or 'desc'.",
         )
 
+    if confidence is not None and confidence not in VALID_CONFIDENCE:
+        return _error_response(
+            400,
+            f"Invalid confidence '{confidence}'. "
+            f"Must be one of: {', '.join(sorted(VALID_CONFIDENCE))}",
+        )
+    if staging_status is not None and staging_status not in VALID_STAGING_STATUS:
+        return _error_response(
+            400,
+            f"Invalid staging_status '{staging_status}'. "
+            f"Must be one of: {', '.join(sorted(VALID_STAGING_STATUS))}",
+        )
+
     all_properties: list[dict[str, Any]] = []
 
     filtered = all_properties
-    if confidence is not None and confidence in VALID_CONFIDENCE:
+    if confidence is not None:
         filtered = [p for p in filtered if p.get("confidence") == confidence]
     if phase is not None:
         filtered = [p for p in filtered if p.get("phase") == phase]
@@ -373,7 +393,7 @@ async def browse_properties(
             for p in filtered
             if p.get("property_category") == property_category
         ]
-    if staging_status is not None and staging_status in VALID_STAGING_STATUS:
+    if staging_status is not None:
         filtered = [
             p for p in filtered if p.get("staging_status") == staging_status
         ]

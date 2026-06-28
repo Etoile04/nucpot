@@ -22,7 +22,7 @@ import {
   getExtractionResults,
   validateExtractionResults,
 } from "@/lib/v4-extraction/api"
-import type { V4PropertyResponse } from "@/lib/v4-extraction/types"
+import type { V4PropertyResponse, V4ResultResponse } from "@/lib/v4-extraction/types"
 import ValidationCard from "@/components/v4-extraction/validation-card"
 import ValidationProgress from "@/components/v4-extraction/validation-progress"
 import KeyboardShortcutsOverlay from "@/components/v4-extraction/keyboard-shortcuts-overlay"
@@ -69,13 +69,16 @@ export default function ValidationPage() {
 
   // ── Data fetching ───────────────────────────────────────────
 
-  const { data, isLoading, isError } = useQuery({
+  const { data: resultEnvelope, isLoading, isError } = useQuery<{
+    data: V4ResultResponse
+    meta?: Record<string, unknown>
+  }>({
     queryKey: ["v4-extraction-results", validationId],
     queryFn: () =>
       getExtractionResults(validationId, { limit: 500 }),
   })
 
-  const properties = data?.properties ?? []
+  const properties = resultEnvelope?.data?.properties ?? []
   const total = properties.length
 
   // ── Mutation: validate (batch submit) ────────────────────

@@ -41,7 +41,9 @@ function getHeaders(): HeadersInit {
   return headers
 }
 
-async function handleResponse<T>(response: Response): Promise<T> {
+async function handleResponse<T>(
+  response: Response,
+): Promise<{ data: T; meta?: Record<string, unknown> }> {
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null)
     const message =
@@ -57,7 +59,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
     throw new Error(result.error ?? "请求失败")
   }
 
-  return result.data
+  return { data: result.data, meta: result.meta }
 }
 
 function buildQueryString(params: Record<string, unknown>): string {
@@ -85,7 +87,8 @@ export async function submitExtractionJob(
     headers: getHeaders(),
     body: JSON.stringify(payload),
   })
-  return handleResponse<V4SubmitResponse>(response)
+  const { data } = await handleResponse<V4SubmitResponse>(response)
+  return data
 }
 
 /**
@@ -102,7 +105,8 @@ export async function getExtractionStatus(
       headers: getHeaders(),
     },
   )
-  return handleResponse<V4StatusResponse>(response)
+  const { data } = await handleResponse<V4StatusResponse>(response)
+  return data
 }
 
 /**
@@ -112,7 +116,7 @@ export async function getExtractionStatus(
 export async function getExtractionResults(
   jobId: string,
   params: V4ResultParams = {},
-): Promise<V4ResultResponse> {
+): Promise<{ data: V4ResultResponse; meta?: Record<string, unknown> }> {
   const qs = buildQueryString(params as Record<string, unknown>)
   const response = await fetch(
     `${API_BASE}/api/v4/extraction/${jobId}/result${qs}`,
@@ -131,7 +135,7 @@ export async function getExtractionResults(
 export async function browseProperties(
   materialSystem: string,
   params: V4BrowseParams = {},
-): Promise<V4BrowseResponse> {
+): Promise<{ data: V4BrowseResponse; meta?: Record<string, unknown> }> {
   const qs = buildQueryString(params as Record<string, unknown>)
   const response = await fetch(
     `${API_BASE}/api/v4/properties/${encodeURIComponent(materialSystem)}${qs}`,
@@ -159,7 +163,8 @@ export async function validateExtractionResults(
       body: JSON.stringify(payload ?? {}),
     },
   )
-  return handleResponse<V4ValidateResponse>(response)
+  const { data } = await handleResponse<V4ValidateResponse>(response)
+  return data
 }
 
 /**
@@ -177,5 +182,6 @@ export async function getMaterialSystems(
       headers: getHeaders(),
     },
   )
-  return handleResponse<V4MaterialSystemSummary[]>(response)
+  const { data } = await handleResponse<V4MaterialSystemSummary[]>(response)
+  return data
 }

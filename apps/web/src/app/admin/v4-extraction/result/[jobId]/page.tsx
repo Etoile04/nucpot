@@ -19,14 +19,13 @@ import {
 import {
   ArrowLeftOutlined,
   SendOutlined,
-  CheckCircleOutlined,
   ExclamationCircleOutlined,
 } from "@ant-design/icons"
 import {
   getExtractionResults,
   validateExtractionResults,
 } from "@/lib/v4-extraction/api"
-import type { V4PropertyResponse, Confidence } from "@/lib/v4-extraction/types"
+import type { V4PropertyResponse, Confidence, V4ResultResponse } from "@/lib/v4-extraction/types"
 import { CONFIDENCE_COLORS, CONFIDENCE_LABELS } from "@/lib/v4-extraction/constants"
 import PropertyFiltersSidebar from "@/components/v4-extraction/property-filters-sidebar"
 import PropertyTable from "@/components/v4-extraction/property-table"
@@ -64,11 +63,11 @@ export default function ResultPage() {
 
   // Fetch results
   const {
-    data: resultData,
+    data: resultEnvelope,
     isLoading,
     isError,
     error,
-  } = useQuery({
+  } = useQuery<{ data: V4ResultResponse; meta?: Record<string, unknown> }>({
     queryKey: ["v4-extraction-result", jobId, queryParams],
     queryFn: () => getExtractionResults(jobId, queryParams),
     enabled: !!jobId,
@@ -120,9 +119,9 @@ export default function ResultPage() {
     })
   }
 
-  const summary = resultData?.summary
+  const resultData = resultEnvelope?.data
   const properties = resultData?.properties ?? []
-  const meta = resultData?.meta
+  const meta = resultEnvelope?.meta
 
   if (isLoading) {
     return (
@@ -188,76 +187,22 @@ export default function ResultPage() {
       </div>
 
       {/* Summary Bar */}
-      {summary && (
+      {resultData && (
         <Card size="small" style={{ marginBottom: "1rem" }}>
           <Row gutter={16} align="middle">
             <Col>
               <Statistic
-                title="总提取数 / Total"
-                value={summary.total_extracted}
+                title="总提取数 / Total Extracted"
+                value={resultData.total_extracted}
                 suffix="条"
                 valueStyle={{ fontSize: 20 }}
               />
             </Col>
             <Col>
               <Statistic
-                title={
-                  <span>
-                    <Tag
-                      color={CONFIDENCE_COLORS.high}
-                      style={{ marginLeft: 4 }}
-                    >
-                      {CONFIDENCE_LABELS.high}
-                    </Tag>
-                  </span>
-                }
-                value={summary.high_confidence_count}
-                suffix="条"
-                valueStyle={{
-                  fontSize: 20,
-                  color: "#52c41a",
-                }}
-                prefix={<CheckCircleOutlined />}
-              />
-            </Col>
-            <Col>
-              <Statistic
-                title={
-                  <span>
-                    <Tag
-                      color={CONFIDENCE_COLORS.medium}
-                      style={{ marginLeft: 4 }}
-                    >
-                      {CONFIDENCE_LABELS.medium}
-                    </Tag>
-                  </span>
-                }
-                value={summary.medium_confidence_count}
-                suffix="条"
-                valueStyle={{
-                  fontSize: 20,
-                  color: "#faad14",
-                }}
-              />
-            </Col>
-            <Col>
-              <Statistic
-                title={
-                  <span>
-                    <Tag
-                      color={CONFIDENCE_COLORS.low}
-                      style={{ marginLeft: 4 }}
-                    >
-                      {CONFIDENCE_LABELS.low}
-                    </Tag>
-                  </span>
-                }
-                value={summary.low_confidence_count}
-                suffix="条"
-                valueStyle={{
-                  fontSize: 20,
-                  color: "#ff4d4f",
-                }}
+                title="作业状态 / Job Status"
+                value={resultData.job_status}
+                valueStyle={{ fontSize: 20 }}
               />
             </Col>
           </Row>

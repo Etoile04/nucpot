@@ -26,8 +26,6 @@ import type { V4StatusResponse } from "@/lib/v4-extraction/types"
 import {
   JOB_STATUS_COLORS,
   JOB_STATUS_LABELS,
-  PRIORITY_COLORS,
-  PRIORITY_LABELS,
   SOURCE_TYPE_COLORS,
   SOURCE_TYPE_LABELS,
   STATUS_POLL_INTERVAL_MS,
@@ -118,13 +116,10 @@ export default function ExtractionStatusPage() {
                 <Descriptions.Item label="类型 / Type">
                   {status.source_type}
                 </Descriptions.Item>
-                <Descriptions.Item label="优先级 / Priority">
-                  <Tag color={PRIORITY_COLORS[status.priority]}>
-                    {PRIORITY_LABELS[status.priority]}
-                  </Tag>
-                </Descriptions.Item>
                 <Descriptions.Item label="创建时间 / Created">
-                  {dayjs(status.created_at).format("YYYY-MM-DD HH:mm:ss")}
+                  {status.created_at
+                    ? dayjs(status.created_at).format("YYYY-MM-DD HH:mm:ss")
+                    : "-"}
                 </Descriptions.Item>
                 <Descriptions.Item label="状态 / Status">
                   <Tag color={JOB_STATUS_COLORS[status.status]}>
@@ -181,10 +176,10 @@ export default function ExtractionStatusPage() {
               </Button>
             )}
 
-            {/* ── Updated timestamp ─────────────────────────────── */}
-            {status.updated_at && isTerminal && (
+            {/* ── Completed timestamp ─────────────────────────────── */}
+            {status.completed_at && isTerminal && (
               <div style={{ color: "rgba(0,0,0,0.45)", fontSize: 12 }}>
-                最后更新: {dayjs(status.updated_at).format("YYYY-MM-DD HH:mm:ss")}
+                完成时间: {dayjs(status.completed_at).format("YYYY-MM-DD HH:mm:ss")}
               </div>
             )}
           </Space>

@@ -82,9 +82,9 @@ export default function BrowsePage() {
 
   // ── Data: Properties ────────────────────────────────────────────
   const {
-    data: browseData,
+    data: browseResult,
     isLoading: propertiesLoading,
-  } = useQuery<V4BrowseResponse>({
+  } = useQuery<{ data: V4BrowseResponse; meta?: Record<string, unknown> }>({
     queryKey: [
       "v4-browse-properties",
       selectedSystem,
@@ -95,8 +95,8 @@ export default function BrowsePage() {
     enabled: selectedSystem !== "",
   })
 
-  const properties = browseData?.properties ?? []
-  const totalProperties = browseData?.meta.total ?? 0
+  const properties = browseResult?.data?.properties ?? []
+  const totalProperties = (browseResult?.meta?.total as number) ?? browseResult?.data?.total_count ?? 0
 
   // ── Handlers ────────────────────────────────────────────────────
   const handleSystemSelect = useCallback(
