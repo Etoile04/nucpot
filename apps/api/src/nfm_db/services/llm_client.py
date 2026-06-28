@@ -72,9 +72,13 @@ def _compute_cache_key(
     prompt: str,
     system_prompt: str,
     model: str,
+    schema: dict[str, Any] | None = None,
 ) -> str:
     """Compute a deterministic cache key from prompt components and model."""
-    raw = f"{system_prompt}|{prompt}|{model}"
+    parts = [system_prompt, prompt, model]
+    if schema is not None:
+        parts.append(json.dumps(schema, sort_keys=True))
+    raw = "|".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -188,7 +192,7 @@ class LLMClient:
             httpx.HTTPStatusError: After exhausting retries on server errors.
         """
         effective_system = system_prompt or _DEFAULT_SYSTEM_PROMPT
-        cache_key = _compute_cache_key(prompt, effective_system, self.model)
+        cache_key = _compute_cache_key(prompt, effective_system, self.model, schema)
 
         # Check cache
         if cache_key in self._cache:
@@ -251,7 +255,11 @@ class LLMClient:
                 )
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
-                if exc.response.status_code < 500 or attempt == self.max_retries:
+                is_retryable = (
+                    exc.response.status_code >= 500
+                    or exc.response.status_code == 429
+                )
+                if not is_retryable or attempt == self.max_retries:
                     raise
                 backoff = _BASE_BACKOFF * (2 ** (attempt - 1))
                 logger.warning(
@@ -303,8 +311,7 @@ class LLMClient:
 
         response.raise_for_status()
         body = response.json()
-        body["_latency_ms"] = (time.monotonic() - start) * 1000
-        return body
+        return {**body, "_latency_ms": (time.monotonic() - start) * 1000}
 
 
 # ---------------------------------------------------------------------------
