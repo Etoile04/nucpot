@@ -16,7 +16,6 @@ job history is required.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import uuid
@@ -158,7 +157,7 @@ def _post_process_extracted(
         phase_mapper = None
 
     try:
-        from nfm_db.core.property_catalog import PropertyCategory, STANDARD_PROPERTIES
+        from nfm_db.core.property_catalog import STANDARD_PROPERTIES
 
         has_catalog = True
     except ImportError:
@@ -192,7 +191,7 @@ def _post_process_extracted(
                     item["property_category"] = matched
                 else:
                     # Check if property name matches any standard name value
-                    for alias, standard in STANDARD_PROPERTIES.items():
+                    for _, standard in STANDARD_PROPERTIES.items():
                         if standard == prop_name:
                             item["property_category"] = standard
                             break

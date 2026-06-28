@@ -14,7 +14,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Data Models
 # ---------------------------------------------------------------------------
@@ -35,10 +34,10 @@ class Conditions(BaseModel):
     """Measurement conditions for extracted properties."""
 
     condition_type: ConditionType = Field(default=ConditionType.UNKNOWN)
-    temp_C: float | str | None = Field(default=None, description="Temperature in Celsius")
-    temp_K: float | str | None = Field(default=None, description="Temperature in Kelvin")
-    pressure_MPa: float | str | None = Field(default=None, description="Pressure in MPa")
-    stress_MPa: float | str | None = Field(default=None, description="Stress in MPa")
+    temp_C: float | str | None = Field(default=None, description="Temperature in Celsius")  # noqa: N815
+    temp_K: float | str | None = Field(default=None, description="Temperature in Kelvin")  # noqa: N815
+    pressure_MPa: float | str | None = Field(default=None, description="Pressure in MPa")  # noqa: N815
+    stress_MPa: float | str | None = Field(default=None, description="Stress in MPa")  # noqa: N815
     strain_rate_s1: float | str | None = Field(
         default=None, alias="strain_rate_s-1", description="Strain rate in s^-1"
     )
@@ -46,7 +45,7 @@ class Conditions(BaseModel):
     dpa: float | str | None = Field(default=None, description="Displacement per atom (dpa)")
     fluence_n_m2: str | None = Field(default=None, description="Neutron fluence in n/m^2")
     flux_n_m2_s: str | None = Field(default=None, description="Neutron flux in n/m^2/s")
-    burnup_GWd_t: float | str | None = Field(
+    burnup_GWd_t: float | str | None = Field(  # noqa: N815
         default=None, alias="burnup_GWd/t", description="Burnup in GWd/t"
     )
     atmosphere: str | None = Field(default=None, description="Atmosphere or medium")

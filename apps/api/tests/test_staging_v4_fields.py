@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import importlib
 
-import sqlalchemy  # noqa: F401 — needed for test_migration_sqlite_add_and_drop_columns
 import pytest
-from alembic import command
-from alembic.config import Config
-from alembic.script import ScriptDirectory
-from sqlalchemy import inspect as sa_inspect, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
+import sqlalchemy
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 # ---------------------------------------------------------------------------
 # 1. Model columns
@@ -182,14 +179,14 @@ def test_migration_revision_chain() -> None:
 @pytest.mark.asyncio
 async def test_migration_sqlite_add_and_drop_columns() -> None:
     """Verify ALTER TABLE ADD/DROP COLUMN works on SQLite (mirrors migration)."""
-    from sqlalchemy import Column, Float, MetaData, String, Text
+    from sqlalchemy import Column, Float, MetaData, String
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     engine: AsyncEngine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
 
     # Create a minimal staging-like table WITHOUT v4 columns
     metadata = MetaData()
-    staging = sqlalchemy.Table(
+    _ = sqlalchemy.Table(
         "_ref_gap_fill_staging",
         metadata,
         Column("id", String(36), primary_key=True),

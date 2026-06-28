@@ -62,6 +62,20 @@ ignore = [
     "SIM117", # nested with — pervasive in pre-existing code
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Chinese fullwidth punctuation is intentional i18n content
+"src/nfm_db/services/extraction_prompt.py" = ["RUF001"]
+"src/nfm_db/services/extraction_pipeline.py" = ["RUF001", "RUF002", "RUF003"]
+# Multiplication sign × is intentional in LaTeX pattern matching
+"src/nfm_db/core/extraction_rules.py" = ["RUF001", "RUF002", "RUF003"]
+# Greek alpha / Chinese characters in docstrings and test data are intentional
+"src/nfm_db/core/phase_rules.py" = ["RUF002"]
+"tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
+"tests/test_extraction_prompt.py" = ["RUF001"]
+"tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
+"tests/test_phase_rules.py" = ["RUF001", "RUF002"]
+"tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["nfm_db"]
 
