@@ -162,7 +162,9 @@ def _get_job_properties(job_id: str) -> list[dict[str, Any]]:
 def _build_material_systems_index() -> list[dict[str, Any]]:
     """Build material systems overview from available job data.
 
-    Extension point: aggregate from extracted_properties table.
+    TODO(NFM-561): Aggregate from extracted_properties table once the
+    v4 pipeline writes to the database. Currently returns empty because
+    the extraction pipeline operates in-memory.
     """
     return []
 
@@ -487,6 +489,8 @@ async def validate_extraction(
     flagged = low_count
     sent_to_review = medium_count
 
+    # TODO(NFM-561): Persist validation_id to DB so review_url can resolve.
+    # Currently the validation workflow is synchronous and stateless.
     validation_id = f"val-{uuid.uuid4()}"
 
     return JSONResponse(

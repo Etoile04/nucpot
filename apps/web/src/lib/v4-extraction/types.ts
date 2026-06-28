@@ -50,7 +50,8 @@ export interface V4ExtractionSubmitRequest {
 }
 
 export interface V4ValidateRequest {
-  auto_approve_high?: boolean
+  auto_approve?: boolean
+  scope?: "all" | "pending_only"
 }
 
 export interface V4BrowseParams {
@@ -97,7 +98,7 @@ export interface V4PropertyResponse {
   job_id?: string
   staging_status?: StagingStatus
   cache_level?: CacheLevel
-  id?: string
+  id?: number
 }
 
 export interface V4JobProgress {

@@ -182,6 +182,8 @@ export async function getMaterialSystems(
       headers: getHeaders(),
     },
   )
-  const { data } = await handleResponse<V4MaterialSystemSummary[]>(response)
-  return data
+  const { data } = await handleResponse<{
+    material_systems: V4MaterialSystemSummary[]
+  }>(response)
+  return data.material_systems
 }

@@ -22,7 +22,11 @@ import {
   getExtractionResults,
   validateExtractionResults,
 } from "@/lib/v4-extraction/api"
-import type { V4PropertyResponse, V4ResultResponse } from "@/lib/v4-extraction/types"
+import type {
+  V4PropertyResponse,
+  V4ResultResponse,
+  V4ValidateRequest,
+} from "@/lib/v4-extraction/types"
 import ValidationCard from "@/components/v4-extraction/validation-card"
 import ValidationProgress from "@/components/v4-extraction/validation-progress"
 import KeyboardShortcutsOverlay from "@/components/v4-extraction/keyboard-shortcuts-overlay"
@@ -84,7 +88,7 @@ export default function ValidationPage() {
   // ── Mutation: validate (batch submit) ────────────────────
 
   const validateMutation = useMutation({
-    mutationFn: (payload?: { auto_approve_high?: boolean }) =>
+    mutationFn: (payload?: V4ValidateRequest) =>
       validateExtractionResults(validationId, payload),
     onSuccess: () => {
       message.success("验证结果已提交 / Validation results submitted")
@@ -430,7 +434,7 @@ export default function ValidationPage() {
                 <Button
                   type="primary"
                   onClick={() =>
-                    validateMutation.mutate({ auto_approve_high: false })
+                    validateMutation.mutate({ auto_approve: false })
                   }
                   loading={validateMutation.isPending}
                 >
