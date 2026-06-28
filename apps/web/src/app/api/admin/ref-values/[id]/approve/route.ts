@@ -34,6 +34,10 @@ export async function POST(
 
   const { id } = await params
 
+  if (!user) {
+    return NextResponse.json({ error: 'User not authenticated' }, { status: 401 })
+  }
+
   try {
     const body = await req.json().catch(() => ({}))
 

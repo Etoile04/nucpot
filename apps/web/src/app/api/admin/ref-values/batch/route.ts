@@ -27,7 +27,10 @@ export async function POST(req: NextRequest) {
   const { error, status, user } = await verifyAdmin(req)
   if (error) {
     return NextResponse.json({ error }, { status })
-   }
+  }
+  if (!user) {
+    return NextResponse.json({ error: 'User not authenticated' }, { status: 401 })
+  }
 
   try {
     const body = await req.json()
@@ -40,7 +43,7 @@ export async function POST(req: NextRequest) {
     const new_status = action === 'approve' ? 'active' : 'rejected'
 
     // Update reference_values
-    const { data: updated, error: up_err } = await supabaseAdmin!
+    const { error: up_err } = await supabaseAdmin!
       .from('reference_values')
       .update({
         status: new_status,
@@ -72,7 +75,7 @@ export async function POST(req: NextRequest) {
       console.error('[ref-values batch audit]', audit_err)
      }
 
-    return NextResponse.json({ success: true, updated: updated?.length ?? 0 })
+    return NextResponse.json({ success: true, updated: ids.length })
    } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[ref-values batch]', msg)

@@ -60,6 +60,10 @@ export async function PATCH(
 
   const { id } = await params
 
+  if (!user) {
+    return NextResponse.json({ error: 'User not authenticated' }, { status: 401 })
+  }
+
   try {
     const body = await req.json()
 
@@ -114,6 +118,10 @@ export async function DELETE(
      }
 
   const { id } = await params
+
+  if (!user) {
+    return NextResponse.json({ error: 'User not authenticated' }, { status: 401 })
+  }
 
   const { error: err } = await supabaseAdmin!
        .from('reference_values')
