@@ -1,0 +1,132 @@
+{
+  "id": "u02-density",
+  "description": "UO2 density measurements - plain, LaTeX scientific notation, range",
+  "source_file": "zhang_2020_uo2_density.md",
+  "property_category": "密度",
+  "records": [
+    {
+      "id": "u02-density-plain",
+      "input": {
+        "source_file": "zhang_2020_uo2_density.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "密度",
+        "property": "密度",
+        "value": "10.96",
+        "unit": "g/cm³",
+        "context": "sintered pellet at 95% TD",
+        "reference": "Zhang et al., J. Nucl. Mater. 2020"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 10.96
+        },
+        "cleaned_value": "10.96",
+        "confidence": "high",
+        "dedup_hash": "21ca3963c4273c7588d26200e650e655b9538c06d0bc631fb81dbb39de28f388",
+        "staging": {
+          "source_file": "zhang_2020_uo2_density.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "密度",
+          "property_name": "密度",
+          "value": 10.96,
+          "unit": "g/cm³",
+          "temperature": null,
+          "method": null,
+          "context": "sintered pellet at 95% TD",
+          "confidence": "medium",
+          "source": "Zhang et al., J. Nucl. Mater. 2020"
+        }
+      }
+    },
+    {
+      "id": "u02-density-latex",
+      "input": {
+        "source_file": "zhang_2020_uo2_density.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "密度",
+        "property": "密度",
+        "value": "$10.5\\times10^{3}$",
+        "unit": "kg/m³",
+        "context": "theoretical density",
+        "reference": "Zhang et al., J. Nucl. Mater. 2020"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 10500.0
+        },
+        "cleaned_value": "10.5×10^3",
+        "confidence": "high",
+        "dedup_hash": "21ca3963c4273c7588d26200e650e655b9538c06d0bc631fb81dbb39de28f388",
+        "staging": {
+          "source_file": "zhang_2020_uo2_density.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "密度",
+          "property_name": "密度",
+          "value": 10500.0,
+          "unit": "kg/m³",
+          "temperature": null,
+          "method": null,
+          "context": "theoretical density",
+          "confidence": "medium",
+          "source": "Zhang et al., J. Nucl. Mater. 2020"
+        }
+      }
+    },
+    {
+      "id": "u02-density-range",
+      "input": {
+        "source_file": "zhang_2020_uo2_density.md",
+        "material_name": "UO2",
+        "composition": "UO2.02",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "密度",
+        "property": "密度",
+        "value": "10.4 to 10.97",
+        "unit": "g/cm³",
+        "context": "stoichiometry variation",
+        "reference": "Zhang et al., J. Nucl. Mater. 2020"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 10.685,
+          "range": [
+            10.4,
+            10.97
+          ]
+        },
+        "cleaned_value": "10.4 to 10.97",
+        "confidence": "high",
+        "dedup_hash": "21ca3963c4273c7588d26200e650e655b9538c06d0bc631fb81dbb39de28f388",
+        "staging": {
+          "source_file": "zhang_2020_uo2_density.md",
+          "element_system": "UO2",
+          "composition": "UO2.02",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "密度",
+          "property_name": "密度",
+          "value": 10.685,
+          "unit": "g/cm³",
+          "temperature": null,
+          "method": null,
+          "context": "stoichiometry variation",
+          "confidence": "medium",
+          "source": "Zhang et al., J. Nucl. Mater. 2020"
+        }
+      }
+    }
+  ]
+}

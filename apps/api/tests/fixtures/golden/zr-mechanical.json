@@ -1,0 +1,137 @@
+{
+  "id": "zr-mechanical",
+  "description": "Zr alloy mechanical properties - yield strength, tensile range, modulus",
+  "source_file": "kim_2018_zr_alloy.md",
+  "property_category": "弹塑性模型",
+  "records": [
+    {
+      "id": "zr-yield-strength",
+      "input": {
+        "source_file": "kim_2018_zr_alloy.md",
+        "material_name": "Zr-2.5Nb",
+        "phase": "alpha",
+        "element": "Zr",
+        "property_category": "弹塑性模型",
+        "property": "屈服强度",
+        "value": "380",
+        "unit": "MPa",
+        "conditions": {
+          "temp_C": 25,
+          "strain_rate_s1": "0.001"
+        },
+        "context": "pressure tube material, longitudinal direction",
+        "reference": "Kim et al., J. ASTM Int. 2018"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 380.0
+        },
+        "cleaned_value": "380",
+        "confidence": "high",
+        "dedup_hash": "d45821240b6a091fde2bcae5508ea4ca8e9d8a694477c987cd2164f6377b2ad6",
+        "staging": {
+          "source_file": "kim_2018_zr_alloy.md",
+          "element_system": "Zr-2.5Nb",
+          "composition": null,
+          "phase": "alpha",
+          "element": "Zr",
+          "property_category": "弹塑性模型",
+          "property_name": "屈服强度",
+          "value": 380.0,
+          "unit": "MPa",
+          "temperature": 25.0,
+          "method": null,
+          "context": "pressure tube material, longitudinal direction",
+          "confidence": "medium",
+          "source": "Kim et al., J. ASTM Int. 2018"
+        }
+      }
+    },
+    {
+      "id": "zr-tensile-range",
+      "input": {
+        "source_file": "kim_2018_zr_alloy.md",
+        "material_name": "Zr-2.5Nb",
+        "phase": "alpha",
+        "element": "Zr",
+        "property_category": "弹塑性模型",
+        "property": "抗拉强度",
+        "value": "500 to 600",
+        "unit": "MPa",
+        "conditions": {
+          "temp_C": 300,
+          "condition_type": "experimental"
+        },
+        "context": "irradiated condition",
+        "reference": "Kim et al., J. ASTM Int. 2018"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 550.0,
+          "range": [
+            500.0,
+            600.0
+          ]
+        },
+        "cleaned_value": "500 to 600",
+        "confidence": "high",
+        "dedup_hash": "d743c5b744dfe9b59a6062178538c33480e74def43978b83dff19e382c5b8802",
+        "staging": {
+          "source_file": "kim_2018_zr_alloy.md",
+          "element_system": "Zr-2.5Nb",
+          "composition": null,
+          "phase": "alpha",
+          "element": "Zr",
+          "property_category": "弹塑性模型",
+          "property_name": "抗拉强度",
+          "value": 550.0,
+          "unit": "MPa",
+          "temperature": 300.0,
+          "method": null,
+          "context": "irradiated condition",
+          "confidence": "medium",
+          "source": "Kim et al., J. ASTM Int. 2018"
+        }
+      }
+    },
+    {
+      "id": "zr-youngs-modulus",
+      "input": {
+        "source_file": "kim_2018_zr_alloy.md",
+        "material_name": "Zr-4",
+        "phase": "alpha",
+        "element": "Zr",
+        "property_category": "弹塑性模型",
+        "property": "弹性模量",
+        "value": "~95",
+        "unit": "GPa",
+        "context": "cladding material at RT",
+        "reference": "Kim et al., J. ASTM Int. 2018"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 95.0
+        },
+        "cleaned_value": "~95",
+        "confidence": "high",
+        "dedup_hash": "cb70e90de9c4bc5c52bcd2495ba82c4d3abf43482cec0839285e2b5de3e0fece",
+        "staging": {
+          "source_file": "kim_2018_zr_alloy.md",
+          "element_system": "Zr-4",
+          "composition": null,
+          "phase": "alpha",
+          "element": "Zr",
+          "property_category": "弹塑性模型",
+          "property_name": "弹性模量",
+          "value": 95.0,
+          "unit": "GPa",
+          "temperature": null,
+          "method": null,
+          "context": "cladding material at RT",
+          "confidence": "medium",
+          "source": "Kim et al., J. ASTM Int. 2018"
+        }
+      }
+    }
+  ]
+}

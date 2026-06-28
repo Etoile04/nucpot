@@ -1,0 +1,147 @@
+{
+  "id": "uo2-irradiation-swelling",
+  "description": "UO2 irradiation swelling - plain, range, scientific notation",
+  "source_file": "spino_2020_uo2_swelling.md",
+  "property_category": "辐照肿胀",
+  "records": [
+    {
+      "id": "uo2-swelling-plain",
+      "input": {
+        "source_file": "spino_2020_uo2_swelling.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "辐照肿胀",
+        "property": "体积肿胀率",
+        "value": "1.5",
+        "unit": "%",
+        "conditions": {
+          "temp_C": 600,
+          "dpa": "40",
+          "condition_type": "experimental"
+        },
+        "context": "LWR burnup at 40 dpa",
+        "reference": "Spino et al., JNM 2020"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 1.5
+        },
+        "cleaned_value": "1.5",
+        "confidence": "high",
+        "dedup_hash": "e406e4b90159202c723cd1b11aefd01c821e8dbe6fc8f189a9d9e7495b68a18b",
+        "staging": {
+          "source_file": "spino_2020_uo2_swelling.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "辐照肿胀",
+          "property_name": "体积肿胀率",
+          "value": 1.5,
+          "unit": "%",
+          "temperature": 600.0,
+          "method": null,
+          "context": "LWR burnup at 40 dpa",
+          "confidence": "medium",
+          "source": "Spino et al., JNM 2020"
+        }
+      }
+    },
+    {
+      "id": "uo2-swelling-range",
+      "input": {
+        "source_file": "spino_2020_uo2_swelling.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "辐照肿胀",
+        "property": "体积肿胀率",
+        "value": "0.8 to 2.5",
+        "unit": "%",
+        "conditions": {
+          "temp_C": 500,
+          "dpa": "15",
+          "condition_type": "experimental"
+        },
+        "context": "intermediate burnup range",
+        "reference": "Spino et al., JNM 2020"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 1.65,
+          "range": [
+            0.8,
+            2.5
+          ]
+        },
+        "cleaned_value": "0.8 to 2.5",
+        "confidence": "high",
+        "dedup_hash": "e406e4b90159202c723cd1b11aefd01c821e8dbe6fc8f189a9d9e7495b68a18b",
+        "staging": {
+          "source_file": "spino_2020_uo2_swelling.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "辐照肿胀",
+          "property_name": "体积肿胀率",
+          "value": 1.65,
+          "unit": "%",
+          "temperature": 500.0,
+          "method": null,
+          "context": "intermediate burnup range",
+          "confidence": "medium",
+          "source": "Spino et al., JNM 2020"
+        }
+      }
+    },
+    {
+      "id": "uo2-swelling-sci",
+      "input": {
+        "source_file": "spino_2020_uo2_swelling.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "辐照肿胀",
+        "property": "密度变化率",
+        "value": "3.2e-4",
+        "unit": "/dpa",
+        "conditions": {
+          "temp_C": 800,
+          "dpa": "80",
+          "condition_type": "irradiation"
+        },
+        "context": "high burnup high temperature",
+        "reference": "Spino et al., JNM 2020"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 0.00032
+        },
+        "cleaned_value": "3.2e-4",
+        "confidence": "high",
+        "dedup_hash": "2cbdad8c952e0d9f916a187b811341259ec3562f26fd6b36775efb145e7dcf9b",
+        "staging": {
+          "source_file": "spino_2020_uo2_swelling.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "辐照肿胀",
+          "property_name": "密度变化率",
+          "value": 0.00032,
+          "unit": "/dpa",
+          "temperature": 800.0,
+          "method": null,
+          "context": "high burnup high temperature",
+          "confidence": "medium",
+          "source": "Spino et al., JNM 2020"
+        }
+      }
+    }
+  ]
+}
