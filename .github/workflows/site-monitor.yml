@@ -1,0 +1,87 @@
+name: NucPot Site Monitor
+
+on:
+  schedule:
+    # Every 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run health checks
+        id: health
+        env:
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: python scripts/health_check.py
+        continue-on-error: true
+
+      - name: Create issue on failure
+        if: failure() && steps.health.outputs.p0_failures > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const failed = `${{ steps.health.outputs.failed_checks }}`;
+            const total = `${{ steps.health.outputs.total_checks }}`;
+            const now = new Date().toISOString();
+
+            // Check if there's an open monitoring issue already
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['monitoring-alert', 'P0'],
+              state: 'open',
+            });
+
+            if (issues.data.length > 0) {
+              // Add comment to existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: `⚠️ **Still failing** at ${now}\n${failed}/${total} checks failed.`
+              });
+            } else {
+              // Create new issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🔴 NucPot Site Down — ${now.slice(0, 19)}`,
+                body: `## NucPot Monitoring Alert\n\n` +
+                  `**Time**: ${now}\n` +
+                  `**Failed**: ${failed}/${total} checks\n` +
+                  `**Severity**: P0 Critical\n\n` +
+                  `### Action Required\n` +
+                  `1. Check ThinkStation: \`ssh z203@100.70.30.21\`\n` +
+                  `   - \`docker ps --filter name=nucpot\`\n` +
+                  `   - \`systemctl status cloudflared\`\n` +
+                  `2. Check Cloudflare Dashboard for tunnel status\n` +
+                  `3. Check Vercel Dashboard for frontend status\n`,
+                labels: ['monitoring-alert', 'P0'],
+              });
+            }
+
+      - name: Health check summary
+        if: always()
+        run: |
+          echo "## Health Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Total checks: ${{ steps.health.outputs.total_checks || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Failed: ${{ steps.health.outputs.failed_checks || '0' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- P0 failures: ${{ steps.health.outputs.p0_failures || '0' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- All passed: ${{ steps.health.outputs.all_passed || 'unknown' }}" >> $GITHUB_STEP_SUMMARY
