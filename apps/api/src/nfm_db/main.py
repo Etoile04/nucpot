@@ -1,5 +1,7 @@
 """NFM-DB API application entry point."""
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -27,9 +29,22 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# CORS origins: env var (comma-separated) or sensible defaults.
+# Production: set CORS_ORIGINS=https://nucpot.dpdns.org,https://yourdomain.com
+_cors_env = os.environ.get("CORS_ORIGINS", "")
+_cors_origins = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://nucpot.dpdns.org",
+    ]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
