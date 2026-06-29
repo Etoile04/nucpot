@@ -1,0 +1,98 @@
+{
+  "id": "sic-mechanical",
+  "description": "CVD-SiC mechanical - flexural strength RT and HT",
+  "source_file": "katoh_2014_sic_mech.md",
+  "property_category": "弹塑性模型",
+  "records": [
+    {
+      "id": "sic-flexural-strength",
+      "input": {
+        "source_file": "katoh_2014_sic_mech.md",
+        "material_name": "CVD-SiC",
+        "phase": "beta",
+        "element": "Si",
+        "property_category": "弹塑性模型",
+        "property": "弯曲强度",
+        "value": "380",
+        "unit": "MPa",
+        "conditions": {
+          "temp_C": 25,
+          "condition_type": "experimental"
+        },
+        "context": "room temperature flexural strength",
+        "reference": "Katoh et al., JNM 2014"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 380.0
+        },
+        "cleaned_value": "380",
+        "confidence": "high",
+        "dedup_hash": "94bbf9b92196d65a6cb35270a3f22eccc9f00514c997737215985f3426b08f75",
+        "staging": {
+          "source_file": "katoh_2014_sic_mech.md",
+          "element_system": "CVD-SiC",
+          "composition": null,
+          "phase": "beta",
+          "element": "Si",
+          "property_category": "弹塑性模型",
+          "property_name": "弯曲强度",
+          "value": 380.0,
+          "unit": "MPa",
+          "temperature": 25.0,
+          "method": null,
+          "context": "room temperature flexural strength",
+          "confidence": "medium",
+          "source": "Katoh et al., JNM 2014"
+        }
+      }
+    },
+    {
+      "id": "sic-flexural-strength-ht",
+      "input": {
+        "source_file": "katoh_2014_sic_mech.md",
+        "material_name": "CVD-SiC",
+        "phase": "beta",
+        "element": "Si",
+        "property_category": "弹塑性模型",
+        "property": "弯曲强度",
+        "value": "250 to 300",
+        "unit": "MPa",
+        "conditions": {
+          "temp_C": 1200,
+          "condition_type": "experimental"
+        },
+        "context": "high temperature strength retention",
+        "reference": "Katoh et al., JNM 2014"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 275.0,
+          "range": [
+            250.0,
+            300.0
+          ]
+        },
+        "cleaned_value": "250 to 300",
+        "confidence": "high",
+        "dedup_hash": "94bbf9b92196d65a6cb35270a3f22eccc9f00514c997737215985f3426b08f75",
+        "staging": {
+          "source_file": "katoh_2014_sic_mech.md",
+          "element_system": "CVD-SiC",
+          "composition": null,
+          "phase": "beta",
+          "element": "Si",
+          "property_category": "弹塑性模型",
+          "property_name": "弯曲强度",
+          "value": 275.0,
+          "unit": "MPa",
+          "temperature": 1200.0,
+          "method": null,
+          "context": "high temperature strength retention",
+          "confidence": "medium",
+          "source": "Katoh et al., JNM 2014"
+        }
+      }
+    }
+  ]
+}
