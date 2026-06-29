@@ -47,7 +47,7 @@ jobs:
           CI: true
         continue-on-error: true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-cron-report
@@ -56,7 +56,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && steps.e2e.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const now = new Date().toISOString();

@@ -6,8 +6,8 @@
     "dev": "next dev --turbopack --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "lint:fix": "next lint --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -24,7 +24,7 @@
     "echarts": "^5.6.0",
     "echarts-for-react": "^3.0.2",
     "gray-matter": "^4.0.3",
-    "next": "^15.1.0",
+    "next": "^16.2.9",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-markdown": "^10.1.0",
@@ -43,7 +43,7 @@
     "eslint": "^9.16.0",
     "eslint-config-next": "^15.1.0",
     "jsdom": "^25.0.0",
-    "prettier": "^3.4.0",
+    "prettier": "^3.9.1",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }
