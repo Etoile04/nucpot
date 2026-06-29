@@ -18,6 +18,7 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
+from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.services.upload_service import PotentialUploadError
 
 app = FastAPI(
@@ -56,3 +57,4 @@ app.include_router(md_verification.router, prefix="/api/v1/md-verification", tag
 app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
 app.include_router(blog.router, prefix="/api/v1", tags=["blog"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["potentials"])
+app.include_router(v4_extraction.router, prefix="/api/v4", tags=["v4-extraction"])
