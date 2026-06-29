@@ -56,7 +56,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && steps.e2e.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const now = new Date().toISOString();

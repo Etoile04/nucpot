@@ -33,7 +33,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && steps.health.outputs.p0_failures > 0
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const failed = `${{ steps.health.outputs.failed_checks }}`;
