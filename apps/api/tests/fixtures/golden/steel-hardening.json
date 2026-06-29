@@ -1,0 +1,102 @@
+{
+  "id": "steel-hardening",
+  "description": "EUROFER97 hardening - yield strength increment, DBTT shift range",
+  "source_file": "aktaa_2019_eurofer97.md",
+  "property_category": "硬化性能",
+  "records": [
+    {
+      "id": "eurofer97-hardening",
+      "input": {
+        "source_file": "aktaa_2019_eurofer97.md",
+        "material_name": "EUROFER97",
+        "composition": "Fe-9Cr-1W-0.2V-0.08Ta",
+        "phase": "martensite",
+        "element": "Fe",
+        "property_category": "硬化性能",
+        "property": "屈服强度增量",
+        "value": "250 ± 30",
+        "unit": "MPa",
+        "conditions": {
+          "temp_C": 25,
+          "dpa": "15",
+          "condition_type": "irradiation"
+        },
+        "context": "neutron irradiation hardening at 15 dpa",
+        "reference": "Aktaa et al., Fus. Eng. Des. 2019"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 250.0,
+          "uncertainty": 30.0
+        },
+        "cleaned_value": "250 ± 30",
+        "confidence": "high",
+        "dedup_hash": "1406473254ab2a21e72049b33ddd38a92c72866cefc7c8189c63f4b3093bd562",
+        "staging": {
+          "source_file": "aktaa_2019_eurofer97.md",
+          "element_system": "EUROFER97",
+          "composition": "Fe-9Cr-1W-0.2V-0.08Ta",
+          "phase": "alpha-prime",
+          "element": "Fe",
+          "property_category": "硬化性能",
+          "property_name": "屈服强度增量",
+          "value": 250.0,
+          "unit": "MPa",
+          "temperature": 25.0,
+          "method": null,
+          "context": "neutron irradiation hardening at 15 dpa",
+          "confidence": "medium",
+          "source": "Aktaa et al., Fus. Eng. Des. 2019"
+        }
+      }
+    },
+    {
+      "id": "eurofer97-dbtt",
+      "input": {
+        "source_file": "aktaa_2019_eurofer97.md",
+        "material_name": "EUROFER97",
+        "composition": "Fe-9Cr-1W-0.2V-0.08Ta",
+        "phase": "martensite",
+        "element": "Fe",
+        "property_category": "硬化性能",
+        "property": "韧脆转变温度偏移",
+        "value": "80 to 120",
+        "unit": "°C",
+        "conditions": {
+          "dpa": "15",
+          "condition_type": "irradiation"
+        },
+        "context": "DBTT shift after neutron irradiation",
+        "reference": "Aktaa et al., Fus. Eng. Des. 2019"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 100.0,
+          "range": [
+            80.0,
+            120.0
+          ]
+        },
+        "cleaned_value": "80 to 120",
+        "confidence": "high",
+        "dedup_hash": "1dd62847e819cdaf341da4d580381abcc29a29da8a97b739626f03dae61dd3ca",
+        "staging": {
+          "source_file": "aktaa_2019_eurofer97.md",
+          "element_system": "EUROFER97",
+          "composition": "Fe-9Cr-1W-0.2V-0.08Ta",
+          "phase": "alpha-prime",
+          "element": "Fe",
+          "property_category": "硬化性能",
+          "property_name": "韧脆转变温度偏移",
+          "value": 100.0,
+          "unit": "°C",
+          "temperature": null,
+          "method": null,
+          "context": "DBTT shift after neutron irradiation",
+          "confidence": "medium",
+          "source": "Aktaa et al., Fus. Eng. Des. 2019"
+        }
+      }
+    }
+  ]
+}
