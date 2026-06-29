@@ -7,7 +7,7 @@ This guide explains how to integrate with the MD Verification API endpoints for 
 ## Base URL
 
 ```typescript
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 ```
 
 All endpoints are prefixed with `/api/v1/md-verification`
