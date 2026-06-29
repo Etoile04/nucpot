@@ -13,7 +13,7 @@ export default function ValidateIndexPage() {
     queryFn: async () => {
       // Use material systems endpoint to check for pending items
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v4/material-systems?has_pending_review=true`,
+        `/api/v4/material-systems?has_pending_review=true`,
         { headers: { "Content-Type": "application/json" } },
       )
       if (!response.ok) return []
