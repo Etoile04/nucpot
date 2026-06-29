@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import OntologyViewerFrame from "./OntologyViewerFrame";
 import { extractRecordRef, type OntologyGraph } from "@/lib/ontology/record-ref";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Relative paths — next.config.ts rewrite proxy handles backend routing.
 
 export interface OntologyRecordRefProps {
   /** Node id from the ?node= deep link (e.g. "mat:UO2"). */
@@ -39,7 +39,7 @@ export default function OntologyRecordRef({
     let cancelled = false;
 
     fetch(
-      `${API_BASE}/api/v1/ontology/corpora/${encodeURIComponent(corpus)}/graph`,
+      `/api/v1/ontology/corpora/${encodeURIComponent(corpus)}/graph`,
     )
       .then((response) => (response.ok ? response.json() : null))
       .then((graph: OntologyGraph | null) => {

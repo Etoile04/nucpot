@@ -27,10 +27,10 @@ PATTERNS=(
   "sk-proj-[a-zA-Z0-9]{32,}"           # OpenAI API keys
   "AKIA[0-9A-Z]{16}"                   # AWS Access Keys
   "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}:[^[:space:]]+"  # Email:password
-  "password["']?\s*[:=]\s*["']?[a-zA-Z0-9]+"  # Password assignments
-  "api[_-]?key["']?\s*[:=]\s*["']?[a-zA-Z0-9\-]+"  # API keys
-  "secret["']?\s*[:=]\s*["']?[a-zA-Z0-9]+"     # Secrets
-  "token["']?\s*[:=]\s*["']?[a-zA-Z0-9.\-_]+"     # Tokens
+  "password[\"']?\s*[:=]\s*[\"']?[a-zA-Z0-9]+"  # Password assignments
+  "api[_-]?key[\"']?\s*[:=]\s*[\"']?[a-zA-Z0-9\-]+"  # API keys
+  "secret[\"']?\s*[:=]\s*[\"']?[a-zA-Z0-9]+"     # Secrets
+  "token[\"']?\s*[:=]\s*[\"']?[a-zA-Z0-9.\-_]+"     # Tokens
   "BEGIN RSA PRIVATE KEY"             # SSH keys
   "BEGIN PRIVATE KEY"                 # Private keys
   "mysql:\/\/[a-zA-Z0-9:]+@[^[:space:]]+" # MySQL connection strings
@@ -62,6 +62,7 @@ EXCLUDE_FILES=(
   "yarn.lock"
   "pnpm-lock.yaml"
   ".gitignore"
+  "security-scan.sh"
   "eslint.config"
 )
 

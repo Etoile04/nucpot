@@ -20,8 +20,7 @@ import type {
   V4ValidateResponse,
 } from "./types"
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+// Relative paths — next.config.ts rewrite proxy handles backend routing.
 
 // ─── Helpers ───────────────────────────────────────────────────
 
@@ -82,7 +81,7 @@ function buildQueryString(params: Record<string, unknown>): string {
 export async function submitExtractionJob(
   payload: V4ExtractionSubmitRequest,
 ): Promise<V4SubmitResponse> {
-  const response = await fetch(`${API_BASE}/api/v4/extraction/submit`, {
+  const response = await fetch(`/api/v4/extraction/submit`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(payload),
@@ -99,7 +98,7 @@ export async function getExtractionStatus(
   jobId: string,
 ): Promise<V4StatusResponse> {
   const response = await fetch(
-    `${API_BASE}/api/v4/extraction/${jobId}/status`,
+    `/api/v4/extraction/${jobId}/status`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -119,7 +118,7 @@ export async function getExtractionResults(
 ): Promise<{ data: V4ResultResponse; meta?: Record<string, unknown> }> {
   const qs = buildQueryString(params as Record<string, unknown>)
   const response = await fetch(
-    `${API_BASE}/api/v4/extraction/${jobId}/result${qs}`,
+    `/api/v4/extraction/${jobId}/result${qs}`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -138,7 +137,7 @@ export async function browseProperties(
 ): Promise<{ data: V4BrowseResponse; meta?: Record<string, unknown> }> {
   const qs = buildQueryString(params as Record<string, unknown>)
   const response = await fetch(
-    `${API_BASE}/api/v4/properties/${encodeURIComponent(materialSystem)}${qs}`,
+    `/api/v4/properties/${encodeURIComponent(materialSystem)}${qs}`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -156,7 +155,7 @@ export async function validateExtractionResults(
   payload?: V4ValidateRequest,
 ): Promise<V4ValidateResponse> {
   const response = await fetch(
-    `${API_BASE}/api/v4/extraction/${jobId}/validate`,
+    `/api/v4/extraction/${jobId}/validate`,
     {
       method: "POST",
       headers: getHeaders(),
@@ -176,7 +175,7 @@ export async function getMaterialSystems(
 ): Promise<V4MaterialSystemSummary[]> {
   const qs = buildQueryString(params as Record<string, unknown>)
   const response = await fetch(
-    `${API_BASE}/api/v4/material-systems${qs}`,
+    `/api/v4/material-systems${qs}`,
     {
       method: "GET",
       headers: getHeaders(),

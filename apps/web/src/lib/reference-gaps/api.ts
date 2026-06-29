@@ -7,13 +7,13 @@ import type {
   ReferenceGapsSummaryResponse,
 } from "./types"
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+// Relative paths — next.config.ts rewrite proxy handles backend routing.
 
 /**
  * Get reference gaps summary statistics.
  */
 export async function getGapsSummary(): Promise<ReferenceGapsSummaryResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/reference-gaps/summary`)
+  const response = await fetch(`/api/v1/reference-gaps/summary`)
 
   if (!response.ok) {
     throw new Error(`Failed to fetch gaps summary: ${response.statusText}`)
@@ -34,7 +34,7 @@ export async function getGapsSummary(): Promise<ReferenceGapsSummaryResponse> {
 export async function fillGap(
   payload: FillRequest,
 ): Promise<FillResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/reference-gaps/fill`, {
+  const response = await fetch(`/api/v1/reference-gaps/fill`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
