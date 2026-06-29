@@ -86,7 +86,7 @@ for pattern in "${PATTERNS[@]}"; do
   matches=$(grep -r -n "$pattern" apps/ $exclude_args 2>/dev/null || true)
 
   if [ -n "$matches" ]; then
-    echo -e "${RED}⚠ FOUND:${NC}"
+    echo -e "${RED}!! FOUND:${NC}"
     echo "$matches"
     ISSUES_FOUND=$((ISSUES_FOUND + 1))
   fi
@@ -110,16 +110,16 @@ for cred_file in "${CREDENTIAL_FILES[@]}"; do
   if [ -f "$cred_file" ]; then
     # Check if file is in .gitignore
     if grep -q "$cred_file" .gitignore 2>/dev/null; then
-      echo -e "${GREEN}✓ $cred_file (in .gitignore)${NC}"
+      echo -e "${GREEN}OK $cred_file (in .gitignore)${NC}"
     else
-      echo -e "${RED}⚠ WARNING: $cred_file not in .gitignore${NC}"
+      echo -e "${RED}!! WARNING: $cred_file not in .gitignore${NC}"
       ISSUES_FOUND=$((ISSUES_FOUND + 1))
     fi
 
     # Check if file has restrictive permissions
     perms=$(stat -f "%Lp" "$cred_file" 2>/dev/null || stat -f "%A" "$cred_file")
     if [ "$perms" != "600" ] && [ "$perms" != "400" ]; then
-      echo -e "${YELLOW}  ⚠ File permissions: $perms (recommend 600)${NC}"
+      echo -e "${YELLOW}  !! File permissions: $perms (recommend 600)${NC}"
     fi
   fi
 done
@@ -131,7 +131,7 @@ echo -e "${YELLOW}Scanning for debug console.log statements...${NC}"
 console_logs=$(grep -r "console\.log" apps/web/src apps/api/src 2>/dev/null || true)
 
 if [ -n "$console_logs" ]; then
-  echo -e "${YELLOW}⚠ Found console.log statements (should use proper logging):${NC}"
+  echo -e "${YELLOW}!! Found console.log statements (should use proper logging):${NC}"
   echo "$console_logs"
   # Count occurrences
   count=$(echo "$console_logs" | wc -l)
@@ -145,7 +145,7 @@ echo -e "${YELLOW}Checking for hardcoded test credentials...${NC}"
 test_creds=$(grep -r "password.*test\|test.*password" apps/web/e2e apps/api/tests 2>/dev/null || true)
 
 if [ -n "$test_creds" ]; then
-  echo -e "${GREEN}✓ Found test credentials (acceptable in tests)${NC}"
+  echo -e "${GREEN}OK Found test credentials (acceptable in tests)${NC}"
   echo "$test_creds"
 else
   echo -e "${BLUE}  No test credentials found${NC}"
@@ -158,7 +158,7 @@ echo -e "${YELLOW}Checking for SQL injection vulnerabilities...${NC}"
 unsafe_sql=$(grep -rE "SELECT.*FROM.*WHERE.*['\"]|['\"]\s*\+\s*['\"]" apps/api/src 2>/dev/null || true)
 
 if [ -n "$unsafe_sql" ]; then
-  echo -e "${RED}⚠ Potential unsafe SQL construction:${NC}"
+  echo -e "${RED}!! Potential unsafe SQL construction:${NC}"
   echo "$unsafe_sql"
   echo "  → Use parameterized queries instead"
   ISSUES_FOUND=$((ISSUES_FOUND + 1))
@@ -179,7 +179,7 @@ xss_patterns=(
 for pattern in "${xss_patterns[@]}"; do
   matches=$(grep -r "$pattern" apps/web/src 2>/dev/null || true)
   if [ -n "$matches" ]; then
-    echo -e "${YELLOW}⚠ Found $pattern (review for XSS risk)${NC}"
+    echo -e "${YELLOW}!! Found $pattern (review for XSS risk)${NC}"
     echo "$matches"
   fi
 done
@@ -188,11 +188,11 @@ echo ""
 echo -e "${BLUE}=== Security Scan Summary ===${NC}"
 
 if [ $ISSUES_FOUND -eq 0 ]; then
-  echo -e "${GREEN}✓ No critical security issues found${NC}"
-  echo -e "${GREEN}✓ Security scan passed${NC}"
+  echo -e "${GREEN}OK No critical security issues found${NC}"
+  echo -e "${GREEN}OK Security scan passed${NC}"
   exit 0
 else
-  echo -e "${RED}⚠ Found $ISSUES_FOUND potential security issues${NC}"
-  echo -e "${RED}⚠ Please review and fix before deployment${NC}"
+  echo -e "${RED}!! Found $ISSUES_FOUND potential security issues${NC}"
+  echo -e "${RED}!! Please review and fix before deployment${NC}"
   exit 1
 fi
