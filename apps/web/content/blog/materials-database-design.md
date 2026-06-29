@@ -6,6 +6,8 @@ tags:
   - 数据库
   - 架构
   - NucPot
+  - api
+  - technical
 author: 李思涵
 ---
 
