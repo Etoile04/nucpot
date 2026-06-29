@@ -184,8 +184,10 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Start API server
+        env:
+          PYTHONPATH: src:.
         run: |
-          uv run uvicorn src.main:app &
+          uv run uvicorn nfm_db.main:app &
           echo $! > api.pid
           echo "Waiting for API to start..."
           sleep 15

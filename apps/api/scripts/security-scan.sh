@@ -10,6 +10,7 @@
 #
 
 set -e
+export LC_ALL=C.UTF-8
 
 # Color codes
 RED='\033[0;31m'
