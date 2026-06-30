@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.core.blog_state import PermissionError
 from nfm_db.models.blog_post import BlogPostMetadata, PostStatus
-from nfm_db.models.user import BlogRole, User
+from nfm_db.models.user import User
 from nfm_db.schemas.blog_post import BlogPostResponse
 from nfm_db.services.blog_post import (
     create_blog_post,

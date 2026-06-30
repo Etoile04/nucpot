@@ -9,7 +9,6 @@ from nfm_db.api.v1.auth import (
     get_current_active_user,
     require_blog_role,
     require_editor,
-    require_reviewer,
 )
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus

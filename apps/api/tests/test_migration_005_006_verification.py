@@ -175,9 +175,9 @@ class TestMigrationChainLinearity:
         revision_ids = [r.revision for r in revisions]
         assert len(revision_ids) == len(set(revision_ids)), "Duplicate revision IDs found"
 
-    def test_head_is_006(self, script_directory: ScriptDirectory):
-        """Migration head is 006."""
-        assert script_directory.get_current_head() == "007"
+    def test_head_is_008(self, script_directory: ScriptDirectory):
+        """Migration head is 008."""
+        assert script_directory.get_current_head() == "008"
 
     def test_005_is_merge_revision(self, script_directory: ScriptDirectory):
         """Migration 005 correctly merges 003b and 004 branches."""
