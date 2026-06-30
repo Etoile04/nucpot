@@ -21,8 +21,8 @@ import pytest
 from celery.exceptions import Retry
 from celery.schedules import crontab
 
-from nfm_db.services.celery_app import celery_app
 from nfm_db.services import md_tasks as _md_mod
+from nfm_db.services.celery_app import celery_app
 from nfm_db.services.md_tasks import run_md_verification_task
 
 # =============================================================================
