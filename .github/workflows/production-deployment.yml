@@ -264,6 +264,7 @@ jobs:
     name: Deploy Production (Docker Compose)
     runs-on: [self-hosted, production]
     needs: [build-web, test-api]
+    if: ${{ needs.build-web.result == 'success' }}
     env:
       HTTP_PROXY: http://127.0.0.1:7892
       HTTPS_PROXY: http://127.0.0.1:7892
