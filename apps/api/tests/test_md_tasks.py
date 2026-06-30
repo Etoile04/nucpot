@@ -22,6 +22,7 @@ from celery.exceptions import Retry
 from celery.schedules import crontab
 
 from nfm_db.services.celery_app import celery_app
+from nfm_db.services import md_tasks as _md_mod
 from nfm_db.services.md_tasks import run_md_verification_task
 
 # =============================================================================
@@ -148,7 +149,7 @@ class TestHappyPath:
             task_instance.request = mock_task_request
 
             # Execute task
-            result = run_md_verification_task(
+            result = _md_mod._run_md_verification_task_impl(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -200,7 +201,7 @@ class TestHappyPath:
             task_instance = MagicMock()
             task_instance.request = mock_task_request
 
-            run_md_verification_task(
+            _md_mod._run_md_verification_task_impl(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -237,7 +238,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(ImportError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -261,7 +262,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(ValueError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     "invalid-uuid",
                     str(mock_potential_file),
@@ -285,7 +286,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(FileNotFoundError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     "/nonexistent/potential.txt",
@@ -309,7 +310,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(FileNotFoundError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -333,7 +334,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(ValueError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -378,7 +379,7 @@ class TestRetryLogic:
             task_instance.retry.side_effect = Retry("Temporary NFS timeout")
 
             with pytest.raises(Retry):
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -416,7 +417,7 @@ class TestRetryLogic:
             task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
             with pytest.raises(Retry):
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -458,7 +459,7 @@ class TestRetryLogic:
                 task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
                 with pytest.raises(Retry):
-                    run_md_verification_task(
+                    _md_mod._run_md_verification_task_impl(
                         task_instance,
                         mock_job_id,
                         str(mock_potential_file),
