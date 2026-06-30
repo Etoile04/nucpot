@@ -274,7 +274,7 @@ jobs:
       - name: Deploy via Docker Compose (loopback SSH)
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
-            cd ~/nucpot
+            cd ~/Projects/nucpot
             git pull origin main
 
             # Rebuild and restart ALL containers (including web)
