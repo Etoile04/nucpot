@@ -57,6 +57,7 @@ class TestUserModel:
             Permission.DELETE_POST,
             Permission.PUBLISH_POST,
             Permission.REVIEW_POST,
+            Permission.SUBMIT_FOR_REVIEW,
             Permission.ASSIGN_ROLES,
         }
 
@@ -76,11 +77,13 @@ class TestUserModel:
         expected_permissions = {
             Permission.CREATE_POST,
             Permission.EDIT_POST,
+            Permission.SUBMIT_FOR_REVIEW,
         }
 
         assert user.permissions == expected_permissions
         assert user.has_permission(Permission.CREATE_POST)
         assert user.has_permission(Permission.EDIT_POST)
+        assert user.has_permission(Permission.SUBMIT_FOR_REVIEW)
         assert not user.has_permission(Permission.DELETE_POST)
         assert not user.has_permission(Permission.REVIEW_POST)
 
@@ -190,4 +193,5 @@ class TestPermission:
         assert Permission.DELETE_POST.value == "delete_post"
         assert Permission.PUBLISH_POST.value == "publish_post"
         assert Permission.REVIEW_POST.value == "review_post"
+        assert Permission.SUBMIT_FOR_REVIEW.value == "submit_for_review"
         assert Permission.ASSIGN_ROLES.value == "assign_roles"
