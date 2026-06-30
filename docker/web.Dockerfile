@@ -1,5 +1,9 @@
 FROM node:22-slim AS builder
 
+# Next.js needs this at build time for the API rewrite proxy
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate

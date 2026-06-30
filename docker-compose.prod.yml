@@ -133,6 +133,8 @@ services:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "http://nucpot-prod-api:8000"
     image: nucpot-prod-web:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-web
     restart: unless-stopped
@@ -141,7 +143,7 @@ services:
     environment:
       NODE_ENV: production
     depends_on:
-      - api
+      api: { condition: service_healthy }
     healthcheck:
       test:
         - CMD-SHELL
