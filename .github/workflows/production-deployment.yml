@@ -330,7 +330,7 @@ jobs:
       - name: Run smoke tests
         run: |
           # Test API health
-          curl -f https://nucpot.dpdns.org/api/health | jq .
+          curl -f https://nucpot.dpdns.org/api/v1/health | jq .
 
           # Test web app
           curl -f https://nucpot.dpdns.org/ | grep "NFMD"
