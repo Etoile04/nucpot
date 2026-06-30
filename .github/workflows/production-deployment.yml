@@ -309,6 +309,12 @@ jobs:
 
       - name: External smoke tests
         run: |
+          # Retry loop: give Cloudflare Tunnel time to stabilize after container restart
+          for i in 1 2 3; do
+            curl -sf https://nucpot.dpdns.org/ > /dev/null && break
+            echo "Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
           curl -f https://nucpot.dpdns.org/ | grep -q "NFMD" || exit 1
           curl -f https://nucpot.dpdns.org/api/v1/health || exit 1
 
