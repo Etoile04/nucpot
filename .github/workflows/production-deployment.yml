@@ -254,25 +254,22 @@ jobs:
   # =============================================================================
   # Deployment
   # =============================================================================
+  # NFM-586 / NFM-593: Self-hosted runner on Mac Studio (same machine as
+  # production Docker stack). Deploy uses loopback SSH (127.0.0.1) over the
+  # host's OpenSSH sshd — same pattern as staging (NFM-150 rev 2).
+  # No external SSH needed. DEPLOY_HOST/DEPLOY_KEY/DEPLOY_USER secrets are
+  # no longer consumed by this workflow and can be deleted.
+  # =============================================================================
   deploy-prod:
     name: Deploy Production (Docker Compose)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, production]
     needs: [build-web, test-api]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup SSH key
+      - name: Deploy via Docker Compose (loopback SSH)
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Deploy via Docker Compose
-        env:
-          SSH_HOST: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $SSH_HOST << ENDSSH
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             cd ~/nucpot
             git pull origin main
 
@@ -299,10 +296,8 @@ jobs:
           curl -f https://nucpot.dpdns.org/api/v1/health || exit 1
 
       - name: Verify Celery workers
-        env:
-          SSH_HOST: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $SSH_HOST \
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
             "docker exec nucpot-prod-worker celery -A nfm_db.services.celery_app:celery_app inspect active"
 
   # =============================================================================
