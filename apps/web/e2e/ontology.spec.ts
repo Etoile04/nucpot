@@ -62,7 +62,7 @@ test.describe("Ontology page — Phase 0 static embed", () => {
     await expect(frame).toBeVisible()
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("/ontology-viewer/index.html")
-    expect(src).toContain("embed=true")
+    expect(src).toContain("embed=false")
     expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json")
 
     // AC#1/#3: the corpus must actually load successfully (same-origin → no
@@ -105,7 +105,7 @@ test.describe("Ontology page — Phase 0 static embed", () => {
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("node=Material")
     // passthrough must preserve embed + data contract too
-    expect(src).toContain("embed=true")
+    expect(src).toContain("embed=false")
     expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json")
   })
 

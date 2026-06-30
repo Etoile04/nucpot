@@ -7,13 +7,13 @@ import OntologyViewerFrame, {
 describe("buildOntologyViewerSrc", () => {
   it("produces the determinate embed src pointing at the vendored corpus", () => {
     expect(buildOntologyViewerSrc()).toBe(
-      "/ontology-viewer/index.html?embed=true&data=/ontology-viewer/data/nvl_ontology_data.json"
+      "/ontology-viewer/index.html?embed=false&data=/ontology-viewer/data/nvl_ontology_data.json"
     );
   });
 
   it("appends a node deep-link param when a node id is supplied", () => {
     expect(buildOntologyViewerSrc("Material")).toBe(
-      "/ontology-viewer/index.html?embed=true&data=/ontology-viewer/data/nvl_ontology_data.json&node=Material"
+      "/ontology-viewer/index.html?embed=false&data=/ontology-viewer/data/nvl_ontology_data.json&node=Material"
     );
   });
 });
@@ -25,7 +25,7 @@ describe("OntologyViewerFrame", () => {
     expect(frame.tagName).toBe("IFRAME");
     const src = frame.getAttribute("src") ?? "";
     expect(src).toContain("/ontology-viewer/index.html");
-    expect(src).toContain("embed=true");
+    expect(src).toContain("embed=false");
     expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json");
     expect(src).not.toContain("node=");
   });
