@@ -224,6 +224,7 @@ class V4SubmitResponse(BaseModel):
     source_type: str
     status: str = "queued"
     message: str = "Extraction job queued successfully."
+    error_message: str | None = None
     created_at: datetime | None = None
 
 

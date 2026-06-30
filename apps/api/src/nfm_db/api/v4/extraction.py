@@ -215,7 +215,10 @@ async def submit_extraction(
                 source_reference=job.source_reference,
                 source_type=job.source_type,
                 status=job.status.value,
-                message="Extraction job queued successfully.",
+                message="Extraction job queued successfully."
+                if job.status != JobStatus.FAILED
+                else f"Extraction failed: {job.error_message}",
+                error_message=job.error_message,
                 created_at=job.created_at,
             ).model_dump(mode="json"),
         },
