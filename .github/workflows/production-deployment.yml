@@ -298,6 +298,9 @@ jobs:
             # Wait for services to start
             sleep 20
 
+            # Run database migrations (idempotent)
+            docker exec -i nucpot-prod-db psql -U "\${PROD_POSTGRES_USER:-nfm}" -d "\${PROD_POSTGRES_DB:-nfm_db}" < scripts/migrations/001_add_dedup_hash.sql || echo "Migration skipped (column may already exist)"
+
             # Health check (internal)
             curl -f http://localhost:8001/api/v1/health || exit 1
           ENDSSH
