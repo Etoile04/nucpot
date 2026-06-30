@@ -321,7 +321,7 @@ jobs:
       - name: Verify Celery workers
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "docker exec nucpot-prod-worker celery -A nfm_db.services.celery_app:celery_app inspect active"
+            "export PATH=\"/usr/local/bin:\$PATH\" && docker exec nucpot-prod-worker celery -A nfm_db.services.celery_app:celery_app inspect active"
 
   # =============================================================================
   # Post-deployment
