@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import uuid
 
+from unittest.mock import MagicMock
+
 import pytest
 from httpx import AsyncClient
 from pydantic import ValidationError
@@ -380,10 +382,9 @@ class TestSubmitWithCascadeFields:
             return type("MockTask", (), {"id": "test-task-id"})()
 
         import nfm_db.api.v1.md_verification as md_module
-        monkeypatch.setattr(
-            md_module, "run_md_verification_task",
-            type("obj", (object,), {"delay": mock_delay})(),
-        )
+        mock_celery_app = MagicMock()
+        mock_celery_app.send_task.return_value = type("MockTask", (), {"id": "test-task-id"})()
+        monkeypatch.setattr(md_module, "celery_app", mock_celery_app)
 
         response = await client_with_auth.post(
             "/api/v1/md-verification/jobs",
