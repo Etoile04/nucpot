@@ -11,10 +11,6 @@
 #   - nucpot-prod-redis: Redis (Celery broker + cache)
 #   - nucpot-prod-api: FastAPI backend
 #   - nucpot-prod-worker: Celery worker for MD verification
-#   - nucpot-prod-web: Next.js web frontend
-#
-# Nginx reverse proxy reference config: docker/nginx.prod.conf
-# (actual nginx runs on the host separately)
 # =============================================================================
 
 name: nucpot-prod
@@ -132,7 +128,7 @@ services:
       start_period: 30s
     networks: [prod]
 
-  # ---- Next.js web frontend ---------------------------------------------------
+  # ---- Web frontend (Next.js) -------------------------------------------------
   web:
     build:
       context: .
@@ -140,18 +136,21 @@ services:
     image: nucpot-prod-web:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-web
     restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_URL: https://nucpot.dpdns.org/api
     ports:
       - "${PROD_WEB_HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
     depends_on:
-      api: { condition: service_healthy }
+      - api
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:3000/ || exit 1"]
-      interval: 10s
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 60s
     networks: [prod]
 
 volumes:
