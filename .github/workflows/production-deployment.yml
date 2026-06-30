@@ -1,5 +1,4 @@
-# Production Deployment Workflow
-#
+---
 # This workflow handles the production deployment of the NFMD system.
 # It includes testing, building, security scanning, and deployment with rollback capability.
 
@@ -28,6 +27,18 @@ jobs:
   # =============================================================================
   # Pre-deployment Checks
   # =============================================================================
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML files
+        run: yamllint .github/ --format colored
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
