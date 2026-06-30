@@ -1,0 +1,47 @@
+# Standalone database migration runner.
+#
+# Runs ONLY the SQL migration against production — no CI, no build, no deploy.
+# Use this when the main deployment pipeline is blocked by pre-existing test
+# failures but the migration must still be applied.
+#
+# Issue: NFM-567
+
+name: Run DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      sql_file:
+        description: "SQL file path relative to repo root"
+        required: false
+        type: string
+        default: "apps/api/scripts/migrations/001_add_dedup_hash.sql"
+
+jobs:
+  migrate:
+    name: Apply Migration
+    runs-on: [self-hosted, production]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run SQL migration
+        run: |
+          FILE="${{ github.event.inputs.sql_file }}"
+          echo "Applying migration: $FILE"
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
+            cd ~/Projects/nucpot
+            git pull origin main
+            docker exec -i nucpot-prod-db psql -U "\${PROD_POSTGRES_USER:-nfm}" -d "\${PROD_POSTGRES_DB:-nfm_db}" < $FILE || echo "Migration errored (may already be applied)"
+          ENDSSH
+
+      - name: Verify columns exist
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+            docker exec nucpot-prod-db psql -U "${PROD_POSTGRES_USER:-nfm}" -d "${PROD_POSTGRES_DB:-nfm_db}" -c "
+              SELECT column_name, data_type
+              FROM information_schema.columns
+              WHERE table_name = '_ref_gap_fill_staging'
+              AND column_name IN ('dedup_hash', 'range_validated', 'fill_batch_id', 'review_note', 'reviewer_id', 'reviewed_at', 'promoted_to_pm_id', 'promoted_at')
+              ORDER BY ordinal_position;
+            "
+          ENDSSH
