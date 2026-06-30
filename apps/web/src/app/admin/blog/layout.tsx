@@ -12,6 +12,7 @@ import { Layout, Menu } from "antd"
 import { CheckCircleOutlined, FileTextOutlined, PlusOutlined } from "@ant-design/icons"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { ReviewBadge } from "./components/ReviewBadge"
 
 const { Sider, Content } = Layout
 
@@ -31,7 +32,12 @@ export default function BlogLayout({
     {
       key: "/admin/blog/review",
       icon: <CheckCircleOutlined />,
-      label: <Link href="/admin/blog/review">审核队列</Link>,
+      label: (
+        <span style={{ display: "inline-flex", alignItems: "center" }}>
+          <Link href="/admin/blog/review" style={{ display: "inline" }}>审核队列</Link>
+          <ReviewBadge />
+        </span>
+      ),
     },
     {
       key: "/admin/blog/new",
