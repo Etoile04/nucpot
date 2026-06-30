@@ -5,7 +5,7 @@ placeholder, get_current_active_user, RequirePermission, and RequireRole
 dependency factories.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -21,6 +21,7 @@ from nfm_db.core.auth import (
     get_current_user,
     require_admin,
     require_admin_or_reviewer,
+    require_assign_roles,
     require_create_post,
     require_delete_post,
     require_edit_post,
@@ -28,10 +29,8 @@ from nfm_db.core.auth import (
     require_publish_post,
     require_review_post,
     require_reviewer,
-    require_assign_roles,
 )
 from nfm_db.models.user import BlogRole, Permission, User
-
 
 # ---------------------------------------------------------------------------
 # Custom error classes

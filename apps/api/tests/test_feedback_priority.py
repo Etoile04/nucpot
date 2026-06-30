@@ -109,43 +109,43 @@ class TestBuildListQuery:
     """Test _build_list_query filter construction."""
 
     def test_query_with_no_filters(self) -> None:
-        from nfm_db.services.feedback import _build_list_query
         from nfm_db.schemas.feedback import FeedbackListQuery
+        from nfm_db.services.feedback import _build_list_query
         stmt = _build_list_query(FeedbackListQuery())
         # Just verify it returns a select without error
         assert stmt is not None
 
     def test_query_with_status_filter(self) -> None:
-        from nfm_db.services.feedback import _build_list_query
         from nfm_db.models.feedback import FeedbackStatus
         from nfm_db.schemas.feedback import FeedbackListQuery
+        from nfm_db.services.feedback import _build_list_query
         stmt = _build_list_query(
             FeedbackListQuery(status=FeedbackStatus.OPEN)
         )
         assert stmt is not None
 
     def test_query_with_priority_filter(self) -> None:
-        from nfm_db.services.feedback import _build_list_query
         from nfm_db.models.feedback import Priority
         from nfm_db.schemas.feedback import FeedbackListQuery
+        from nfm_db.services.feedback import _build_list_query
         stmt = _build_list_query(
             FeedbackListQuery(priority=Priority.HIGH)
         )
         assert stmt is not None
 
     def test_query_with_type_filter(self) -> None:
-        from nfm_db.services.feedback import _build_list_query
         from nfm_db.models.feedback import FeedbackType
         from nfm_db.schemas.feedback import FeedbackListQuery
+        from nfm_db.services.feedback import _build_list_query
         stmt = _build_list_query(
             FeedbackListQuery(feedback_type=FeedbackType.BUG_REPORT)
         )
         assert stmt is not None
 
     def test_query_with_all_filters(self) -> None:
-        from nfm_db.services.feedback import _build_list_query
         from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
         from nfm_db.schemas.feedback import FeedbackListQuery
+        from nfm_db.services.feedback import _build_list_query
         stmt = _build_list_query(
             FeedbackListQuery(
                 status=FeedbackStatus.OPEN,

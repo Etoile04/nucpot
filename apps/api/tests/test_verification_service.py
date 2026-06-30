@@ -496,7 +496,7 @@ class TestProcessVerificationResults:
         from datetime import timedelta
 
         now = datetime.now(UTC)
-        future_date = now + timedelta(days=7)
+        now + timedelta(days=7)
 
         await _insert_staging_record(
             db_session,
@@ -540,7 +540,6 @@ class TestProcessVerificationResults:
     @pytest.mark.asyncio
     async def test_process_with_uuid_staging_id(self, db_session: AsyncSession):
         """Process verification result with UUID staging_id type (not string)."""
-        from uuid import uuid4 as make_uuid
 
         record = await _insert_staging_record(db_session)
 

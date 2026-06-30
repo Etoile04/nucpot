@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.schemas.potential import PotentialCreateRequest
 from nfm_db.services.upload_service import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_SIZE,
@@ -30,7 +29,6 @@ from nfm_db.services.upload_service import (
     create_potential,
     get_upload_dir,
 )
-
 
 # ---------------------------------------------------------------------------
 # _validate_extension
@@ -241,9 +239,8 @@ class TestExceptions:
 # ---------------------------------------------------------------------------
 
 
-def _make_payload(**overrides: object) -> "PotentialCreateRequest":
-    """Build a valid PotentialCreateRequest for testing."""
-    from nfm_db.schemas.potential import PotentialCreateRequest
+def _make_payload(**overrides: object) -> PotentialCreateRequest:
+    """Build a valid PotentialCreateRequest payload for testing."""
 
     defaults = {
         "name": "EAM_U_Test",
