@@ -264,6 +264,10 @@ jobs:
     name: Deploy Production (Docker Compose)
     runs-on: [self-hosted, production]
     needs: [build-web, test-api]
+    env:
+      HTTP_PROXY: http://127.0.0.1:7892
+      HTTPS_PROXY: http://127.0.0.1:7892
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
     steps:
       - uses: actions/checkout@v4
 
