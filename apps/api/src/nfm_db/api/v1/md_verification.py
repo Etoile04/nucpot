@@ -47,7 +47,7 @@ try:
     from nfm_db.services.celery_app import celery_app
     CELERY_AVAILABLE = True
 except ImportError:
-    celery_app = None  # type: ignore
+    celery_app = None
     CELERY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,7 @@ async def submit_md_verification_job(
 
         # Submit Celery task for async execution
         try:
-            task_result = celery_app.send_task(  # type: ignore
+            task_result = celery_app.send_task(
                 "nfm_db.services.md_tasks.run_md_verification",
                 args=[
                     str(job.id),
