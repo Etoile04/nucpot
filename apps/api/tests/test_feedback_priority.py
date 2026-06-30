@@ -75,3 +75,84 @@ class TestClassifyPriority:
     def test_bug_report_no_keyword_stays_medium(self) -> None:
         result = classify_priority(FeedbackType.BUG_REPORT, "样式问题", "按钮颜色不对")
         assert result == Priority.MEDIUM
+
+
+class TestCalculatePages:
+    """Test pagination calculation."""
+
+    def test_exact_division(self) -> None:
+        from nfm_db.services.feedback import calculate_pages
+        assert calculate_pages(100, 20) == 5
+
+    def test_with_remainder(self) -> None:
+        from nfm_db.services.feedback import calculate_pages
+        assert calculate_pages(101, 20) == 6
+
+    def test_single_item(self) -> None:
+        from nfm_db.services.feedback import calculate_pages
+        assert calculate_pages(1, 20) == 1
+
+    def test_zero_total(self) -> None:
+        from nfm_db.services.feedback import calculate_pages
+        assert calculate_pages(0, 20) == 0
+
+    def test_less_than_page_size(self) -> None:
+        from nfm_db.services.feedback import calculate_pages
+        assert calculate_pages(5, 20) == 1
+
+    def test_limit_one(self) -> None:
+        from nfm_db.services.feedback import calculate_pages
+        assert calculate_pages(10, 1) == 10
+
+
+class TestBuildListQuery:
+    """Test _build_list_query filter construction."""
+
+    def test_query_with_no_filters(self) -> None:
+        from nfm_db.services.feedback import _build_list_query
+        from nfm_db.schemas.feedback import FeedbackListQuery
+        stmt = _build_list_query(FeedbackListQuery())
+        # Just verify it returns a select without error
+        assert stmt is not None
+
+    def test_query_with_status_filter(self) -> None:
+        from nfm_db.services.feedback import _build_list_query
+        from nfm_db.models.feedback import FeedbackStatus
+        from nfm_db.schemas.feedback import FeedbackListQuery
+        stmt = _build_list_query(
+            FeedbackListQuery(status=FeedbackStatus.OPEN)
+        )
+        assert stmt is not None
+
+    def test_query_with_priority_filter(self) -> None:
+        from nfm_db.services.feedback import _build_list_query
+        from nfm_db.models.feedback import Priority
+        from nfm_db.schemas.feedback import FeedbackListQuery
+        stmt = _build_list_query(
+            FeedbackListQuery(priority=Priority.HIGH)
+        )
+        assert stmt is not None
+
+    def test_query_with_type_filter(self) -> None:
+        from nfm_db.services.feedback import _build_list_query
+        from nfm_db.models.feedback import FeedbackType
+        from nfm_db.schemas.feedback import FeedbackListQuery
+        stmt = _build_list_query(
+            FeedbackListQuery(feedback_type=FeedbackType.BUG_REPORT)
+        )
+        assert stmt is not None
+
+    def test_query_with_all_filters(self) -> None:
+        from nfm_db.services.feedback import _build_list_query
+        from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
+        from nfm_db.schemas.feedback import FeedbackListQuery
+        stmt = _build_list_query(
+            FeedbackListQuery(
+                status=FeedbackStatus.OPEN,
+                priority=Priority.HIGH,
+                feedback_type=FeedbackType.BUG_REPORT,
+                page=2,
+                limit=10,
+            )
+        )
+        assert stmt is not None
