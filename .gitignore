@@ -28,5 +28,6 @@ docker/.env.*
 *~
 docker/postgres-data/
 .worktrees/
+.claude/worktrees/
 *.tsbuildinfo
 test-results/
