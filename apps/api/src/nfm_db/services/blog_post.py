@@ -129,6 +129,7 @@ async def create_blog_post(
     # Create metadata record
     metadata = BlogPostMetadata(
         slug=slug,
+        title=title,
         status=PostStatus.DRAFT.value,
         author_id=author_id,
     )
@@ -364,6 +365,8 @@ async def delete_blog_post(
     session: AsyncSession,
     slug: str,
     author_id: uuid.UUID,
+    *,
+    is_admin: bool = False,
 ) -> None:
     """Delete a blog post (file and metadata).
 
@@ -371,13 +374,14 @@ async def delete_blog_post(
         session: Database session
         slug: Post slug
         author_id: User requesting deletion
+        is_admin: If True, skip ownership check (admin override)
     """
     metadata = await get_blog_post_by_slug(session, slug)
     if not metadata:
         raise ValueError(f"Post not found: {slug}")
 
-    # Verify ownership (or admin could override)
-    if metadata.author_id != author_id:
+    # Verify ownership unless caller is admin
+    if not is_admin and metadata.author_id != author_id:
         raise PermissionError("delete_post")
 
     # Delete markdown file
