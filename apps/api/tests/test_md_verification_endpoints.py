@@ -14,6 +14,7 @@ Tests all 8 MD verification endpoints:
 from __future__ import annotations
 
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -195,7 +196,6 @@ class TestSubmitMDVerificationJob:
 
         # Apply monkeypatch to replace celery_app.send_task in md_verification module
         import nfm_db.api.v1.md_verification as md_verification_module
-        from unittest.mock import MagicMock
 
         mock_celery_app = MagicMock()
         mock_celery_app.send_task.return_value = type("MockTask", (), {"id": "test-task-id"})()

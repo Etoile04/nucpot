@@ -11,7 +11,6 @@ Tests the new features added by NFM-374:
 from __future__ import annotations
 
 import uuid
-
 from unittest.mock import MagicMock
 
 import pytest
