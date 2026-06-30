@@ -6,7 +6,7 @@ without requiring a live PostgreSQL connection.
 Acceptance Criteria:
 - [AC-1] Migration 005 exists and creates verification_results_md table
 - [AC-2] Migration 006 exists and extends status check constraint
-- [AC-3] Migration chain is linear (no conflicts between 005 and 006)
+- [AC-3] Migration chain is linear (no conflicts between 005 and 007)
 - [AC-4] Migrations are additive-only: no column drops, no data loss, no table recreation
 
 Live DB tests (AC-5, AC-6) are in test_md_verification_migration.py and
@@ -162,7 +162,7 @@ class TestMigration006Exists:
 # ---------------------------------------------------------------------------
 
 class TestMigrationChainLinearity:
-    """Verify the migration chain from 005 to 006 is linear."""
+    """Verify the migration chain from 005 to 007 is linear."""
 
     def test_006_depends_on_005(self, script_directory: ScriptDirectory):
         """Migration 006's down_revision is exactly 005."""
@@ -177,7 +177,7 @@ class TestMigrationChainLinearity:
 
     def test_head_is_006(self, script_directory: ScriptDirectory):
         """Migration head is 006."""
-        assert script_directory.get_current_head() == "006"
+        assert script_directory.get_current_head() == "007"
 
     def test_005_is_merge_revision(self, script_directory: ScriptDirectory):
         """Migration 005 correctly merges 003b and 004 branches."""
