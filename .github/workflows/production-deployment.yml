@@ -275,6 +275,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             cd ~/Projects/nucpot
+            export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
             git pull origin main
 
             # Rebuild and restart ALL containers (including web)
