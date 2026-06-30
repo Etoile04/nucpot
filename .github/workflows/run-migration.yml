@@ -31,6 +31,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             cd ~/Projects/nucpot
             git pull origin main
+            # Force checkout migration files to match HEAD (prevent stale local edits)
+            git checkout HEAD -- apps/api/scripts/migrations/
             docker exec -i nucpot-prod-db psql -U "\${PROD_POSTGRES_USER:-nfm}" -d "\${PROD_POSTGRES_DB:-nfm_db}" < $FILE || echo "Migration errored (may already be applied)"
           ENDSSH
 

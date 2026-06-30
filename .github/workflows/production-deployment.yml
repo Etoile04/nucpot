@@ -285,8 +285,17 @@ jobs:
             # Wait for services to start
             sleep 20
 
-            # Run database migrations (idempotent)
-            docker exec -i nucpot-prod-db psql -U "${PROD_POSTGRES_USER:-nfm}" -d "${PROD_POSTGRES_DB:-nfm_db}" < apps/api/scripts/migrations/001_add_dedup_hash.sql || echo "Migration skipped"
+            # Ensure migration files match HEAD (prevent stale local edits)
+            git checkout HEAD -- apps/api/scripts/migrations/
+
+            # Run database migrations (idempotent, both files)
+            for SQL_FILE in apps/api/scripts/migrations/001_add_dedup_hash.sql \
+                             apps/api/scripts/migrations/002_fix_dedup_hash_simple.sql; do
+              if [ -f "$SQL_FILE" ]; then
+                echo "Applying migration: $SQL_FILE"
+                docker exec -i nucpot-prod-db psql -U "${PROD_POSTGRES_USER:-nfm}" -d "${PROD_POSTGRES_DB:-nfm_db}" < "$SQL_FILE" || echo "Migration $SQL_FILE skipped (may already be applied)"
+              fi
+            done
 
             # Internal health checks
             echo "Checking API health..."
