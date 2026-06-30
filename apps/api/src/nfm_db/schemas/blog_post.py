@@ -17,11 +17,15 @@ class BlogPostCreate(BaseModel):
 
 
 class BlogPostResponse(BaseModel):
-    """Schema for blog post response."""
+    """Schema for blog post response.
+
+    Note: title is stored in the markdown file, not in the DB metadata
+    model, so it is not included here. The frontend reads title from the
+    markdown frontmatter when rendering.
+    """
 
     id: uuid.UUID
     slug: str
-    title: str
     status: str
     author_id: uuid.UUID
     reviewer_id: uuid.UUID | None = None
