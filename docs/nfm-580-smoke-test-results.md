@@ -57,3 +57,13 @@ Production deployment infrastructure is **operational**. API serves authenticate
 - `celery_app.py`: Register `_run_md_verification_dispatch` as a proper `@celery_app.task(bind=True, name=...)`. The dispatch function lazy-imports the plain implementation at execution time to avoid circular imports.
 
 **Verification:** POST without auth → 401 (correct, was 500). 12/12 unit tests pass. Full import chain clean.
+
+## Production Post-Deploy Confirmation (2026-06-30)
+
+After deploy of commit `d8dc3a7`, the POST `/api/v1/md-verification/jobs` endpoint was re-tested:
+- **Result:** HTTP 401 `{"detail":"Not authenticated"}` ✅ (previously HTTP 500)
+- **All 7 smoke tests pass** (health, auth, MD health, GET jobs, security, Celery, feedback)
+
+## Disposition
+
+NFM-580 is **DONE**. The POST /jobs 500 bug is fixed and verified on production.
