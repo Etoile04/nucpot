@@ -42,13 +42,13 @@ from nfm_db.services.md_verification import (
 )
 from nfm_db.services.rate_limit import md_verification_rate_limit
 
-# Try to import Celery task (may not be available in all environments)
+# Try to import Celery app (may not be available in all environments)
 try:
-    from nfm_db.services.md_tasks import run_md_verification_task
+    from nfm_db.services.celery_app import celery_app
     CELERY_AVAILABLE = True
 except ImportError:
+    celery_app = None  # type: ignore
     CELERY_AVAILABLE = False
-    run_md_verification_task = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -202,11 +202,14 @@ async def submit_md_verification_job(
 
         # Submit Celery task for async execution
         try:
-            task_result = run_md_verification_task.delay(  # type: ignore
-                job_id=str(job.id),
-                potential_file=request.potential_file,
-                structure_file=request.structure_file,
-                config=request.config,
+            task_result = celery_app.send_task(  # type: ignore
+                "nfm_db.services.md_tasks.run_md_verification",
+                args=[
+                    str(job.id),
+                    request.potential_file,
+                    request.structure_file,
+                    request.config,
+                ],
             )
 
             # Update job status to SUBMITTED
