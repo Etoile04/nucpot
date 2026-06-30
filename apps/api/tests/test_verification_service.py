@@ -10,6 +10,7 @@ Tests for:
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -414,3 +415,198 @@ class TestProcessVerificationResults:
         assert outcome["processed"] == 4
         assert outcome["updated"] == 2
         assert outcome["not_found"] == 2
+
+    @pytest.mark.asyncio
+    async def test_export_with_phase_filter(self, db_session: AsyncSession):
+        """Export filtered by phase."""
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            phase="BCC",
+        )
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            phase="FCC",
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            phase="BCC",
+        )
+
+        assert total == 1
+        assert all(r.phase == "BCC" for r in records)
+
+    @pytest.mark.asyncio
+    async def test_export_with_property_name_filter(self, db_session: AsyncSession):
+        """Export filtered by property_name."""
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            property_name="lattice_constant",
+        )
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            property_name="formation_energy",
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            property_name="lattice_constant",
+        )
+
+        assert total == 1
+        assert records[0].property_name == "lattice_constant"
+
+    @pytest.mark.asyncio
+    async def test_export_with_from_date_filter(self, db_session: AsyncSession):
+        """Export filtered by from_date includes only newer records."""
+        from datetime import timedelta
+
+        now = datetime.now(UTC)
+        old_date = now - timedelta(days=7)
+
+        rec = await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+        )
+        # Manually set created_at to the past
+        rec.created_at = old_date
+        await db_session.commit()
+
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            element_system="Pu",
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            from_date=now - timedelta(seconds=1),
+        )
+
+        assert total == 1
+        assert records[0].element_system == "Pu"
+
+    @pytest.mark.asyncio
+    async def test_export_with_to_date_filter(self, db_session: AsyncSession):
+        """Export filtered by to_date excludes newer records."""
+        from datetime import timedelta
+
+        now = datetime.now(UTC)
+        future_date = now + timedelta(days=7)
+
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            to_date=now - timedelta(seconds=1),
+        )
+
+        assert total == 0
+
+    @pytest.mark.asyncio
+    async def test_export_with_both_date_filters(self, db_session: AsyncSession):
+        """Export with both from_date and to_date."""
+        from datetime import timedelta
+
+        now = datetime.now(UTC)
+        rec = await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+        )
+        rec.created_at = now - timedelta(hours=12)
+        await db_session.commit()
+
+        await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+            element_system="Pu",
+        )
+
+        records, total = await export_for_verification(
+            db_session,
+            from_date=now - timedelta(hours=24),
+            to_date=now - timedelta(seconds=1),
+        )
+
+        assert total == 1
+
+    @pytest.mark.asyncio
+    async def test_process_with_uuid_staging_id(self, db_session: AsyncSession):
+        """Process verification result with UUID staging_id type (not string)."""
+        from uuid import uuid4 as make_uuid
+
+        record = await _insert_staging_record(db_session)
+
+        results = [
+            {
+                "staging_id": record.id,  # UUID, not str
+                "verdict": "B",
+            }
+        ]
+
+        outcome = await process_verification_results(db_session, results)
+        assert outcome["updated"] == 1
+        assert outcome["not_found"] == 0
+
+    @pytest.mark.asyncio
+    async def test_process_non_f_grade_does_not_change_status(
+        self, db_session: AsyncSession,
+    ):
+        """Non-F grades do not change the staging status."""
+        record = await _insert_staging_record(
+            db_session,
+            status=StagingStatus.APPROVED,
+        )
+
+        results = [
+            {
+                "staging_id": str(record.id),
+                "verdict": "C",
+                "verified_value": 3.5,
+                "verified_uncertainty": 0.1,
+            }
+        ]
+
+        await process_verification_results(db_session, results)
+
+        await db_session.refresh(record)
+        assert record.status == StagingStatus.APPROVED  # Status unchanged
+        assert "VERIFY:C" in record.review_note
+        assert "value=3.5" in record.review_note
+        assert "±0.1" in record.review_note
+
+    def test_note_with_all_fields_combined(self) -> None:
+        """Note with verdict, source, value, uncertainty, and original note."""
+        note = build_verification_note(
+            verdict="A",
+            verified_source="Smith2020",
+            verified_value=2.87,
+            verified_uncertainty=0.05,
+            original_note="Excellent agreement",
+        )
+
+        assert "VERIFY:A" in note
+        assert "source=Smith2020" in note
+        assert "value=2.87±0.05" in note
+        assert "Excellent agreement" in note
+
+    def test_note_verdict_d(self) -> None:
+        """Note with D verdict."""
+        note = build_verification_note(
+            verdict="D",
+            original_note="Significant deviation",
+        )
+        assert "VERIFY:D" in note
+        assert "Significant deviation" in note
+
+    def test_note_verdict_e(self) -> None:
+        """Note with E verdict."""
+        note = build_verification_note(verdict="E")
+        assert note == "VERIFY:E"

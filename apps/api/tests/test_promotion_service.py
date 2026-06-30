@@ -296,3 +296,159 @@ class TestPromoteToMeasurements:
 
         with pytest.raises(PromotionNotImplementedError):
             await promote_to_measurements(db_session, record)
+
+
+# ---------------------------------------------------------------------------
+# Exception classes
+# ---------------------------------------------------------------------------
+
+
+class TestStagingRecordNotFoundError:
+    """Test StagingRecordNotFoundError exception."""
+
+    def test_error_message_contains_id(self) -> None:
+        """Error message includes the staging record ID."""
+        fake_id = uuid.uuid4()
+        exc = StagingRecordNotFoundError(fake_id)
+        assert fake_id.hex[:8] in str(exc) or str(fake_id) in str(exc)
+        assert exc.staging_id == fake_id
+
+    def test_is_exception(self) -> None:
+        """StagingRecordNotFoundError is an Exception subclass."""
+        assert issubclass(StagingRecordNotFoundError, Exception)
+
+
+class TestInvalidTransitionError:
+    """Test InvalidTransitionError exception."""
+
+    def test_stores_current_and_target(self) -> None:
+        """Error stores current and target statuses."""
+        fake_id = uuid.uuid4()
+        exc = InvalidTransitionError(
+            fake_id, StagingStatus.PROMOTED, StagingStatus.REJECTED,
+        )
+        assert exc.staging_id == fake_id
+        assert exc.current == StagingStatus.PROMOTED
+        assert exc.target == StagingStatus.REJECTED
+
+    def test_message_contains_both_statuses(self) -> None:
+        """Error message includes both status values."""
+        fake_id = uuid.uuid4()
+        exc = InvalidTransitionError(
+            fake_id, StagingStatus.PENDING, StagingStatus.PROMOTED,
+        )
+        msg = str(exc)
+        assert "pending" in msg.lower()
+        assert "promoted" in msg.lower()
+
+
+class TestPromotionNotImplementedError:
+    """Test PromotionNotImplementedError exception."""
+
+    def test_is_not_implemented_error(self) -> None:
+        """PromotionNotImplementedError is a NotImplementedError subclass."""
+        assert issubclass(PromotionNotImplementedError, NotImplementedError)
+
+    def test_message_mentions_schema(self) -> None:
+        """Error message mentions NFMD schema."""
+        exc = PromotionNotImplementedError()
+        assert "NFMD" in str(exc) or "not yet implemented" in str(exc)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_staging_record
+# ---------------------------------------------------------------------------
+
+
+class TestFetchStagingRecord:
+    """Test _fetch_staging_record helper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_record(self, db_session: AsyncSession) -> None:
+        """GIVEN record exists, THEN returns the record."""
+        from nfm_db.services.promotion_service import _fetch_staging_record
+
+        record = await _insert_staging_record(db_session)
+        fetched = await _fetch_staging_record(db_session, record.id)
+        assert fetched.id == record.id
+
+    @pytest.mark.asyncio
+    async def test_raises_not_found_for_missing(self, db_session: AsyncSession) -> None:
+        """GIVEN record does not exist, THEN raises StagingRecordNotFoundError."""
+        from nfm_db.services.promotion_service import _fetch_staging_record
+
+        fake_id = uuid.uuid4()
+        with pytest.raises(StagingRecordNotFoundError) as exc_info:
+            await _fetch_staging_record(db_session, fake_id)
+        assert exc_info.value.staging_id == fake_id
+
+
+# ---------------------------------------------------------------------------
+# approve with reviewer_id edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestApproveEdgeCases:
+    """Additional edge cases for approve."""
+
+    @pytest.mark.asyncio
+    async def test_approve_with_none_reviewer_id(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Approving with reviewer_id=None works and stores None."""
+        from nfm_db.services.promotion_service import approve_staging_record
+
+        record = await _insert_staging_record(db_session)
+        result = await approve_staging_record(
+            db_session, record.id, reviewer_id=None,
+        )
+        assert result.reviewer_id is None
+
+    @pytest.mark.asyncio
+    async def test_approve_with_none_review_note(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Approving with review_note=None stores None."""
+        from nfm_db.services.promotion_service import approve_staging_record
+
+        record = await _insert_staging_record(db_session)
+        result = await approve_staging_record(
+            db_session, record.id, review_note=None,
+        )
+        assert result.review_note is None
+
+
+# ---------------------------------------------------------------------------
+# reject with reviewer_id
+# ---------------------------------------------------------------------------
+
+
+class TestRejectEdgeCases:
+    """Additional edge cases for reject."""
+
+    @pytest.mark.asyncio
+    async def test_reject_with_reviewer_id(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Rejecting with reviewer_id stores it."""
+        from nfm_db.services.promotion_service import reject_staging_record
+
+        reviewer_id = uuid.uuid4()
+        record = await _insert_staging_record(db_session)
+        result = await reject_staging_record(
+            db_session, record.id, reviewer_id=reviewer_id,
+        )
+        assert result.reviewer_id == reviewer_id
+
+    @pytest.mark.asyncio
+    async def test_reject_with_none_reviewer_id(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Rejecting with reviewer_id=None stores None."""
+        from nfm_db.services.promotion_service import reject_staging_record
+
+        record = await _insert_staging_record(db_session)
+        result = await reject_staging_record(
+            db_session, record.id, reviewer_id=None,
+        )
+        assert result.reviewer_id is None
