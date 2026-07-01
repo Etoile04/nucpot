@@ -1,6 +1,7 @@
 """Blog admin API endpoints: CRUD and review workflow."""
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -131,8 +132,6 @@ async def list_posts(
     offset: int = Query(default=0, ge=0),
 ) -> list[BlogPostResponse]:
     """List blog posts with filtering (admin/editor/reviewer only)."""
-    import uuid
-
     post_status = None
     if status is not None:
         try:

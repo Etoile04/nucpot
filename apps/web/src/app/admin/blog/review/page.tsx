@@ -8,6 +8,7 @@ import { blogApi, type BlogPostResponse } from "@/lib/api-client"
 export default function ReviewQueuePage() {
   const [posts, setPosts] = useState<readonly BlogPostResponse[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [actionInProgress, setActionInProgress] = useState<string | null>(null)
   const [showRejectDialog, setShowRejectDialog] = useState<string | null>(null)
   const [rejectionReason, setRejectionReason] = useState("")
@@ -37,8 +38,9 @@ export default function ReviewQueuePage() {
     try {
       const pendingPosts = await blogApi.list({ status: "under_review" })
       setPosts(pendingPosts)
+      setLoadError(null)
     } catch {
-      // Silently fail — empty list shown
+      setLoadError("加载审核列表失败")
     } finally {
       setLoading(false)
     }
@@ -94,6 +96,21 @@ export default function ReviewQueuePage() {
 
   return (
     <div style={{ padding: "2rem" }}>
+      {loadError && (
+        <div
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem 1rem",
+            background: "#fff2f0",
+            border: "1px solid #ffccc7",
+            borderRadius: 4,
+            color: "#ff4d4f",
+            fontSize: "0.875rem",
+          }}
+        >
+          {loadError}
+        </div>
+      )}
       <h1
         style={{
           fontSize: "1.75rem",

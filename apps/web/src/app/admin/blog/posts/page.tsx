@@ -8,6 +8,7 @@ import { blogApi, type BlogPostResponse } from "@/lib/api-client"
 export default function BlogPostsAdminPage() {
   const [posts, setPosts] = useState<readonly BlogPostResponse[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -60,8 +61,9 @@ export default function BlogPostsAdminPage() {
     try {
       const allPosts = await blogApi.list({ limit: 100 })
       setPosts(allPosts)
-    } catch (error) {
-      // Silently fail — empty list shown
+      setLoadError(null)
+    } catch {
+      setLoadError("加载文章列表失败")
     } finally {
       setLoading(false)
     }
@@ -97,6 +99,21 @@ export default function BlogPostsAdminPage() {
 
   return (
     <div style={{ padding: "2rem" }}>
+      {loadError && (
+        <div
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem 1rem",
+            background: "#fff2f0",
+            border: "1px solid #ffccc7",
+            borderRadius: 4,
+            color: "#ff4d4f",
+            fontSize: "0.875rem",
+          }}
+        >
+          {loadError}
+        </div>
+      )}
       <h1
         style={{
           fontSize: "1.75rem",

@@ -23,6 +23,24 @@ def get_content_dir() -> Path:
     return Path(os.environ.get("BLOG_CONTENT_DIR", "content/blog"))
 
 
+def _safe_md_path(slug: str) -> Path:
+    """Construct a markdown file path with path traversal protection.
+
+    Rejects slugs containing path separators or traversal sequences,
+    then verifies the resolved path stays inside the content directory.
+    """
+    if ".." in slug or "/" in slug or "\\" in slug:
+        raise ValueError(f"Unsafe slug rejected: {slug!r}")
+
+    content_dir = get_content_dir().resolve()
+    md_path = (content_dir / f"{slug}.md").resolve()
+
+    if not md_path.is_relative_to(content_dir):
+        raise ValueError(f"Path escapes content dir: {slug!r}")
+
+    return md_path
+
+
 def generate_slug(title: str) -> str:
     """Generate a URL-safe slug from a title."""
     import re
@@ -45,8 +63,7 @@ def update_markdown_status(slug: str, status: str) -> None:
     """
     import re
 
-    content_dir = get_content_dir()
-    file_path = content_dir / f"{slug}.md"
+    file_path = _safe_md_path(slug)
 
     with open(file_path, encoding="utf-8") as f:
         content = f.read()
@@ -191,8 +208,7 @@ async def update_blog_post(
     if post is None:
         raise ValueError(f"Post not found: {slug}")
 
-    content_dir = get_content_dir()
-    file_path = content_dir / f"{slug}.md"
+    file_path = _safe_md_path(slug)
 
     # Read existing markdown to preserve unchanged frontmatter
     existing_raw = ""
@@ -237,7 +253,7 @@ async def update_blog_post(
         body = existing_raw
 
     # Write updated markdown
-    content_dir.mkdir(parents=True, exist_ok=True)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(frontmatter_str + "\n" + body)
 
@@ -477,8 +493,7 @@ async def delete_blog_post(
         raise PermissionError("delete_post")
 
     # Delete markdown file
-    content_dir = get_content_dir()
-    file_path = content_dir / f"{slug}.md"
+    file_path = _safe_md_path(slug)
     if file_path.exists():
         file_path.unlink()
 
