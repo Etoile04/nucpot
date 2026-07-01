@@ -22,7 +22,7 @@ jobs:
     name: Apply Migration
     runs-on: [self-hosted, production]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Run SQL migration
         run: |
