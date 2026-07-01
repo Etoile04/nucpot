@@ -1,7 +1,9 @@
 """Blog admin API endpoints: CRUD and review workflow."""
 
+from pathlib import Path
 from typing import Annotated
 
+import matter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,7 @@ from nfm_db.api.v1.auth import (
     require_blog_role,
     require_editor,
 )
+from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus
 from nfm_db.models.user import BlogRole, User
@@ -31,6 +34,46 @@ from nfm_db.services.blog_post import (
 )
 
 router = APIRouter()
+settings = get_settings()
+
+
+def _content_dir() -> Path:
+    return Path(settings.blog_content_dir)
+
+
+def _read_markdown(slug: str) -> dict | None:
+    """Read markdown file for a post and return frontmatter + content."""
+    md_path = _content_dir() / f"{slug}.md"
+    if not md_path.exists():
+        return None
+    try:
+        raw = md_path.read_text(encoding="utf-8")
+        parsed = matter.parse(raw)
+        return {
+            "content": parsed.content,
+            "summary": parsed.data.get("summary", ""),
+            "tags": parsed.data.get("tags", []),
+            "author_name": parsed.data.get("author", ""),
+        }
+    except Exception:
+        return None
+
+
+def _enrich_response(post) -> BlogPostResponse:
+    """Build a BlogPostResponse with markdown content fields merged in."""
+    data = {}
+    if hasattr(post, "title") and not hasattr(post, "content"):
+        # ORM model — extract fields
+        data = {k: getattr(post, k) for k in BlogPostResponse.model_fields if hasattr(post, k)}
+    else:
+        data = BlogPostResponse.model_validate(post).model_dump()
+
+    file_data = _read_markdown(data.get("slug", ""))
+    if file_data is not None:
+        data.update(file_data)
+
+    return BlogPostResponse(**data)
+
 
 # Admin + reviewer role dependency (shared by list/get endpoints)
 require_admin_or_reviewer = require_blog_role(
@@ -57,7 +100,7 @@ async def create_post(
         author_name=payload.author_name,
     )
 
-    return BlogPostResponse.model_validate(metadata)
+    return _enrich_response(metadata)
 
 
 @router.get("/admin/blog/posts", response_model=list[BlogPostResponse])
@@ -98,7 +141,7 @@ async def list_posts(
         offset=offset,
     )
 
-    return [BlogPostResponse.model_validate(post) for post in posts]
+    return [_enrich_response(post) for post in posts]
 
 
 @router.get("/admin/blog/posts/{slug}", response_model=BlogPostResponse)
@@ -112,7 +155,7 @@ async def get_post(
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    return BlogPostResponse.model_validate(post)
+    return _enrich_response(post)
 
 
 @router.delete("/admin/blog/posts/{slug}", status_code=204)

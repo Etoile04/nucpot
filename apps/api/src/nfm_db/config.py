@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     secret_key: str = "CHANGE_THIS_IN_PRODUCTION"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    blog_content_dir: str = "content/blog"
 
     model_config = {"env_file": ".env", "env_prefix": "NFM_"}
 
