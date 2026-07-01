@@ -39,10 +39,19 @@ jobs:
         run: pnpm run build
 
   e2e:
-    name: E2E Tests (Live)
+    name: E2E Tests (${{ matrix.layer }})
     runs-on: ubuntu-latest
     needs: frontend
-    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        include:
+          - layer: smoke
+            tags: "@smoke"
+            run_on: [pull_request, push]
+          - layer: core
+            tags: "@unit @integration"
+            run_on: [push]
+    if: github.event_name == matrix.run_on
     defaults:
       run:
         working-directory: apps/web
@@ -62,8 +71,8 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run E2E tests against live site
-        run: pnpm exec playwright test --project=chromium
+      - name: Run E2E ${{ matrix.layer }} tests against live site
+        run: pnpm exec playwright test --project=chromium --grep "${{ matrix.tags }}"
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org
@@ -73,7 +82,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.layer }}
           path: apps/web/playwright-report/
           retention-days: 30
 
