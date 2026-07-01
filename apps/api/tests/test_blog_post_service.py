@@ -239,6 +239,7 @@ class TestGetBlogPostBySlug:
     @pytest.mark.asyncio
     async def test_returns_post_when_found(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="existing-post",
             status=PostStatus.DRAFT.value,
             author_id=AUTHOR_ID,
@@ -267,7 +268,7 @@ class TestListBlogPosts:
     @pytest.fixture
     async def seeded_posts(self, db_session: AsyncSession) -> list[BlogPostMetadata]:
         posts = [
-            BlogPostMetadata(slug=f"post-{i}", status=status, author_id=AUTHOR_ID)
+            BlogPostMetadata(slug=f"post-{i}", title=f"Post {i}", status=status, author_id=AUTHOR_ID)
             for i, status in enumerate(
                 [PostStatus.DRAFT.value, PostStatus.PUBLISHED.value, PostStatus.DRAFT.value]
             )
@@ -318,6 +319,7 @@ class TestSubmitForReview:
         self, db_session: AsyncSession, tmp_path: Path
     ) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="review-me", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -335,6 +337,7 @@ class TestSubmitForReview:
     @pytest.mark.asyncio
     async def test_submit_rejects_non_owner(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="not-mine", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -347,6 +350,7 @@ class TestSubmitForReview:
     @pytest.mark.asyncio
     async def test_submit_rejects_missing_permission(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="no-perm", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -367,6 +371,7 @@ class TestApprovePost:
     @pytest.mark.asyncio
     async def test_approve_under_review(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="approve-me", status=PostStatus.UNDER_REVIEW.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -383,6 +388,7 @@ class TestApprovePost:
     @pytest.mark.asyncio
     async def test_approve_invalid_transition(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="draft-post", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -394,6 +400,7 @@ class TestApprovePost:
     @pytest.mark.asyncio
     async def test_approve_missing_permission(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="no-perm-approve", status=PostStatus.UNDER_REVIEW.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -409,6 +416,7 @@ class TestRejectPost:
     @pytest.mark.asyncio
     async def test_reject_under_review(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="reject-me", status=PostStatus.UNDER_REVIEW.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -431,6 +439,7 @@ class TestPublishPost:
     @pytest.mark.asyncio
     async def test_publish_approved(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="publish-me", status=PostStatus.APPROVED.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -446,6 +455,7 @@ class TestPublishPost:
     @pytest.mark.asyncio
     async def test_publish_invalid_from_draft(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="cant-publish", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -468,6 +478,7 @@ class TestDeleteBlogPost:
         self, db_session: AsyncSession, tmp_path: Path
     ) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="delete-me", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
@@ -486,6 +497,7 @@ class TestDeleteBlogPost:
     @pytest.mark.asyncio
     async def test_delete_rejects_non_owner(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
+        title="Test Post",
             slug="not-mine-del", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)

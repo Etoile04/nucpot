@@ -3,15 +3,15 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { formatDate } from "@/lib/blog/format-date"
-import type { BlogPostMeta } from "@/lib/blog/types"
+import { blogApi, type BlogPostResponse } from "@/lib/api-client"
 
 export default function BlogPostsAdminPage() {
-  const [posts, setPosts] = useState<BlogPostMeta[]>([])
+  const [posts, setPosts] = useState<readonly BlogPostResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [filteredPosts, setFilteredPosts] = useState<BlogPostMeta[]>([])
+  const [filteredPosts, setFilteredPosts] = useState<readonly BlogPostResponse[]>([])
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(10)
 
@@ -19,7 +19,6 @@ export default function BlogPostsAdminPage() {
     loadPosts()
   }, [])
 
-  // Filter posts based on search query
   useEffect(() => {
     if (!searchQuery.trim()) {
       setFilteredPosts(posts)
@@ -28,25 +27,22 @@ export default function BlogPostsAdminPage() {
       const filtered = posts.filter(
         (post) =>
           post.title.toLowerCase().includes(query) ||
-          post.author.toLowerCase().includes(query) ||
-          post.tags.some((tag) => tag.toLowerCase().includes(query)) ||
-          post.summary.toLowerCase().includes(query)
+          (post.author_name ?? "").toLowerCase().includes(query) ||
+          (post.tags ?? []).some((tag) => tag.toLowerCase().includes(query)) ||
+          (post.summary ?? "").toLowerCase().includes(query),
       )
       setFilteredPosts(filtered)
     }
-    // Reset to first page when search changes
     setCurrentPage(1)
   }, [searchQuery, posts])
 
-  // Calculate paginated posts
   const paginatedPosts = filteredPosts.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    currentPage * itemsPerPage,
   )
 
   const totalPages = Math.ceil(filteredPosts.length / itemsPerPage)
 
-  // Cancel delete confirmation when clicking elsewhere
   useEffect(() => {
     const handleClick = () => {
       if (deleteConfirm) {
@@ -62,14 +58,10 @@ export default function BlogPostsAdminPage() {
 
   const loadPosts = async () => {
     try {
-      const response = await fetch("/api/admin/blog/posts")
-      const result = await response.json()
-
-      if (result.success) {
-        setPosts(result.data)
-      }
+      const allPosts = await blogApi.list({ limit: 100 })
+      setPosts(allPosts)
     } catch (error) {
-      console.error("Failed to load posts:", error)
+      // Silently fail — empty list shown
     } finally {
       setLoading(false)
     }
@@ -83,21 +75,13 @@ export default function BlogPostsAdminPage() {
 
     setDeleting(true)
     try {
-      const response = await fetch(`/api/admin/blog/posts/${slug}`, {
-        method: "DELETE",
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        // Remove from local state
-        setPosts(posts.filter((p) => p.slug !== slug))
-        setDeleteConfirm(null)
-      } else {
-        alert(result.error || "删除失败")
-      }
+      await blogApi.delete(slug)
+      setPosts(posts.filter((p) => p.slug !== slug))
+      setDeleteConfirm(null)
     } catch (error) {
-      alert("删除失败")
+      alert(
+        error instanceof Error ? error.message : "删除失败",
+      )
     } finally {
       setDeleting(false)
     }
@@ -183,9 +167,12 @@ export default function BlogPostsAdminPage() {
                   gap: "1rem",
                 }}
               >
-                <span>{formatDate(post.date)}</span>
-                <span>作者：{post.author}</span>
-                <span>标签：{post.tags.join(", ")}</span>
+                <span>{formatDate(post.created_at.split("T")[0] ?? "")}</span>
+                <span>作者：{post.author_name ?? "未知"}</span>
+                <span>状态：{post.status}</span>
+                <span>
+                  标签：{(post.tags ?? []).join(", ")}
+                </span>
               </div>
             </div>
             <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -305,16 +292,16 @@ export default function BlogPostsAdminPage() {
       )}
 
       {filteredPosts.length === 0 && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "3rem",
-              color: "#999",
-            }}
-          >
-            <p>{searchQuery.trim() ? "没有找到匹配的文章" : "暂无文章"}</p>
-          </div>
-        )}
-      </div>
+        <div
+          style={{
+            textAlign: "center",
+            padding: "3rem",
+            color: "#999",
+          }}
+        >
+          <p>{searchQuery.trim() ? "没有找到匹配的文章" : "暂无文章"}</p>
+        </div>
+      )}
+    </div>
   )
 }

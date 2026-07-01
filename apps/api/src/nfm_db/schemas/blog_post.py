@@ -17,7 +17,11 @@ class BlogPostCreate(BaseModel):
 
 
 class BlogPostResponse(BaseModel):
-    """Schema for blog post response."""
+    """Schema for blog post response.
+
+    Includes both DB metadata and content fields populated from the
+    markdown file frontmatter so the frontend has everything it needs.
+    """
 
     id: uuid.UUID
     slug: str
@@ -30,6 +34,11 @@ class BlogPostResponse(BaseModel):
     rejection_reason: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Content fields (populated from markdown file frontmatter)
+    content: str | None = None
+    summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    author_name: str | None = None
 
     class Config:
         from_attributes = True
