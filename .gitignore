@@ -31,3 +31,4 @@ docker/postgres-data/
 .claude/worktrees/
 *.tsbuildinfo
 test-results/
+.gitnexus/
