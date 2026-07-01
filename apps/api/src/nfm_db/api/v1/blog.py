@@ -8,8 +8,6 @@ import frontmatter as matter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
-
 from nfm_db.api.v1.auth import (
     get_current_active_user,
     require_blog_role,
@@ -40,6 +38,7 @@ from nfm_db.services.blog_post import (
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _content_dir() -> Path:
