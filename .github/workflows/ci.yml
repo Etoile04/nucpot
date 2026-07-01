@@ -51,7 +51,7 @@ jobs:
           - layer: core
             tags: "@unit @integration"
             run_on: [push]
-    if: github.event_name == matrix.run_on
+    if: contains(fromJSON(format('["{0}"]', join(matrix.run_on, '","'))), github.event_name)
     defaults:
       run:
         working-directory: apps/web
