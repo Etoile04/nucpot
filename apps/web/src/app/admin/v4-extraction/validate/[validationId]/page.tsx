@@ -82,7 +82,7 @@ export default function ValidationPage() {
       getExtractionResults(validationId, { limit: 500 }),
   })
 
-  const properties = resultEnvelope?.data?.properties ?? []
+  const properties = useMemo(() => resultEnvelope?.data?.properties ?? [], [resultEnvelope?.data?.properties])
   const total = properties.length
 
   // ── Mutation: validate (batch submit) ────────────────────

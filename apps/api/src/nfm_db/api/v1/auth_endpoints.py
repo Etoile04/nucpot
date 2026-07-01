@@ -1,7 +1,7 @@
 """Authentication and user management API endpoints."""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -54,7 +54,7 @@ async def login(
         )
 
     # Update last login
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(UTC)
     await db.commit()
 
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)

@@ -172,6 +172,8 @@ markers = [
     "e2e: End-to-end tests that exercise the full system",
     "unit: Unit tests (isolated, no external dependencies)",
     "integration: Integration tests (require external services)",
+    "golden: Golden regression tests",
+    "performance: Performance benchmark tests",
 ]
 
 [build-system]

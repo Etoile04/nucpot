@@ -1,13 +1,14 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useMemo, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import type { Potential } from '@/lib/types'
 
 function CompareContent() {
   const searchParams = useSearchParams()
-  const ids = searchParams.get('ids')?.split(',').filter(Boolean) || []
+  const idsParam = searchParams.get('ids')
+  const ids = useMemo(() => idsParam?.split(',').filter(Boolean) || [], [idsParam])
 
   const [potentials, setPotentials] = useState<Potential[]>([])
   const [loading, setLoading] = useState(true)
@@ -35,7 +36,7 @@ function CompareContent() {
       })
       .catch(e => setError(e instanceof Error ? e.message : '加载失败'))
       .finally(() => setLoading(false))
-  }, [searchParams.get('ids')])
+  }, [idsParam, ids])
 
   if (ids.length < 2) {
     return (

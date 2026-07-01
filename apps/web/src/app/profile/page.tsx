@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, FormEvent } from 'react'
+import { useCallback, useEffect, useState, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
 import { supabase } from '@/lib/supabase'
@@ -45,14 +45,7 @@ export default function ProfilePage() {
     }
   }, [loading, user, router])
 
-  useEffect(() => {
-    if (session) {
-      fetchContributions()
-      fetchProfileDetail()
-    }
-  }, [session])
-
-  async function fetchContributions() {
+  const fetchContributions = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/my-contributions', {
         headers: { Authorization: `Bearer ${session!.access_token}` },
@@ -66,9 +59,9 @@ export default function ProfilePage() {
     } finally {
       setLoadingContribs(false)
     }
-  }
+  }, [session])
 
-  async function fetchProfileDetail() {
+  const fetchProfileDetail = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/profile', {
         headers: { Authorization: `Bearer ${session!.access_token}` },
@@ -88,7 +81,14 @@ export default function ProfilePage() {
     } catch {
       // Ignore
     }
-  }
+  }, [session])
+
+  useEffect(() => {
+    if (session) {
+      fetchContributions()
+      fetchProfileDetail()
+    }
+  }, [session, fetchContributions, fetchProfileDetail])
 
   async function handleProfileSave(e: FormEvent) {
     e.preventDefault()

@@ -37,7 +37,7 @@ export default function ReviewQueuePage() {
     try {
       const pendingPosts = await blogApi.list({ status: "under_review" })
       setPosts(pendingPosts)
-    } catch (error) {
+    } catch {
       // Silently fail — empty list shown
     } finally {
       setLoading(false)
