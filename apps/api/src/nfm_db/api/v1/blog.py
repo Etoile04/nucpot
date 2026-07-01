@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated
 
-import matter
+import frontmatter as matter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,12 +48,12 @@ def _read_markdown(slug: str) -> dict | None:
         return None
     try:
         raw = md_path.read_text(encoding="utf-8")
-        parsed = matter.parse(raw)
+        parsed = matter.loads(raw)
         return {
             "content": parsed.content,
-            "summary": parsed.data.get("summary", ""),
-            "tags": parsed.data.get("tags", []),
-            "author_name": parsed.data.get("author", ""),
+            "summary": parsed.metadata.get("summary", ""),
+            "tags": parsed.metadata.get("tags", []),
+            "author_name": parsed.metadata.get("author", ""),
         }
     except Exception:
         return None
