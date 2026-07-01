@@ -501,10 +501,10 @@ test.describe("Security Headers", { tag: "@integration" }, () => {
     const headers = response.headers()
 
     // Should have security headers (if configured)
-    // These headers should be present:
+    // Note: X-XSS-Protection is deprecated and removed from modern browsers
     expect(headers).toHaveProperty("x-frame-options")  // Prevent clickjacking
     expect(headers).toHaveProperty("x-content-type-options")  // Prevent MIME sniffing
-    expect(headers).toHaveProperty("x-xss-protection")  // XSS protection
+    expect(headers).toHaveProperty("referrer-policy")  // Control referrer info
   })
 
   test("sets Content-Security-Policy", async ({ page }) => {
