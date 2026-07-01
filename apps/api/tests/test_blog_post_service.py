@@ -599,7 +599,7 @@ class TestFullWorkflow:
 
 
 class TestSafeMdPath:
-    """Tests for the path traversal–safe markdown path helper."""
+    """Tests for the path traversal-safe markdown path helper."""
 
     def test_normal_slug(self, tmp_path: Path) -> None:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
