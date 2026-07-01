@@ -28,6 +28,9 @@ docker/.env.*
 *~
 docker/postgres-data/
 .worktrees/
-.claude/worktrees/
+.claude/
+CLAUDE.md
+.gitnexus/
+.hermes/
 *.tsbuildinfo
 test-results/
