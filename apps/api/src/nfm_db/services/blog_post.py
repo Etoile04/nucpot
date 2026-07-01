@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -195,12 +196,12 @@ async def update_blog_post(
 
     # Read existing markdown to preserve unchanged frontmatter
     existing_raw = ""
-    existing_metadata = {}
+    existing_metadata: dict[str, Any] = {}
     if file_path.exists():
         existing_raw = file_path.read_text(encoding="utf-8")
         if existing_raw.startswith("---"):
             end = existing_raw.index("---", 3)
-            import yaml
+            import yaml  # type: ignore[import-untyped]
 
             existing_metadata = yaml.safe_load(existing_raw[3:end]) or {}
 
