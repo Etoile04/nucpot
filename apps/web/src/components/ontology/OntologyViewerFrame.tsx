@@ -36,7 +36,7 @@ export interface OntologyViewerFrameProps {
 
 /** Build the determinate iframe src for the embedded viewer. */
 export function buildOntologyViewerSrc(node?: string): string {
-  const src = `${VIEWER_ENTRY}?embed=true&data=${DEFAULT_DATA_URL}`;
+  const src = `${VIEWER_ENTRY}?embed=false&data=${DEFAULT_DATA_URL}`;
   return node ? `${src}&node=${encodeURIComponent(node)}` : src;
 }
 

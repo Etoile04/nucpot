@@ -18,7 +18,7 @@ import { expect, test } from "@playwright/test"
  * This lets us smoke-test the route without depending on a seeded DB. The test
  * asserts the page shell loads, not that real data renders.
  */
-test.describe("Potential routes (@nfm-283)", () => {
+test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
   test("/browse page loads (smoke)", async ({ page }) => {
     await page.goto("/browse", { waitUntil: "domcontentloaded" })
     await expect(page.locator("nav").first()).toBeVisible()
@@ -32,17 +32,14 @@ test.describe("Potential routes (@nfm-283)", () => {
     await expect(page.locator("nav").first()).toBeVisible()
   })
 
-  test("/upload stub page renders the \"coming soon\" message", async ({
+  test("/upload page renders the upload form", async ({
     page,
   }) => {
     await page.goto("/upload", { waitUntil: "domcontentloaded" })
     await expect(page.locator("body")).toBeVisible()
-    // Upload is a Phase 2 stub; the Result title is the contract.
-    await expect(page.getByText("上传功能即将上线")).toBeVisible()
-    // Stub should link back to browse
-    await expect(
-      page.locator('a[href="/browse"]').first()
-    ).toBeVisible()
+    // Upload page now has a full form with name, type, elements fields
+    await expect(page.getByText("上传势函数")).toBeVisible()
+    await expect(page.locator('button:has-text("上 传")')).toBeVisible()
   })
 
   test("/potential/[id] detail page shell loads (deep-link smoke)", async ({
@@ -58,7 +55,8 @@ test.describe("Potential routes (@nfm-283)", () => {
     await expect(page.locator("nav").first()).toBeVisible()
     // Either real detail content or the Empty fallback should be present;
     // we only assert the shell here.
-    await expect(page.locator("main").or(page.locator("body"))).toBeVisible()
+    // Page has nested <main> elements; use .first() to avoid strict-mode violation
+    await expect(page.locator("main").first()).toBeVisible()
   })
 
   test("/potential/[id] reachable via /browse card click when data exists", async ({

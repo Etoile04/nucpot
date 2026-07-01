@@ -338,27 +338,44 @@ jobs:
   # Post-deployment
   # =============================================================================
   smoke-test:
-    name: Smoke Tests
+    name: Smoke Tests (@smoke)
     runs-on: ubuntu-latest
     needs: [deploy-prod]
+    defaults:
+      run:
+        working-directory: apps/web
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run smoke tests
-        run: |
-          # Test API health
-          curl -f https://nucpot.dpdns.org/api/v1/health | jq .
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
-          # Test web app
-          curl -f https://nucpot.dpdns.org/ | grep "NFMD"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
 
-          # Test MD verification endpoint
-          curl -f https://nucpot.dpdns.org/api/md-verification/jobs | jq .
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-      - name: Run regression tests
-        run: |
-          cd apps/web
-          pnpm run test:e2e --grep "regression"
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run @smoke E2E tests
+        run: pnpm exec playwright test --project=chromium --grep "@smoke"
+        env:
+          E2E_TARGET: live
+          BASE_URL: https://nucpot.dpdns.org
+          API_BASE_URL: https://verify.nucpot.dpdns.org
+          CI: true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-test-report
+          path: apps/web/playwright-report/
+          retention-days: 7
 
   notify:
     name: Notify Deployment Status
