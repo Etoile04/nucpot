@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { createContext, useContext, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { authApi, clearToken, getToken, type UserProfile } from "@/lib/api-client"
 
@@ -8,9 +8,29 @@ interface BlogAuthGuardProps {
   readonly children: React.ReactNode
 }
 
+interface AuthContextValue {
+  readonly profile: UserProfile | null
+  readonly loading: boolean
+}
+
+const AuthContext = createContext<AuthContextValue>({
+  profile: null,
+  loading: true,
+})
+
+/**
+ * Access the current authenticated user profile from any child of BlogAuthGuard.
+ * Returns null while loading or if unauthenticated.
+ */
+export function useAuthProfile(): AuthContextValue {
+  return useContext(AuthContext)
+}
+
 /**
  * Checks JWT validity via /api/v1/auth/me.
  * Redirects to /admin/login if unauthenticated or token expired.
+ * Exposes the user profile via React context so child components
+ * (e.g. layout sidebar) can consume it without a second fetch.
  */
 export default function BlogAuthGuard({ children }: BlogAuthGuardProps) {
   const router = useRouter()
@@ -64,5 +84,9 @@ export default function BlogAuthGuard({ children }: BlogAuthGuardProps) {
     return null
   }
 
-  return <>{children}</>
+  return (
+    <AuthContext.Provider value={{ profile, loading: false }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }

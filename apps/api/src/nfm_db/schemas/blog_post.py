@@ -16,6 +16,19 @@ class BlogPostCreate(BaseModel):
     author_name: str = Field(..., min_length=1, max_length=100)
 
 
+class BlogPostUpdate(BaseModel):
+    """Schema for updating an existing blog post.
+
+    All fields are optional — only provided fields are updated.
+    """
+
+    title: str | None = Field(None, min_length=1, max_length=255)
+    content: str | None = Field(None, min_length=1)
+    summary: str | None = Field(None, min_length=1, max_length=500)
+    tags: list[str] | None = Field(None, max_length=10)
+    author_name: str | None = Field(None, min_length=1, max_length=100)
+
+
 class BlogPostResponse(BaseModel):
     """Schema for blog post response.
 

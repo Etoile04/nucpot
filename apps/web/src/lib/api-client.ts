@@ -170,6 +170,14 @@ interface BlogPostCreatePayload {
   readonly author_name: string
 }
 
+interface BlogPostUpdatePayload {
+  readonly title?: string
+  readonly content?: string
+  readonly summary?: string
+  readonly tags?: readonly string[]
+  readonly author_name?: string
+}
+
 export const blogApi = {
   list: (params?: { status?: string; limit?: number; offset?: number }): Promise<readonly BlogPostResponse[]> => {
     const query = new URLSearchParams()
@@ -186,6 +194,12 @@ export const blogApi = {
   create: (payload: BlogPostCreatePayload): Promise<BlogPostResponse> =>
     request<BlogPostResponse>("/api/v1/admin/blog/posts", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  update: (slug: string, payload: BlogPostUpdatePayload): Promise<BlogPostResponse> =>
+    request<BlogPostResponse>(`/api/v1/admin/blog/posts/${slug}`, {
+      method: "PUT",
       body: JSON.stringify(payload),
     }),
 

@@ -72,8 +72,7 @@ export default function EditBlogPostPage() {
     setError(null)
 
     try {
-      await blogApi.delete(slug)
-      await blogApi.create({
+      await blogApi.update(slug, {
         title,
         content,
         summary,

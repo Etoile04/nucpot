@@ -5,11 +5,10 @@ import { Layout, Menu } from "antd"
 import { CheckCircleOutlined, FileTextOutlined, PlusOutlined } from "@ant-design/icons"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import BlogAuthGuard from "@/components/admin/BlogAuthGuard"
+import BlogAuthGuard, { useAuthProfile } from "@/components/admin/BlogAuthGuard"
 import {
   authApi,
   blogApi,
-  type UserProfile,
 } from "@/lib/api-client"
 
 const { Sider, Content } = Layout
@@ -40,15 +39,8 @@ export default function BlogLayout({
 }) {
   const pathname = usePathname()
   const router = useRouter()
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const { profile } = useAuthProfile()
   const reviewCount = useReviewCount()
-
-  useEffect(() => {
-    authApi
-      .getMe()
-      .then(setProfile)
-      .catch(() => setProfile(null))
-  }, [])
 
   const handleLogout = useCallback(() => {
     authApi.logout()

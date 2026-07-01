@@ -1,11 +1,14 @@
 """Blog admin API endpoints: CRUD and review workflow."""
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
 import frontmatter as matter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from nfm_db.api.v1.auth import (
     get_current_active_user,
@@ -19,6 +22,7 @@ from nfm_db.models.user import BlogRole, User
 from nfm_db.schemas.blog_post import (
     BlogPostCreate,
     BlogPostResponse,
+    BlogPostUpdate,
     WorkflowActionRequest,
     WorkflowActionResponse,
 )
@@ -31,6 +35,7 @@ from nfm_db.services.blog_post import (
     publish_post,
     reject_post,
     submit_for_review,
+    update_blog_post,
 )
 
 router = APIRouter()
@@ -42,8 +47,21 @@ def _content_dir() -> Path:
 
 
 def _read_markdown(slug: str) -> dict | None:
-    """Read markdown file for a post and return frontmatter + content."""
-    md_path = _content_dir() / f"{slug}.md"
+    """Read markdown file for a post and return frontmatter + content.
+
+    Rejects slugs containing path traversal sequences.
+    """
+    if ".." in slug or "/" in slug or "\\" in slug:
+        logger.warning("Rejected path traversal attempt in slug=%r", slug)
+        return None
+
+    safe_name = slug.split("/")[-1]
+    md_path = (_content_dir() / f"{safe_name}.md").resolve()
+
+    if not md_path.is_relative_to(_content_dir().resolve()):
+        logger.warning("Resolved path escapes content dir: slug=%r", slug)
+        return None
+
     if not md_path.exists():
         return None
     try:
@@ -56,6 +74,7 @@ def _read_markdown(slug: str) -> dict | None:
             "author_name": parsed.metadata.get("author", ""),
         }
     except Exception:
+        logger.warning("Failed to read markdown for slug=%s", slug, exc_info=True)
         return None
 
 
@@ -178,6 +197,30 @@ async def delete_post(
         )
 
     await delete_blog_post(session, slug, current_user.id, is_admin=is_admin)
+
+
+@router.put("/admin/blog/posts/{slug}", response_model=BlogPostResponse)
+async def update_post(
+    slug: str,
+    payload: BlogPostUpdate,
+    current_user: Annotated[User, Depends(require_editor)],
+    session: AsyncSession = Depends(get_db),
+) -> BlogPostResponse:
+    """Update an existing blog post in place (preserves slug)."""
+    try:
+        updated = await update_blog_post(
+            session,
+            slug=slug,
+            title=payload.title,
+            content=payload.content,
+            summary=payload.summary,
+            tags=payload.tags,
+            author_name=payload.author_name,
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    return _enrich_response(updated)
 
 
 @router.post("/admin/blog/posts/{slug}/workflow", response_model=WorkflowActionResponse)

@@ -158,6 +158,97 @@ async def get_blog_post_by_slug(
     return result.scalar_one_or_none()
 
 
+async def update_blog_post(
+    session: AsyncSession,
+    slug: str,
+    title: str | None = None,
+    content: str | None = None,
+    summary: str | None = None,
+    tags: list[str] | None = None,
+    author_name: str | None = None,
+) -> BlogPostMetadata:
+    """Update an existing blog post's metadata and markdown content in place.
+
+    The slug is preserved — no new slug is generated.
+
+    Args:
+        session: Database session
+        slug: Existing post slug
+        title: New title (optional)
+        content: New markdown content (optional)
+        summary: New summary (optional)
+        tags: New tags (optional)
+        author_name: New author display name (optional)
+
+    Returns:
+        Updated BlogPostMetadata
+
+    Raises:
+        ValueError: If the post is not found
+    """
+    post = await get_blog_post_by_slug(session, slug)
+    if post is None:
+        raise ValueError(f"Post not found: {slug}")
+
+    content_dir = get_content_dir()
+    file_path = content_dir / f"{slug}.md"
+
+    # Read existing markdown to preserve unchanged frontmatter
+    existing_raw = ""
+    existing_metadata = {}
+    if file_path.exists():
+        existing_raw = file_path.read_text(encoding="utf-8")
+        if existing_raw.startswith("---"):
+            end = existing_raw.index("---", 3)
+            import yaml
+
+            existing_metadata = yaml.safe_load(existing_raw[3:end]) or {}
+
+    # Merge updates
+    if title is not None:
+        existing_metadata["title"] = title
+    if author_name is not None:
+        existing_metadata["author"] = author_name
+    if tags is not None:
+        existing_metadata["tags"] = tags
+    if summary is not None:
+        existing_metadata["summary"] = summary
+    existing_metadata["date"] = datetime.now().strftime("%Y-%m-%d")
+
+    # Build frontmatter string
+    frontmatter_str = "---\n"
+    for key, value in existing_metadata.items():
+        if isinstance(value, list):
+            frontmatter_str += f"{key}:\n"
+            for item in value:
+                frontmatter_str += f"  - {item}\n"
+        else:
+            frontmatter_str += f"{key}: {value}\n"
+    frontmatter_str += "---\n\n"
+
+    # Content body: use updated content or extract from existing
+    if content is not None:
+        body = content
+    elif existing_raw.startswith("---"):
+        end = existing_raw.index("---", 3) + 3
+        body = existing_raw[end:].strip()
+    else:
+        body = existing_raw
+
+    # Write updated markdown
+    content_dir.mkdir(parents=True, exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(frontmatter_str + "\n" + body)
+
+    # Update DB metadata
+    if title is not None:
+        post.title = title
+
+    await session.flush()
+    await session.refresh(post)
+    return post
+
+
 async def list_blog_posts(
     session: AsyncSession,
     status: PostStatus | None = None,
