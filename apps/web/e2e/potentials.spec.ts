@@ -18,7 +18,7 @@ import { expect, test } from "@playwright/test"
  * This lets us smoke-test the route without depending on a seeded DB. The test
  * asserts the page shell loads, not that real data renders.
  */
-test.describe("Potential routes (@nfm-283)", () => {
+test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
   test("/browse page loads (smoke)", async ({ page }) => {
     await page.goto("/browse", { waitUntil: "domcontentloaded" })
     await expect(page.locator("nav").first()).toBeVisible()

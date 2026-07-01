@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test"
  * - Result comparison and analysis
  */
 
-test.describe("Results Display", () => {
+test.describe("Results Display", { tag: "@integration" }, () => {
   // TODO: Re-enable when job result pages are available on live site
   test.describe.skip("Energy Curve Visualization", () => {
     test("displays energy vs volume curve", async ({ page }) => {
@@ -365,7 +365,7 @@ test.describe("Results Display", () => {
   })
 })
 
-test.describe.skip("Results Display Accessibility", () => {
+test.describe.skip("Results Display Accessibility", { tag: "@integration" }, () => {
   test("chart has alternative text", async ({ page }) => {
     await page.goto("/admin/md-verification/jobs/completed-job-123")
 
@@ -389,7 +389,7 @@ test.describe.skip("Results Display Accessibility", () => {
   })
 })
 
-test.describe.skip("Results Performance", () => {
+test.describe.skip("Results Performance", { tag: "@integration" }, () => {
   test("loads results quickly for large datasets", async ({ page }) => {
     const startTime = Date.now()
     await page.goto("/admin/md-verification/jobs/completed-job-large")

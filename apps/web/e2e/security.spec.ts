@@ -14,7 +14,7 @@ import { test, expect } from "@playwright/test"
  * - Data privacy
  */
 
-test.describe("Authentication & Authorization", () => {
+test.describe("Authentication & Authorization", { tag: "@integration" }, () => {
   // TODO: Re-enable when auth middleware is deployed to live site
   test.skip(true, "Auth middleware not enabled on live site — API returns 200 without auth")
 
@@ -121,7 +121,7 @@ test.describe("Authentication & Authorization", () => {
   })
 })
 
-test.describe("Input Validation", () => {
+test.describe("Input Validation", { tag: "@integration" }, () => {
   // TODO: Re-enable when admin/md-verification form validation is fully functional on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -224,7 +224,7 @@ test.describe("Input Validation", () => {
   })
 })
 
-test.describe("XSS Protection", () => {
+test.describe("XSS Protection", { tag: "@integration" }, () => {
   // TODO: Re-enable when admin/md-verification form validation is fully functional on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -271,7 +271,7 @@ test.describe("XSS Protection", () => {
   })
 })
 
-test.describe("CSRF Protection", () => {
+test.describe("CSRF Protection", { tag: "@integration" }, () => {
   // TODO: Re-enable when admin/md-verification form is fully functional on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -327,7 +327,7 @@ test.describe("CSRF Protection", () => {
   })
 })
 
-test.describe("Credential Security", () => {
+test.describe("Credential Security", { tag: "@integration" }, () => {
   test("does not expose credentials in page source", async ({ page }) => {
     await page.goto("/login")
 
@@ -386,7 +386,7 @@ test.describe("Credential Security", () => {
   })
 })
 
-test.describe("Rate Limiting", () => {
+test.describe("Rate Limiting", { tag: "@integration" }, () => {
   // TODO: Re-enable when auth middleware and rate limiting are deployed to live site
   test.skip(true, "Auth middleware and rate limiting not enabled on live site")
 
@@ -433,7 +433,7 @@ test.describe("Rate Limiting", () => {
   })
 })
 
-test.describe("Data Privacy", () => {
+test.describe("Data Privacy", { tag: "@integration" }, () => {
   // TODO: Re-enable when auth middleware is deployed to live site
   test.skip(true, "Auth middleware not enabled on live site — cannot test data privacy features")
 
@@ -493,7 +493,7 @@ test.describe("Data Privacy", () => {
   })
 })
 
-test.describe("Security Headers", () => {
+test.describe("Security Headers", { tag: "@integration" }, () => {
   test("includes security headers", async ({ page }) => {
     const response = await page.request.get("/")
 
@@ -520,7 +520,7 @@ test.describe("Security Headers", () => {
   })
 })
 
-test.describe.skip("Error Handling Security", () => {
+test.describe.skip("Error Handling Security", { tag: "@integration" }, () => {
   test("does not leak stack traces in errors", async ({ page }) => {
     // Navigate to a non-existent page
     await page.goto("/admin/md-verification/non-existent-page")
@@ -545,7 +545,7 @@ test.describe.skip("Error Handling Security", () => {
   })
 })
 
-test.describe.skip("Session Security", () => {
+test.describe.skip("Session Security", { tag: "@integration" }, () => {
   test("invalidates session on password change", async ({ page, context }) => {
     // Login
     await page.goto("/login")
@@ -601,7 +601,7 @@ test.describe.skip("Session Security", () => {
   })
 })
 
-test.describe("Security Monitoring", () => {
+test.describe("Security Monitoring", { tag: "@integration" }, () => {
   // TODO: Re-enable when auth middleware is deployed to live site
   test.skip(true, "Auth middleware not enabled on live site — security monitoring not testable")
 

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test"
 
-test.describe("Browse Page", () => {
+test.describe("Browse Page", { tag: "@smoke" }, () => {
   test("loads the browse page successfully", async ({ page }) => {
     await page.goto("/browse", { waitUntil: "domcontentloaded" })
     const headerNav = page.locator("nav").first()

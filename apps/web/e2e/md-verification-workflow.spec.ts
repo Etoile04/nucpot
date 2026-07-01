@@ -16,7 +16,7 @@ import { MOCK_SUBMITTED_JOB } from "./fixtures/md-verification-mock-data"
  */
 
 // TODO: Re-enable when mock fixtures (md-verification-mock-server, md-verification-mock-data) are created
-test.describe.skip("Create Task", () => {
+test.describe.skip("Create Task", { tag: "@unit" }, () => {
   test.beforeEach(async ({ page }) => {
     await setupMockApi(page, "normal")
   })
@@ -85,7 +85,7 @@ test.describe.skip("Create Task", () => {
 // 2. Monitor Progress E2E
 // =============================================================================
 
-test.describe.skip("Monitor Progress", () => {
+test.describe.skip("Monitor Progress", { tag: "@unit" }, () => {
   test.beforeEach(async ({ page }) => {
     await setupMockApi(page, "normal")
   })
@@ -160,7 +160,7 @@ test.describe.skip("Monitor Progress", () => {
 // 3. View Results E2E
 // =============================================================================
 
-test.describe.skip("View Results", () => {
+test.describe.skip("View Results", { tag: "@unit" }, () => {
   test.beforeEach(async ({ page }) => {
     await setupMockApi(page, "normal")
   })
@@ -265,7 +265,7 @@ test.describe.skip("View Results", () => {
 // 4. Error / Edge Scenarios
 // =============================================================================
 
-test.describe.skip("Error Scenarios", () => {
+test.describe.skip("Error Scenarios", { tag: "@unit" }, () => {
   test("shows queue-full error on submission", async ({ page }) => {
     await setupMockApi(page, "queue-full")
     await page.goto("/admin/md-verification")
@@ -312,7 +312,7 @@ test.describe.skip("Error Scenarios", () => {
 // 5. Responsive Tests
 // =============================================================================
 
-test.describe.skip("Responsive Layout", () => {
+test.describe.skip("Responsive Layout", { tag: "@unit" }, () => {
   test.beforeEach(async ({ page }) => {
     await setupMockApi(page, "normal")
   })

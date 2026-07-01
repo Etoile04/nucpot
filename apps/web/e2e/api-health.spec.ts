@@ -4,7 +4,7 @@ const API_BASE_URL =
   process.env.API_BASE_URL || "https://verify.nucpot.dpdns.org"
 
 // TODO: Re-enable when verify.nucpot.dpdns.org subdomain is deployed and reachable
-test.describe.skip("API Health Check", () => {
+test.describe.skip("API Health Check", { tag: "@integration" }, () => {
   test("GET /api/health returns ok", async ({ request }) => {
     const response = await request.get(`${API_BASE_URL}/api/health`)
     expect(response.status()).toBe(200)

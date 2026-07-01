@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test"
  * - Results display for completed jobs
  */
 
-test.describe("MD Verification", () => {
+test.describe("MD Verification", { tag: "@integration" }, () => {
   test.describe("Main Dashboard", () => {
     test("loads the MD verification dashboard", async ({ page }) => {
       await page.goto("/admin/md-verification")
@@ -238,7 +238,7 @@ test.describe("MD Verification", () => {
   })
 })
 
-test.describe("MD Verification Accessibility", () => {
+test.describe("MD Verification Accessibility", { tag: "@integration" }, () => {
   test("form has proper labels", async ({ page }) => {
     await page.goto("/admin/md-verification")
 

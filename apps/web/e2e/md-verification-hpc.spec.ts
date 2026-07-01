@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test"
  */
 
 // TODO: Re-enable when HPC integration and auth middleware are deployed to live site
-test.describe.skip("MD Verification with Real HPC", () => {
+test.describe.skip("MD Verification with Real HPC", { tag: "@integration" }, () => {
   test.describe("Task Submission to HPC", () => {
     test("submits job to real HPC cluster", async ({ page }) => {
       // Login first (assuming auth is required)
@@ -418,7 +418,7 @@ test.describe.skip("MD Verification with Real HPC", () => {
   })
 })
 
-test.describe.skip("HPC Integration Security", () => {
+test.describe.skip("HPC Integration Security", { tag: "@integration" }, () => {
   test("does not expose SSH credentials in UI", async ({ page }) => {
     await page.goto("/admin/md-verification/jobs/test-job")
 

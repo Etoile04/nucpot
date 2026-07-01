@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test"
  * - Session management
  */
 
-test.describe("Authentication", () => {
+test.describe("Authentication", { tag: "@integration" }, () => {
   test.beforeEach(async ({ page }) => {
     // Clear any existing session
     await page.context().clearCookies()
@@ -265,7 +265,7 @@ test.describe("Authentication", () => {
   })
 })
 
-test.describe("Authentication Security", () => {
+test.describe("Authentication Security", { tag: "@integration" }, () => {
   // TODO: Re-enable when auth middleware is deployed to live site
   test.skip(true, "Auth middleware not enabled on live site — security features not testable")
 
@@ -303,7 +303,7 @@ test.describe("Authentication Security", () => {
   })
 })
 
-test.describe("Authentication Accessibility", () => {
+test.describe("Authentication Accessibility", { tag: "@integration" }, () => {
   // TODO: Re-enable when auth middleware is deployed to live site
   test.skip(true, "Auth middleware not enabled on live site — accessibility checks not testable")
 

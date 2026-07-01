@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test"
  * - Server errors
  */
 
-test.describe("File Format Validation", () => {
+test.describe("File Format Validation", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -109,7 +109,7 @@ test.describe("File Format Validation", () => {
   })
 })
 
-test.describe("Input Parameter Validation", () => {
+test.describe("Input Parameter Validation", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -194,7 +194,7 @@ test.describe("Input Parameter Validation", () => {
   })
 })
 
-test.describe("HPC Connection Errors", () => {
+test.describe("HPC Connection Errors", { tag: "@periodic" }, () => {
   // TODO: Re-enable when HPC integration is available on live site
   test.skip(true, "HPC cluster integration not available on live site")
 
@@ -274,7 +274,7 @@ test.describe("HPC Connection Errors", () => {
   })
 })
 
-test.describe("Job Execution Errors", () => {
+test.describe("Job Execution Errors", { tag: "@periodic" }, () => {
   // TODO: Re-enable when job execution error pages are available on live site
   test.skip(true, "Job execution error pages not available on live site")
 
@@ -344,7 +344,7 @@ test.describe("Job Execution Errors", () => {
   })
 })
 
-test.describe("Network Errors", () => {
+test.describe("Network Errors", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -406,7 +406,7 @@ test.describe("Network Errors", () => {
   })
 })
 
-test.describe("Server Errors", () => {
+test.describe("Server Errors", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -481,7 +481,7 @@ test.describe("Server Errors", () => {
   })
 })
 
-test.describe("Error Recovery", () => {
+test.describe("Error Recovery", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -532,7 +532,7 @@ test.describe("Error Recovery", () => {
   })
 })
 
-test.describe("Error Logging and Reporting", () => {
+test.describe("Error Logging and Reporting", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -576,7 +576,7 @@ test.describe("Error Logging and Reporting", () => {
   })
 })
 
-test.describe("Error UX", () => {
+test.describe("Error UX", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
@@ -632,7 +632,7 @@ test.describe("Error UX", () => {
   })
 })
 
-test.describe("Error Accessibility", () => {
+test.describe("Error Accessibility", { tag: "@periodic" }, () => {
   // TODO: Re-enable when admin/md-verification form elements are available on live site
   test.skip(true, "Admin MD verification form elements not fully functional on live site")
 
