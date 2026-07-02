@@ -2,6 +2,7 @@
 
 ## Active Blockers
 
+- [NFM-603 Blog Auth Blocked](nfm603-blog-auth-blocked.md) — Blog auth + frontend connection blocked on NFM-604 Phase A merge (code complete, CI fixes pending) — CEO intervention recommended
 - [NFM-338 Phase 2.6 Blocker](nfm338-blocker-missing-components.md) — Integration testing blocked: Phase 2.3-2.5 components missing (API endpoints, Celery tasks, MD Runner integration not found)
 - [NFM-323 ThinkStation Offline](nfm323-thinkstation-blocker.md) —势函数网页恢复状态报告: Frontend 95% complete, verification service blocked by ThinkStation offline >24h (User/IT action required)
 
