@@ -34,3 +34,6 @@ CLAUDE.md
 .hermes/
 *.tsbuildinfo
 test-results/
+
+# Auto-generated blog content (not source material)
+apps/api/content/blog/
