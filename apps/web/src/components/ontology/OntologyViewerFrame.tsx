@@ -19,8 +19,25 @@
  * See EMBEDDING.md §1–§5 in the viewer repo (commit 6345543).
  */
 
+/** Minimum iframe height (px) — EMBEDDING.md §5 height contract. */
+export const IFRAME_MIN_HEIGHT = 600;
+
 const VIEWER_ENTRY = "/ontology-viewer/index.html";
 const DEFAULT_DATA_URL = "/ontology-viewer/data/nvl_ontology_data.json";
+
+/** Reusable host container styles — full-width wrapper with height contract. */
+const HOST_CONTAINER_STYLE = {
+  width: "100%",
+  minHeight: `${IFRAME_MIN_HEIGHT}px`,
+} as const;
+
+/** Reusable iframe chromeless styles — fills host, no border. */
+const IFRAME_STYLE = {
+  width: "100%",
+  height: "100%",
+  minHeight: `${IFRAME_MIN_HEIGHT}px`,
+  border: "0",
+} as const;
 
 export interface OntologyViewerFrameProps {
   /** Optional node id for deep-linking (?node=<id>, NFM-237 MUST #3). */
@@ -38,6 +55,11 @@ export interface OntologyViewerFrameProps {
    * manifest instead of using the hardcoded static corpus.
    */
   corpus?: string;
+  /**
+   * Whether the record_ref graph fetch is in progress (NFM-610).
+   * When true, shows a loading hint below the viewer.
+   */
+  loading?: boolean;
 }
 
 /** Build the determinate iframe src for the embedded viewer. */
@@ -47,11 +69,14 @@ export function buildOntologyViewerSrc(
 ): string {
   const params = new URLSearchParams();
   params.set("embed", "false");
+
+  // Corpus param takes precedence — viewer resolves data URL from corpus manifest.
   if (corpus) {
     params.set("corpus", corpus);
   } else {
     params.set("data", DEFAULT_DATA_URL);
   }
+
   if (node) {
     params.set("node", node);
   }
@@ -62,20 +87,16 @@ export default function OntologyViewerFrame({
   node,
   recordRef,
   corpus,
+  loading,
 }: OntologyViewerFrameProps) {
   return (
-    <div style={{ width: "100%", minHeight: "600px" }}>
+    <div style={HOST_CONTAINER_STYLE}>
       <iframe
         src={buildOntologyViewerSrc(node, corpus)}
         title="OntoFuel 本体可视化"
         loading="lazy"
         allowFullScreen
-        style={{
-          width: "100%",
-          height: "100%",
-          minHeight: "600px",
-          border: "0",
-        }}
+        style={IFRAME_STYLE}
       />
       {/* Phase 2 (NFM-267): shareable deep link from node → material records.
           Omitted for class nodes and pre-record_ref data sources. */}
@@ -88,6 +109,14 @@ export default function OntologyViewerFrame({
         >
           View material records →
         </a>
+      )}
+      {loading && !recordRef && (
+        <span
+          className="ontology-record-ref-loading"
+          style={{ fontSize: "0.85em", color: "#888" }}
+        >
+          Loading material records…
+        </span>
       )}
     </div>
   );
