@@ -16,6 +16,20 @@ describe("buildOntologyViewerSrc", () => {
       "/ontology-viewer/index.html?embed=false&data=/ontology-viewer/data/nvl_ontology_data.json&node=Material"
     );
   });
+
+  it("passes corpus param instead of data when corpus is provided (NFM-610)", () => {
+    const src = buildOntologyViewerSrc(undefined, "ontofuel");
+    expect(src).toContain("corpus=ontofuel");
+    expect(src).not.toContain("data=");
+    expect(src).toContain("embed=false");
+  });
+
+  it("passes corpus and node together (NFM-610)", () => {
+    const src = buildOntologyViewerSrc("mat:UO2", "smirnov2014");
+    expect(src).toContain("corpus=smirnov2014");
+    expect(src).toContain("node=mat:UO2");
+    expect(src).not.toContain("data=");
+  });
 });
 
 describe("OntologyViewerFrame", () => {
@@ -34,6 +48,14 @@ describe("OntologyViewerFrame", () => {
     render(<OntologyViewerFrame node="Material" />);
     const frame = screen.getByTitle("OntoFuel 本体可视化");
     expect(frame.getAttribute("src") ?? "").toContain("node=Material");
+  });
+
+  it("passes ?corpus= to iframe when corpus prop is provided (NFM-610)", () => {
+    render(<OntologyViewerFrame corpus="ontofuel" />);
+    const frame = screen.getByTitle("OntoFuel 本体可视化");
+    const src = frame.getAttribute("src") ?? "";
+    expect(src).toContain("corpus=ontofuel");
+    expect(src).not.toContain("data=");
   });
 
   it("enforces the iframe height contract so it never collapses below 600px", () => {

@@ -55,5 +55,11 @@ export default function OntologyRecordRef({
     };
   }, [node, corpus]);
 
-  return <OntologyViewerFrame node={node} recordRef={recordRef ?? undefined} />;
+  return (
+    <OntologyViewerFrame
+      node={node}
+      corpus={corpus}
+      recordRef={recordRef ?? undefined}
+    />
+  );
 }

@@ -32,22 +32,41 @@ export interface OntologyViewerFrameProps {
    * pre-record_ref data sources (Phase 0 static corpus) — graceful no-op.
    */
   recordRef?: string;
+  /**
+   * Corpus id for dynamic data source resolution (NFM-610). When provided,
+   * the viewer's corpus selector resolves the data URL from the corpus index
+   * manifest instead of using the hardcoded static corpus.
+   */
+  corpus?: string;
 }
 
 /** Build the determinate iframe src for the embedded viewer. */
-export function buildOntologyViewerSrc(node?: string): string {
-  const src = `${VIEWER_ENTRY}?embed=false&data=${DEFAULT_DATA_URL}`;
-  return node ? `${src}&node=${encodeURIComponent(node)}` : src;
+export function buildOntologyViewerSrc(
+  node?: string,
+  corpus?: string,
+): string {
+  const params = new URLSearchParams();
+  params.set("embed", "false");
+  if (corpus) {
+    params.set("corpus", corpus);
+  } else {
+    params.set("data", DEFAULT_DATA_URL);
+  }
+  if (node) {
+    params.set("node", node);
+  }
+  return `${VIEWER_ENTRY}?${params.toString()}`;
 }
 
 export default function OntologyViewerFrame({
   node,
   recordRef,
+  corpus,
 }: OntologyViewerFrameProps) {
   return (
     <div style={{ width: "100%", minHeight: "600px" }}>
       <iframe
-        src={buildOntologyViewerSrc(node)}
+        src={buildOntologyViewerSrc(node, corpus)}
         title="OntoFuel 本体可视化"
         loading="lazy"
         allowFullScreen
