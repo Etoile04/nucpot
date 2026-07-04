@@ -533,6 +533,7 @@ export default function BrowsePage() {
             )}
 
             {/* Table */}
+            {!propertiesError && (
             <div style={{ flex: 1, overflow: "auto" }}>
               <Table<V4PropertyResponse>
                 columns={columns}
@@ -556,6 +557,7 @@ export default function BrowsePage() {
                 })}
               />
             </div>
+            )}
           </>
         )}
 

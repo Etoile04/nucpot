@@ -414,52 +414,52 @@ export default function ValidationPage() {
   if (isComplete) {
     return (
       <ToastProvider>
-      <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
-        <Card bordered>
-          <div style={{ textAlign: "center", padding: 24 }}>
-            <CheckCircleOutlined
-              style={{ fontSize: 48, color: "#52c41a" }}
-            />
-            <Typography.Title level={3} style={{ marginTop: 16 }}>
-              审核完成 / Review Complete
-            </Typography.Title>
-            <ValidationProgress
-              current={reviewedCount}
-              total={total}
-              approved={approvedCount}
-              rejected={rejectedCount}
-              skipped={skippedCount}
-            />
-            <Row gutter={16} justify="center" style={{ marginTop: 24 }}>
-              <Col>
-                <Button
-                  type="primary"
-                  onClick={() =>
-                    validateMutation.mutate({ auto_approve: false })
-                  }
-                  loading={validateMutation.isPending}
-                >
-                  提交审核结果 / Submit Review
-                </Button>
-              </Col>
-              <Col>
-                <Button
-                  icon={<DownloadOutlined />}
-                  onClick={handleExportReviewed}
-                  loading={isExporting}
-                >
-                  导出 / Export
-                </Button>
-              </Col>
-              <Col>
-                <Button onClick={() => router.push("/admin/v4-extraction/validate")}>
-                  返回列表 / Back
-                </Button>
-              </Col>
-            </Row>
-          </div>
-        </Card>
-      </div>
+        <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
+          <Card bordered>
+            <div style={{ textAlign: "center", padding: 24 }}>
+              <CheckCircleOutlined
+                style={{ fontSize: 48, color: "#52c41a" }}
+              />
+              <Typography.Title level={3} style={{ marginTop: 16 }}>
+                审核完成 / Review Complete
+              </Typography.Title>
+              <ValidationProgress
+                current={reviewedCount}
+                total={total}
+                approved={approvedCount}
+                rejected={rejectedCount}
+                skipped={skippedCount}
+              />
+              <Row gutter={16} justify="center" style={{ marginTop: 24 }}>
+                <Col>
+                  <Button
+                    type="primary"
+                    onClick={() =>
+                      validateMutation.mutate({ auto_approve: false })
+                    }
+                    loading={validateMutation.isPending}
+                  >
+                    提交审核结果 / Submit Review
+                  </Button>
+                </Col>
+                <Col>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    onClick={handleExportReviewed}
+                    loading={isExporting}
+                  >
+                    导出 / Export
+                  </Button>
+                </Col>
+                <Col>
+                  <Button onClick={() => router.push("/admin/v4-extraction/validate")}>
+                    返回列表 / Back
+                  </Button>
+                </Col>
+              </Row>
+            </div>
+          </Card>
+        </div>
       </ToastProvider>
     )
   }
@@ -468,17 +468,17 @@ export default function ValidationPage() {
 
   return (
     <ToastProvider>
-    <div style={{ padding: 24 }}>
-      {/* Header with progress and batch actions */}
-      <Row gutter={16} align="middle" style={{ marginBottom: 16 }}>
-        <Col flex="auto">
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            人工审核 / Human Validation
-          </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Job ID: {validationId}
-          </Typography.Text>
-        </Col>
+      <div style={{ padding: 24 }}>
+        {/* Header with progress and batch actions */}
+        <Row gutter={16} align="middle" style={{ marginBottom: 16 }}>
+          <Col flex="auto">
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              人工审核 / Human Validation
+            </Typography.Title>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Job ID: {validationId}
+            </Typography.Text>
+          </Col>
         <Col>
           <Space>
             <Button
@@ -501,74 +501,74 @@ export default function ValidationPage() {
         </Col>
       </Row>
 
-      {/* Progress */}
-      <ValidationProgress
-        current={reviewedCount}
-        total={total}
-        approved={approvedCount}
-        rejected={rejectedCount}
-        skipped={skippedCount}
-      />
-
-      {/* Current item */}
-      {currentProperty && (
-        <div key={currentProperty.id ?? currentIndex}>
-          <ValidationCard
-            property={currentProperty}
-            qualityGateReason={qualityGateReason}
-            onApprove={handleApprove}
-            onReject={openRejectModal}
-            onModify={handleModify}
-            onSkip={handleSkip}
-            isEditing={isEditing}
-          />
-        </div>
-      )}
-
-      {/* Reject Modal */}
-      <Modal
-        title="拒绝原因 / Rejection Reason"
-        open={rejectModalOpen}
-        onOk={() => handleReject(rejectReason)}
-        onCancel={() => {
-          setRejectModalOpen(false)
-          setRejectReason("")
-        }}
-        okText="确认拒绝 / Confirm Reject"
-        cancelText="取消 / Cancel"
-        okButtonProps={{ danger: true }}
-      >
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          请输入拒绝原因或选择常用原因 / Enter or select a rejection reason
-        </Typography.Paragraph>
-        <div style={{ marginBottom: 12 }}>
-          <Space wrap size={[4, 4]}>
-            {COMMON_REJECT_REASONS.map((reason) => (
-              <Button
-                key={reason}
-                size="small"
-                type={rejectReason === reason ? "primary" : "default"}
-                onClick={() => setRejectReason(reason)}
-              >
-                {reason}
-              </Button>
-            ))}
-          </Space>
-        </div>
-        <Typography.Text style={{ display: "block", marginBottom: 4, fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
-          自定义原因 / Custom reason
-        </Typography.Text>
-        <Input.TextArea
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
-          rows={3}
-          placeholder="输入拒绝原因... / Enter rejection reason..."
+        {/* Progress */}
+        <ValidationProgress
+          current={reviewedCount}
+          total={total}
+          approved={approvedCount}
+          rejected={rejectedCount}
+          skipped={skippedCount}
         />
-      </Modal>
 
-      {/* Keyboard shortcuts overlay */}
-      <KeyboardShortcutsOverlay />
-    </div>
+        {/* Current item */}
+        {currentProperty && (
+          <div key={currentProperty.id ?? currentIndex}>
+            <ValidationCard
+              property={currentProperty}
+              qualityGateReason={qualityGateReason}
+              onApprove={handleApprove}
+              onReject={openRejectModal}
+              onModify={handleModify}
+              onSkip={handleSkip}
+              isEditing={isEditing}
+            />
+          </div>
+        )}
+
+        {/* Reject Modal */}
+        <Modal
+          title="拒绝原因 / Rejection Reason"
+          open={rejectModalOpen}
+          onOk={() => handleReject(rejectReason)}
+          onCancel={() => {
+            setRejectModalOpen(false)
+            setRejectReason("")
+          }}
+          okText="确认拒绝 / Confirm Reject"
+          cancelText="取消 / Cancel"
+          okButtonProps={{ danger: true }}
+        >
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            请输入拒绝原因或选择常用原因 / Enter or select a rejection reason
+          </Typography.Paragraph>
+          <div style={{ marginBottom: 12 }}>
+            <Space wrap size={[4, 4]}>
+              {COMMON_REJECT_REASONS.map((reason) => (
+                <Button
+                  key={reason}
+                  size="small"
+                  type={rejectReason === reason ? "primary" : "default"}
+                  onClick={() => setRejectReason(reason)}
+                >
+                  {reason}
+                </Button>
+              ))}
+            </Space>
+          </div>
+          <Typography.Text style={{ display: "block", marginBottom: 4, fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+            自定义原因 / Custom reason
+          </Typography.Text>
+          <Input.TextArea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            rows={3}
+            placeholder="输入拒绝原因... / Enter rejection reason..."
+          />
+        </Modal>
+
+        {/* Keyboard shortcuts overlay */}
+        <KeyboardShortcutsOverlay />
+      </div>
     </ToastProvider>
   )
 }
