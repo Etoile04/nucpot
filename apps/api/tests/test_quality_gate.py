@@ -552,3 +552,166 @@ class TestPropertyMappingLoader:
         reloaded = loader.reload()
         assert "prop_b" in reloaded
         assert first is not reloaded  # New object after reload
+
+
+# ---------------------------------------------------------------------------
+# NFM-635: range_exists field and structural-key safety
+# ---------------------------------------------------------------------------
+
+
+class TestRangeExistsField:
+    """Test range_exists field on ValidationResult (NFM-635).
+
+    Validates that the gate can distinguish between:
+    - "no range data exists" (range_exists=False) → pass-through by confidence
+    - "range data exists and value passes" (range_exists=True, is_valid=True) → pass
+    - "range data exists and value fails" (range_exists=True, is_valid=False) → reject
+    """
+
+    def test_range_exists_true_when_range_found(self) -> None:
+        """range_exists=True when a range definition exists for the property."""
+        ranges = {"lattice_constant": {"min": 2.0, "max": 5.0}}
+        result = validate_range("lattice_constant", 3.0, ranges)
+        assert result.range_exists is True
+
+    def test_range_exists_false_when_property_unknown(self) -> None:
+        """range_exists=False when no range definition exists (fail-open)."""
+        result = validate_range("unknown_property", 9999.0, {})
+        assert result.range_exists is False
+
+    def test_range_exists_false_on_structural_key_collision(self) -> None:
+        """Non-dict structural keys (version, description) treated as no range.
+
+        When property-mapping.json has structural keys like 'version': '1.0',
+        a property named 'version' must not crash with AttributeError.
+        """
+        ranges = {
+            "version": "1.0",
+            "description": "property mapping config",
+            "property_aliases": {"density": ["rho"]},
+            "unit_normalization": {"kg/m3": "g/cm3"},
+        }
+        # Must not raise AttributeError — treated as no range data
+        result = validate_range("version", 1.0, ranges)
+        assert result.range_exists is False
+        assert result.is_valid is True
+
+    def test_range_exists_false_on_non_dict_nested_key(self) -> None:
+        """Dict-valued structural keys without min/max treated as no range."""
+        ranges = {
+            "property_aliases": {"density": ["rho"]},
+        }
+        result = validate_range("property_aliases", 1.0, ranges)
+        assert result.range_exists is False
+        assert result.is_valid is True
+
+
+class TestMissingRangePassThrough:
+    """NFM-635 AC-2: Missing ranges route by confidence only (not rejected).
+
+    These tests verify that when NO range data exists for a property,
+    the gate routes based on confidence level, NOT as a rejection.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_range_high_confidence_auto_approved(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """No range data + high confidence → auto_approved."""
+        gate = QualityGateService(db_session)
+        gate._mapping_loader._ranges = {}  # Empty = no range data
+
+        ref = _make_ref(confidence="high", property_name="novel_property")
+        result = await gate.process(ref)
+
+        assert result.decision == GateDecision.AUTO_APPROVED
+        assert result.should_stage is True
+
+    @pytest.mark.asyncio
+    async def test_no_range_medium_confidence_pending_review(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """No range data + medium confidence → pending_review."""
+        gate = QualityGateService(db_session)
+        gate._mapping_loader._ranges = {}
+
+        ref = _make_ref(confidence="medium", property_name="novel_property")
+        result = await gate.process(ref)
+
+        assert result.decision == GateDecision.PENDING_REVIEW
+        assert result.should_stage is True
+
+    @pytest.mark.asyncio
+    async def test_no_range_low_confidence_pending_flagged(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """No range data + low confidence → pending_flagged."""
+        gate = QualityGateService(db_session)
+        gate._mapping_loader._ranges = {}
+
+        ref = _make_ref(confidence="low", property_name="novel_property")
+        result = await gate.process(ref)
+
+        assert result.decision == GateDecision.PENDING_FLAGGED
+        assert result.should_stage is True
+
+    @pytest.mark.asyncio
+    async def test_structural_keys_in_mapping_dont_reject(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """AC-2 real-world: property-mapping.json with only structural keys
+        (no range definitions) must not reject any properties."""
+        structural_mapping = {
+            "version": "1.0",
+            "description": "NFM property mapping",
+            "property_aliases": {"density": ["rho"]},
+            "unit_normalization": {"kg/m3": "g/cm3"},
+        }
+        gate = QualityGateService(db_session)
+        gate._mapping_loader._ranges = structural_mapping
+
+        ref = _make_ref(
+            confidence="high",
+            property_name="density",
+            value=10.97,
+        )
+        result = await gate.process(ref)
+
+        # Must not reject — no range data exists for 'density'
+        assert result.decision != GateDecision.REJECTED
+        assert result.should_stage is True
+
+
+class TestPresentRangeStillRejects:
+    """NFM-635 AC-3: When range data IS present and value is out of range,
+    the gate still rejects."""
+
+    @pytest.mark.asyncio
+    async def test_present_range_invalid_value_rejects(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Range exists + value out of range → rejected."""
+        gate = QualityGateService(db_session)
+        gate._mapping_loader._ranges = {"lattice_constant": {"min": 2.0, "max": 5.0}}
+
+        ref = _make_ref(value=99.0)  # Way out of range
+        result = await gate.process(ref)
+
+        assert result.decision == GateDecision.REJECTED
+        assert result.should_stage is False
+        assert result.range_validated is False
+
+    @pytest.mark.asyncio
+    async def test_present_range_valid_value_passes(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Range exists + value in range → routes by confidence."""
+        gate = QualityGateService(db_session)
+        gate._mapping_loader._ranges = {"lattice_constant": {"min": 2.0, "max": 5.0}}
+
+        ref = _make_ref(value=3.0, confidence="high")
+        result = await gate.process(ref)
+
+        assert result.decision == GateDecision.AUTO_APPROVED
+        assert result.should_stage is True
+        assert result.range_validated is True
