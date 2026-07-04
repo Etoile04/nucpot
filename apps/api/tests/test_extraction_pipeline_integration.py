@@ -494,7 +494,7 @@ class TestOntoFuelExtractStub:
         with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
             results = await ontofuel_extract(
                 source_reference="test_source",
-                source_type="doi",
+                source_type="file",
             )
 
         assert len(results) == 3
@@ -505,7 +505,7 @@ class TestOntoFuelExtractStub:
         with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
             results = await ontofuel_extract(
                 source_reference="test_source",
-                source_type="doi",
+                source_type="file",
             )
 
         confidences = {prop["confidence"] for prop in results}
@@ -517,7 +517,7 @@ class TestOntoFuelExtractStub:
         with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
             results = await ontofuel_extract(
                 source_reference="custom_doi",
-                source_type="doi",
+                source_type="file",
             )
 
         for prop in results:

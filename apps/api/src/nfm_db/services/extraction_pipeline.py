@@ -240,7 +240,6 @@ async def ontofuel_extract(
         return _stub_extraction_results(source_reference)
 
     # Real LLM extraction
-    # Real LLM extraction
     if not is_llm_configured():
         # DOI without LLM: same as stub DOI behavior (NFM-636)
         if source_type == "doi":
@@ -406,7 +405,7 @@ async def trigger_extraction(
                 _update_job(
                     job,
                     status=JobStatus.FAILED,
-                    error_message=f"Invalid DOI format: {source_reference}",
+                    error_message="Invalid DOI format (rejected by pipeline guard)",
                     completed_at=datetime.now(UTC),
                 )
                 await session.commit()

@@ -250,6 +250,7 @@ async def submit_extraction(
                 "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
                 "(e.g., 10.1016/j.nucengdes.2020.110756)",
             )
+    # Pass original reference to pipeline (preserve user input in job record)
     job = await trigger_extraction(
         session=session,
         source_reference=payload.source_reference,

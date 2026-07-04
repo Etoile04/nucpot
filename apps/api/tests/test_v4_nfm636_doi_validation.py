@@ -100,6 +100,11 @@ class TestDefenseInDepthDoiGuard:
 class TestStubModeDoiFailure:
     """Tests for stub mode returning FAILED for DOI source_type (NFM-636)."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_stub_mode(self, monkeypatch):
+        """Ensure stub mode is active for all tests in this class."""
+        monkeypatch.setenv("EXTRACTION_STUB_MODE", "true")
+
     @pytest.mark.asyncio
     async def test_stub_mode_doi_returns_failed_status(self, doi_client):
         payload = {
