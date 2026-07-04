@@ -6,7 +6,11 @@ import path from "path"
 // which does not exist on Vercel, causing ALL API calls to fail.
 const API_SERVER_URL = process.env.API_SERVER_URL
 
-if (!API_SERVER_URL && process.env.NODE_ENV === "production") {
+// Hard-fail guard: require API_SERVER_URL in deployed production environments.
+// Allow fallback for CI builds, local development, and preview builds.
+const isProductionDeploy = process.env.NODE_ENV === "production" && !process.env.CI
+
+if (!API_SERVER_URL && isProductionDeploy) {
   throw new Error(
     "[NFM-623] API_SERVER_URL environment variable is required in production. " +
       "Set it in Vercel → Settings → Environment Variables (e.g. https://nucpot.dpdns.org).",
