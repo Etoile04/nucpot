@@ -30,6 +30,8 @@ import type {
 import ValidationCard from "@/components/v4-extraction/validation-card"
 import ValidationProgress from "@/components/v4-extraction/validation-progress"
 import KeyboardShortcutsOverlay from "@/components/v4-extraction/keyboard-shortcuts-overlay"
+import ErrorEmptyState from "@/components/v4-extraction/error-empty-state"
+import { ToastProvider } from "@/components/v4-extraction/toast-provider"
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -73,7 +75,7 @@ export default function ValidationPage() {
 
   // ── Data fetching ───────────────────────────────────────────
 
-  const { data: resultEnvelope, isLoading, isError } = useQuery<{
+  const { data: resultEnvelope, isLoading, isError, refetch } = useQuery<{
     data: V4ResultResponse
     meta?: Record<string, unknown>
   }>({
@@ -388,12 +390,10 @@ export default function ValidationPage() {
   if (isError) {
     return (
       <div style={{ padding: 24 }}>
-        <Empty
-          description={
-            <Typography.Text type="danger">
-              加载失败 / Failed to load results
-            </Typography.Text>
-          }
+        <ErrorEmptyState
+          title="加载失败 / Load Failed"
+          description="无法获取验证结果"
+          onRetry={refetch}
         />
       </div>
     )
@@ -413,6 +413,7 @@ export default function ValidationPage() {
 
   if (isComplete) {
     return (
+      <ToastProvider>
       <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
         <Card bordered>
           <div style={{ textAlign: "center", padding: 24 }}>
@@ -459,12 +460,14 @@ export default function ValidationPage() {
           </div>
         </Card>
       </div>
+      </ToastProvider>
     )
   }
 
   // ── Render: Main review interface ─────────────────────────
 
   return (
+    <ToastProvider>
     <div style={{ padding: 24 }}>
       {/* Header with progress and batch actions */}
       <Row gutter={16} align="middle" style={{ marginBottom: 16 }}>
@@ -566,5 +569,6 @@ export default function ValidationPage() {
       {/* Keyboard shortcuts overlay */}
       <KeyboardShortcutsOverlay />
     </div>
+    </ToastProvider>
   )
 }

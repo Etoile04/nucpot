@@ -23,6 +23,7 @@ import {
   Card,
   Divider,
   Tooltip,
+  Empty,
 } from "antd"
 import {
   EyeOutlined,
@@ -53,6 +54,8 @@ import type {
 import MaterialSystemNav from "@/components/v4-extraction/material-system-nav"
 import BrowseFilterBar from "@/components/v4-extraction/browse-filter-bar"
 import BrowseCharts from "@/components/v4-extraction/browse-charts"
+import SidebarSkeleton from "@/components/v4-extraction/sidebar-skeleton"
+import ErrorEmptyState from "@/components/v4-extraction/error-empty-state"
 
 const { Text, Title } = Typography
 
@@ -75,6 +78,8 @@ export default function BrowsePage() {
   const {
     data: systems = [],
     isLoading: systemsLoading,
+    isError: systemsError,
+    refetch: refetchSystems,
   } = useQuery<V4MaterialSystemSummary[]>({
     queryKey: ["v4-material-systems"],
     queryFn: () => getMaterialSystems({}),
@@ -84,6 +89,8 @@ export default function BrowsePage() {
   const {
     data: browseResult,
     isLoading: propertiesLoading,
+    isError: propertiesError,
+    refetch: refetchProperties,
   } = useQuery<{ data: V4BrowseResponse; meta?: Record<string, unknown> }>({
     queryKey: [
       "v4-browse-properties",
@@ -441,16 +448,21 @@ export default function BrowsePage() {
           selectedKey={selectedSystem}
           onSelect={handleSystemSelect}
         />
-        {systemsLoading && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: 16,
-              color: "rgba(0,0,0,0.25)",
-            }}
-          >
-            加载中...
-          </div>
+        {systemsLoading && <SidebarSkeleton rows={8} />}
+        {systemsError && (
+          <ErrorEmptyState
+            compact
+            title="加载失败 / Load Failed"
+            description="无法获取材料体系列表"
+            onRetry={refetchSystems}
+          />
+        )}
+        {!systemsLoading && !systemsError && systems.length === 0 && (
+          <Empty
+            style={{ padding: "32px 16px" }}
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="无材料体系 / No material systems"
+          />
         )}
       </div>
 
@@ -500,6 +512,25 @@ export default function BrowsePage() {
                 onFilterChange={handleFilterChange}
               />
             </div>
+
+            {/* Error state for properties */}
+            {propertiesError && (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 24,
+                }}
+              >
+                <ErrorEmptyState
+                  title="数据加载失败 / Data Load Failed"
+                  description="无法获取属性数据"
+                  onRetry={refetchProperties}
+                />
+              </div>
+            )}
 
             {/* Table */}
             <div style={{ flex: 1, overflow: "auto" }}>
