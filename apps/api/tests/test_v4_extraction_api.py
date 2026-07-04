@@ -50,8 +50,8 @@ async def v4_client(db_session):
 def submit_payload() -> dict:
     """Valid submit request payload."""
     return {
-        "source_reference": "10.1016/j.jnucmat.2023.01.001",
-        "source_type": "doi",
+        "source_reference": "test_paper.md",
+        "source_type": "file",
         "element_systems": ["U", "Zr"],
         "cache_level": "L2",
         "priority": "normal",
@@ -102,8 +102,8 @@ class TestSubmitExtraction:
         assert body["success"] is True
         data = body["data"]
         assert "job_id" in data
-        assert data["source_reference"] == "10.1016/j.jnucmat.2023.01.001"
-        assert data["source_type"] == "doi"
+        assert data["source_reference"] == "test_paper.md"
+        assert data["source_type"] == "file"
         assert data["status"] in ("completed", "partial", "queued")
         assert data["message"] == "Extraction job queued successfully."
         assert data["created_at"] is not None
