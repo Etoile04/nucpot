@@ -9,8 +9,8 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from nfm_db.main import app
 from nfm_db.database import get_db
+from nfm_db.main import app
 
 # ---------------------------------------------------------------------------
 # Fixtures
