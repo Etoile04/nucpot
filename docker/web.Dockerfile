@@ -1,9 +1,10 @@
 FROM node:22-slim AS builder
 
-# API_SERVER_URL is read at runtime by next.config.ts for the rewrite proxy.
+# API_SERVER_URL is read at build time by next.config.ts for the rewrite proxy.
 # It is NOT a NEXT_PUBLIC_ var — it stays server-side only.
-# Set via docker-compose or -e at container start (not at build time).
-ARG API_SERVER_URL=http://localhost:8000
+# In Docker production, nginx already proxies /api/* so this is optional.
+# ⚠️ Do NOT set to the public domain — that creates an infinite loop.
+ARG API_SERVER_URL=http://nucpot-prod-api:8000
 ENV API_SERVER_URL=$API_SERVER_URL
 
 WORKDIR /app
