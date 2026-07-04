@@ -3,9 +3,9 @@
  *
  * Reads JWT from localStorage and attaches Authorization header.
  * All blog admin API calls go through this client.
+ *
+ * Uses relative paths — next.config.ts rewrite proxy handles backend routing.
  */
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
 const TOKEN_KEY = "blog_admin_token"
 
@@ -49,7 +49,7 @@ async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const url = `${API_BASE}${path}`
+  const url = path
   const response = await fetch(url, {
     ...options,
     headers: buildHeaders(
@@ -106,7 +106,7 @@ export const authApi = {
     body.append("username", username)
     body.append("password", password)
 
-    const url = `${API_BASE}/api/v1/auth/login`
+    const url = "/api/v1/auth/login"
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
