@@ -12,6 +12,7 @@ Provides the dedicated /api/v4/ namespace for the extraction lifecycle:
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -52,6 +53,9 @@ VALID_CONFIDENCE = {"high", "medium", "low"}
 VALID_STAGING_STATUS = {"pending", "approved", "rejected", "promoted"}
 VALID_SORT_FIELDS = {"property", "temperature", "confidence", "created_at"}
 VALID_SORT_ORDERS = {"asc", "desc"}
+
+# DOI format regex per CTO ADR (NFM-632)
+DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 
 # Ordered job lifecycle steps for progress tracking
 _ORDERED_STEPS = [
@@ -196,6 +200,15 @@ async def submit_extraction(
 
     if not payload.source_reference.strip():
         return _error_response(400, "source_reference must not be empty.")
+
+    if payload.source_type == "doi" and not DOI_PATTERN.match(
+        payload.source_reference.strip()
+    ):
+        return _error_response(
+            400,
+            "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
+            "(e.g., 10.1016/j.nucengdes.2020.110756)",
+        )
 
     job = await trigger_extraction(
         session=session,
