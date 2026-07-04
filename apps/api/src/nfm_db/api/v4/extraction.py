@@ -241,14 +241,15 @@ async def submit_extraction(
     if not payload.source_reference.strip():
         return _error_response(400, "source_reference must not be empty.")
 
-    if payload.source_type == "doi" and not DOI_PATTERN.match(
-        payload.source_reference.strip()
-    ):
-        return _error_response(
-            400,
-            "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
-            "(e.g., 10.1016/j.nucengdes.2020.110756)",
-        )
+    if payload.source_type == "doi":
+        # Strip optional 'doi:' prefix (case-insensitive) before validation (NFM-636)
+        clean_ref = payload.source_reference.strip().lower().removeprefix("doi:")
+        if not DOI_PATTERN.match(clean_ref):
+            return _error_response(
+                400,
+                "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
+                "(e.g., 10.1016/j.nucengdes.2020.110756)",
+            )
 
     job = await trigger_extraction(
         session=session,
@@ -306,6 +307,7 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
                 extracted_count=job.extracted_count,
                 staged_count=job.staged_count,
                 rejected_count=job.rejected_count,
+                duplicate_count=job.duplicate_count,
                 error_message=job.error_message,
                 created_at=job.created_at,
                 started_at=job.started_at,
