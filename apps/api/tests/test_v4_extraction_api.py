@@ -171,9 +171,17 @@ class TestSubmitExtraction:
     async def test_submit_accepts_all_valid_source_types(
         self, v4_client: AsyncClient
     ):
+        # Map each source_type to a representative valid source_reference.
+        # DOI must match the regex guard added in NFM-632.
+        refs = {
+            "doi": "10.1016/j.nucengdes.2020.110756",
+            "url": "https://example.com/paper",
+            "file": "ref-file",
+            "internal_id": "ref-internal_id",
+        }
         for source_type in ("doi", "url", "file", "internal_id"):
             payload = {
-                "source_reference": f"ref-{source_type}",
+                "source_reference": refs[source_type],
                 "source_type": source_type,
             }
             response = await v4_client.post(

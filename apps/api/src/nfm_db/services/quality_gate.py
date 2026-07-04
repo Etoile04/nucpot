@@ -56,6 +56,7 @@ class ValidationResult:
     value: float
     min_bound: float | None = None
     max_bound: float | None = None
+    range_exists: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,16 +162,20 @@ def compute_dedup_hash(
 def validate_range(
     property_name: str,
     value: float,
-    ranges: dict[str, dict[str, float]],
+    ranges: dict[str, Any],
 ) -> ValidationResult:
     """Check whether a value falls within the expected range for its property.
 
     Fail-open for unknown properties: returns is_valid=True when no range
-    is defined in the mapping.
+    is defined in the mapping.  Structural keys in the mapping (e.g. 'version',
+    'description') that hold non-dict values are treated as absent range data.
+
+    Returns ``range_exists=True`` only when a dict with ``min`` or ``max`` keys
+    is found for the requested property name.
     """
     property_range = ranges.get(property_name)
 
-    if property_range is None:
+    if not isinstance(property_range, dict):
         return ValidationResult(
             is_valid=True,
             property_name=property_name,
@@ -186,12 +191,15 @@ def validate_range(
     if max_bound is not None and value > max_bound:
         is_valid = False
 
+    has_range = min_bound is not None or max_bound is not None
+
     return ValidationResult(
         is_valid=is_valid,
         property_name=property_name,
         value=value,
         min_bound=min_bound,
         max_bound=max_bound,
+        range_exists=has_range,
     )
 
 
@@ -225,15 +233,19 @@ class QualityGateService:
         self,
         confidence: Confidence,
         range_validated: bool,
+        range_exists: bool = False,
     ) -> tuple[GateDecision, StagingStatus]:
         """Three-path confidence router per NFM-54 design Section 3.1.
 
-        - high  + range_valid → auto_approve (status=approved)
-        - medium + range_valid → pending_review (status=pending)
+        Ranges are informational quality hints, not hard blockers.
+        Only reject when range data IS present AND value is out of range.
+
+        - high  + range_valid OR no range → auto_approve (status=approved)
+        - medium + range_valid OR no range → pending_review (status=pending)
         - low   → pending_flagged (status=pending)
-        - any   + range_invalid → rejected
+        - any   + range_exists AND range_invalid → rejected
         """
-        if not range_validated:
+        if range_exists and not range_validated:
             return GateDecision.REJECTED, StagingStatus.REJECTED
 
         if confidence == Confidence.HIGH:
@@ -287,7 +299,9 @@ class QualityGateService:
 
         # Step 4: Confidence routing
         confidence = Confidence(ref_data.get("confidence", "medium"))
-        decision, _ = self._route_confidence(confidence, range_result.is_valid)
+        decision, _ = self._route_confidence(
+            confidence, range_result.is_valid, range_result.range_exists,
+        )
 
         return GateResult(
             decision=decision,
@@ -335,6 +349,7 @@ class QualityGateService:
         _, status = self._route_confidence(
             gate_result.confidence,
             gate_result.range_validated,
+            gate_result.range_detail.range_exists if gate_result.range_detail else False,
         )
 
         record = RefGapFillStaging(
