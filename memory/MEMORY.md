@@ -18,6 +18,7 @@
 - [NFM-41 Blog Deployment Complete](nfm41-blog-deployment-complete.md) — Blog successfully deployed to production at https://nucpot.dpdns.org
 - [NFM-274 UX Review: Ontology Phase 0](nfm274-ux-review-ontology-phase0.md) — UX review of NFMD ontology Phase 0 embed interaction: PASS with NICE-TO-HAVE improvements for Phase 1+
 - [NFM-346 Tianjin Backup Failover Complete](nfm346-tianjin-failover-complete.md) — ✅ CTO Complete: Phase 4.5 Tianjin backup cluster failover technical planning (52-page spec, 4 components, API blocker documented, implementation delegated to CPO)
+- [NFM-639 Productivity Review False Positive](nfm639-false-positive.md) — ✅ CEO Review: 6h active duration normal for nuclear literature review; no action needed on NFM-575
 
 ## Consultations
 
@@ -30,3 +31,4 @@
 ## Feedback
 
 - [NFM-80 Productivity Review](feedback/nfm80-productivity-review.md) — Agent productivity review protocol: high-churn blocking decision pattern
+- [NFM-676 Phase 3 Blueprint](nfm676-phase3-blueprint.md) — Phase 3 architecture: ECharts viz, export APIs, RLS+middleware desensitization, 9 child issues planned (in_review, awaiting board approval)
