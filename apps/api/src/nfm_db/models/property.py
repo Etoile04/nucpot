@@ -6,14 +6,15 @@ Stores material property data with multi-type value support and conditions.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Date,
     ForeignKey,
     Index,
-    JSON,
     Numeric,
     String,
     Text,
@@ -22,8 +23,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, TimestampMixin
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nfm_db.models.material import Material
