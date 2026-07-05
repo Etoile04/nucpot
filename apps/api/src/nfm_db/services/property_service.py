@@ -49,10 +49,7 @@ async def list_measurements(
     """Return a paginated list of measurements, optionally filtered by material or property type."""
 
     # Build base query with join to Dataset for material_id filtering
-    stmt = (
-        select(PropertyMeasurement)
-        .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
-    )
+    stmt = select(PropertyMeasurement).join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
 
     if material_id is not None:
         stmt = stmt.where(Dataset.material_id == material_id)
@@ -62,9 +59,7 @@ async def list_measurements(
 
     # Add sorting
     sort_column = _SORT_COLUMNS.get(sort, PropertyMeasurement.created_at)
-    stmt = stmt.order_by(
-        sort_column.desc() if order == "desc" else sort_column.asc()
-    )
+    stmt = stmt.order_by(sort_column.desc() if order == "desc" else sort_column.asc())
 
     # Get total count
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -104,10 +99,7 @@ async def get_measurement(
         return None
 
     # Build conditions list
-    conditions = [
-        MeasurementConditionResponse.model_validate(c)
-        for c in row.conditions
-    ]
+    conditions = [MeasurementConditionResponse.model_validate(c) for c in row.conditions]
 
     # Build dataset response
     dataset = DatasetResponse.model_validate(row.dataset) if row.dataset else None
@@ -185,8 +177,7 @@ async def get_measurement_stats(db: AsyncSession) -> PropertyStatsResponse:
 
     category_result = await db.execute(category_stmt)
     by_category = [
-        PropertyCategoryCount(category=name, count=count)
-        for name, count in category_result.all()
+        PropertyCategoryCount(category=name, count=count) for name, count in category_result.all()
     ]
 
     # Count by material (join through Dataset, join to Material for name)

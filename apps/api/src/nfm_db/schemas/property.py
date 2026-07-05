@@ -162,8 +162,12 @@ class PropertyMeasurementCreate(BaseModel):
     def check_at_least_one_value(self) -> "PropertyMeasurementCreate":
         """Ensure at least one value_* field is provided."""
         value_fields = [
-            "value_scalar", "value_min", "value_max",
-            "value_expression", "value_list", "value_text",
+            "value_scalar",
+            "value_min",
+            "value_max",
+            "value_expression",
+            "value_list",
+            "value_text",
         ]
         if not any(getattr(self, field) for field in value_fields):
             raise ValueError(
