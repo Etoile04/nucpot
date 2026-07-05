@@ -179,7 +179,7 @@ class PropertyMeasurement(TimestampMixin, Base):
         Numeric(16, 6), nullable=True,
     )
     value_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
-    value_list: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    value_list: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
         Numeric(16, 6), nullable=True,
