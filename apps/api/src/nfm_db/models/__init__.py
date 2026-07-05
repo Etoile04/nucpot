@@ -61,6 +61,7 @@ from nfm_db.models.md_verification import (  # noqa: E402
 )
 from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
+    Dataset,
     MeasurementCondition,
     PropertyCategory,
     PropertyMeasurement,
@@ -96,6 +97,7 @@ __all__ = [
     "Confidence",
     "DataSource",
     "DataSourceAuthor",
+    "Dataset",
     "DefectAnalysisResult",
     "DefectType",
     "ExecutionStatus",
