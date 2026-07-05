@@ -65,13 +65,38 @@ from nfm_db.models.user import (  # noqa: E402
     Permission,
     User,
 )
+from nfm_db.models.unit import (  # noqa: E402
+    Unit,
+    UnitConversion,
+)
+from nfm_db.models.source import (  # noqa: E402
+    DataSource,
+    Author,
+    DataSourceAuthor,
+)
+from nfm_db.models.material import (  # noqa: E402
+    MaterialCategory,
+    Material,
+    MaterialAlias,
+    MaterialComposition,
+)
+from nfm_db.models.property import (  # noqa: E402
+    PropertyCategory,
+    PropertyType,
+    Dataset,
+    PropertyMeasurement,
+    MeasurementCondition,
+)
 
 __all__ = [
+    "Author",
     "Base",
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
     "Confidence",
+    "DataSource",
+    "DataSourceAuthor",
     "DefectAnalysisResult",
     "DefectType",
     "ExecutionStatus",
@@ -85,15 +110,25 @@ __all__ = [
     "JobStatus",
     "JobType",
     "MDSimulationResult",
+    "Material",
+    "MaterialAlias",
+    "MaterialCategory",
+    "MaterialComposition",
     "MDVerificationJob",
+    "MeasurementCondition",
     "Permission",
     "PostStatus",
     "Potential",
     "PotentialFittingResult",
     "Priority",
+    "PropertyCategory",
+    "PropertyMeasurement",
+    "PropertyType",
     "RefGapFillStaging",
     "StagingStatus",
     "TimestampMixin",
+    "Unit",
+    "UnitConversion",
     "User",
     "VerificationResultMD",
 ]
