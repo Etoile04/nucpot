@@ -39,6 +39,12 @@ from nfm_db.models.feedback import (  # noqa: E402
 from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
+from nfm_db.models.material import (  # noqa: E402
+    Material,
+    MaterialAlias,
+    MaterialCategory,
+    MaterialComposition,
+)
 from nfm_db.models.md_verification import (  # noqa: E402
     DefectAnalysisResult,
     DefectType,
@@ -54,38 +60,32 @@ from nfm_db.models.md_verification import (  # noqa: E402
     VerificationResultMD,
 )
 from nfm_db.models.potential import Potential  # noqa: E402
+from nfm_db.models.property import (  # noqa: E402
+    Dataset,
+    MeasurementCondition,
+    PropertyCategory,
+    PropertyMeasurement,
+    PropertyType,
+)
 from nfm_db.models.ref_gap_fill import (  # noqa: E402
     CacheLevel,
     Confidence,
     RefGapFillStaging,
     StagingStatus,
 )
-from nfm_db.models.user import (  # noqa: E402
-    BlogRole,
-    Permission,
-    User,
+from nfm_db.models.source import (  # noqa: E402
+    Author,
+    DataSource,
+    DataSourceAuthor,
 )
 from nfm_db.models.unit import (  # noqa: E402
     Unit,
     UnitConversion,
 )
-from nfm_db.models.source import (  # noqa: E402
-    DataSource,
-    Author,
-    DataSourceAuthor,
-)
-from nfm_db.models.material import (  # noqa: E402
-    MaterialCategory,
-    Material,
-    MaterialAlias,
-    MaterialComposition,
-)
-from nfm_db.models.property import (  # noqa: E402
-    PropertyCategory,
-    PropertyType,
-    Dataset,
-    PropertyMeasurement,
-    MeasurementCondition,
+from nfm_db.models.user import (  # noqa: E402
+    BlogRole,
+    Permission,
+    User,
 )
 
 __all__ = [
@@ -97,6 +97,7 @@ __all__ = [
     "Confidence",
     "DataSource",
     "DataSourceAuthor",
+    "Dataset",
     "DefectAnalysisResult",
     "DefectType",
     "ExecutionStatus",
@@ -110,11 +111,11 @@ __all__ = [
     "JobStatus",
     "JobType",
     "MDSimulationResult",
+    "MDVerificationJob",
     "Material",
     "MaterialAlias",
     "MaterialCategory",
     "MaterialComposition",
-    "MDVerificationJob",
     "MeasurementCondition",
     "Permission",
     "PostStatus",

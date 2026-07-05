@@ -6,6 +6,8 @@ Stores material property data with multi-type value support and conditions.
 """
 
 import uuid
+from datetime import date
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -13,17 +15,15 @@ from sqlalchemy import (
     Date,
     ForeignKey,
     Index,
-    JSON,
     Numeric,
     String,
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, TimestampMixin
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nfm_db.models.material import Material
@@ -124,7 +124,7 @@ class Dataset(TimestampMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    measurement_date: Mapped[str | None] = mapped_column(Date, nullable=True)
+    measurement_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # -- relationships --
@@ -176,7 +176,7 @@ class PropertyMeasurement(TimestampMixin, Base):
         Numeric(16, 6), nullable=True,
     )
     value_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
-    value_list: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    value_list: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
         Numeric(16, 6), nullable=True,
