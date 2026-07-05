@@ -39,6 +39,12 @@ from nfm_db.models.feedback import (  # noqa: E402
 from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
+from nfm_db.models.material import (  # noqa: E402
+    Material,
+    MaterialAlias,
+    MaterialCategory,
+    MaterialComposition,
+)
 from nfm_db.models.md_verification import (  # noqa: E402
     DefectAnalysisResult,
     DefectType,
@@ -54,11 +60,27 @@ from nfm_db.models.md_verification import (  # noqa: E402
     VerificationResultMD,
 )
 from nfm_db.models.potential import Potential  # noqa: E402
+from nfm_db.models.property import (  # noqa: E402
+    Dataset,
+    MeasurementCondition,
+    PropertyCategory,
+    PropertyMeasurement,
+    PropertyType,
+)
 from nfm_db.models.ref_gap_fill import (  # noqa: E402
     CacheLevel,
     Confidence,
     RefGapFillStaging,
     StagingStatus,
+)
+from nfm_db.models.source import (  # noqa: E402
+    Author,
+    DataSource,
+    DataSourceAuthor,
+)
+from nfm_db.models.unit import (  # noqa: E402
+    Unit,
+    UnitConversion,
 )
 from nfm_db.models.user import (  # noqa: E402
     BlogRole,
@@ -67,11 +89,15 @@ from nfm_db.models.user import (  # noqa: E402
 )
 
 __all__ = [
+    "Author",
     "Base",
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
     "Confidence",
+    "DataSource",
+    "DataSourceAuthor",
+    "Dataset",
     "DefectAnalysisResult",
     "DefectType",
     "ExecutionStatus",
@@ -86,14 +112,24 @@ __all__ = [
     "JobType",
     "MDSimulationResult",
     "MDVerificationJob",
+    "Material",
+    "MaterialAlias",
+    "MaterialCategory",
+    "MaterialComposition",
+    "MeasurementCondition",
     "Permission",
     "PostStatus",
     "Potential",
     "PotentialFittingResult",
     "Priority",
+    "PropertyCategory",
+    "PropertyMeasurement",
+    "PropertyType",
     "RefGapFillStaging",
     "StagingStatus",
     "TimestampMixin",
+    "Unit",
+    "UnitConversion",
     "User",
     "VerificationResultMD",
 ]
