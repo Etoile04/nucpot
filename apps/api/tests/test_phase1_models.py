@@ -17,9 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
     Author,
+    Dataset,
     DataSource,
     DataSourceAuthor,
-    Dataset,
     Material,
     MaterialAlias,
     MaterialCategory,
@@ -31,6 +31,7 @@ from nfm_db.models import (
     Unit,
     UnitConversion,
 )
+
 
 # Helper to eagerly refresh a relationship in async sessions
 # (avoids MissingGreenlet from implicit lazy load)

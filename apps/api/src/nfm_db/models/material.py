@@ -6,6 +6,7 @@ Stores material definitions with hierarchical categories, aliases, and compositi
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -21,8 +22,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, TimestampMixin
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nfm_db.models.property import Dataset

@@ -5,6 +5,7 @@ Supports unit definitions with conversion factors between units.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     ForeignKey,
@@ -16,8 +17,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, TimestampMixin
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nfm_db.models.property import PropertyMeasurement, PropertyType
