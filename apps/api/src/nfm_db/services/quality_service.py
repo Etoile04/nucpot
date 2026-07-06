@@ -132,8 +132,8 @@ async def calculate_extraction_accuracy(
     failed_items: list[AccuracyFailure] = []
 
     for record in records[:sample_size]:
-        ref = ref_map.get(record.property_name)
-        if ref is None:
+        ref = ref_map.get(record.property_name) or {}
+        if not ref:
             # No reference for this property — count as correct (unverified)
             correct += 1
             continue
@@ -240,7 +240,7 @@ async def _get_confidence_distribution(
     dist: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
     for row in rows:
         if row.confidence and row.confidence.value in dist:
-            dist[row.confidence.value] = row.count
+            dist[row.confidence.value] = row._mapping["count"]
 
     return ConfidenceDistribution(**dist)
 

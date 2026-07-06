@@ -49,7 +49,7 @@ async def create_batch_endpoint(
 )
 async def get_batch_status_endpoint(
     batch_id: str,
-) -> dict:
+) -> dict[str, object]:
     """Return real-time progress for a batch import job."""
     progress = seed_service.get_batch_status(batch_id)
     if progress is None:
