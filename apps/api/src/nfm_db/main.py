@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from nfm_db.api.v1 import (
-    auth_endpoints,
     blog,
     extraction,
     feedback,
@@ -20,8 +19,38 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
-from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.services.upload_service import PotentialUploadError
+
+# Optional v1 modules (may not exist in all branches yet)
+try:
+    from nfm_db.api.v1 import materials as materials_mod
+except ImportError:
+    materials_mod = None  # type: ignore[assignment]
+
+try:
+    from nfm_db.api.v1 import properties as properties_mod
+except ImportError:
+    properties_mod = None  # type: ignore[assignment]
+
+try:
+    from nfm_db.api.v1 import seed as seed_mod
+except ImportError:
+    seed_mod = None  # type: ignore[assignment]
+
+try:
+    from nfm_db.api.v1 import sources as sources_mod
+except ImportError:
+    sources_mod = None  # type: ignore[assignment]
+
+try:
+    from nfm_db.api.v1 import auth_endpoints
+except ImportError:
+    auth_endpoints = None  # type: ignore[assignment]
+
+try:
+    from nfm_db.api.v4 import extraction as v4_extraction
+except ImportError:
+    v4_extraction = None  # type: ignore[assignment]
 
 app = FastAPI(
     title="核燃料与材料物性数据库 API",
@@ -69,7 +98,17 @@ app.include_router(viz.router, prefix="/api/v1", tags=["visualization"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["ontology"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["verification"])
 app.include_router(md_verification.router, prefix="/api/v1/md-verification", tags=["md-verification"])
-app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
+if auth_endpoints is not None:
+    app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
 app.include_router(blog.router, prefix="/api/v1", tags=["blog"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["potentials"])
-app.include_router(v4_extraction.router, prefix="/api/v4", tags=["v4-extraction"])
+if sources_mod is not None:
+    app.include_router(sources_mod.router, prefix="/api/v1", tags=["sources"])
+if materials_mod is not None:
+    app.include_router(materials_mod.router, prefix="/api/v1", tags=["materials"])
+if properties_mod is not None:
+    app.include_router(properties_mod.router, prefix="/api/v1", tags=["properties"])
+if seed_mod is not None:
+    app.include_router(seed_mod.router, prefix="/api/v1", tags=["seed"])
+if v4_extraction is not None:
+    app.include_router(v4_extraction.router, prefix="/api/v4", tags=["v4-extraction"])

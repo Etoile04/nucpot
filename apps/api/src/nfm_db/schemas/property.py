@@ -202,6 +202,8 @@ class PropertyMeasurementResponse(BaseModel):
     uncertainty: float | None
     unit_id: UUID | None
     notes: str | None
+    review_status: str = "pending"
+    reviewer_note: str | None = None
     created_at: datetime
     updated_at: datetime
 
