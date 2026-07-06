@@ -5,8 +5,7 @@ from typing import Any
 
 import pytest
 
-from nfm_db.models import Material, MaterialAlias, MaterialComposition, MaterialCategory
-
+from nfm_db.models import Material, MaterialAlias, MaterialCategory, MaterialComposition
 
 _seed_counter = 0
 
