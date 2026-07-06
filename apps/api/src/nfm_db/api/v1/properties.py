@@ -23,6 +23,7 @@ from nfm_db.schemas.property import (
     PropertyMeasurementDetailResponse,
     PropertyMeasurementResponse,
     PropertyMeasurementUpdate,
+    PropertyStatsResponse,
 )
 from nfm_db.services.property_service import (
     create_measurement,
@@ -65,7 +66,7 @@ async def list_properties_endpoint(
 @router.get("/properties/stats")
 async def get_properties_stats_endpoint(
     db: AsyncSession = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[PropertyStatsResponse]:
     """Return aggregate statistics about measurements."""
     stats = await get_measurement_stats(db)
     return ApiResponse(success=True, data=stats)
