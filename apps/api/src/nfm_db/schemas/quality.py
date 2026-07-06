@@ -12,7 +12,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Accuracy report
 # ---------------------------------------------------------------------------
@@ -28,7 +27,7 @@ class AccuracyReport(BaseModel):
     accuracy_score: float = Field(
         ge=0.0,
         le=1.0,
-        description="Fraction correct (0.0–1.0)",
+        description="Fraction correct (0.0-1.0)",
     )
     failed_items: list[AccuracyFailure] = Field(default_factory=list)
     target_met: bool = Field(

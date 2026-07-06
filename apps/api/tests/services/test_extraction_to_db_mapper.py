@@ -6,7 +6,6 @@ Tests use the db_session fixture from conftest.py (SQLite in-memory).
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import pytest
@@ -14,10 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
-    DataSource,
     Dataset,
+    DataSource,
     Material,
-    MaterialComposition,
     MeasurementCondition,
     PropertyCategory,
     PropertyMeasurement,
@@ -28,7 +26,6 @@ from nfm_db.services.extraction_to_db_mapper import (
     MappingResult,
     map_and_persist,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -432,21 +429,21 @@ class TestMapAndPersistIntegration:
         self, db_session: AsyncSession
     ):
         """Given realistic extraction output, verify correct DB records."""
-        pt_tc = await _seed_property_type(
+        await _seed_property_type(
             db_session,
             category_name="thermal",
             category_slug="thermal",
             property_name="Thermal Conductivity",
             property_slug="thermal-conductivity",
         )
-        pt_mp = await _seed_property_type(
+        await _seed_property_type(
             db_session,
             category_name="thermal",
             category_slug="thermal",
             property_name="Melting Point",
             property_slug="melting-point",
         )
-        pt_de = await _seed_property_type(
+        await _seed_property_type(
             db_session,
             category_name="mechanical",
             category_slug="mechanical",

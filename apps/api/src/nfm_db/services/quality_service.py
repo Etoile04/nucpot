@@ -30,7 +30,6 @@ from nfm_db.schemas.quality import (
     CoverageEntry,
     CoverageReport,
     QualitySummary,
-    ReviewAction,
     UnreviewedExtraction,
 )
 

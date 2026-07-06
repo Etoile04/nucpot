@@ -15,7 +15,7 @@ All operations run within a single DB transaction.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -23,10 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
-    DataSource,
     Dataset,
+    DataSource,
     Material,
-    MaterialComposition,
     MeasurementCondition,
     PropertyCategory,
     PropertyMeasurement,
@@ -134,7 +133,7 @@ def _build_condition_kwargs(
     if extra_keys:
         extra_parts = [f"{k}={conditions[k]}" for k in extra_keys]
         existing_notes = conditions.get("notes", "")
-        parts = [existing_notes] + extra_parts if existing_notes else extra_parts
+        parts = [existing_notes, *extra_parts] if existing_notes else extra_parts
         mapped["notes"] = "; ".join(parts)
 
     return mapped

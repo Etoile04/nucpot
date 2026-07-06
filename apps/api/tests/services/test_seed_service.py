@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -32,7 +31,6 @@ from nfm_db.services.seed_service import (
     get_batch_status,
     start_batch,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

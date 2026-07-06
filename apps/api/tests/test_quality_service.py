@@ -15,7 +15,6 @@ Tests cover:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -30,9 +29,7 @@ from nfm_db.schemas.quality import (
     AccuracyReport,
     CoverageReport,
     QualitySummary,
-    ReviewAction,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

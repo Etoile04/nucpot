@@ -14,26 +14,24 @@ Note: HTTP CRUD endpoint verification depends on NFM-702 service layer
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Text, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy import Text, event
 
 from nfm_db.models import Base
-from nfm_db.models.source import DataSource
 from nfm_db.models.material import Material
 from nfm_db.models.property import (
     Dataset,
-    PropertyCategory,
-    PropertyType,
-    PropertyMeasurement,
     MeasurementCondition,
+    PropertyCategory,
+    PropertyMeasurement,
+    PropertyType,
 )
+from nfm_db.models.source import DataSource
 from nfm_db.models.unit import Unit
 from nfm_db.services.extraction_to_db_mapper import (
     MappingResult,
     map_and_persist,
 )
-
 
 # ---------------------------------------------------------------------------
 # SQLite compatibility: JSONB is PG-only — fall back to TEXT for test DDL.
