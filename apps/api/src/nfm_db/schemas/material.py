@@ -196,3 +196,10 @@ class MaterialCompositionResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MaterialDetailResponse(MaterialResponse):
+    """Material response with eagerly-loaded aliases and composition."""
+
+    aliases: list[MaterialAliasResponse] = Field(default_factory=list)
+    composition: list[MaterialCompositionResponse] = Field(default_factory=list)

@@ -12,11 +12,14 @@ from nfm_db.api.v1 import (
     extraction,
     feedback,
     health,
+    materials,
     md_verification,
     ontology,
     potentials,
+    properties,
     reference_gaps,
     reference_values,
+    sources,
     verification,
     viz,
 )
@@ -72,4 +75,7 @@ app.include_router(md_verification.router, prefix="/api/v1/md-verification", tag
 app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
 app.include_router(blog.router, prefix="/api/v1", tags=["blog"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["potentials"])
+app.include_router(materials.router, prefix="/api/v1", tags=["materials"])
+app.include_router(properties.router, prefix="/api/v1", tags=["properties"])
+app.include_router(sources.router, prefix="/api/v1", tags=["sources"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["v4-extraction"])
