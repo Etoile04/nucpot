@@ -11,11 +11,14 @@ from nfm_db.api.v1 import (
     extraction,
     feedback,
     health,
+    materials,
     md_verification,
     ontology,
     potentials,
+    properties,
     reference_gaps,
     reference_values,
+    sources,
     verification,
     viz,
 )
@@ -102,12 +105,9 @@ if auth_endpoints is not None:
     app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
 app.include_router(blog.router, prefix="/api/v1", tags=["blog"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["potentials"])
-if sources_mod is not None:
-    app.include_router(sources_mod.router, prefix="/api/v1", tags=["sources"])
-if materials_mod is not None:
-    app.include_router(materials_mod.router, prefix="/api/v1", tags=["materials"])
-if properties_mod is not None:
-    app.include_router(properties_mod.router, prefix="/api/v1", tags=["properties"])
+app.include_router(materials.router, prefix="/api/v1", tags=["materials"])
+app.include_router(properties.router, prefix="/api/v1", tags=["properties"])
+app.include_router(sources.router, prefix="/api/v1", tags=["sources"])
 if seed_mod is not None:
     app.include_router(seed_mod.router, prefix="/api/v1", tags=["seed"])
 if v4_extraction is not None:

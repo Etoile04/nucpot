@@ -23,6 +23,7 @@ from nfm_db.schemas.property import (
     PropertyMeasurementDetailResponse,
     PropertyMeasurementResponse,
     PropertyMeasurementUpdate,
+    PropertyStatsResponse,
 )
 from nfm_db.services.property_service import (
     create_measurement,
@@ -37,7 +38,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/properties", response_model=ApiResponse[PaginatedResponse[PropertyMeasurementResponse]])
+@router.get(
+    "/properties", response_model=ApiResponse[PaginatedResponse[PropertyMeasurementResponse]]
+)
 async def list_properties_endpoint(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
@@ -63,13 +66,15 @@ async def list_properties_endpoint(
 @router.get("/properties/stats")
 async def get_properties_stats_endpoint(
     db: AsyncSession = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[PropertyStatsResponse]:
     """Return aggregate statistics about measurements."""
     stats = await get_measurement_stats(db)
     return ApiResponse(success=True, data=stats)
 
 
-@router.get("/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementDetailResponse])
+@router.get(
+    "/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementDetailResponse]
+)
 async def get_property_endpoint(
     measurement_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -81,7 +86,9 @@ async def get_property_endpoint(
     return ApiResponse(success=True, data=detail)
 
 
-@router.post("/properties", response_model=ApiResponse[PropertyMeasurementResponse], status_code=201)
+@router.post(
+    "/properties", response_model=ApiResponse[PropertyMeasurementResponse], status_code=201
+)
 async def create_property_endpoint(
     payload: PropertyMeasurementCreate,
     db: AsyncSession = Depends(get_db),
@@ -91,7 +98,9 @@ async def create_property_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.patch("/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementResponse])
+@router.patch(
+    "/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementResponse]
+)
 async def update_property_endpoint(
     measurement_id: UUID,
     payload: PropertyMeasurementUpdate,

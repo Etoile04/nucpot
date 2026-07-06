@@ -90,7 +90,7 @@ class DataSourceUpdate(BaseModel):
 
 
 class DataSourceResponse(BaseModel):
-    """Schema for data source response."""
+    """Schema for data source response (list endpoint, no authors)."""
 
     id: UUID
     doi: str | None = None
@@ -187,5 +187,12 @@ class DataSourceAuthorResponse(BaseModel):
     is_corresponding: bool = False
     created_at: datetime
     updated_at: datetime
+    author: AuthorResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DataSourceDetailResponse(DataSourceResponse):
+    """Data source response with eagerly-loaded authors (detail endpoint)."""
+
+    authors: list[DataSourceAuthorResponse] = Field(default_factory=list)
