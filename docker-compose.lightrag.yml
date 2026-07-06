@@ -1,0 +1,108 @@
+# =============================================================================
+# NFM-DB — LightRAG Sidecar (standalone overlay)
+# =============================================================================
+# Adds a LightRAG sidecar service to the production stack.
+# The sidecar connects to the same PostgreSQL instance used by the NFM API.
+#
+# Usage:
+#   # Start the full stack (API + LightRAG):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.lightrag.yml \
+#     --env-file docker/.env.prod --env-file .env.lightrag \
+#     up -d --build
+#
+#   # Start only the sidecar (requires existing DB):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.lightrag.yml \
+#     --env-file docker/.env.prod --env-file .env.lightrag \
+#     up -d lightrag
+#
+# Architecture:
+#   NFM FastAPI (8000) <--> LightRAG Sidecar (8001) <--> PostgreSQL (pgvector + AGE)
+#
+# Parent issue: NFM-741
+# =============================================================================
+
+# Extend the production network from docker-compose.prod.yml
+name: nucpot-prod
+
+services:
+  # ---- LightRAG Sidecar ----------------------------------------------------
+  # Isolated RAG + Knowledge Graph service.
+  # ⚠️  Beta — LightRAG is under active development.
+  lightrag:
+    build:
+      context: .
+      dockerfile: docker/lightrag/Dockerfile
+    image: nucpot-lightrag:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-lightrag
+    restart: unless-stopped
+    ports:
+      # Host 9621 -> Container 8001
+      # (Host 8001 is already used by NFM API)
+      - "${LIGHTRAG_HOST_PORT:-9621}:8001"
+    environment:
+      # --- PostgreSQL (shared with NFM API) ---
+      POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-prod-db}
+      POSTGRES_PORT: ${LIGHTRAG_PG_PORT:-5432}
+      POSTGRES_USER: ${LIGHTRAG_PG_USER:-${PROD_POSTGRES_USER:-nfm}}
+      POSTGRES_PASSWORD: ${LIGHTRAG_PG_PASSWORD:-${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}}
+      POSTGRES_DATABASE: ${LIGHTRAG_PG_DB:-${PROD_POSTGRES_DB:-nfm_db}}
+      POSTGRES_MAX_CONNECTIONS: ${LIGHTRAG_PG_MAX_CONNECTIONS:-25}
+      POSTGRES_VECTOR_INDEX_TYPE: ${LIGHTRAG_PG_VECTOR_INDEX_TYPE:-HNSW}
+
+      # --- LLM Configuration ---
+      LLM_BINDING: ${LIGHTRAG_LLM_BINDING:-openai}
+      LLM_MODEL: ${LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
+      LLM_BINDING_HOST: ${LIGHTRAG_LLM_HOST:-}
+      LLM_BINDING_API_KEY: ${LIGHTRAG_LLM_API_KEY:-}
+      LLM_TIMEOUT: ${LIGHTRAG_LLM_TIMEOUT:-150}
+      MAX_ASYNC_LLM: ${LIGHTRAG_MAX_ASYNC_LLM:-4}
+
+      # --- Embedding Configuration ---
+      EMBEDDING_BINDING: ${LIGHTRAG_EMBEDDING_BINDING:-openai}
+      EMBEDDING_MODEL: ${LIGHTRAG_EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIM: ${LIGHTRAG_EMBEDDING_DIM:-1024}
+      EMBEDDING_BINDING_HOST: ${LIGHTRAG_EMBEDDING_HOST:-}
+      EMBEDDING_BINDING_API_KEY: ${LIGHTRAG_EMBEDDING_API_KEY:-}
+
+      # --- RAG Configuration ---
+      SUMMARY_LANGUAGE: ${LIGHTRAG_SUMMARY_LANGUAGE:-Chinese}
+      WORKING_DIR: /app/rag_storage
+      INPUT_DIR: /app/inputs
+
+      # --- Server ---
+      PORT: "8001"
+      HOST: "0.0.0.0"
+
+      # --- Authentication (optional) ---
+      LIGHTRAG_API_KEY: ${LIGHTRAG_API_KEY:-}
+    volumes:
+      - lightrag-data:/app/rag_storage
+      - lightrag-inputs:/app/inputs
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:8001/health || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+        reservations:
+          cpus: "0.5"
+          memory: 1g
+    networks: [prod]
+
+volumes:
+  lightrag-data:
+  lightrag-inputs:
+
+networks:
+  prod:
+    external: true
+    name: nucpot-prod_prod
