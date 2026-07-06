@@ -1,9 +1,81 @@
 """SQLAlchemy ORM base and common mixins."""
 
-from datetime import datetime
+from __future__ import annotations
 
-from sqlalchemy import DateTime, func
+import json
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, Text, TypeDecorator, func, types
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+if TYPE_CHECKING:
+    pass
+
+
+class JSONArray(TypeDecorator[list[str] | None]):
+    """PostgreSQL ARRAY ↔ JSON text for cross-database compatibility.
+
+    On PostgreSQL, uses native ARRAY(Text).
+    On SQLite and other databases, serializes lists as JSON text.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(ARRAY(Text))
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
+class CompatJSONB(TypeDecorator[dict | None]):
+    """PostgreSQL JSONB ↔ JSON text for cross-database compatibility.
+
+    On PostgreSQL, uses native JSONB.
+    On SQLite and other databases, serializes dicts as JSON text.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB())
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
 
 
 class Base(DeclarativeBase):
@@ -59,6 +131,10 @@ from nfm_db.models.md_verification import (  # noqa: E402
     PotentialFittingResult,
     VerificationResultMD,
 )
+from nfm_db.models.ontology import (  # noqa: E402
+    KEntityType,
+    KRelationType,
+)
 from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
     Dataset,
@@ -87,10 +163,19 @@ from nfm_db.models.user import (  # noqa: E402
     Permission,
     User,
 )
+from nfm_db.models.kg import (  # noqa: E402
+    KGEdge,
+    KGNode,
+    KGReviewQueue,
+    VALID_NODE_TYPES,
+    VALID_RELATION_TYPES,
+)
 
 __all__ = [
     "Author",
     "Base",
+    "CompatJSONB",
+    "JSONArray",
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
@@ -110,6 +195,8 @@ __all__ = [
     "HpcJobStatus",
     "JobStatus",
     "JobType",
+    "KEntityType",
+    "KRelationType",
     "MDSimulationResult",
     "MDVerificationJob",
     "Material",
@@ -132,4 +219,9 @@ __all__ = [
     "UnitConversion",
     "User",
     "VerificationResultMD",
+    "KGNode",
+    "KGEdge",
+    "KGReviewQueue",
+    "VALID_NODE_TYPES",
+    "VALID_RELATION_TYPES",
 ]

@@ -23,11 +23,13 @@ def _map_jsonb_to_text_for_sqlite(
     connection,
     **_kw,
 ) -> None:
-    """Replace JSONB columns with TEXT so ``create_all`` succeeds on SQLite.
+    """Replace JSONB/ARRAY columns with TEXT so ``create_all`` succeeds on SQLite.
 
     Runs on every ``before_create`` event (not once-only) because each test
     re-creates the database from scratch.
     """
+    from sqlalchemy import ARRAY as SA_ARRAY
+    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
     from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
     from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 
@@ -37,6 +39,8 @@ def _map_jsonb_to_text_for_sqlite(
     for table in target.sorted_tables:
         for col in table.columns:
             if isinstance(col.type, PG_JSONB):
+                col.type = Text()
+            if isinstance(col.type, (PG_ARRAY, SA_ARRAY)):
                 col.type = Text()
 
 
@@ -56,6 +60,13 @@ def _reset_rate_limiters() -> None:
 async def db_session() -> AsyncSession:
     """Create an in-memory SQLite async session for testing."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
