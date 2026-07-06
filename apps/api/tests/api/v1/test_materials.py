@@ -8,7 +8,6 @@ import pytest
 
 from nfm_db.models import Material, MaterialAlias, MaterialCategory
 
-
 # ---------------------------------------------------------------------------
 # Helpers — each test creates its own data, no cross-test dependencies
 # ---------------------------------------------------------------------------

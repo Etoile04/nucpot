@@ -1,10 +1,11 @@
 """Tests for the material service layer."""
 
 import uuid
+from typing import Any
 
 import pytest
 
-from nfm_db.models import Material, MaterialAlias, MaterialComposition, MaterialCategory
+from nfm_db.models import Material, MaterialAlias, MaterialCategory, MaterialComposition
 from nfm_db.services.material_service import (
     create_material,
     get_material,
@@ -12,7 +13,6 @@ from nfm_db.services.material_service import (
     search_materials,
     update_material,
 )
-
 
 _seed_counter = 0
 

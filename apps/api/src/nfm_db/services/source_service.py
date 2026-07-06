@@ -15,11 +15,11 @@ from sqlalchemy.orm import selectinload
 from nfm_db.models import DataSource, DataSourceAuthor
 from nfm_db.schemas.common import PaginatedResponse
 from nfm_db.schemas.source import (
+    AuthorResponse,
     DataSourceAuthorResponse,
     DataSourceCreate,
     DataSourceDetailResponse,
     DataSourceResponse,
-    AuthorResponse,
 )
 
 logger = logging.getLogger(__name__)
