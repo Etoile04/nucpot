@@ -43,6 +43,11 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.models.kg_node import (  # noqa: E402
+    KGNode,
+    KGProvenance,
+    KGReviewQueue,
+)
 from nfm_db.models.user import (  # noqa: E402
     BlogRole,
     Permission,
@@ -58,6 +63,9 @@ __all__ = [
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
+    "KGNode",
+    "KGProvenance",
+    "KGReviewQueue",
     "Permission",
     "PostStatus",
     "Potential",
