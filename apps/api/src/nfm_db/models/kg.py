@@ -8,7 +8,7 @@ Supports multi-corpus ontology via corpus_id and OntologyIdMap.
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     JSON,
@@ -66,7 +66,7 @@ class KGNode(TimestampMixin, Base):
         nullable=True,
         comment="JSON array of alternative names, stored as JSON text",
     )
-    properties: Mapped[dict] = mapped_column(
+    properties: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         default=dict,
     )
@@ -150,7 +150,7 @@ class KGEdge(TimestampMixin, Base):
         nullable=False,
     )
     relation_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    properties: Mapped[dict] = mapped_column(
+    properties: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         default=dict,
     )

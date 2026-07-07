@@ -22,7 +22,7 @@ import logging
 import os
 import time
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -374,7 +374,7 @@ class VisionClient:
             body.get("usage", {}).get("total_tokens", "N/A"),
         )
 
-        return body
+        return cast(dict[str, Any], body)
 
 
 # ---------------------------------------------------------------------------

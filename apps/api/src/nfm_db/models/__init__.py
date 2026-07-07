@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, Text, TypeDecorator, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeEngine
 
 if TYPE_CHECKING:
     pass
@@ -24,19 +26,19 @@ class JSONArray(TypeDecorator[list[str] | None]):
     impl = Text
     cache_ok = True
 
-    def load_dialect_impl(self, dialect):
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(ARRAY(Text))
         return dialect.type_descriptor(Text())
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return None
         if dialect.name == "postgresql":
             return value
         return json.dumps(value)
 
-    def process_result_value(self, value, dialect):
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return None
         if dialect.name == "postgresql":
@@ -46,7 +48,7 @@ class JSONArray(TypeDecorator[list[str] | None]):
         return value
 
 
-class CompatJSONB(TypeDecorator[dict | None]):
+class CompatJSONB(TypeDecorator[dict[str, Any] | None]):
     """PostgreSQL JSONB ↔ JSON text for cross-database compatibility.
 
     On PostgreSQL, uses native JSONB.
@@ -56,19 +58,19 @@ class CompatJSONB(TypeDecorator[dict | None]):
     impl = Text
     cache_ok = True
 
-    def load_dialect_impl(self, dialect):
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(JSONB())
         return dialect.type_descriptor(Text())
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return None
         if dialect.name == "postgresql":
             return value
         return json.dumps(value)
 
-    def process_result_value(self, value, dialect):
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return None
         if dialect.name == "postgresql":

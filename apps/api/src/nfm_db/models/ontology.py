@@ -10,7 +10,7 @@ NFM-716 — Phase 2B.2 NucMat Ontology
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -76,7 +76,7 @@ class KRelationType(TimestampMixin, Base):
         JSONArray,
         nullable=True,
     )
-    properties_schema: Mapped[dict | None] = mapped_column(
+    properties_schema: Mapped[dict[str, Any] | None] = mapped_column(
         CompatJSONB,
         nullable=True,
     )

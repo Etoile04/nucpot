@@ -113,6 +113,14 @@ module = "prometheus_client.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "pytesseract.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "PIL.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "nfm_md_runner.*"
 ignore_missing_imports = true
 
