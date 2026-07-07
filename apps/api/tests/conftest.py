@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import Text, event
@@ -11,6 +13,12 @@ from nfm_db.database import get_db
 from nfm_db.main import app
 from nfm_db.models import Base, BlogRole, User
 from nfm_db.services.auth_service import create_access_token
+
+# Deterministic user IDs for FK seed data (matched by test_blog_post_service,
+# test_blog_auth, test_md_verification_service_edge_cases).
+_SEED_AUTHOR_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
+_SEED_REVIEWER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000002")
+_SEED_OTHER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000003")
 
 
 # ---------------------------------------------------------------------------
@@ -23,11 +31,13 @@ def _map_jsonb_to_text_for_sqlite(
     connection,
     **_kw,
 ) -> None:
-    """Replace JSONB columns with TEXT so ``create_all`` succeeds on SQLite.
+    """Replace JSONB/ARRAY columns with TEXT so ``create_all`` succeeds on SQLite.
 
     Runs on every ``before_create`` event (not once-only) because each test
     re-creates the database from scratch.
     """
+    from sqlalchemy import ARRAY as SA_ARRAY
+    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
     from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
     from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 
@@ -37,6 +47,8 @@ def _map_jsonb_to_text_for_sqlite(
     for table in target.sorted_tables:
         for col in table.columns:
             if isinstance(col.type, PG_JSONB):
+                col.type = Text()
+            if isinstance(col.type, (PG_ARRAY, SA_ARRAY)):
                 col.type = Text()
 
 
@@ -56,6 +68,13 @@ def _reset_rate_limiters() -> None:
 async def db_session() -> AsyncSession:
     """Create an in-memory SQLite async session for testing."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -63,6 +82,19 @@ async def db_session() -> AsyncSession:
         engine, class_=AsyncSession, expire_on_commit=False,
     )
     async with session_factory() as session:
+        # Seed deterministic users so FK references in blog/md_verification tests resolve.
+        for uid, name, email in [
+            (_SEED_AUTHOR_ID, "_fk_seed_author", "_fk_author@test.com"),
+            (_SEED_REVIEWER_ID, "_fk_seed_reviewer", "_fk_reviewer@test.com"),
+            (_SEED_OTHER_ID, "_fk_seed_other", "_fk_other@test.com"),
+        ]:
+            existing = await session.get(User, uid)
+            if existing is None:
+                session.add(User(
+                    id=uid, username=name, email=email,
+                    hashed_password="hashed",
+                ))
+        await session.flush()
         yield session
 
     async with engine.begin() as conn:
