@@ -322,7 +322,7 @@ class TestVisionClientRetry:
             client = VisionClient(max_retries=2)
 
         with patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=always_fail):
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(VisionClientError, match="VLM HTTP error 500"):
                 await client.extract(image_data=_sample_png_bytes(), prompt="Extract")
 
 
