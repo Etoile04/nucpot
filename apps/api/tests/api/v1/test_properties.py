@@ -260,17 +260,24 @@ async def test_create_measurement_scalar(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_measurement_range(async_client) -> None:
+async def test_create_measurement_range(async_client, db_session) -> None:
+    mat = await _seed_material(db_session, name="RangeMat")
+    cat = await _seed_category(db_session, name="RangeCat", slug="range-cat")
+    pt = await _seed_property_type(db_session, cat.id, slug="range-pt")
+    ds = await _seed_dataset(db_session, mat.id)
     payload = {
-        "dataset_id": str(uuid.uuid4()),
-        "property_type_id": str(uuid.uuid4()),
+        "dataset_id": str(ds.id),
+        "property_type_id": str(pt.id),
         "value_min": 1.0,
         "value_max": 5.0,
     }
-    # Will fail with FK constraint — but validates schema shape
     response = await async_client.post("/api/v1/properties", json=payload)
-    # May 500 on FK, but should not be 422 (schema valid)
-    assert response.status_code != 422
+    assert response.status_code == 201
+    body = response.json()
+    assert body["success"] is True
+    data = body["data"]
+    assert data["value_min"] == 1.0
+    assert data["value_max"] == 5.0
 
 
 @pytest.mark.asyncio
