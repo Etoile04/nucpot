@@ -1,7 +1,7 @@
 """Create kg_nodes and kg_edges tables with performance indexes
 
 Revision ID: 012
-Revises: 011
+Revises: 010
 Create Date: 2026-07-06 12:00:00.000000
 
 Creates the core Knowledge Graph storage tables:
@@ -24,7 +24,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "012"
-down_revision: str | Sequence[str] | None = "011"
+down_revision: str | Sequence[str] | None = "010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

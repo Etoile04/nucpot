@@ -11,8 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession

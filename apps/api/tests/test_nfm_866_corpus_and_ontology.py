@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -53,7 +53,7 @@ class TestKGNodeCorpusColumns:
             label="UO2",
             corpus_id="nvl-1.1",
             synced_to_graph=True,
-            graph_synced_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+            graph_synced_at=datetime(2026, 1, 15, tzinfo=datetime.UTC),
         )
         db_session.add(node)
         await db_session.commit()
@@ -130,7 +130,7 @@ class TestKGEdgeCorpusColumns:
         db_session.add_all([source, target])
         await db_session.flush()
 
-        sync_time = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+        sync_time = datetime(2026, 2, 1, 12, 0, 0, tzinfo=datetime.UTC)
         edge = KGEdge(
             source_node_id=source.id,
             target_node_id=target.id,
