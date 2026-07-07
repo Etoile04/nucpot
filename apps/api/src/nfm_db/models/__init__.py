@@ -48,6 +48,11 @@ from nfm_db.models.kg_node import (  # noqa: E402
     KGProvenance,
     KGReviewQueue,
 )
+from nfm_db.models.source import (  # noqa: E402
+    Author,
+    DataSource,
+    DataSourceAuthor,
+)
 from nfm_db.models.user import (  # noqa: E402
     BlogRole,
     Permission,
@@ -55,11 +60,14 @@ from nfm_db.models.user import (  # noqa: E402
 )
 
 __all__ = [
+    "Author",
     "Base",
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
     "Confidence",
+    "DataSource",
+    "DataSourceAuthor",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
