@@ -167,6 +167,7 @@ from nfm_db.models.kg import (  # noqa: E402
     KGEdge,
     KGNode,
     KGReviewQueue,
+    OntologyIdMap,
     VALID_NODE_TYPES,
     VALID_RELATION_TYPES,
 )
@@ -222,6 +223,7 @@ __all__ = [
     "KGNode",
     "KGEdge",
     "KGReviewQueue",
+    "OntologyIdMap",
     "VALID_NODE_TYPES",
     "VALID_RELATION_TYPES",
 ]

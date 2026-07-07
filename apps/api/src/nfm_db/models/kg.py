@@ -1,8 +1,9 @@
 """Knowledge Graph ORM models.
 
-Phase 2B tables: kg_nodes, kg_edges, kg_review_queue.
+Phase 2B tables: kg_nodes, kg_edges, kg_review_queue, ontology_id_map.
 Stores extracted knowledge graph entities and their relationships,
 with provenance tracking, confidence scores, and a human review queue.
+Supports multi-corpus ontology via corpus_id and OntologyIdMap.
 """
 
 import uuid
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -19,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -78,6 +81,21 @@ class KGNode(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20),
         default="active",
+    )
+    corpus_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Multi-corpus identifier; null = default corpus",
+    )
+    synced_to_graph: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        comment="Whether this node has been synced to AGE graph",
+    )
+    graph_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last AGE graph sync",
     )
 
     # -- relationships --
@@ -143,6 +161,21 @@ class KGEdge(TimestampMixin, Base):
     source_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("data_sources.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    corpus_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Multi-corpus identifier; null = default corpus",
+    )
+    synced_to_graph: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        comment="Whether this edge has been synced to AGE graph",
+    )
+    graph_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last AGE graph sync",
     )
 
     # -- relationships --
@@ -226,4 +259,57 @@ class KGReviewQueue(Base):
         return (
             f"<KGReviewQueue id={self.id!s} type={self.item_type!r} "
             f"status={self.status!r}>"
+        )
+
+
+class OntologyIdMap(Base):
+    """Maps external ontology IDs (e.g. NVL v1.1) to internal KG nodes.
+
+    Composite PK: (nvl_id, corpus_id) ensures one mapping per
+    external identifier per corpus.  node_id is an FK to kg_nodes
+    so the mapped KG node can be resolved in a single join.
+    """
+
+    __tablename__ = "ontology_id_map"
+    __table_args__ = (
+        UniqueConstraint(
+            "nvl_id",
+            "corpus_id",
+            name="uq_ontology_id_map_nvl_corpus",
+        ),
+        Index("ix_ontology_id_map_node_id", "node_id"),
+    )
+
+    nvl_id: Mapped[str] = mapped_column(
+        String(100),
+        primary_key=True,
+        comment="External ontology identifier (e.g. NVL v1.1 ID)",
+    )
+    corpus_id: Mapped[str] = mapped_column(
+        String(100),
+        primary_key=True,
+        comment="Corpus this mapping belongs to",
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("kg_nodes.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Internal KG node this external ID resolves to",
+    )
+    graph_label: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="Label in the AGE graph (may differ from KGNode label)",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    # -- relationships --
+    node: Mapped["KGNode"] = relationship()
+
+    def __repr__(self) -> str:
+        return (
+            f"<OntologyIdMap nvl_id={self.nvl_id!r} "
+            f"corpus={self.corpus_id!r} node={self.node_id!s}>"
         )
