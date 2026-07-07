@@ -87,10 +87,18 @@ from nfm_db.models.user import (  # noqa: E402
     Permission,
     User,
 )
+from nfm_db.models.kg import (  # noqa: E402
+    KGEdge,
+    KGNode,
+    KGReviewQueue,
+)
 
 __all__ = [
     "Author",
     "Base",
+    "KGEdge",
+    "KGNode",
+    "KGReviewQueue",
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
