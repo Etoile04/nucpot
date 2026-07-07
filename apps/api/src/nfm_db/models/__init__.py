@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Text, TypeDecorator, func, types
+from sqlalchemy import DateTime, Text, TypeDecorator, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -111,6 +111,14 @@ from nfm_db.models.feedback import (  # noqa: E402
 from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
+from nfm_db.models.kg import (  # noqa: E402
+    VALID_NODE_TYPES,
+    VALID_RELATION_TYPES,
+    KGEdge,
+    KGNode,
+    KGReviewQueue,
+    OntologyIdMap,
+)
 from nfm_db.models.material import (  # noqa: E402
     Material,
     MaterialAlias,
@@ -163,23 +171,16 @@ from nfm_db.models.user import (  # noqa: E402
     Permission,
     User,
 )
-from nfm_db.models.kg import (  # noqa: E402
-    KGEdge,
-    KGNode,
-    KGReviewQueue,
-    OntologyIdMap,
-    VALID_NODE_TYPES,
-    VALID_RELATION_TYPES,
-)
 
 __all__ = [
+    "VALID_NODE_TYPES",
+    "VALID_RELATION_TYPES",
     "Author",
     "Base",
-    "CompatJSONB",
-    "JSONArray",
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
+    "CompatJSONB",
     "Confidence",
     "DataSource",
     "DataSourceAuthor",
@@ -194,13 +195,14 @@ __all__ = [
     "HPCFailoverEvent",
     "HpcJob",
     "HpcJobStatus",
+    "JSONArray",
     "JobStatus",
     "JobType",
     "KEntityType",
-    "KRelationType",
     "KGEdge",
     "KGNode",
     "KGReviewQueue",
+    "KRelationType",
     "MDSimulationResult",
     "MDVerificationJob",
     "Material",
@@ -223,7 +225,5 @@ __all__ = [
     "Unit",
     "UnitConversion",
     "User",
-    "VALID_NODE_TYPES",
-    "VALID_RELATION_TYPES",
     "VerificationResultMD",
 ]

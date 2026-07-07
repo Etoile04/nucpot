@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import KGEdge, KGNode, OntologyIdMap
 
-
 # ============================================================
 # KGNode corpus columns
 # ============================================================
