@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 import pytest
 
+from nfm_db.services.extraction_normalizer import NormalizedValue
+
 
 # ---------------------------------------------------------------------------
 # Test data structures (mirrors ExtractedProperty from schemas/extraction.py)
@@ -33,19 +35,6 @@ class ExtractedValue:
     source_file: str | None = None
     page_number: int | None = None
     context: str | None = None
-
-
-@dataclass(frozen=True)
-class NormalizedValue:
-    """Result of normalizing an extracted value."""
-
-    property_name: str
-    original_value: float
-    original_unit: str
-    normalized_value: float
-    normalized_unit: str
-    is_valid: bool
-    validation_errors: tuple[str, ...]
 
 
 # ===========================================================================

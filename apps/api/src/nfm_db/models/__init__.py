@@ -200,7 +200,6 @@ __all__ = [
     "DefectType",
     "ExtractionFigure",
     "ExecutionStatus",
-    "ExtractionFigure",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
