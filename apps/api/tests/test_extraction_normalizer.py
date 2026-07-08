@@ -45,7 +45,7 @@ class NormalizedValue:
     normalized_value: float
     normalized_unit: str
     is_valid: bool
-    validation_errors: list[str]
+    validation_errors: tuple[str, ...]
 
 
 # ===========================================================================

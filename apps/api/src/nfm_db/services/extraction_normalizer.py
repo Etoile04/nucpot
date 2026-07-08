@@ -434,12 +434,15 @@ class ExtractionNormalizer:
         unique: list[NormalizedValue] = []
         seen: set[str] = set()
         for i, n in enumerate(normalized):
-            material = (getattr(values[i], "material_name") or "") if i < len(values) else ""
+            src = values[i] if i < len(values) else None
+            material = (getattr(src, "material_name") or "").strip() if src else ""
+            source_file = (getattr(src, "source_file") or "").strip() if src else ""
             hash_key = (
                 f"{n.property_name}|{n.normalized_value:.10g}"
-                f"|{n.normalized_unit}|{material}"
+                f"|{n.normalized_unit}|{material}|{source_file}"
             )
             if hash_key not in seen:
                 seen.add(hash_key)
                 unique.append(n)
         return unique
+
