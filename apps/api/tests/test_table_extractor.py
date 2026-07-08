@@ -1,7 +1,7 @@
 """Tests for VLM-based table structure extractor (NFM-851, B1.3).
 
 Covers: extraction flow, schema validation, cell parsing,
-merged cell handling, error handling. Uses mocked VLM client.
+merged cell handling, OCR fallback integration. Uses mocked VLM client.
 """
 
 from __future__ import annotations
@@ -16,10 +16,13 @@ from nfm_db.schemas.vision_extraction import (
     VisionExtractionResult,
 )
 from nfm_db.services.table_extractor import TableExtractor, extract_table_data
+from nfm_db.services.vision_client import VisionClientError
+from nfm_db.services.ocr_fallback import OCRResult
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sample_png_bytes() -> bytes:
     """Minimal valid PNG bytes (1x1 transparent pixel)."""
@@ -106,6 +109,13 @@ class TestTableExtractorInit:
         mock_client.provider = "ollama"
         extractor = TableExtractor(client=mock_client)
         assert extractor.client is mock_client
+
+    @pytest.mark.asyncio
+    async def test_default_ocr_fallback_created(self) -> None:
+        """Should create OcrFallback automatically if none provided."""
+        with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
+            extractor = TableExtractor()
+            assert extractor.ocr_fallback is not None
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +319,113 @@ class TestConvenienceFunction:
 
         assert isinstance(result, VisionExtractionResult)
         assert result.figure_type == "table"
+
+
+# ---------------------------------------------------------------------------
+# Tests: OCR fallback integration
+# ---------------------------------------------------------------------------
+
+
+class TestTableExtractorOcrFallback:
+    """Tests for OCR fallback when VLM is unavailable."""
+
+    @pytest.mark.asyncio
+    async def test_falls_back_on_vlm_error(self) -> None:
+        """Should activate OCR fallback when VLM raises VisionClientError."""
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(
+            side_effect=VisionClientError("VLM request failed after 3 retries")
+        )
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock(
+            return_value=OCRResult(
+                text="Material  Temp  Value\nUO2     300   10.5\nUO2     600   5.5",
+                confidence=0.3,
+                method="stub",
+            )
+        )
+
+        extractor = TableExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        result = await extractor.extract(image_data=_sample_png_bytes())
+
+        assert result.figure_type == "table"
+        assert result.table_data is not None
+        assert result.fallback_used is True
+        assert result.provider == "ocr"
+
+    @pytest.mark.asyncio
+    async def test_fallback_preserves_source_path(self) -> None:
+        """Should pass source_path through to OCR fallback result."""
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(
+            side_effect=VisionClientError("Connection refused")
+        )
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock(
+            return_value=OCRResult(text="data", confidence=0.2, method="stub")
+        )
+
+        extractor = TableExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        result = await extractor.extract(
+            image_data=_sample_png_bytes(),
+            source_path="/data/table1.png",
+        )
+
+        assert result.source_image_path == "/data/table1.png"
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_vlm_succeeds(self) -> None:
+        """Should not use OCR fallback when VLM succeeds."""
+        vlm_data = _mock_vlm_response()
+
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(return_value=vlm_data)
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock()
+
+        extractor = TableExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        with patch(
+            "nfm_db.services.table_extractor.build_table_extraction_prompt",
+            return_value="system",
+        ):
+            result = await extractor.extract(image_data=_sample_png_bytes())
+
+        assert result.fallback_used is False
+        mock_ocr.extract_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fallback_table_parses_rows(self) -> None:
+        """Should parse OCR text into table rows and columns."""
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(
+            side_effect=VisionClientError("VLM unavailable")
+        )
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock(
+            return_value=OCRResult(
+                text="Material  Temp  Value\nUO2     300   10.5\nMOX     400   8.2",
+                confidence=0.3,
+                method="stub",
+            )
+        )
+
+        extractor = TableExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        result = await extractor.extract(image_data=_sample_png_bytes())
+
+        assert result.table_data is not None
+        assert result.table_data.num_rows == 2
+        assert result.table_data.num_columns == 3
+        assert result.table_data.rows[0][0].value == "UO2"
+        assert result.table_data.rows[1][0].value == "MOX"

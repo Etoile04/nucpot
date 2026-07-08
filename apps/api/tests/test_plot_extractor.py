@@ -16,6 +16,8 @@ from nfm_db.schemas.vision_extraction import (
     VisionExtractionResult,
 )
 from nfm_db.services.plot_extractor import PlotExtractor, extract_plot_data
+from nfm_db.services.vision_client import VisionClientError
+from nfm_db.services.ocr_fallback import OCRResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -251,3 +253,93 @@ class TestConvenienceFunction:
 
         assert isinstance(result, VisionExtractionResult)
         assert result.figure_type == "plot"
+
+
+# ---------------------------------------------------------------------------
+# Tests: OCR fallback integration
+# ---------------------------------------------------------------------------
+
+
+class TestPlotExtractorOcrFallback:
+    """Tests for OCR fallback when VLM is unavailable."""
+
+    @pytest.mark.asyncio
+    async def test_falls_back_on_vlm_error(self) -> None:
+        """Should activate OCR fallback when VLM raises VisionClientError."""
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(
+            side_effect=VisionClientError("VLM request failed after 3 retries")
+        )
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock(
+            return_value=OCRResult(
+                text="Temperature (K)\nConductivity (W/m·K)",
+                confidence=0.3,
+                method="stub",
+            )
+        )
+
+        extractor = PlotExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        result = await extractor.extract(image_data=_sample_png_bytes())
+
+        assert result.figure_type == "plot"
+        assert result.plot_data is not None
+        assert result.fallback_used is True
+        assert result.provider == "ocr"
+
+    @pytest.mark.asyncio
+    async def test_fallback_preserves_source_path(self) -> None:
+        """Should pass source_path through to OCR fallback result."""
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(
+            side_effect=VisionClientError("Connection refused")
+        )
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock(
+            return_value=OCRResult(text="data", confidence=0.2, method="stub")
+        )
+
+        extractor = PlotExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        result = await extractor.extract(
+            image_data=_sample_png_bytes(),
+            source_path="/data/fig1.png",
+        )
+
+        assert result.source_image_path == "/data/fig1.png"
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_vlm_succeeds(self) -> None:
+        """Should not use OCR fallback when VLM succeeds."""
+        vlm_data = _mock_vlm_response()
+
+        mock_client = MagicMock()
+        mock_client.provider = "openai"
+        mock_client.model = "gpt-4o"
+        mock_client.extract = AsyncMock(return_value=vlm_data)
+
+        mock_ocr = MagicMock()
+        mock_ocr.extract_text = AsyncMock()
+
+        extractor = PlotExtractor(client=mock_client, ocr_fallback=mock_ocr)
+        # Patch build_prompt to avoid needing _call_provider mock chain
+        with patch(
+            "nfm_db.services.plot_extractor.build_plot_extraction_prompt",
+            return_value="system",
+        ):
+            result = await extractor.extract(image_data=_sample_png_bytes())
+
+        assert result.fallback_used is False
+        mock_ocr.extract_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_default_ocr_fallback_created(self) -> None:
+        """Should create OcrFallback automatically if none provided."""
+        with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
+            extractor = PlotExtractor()
+            assert extractor.ocr_fallback is not None
