@@ -189,6 +189,7 @@ __all__ = [
     "Dataset",
     "DefectAnalysisResult",
     "DefectType",
+    "ExtractionFigure",
     "ExecutionStatus",
     "Feedback",
     "FeedbackStatus",
