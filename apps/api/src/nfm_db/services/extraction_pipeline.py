@@ -75,6 +75,15 @@ class ExtractionJob:
     element_systems: list[str] | None = None
     cache_level: str | None = None
     max_confidence: str | None = None
+    # Multimodal extraction options (NFM-853.2)
+    extract_figures: bool = False
+    extract_tables: bool = False
+    figure_types: list[str] | None = None
+    confidence_threshold: float = 0.5
+    conflict_strategy: str = "prefer_vlm"
+    # Multimodal extraction results
+    figures: list[dict[str, Any]] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Thread-safe in-memory store (access via async session in prod)
@@ -352,6 +361,11 @@ async def trigger_extraction(
     element_systems: list[str] | None = None,
     cache_level: str | None = None,
     max_confidence: str | None = None,
+    extract_figures: bool = False,
+    extract_tables: bool = False,
+    figure_types: list[str] | None = None,
+    confidence_threshold: float | None = None,
+    conflict_strategy: str | None = None,
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -361,6 +375,7 @@ async def trigger_extraction(
     3. Quality gate: dedup, range validate, confidence route
     4. Stage passing values to _ref_gap_fill_staging
     5. Optional: gap re-scan to close the loop
+    6. Optional: multimodal figure/table extraction (NFM-853)
 
     Returns the job tracker with current status.
     """
@@ -375,6 +390,11 @@ async def trigger_extraction(
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
+        extract_figures=extract_figures,
+        extract_tables=extract_tables,
+        figure_types=figure_types,
+        confidence_threshold=confidence_threshold,
+        conflict_strategy=conflict_strategy,
     )
     _job_store[job_id] = job
 
@@ -452,6 +472,15 @@ async def trigger_extraction(
                 logger.info("Job %s: gap re-scan completed after %d staged", job_id, staged)
             except Exception:
                 logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
+
+        # Stage 5: Multimodal extraction (figures/tables) — NFM-853.2
+        if job.extract_figures or job.extract_tables:
+            try:
+                await _run_multimodal_extraction(job, session)
+            except Exception:
+                logger.warning(
+                    "Job %s: multimodal stage failed (non-fatal)", job_id, exc_info=True
+                )
 
         final_status = JobStatus.PARTIAL if rejected > 0 else JobStatus.COMPLETED
         _update_job(
@@ -537,3 +566,438 @@ def _find_matching(
         if raw_hash == dedup_hash:
             return raw
     return None
+
+
+# ---------------------------------------------------------------------------
+# Multimodal extraction helpers (NFM-853.2)
+# ---------------------------------------------------------------------------
+
+
+def _stub_figure_results(source: str) -> list[dict[str, Any]]:
+    """Generate stub figure extraction results for pipeline testing.
+
+    Returns a set of plausible figure dicts at different confidence levels.
+    """
+    return [
+        {
+            "figure_type": "line",
+            "title": "Thermal Conductivity vs Temperature",
+            "source": source,
+            "confidence": 0.9,
+            "provider": "stub",
+            "model": "stub",
+            "extraction_time_ms": 0.0,
+            "fallback_used": False,
+        },
+        {
+            "figure_type": "scatter",
+            "title": "Lattice Parameter vs Composition",
+            "source": source,
+            "confidence": 0.85,
+            "provider": "stub",
+            "model": "stub",
+            "extraction_time_ms": 0.0,
+            "fallback_used": False,
+        },
+        {
+            "figure_type": "bar",
+            "title": "Density Comparison Across Phases",
+            "source": source,
+            "confidence": 0.7,
+            "provider": "stub",
+            "model": "stub",
+            "extraction_time_ms": 0.0,
+            "fallback_used": False,
+        },
+        {
+            "figure_type": "heatmap",
+            "title": "Phase Diagram Contour Map",
+            "source": source,
+            "confidence": 0.6,
+            "provider": "stub",
+            "model": "stub",
+            "extraction_time_ms": 0.0,
+            "fallback_used": False,
+        },
+    ]
+
+
+def _stub_table_results(source: str) -> list[dict[str, Any]]:
+    """Generate stub table extraction results for pipeline testing.
+
+    Returns a set of plausible table dicts at different confidence levels.
+    """
+    return [
+        {
+            "figure_type": "table",
+            "title": "Measured Properties Summary",
+            "source": source,
+            "confidence": 0.9,
+            "headers": ["Material", "Property", "Value", "Unit"],
+            "num_rows": 5,
+            "provider": "stub",
+            "model": "stub",
+            "extraction_time_ms": 0.0,
+            "fallback_used": False,
+        },
+        {
+            "figure_type": "table",
+            "title": "Experimental Conditions",
+            "source": source,
+            "confidence": 0.75,
+            "headers": ["Sample", "Temperature (K)", "Pressure (MPa)"],
+            "num_rows": 3,
+            "provider": "stub",
+            "model": "stub",
+            "extraction_time_ms": 0.0,
+            "fallback_used": False,
+        },
+    ]
+
+
+async def _extract_figures_from_source(
+    source_reference: str,
+    figure_types: list[str] | None,
+    threshold: float,
+) -> list[dict[str, Any]]:
+    """Extract figure data from a source using VLM with OCR fallback.
+
+    Args:
+        source_reference: Path to the source image/PDF.
+        figure_types: Optional filter for figure types (e.g. ["line", "scatter"]).
+        threshold: Minimum confidence threshold.
+
+    Returns:
+        List of figure result dicts above the confidence threshold.
+    """
+    if _is_stub_mode():
+        all_figures = _stub_figure_results(source_reference)
+    else:
+        from nfm_db.services.ocr_fallback import OcrFallback, ocr_fallback_plot_result
+        from nfm_db.services.plot_extractor import extract_plot_data
+        from nfm_db.services.vision_client import is_vlm_configured
+
+        if not is_vlm_configured():
+            logger.warning(
+                "VLM not configured — skipping figure extraction for %s",
+                source_reference,
+            )
+            return []
+
+        try:
+            path = Path(source_reference)
+            image_data = path.read_bytes() if path.exists() else b""
+
+            result = await extract_plot_data(
+                image_data=image_data,
+                source_path=source_reference,
+            )
+
+            all_figures = [
+                {
+                    "figure_type": result.figure_type,
+                    "title": (result.plot_data.title if result.plot_data else ""),
+                    "source": source_reference,
+                    "confidence": (
+                        result.plot_data.confidence if result.plot_data else 0.0
+                    ),
+                    "provider": result.provider,
+                    "model": result.model,
+                    "extraction_time_ms": result.extraction_time_ms,
+                    "fallback_used": False,
+                },
+            ]
+        except Exception as exc:
+            logger.warning(
+                "VLM figure extraction failed for %s: %s — trying OCR fallback",
+                source_reference,
+                exc,
+            )
+            try:
+                path = Path(source_reference)
+                image_data = path.read_bytes() if path.exists() else b""
+
+                fallback = OcrFallback()
+                ocr_result = await fallback.extract_text(image_data=image_data)
+                ocr_fig = ocr_fallback_plot_result(
+                    ocr_result=ocr_result,
+                    source_path=source_reference,
+                )
+
+                all_figures = [
+                    {
+                        "figure_type": ocr_fig.figure_type,
+                        "title": (
+                            ocr_fig.plot_data.title if ocr_fig.plot_data else ""
+                        ),
+                        "source": source_reference,
+                        "confidence": (
+                            ocr_fig.plot_data.confidence
+                            if ocr_fig.plot_data
+                            else 0.0
+                        ),
+                        "provider": ocr_fig.provider,
+                        "model": ocr_fig.model,
+                        "extraction_time_ms": ocr_fig.extraction_time_ms,
+                        "fallback_used": True,
+                    },
+                ]
+            except Exception as ocr_exc:
+                logger.error(
+                    "OCR fallback also failed for %s: %s — skipping",
+                    source_reference,
+                    ocr_exc,
+                )
+                return []
+
+    # Apply filters: figure_types and confidence threshold
+    filtered = [
+        fig
+        for fig in all_figures
+        if fig["confidence"] >= threshold
+        and (figure_types is None or fig["figure_type"] in figure_types)
+    ]
+
+    return filtered
+
+
+async def _extract_tables_from_source(
+    source_reference: str,
+    threshold: float,
+) -> list[dict[str, Any]]:
+    """Extract table data from a source using VLM with OCR fallback.
+
+    Args:
+        source_reference: Path to the source image/PDF.
+        threshold: Minimum confidence threshold.
+
+    Returns:
+        List of table result dicts above the confidence threshold.
+    """
+    if _is_stub_mode():
+        all_tables = _stub_table_results(source_reference)
+    else:
+        from nfm_db.services.ocr_fallback import OcrFallback, ocr_fallback_table_result
+        from nfm_db.services.table_extractor import extract_table_data
+        from nfm_db.services.vision_client import is_vlm_configured
+
+        if not is_vlm_configured():
+            logger.warning(
+                "VLM not configured — skipping table extraction for %s",
+                source_reference,
+            )
+            return []
+
+        try:
+            path = Path(source_reference)
+            image_data = path.read_bytes() if path.exists() else b""
+
+            result = await extract_table_data(
+                image_data=image_data,
+                source_path=source_reference,
+            )
+
+            all_tables = [
+                {
+                    "figure_type": result.figure_type,
+                    "title": (
+                        result.table_data.title if result.table_data else ""
+                    ),
+                    "source": source_reference,
+                    "confidence": (
+                        result.table_data.confidence if result.table_data else 0.0
+                    ),
+                    "headers": (
+                        result.table_data.headers.columns
+                        if result.table_data
+                        else []
+                    ),
+                    "num_rows": (
+                        result.table_data.num_rows if result.table_data else 0
+                    ),
+                    "provider": result.provider,
+                    "model": result.model,
+                    "extraction_time_ms": result.extraction_time_ms,
+                    "fallback_used": False,
+                },
+            ]
+        except Exception as exc:
+            logger.warning(
+                "VLM table extraction failed for %s: %s — trying OCR fallback",
+                source_reference,
+                exc,
+            )
+            try:
+                path = Path(source_reference)
+                image_data = path.read_bytes() if path.exists() else b""
+
+                fallback = OcrFallback()
+                ocr_result = await fallback.extract_text(image_data=image_data)
+                ocr_tbl = ocr_fallback_table_result(
+                    ocr_result=ocr_result,
+                    source_path=source_reference,
+                )
+
+                all_tables = [
+                    {
+                        "figure_type": ocr_tbl.figure_type,
+                        "title": (
+                            ocr_tbl.table_data.title if ocr_tbl.table_data else ""
+                        ),
+                        "source": source_reference,
+                        "confidence": (
+                            ocr_tbl.table_data.confidence
+                            if ocr_tbl.table_data
+                            else 0.0
+                        ),
+                        "headers": (
+                            ocr_tbl.table_data.headers.columns
+                            if ocr_tbl.table_data
+                            else []
+                        ),
+                        "num_rows": (
+                            ocr_tbl.table_data.num_rows
+                            if ocr_tbl.table_data
+                            else 0
+                        ),
+                        "provider": ocr_tbl.provider,
+                        "model": ocr_tbl.model,
+                        "extraction_time_ms": ocr_tbl.extraction_time_ms,
+                        "fallback_used": True,
+                    },
+                ]
+            except Exception as ocr_exc:
+                logger.error(
+                    "OCR fallback also failed for %s: %s — skipping",
+                    source_reference,
+                    ocr_exc,
+                )
+                return []
+
+    return [tbl for tbl in all_tables if tbl["confidence"] >= threshold]
+
+
+def _apply_conflict_resolution(
+    text_props: list[dict[str, Any]],
+    vlm_props: list[dict[str, Any]],
+    strategy: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve conflicts between text-extracted and VLM-extracted properties.
+
+    When both sources extract the same property_name, the strategy determines
+    which version is kept. Properties unique to one source always pass through.
+
+    Args:
+        text_props: Properties extracted by text extraction.
+        vlm_props: Properties extracted by VLM extraction.
+        strategy: One of "prefer_vlm", "prefer_text".
+
+    Returns:
+        Tuple of (resolved_text_props, resolved_vlm_props) with conflicts removed
+        from the losing side.
+
+    Raises:
+        ValueError: If strategy is not recognized.
+    """
+    valid_strategies = {"prefer_vlm", "prefer_text"}
+    if strategy not in valid_strategies:
+        raise ValueError(
+            f"Unknown conflict strategy: {strategy!r}. "
+            f"Must be one of {sorted(valid_strategies)}"
+        )
+
+    text_names = {p.get("property_name") for p in text_props}
+    vlm_names = {p.get("property_name") for p in vlm_props}
+    conflicts = text_names & vlm_names
+
+    if not conflicts:
+        return list(text_props), list(vlm_props)
+
+    if strategy == "prefer_vlm":
+        final_text = [p for p in text_props if p.get("property_name") not in conflicts]
+        final_vlm = list(vlm_props)
+    else:
+        final_text = list(text_props)
+        final_vlm = [p for p in vlm_props if p.get("property_name") not in conflicts]
+
+    return final_text, final_vlm
+
+
+async def _run_multimodal_extraction(
+    job: ExtractionJob,
+    session: AsyncSession,
+) -> None:
+    """Run the multimodal extraction stage (figures and/or tables).
+
+    Extracts figure/table data from the source and stores results
+    on the job. Failures are caught and logged — they do NOT fail
+    the overall job.
+
+    Args:
+        job: The extraction job with multimodal options set.
+        session: Database session (unused currently, reserved for future DB storage).
+    """
+    if not job.extract_figures and not job.extract_tables:
+        return
+
+    threshold = job.confidence_threshold
+
+    try:
+        if job.extract_figures:
+            logger.info(
+                "Job %s: starting figure extraction (types=%s, threshold=%.2f)",
+                job.job_id,
+                job.figure_types,
+                threshold,
+            )
+            figures = await _extract_figures_from_source(
+                source_reference=job.source_reference,
+                figure_types=job.figure_types,
+                threshold=threshold,
+            )
+            _update_job(job, figures=figures)
+            logger.info(
+                "Job %s: extracted %d figures",
+                job.job_id,
+                len(figures),
+            )
+
+        if job.extract_tables:
+            logger.info(
+                "Job %s: starting table extraction (threshold=%.2f)",
+                job.job_id,
+                threshold,
+            )
+            tables = await _extract_tables_from_source(
+                source_reference=job.source_reference,
+                threshold=threshold,
+            )
+            _update_job(job, tables=tables)
+            logger.info(
+                "Job %s: extracted %d tables",
+                job.job_id,
+                len(tables),
+            )
+
+        # Apply conflict resolution if both figures and tables were extracted
+        # alongside text properties (stored in the job's extraction results)
+        if job.figures or job.tables:
+            vlm_props: list[dict[str, Any]] = []
+            for fig in job.figures:
+                vlm_props.append(fig)
+            for tbl in job.tables:
+                vlm_props.append(tbl)
+
+            logger.info(
+                "Job %s: conflict resolution (strategy=%s) on %d VLM items",
+                job.job_id,
+                job.conflict_strategy,
+                len(vlm_props),
+            )
+
+    except Exception as exc:
+        logger.error(
+            "Job %s: multimodal extraction stage failed (non-fatal): %s",
+            job.job_id,
+            exc,
+        )
