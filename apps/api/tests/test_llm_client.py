@@ -27,6 +27,7 @@ from nfm_db.services.llm_client import (
     _get_config,
     _strip_code_fences,
     _validate_json_schema,
+    call_llm,
     is_llm_configured,
 )
 
@@ -924,7 +925,423 @@ class TestLegacyFunctions:
 
 
 # ---------------------------------------------------------------------------
-# 13. No Agent Skills runtime dependency
+# 13. Legacy call_llm function
+# ---------------------------------------------------------------------------
+
+
+class TestCallLlm:
+    """Tests for the legacy call_llm function (lines 331-400)."""
+
+    @staticmethod
+    def _build_mock_http_client(
+        response_body: dict[str, Any],
+        status_code: int = 200,
+    ) -> AsyncMock:
+        """Create a mock httpx.AsyncClient for call_llm tests."""
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json.return_value = response_body
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = "error body"
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_call_llm_returns_parsed_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should return a parsed dict from valid JSON content."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        body = {
+            "choices": [
+                {
+                    "message": {"content": '{"key": "value"}'},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 50},
+        }
+
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            result = await call_llm(
+                system_prompt="You are helpful.",
+                user_message="Extract key.",
+            )
+
+        assert result == {"key": "value"}
+
+    @pytest.mark.asyncio
+    async def test_call_llm_uses_provided_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should use the provided config dict instead of env vars."""
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+        custom_config = {
+            "api_key": "custom-key",
+            "base_url": "https://custom.api/v1",
+            "model": "custom-model",
+        }
+
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                config=custom_config,
+            )
+
+        call_args = mock_http.post.call_args
+        url = call_args[0][0]
+        assert url == "https://custom.api/v1/chat/completions"
+        payload = call_args[1]["json"]
+        assert payload["model"] == "custom-model"
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_missing_api_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should raise ValueError when API key is missing."""
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+        with pytest.raises(ValueError, match="LLM_API_KEY"):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+            )
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_http_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should wrap HTTPStatusError as RuntimeError."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.text = "Bad Gateway"
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Bad Gateway", request=MagicMock(), response=mock_response,
+        )
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+            pytest.raises(RuntimeError, match="502"),
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_request_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should wrap httpx.RequestError as RuntimeError."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(
+            side_effect=httpx.RequestError("Connection refused", request=MagicMock()),
+        )
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+            pytest.raises(RuntimeError, match="request failed"),
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_invalid_json_body(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should raise RuntimeError if response body is not valid JSON."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = json.JSONDecodeError("err", "doc", 0)
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+            pytest.raises(RuntimeError, match="not valid JSON"),
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_empty_choices(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should raise RuntimeError if choices list is empty."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        mock_http = self._build_mock_http_client({"choices": []})
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_http,
+            ),
+            pytest.raises(RuntimeError, match="empty choices"),
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_empty_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should raise RuntimeError if message content is empty."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        body = {
+            "choices": [
+                {"message": {"content": ""}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_http,
+            ),
+            pytest.raises(RuntimeError, match="empty content"),
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
+    async def test_call_llm_raises_on_invalid_json_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should raise RuntimeError if content is not valid JSON."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        body = {
+            "choices": [
+                {"message": {"content": "not json at all"}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_http,
+            ),
+            pytest.raises(RuntimeError, match="not valid JSON"),
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+    @pytest.mark.asyncio
+    async def test_call_llm_strips_code_fences(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should strip code fences from content before parsing."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '```json\n{"result": 42}\n```',
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            result = await call_llm(system_prompt="S", user_message="U")
+
+        assert result == {"result": 42}
+
+    @pytest.mark.asyncio
+    async def test_call_llm_returns_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should return a list if content parses to a JSON array."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"a": 1}, {"b": 2}]',
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            result = await call_llm(system_prompt="S", user_message="U")
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_call_llm_passes_temperature_and_max_tokens(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should pass temperature and max_tokens in payload."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                temperature=0.5,
+                max_tokens=2048,
+            )
+
+        payload = mock_http.post.call_args[1]["json"]
+        assert payload["temperature"] == 0.5
+        assert payload["max_tokens"] == 2048
+
+    @pytest.mark.asyncio
+    async def test_call_llm_strips_url_trailing_slash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm should strip trailing slash from base_url."""
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.delenv("LLM_BASE_URL", raising=False)
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+
+        config = {
+            "api_key": "test-key",
+            "base_url": "https://api.example.com/v1/",
+            "model": "gpt-4o",
+        }
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(system_prompt="S", user_message="U", config=config)
+
+        url = mock_http.post.call_args[0][0]
+        assert url == "https://api.example.com/v1/chat/completions"
+
+
+# ---------------------------------------------------------------------------
+# 14. _strip_code_fences edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestStripCodeFencesEdgeCases:
+    """Additional edge cases for _strip_code_fences."""
+
+    def test_fences_without_language_tag(self) -> None:
+        """Should strip fences with no language annotation after backticks."""
+        raw = '```\n{"key": "value"}\n```'
+        assert _strip_code_fences(raw) == '{"key": "value"}'
+
+    def test_fences_with_leading_whitespace(self) -> None:
+        """Should strip fences and trailing whitespace, but keep inner leading spaces."""
+        raw = '  ```json\n  {"key": "value"}  \n  ```  '
+        assert _strip_code_fences(raw) == '  {"key": "value"}'
+
+    def test_empty_string(self) -> None:
+        """Should return empty string for empty input."""
+        assert _strip_code_fences("") == ""
+
+    def test_only_fences_no_content(self) -> None:
+        """Should handle fences wrapping empty content."""
+        raw = "```\n```"
+        expected = ""
+        assert _strip_code_fences(raw) == expected
+
+    def test_no_closing_fence(self) -> None:
+        """Should not strip if there is no closing fence."""
+        raw = "```json\n{\"key\": \"value\"}"
+        result = _strip_code_fences(raw)
+        assert "\"key\"" in result
+
+
+# ---------------------------------------------------------------------------
+# 15. No Agent Skills runtime dependency
 # ---------------------------------------------------------------------------
 
 
