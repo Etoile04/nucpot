@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     blog_content_dir: str = "content/blog"
+    lightrag_host: str = "localhost"
+    lightrag_port: int = 9621
 
     model_config = {"env_file": ".env", "env_prefix": "NFM_"}
 

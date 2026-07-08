@@ -13,6 +13,7 @@ from nfm_db.api.v1 import (
     feedback,
     health,
     kg,
+    lightrag,
     materials,
     md_verification,
     ontology,
@@ -81,3 +82,4 @@ app.include_router(properties.router, prefix="/api/v1", tags=["properties"])
 app.include_router(sources.router, prefix="/api/v1", tags=["sources"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["v4-extraction"])
 app.include_router(kg.router, prefix="/api/v1", tags=["knowledge-graph"])
+app.include_router(lightrag.router, prefix="/api/v1", tags=["lightrag"])
