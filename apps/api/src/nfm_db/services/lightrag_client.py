@@ -6,8 +6,10 @@ Wraps the LightRAG REST API (default port 9621):
   GET  /health          — service health check
 
 Configuration via environment variables:
-  LIGHTRAG_HOST  - LightRAG server host (default: "localhost")
-  LIGHTRAG_PORT  - LightRAG server port (default: 9621)
+  NFM_LIGHTRAG_HOST / LIGHTRAG_HOST  - LightRAG server host (default: "localhost")
+  NFM_LIGHTRAG_PORT / LIGHTRAG_PORT  - LightRAG server port (default: 9621)
+
+The NFM_-prefixed variants take precedence to match the Settings env_prefix.
 """
 
 from __future__ import annotations
@@ -40,8 +42,14 @@ class LightRAGClientError(Exception):
 
 
 def is_lightrag_configured() -> bool:
-    """Check if LightRAG host is configured in environment."""
-    return bool(os.environ.get("LIGHTRAG_HOST"))
+    """Check if LightRAG host is configured in environment.
+
+    Checks both NFM_LIGHTRAG_HOST (Settings prefix) and LIGHTRAG_HOST.
+    """
+    return bool(
+        os.environ.get("NFM_LIGHTRAG_HOST")
+        or os.environ.get("LIGHTRAG_HOST")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -67,9 +75,12 @@ class LightRAGClient:
         port: int | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
-        self.host = host or os.environ.get("LIGHTRAG_HOST", _DEFAULT_HOST)
+        self.host = host or os.environ.get(
+            "NFM_LIGHTRAG_HOST"
+        ) or os.environ.get("LIGHTRAG_HOST", _DEFAULT_HOST)
         self.port = port or int(
-            os.environ.get("LIGHTRAG_PORT", str(_DEFAULT_PORT))
+            os.environ.get("NFM_LIGHTRAG_PORT")
+            or os.environ.get("LIGHTRAG_PORT", str(_DEFAULT_PORT))
         )
         self.timeout = timeout
         self._base_url = f"http://{self.host}:{self.port}"

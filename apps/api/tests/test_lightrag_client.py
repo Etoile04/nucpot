@@ -326,3 +326,106 @@ class TestQuery:
             side_effect=httpx.ReadTimeout("Timed out"),
         ), pytest.raises(LightRAGClientError):
             await client.query(query="test query")
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle (close, context manager) — M1/L2 fix coverage
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycle:
+    """Tests for client lifecycle: close() and async context manager."""
+
+    @pytest.mark.asyncio
+    async def test_close_delegates_to_http_client(self) -> None:
+        """close() should delegate to the underlying httpx.AsyncClient."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "aclose",
+            new_callable=AsyncMock,
+        ) as mock_close:
+            await client.close()
+            mock_close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_context_manager_returns_self(self) -> None:
+        """__aenter__ should return the client instance itself."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        async with client as entered:
+            assert entered is client
+
+    @pytest.mark.asyncio
+    async def test_context_manager_closes_on_exit(self) -> None:
+        """__aexit__ should call close() even after normal exit."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "aclose",
+            new_callable=AsyncMock,
+        ) as mock_close:
+            async with client:
+                pass
+            mock_close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_context_manager_closes_on_exception(self) -> None:
+        """__aexit__ should call close() even when an exception is raised."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "aclose",
+            new_callable=AsyncMock,
+        ) as mock_close:
+            with pytest.raises(RuntimeError):
+                async with client:
+                    raise RuntimeError("boom")
+            mock_close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Config path — M2 fix coverage
+# ---------------------------------------------------------------------------
+
+
+class TestConfigPath:
+    """Tests for NFM_-prefixed env var support (M2 fix)."""
+
+    def test_configured_with_nfm_prefixed_host(self) -> None:
+        """Should return True when NFM_LIGHTRAG_HOST is set (Settings prefix)."""
+        from nfm_db.services.lightrag_client import is_lightrag_configured  # type: ignore[import-untyped]
+
+        with patch.dict("os.environ", {"NFM_LIGHTRAG_HOST": "localhost"}):
+            assert is_lightrag_configured() is True
+
+    def test_nfm_prefix_takes_precedence(self) -> None:
+        """NFM_LIGHTRAG_HOST should take precedence over LIGHTRAG_HOST."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        with patch.dict(
+            "os.environ",
+            {"NFM_LIGHTRAG_HOST": "nfm-host", "LIGHTRAG_HOST": "old-host"},
+        ):
+            client = LightRAGClient()
+            assert client.host == "nfm-host"
+
+    def test_falls_back_to_unprefixed(self) -> None:
+        """Should fall back to LIGHTRAG_HOST when NFM_ variant is not set."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        with patch.dict(
+            "os.environ",
+            {"LIGHTRAG_HOST": "fallback-host"},
+            clear=False,
+        ):
+            with patch.dict("os.environ", {"NFM_LIGHTRAG_HOST": ""}, clear=False):
+                client = LightRAGClient()
+                assert client.host == "fallback-host"

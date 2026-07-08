@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import APIRouter
 
 from nfm_db.config import get_settings
@@ -66,7 +67,7 @@ async def health_check() -> ApiResponse[HealthResponse]:
                 error="LightRAG service is not responding",
             ),
         )
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         logger.error("LightRAG health check error: %s", exc)
         return ApiResponse(
             success=True,
@@ -75,6 +76,8 @@ async def health_check() -> ApiResponse[HealthResponse]:
                 error=str(exc),
             ),
         )
+    finally:
+        await client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +123,8 @@ async def ingest_document(
             success=False,
             error=f"Ingest failed: {exc}",
         )
+    finally:
+        await client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -167,3 +172,5 @@ async def query_knowledge_graph(
             success=False,
             error=f"Query failed: {exc}",
         )
+    finally:
+        await client.close()
