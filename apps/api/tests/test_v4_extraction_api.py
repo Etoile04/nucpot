@@ -678,7 +678,8 @@ class TestV4Helpers:
         assert progress.current_step == "queued"
         assert progress.steps_completed == []
         assert progress.steps_remaining == [
-            "running", "extracting", "mapping", "quality_gate", "completed",
+            "running", "extracting", "extracting_figures", "extracting_tables",
+            "mapping", "quality_gate", "completed",
         ]
 
     def test_build_progress_for_completed(self):

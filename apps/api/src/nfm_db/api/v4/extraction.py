@@ -26,12 +26,14 @@ from nfm_db.schemas.extraction import (
     V4BrowseResponse,
     V4ConfidenceSummary,
     V4ExtractionSubmitRequest,
+    V4FigureResult,
     V4JobProgress,
     V4MaterialSystemSummary,
     V4PropertyResponse,
     V4ResultResponse,
     V4StatusResponse,
     V4SubmitResponse,
+    V4TableResult,
     V4ValidateRequest,
     V4ValidateResponse,
 )
@@ -63,6 +65,8 @@ _ORDERED_STEPS = [
     "queued",
     "running",
     "extracting",
+    "extracting_figures",
+    "extracting_tables",
     "mapping",
     "quality_gate",
     "completed",
@@ -257,6 +261,11 @@ async def submit_extraction(
         element_systems=payload.element_systems,
         cache_level=payload.cache_level,
         max_confidence=payload.max_confidence,
+        extract_figures=payload.extract_figures,
+        extract_tables=payload.extract_tables,
+        figure_types=payload.figure_types,
+        confidence_threshold=payload.confidence_threshold,
+        conflict_strategy=payload.conflict_strategy,
     )
 
     return JSONResponse(
@@ -325,11 +334,17 @@ async def get_extraction_result(
     job_id: str,
     confidence: str | None = Query(default=None),
     property_category: str | None = Query(default=None),
+    include_figures: bool = Query(default=True),
+    include_tables: bool = Query(default=True),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Retrieve extraction results for a completed job with pagination."""
+    """Retrieve extraction results for a completed job with pagination.
+
+    Set include_figures=False or include_tables=False to exclude
+    multimodal extraction data from the response.
+    """
     job = get_job(job_id)
 
     if job is None:
@@ -374,6 +389,18 @@ async def get_extraction_result(
         _to_v4_property(p, job_id=job_id) for p in page_properties
     ]
 
+    # Build multimodal result arrays from job data (NFM-853.3)
+    figures = (
+        [V4FigureResult(**f) for f in job.figures]
+        if include_figures and job.figures
+        else []
+    )
+    tables = (
+        [V4TableResult(**t) for t in job.tables]
+        if include_tables and job.tables
+        else []
+    )
+
     return JSONResponse(
         content={
             "success": True,
@@ -382,6 +409,8 @@ async def get_extraction_result(
                 job_status=job.status.value,
                 total_extracted=job.extracted_count,
                 properties=[p.model_dump(mode="json") for p in properties],
+                figures=[f.model_dump(mode="json") for f in figures],
+                tables=[t.model_dump(mode="json") for t in tables],
             ).model_dump(mode="json"),
             "meta": {
                 "total": total,
@@ -389,6 +418,8 @@ async def get_extraction_result(
                 "limit": limit,
                 "confidence_filter": confidence,
                 "category_filter": property_category,
+                "include_figures": include_figures,
+                "include_tables": include_tables,
             },
         },
     )
