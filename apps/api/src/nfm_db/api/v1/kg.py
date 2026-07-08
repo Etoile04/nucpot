@@ -1,9 +1,19 @@
-"""Knowledge Graph query API endpoints (NFM-858).
+"""Knowledge Graph query, review queue, and conflict resolution API endpoints.
 
-Three query modes:
+Query modes (NFM-858):
   - GET  /kg/query/property  — find nodes by property value
   - GET  /kg/query/relation  — find edges by relation type between entities
   - GET  /kg/query/path      — find paths between entities (depth ≤3)
+
+Review queue (NFM-859):
+  - GET  /kg/review/queue          — list pending review items
+  - POST /kg/review/{id}/approve   — approve and add to KG
+  - POST /kg/review/{id}/reject    — reject with reason
+
+Conflict resolution (NFM-861):
+  - GET  /kg/conflicts              — list conflict records
+  - POST /kg/conflicts/{id}/resolve — resolve a conflict
+  - POST /kg/fusion                  — run multi-source fusion pipeline
 """
 
 from __future__ import annotations
@@ -12,6 +22,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
@@ -25,6 +36,11 @@ from nfm_db.services.kg_query_service import (
     path_query,
     property_query,
     relation_query,
+)
+from nfm_db.services.review_queue_service import (
+    approve_review_item,
+    list_pending_reviews,
+    reject_review_item,
 )
 
 logger = logging.getLogger(__name__)
@@ -133,4 +149,104 @@ async def path_query_endpoint(
         relation_types=rel_list,
         limit=limit,
     )
+    return ApiResponse(success=True, data=result)
+
+
+# ===========================================================================
+# Review Queue endpoints (NFM-859 B2.6)
+# ===========================================================================
+
+
+class ApproveRequest(BaseModel):
+    """Request body for approving a review item."""
+
+    reviewer_notes: str | None = Field(
+        None,
+        description="Optional notes from the reviewer",
+    )
+
+
+class RejectRequest(BaseModel):
+    """Request body for rejecting a review item."""
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        description="Reason for rejection",
+    )
+
+
+class ReviewQueueResponse(BaseModel):
+    """Response envelope for the review queue listing."""
+
+    items: list[dict] = Field(default_factory=list)
+    total: int = 0
+
+
+@router.get(
+    "/kg/review/queue",
+    response_model=ApiResponse[ReviewQueueResponse],
+)
+async def list_review_queue(
+    item_type: str | None = Query(None, description="Filter by item type (entity/relation)"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReviewQueueResponse]:
+    """List pending items in the KG review queue."""
+    items, total = await list_pending_reviews(
+        db,
+        item_type=item_type,
+        limit=limit,
+        offset=offset,
+    )
+    return ApiResponse(
+        success=True,
+        data=ReviewQueueResponse(items=items, total=total),
+    )
+
+
+@router.post(
+    "/kg/review/{review_id}/approve",
+    response_model=ApiResponse[dict],
+)
+async def approve_review(
+    review_id: UUID,
+    body: ApproveRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict]:
+    """Approve a pending review item and promote it to the live KG."""
+    result = await approve_review_item(
+        db,
+        review_id=review_id,
+        reviewer_notes=body.reviewer_notes if body else None,
+    )
+    if "error" in result:
+        raise HTTPException(
+            status_code=result.get("status_code", 400),
+            detail=result["error"],
+        )
+    return ApiResponse(success=True, data=result)
+
+
+@router.post(
+    "/kg/review/{review_id}/reject",
+    response_model=ApiResponse[dict],
+)
+async def reject_review(
+    review_id: UUID,
+    body: RejectRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict]:
+    """Reject a pending review item with a reason."""
+    result = await reject_review_item(
+        db,
+        review_id=review_id,
+        reason=body.reason,
+    )
+    if "error" in result:
+        raise HTTPException(
+            status_code=result.get("status_code", 400),
+            detail=result["error"],
+        )
     return ApiResponse(success=True, data=result)
