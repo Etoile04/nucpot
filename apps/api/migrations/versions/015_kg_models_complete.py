@@ -1,10 +1,11 @@
 """Complete KG model schema: figure_id, corpus, AGE sync, review queue, ontology map
 
-Revision ID: 014
-Revises: 013
+Revision ID: 015
+Revises: 014
 Create Date: 2026-07-08
 
-Bridges gap between migration 012/013 DDL and the current ORM models:
+Bridges gap between migration 012/013/014 DDL and the current ORM models:
+- Fix stale ck_kg_nodes_node_type: add missing 'Measurement' type
 - Add figure_id FK to kg_nodes (spec §6.2)
 - Add corpus_id, synced_to_graph, graph_synced_at to kg_nodes and kg_edges
   (multi-corpus support + Apache AGE graph sync tracking)
@@ -18,14 +19,28 @@ from collections.abc import Sequence
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "014"
-down_revision: str | Sequence[str] | None = "013"
+revision: str = "015"
+down_revision: str | Sequence[str] | None = "014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     """Apply all KG model completion changes."""
+
+    # =========================================================================
+    # FIX: Stale ck_kg_nodes_node_type missing 'Measurement' (H1)
+    # Migration 012 only had 5 node types; ORM added 'Measurement' later.
+    # =========================================================================
+    op.execute("""
+        ALTER TABLE kg_nodes
+            DROP CONSTRAINT IF EXISTS ck_kg_nodes_node_type,
+            ADD CONSTRAINT ck_kg_nodes_node_type
+                CHECK (node_type IN (
+                    'Material', 'Property', 'Experiment',
+                    'Condition', 'Publication', 'Measurement'
+                ))
+    """)
 
     # =========================================================================
     # ALTER kg_nodes: add figure_id, corpus_id, AGE sync columns
@@ -139,3 +154,14 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_kg_nodes_corpus_id")
     op.execute("DROP INDEX IF EXISTS ix_kg_nodes_figure_id")
     op.execute("DROP INDEX IF EXISTS ix_kg_edges_corpus_id")
+
+    # Revert CHECK constraint to original 5 types (pre-015 state)
+    op.execute("""
+        ALTER TABLE kg_nodes
+            DROP CONSTRAINT IF EXISTS ck_kg_nodes_node_type,
+            ADD CONSTRAINT ck_kg_nodes_node_type
+                CHECK (node_type IN (
+                    'Material', 'Property', 'Experiment',
+                    'Condition', 'Publication'
+                ))
+    """)
