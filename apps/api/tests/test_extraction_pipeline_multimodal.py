@@ -300,6 +300,82 @@ class TestExtractTablesFromSource:
         for table in results:
             assert table["confidence"] >= 0.8
 
+    @pytest.mark.asyncio
+    async def test_vlm_failure_ocr_also_fails_returns_empty(self):
+        """When VLM fails AND OCR fallback also fails, figure extraction returns empty."""
+        with patch(
+            "nfm_db.services.extraction_pipeline._is_stub_mode",
+            return_value=False,
+        ), patch(
+            "nfm_db.services.vision_client.is_vlm_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.plot_extractor.extract_plot_data",
+            side_effect=Exception("VLM timeout"),
+        ), patch(
+            "nfm_db.services.ocr_fallback.OcrFallback",
+        ) as MockOcr:
+            mock_ocr_instance = AsyncMock()
+            mock_ocr_instance.extract_text = AsyncMock(
+                side_effect=Exception("OCR engine crash"),
+            )
+            MockOcr.return_value = mock_ocr_instance
+
+            results = await _extract_figures_from_source(
+                source_reference="test.png",
+                figure_types=None,
+                threshold=0.1,
+            )
+
+        # Both VLM and OCR failed — should return empty list, not raise
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_vlm_not_configured_skips_extraction(self):
+        """When VLM is not configured, figure extraction returns empty (no fallback)."""
+        with patch(
+            "nfm_db.services.extraction_pipeline._is_stub_mode",
+            return_value=False,
+        ), patch(
+            "nfm_db.services.vision_client.is_vlm_configured",
+            return_value=False,
+        ):
+            results = await _extract_figures_from_source(
+                source_reference="test.png",
+                figure_types=None,
+                threshold=0.5,
+            )
+
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_table_ocr_also_fails_returns_empty(self):
+        """When VLM and OCR both fail for table extraction, returns empty."""
+        with patch(
+            "nfm_db.services.extraction_pipeline._is_stub_mode",
+            return_value=False,
+        ), patch(
+            "nfm_db.services.vision_client.is_vlm_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.table_extractor.extract_table_data",
+            side_effect=Exception("VLM timeout"),
+        ), patch(
+            "nfm_db.services.ocr_fallback.OcrFallback",
+        ) as MockOcr:
+            mock_ocr_instance = AsyncMock()
+            mock_ocr_instance.extract_text = AsyncMock(
+                side_effect=Exception("OCR engine crash"),
+            )
+            MockOcr.return_value = mock_ocr_instance
+
+            results = await _extract_tables_from_source(
+                source_reference="test.png",
+                threshold=0.1,
+            )
+
+        assert results == []
+
 
 # ---------------------------------------------------------------------------
 # _apply_conflict_resolution
@@ -400,6 +476,52 @@ class TestApplyConflictResolution:
 
         assert text_props[0]["value"] == original_text_value
         assert vlm_props[0]["value"] == original_vlm_value
+
+    def test_merge_strategy_raises_not_implemented(self):
+        """'merge' strategy is recognized by the schema but not yet implemented."""
+        text_props = [{"property_name": "a", "value": 1}]
+        vlm_props = [{"property_name": "b", "value": 2}]
+
+        with pytest.raises(ValueError, match="Unknown conflict strategy"):
+            _apply_conflict_resolution(text_props, vlm_props, "merge")
+
+    def test_keep_both_strategy_raises_not_implemented(self):
+        """'keep_both' strategy is recognized by the schema but not yet implemented."""
+        text_props = [{"property_name": "a", "value": 1}]
+        vlm_props = [{"property_name": "b", "value": 2}]
+
+        with pytest.raises(ValueError, match="Unknown conflict strategy"):
+            _apply_conflict_resolution(text_props, vlm_props, "keep_both")
+
+    def test_multiple_conflicts_resolved_correctly(self):
+        """When multiple properties conflict, all are resolved consistently."""
+        text_props = [
+            {"property_name": "lattice_constant", "value": 5.47, "source": "text"},
+            {"property_name": "density", "value": 10.9, "source": "text"},
+        ]
+        vlm_props = [
+            {"property_name": "lattice_constant", "value": 5.48, "source": "vlm"},
+            {"property_name": "density", "value": 10.95, "source": "vlm"},
+        ]
+
+        final_text, final_vlm = _apply_conflict_resolution(
+            text_props, vlm_props, "prefer_vlm"
+        )
+
+        assert len(final_text) == 0
+        assert len(final_vlm) == 2
+
+    def test_one_side_empty_no_conflicts(self):
+        """When one side is empty, there are no conflicts to resolve."""
+        text_props = [{"property_name": "a", "value": 1}]
+        vlm_props = []
+
+        final_text, final_vlm = _apply_conflict_resolution(
+            text_props, vlm_props, "prefer_vlm"
+        )
+
+        assert len(final_text) == 1
+        assert len(final_vlm) == 0
 
 
 # ---------------------------------------------------------------------------

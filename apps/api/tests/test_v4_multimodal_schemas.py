@@ -311,3 +311,91 @@ class TestV4MultimodalSummary:
     def test_avg_confidence_clamped(self):
         with pytest.raises(ValidationError):
             V4MultimodalSummary(avg_confidence=1.5)
+
+
+# ---------------------------------------------------------------------------
+# Invalid input rejection tests (NFM-925)
+# ---------------------------------------------------------------------------
+
+
+class TestV4ExtractionSubmitInvalidInputs:
+    """Tests for rejecting invalid multimodal inputs (NFM-925)."""
+
+    def test_rejects_invalid_conflict_strategy(self):
+        """Pydantic Literal rejects unknown conflict strategies."""
+        with pytest.raises(ValidationError, match="conflict_strategy"):
+            V4ExtractionSubmitRequest(
+                source_reference="10.1016/test",
+                source_type="doi",
+                conflict_strategy="invalid_strategy",
+            )
+
+    def test_rejects_empty_string_conflict_strategy(self):
+        """Empty string is not a valid conflict strategy."""
+        with pytest.raises(ValidationError, match="conflict_strategy"):
+            V4ExtractionSubmitRequest(
+                source_reference="10.1016/test",
+                source_type="doi",
+                conflict_strategy="",
+            )
+
+    def test_rejects_numeric_conflict_strategy(self):
+        """Numeric value is not accepted for conflict_strategy."""
+        with pytest.raises(ValidationError, match="conflict_strategy"):
+            V4ExtractionSubmitRequest(
+                source_reference="10.1016/test",
+                source_type="doi",
+                conflict_strategy=123,
+            )
+
+    def test_rejects_figure_types_as_strings(self):
+        """figure_types must be a list, not a plain string."""
+        with pytest.raises(ValidationError):
+            V4ExtractionSubmitRequest(
+                source_reference="10.1016/test",
+                source_type="doi",
+                figure_types="line",
+            )
+
+    def test_rejects_figure_types_with_invalid_items(self):
+        """figure_types items must be strings, not integers."""
+        with pytest.raises(ValidationError):
+            V4ExtractionSubmitRequest(
+                source_reference="10.1016/test",
+                source_type="doi",
+                figure_types=["line", 42],
+            )
+
+    def test_accepts_empty_figure_types_list(self):
+        """Empty list is valid for figure_types (no filter)."""
+        req = V4ExtractionSubmitRequest(
+            source_reference="10.1016/test",
+            source_type="doi",
+            figure_types=[],
+        )
+        assert req.figure_types == []
+
+    def test_confidence_threshold_boundary_values(self):
+        """Exact boundary values 0.0 and 1.0 are accepted."""
+        req_low = V4ExtractionSubmitRequest(
+            source_reference="10.1016/test",
+            source_type="doi",
+            confidence_threshold=0.0,
+        )
+        assert req_low.confidence_threshold == 0.0
+
+        req_high = V4ExtractionSubmitRequest(
+            source_reference="10.1016/test",
+            source_type="doi",
+            confidence_threshold=1.0,
+        )
+        assert req_high.confidence_threshold == 1.0
+
+    def test_rejects_confidence_threshold_as_string(self):
+        """confidence_threshold must be float, not a string."""
+        with pytest.raises(ValidationError):
+            V4ExtractionSubmitRequest(
+                source_reference="10.1016/test",
+                source_type="doi",
+                confidence_threshold="high",
+            )

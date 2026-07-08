@@ -394,11 +394,82 @@ class TestStatusMultimodalSteps:
             assert response.status_code == 200
             progress = response.json()["data"]["progress"]
             assert progress["current_step"] == "mapping"
-            # extracting_figures and extracting_tables should be completed
-            # (they come before mapping in ordered steps)
             from nfm_db.api.v4.extraction import _ORDERED_STEPS
 
             assert "extracting_figures" in progress["steps_completed"]
             assert "extracting_tables" in progress["steps_completed"]
         finally:
             _job_store.pop(job_id, None)
+
+
+# ---------------------------------------------------------------------------
+# POST /submit — invalid multimodal params
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitInvalidMultimodalParams:
+    """POST /submit rejects invalid multimodal parameters (NFM-925)."""
+
+    @pytest.mark.asyncio
+    async def test_submit_invalid_conflict_strategy_returns_422(
+        self, v4_client: AsyncClient
+    ):
+        """Invalid conflict_strategy returns 422 Unprocessable Entity."""
+        payload = {
+            "source_reference": "10.1016/test",
+            "source_type": "doi",
+            "extract_figures": True,
+            "conflict_strategy": "invalid_strategy",
+        }
+        response = await v4_client.post(
+            "/api/v4/extraction/submit", json=payload
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_submit_invalid_confidence_threshold_returns_422(
+        self, v4_client: AsyncClient
+    ):
+        """confidence_threshold > 1.0 returns 422 Unprocessable Entity."""
+        payload = {
+            "source_reference": "10.1016/test",
+            "source_type": "doi",
+            "extract_figures": True,
+            "confidence_threshold": 1.5,
+        }
+        response = await v4_client.post(
+            "/api/v4/extraction/submit", json=payload
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_submit_negative_confidence_threshold_returns_422(
+        self, v4_client: AsyncClient
+    ):
+        """confidence_threshold < 0.0 returns 422 Unprocessable Entity."""
+        payload = {
+            "source_reference": "10.1016/test",
+            "source_type": "doi",
+            "extract_figures": True,
+            "confidence_threshold": -0.1,
+        }
+        response = await v4_client.post(
+            "/api/v4/extraction/submit", json=payload
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_submit_string_confidence_threshold_returns_422(
+        self, v4_client: AsyncClient
+    ):
+        """confidence_threshold as string returns 422 Unprocessable Entity."""
+        payload = {
+            "source_reference": "10.1016/test",
+            "source_type": "doi",
+            "extract_figures": True,
+            "confidence_threshold": "high",
+        }
+        response = await v4_client.post(
+            "/api/v4/extraction/submit", json=payload
+        )
+        assert response.status_code == 422
