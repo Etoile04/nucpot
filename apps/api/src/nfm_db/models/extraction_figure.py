@@ -12,7 +12,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Float, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
 

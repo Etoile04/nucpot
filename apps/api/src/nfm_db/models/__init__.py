@@ -146,6 +146,7 @@ from nfm_db.models.ontology import (  # noqa: E402
     KRelationType,
 )
 from nfm_db.models.potential import Potential  # noqa: E402
+from nfm_db.models.extraction_figure import ExtractionFigure  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
     Dataset,
     MeasurementCondition,
@@ -191,6 +192,7 @@ __all__ = [
     "DefectType",
     "ExtractionFigure",
     "ExecutionStatus",
+    "ExtractionFigure",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
