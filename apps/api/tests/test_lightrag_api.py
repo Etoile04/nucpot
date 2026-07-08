@@ -44,6 +44,7 @@ def mock_lightrag_client():
                 ],
             }
         )
+        mock_instance.close = AsyncMock()
         yield mock_instance
 
 
@@ -81,6 +82,7 @@ class TestHealthEndpoint:
         ) as mock_cls:
             mock_instance = mock_cls.return_value
             mock_instance.health_check = AsyncMock(return_value=False)
+            mock_instance.close = AsyncMock()
 
             transport = ASGITransport(app=app)
             async with AsyncClient(
@@ -155,6 +157,7 @@ class TestIngestEndpoint:
             mock_instance.ingest = AsyncMock(
                 side_effect=LightRAGClientError("Service unavailable")
             )
+            mock_instance.close = AsyncMock()
 
             transport = ASGITransport(app=app)
             async with AsyncClient(
@@ -236,6 +239,7 @@ class TestQueryEndpoint:
             mock_instance.query = AsyncMock(
                 side_effect=LightRAGClientError("Query failed")
             )
+            mock_instance.close = AsyncMock()
 
             transport = ASGITransport(app=app)
             async with AsyncClient(
