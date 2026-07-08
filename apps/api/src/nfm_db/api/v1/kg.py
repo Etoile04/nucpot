@@ -27,6 +27,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.schemas.common import ApiResponse
+from nfm_db.schemas.conflict import (
+    ConflictListResponse,
+    ConflictResponse,
+    FusionResult,
+    ResolveConflictRequest,
+    ResolveConflictResponse,
+)
 from nfm_db.schemas.kg_query import (
     PathQueryResponse,
     PropertyQueryResponse,
@@ -36,6 +43,11 @@ from nfm_db.services.kg_query_service import (
     path_query,
     property_query,
     relation_query,
+)
+from nfm_db.services.multi_source_fusion import (
+    list_conflicts,
+    resolve_single_conflict,
+    run_fusion,
 )
 from nfm_db.services.review_queue_service import (
     approve_review_item,
@@ -249,4 +261,137 @@ async def reject_review(
             status_code=result.get("status_code", 400),
             detail=result["error"],
         )
+    return ApiResponse(success=True, data=result)
+
+
+# ===========================================================================
+# Conflict Resolution endpoints (NFM-861)
+# ===========================================================================
+
+
+@router.get(
+    "/kg/conflicts",
+    response_model=ApiResponse[ConflictListResponse],
+)
+async def list_conflicts_endpoint(
+    material_id: str | None = Query(None, description="Filter by material node UUID"),
+    property_type_id: str | None = Query(
+        None, description="Filter by property type UUID"
+    ),
+    status: str | None = Query(None, description="Filter by status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ConflictListResponse]:
+    """List conflict records from multi-source fusion."""
+    mat_uuid: UUID | None = None
+    if material_id:
+        try:
+            mat_uuid = UUID(material_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid material_id UUID")
+
+    pt_uuid: UUID | None = None
+    if property_type_id:
+        try:
+            pt_uuid = UUID(property_type_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="Invalid property_type_id UUID"
+            )
+
+    records, total = await list_conflicts(
+        db,
+        material_id=mat_uuid,
+        property_type_id=pt_uuid,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+    conflict_responses = [
+        ConflictResponse(
+            id=r.id,
+            material_node_id=r.material_node_id,
+            property_node_id=r.property_node_id,
+            property_type_id=r.property_type_id,
+            conflicting_values=r.conflicting_values,
+            strategy=r.strategy,
+            resolved_value=r.resolved_value,
+            status=r.status,
+            resolved_by=r.resolved_by,
+            resolved_at=r.resolved_at,
+            resolution_notes=r.resolution_notes,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in records
+    ]
+
+    return ApiResponse(
+        success=True,
+        data=ConflictListResponse(
+            conflicts=conflict_responses,
+            total=total,
+        ),
+    )
+
+
+@router.post(
+    "/kg/conflicts/{conflict_id}/resolve",
+    response_model=ApiResponse[ResolveConflictResponse],
+)
+async def resolve_conflict_endpoint(
+    conflict_id: UUID,
+    body: ResolveConflictRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ResolveConflictResponse]:
+    """Resolve a conflict record manually or re-run auto-resolution."""
+    record = await resolve_single_conflict(
+        db,
+        conflict_id=conflict_id,
+        resolved_value=body.resolved_value if body else None,
+        strategy_override=body.strategy_override if body else None,
+        notes=body.notes if body else None,
+    )
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="Conflict record not found")
+
+    return ApiResponse(
+        success=True,
+        data=ResolveConflictResponse(
+            id=record.id,
+            strategy=record.strategy,
+            resolved_value=record.resolved_value,
+            status=record.status,
+            resolved_at=record.resolved_at,
+        ),
+    )
+
+
+@router.post(
+    "/kg/fusion",
+    response_model=ApiResponse[FusionResult],
+)
+async def run_fusion_endpoint(
+    material_id: str | None = Query(None, description="Material node UUID to fuse"),
+    strategy_override: str | None = Query(
+        None, description="Override conflict strategy for all properties"
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[FusionResult]:
+    """Run multi-source fusion pipeline to detect and resolve conflicts."""
+    mat_uuid: UUID | None = None
+    if material_id:
+        try:
+            mat_uuid = UUID(material_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid material_id UUID")
+
+    result = await run_fusion(
+        db,
+        material_id=mat_uuid,
+        strategy_override=strategy_override,
+    )
     return ApiResponse(success=True, data=result)
