@@ -119,12 +119,28 @@ from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
 from nfm_db.models.kg import (  # noqa: E402
-    VALID_NODE_TYPES,
-    VALID_RELATION_TYPES,
     KGEdge,
     KGNode,
     KGReviewQueue,
     OntologyIdMap,
+    VALID_NODE_TYPES,
+    VALID_RELATION_TYPES,
+)
+from nfm_db.models.conflict_record import (  # noqa: E402
+    ConflictRecord,
+)
+from nfm_db.models.extraction_figure import (  # noqa: E402
+    ExtractionFigure,
+)
+from nfm_db.models.extraction_job import (  # noqa: E402
+    ExtractionJob,
+)
+from nfm_db.models.extraction_result import (  # noqa: E402
+    ExtractionResult,
+)
+from nfm_db.models.review import (  # noqa: E402
+    ReviewMixin,
+    ReviewStatus,
 )
 from nfm_db.models.material import (  # noqa: E402
     Material,
@@ -180,8 +196,6 @@ from nfm_db.models.user import (  # noqa: E402
 )
 
 __all__ = [
-    "VALID_NODE_TYPES",
-    "VALID_RELATION_TYPES",
     "Author",
     "Base",
     "BlogPostMetadata",
@@ -197,6 +211,9 @@ __all__ = [
     "DefectAnalysisResult",
     "DefectType",
     "ExecutionStatus",
+    "ExtractionFigure",
+    "ExtractionJob",
+    "ExtractionResult",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
@@ -230,10 +247,14 @@ __all__ = [
     "PropertyType",
     "RefGapFillStaging",
     "ResolutionStrategy",
+    "ReviewMixin",
+    "ReviewStatus",
     "StagingStatus",
     "TimestampMixin",
     "Unit",
     "UnitConversion",
     "User",
+    "VALID_NODE_TYPES",
+    "VALID_RELATION_TYPES",
     "VerificationResultMD",
 ]
