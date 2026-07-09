@@ -5,6 +5,7 @@ from nfm_db.schemas.common import (  # noqa: F401
     ErrorCode,
     ErrorResponse,
     PaginatedResponse,
+    PaginationParams,
 )
 from nfm_db.schemas.extraction import (  # noqa: F401
     ExtractionStatusResponse,
