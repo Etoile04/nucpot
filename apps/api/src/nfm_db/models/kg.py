@@ -28,20 +28,21 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nfm_db.models import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from nfm_db.models.extraction_figure import ExtractionFigure
     from nfm_db.models.source import DataSource
 
 
 class KGNode(TimestampMixin, Base):
     """A knowledge graph node representing an entity.
 
-    Entity types: Material, Property, Experiment, Condition, Publication.
+    Entity types: Material, Property, Experiment, Condition, Publication, Measurement.
     """
 
     __tablename__ = "kg_nodes"
     __table_args__ = (
         CheckConstraint(
             "node_type IN ('Material', 'Property', 'Experiment', "
-            "'Condition', 'Publication')",
+            "'Condition', 'Publication', 'Measurement')",
             name="ck_kg_nodes_node_type",
         ),
         CheckConstraint(
@@ -78,6 +79,11 @@ class KGNode(TimestampMixin, Base):
         ForeignKey("data_sources.id", ondelete="SET NULL"),
         nullable=True,
     )
+    figure_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("extraction_figures.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Associated extraction figure (spec §6.2)",
+    )
     status: Mapped[str] = mapped_column(
         String(20),
         default="active",
@@ -100,6 +106,7 @@ class KGNode(TimestampMixin, Base):
 
     # -- relationships --
     source: Mapped["DataSource | None"] = relationship()
+    figure: Mapped["ExtractionFigure | None"] = relationship()
     outgoing_edges: Mapped[list["KGEdge"]] = relationship(
         back_populates="source_node",
         foreign_keys="[KGEdge.source_node_id]",
@@ -116,7 +123,9 @@ class KGNode(TimestampMixin, Base):
 class KGEdge(TimestampMixin, Base):
     """A directed edge connecting two knowledge graph nodes.
 
-    Relation types: hasProperty, measuredIn, relatedTo, cites, hasCondition.
+    Relation types: hasProperty, measuredIn, relatedTo, cites, hasCondition,
+    publishedIn, containsData, synthesizedBy, alloyOf, irradiatedIn,
+    testedAt, references, derivedFrom.
     """
 
     __tablename__ = "kg_edges"
@@ -201,11 +210,32 @@ class KGEdge(TimestampMixin, Base):
 # ---------------------------------------------------------------------------
 
 VALID_RELATION_TYPES: frozenset[str] = frozenset(
-    {"hasProperty", "measuredIn", "relatedTo", "cites", "hasCondition"}
+    {
+        "hasProperty",
+        "measuredIn",
+        "relatedTo",
+        "cites",
+        "hasCondition",
+        "publishedIn",
+        "containsData",
+        "synthesizedBy",
+        "alloyOf",
+        "irradiatedIn",
+        "testedAt",
+        "references",
+        "derivedFrom",
+    }
 )
 
 VALID_NODE_TYPES: frozenset[str] = frozenset(
-    {"Material", "Property", "Experiment", "Condition", "Publication"}
+    {
+        "Material",
+        "Property",
+        "Experiment",
+        "Condition",
+        "Publication",
+        "Measurement",
+    }
 )
 
 
@@ -249,6 +279,7 @@ class KGReviewQueue(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        server_default=func.now(),
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
