@@ -1,4 +1,4 @@
-import BlogAuthGuard from '@/components/admin/BlogAuthGuard'
+import ReviewAuthGuard from '@/components/review/ReviewAuthGuard'
 
 export const metadata = {
   title: 'Review',
@@ -7,10 +7,9 @@ export const metadata = {
 
 /**
  * Review layout — wraps all /review/* routes with JWT-based auth.
- * Uses BlogAuthGuard which checks /api/v1/auth/me and redirects
- * unauthenticated users to /admin/login per NFM-848 spec.
- * When NFM-834.2 delivers the generalized AuthGuard, swap it in —
- * the wrapper pattern is identical.
+ * Uses ReviewAuthGuard which checks /api/v1/auth/me and redirects
+ * unauthenticated users to /login.
+ * Spec: NFM-1006
  */
 export default function ReviewLayout({
   children,
@@ -18,12 +17,12 @@ export default function ReviewLayout({
   readonly children: React.ReactNode
 }) {
   return (
-    <BlogAuthGuard>
+    <ReviewAuthGuard>
       <div className="min-h-[calc(100vh-73px)] bg-gray-900">
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
           {children}
         </main>
       </div>
-    </BlogAuthGuard>
+    </ReviewAuthGuard>
   )
 }
