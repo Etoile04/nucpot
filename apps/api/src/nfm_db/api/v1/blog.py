@@ -37,7 +37,7 @@ from nfm_db.services.blog_post import (
     update_blog_post,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["博客管理"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ async def create_post(
     current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> BlogPostResponse:
-    """Create a new blog post (editor/admin only)."""
+    """创建新博客文章（仅编辑/管理员）。"""
     metadata, _ = await create_blog_post(
         session,
         author_id=current_user.id,
@@ -131,7 +131,7 @@ async def list_posts(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> list[BlogPostResponse]:
-    """List blog posts with filtering (admin/editor/reviewer only)."""
+    """获取博客文章列表，支持筛选（仅管理员/编辑/审核员）。"""
     post_status = None
     if status is not None:
         try:
@@ -167,7 +167,7 @@ async def get_post(
     _current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> BlogPostResponse:
-    """Get a single blog post by slug (editor/admin only)."""
+    """按slug获取单篇博客文章（仅编辑/管理员）。"""
     post = await get_blog_post_by_slug(session, slug)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -181,7 +181,7 @@ async def delete_post(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a blog post (author or admin only)."""
+    """删除博客文章（仅作者或管理员）。"""
     post = await get_blog_post_by_slug(session, slug)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -204,7 +204,7 @@ async def update_post(
     current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> BlogPostResponse:
-    """Update an existing blog post in place (preserves slug)."""
+    """更新博客文章（保留slug不变）。"""
     try:
         updated = await update_blog_post(
             session,
@@ -228,7 +228,7 @@ async def workflow_action(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: AsyncSession = Depends(get_db),
 ) -> WorkflowActionResponse:
-    """Execute workflow action on a blog post."""
+    """执行博客文章工作流操作。"""
     # Convert Permission enum set to string set for the state machine
     user_permissions = {p.value for p in current_user.permissions}
 

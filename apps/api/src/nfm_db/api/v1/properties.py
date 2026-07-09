@@ -35,7 +35,7 @@ from nfm_db.services.property_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["属性管理"])
 
 
 @router.get(
@@ -44,13 +44,13 @@ router = APIRouter()
 async def list_properties_endpoint(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    material_id: UUID | None = Query(None, description="Filter by material"),
-    property_type_id: UUID | None = Query(None, description="Filter by property type"),
+    material_id: UUID | None = Query(None),
+    property_type_id: UUID | None = Query(None),
     sort: str = Query("created_at", pattern="^(created_at|updated_at)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[PropertyMeasurementResponse]]:
-    """Return a paginated list of measurements, optionally filtered by material or property type."""
+    """获取物性测量数据列表，支持分页与筛选。"""
     result = await list_measurements(
         db,
         page=page,
@@ -67,7 +67,7 @@ async def list_properties_endpoint(
 async def get_properties_stats_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyStatsResponse]:
-    """Return aggregate statistics about measurements."""
+    """获取物性测量数据统计汇总。"""
     stats = await get_measurement_stats(db)
     return ApiResponse(success=True, data=stats)
 
@@ -79,7 +79,7 @@ async def get_property_endpoint(
     measurement_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementDetailResponse]:
-    """Return a single measurement with conditions and dataset."""
+    """获取单个物性测量详情（含条件与数据集）。"""
     detail = await get_measurement(db, measurement_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Property measurement not found")
@@ -93,7 +93,7 @@ async def create_property_endpoint(
     payload: PropertyMeasurementCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementResponse]:
-    """Create a new property measurement."""
+    """创建新的物性测量数据。"""
     result = await create_measurement(db, payload)
     return ApiResponse(success=True, data=result)
 
@@ -106,7 +106,7 @@ async def update_property_endpoint(
     payload: PropertyMeasurementUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementResponse]:
-    """Update an existing property measurement."""
+    """更新现有物性测量数据。"""
     result = await update_measurement(db, measurement_id, payload)
     if result is None:
         raise HTTPException(status_code=404, detail="Property measurement not found")

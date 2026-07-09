@@ -34,7 +34,7 @@ from nfm_db.services.auth_service import (
     get_password_hash,
 )
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter(prefix="/auth", tags=["认证管理"])
 settings = get_settings()
 
 
@@ -43,7 +43,7 @@ async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Token:
-    """Authenticate user and return access token."""
+    """用户登录，获取访问令牌。"""
     result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalar_one_or_none()
 
@@ -71,7 +71,7 @@ async def register(
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """Register a new user (available during initial setup)."""
+    """注册新用户。"""
     # Check if username exists
     result = await db.execute(select(User).where(User.username == user_data.username))
     if result.scalar_one_or_none():
@@ -107,7 +107,7 @@ async def register(
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user),
 ) -> ApiResponse[UserResponse]:
-    """Get information about the currently authenticated user."""
+    """获取当前认证用户信息。"""
     return ApiResponse(
         success=True,
         data=UserResponse.model_validate(current_user),
@@ -118,7 +118,7 @@ async def get_current_user_info(
 async def list_roles(
     current_user: User = Depends(require_admin_dep),
 ) -> ApiResponse[list[BlogRoleResponse]]:
-    """List all available blog roles (admin only)."""
+    """获取所有博客角色列表（仅管理员）。"""
     roles = get_all_roles()
     return ApiResponse(
         success=True,
@@ -137,7 +137,7 @@ async def assign_user_role(
     current_user: User = Depends(require_admin_dep),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RoleAssignmentResponse]:
-    """Assign or remove a blog role for a user (admin only)."""
+    """分配或移除用户博客角色（仅管理员）。"""
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalar_one_or_none()
 

@@ -43,7 +43,7 @@ from nfm_db.schemas.literature import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/literature")
+router = APIRouter(prefix="/literature", tags=["文献管理"])
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
 async def upload_literature(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureUploadResponse]:
-    """Upload a PDF file for parsing and extraction.
+    """上传PDF文件用于解析和提取。
 
     Note: File upload handling requires multipart form data.
     This endpoint creates a placeholder DataSource record.
@@ -136,12 +136,12 @@ async def upload_literature(
     summary="Full-text search across literature",
 )
 async def search_literature(
-    q: str = Query(..., min_length=1, description="Search query"),
+    q: str = Query(..., min_length=1),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[LiteratureListItem]]:
-    """Search across title, abstract, and DOI fields."""
+    """全文检索文献（标题、摘要、DOI）。"""
     stmt = select(DataSource).where(
         DataSource.source_type == "journal_article",
         or_(
@@ -183,7 +183,7 @@ async def get_literature_status(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureStatusResponse]:
-    """Return the current processing status and progress."""
+    """获取文献处理状态与进度。"""
     source = await _get_source_or_404(literature_id, db)
 
     status = "uploaded"
@@ -207,7 +207,7 @@ async def get_literature_detail(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureDetailResponse]:
-    """Return the full literature detail including extracted entities."""
+    """获取文献完整详情（含提取实体）。"""
     source = await _get_source_or_404(literature_id, db)
 
     # Count extraction figures if they exist.
@@ -255,7 +255,7 @@ async def list_literature(
     sort_order: str = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[LiteratureListItem]]:
-    """Return paginated literature list with optional filters."""
+    """获取文献列表，支持分页与筛选。"""
     stmt = select(DataSource).where(
         DataSource.source_type == "journal_article",
     )
@@ -315,7 +315,7 @@ async def reextract_literature(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureReextractResponse]:
-    """Trigger a re-extraction of the literature item."""
+    """触发文献重新提取。"""
     source = await _get_source_or_404(literature_id, db)
     await db.commit()
 
@@ -337,7 +337,7 @@ async def delete_literature(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, str]]:
-    """Delete a literature item and all associated extraction data."""
+    """删除文献及其关联数据。"""
     source = await _get_source_or_404(literature_id, db)
 
     # Delete associated extraction figures and results.

@@ -14,7 +14,7 @@ from nfm_db.schemas.feedback import (
 )
 from nfm_db.services.feedback import calculate_pages, create_feedback, list_feedback
 
-router = APIRouter()
+router = APIRouter(tags=["反馈管理"])
 
 
 @router.post("/feedback", response_model=ApiResponse, status_code=201)
@@ -40,7 +40,7 @@ async def list_feedback_endpoint(
     limit: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    """List feedback entries with filtering and pagination (admin endpoint)."""
+    """获取反馈列表，支持筛选与分页（管理员接口）。"""
     params = FeedbackListQuery(
         status=status,
         priority=priority,

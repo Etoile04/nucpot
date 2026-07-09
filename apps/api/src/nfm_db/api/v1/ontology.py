@@ -23,7 +23,7 @@ from nfm_db.services.ontology_service import (
 )
 from nfm_db.services.rate_limit import ontology_rate_limit
 
-router = APIRouter()
+router = APIRouter(tags=["本体管理"])
 
 # Safe slug — also the only form a staging ``source`` may take. Path-validated
 # (422 on mismatch); no string interpolation into SQL downstream.
@@ -47,22 +47,19 @@ async def get_corpus_graph(
     corpus_id: str = Path(
         ...,
         pattern=CORPUS_ID_PATTERN,
-        description="Corpus slug (= staging source).",
     ),
     max_nodes: int | None = Query(
         default=None,
         ge=1,
         le=HARD_MAX_NODES,
-        description="Page size ceiling (nodes). Omits → full corpus (<= hard ceiling).",
     ),
     cursor: str | None = Query(
         default=None,
-        description="Opaque pagination cursor from a prior response.",
     ),
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> OntologyGraphResponse:
-    """Return the derived versioned NVL graph for ``corpus_id``.
+    """返回指定语料库的版本化NVL图谱。
 
     Raises:
         404: the corpus resolves to no staging rows.

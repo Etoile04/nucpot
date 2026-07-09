@@ -57,7 +57,7 @@ from nfm_db.services.verification_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["参考值管理"])
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ async def bulk_stage_reference_values(
     payload: BulkStagingRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Bulk write reference values to staging.
+    """批量写入参考值到暂存表。
 
     Accepts an array of reference_value dicts, runs quality gate on each
     (dedup, range check, confidence routing), and stages accepted values.
@@ -152,13 +152,12 @@ async def list_pending_review(
     confidence: Confidence | None = Query(default=None),
     status: str | None = Query(
         default=None,
-        description="Filter by status: pending, approved, rejected, promoted, all",
     ),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Paginated list of staging records pending review.
+    """获取待审核的暂存记录列表，支持分页与筛选。
 
     Filters: element_system, phase, property_name, confidence, status.
     When status is None or 'pending': returns PENDING records only (default).
@@ -241,7 +240,7 @@ async def approve_reference_value(
     payload: ReviewRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Approve and promote a staging record.
+    """批准并提升暂存记录。
 
     Accepts an optional review_note. Runs the promotion pipeline:
     updates staging status to PROMOTED with review metadata and timestamp.
@@ -284,7 +283,7 @@ async def reject_reference_value(
     payload: ReviewRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Reject a staging record.
+    """驳回暂存记录。
 
     Accepts an optional review_note. Updates staging status to REJECTED
     with review metadata and timestamp.
@@ -323,7 +322,7 @@ async def export_reference_values(
     payload: ExportRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Bulk export reference values for verification consumption.
+    """批量导出参考值供验证服务使用。
 
     Exports staged values with optional filters (status, element_system,
     date range). The output format is compatible with verify-service
@@ -372,7 +371,7 @@ async def verify_callback(
     payload: VerificationCallbackRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Receive verification results from the verify-service.
+    """接收验证服务的验证结果回调。
 
     The verify-service sends A-F grades for each staging record.
     F-grade records are auto-rejected. All verified records have

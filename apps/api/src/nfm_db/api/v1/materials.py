@@ -34,19 +34,19 @@ from nfm_db.services.material_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["材料管理"])
 
 
 @router.get("/materials", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])
 async def list_materials_endpoint(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    category_id: UUID | None = Query(None, description="Filter by category"),
+    category_id: UUID | None = Query(None),
     sort: str = Query("created_at", pattern="^(name|created_at|updated_at)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
-    """Return a paginated list of materials, optionally filtered by category."""
+    """获取材料列表，支持分页与分类筛选。"""
     result = await list_materials(
         db,
         page=page,
@@ -60,12 +60,12 @@ async def list_materials_endpoint(
 
 @router.get("/materials/search", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])
 async def search_materials_endpoint(
-    q: str = Query("", description="Search query"),
+    q: str = Query(""),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
-    """Search materials by name, formula, or alias (ILIKE)."""
+    """按名称、化学式或别名搜索材料。"""
     result = await search_materials(
         db,
         query=q,
@@ -80,7 +80,7 @@ async def get_material_endpoint(
     material_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialDetailResponse]:
-    """Return a single material with aliases and composition."""
+    """获取单个材料详情（含别名与成分）。"""
     detail = await get_material(db, material_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Material not found")
@@ -92,7 +92,7 @@ async def create_material_endpoint(
     payload: MaterialCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialResponse]:
-    """Create a new material."""
+    """创建新材料。"""
     result = await create_material(db, payload)
     return ApiResponse(success=True, data=result)
 
@@ -103,7 +103,7 @@ async def update_material_endpoint(
     payload: MaterialUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialResponse]:
-    """Update an existing material."""
+    """更新现有材料信息。"""
     result = await update_material(db, material_id, payload)
     if result is None:
         raise HTTPException(status_code=404, detail="Material not found")

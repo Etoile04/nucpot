@@ -52,7 +52,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["MD验证"])
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,6 @@ class CancelJobResponse(BaseModel):
     response_model=MDVerificationJobResponse,
     status_code=http_status.HTTP_201_CREATED,
     summary="Submit MD verification job",
-    description="Creates a new MD verification job and submits it to Celery for async execution.",
 )
 async def submit_md_verification_job(
     request: MDVerificationJobSubmitRequest,
@@ -147,7 +146,7 @@ async def submit_md_verification_job(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobResponse:
-    """Submit a new MD verification job.
+    """提交新的MD验证任务。
 
     This endpoint:
     1. Validates request parameters
@@ -254,7 +253,6 @@ async def submit_md_verification_job(
     response_model=MDVerificationJobListResponse,
     status_code=http_status.HTTP_200_OK,
     summary="List MD verification jobs",
-    description="List MD verification jobs with optional filters for status, potential ID, and element system.",
 )
 async def list_md_verification_jobs(
     potential_id: str | None = None,
@@ -265,7 +263,7 @@ async def list_md_verification_jobs(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobListResponse:
-    """List MD verification jobs with optional filters.
+    """获取MD验证任务列表，支持筛选。
 
     Args:
         potential_id: Filter by potential ID
@@ -310,7 +308,6 @@ async def list_md_verification_jobs(
     response_model=MDVerificationJobResponse,
     status_code=http_status.HTTP_200_OK,
     summary="Get MD verification job details",
-    description="Get detailed information about a specific MD verification job.",
 )
 async def get_md_verification_job(
     job_id: uuid.UUID,
@@ -357,7 +354,6 @@ async def get_md_verification_job(
     response_model=JobStatusResponse,
     status_code=http_status.HTTP_200_OK,
     summary="Get MD verification job status",
-    description="Get current status and execution details for a specific job.",
 )
 async def get_md_verification_job_status(
     job_id: uuid.UUID,
@@ -417,7 +413,6 @@ async def get_md_verification_job_status(
     response_model=CancelJobResponse,
     status_code=http_status.HTTP_200_OK,
     summary="Cancel MD verification job",
-    description="Cancel a pending or running MD verification job. Cannot cancel completed jobs.",
 )
 async def cancel_md_verification_job(
     job_id: uuid.UUID,
@@ -502,7 +497,6 @@ async def cancel_md_verification_job(
     response_model=MDSimulationResultResponse,
     status_code=http_status.HTTP_200_OK,
     summary="Get MD simulation results",
-    description="Get simulation results (thermodynamic data, trajectory) for a completed job.",
 )
 async def get_simulation_results(
     job_id: uuid.UUID,
@@ -557,7 +551,6 @@ async def get_simulation_results(
     response_model=list[DefectAnalysisResultResponse],
     status_code=http_status.HTTP_200_OK,
     summary="Get defect analysis results",
-    description="Get defect analysis results (defect types, concentrations, formation energies) for a completed job.",
 )
 async def get_defect_analysis_results(
     job_id: uuid.UUID,
@@ -611,7 +604,6 @@ async def get_defect_analysis_results(
     response_model=list[PotentialFittingResultResponse],
     status_code=http_status.HTTP_200_OK,
     summary="Get potential fitting results",
-    description="Get potential fitting results (parameters, quality metrics) for a completed job.",
 )
 async def get_fitting_results(
     job_id: uuid.UUID,
@@ -680,7 +672,6 @@ class CompositeJobResultsResponse(BaseModel):
     response_model=CompositeJobResultsResponse,
     status_code=http_status.HTTP_200_OK,
     summary="Get composite job results",
-    description="Get job details together with simulation, defect, and fitting results in a single call.",
 )
 async def get_composite_job_results(
     job_id: uuid.UUID,

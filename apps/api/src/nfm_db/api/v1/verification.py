@@ -35,7 +35,7 @@ from nfm_db.services.domain_expert.reference_validation import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["数据验证"])
 
 
 # ---------------------------------------------------------------------------
@@ -46,20 +46,19 @@ router = APIRouter()
 class ReferenceCandidateRequest(BaseModel):
     """Request body for POST /api/v1/verification/check-gap."""
 
-    element_system: str = Field(..., max_length=50, description="e.g., U, UO2, Zr, Fe, U-Zr")
-    property_name: str = Field(..., max_length=100, description="e.g., lattice_constant")
-    value: float = Field(..., description="Reference value")
-    unit: str = Field(..., max_length=20, description="e.g., Å, eV/atom, GPa")
-    source: str = Field(..., max_length=200, description="Source name or citation")
+    element_system: str = Field(..., max_length=50)
+    property_name: str = Field(..., max_length=100)
+    value: float = Field(...)
+    unit: str = Field(..., max_length=20)
+    source: str = Field(..., max_length=200)
     source_type: SourceCredibility = Field(
         default=SourceCredibility.UNKNOWN,
-        description="Credibility tier of the source",
     )
-    source_doi: str | None = Field(None, max_length=100, description="DOI if available")
-    method: str | None = Field(None, max_length=100, description="Methodology (e.g., DFT, experimental)")
-    uncertainty: float | None = Field(None, description="Uncertainty estimate")
-    temperature: float | None = Field(None, description="Temperature in K")
-    phase: str | None = Field(None, max_length=50, description="Phase (e.g., alpha, beta)")
+    source_doi: str | None = Field(None, max_length=100)
+    method: str | None = Field(None, max_length=100)
+    uncertainty: float | None = Field(None)
+    temperature: float | None = Field(None)
+    phase: str | None = Field(None, max_length=50)
 
 
 class LiteratureMatchItem(BaseModel):
@@ -80,7 +79,7 @@ class ReferenceValidationResponse(BaseModel):
 
     validation_id: UUID
     validated_at: datetime
-    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Confidence 0-1")
+    confidence_score: float = Field(..., ge=0.0, le=1.0)
     is_validated: bool
     needs_escalation: bool
     escalation_reason: str | None = None
@@ -96,11 +95,11 @@ class AdjudicationRequest(BaseModel):
     staging_id: UUID
     element_system: str
     property_name: str
-    error_log: str = Field(..., description="LAMMPS error log or failure message")
-    potential_type: str | None = Field(None, description="e.g., EAM, Buckingham, MEAM")
-    lammps_version: str | None = Field(None, description="LAMMPS version")
-    phase: str | None = Field(None, description="Phase (if applicable)")
-    temperature: float | None = Field(None, description="Temperature in K")
+    error_log: str = Field(...)
+    potential_type: str | None = Field(None)
+    lammps_version: str | None = Field(None)
+    phase: str | None = Field(None)
+    temperature: float | None = Field(None)
 
 
 class FixSuggestionItem(BaseModel):
@@ -129,7 +128,7 @@ class AdjudicationResponse(BaseModel):
 class QuarterlyAuditRequest(BaseModel):
     """Request body for POST /api/v1/verification/quarterly-audit."""
 
-    quarter: str = Field(..., description="e.g., 2026-Q2")
+    quarter: str = Field(...)
     start_date: datetime
     end_date: datetime
     p0_systems: list[str] = Field(default_factory=lambda: ["U", "UO2", "Zr", "Fe", "U-Zr"])
@@ -143,10 +142,10 @@ class QuarterlyAuditRequest(BaseModel):
         ]
     )
     min_uncertainty_coverage: float = Field(
-        default=0.90, ge=0.0, le=1.0, description="Target uncertainty coverage (90%)"
+        default=0.90, ge=0.0, le=1.0
     )
     max_days_since_verification: int = Field(
-        default=90, description="Max days since last verification (1 quarter)"
+        default=90
     )
 
 
@@ -187,15 +186,14 @@ class QuarterlyAuditResponse(BaseModel):
     "/check-gap",
     response_model=ReferenceValidationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Validate a reference candidate",
-    description="Runs reference-validation-workflow: literature search, source validation, "
+    summary="Validate a reference candidate"
                 "uncertainty estimation, confidence scoring. Escalates if confidence < 80%.",
 )
 async def check_reference_gap(
     request: ReferenceCandidateRequest,
     current_user: User = Depends(get_current_user),
 ) -> ReferenceValidationResponse:
-    """Validate a new reference candidate.
+    """验证新的参考数据候选值。
 
     This endpoint runs the reference-validation-workflow:
     1. Literature search (if skill available)
@@ -259,15 +257,14 @@ async def check_reference_gap(
     "/adjudicate-grade",
     response_model=AdjudicationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Adjudicate an F-grade LAMMPS failure",
-    description="Runs f-grade-adjudication-workflow: analyzes LAMMPS error logs, "
+    summary="Adjudicate an F-grade LAMMPS failure"
                 "pattern matches known failures, suggests fixes. Escalates if confidence < 70%.",
 )
 async def adjudicate_f_grade_endpoint(
     request: AdjudicationRequest,
     current_user: User = Depends(get_current_user),
 ) -> AdjudicationResponse:
-    """Adjudicate an F-grade verification failure.
+    """裁定F级验证失败。
 
     This endpoint runs the f-grade-adjudication-workflow:
     1. Parse LAMMPS error log
@@ -322,15 +319,14 @@ async def adjudicate_f_grade_endpoint(
     "/quarterly-audit",
     response_model=QuarterlyAuditResponse,
     status_code=status.HTTP_200_OK,
-    summary="Run quarterly P0 audit",
-    description="Runs quarterly-audit-workflow: checks all P0 systems for uncertainty coverage, "
+    summary="Run quarterly P0 audit"
                 "verification freshness, and conflicts. Generates audit report with findings.",
 )
 async def run_quarterly_audit_endpoint(
     request: QuarterlyAuditRequest,
     current_user: User = Depends(get_current_user),
 ) -> QuarterlyAuditResponse:
-    """Run quarterly audit on P0 safety-critical systems.
+    """对P0安全关键体系执行季度审计。
 
     This endpoint runs the quarterly-audit-workflow:
     1. Uncertainty coverage check (target: 90%)
@@ -397,7 +393,7 @@ async def run_quarterly_audit_endpoint(
     summary="Verification module health check",
 )
 async def verification_health() -> dict[str, str]:
-    """Health check for the verification module."""
+    """验证模块健康检查。"""
     return {
         "status": "healthy",
         "module": "verification",

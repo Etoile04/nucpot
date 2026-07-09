@@ -29,15 +29,15 @@ from nfm_db.services.source_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["数据源管理"])
 
 
 @router.get("/sources", response_model=ApiResponse[PaginatedResponse[DataSourceResponse]])
 async def list_sources_endpoint(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    year: int | None = Query(None, description="Filter by publication year"),
-    source_type: str | None = Query(None, description="Filter by source type"),
+    year: int | None = Query(None),
+    source_type: str | None = Query(None),
     sort: str = Query("created_at", pattern="^(created_at|updated_at|title|year)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
@@ -60,7 +60,7 @@ async def get_source_endpoint(
     source_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceDetailResponse]:
-    """Return a single source with authors ordered by author_order."""
+    """获取单个数据来源详情（含作者列表）。"""
     detail = await get_source(db, source_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -72,6 +72,6 @@ async def create_source_endpoint(
     payload: DataSourceCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceResponse]:
-    """Create a new data source."""
+    """创建新的数据来源。"""
     result = await create_source(db, payload)
     return ApiResponse(success=True, data=result)
