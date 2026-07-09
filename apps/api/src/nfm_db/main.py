@@ -3,10 +3,11 @@
 import logging
 import os
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 from nfm_db.api.v1 import (
     auth_endpoints,
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 _STATUS_TO_ERROR_CODE: dict[int, ErrorCode] = {
     400: ErrorCode.VALIDATION_ERROR,
     401: ErrorCode.AUTHENTICATION_ERROR,
-    403: ErrorCode.AUTHENTICATION_ERROR,
+    403: ErrorCode.PERMISSION_ERROR,
     404: ErrorCode.NOT_FOUND,
     405: ErrorCode.VALIDATION_ERROR,
     409: ErrorCode.CONFLICT,
@@ -157,6 +158,7 @@ async def _upload_error_handler(_request: Request, exc: PotentialUploadError) ->
         content={
             "success": False,
             "error": exc.message,
+            "detail": exc.message,
             "error_code": _status_to_error_code(exc.status_code),
         },
     )
@@ -173,6 +175,7 @@ async def _validation_error_handler(
         content={
             "success": False,
             "error": "Validation error",
+            "detail": "Validation error",
             "error_code": ErrorCode.VALIDATION_ERROR,
             "details": {"errors": exc.errors()},
         },
@@ -190,6 +193,7 @@ async def _http_exception_handler(
         content={
             "success": False,
             "error": exc.detail,
+            "detail": exc.detail,
             "error_code": _status_to_error_code(exc.status_code),
         },
     )
@@ -207,6 +211,7 @@ async def _global_exception_handler(
         content={
             "success": False,
             "error": "Internal server error",
+            "detail": "Internal server error",
             "error_code": ErrorCode.INTERNAL_ERROR,
         },
     )
