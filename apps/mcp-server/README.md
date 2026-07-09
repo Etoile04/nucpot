@@ -54,6 +54,26 @@ next to the entry-point.
 
 ## Claude Code Integration
 
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) installed and on `PATH`
+- PostgreSQL running (or adjust `NFM_MCP_DATABASE_URL` to point to your DB)
+- NFM API dependencies installed (`uv --project apps/mcp-server sync`)
+
+### Quick Start
+
+1. Copy the example config to your project root:
+
+   ```bash
+   cp .mcp.json.example .mcp.json
+   ```
+
+2. Edit `.mcp.json` and set your `NFM_MCP_DATABASE_URL`.
+
+3. Restart Claude Code — it auto-discovers `.mcp.json` in the project root.
+
+### Configuration
+
 Add to your project's `.mcp.json` (or Claude Code's global config):
 
 ```json
@@ -61,7 +81,7 @@ Add to your project's `.mcp.json` (or Claude Code's global config):
   "mcpServers": {
     "nfm": {
       "command": "uv",
-      "args": ["run", "--project", "apps/mcp-server", "nfm-mcp-server"],
+      "args": ["--project", "apps/mcp-server", "run", "nfm-mcp-server"],
       "env": {
         "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm"
       }
@@ -69,6 +89,16 @@ Add to your project's `.mcp.json` (or Claude Code's global config):
   }
 }
 ```
+
+### Verification
+
+After restarting Claude Code, confirm the MCP server is connected:
+
+1. All 9 tools should appear: `search_materials`, `get_material`, `query_properties`,
+   `search_sources`, `query_potentials`, `browse_ontology`, `query_knowledge_graph`,
+   `trigger_extraction`, `get_extraction_status`.
+2. Try a quick query: "Search for uranium dioxide materials" — Claude Code should
+   use the `search_materials` tool against the live database.
 
 ## Development
 
