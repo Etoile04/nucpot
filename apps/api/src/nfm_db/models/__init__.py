@@ -39,6 +39,27 @@ from nfm_db.models.feedback import (  # noqa: E402
 from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
+from nfm_db.models.kg import (  # noqa: E402
+    KGEdge,
+    KGNode,
+    KGReviewQueue,
+)
+from nfm_db.models.conflict_record import (  # noqa: E402
+    ConflictRecord,
+)
+from nfm_db.models.extraction_figure import (  # noqa: E402
+    ExtractionFigure,
+)
+from nfm_db.models.extraction_job import (  # noqa: E402
+    ExtractionJob,
+)
+from nfm_db.models.extraction_result import (  # noqa: E402
+    ExtractionResult,
+)
+from nfm_db.models.review import (  # noqa: E402
+    ReviewMixin,
+    ReviewStatus,
+)
 from nfm_db.models.material import (  # noqa: E402
     Material,
     MaterialAlias,
@@ -92,6 +113,12 @@ __all__ = [
     "Author",
     "Base",
     "BlogPostMetadata",
+    "ConflictRecord",
+    "ExtractionFigure",
+    "ExtractionJob",
+    "ExtractionResult",
+    "ReviewMixin",
+    "ReviewStatus",
     "BlogRole",
     "CacheLevel",
     "Confidence",
@@ -106,6 +133,9 @@ __all__ = [
     "FeedbackType",
     "FittingMethod",
     "HPCFailoverEvent",
+    "KGEdge",
+    "KGNode",
+    "KGReviewQueue",
     "HpcJob",
     "HpcJobStatus",
     "JobStatus",
