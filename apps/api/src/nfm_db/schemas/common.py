@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -70,5 +70,9 @@ class PaginationParams(BaseModel):
         ge=1,
         le=100,
         description="每页数量",
-        alias="per_page",
+        validation_alias=AliasChoices("per_page", "limit"),
     )
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.per_page

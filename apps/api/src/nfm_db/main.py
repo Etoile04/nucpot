@@ -15,6 +15,7 @@ from nfm_db.api.v1 import (
     extraction,
     feedback,
     health,
+    kg,
     materials,
     md_verification,
     ontology,
@@ -224,6 +225,7 @@ app.include_router(reference_gaps.router, prefix="/api/v1", tags=["reference-gap
 app.include_router(extraction.router, prefix="/api/v1", tags=["extraction"])
 app.include_router(viz.router, prefix="/api/v1", tags=["visualization"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["ontology"])
+app.include_router(kg.router, prefix="/api/v1", tags=["kg"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["verification"])
 app.include_router(md_verification.router, prefix="/api/v1/md-verification", tags=["md-verification"])
 app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
