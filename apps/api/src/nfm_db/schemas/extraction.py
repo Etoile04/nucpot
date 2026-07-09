@@ -5,10 +5,15 @@ pipeline: PDF → extraction → property mapping → quality gate → staging.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from nfm_db.schemas.vision_extraction import (
+    TableData,
+    VisionExtractionResult,
+)
 
 # ---------------------------------------------------------------------------
 # Trigger schemas
@@ -215,6 +220,36 @@ class V4ExtractionSubmitRequest(BaseModel):
         description="Job queue priority: normal or high.",
     )
 
+    # --- Multimodal extraction options (NFM-922) ---
+    extract_figures: bool = Field(
+        default=False,
+        description="Enable figure/plot extraction via VLM.",
+    )
+    extract_tables: bool = Field(
+        default=False,
+        description="Enable table extraction via VLM.",
+    )
+    figure_types: list[str] | None = Field(
+        default=None,
+        description=(
+            "Filter figure types to extract: 'line', 'scatter', 'bar', "
+            "'heatmap', 'contour'. None means all types."
+        ),
+    )
+    confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum VLM confidence to accept an extraction.",
+    )
+    conflict_strategy: Literal["prefer_vlm", "prefer_text", "merge", "keep_both"] = Field(
+        default="prefer_vlm",
+        description=(
+            "How to resolve VLM vs text extraction conflicts: "
+            "prefer_vlm, prefer_text, merge, keep_both."
+        ),
+    )
+
 
 class V4SubmitResponse(BaseModel):
     """Response after submitting a v4 extraction job."""
@@ -283,6 +318,14 @@ class V4ResultResponse(BaseModel):
     job_status: str
     total_extracted: int
     properties: list[V4PropertyResponse] = Field(default_factory=list)
+    figures: list[V4FigureResult] = Field(
+        default_factory=list,
+        description="Extracted figure/plot data from multimodal extraction.",
+    )
+    tables: list[V4TableResult] = Field(
+        default_factory=list,
+        description="Extracted table data from multimodal extraction.",
+    )
 
 
 class V4BrowseResponse(BaseModel):
@@ -335,3 +378,64 @@ class V4MaterialSystemSummary(BaseModel):
     )
     pending_review_count: int = 0
     last_extraction_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# V4 multimodal extraction result schemas (NFM-922)
+# ---------------------------------------------------------------------------
+
+
+class V4FigureResult(BaseModel):
+    """Wraps a VisionExtractionResult with page/source context for V4 API."""
+
+    page_number: int = Field(
+        ge=0,
+        description="Page number in the source document (0-indexed).",
+    )
+    source_file: str = Field(
+        description="Source file path or identifier.",
+    )
+    extraction: VisionExtractionResult = Field(
+        description="Complete VLM extraction result for this figure.",
+    )
+
+
+class V4TableResult(BaseModel):
+    """Wraps a TableData with page/source context for V4 API."""
+
+    page_number: int = Field(
+        ge=0,
+        description="Page number in the source document (0-indexed).",
+    )
+    source_file: str = Field(
+        description="Source file path or identifier.",
+    )
+    table_data: TableData = Field(
+        description="Structured table extraction result.",
+    )
+
+
+class V4MultimodalSummary(BaseModel):
+    """Aggregate statistics for multimodal extraction results."""
+
+    total_figures: int = Field(
+        default=0,
+        ge=0,
+        description="Total figures extracted.",
+    )
+    total_tables: int = Field(
+        default=0,
+        ge=0,
+        description="Total tables extracted.",
+    )
+    fallback_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of extractions that used OCR fallback.",
+    )
+    avg_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Average VLM confidence across all multimodal extractions.",
+    )
