@@ -88,6 +88,45 @@ def server_proc() -> subprocess.Popen[str]:
             proc.wait(timeout=5)
 
 
+NOTIFICATION_INITIALIZED: dict[str, Any] = {
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized",
+}
+
+
+def _send_notification(proc: subprocess.Popen[str], notification: dict[str, Any]) -> None:
+    """Write a JSON-RPC notification (no id) to the server's stdin."""
+    proc.stdin.write(json.dumps(notification) + "\n")
+    proc.stdin.flush()
+
+
+def _init_and_confirm(proc: subprocess.Popen[str]) -> None:
+    """Send initialize request, read response, send initialized notification."""
+    _send_request(proc, INITIALIZE_REQUEST)
+    _read_response(proc)
+    _send_notification(proc, NOTIFICATION_INITIALIZED)
+
+
+def _call_tool(
+    proc: subprocess.Popen[str],
+    tool_name: str,
+    arguments: dict[str, Any],
+    request_id: int = 3,
+) -> dict[str, Any]:
+    """Send a tools/call request and return the response."""
+    request: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    }
+    _send_request(proc, request)
+    return _read_response(proc)
+
+
 @pytest.mark.integration
 class TestStdioStartup:
     """Verify the MCP server starts via stdio and responds to protocol messages."""
@@ -155,3 +194,226 @@ class TestStdioStartup:
         for tool in tools:
             assert "name" in tool, f"Tool missing 'name': {tool}"
             assert "inputSchema" in tool, f"Tool {tool.get('name')!r} missing 'inputSchema'"
+
+
+@pytest.mark.integration
+class TestToolCalls:
+    """End-to-end tests: invoke tools via MCP JSON-RPC tools/call.
+
+    These tests exercise the full protocol path that Claude Code uses:
+    initialize → initialized notification → tools/call.
+
+    Only mock-data tools are tested (no PostgreSQL required).
+    """
+
+    def test_browse_ontology_returns_nodes(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """browse_ontology should return a JSON list of ontology nodes."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(server_proc, "browse_ontology", {})
+
+        assert resp.get("jsonrpc") == "2.0"
+        assert resp.get("id") == 3
+        result = resp.get("result")
+        assert result is not None, f"Expected result, got: {resp}"
+
+        content = result.get("content", [])
+        assert len(content) > 0, "Expected non-empty content array"
+
+        text_parts = [p["text"] for p in content if p.get("type") == "text"]
+        assert len(text_parts) > 0, "Expected at least one text content part"
+
+        data = json.loads(text_parts[0])
+        assert isinstance(data, list), f"Expected list, got {type(data).__name__}"
+        assert len(data) > 0, "Expected non-empty ontology list"
+
+    def test_browse_ontology_with_query_filter(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """browse_ontology with query should filter results."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(
+            server_proc,
+            "browse_ontology",
+            {"query": "reactor"},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert len(data) > 0, "Expected results for 'reactor' query"
+
+    def test_query_knowledge_graph_returns_structure(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """query_knowledge_graph should return nodes and edges."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(
+            server_proc,
+            "query_knowledge_graph",
+            {"query": "UO2"},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert "nodes" in data, f"Expected 'nodes' key, got: {list(data.keys())}"
+        assert "edges" in data, f"Expected 'edges' key, got: {list(data.keys())}"
+        assert len(data["nodes"]) > 0, "Expected non-empty nodes"
+
+    def test_search_sources_returns_results(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """search_sources should return a list of source references."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(
+            server_proc,
+            "search_sources",
+            {"query": "Finkelstein"},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert isinstance(data, list), f"Expected list, got {type(data).__name__}"
+        assert len(data) > 0, "Expected non-empty sources list"
+
+    def test_query_potentials_returns_list(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """query_potentials should return a list of potential entries."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(
+            server_proc,
+            "query_potentials",
+            {"material_id": "UO2"},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert isinstance(data, list), f"Expected list, got {type(data).__name__}"
+
+    def test_trigger_extraction_returns_job_id(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """trigger_extraction should return a job_id and submitted status."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(
+            server_proc,
+            "trigger_extraction",
+            {"file_url": "https://example.com/test.pdf"},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert "job_id" in data, f"Expected 'job_id', got: {data}"
+        assert data.get("status") == "submitted", f"Expected 'submitted', got: {data.get('status')}"
+
+    def test_get_extraction_status_returns_job(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """get_extraction_status should return job details for a known job."""
+        _init_and_confirm(server_proc)
+
+        # First trigger a job to get a known job_id
+        create_resp = _call_tool(
+            server_proc,
+            "trigger_extraction",
+            {"file_url": "https://example.com/status-test.pdf"},
+        )
+        create_data = json.loads(
+            [p["text"] for p in create_resp["result"]["content"] if p.get("type") == "text"][0]
+        )
+        job_id = create_data["job_id"]
+
+        # Now query its status
+        resp = _call_tool(
+            server_proc,
+            "get_extraction_status",
+            {"job_id": job_id},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert data.get("job_id") == job_id, f"Expected job_id {job_id}, got: {data}"
+
+    def test_get_extraction_status_not_found_returns_error(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """get_extraction_status should return an error for nonexistent job."""
+        _init_and_confirm(server_proc)
+        resp = _call_tool(
+            server_proc,
+            "get_extraction_status",
+            {"job_id": "job-nonexistent"},
+        )
+
+        text_parts = [
+            p["text"] for p in resp["result"]["content"]
+            if p.get("type") == "text"
+        ]
+        data = json.loads(text_parts[0])
+        assert "error" in data, f"Expected 'error' key for nonexistent job, got: {data}"
+
+    def test_no_unhandled_exceptions_in_tool_calls(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """All tool calls should return valid JSON-RPC responses (no crashes)."""
+        _init_and_confirm(server_proc)
+
+        tool_calls = [
+            ("browse_ontology", {}),
+            ("browse_ontology", {"query": "material"}),
+            ("query_knowledge_graph", {"query": "UO2"}),
+            ("search_sources", {"query": "nuclear"}),
+            ("query_potentials", {"material_id": "UO2"}),
+            ("trigger_extraction", {"file_url": "https://example.com/e2e.pdf"}),
+            ("get_extraction_status", {"job_id": "job-nonexistent"}),
+        ]
+
+        for idx, (tool_name, args) in enumerate(tool_calls):
+            resp = _call_tool(
+                server_proc,
+                tool_name,
+                args,
+                request_id=100 + idx,
+            )
+
+            # Must be valid JSON-RPC
+            assert resp.get("jsonrpc") == "2.0", (
+                f"Tool {tool_name!r}: missing jsonrpc version"
+            )
+            assert resp.get("id") == 100 + idx, (
+                f"Tool {tool_name!r}: wrong id"
+            )
+            assert "result" in resp, (
+                f"Tool {tool_name!r}: missing 'result', got error response: {resp}"
+            )
+            assert resp["result"].get("content"), (
+                f"Tool {tool_name!r}: empty content in result"
+            )
