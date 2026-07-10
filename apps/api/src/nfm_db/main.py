@@ -6,7 +6,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from nfm_db.middleware.rate_limit import GlobalRateLimitMiddleware
+from slowapi.errors import RateLimitExceeded
+
+from nfm_db.middleware.rate_limit import (
+    NFMRateLimitMiddleware,
+    limiter,
+    rate_limit_exceeded_handler,
+)
 
 from nfm_db.api.v1 import (
     auth_endpoints,
@@ -150,9 +156,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global rate limiting (NFM-1073): per-IP sliding window on all /api/ routes.
+# Global rate limiting (NFM-1087): per-IP limits via slowapi on all /api/ routes.
 # Health endpoint is exempt. Configurable via RATE_LIMIT_* env vars.
-app.add_middleware(GlobalRateLimitMiddleware)
+app.state.limiter = limiter
+app.exception_handlers[RateLimitExceeded] = rate_limit_exceeded_handler
+app.add_middleware(NFMRateLimitMiddleware)
 
 # Global HTTP exception handler (NFM-1090): enriches all HTTPException
 # responses with standard error_code and Chinese message.

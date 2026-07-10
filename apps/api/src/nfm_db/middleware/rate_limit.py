@@ -1,182 +1,75 @@
-"""Global rate limiting middleware — NFM-1073.
+"""Global rate limiting middleware using slowapi (NFM-1087).
 
-Extends the existing ``InProcessRateLimiter`` from ``nfm_db.services.rate_limit``
-into a Starlette ``BaseHTTPMiddleware`` applied to all ``/api/`` routes except
-``/api/v1/health``.  No new external dependencies.
+Uses the ``slowapi`` library with its ``limits`` storage backend (memory by
+default, Redis for multi-instance deployments).  Only ``/api/`` routes are
+checked; ``/docs``, ``/redoc``, ``/openapi.json`` etc. pass through
+unrestricted.  The health endpoint is exempt via ``@limiter.exempt``.
 
-Env vars:
-    ``RATE_LIMIT_MAX_REQUESTS``   default ``60``
-    ``RATE_LIMIT_WINDOW_SECONDS`` default ``60``
-    ``RATE_LIMIT_ENABLED``        default ``true``
+Env vars
+--------
+``RATE_LIMIT_DEFAULT``    default ``100/minute``
+``RATE_LIMIT_BURST``       default ``20/second``
+``RATE_LIMIT_STORAGE_URI`` default ``memory://``
 """
 
 from __future__ import annotations
 
 import os
-import time
-from collections import defaultdict
-from collections.abc import Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 
-# Default policy (per NFM-1073 spec).
-_DEFAULT_MAX_REQUESTS = 60
-_DEFAULT_WINDOW_SECONDS = 60
+_DEFAULT_LIMIT = os.environ.get("RATE_LIMIT_DEFAULT", "100/minute")
+_BURST_LIMIT = os.environ.get("RATE_LIMIT_BURST", "20/second")
+_STORAGE_URI = os.environ.get("RATE_LIMIT_STORAGE_URI", "memory://")
 
-# Paths that bypass the global rate limiter.
-_EXEMPT_PATHS = {"/api/v1/health"}
+limiter = Limiter(
+    key_func=get_remote_address,
+    application_limits=[_DEFAULT_LIMIT, _BURST_LIMIT],
+    storage_uri=_STORAGE_URI,
+    headers_enabled=True,
+)
 
 
-class GlobalRateLimitLimiter:
-    """In-process sliding-window counter keyed by client IP.
+class NFMRateLimitMiddleware(SlowAPIMiddleware):
+    """SlowAPIMiddleware scoped to ``/api/`` routes only.
 
-    Same algorithm as ``nfm_db.services.rate_limit.InProcessRateLimiter``
-    but returns structured data instead of raising ``HTTPException``, so
-    the middleware can add headers and customise the JSON response.
+    Non-API routes (``/docs``, ``/redoc``, ``/openapi.json``) are never
+    rate-limited.  Health is exempt via ``@limiter.exempt``.
     """
 
-    def __init__(
-        self,
-        max_requests: int = _DEFAULT_MAX_REQUESTS,
-        window_seconds: int = _DEFAULT_WINDOW_SECONDS,
-        enabled: bool = True,
-    ) -> None:
-        self._max = max_requests
-        self._window = window_seconds
-        self._enabled = enabled
-        self._hits: dict[str, list[float]] = defaultdict(list)
-
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
-
-    def check(self, key: str) -> dict:
-        """Check the rate limit for *key*.
-
-        Returns a dict with:
-        - ``allowed`` (bool)
-        - ``remaining`` (int)
-        - ``reset`` (float — monotonic timestamp when oldest hit expires)
-        - ``retry_after`` (int | None — seconds to wait, only when not allowed)
-        """
-        if not self._enabled:
-            return {
-                "allowed": True,
-                "remaining": -1,
-                "reset": 0.0,
-                "retry_after": None,
-            }
-
-        now = time.monotonic()
-        bucket = [ts for ts in self._hits[key] if ts > now - self._window]
-        self._hits[key] = bucket
-
-        remaining = max(0, self._max - len(bucket))
-
-        if len(bucket) >= self._max:
-            oldest = bucket[0]
-            retry_after = max(1, int(oldest + self._window - now) + 1)
-            return {
-                "allowed": False,
-                "remaining": 0,
-                "reset": oldest + self._window,
-                "retry_after": retry_after,
-            }
-
-        bucket.append(now)
-        oldest = bucket[0]
-        return {
-            "allowed": True,
-            "remaining": remaining - 1,
-            "reset": oldest + self._window,
-            "retry_after": None,
-        }
-
-    def reset(self) -> None:
-        """Clear all buckets — used by tests to isolate state."""
-        self._hits.clear()
-
-
-def create_global_rate_limiter(
-    max_requests: int | None = None,
-    window_seconds: int | None = None,
-    enabled: bool | None = None,
-) -> GlobalRateLimitLimiter:
-    """Factory: build a ``GlobalRateLimitLimiter`` from env vars or overrides."""
-    if max_requests is None:
-        max_requests = int(
-            os.environ.get("RATE_LIMIT_MAX_REQUESTS", _DEFAULT_MAX_REQUESTS)
-        )
-    if window_seconds is None:
-        window_seconds = int(
-            os.environ.get("RATE_LIMIT_WINDOW_SECONDS", _DEFAULT_WINDOW_SECONDS)
-        )
-    if enabled is None:
-        enabled = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-
-    return GlobalRateLimitLimiter(
-        max_requests=max_requests,
-        window_seconds=window_seconds,
-        enabled=enabled,
-    )
-
-
-class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
-    """Starlette middleware that enforces global per-IP rate limits.
-
-    Applied to all ``/api/`` routes.  The health endpoint (and any path in
-    ``_EXEMPT_PATHS``) is completely skipped.
-    """
-
-    def __init__(
-        self,
-        app: Callable,
-        limiter: GlobalRateLimitLimiter | None = None,
-    ) -> None:
-        super().__init__(app)
-        self._limiter = limiter or create_global_rate_limiter()
-
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         path = request.url.path
-
-        # Exempt health and non-API paths.
-        if path in _EXEMPT_PATHS or not path.startswith("/api/"):
+        if not path.startswith("/api/"):
             return await call_next(request)
+        return await super().dispatch(request, call_next)
 
-        # Determine client key.
-        host = request.client.host if request.client else "anonymous"
-        key = f"global:{host}"
 
-        result = self._limiter.check(key)
+def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
+    """Custom 429 handler with NFM standard error envelope.
 
-        if not self._limiter.enabled:
-            return await call_next(request)
-
-        if not result["allowed"]:
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "success": False,
-                    "error": "Rate limit exceeded. Please retry later.",
-                    "error_code": "RATE_LIMIT_EXCEEDED",
-                },
-                headers={
-                    "Retry-After": str(result["retry_after"]),
-                    "X-RateLimit-Limit": str(self._limiter._max),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(int(result["reset"])),
-                },
-            )
-
-        # Inject rate-limit headers into the downstream response.
-        response = await call_next(request)
-        response.headers["X-RateLimit-Limit"] = str(self._limiter._max)
-        response.headers["X-RateLimit-Remaining"] = str(result["remaining"])
-        response.headers["X-RateLimit-Reset"] = str(int(result["reset"]))
-        return response
+    **Must be sync** — ``SlowAPIMiddleware`` calls via
+    ``sync_check_limits`` which falls back to the default handler for
+    async callables.
+    """
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "success": False,
+            "error": "Rate limit exceeded",
+            "error_code": "RATE_LIMIT_EXCEEDED",
+        },
+    )
+    try:
+        view_rate_limit = getattr(request.state, "view_rate_limit", None)
+        if view_rate_limit is not None:
+            response = limiter._inject_headers(response, view_rate_limit)
+    except Exception:
+        pass  # never let header injection crash the 429 response
+    return response
