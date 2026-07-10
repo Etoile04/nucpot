@@ -351,7 +351,7 @@ async def get_shortest_path(
     summary="Rebuild AGE graph for a corpus",
 )
 async def sync_corpus_graph(
-    corpus_id: str = Query(..., description="Corpus to rebuild"),
+    corpus_id: str = Query(..., description="Corpus to rebuild", pattern=CORPUS_ID_PATTERN),
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> SyncResponse:
