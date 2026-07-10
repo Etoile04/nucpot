@@ -257,6 +257,11 @@ async def submit_extraction(
         element_systems=payload.element_systems,
         cache_level=payload.cache_level,
         max_confidence=payload.max_confidence,
+        extract_figures=payload.extract_figures,
+        extract_tables=payload.extract_tables,
+        figure_types=payload.figure_types,
+        confidence_threshold=payload.confidence_threshold,
+        conflict_strategy=payload.conflict_strategy,
     )
 
     return JSONResponse(
@@ -374,6 +379,9 @@ async def get_extraction_result(
         _to_v4_property(p, job_id=job_id) for p in page_properties
     ]
 
+    figures = list(job.figures or [])
+    tables = list(job.tables or [])
+
     return JSONResponse(
         content={
             "success": True,
@@ -382,6 +390,8 @@ async def get_extraction_result(
                 job_status=job.status.value,
                 total_extracted=job.extracted_count,
                 properties=[p.model_dump(mode="json") for p in properties],
+                figures=figures,
+                tables=tables,
             ).model_dump(mode="json"),
             "meta": {
                 "total": total,

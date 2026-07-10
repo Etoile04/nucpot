@@ -4,6 +4,8 @@ Trigger, status, and response models for the literature extraction
 pipeline: PDF → extraction → property mapping → quality gate → staging.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
