@@ -66,6 +66,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Chinese fullwidth punctuation is intentional i18n content
+"src/nfm_db/api/v1/*.py" = ["RUF001", "RUF002"]
+"src/nfm_db/api/v4/*.py" = ["RUF001", "RUF002"]
+"src/nfm_db/schemas/errors.py" = ["RUF001", "RUF002"]
 "src/nfm_db/services/extraction_prompt.py" = ["RUF001"]
 "src/nfm_db/services/extraction_pipeline.py" = ["RUF001", "RUF002", "RUF003"]
 # Multiplication sign × is intentional in LaTeX pattern matching

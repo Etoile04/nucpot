@@ -25,7 +25,6 @@ from slowapi.middleware import _find_route_handler, _should_exempt, sync_check_l
 from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 
-
 # ---------------------------------------------------------------------------
 # Minimal app factory — avoids importing nfm_db.main which cascades
 # through dozens of models/schemas that are missing on this branch.
@@ -173,8 +172,8 @@ def test_limiter_reads_env_vars() -> None:
     """RATE_LIMIT_DEFAULT and RATE_LIMIT_BURST are read at module level."""
     from nfm_db.middleware.rate_limit import _BURST_LIMIT, _DEFAULT_LIMIT
 
-    assert _DEFAULT_LIMIT == os.environ.get("RATE_LIMIT_DEFAULT", "100/minute")
-    assert _BURST_LIMIT == os.environ.get("RATE_LIMIT_BURST", "20/second")
+    assert os.environ.get("RATE_LIMIT_DEFAULT", "100/minute") == _DEFAULT_LIMIT
+    assert os.environ.get("RATE_LIMIT_BURST", "20/second") == _BURST_LIMIT
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,6 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-
 # ---------------------------------------------------------------------------
 # App factory — inline middleware to avoid SlowAPIMiddleware/BaseHTTPMiddleware
 # issues with httpx ASGITransport in pytest.
@@ -146,14 +145,14 @@ def test_default_limit_reads_env() -> None:
     """Module-level _DEFAULT_LIMIT matches RATE_LIMIT_DEFAULT env var."""
     from nfm_db.middleware.rate_limit import _DEFAULT_LIMIT
 
-    assert _DEFAULT_LIMIT == os.environ.get("RATE_LIMIT_DEFAULT", "100/minute")
+    assert os.environ.get("RATE_LIMIT_DEFAULT", "100/minute") == _DEFAULT_LIMIT
 
 
 def test_burst_limit_reads_env() -> None:
     """Module-level _BURST_LIMIT matches RATE_LIMIT_BURST env var."""
     from nfm_db.middleware.rate_limit import _BURST_LIMIT
 
-    assert _BURST_LIMIT == os.environ.get("RATE_LIMIT_BURST", "20/second")
+    assert os.environ.get("RATE_LIMIT_BURST", "20/second") == _BURST_LIMIT
 
 
 def test_custom_default_via_env() -> None:
