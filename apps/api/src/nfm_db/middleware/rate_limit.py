@@ -21,7 +21,7 @@ Env vars
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, cast
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -54,13 +54,13 @@ class NFMRateLimitMiddleware(SlowAPIMiddleware):
     ) -> Response:
         path = request.url.path
         if not path.startswith("/api/"):
-            return await call_next(request)
+            return cast(Response, await call_next(request))
         return await super().dispatch(request, call_next)
 
 
 def rate_limit_exceeded_handler(
     request: Request, exc: RateLimitExceeded
-) -> JSONResponse:
+) -> Response:
     """Custom 429 handler with NFM standard error envelope.
 
     **Must be sync** — ``SlowAPIMiddleware`` calls via
