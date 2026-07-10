@@ -18,6 +18,7 @@ from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus
 from nfm_db.models.user import BlogRole, User
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.blog_post import (
     BlogPostCreate,
     BlogPostResponse,
@@ -130,8 +131,7 @@ async def list_posts(
     session: AsyncSession = Depends(get_db),
     status: str | None = Query(default=None),
     author_id: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    pagination: PaginationParams = Depends(PaginationParams),
 ) -> list[BlogPostResponse]:
     """获取博客文章列表，支持筛选（仅管理员/审核员）。
 
@@ -158,8 +158,8 @@ async def list_posts(
         session,
         status=post_status,
         author_id=parsed_author_id,
-        limit=limit,
-        offset=offset,
+        limit=pagination.per_page,
+        offset=pagination.offset,
     )
 
     return [_enrich_response(post) for post in posts]
