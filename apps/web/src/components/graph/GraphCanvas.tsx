@@ -223,6 +223,7 @@ export function GraphCanvas({
   data,
   onNodeClick,
   onNodeHover,
+  onExpand,
   className,
   height = DEFAULT_HEIGHT,
   initialZoom = 1,
@@ -320,11 +321,27 @@ export function GraphCanvas({
               label: simNode.label,
               type: toNodeType(simNode.category),
               size: simNode.radius,
+              childCount: simNode.childCount,
             }
           : null,
       )
     },
     [graph.hoverNode, onNodeHover],
+  )
+
+  const handleSimNodeDoubleClick = useCallback(
+    (simNode: SimNode) => {
+      if (onExpand && simNode.childCount && simNode.childCount > 0) {
+        onExpand({
+          id: simNode.id,
+          label: simNode.label,
+          type: toNodeType(simNode.category),
+          size: simNode.radius,
+          childCount: simNode.childCount,
+        })
+      }
+    },
+    [onExpand],
   )
 
   /* ---------------------------------------------------------------- */
@@ -384,6 +401,7 @@ export function GraphCanvas({
             selection={graph.selection}
             onNodeClick={handleSimNodeClick}
             onNodeHover={handleSimNodeHover}
+            onNodeDoubleClick={handleSimNodeDoubleClick}
           />
         ) : (
           <SvgRenderer
@@ -396,6 +414,7 @@ export function GraphCanvas({
             selection={graph.selection}
             onNodeClick={handleSimNodeClick}
             onNodeHover={handleSimNodeHover}
+            onNodeDoubleClick={handleSimNodeDoubleClick}
           />
         )}
 

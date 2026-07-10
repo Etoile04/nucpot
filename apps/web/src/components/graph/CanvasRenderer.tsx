@@ -26,6 +26,7 @@ import {
   EDGE_DEFAULT_COLOR,
   EDGE_HIGHLIGHT_COLOR,
 } from "./graph-theme"
+import { getNeighborIds } from "./graph-utils"
 
 export interface CanvasRendererProps {
   readonly width: number
@@ -36,6 +37,7 @@ export interface CanvasRendererProps {
   readonly selection: GraphSelection
   readonly onNodeClick?: (node: SimNode) => void
   readonly onNodeHover?: (node: SimNode | null) => void
+  readonly onNodeDoubleClick?: (node: SimNode) => void
 }
 
 /** Convert screen coordinates to graph-space coordinates. */
@@ -84,21 +86,6 @@ function getEdgeCoords(edge: SimEdge): {
   return { x1: src.x, y1: src.y, x2: tgt.x, y2: tgt.y }
 }
 
-/** Get 1-hop neighbor IDs for a node. */
-function getNeighborIds(
-  nodeId: string,
-  edges: readonly SimEdge[],
-): ReadonlySet<string> {
-  const neighbors = new Set<string>()
-  for (const edge of edges) {
-    const src = typeof edge.source === "string" ? edge.source : edge.source.id
-    const tgt = typeof edge.target === "string" ? edge.target : edge.target.id
-    if (src === nodeId) neighbors.add(tgt)
-    if (tgt === nodeId) neighbors.add(src)
-  }
-  return neighbors
-}
-
 export function CanvasRenderer({
   width,
   height,
@@ -108,6 +95,7 @@ export function CanvasRenderer({
   selection,
   onNodeClick,
   onNodeHover,
+  onNodeDoubleClick,
 }: CanvasRendererProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const theme = useMemo(() => getTheme(), [])
@@ -262,6 +250,19 @@ export function CanvasRenderer({
     [viewport, nodes, onNodeClick],
   )
 
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const screenX = e.clientX - rect.left
+      const screenY = e.clientY - rect.top
+      const hit = hitTest(screenX, screenY, viewport, nodes)
+      if (hit) {
+        onNodeDoubleClick?.(hit)
+      }
+    },
+    [viewport, nodes, onNodeDoubleClick],
+  )
+
   /* ---------------------------------------------------------------- */
   /*  Accessible node list (sr-only)                                  */
   /* ---------------------------------------------------------------- */
@@ -287,6 +288,7 @@ export function CanvasRenderer({
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
       />
       <div
         className="sr-only"

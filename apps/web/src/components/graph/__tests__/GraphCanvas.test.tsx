@@ -47,6 +47,16 @@ const SMALL_DATA: GraphData = {
   ],
 }
 
+const EXPANDABLE_DATA: GraphData = {
+  nodes: [
+    { id: "n1", label: "Uranium", type: "material", childCount: 3 },
+    { id: "n2", label: "Density", type: "property" },
+  ],
+  edges: [
+    { id: "e1", source: "n1", target: "n2" },
+  ],
+}
+
 function makeLargeData(count: number): GraphData {
   return {
     nodes: Array.from({ length: count }, (_, i) => ({
@@ -120,5 +130,40 @@ describe("GraphCanvas", () => {
       name: /interactive knowledge graph/i,
     })
     expect(container).toBeInTheDocument()
+  })
+
+  it("shows loading state during simulation", () => {
+    render(<GraphCanvas data={SMALL_DATA} />)
+
+    const loading = screen.getByRole("status", { busy: true })
+    expect(loading).toBeInTheDocument()
+    expect(loading).toHaveTextContent("Computing layout")
+  })
+
+  it("calls onExpand on double-click when childCount > 0", () => {
+    const onExpand = vi.fn()
+    render(
+      <GraphCanvas data={EXPANDABLE_DATA} onExpand={onExpand} />,
+    )
+
+    const node = screen.getByRole("button", { name: /Node: Uranium/i })
+    fireEvent.dblClick(node)
+
+    expect(onExpand).toHaveBeenCalledOnce()
+    const expandedNode = onExpand.mock.calls[0]![0]
+    expect(expandedNode.id).toBe("n1")
+    expect(expandedNode.childCount).toBe(3)
+  })
+
+  it("does not call onExpand on double-click when childCount is 0", () => {
+    const onExpand = vi.fn()
+    render(
+      <GraphCanvas data={SMALL_DATA} onExpand={onExpand} />,
+    )
+
+    const node = screen.getByRole("button", { name: /Node: Uranium/i })
+    fireEvent.dblClick(node)
+
+    expect(onExpand).not.toHaveBeenCalled()
   })
 })
