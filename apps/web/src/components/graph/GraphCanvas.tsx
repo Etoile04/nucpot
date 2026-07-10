@@ -20,10 +20,7 @@ import {
   type ReactNode,
 } from "react"
 import type {
-  GraphData,
-  GraphNode,
   SimNode,
-  GraphViewport,
 } from "./types"
 import { toNodeType } from "./types"
 import { useForceGraph } from "./useForceGraph"
