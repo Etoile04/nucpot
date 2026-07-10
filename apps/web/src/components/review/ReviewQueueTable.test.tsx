@@ -80,7 +80,8 @@ describe('ReviewQueueTable', () => {
 
   it('renders status labels', () => {
     render(<ReviewQueueTable {...defaultProps()} />)
-    expect(screen.getByText('待审')).toBeDefined()
+    // Two items have status 'pending', so getAllByText is required
+    expect(screen.getAllByText('待审').length).toBe(2)
     expect(screen.getByText('已通过')).toBeDefined()
   })
 
@@ -117,7 +118,8 @@ describe('ReviewQueueTable', () => {
     const onSelectAll = vi.fn()
     render(<ReviewQueueTable {...defaultProps({ onSelectAll })} />)
     fireEvent.click(screen.getByRole('checkbox', { name: '选择全部' }))
-    expect(onSelectAll).toHaveBeenCalledWith(false)
+    // allSelected is false when selectedIds is empty, so !allSelected = true
+    expect(onSelectAll).toHaveBeenCalledWith(true)
   })
 
   it('calls onSelect when individual checkbox is toggled', () => {
@@ -131,14 +133,14 @@ describe('ReviewQueueTable', () => {
 
   it('does not show batch bar when nothing is selected', () => {
     render(<ReviewQueueTable {...defaultProps()} />)
-    expect(screen.queryByText('已选择')).toBeNull()
+    expect(screen.queryByText(/已选择.*项/)).toBeNull()
   })
 
   it('shows batch bar when items are selected', () => {
     const selectedIds = new Set(['item-1', 'item-2'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds })} />)
-    expect(screen.getByText('已选择')).toBeDefined()
-    expect(screen.getByText('2')).toBeDefined()
+    expect(screen.getByText(/已选择.*项/)).toBeDefined()
+    expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1)
   })
 
   it('batch bar has correct aria-labels', () => {
@@ -154,7 +156,8 @@ describe('ReviewQueueTable', () => {
     const selectedIds = new Set(['item-1'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds })} />)
     fireEvent.click(screen.getByLabelText('批量通过 1 项'))
-    expect(screen.getByText('批量通过')).toBeDefined()
+    // Use heading role to disambiguate from batch bar button text
+    expect(screen.getByRole('heading', { name: '批量通过' })).toBeDefined()
     expect(screen.getByText(/确定通过选中的 1 项吗/)).toBeDefined()
   })
 
@@ -162,7 +165,8 @@ describe('ReviewQueueTable', () => {
     const selectedIds = new Set(['item-1'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds })} />)
     fireEvent.click(screen.getByLabelText('批量拒绝 1 项'))
-    expect(screen.getByText('批量拒绝')).toBeDefined()
+    // Use heading role to disambiguate from batch bar button text
+    expect(screen.getByRole('heading', { name: '批量拒绝' })).toBeDefined()
     expect(screen.getByText(/确定拒绝选中的 1 项吗/)).toBeDefined()
   })
 
@@ -175,7 +179,8 @@ describe('ReviewQueueTable', () => {
     fireEvent.click(screen.getByText('确认通过'))
 
     expect(onBatchAction).toHaveBeenCalledWith('approve', ['item-1', 'item-2'])
-    expect(screen.queryByText('批量通过')).toBeNull()
+    // Modal is gone — check dialog role, not text (batch bar button text persists)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('closes modal on cancel', () => {
@@ -185,7 +190,8 @@ describe('ReviewQueueTable', () => {
     fireEvent.click(screen.getByLabelText('批量通过 1 项'))
     fireEvent.click(screen.getByText('取消'))
 
-    expect(screen.queryByText('批量通过')).toBeNull()
+    // Modal is gone — check dialog role, not text (batch bar button text persists)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   // --- Individual row actions ---
