@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -191,7 +190,7 @@ async def get_literature_status(
 
     Return the current processing status and progress.
     """
-    source = await _get_source_or_404(literature_id, db)
+    await _get_source_or_404(literature_id, db)
 
     status = "uploaded"
     progress = 100
@@ -332,7 +331,7 @@ async def reextract_literature(
 
     Trigger a re-extraction of the literature item.
     """
-    source = await _get_source_or_404(literature_id, db)
+    await _get_source_or_404(literature_id, db)
     await db.commit()
 
     return ApiResponse(

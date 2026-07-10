@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select, text
@@ -322,7 +322,7 @@ async def find_paths(
         node_id_val = uuid.UUID(str(row[0]))
         next_node_id_val = uuid.UUID(str(row[1]))
         edge_id_val = uuid.UUID(str(row[2]))
-        relation_type_val = str(row[3])
+        str(row[3])
 
         # Load the two nodes
         n1_result = await db.execute(select(KGNode).where(KGNode.id == node_id_val))
@@ -504,7 +504,7 @@ async def approve_review_item(
     notes = payload.reviewer_notes if payload else None
     item.status = "approved"
     item.reviewer_notes = notes
-    item.reviewed_at = datetime.now(timezone.utc)
+    item.reviewed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(item)
 
@@ -546,7 +546,7 @@ async def reject_review_item(
     notes = payload.reviewer_notes if payload else None
     item.status = "rejected"
     item.reviewer_notes = notes
-    item.reviewed_at = datetime.now(timezone.utc)
+    item.reviewed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(item)
 

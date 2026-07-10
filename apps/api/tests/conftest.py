@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import sqlalchemy.exc as sa_exc
 import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import JSON, event
-from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -80,14 +78,23 @@ def _safe_create_all(sync_conn, metadata) -> None:
     metadata.create_all(sync_conn)
 
 
-@pytest.fixture(autouse=True)
-def _reset_rate_limiters() -> None:
-    """Isolate all in-process rate limiters between tests (no cross-test 429)."""
+@pytest.fixture(autouse=True, scope="session")
+def _neutralize_global_rate_limits() -> None:
+    """Disable global slowapi limits in tests; keep middleware for headers.
+
+    The global ``NFMRateLimitMiddleware`` must stay active so that per-endpoint
+    rate-limit tests still receive ``Retry-After`` header injection via
+    ``limiter._inject_headers``.  We simply clear the global application limits
+    so the middleware never triggers 429 itself, while per-endpoint
+    ``InProcessRateLimiter`` dependency checks remain fully functional.
+    """
+    from nfm_db.middleware.rate_limit import limiter as global_limiter
     from nfm_db.services.rate_limit import md_verification_limiter, ontology_limiter
 
-    ontology_limiter.reset()
-    md_verification_limiter.reset()
-    yield
+    # Remove global application-level limits (burst + sustained).
+    # Per-endpoint decorators (if any) are unaffected.
+    global_limiter.application_limits = []
+    global_limiter.reset()
     ontology_limiter.reset()
     md_verification_limiter.reset()
 

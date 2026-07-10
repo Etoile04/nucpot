@@ -12,7 +12,7 @@ Uses dependency injection via set_client() to inject mock/stub clients.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -26,7 +26,6 @@ from nfm_db.schemas.lightrag import (
 )
 from nfm_db.services.lightrag_client import LightRAGClientProtocol
 
-
 # ---------------------------------------------------------------------------
 # Mock client — frozen dataclass implementing the protocol
 # ---------------------------------------------------------------------------
@@ -38,7 +37,7 @@ class MockLightRAGClient:
 
     should_fail: bool = False
     error_message: str = "Sidecar unreachable"
-    ingest_id: uuid.UUID = uuid.uuid4()
+    ingest_id: uuid.UUID = field(default_factory=uuid.uuid4)
     query_answer: str | None = "UO2 has a thermal conductivity of 13.5 W/(m·K)"
     query_sources: list[dict[str, Any]] | None = None
     graph_results: list[dict[str, Any]] | None = None

@@ -18,7 +18,6 @@ from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus
 from nfm_db.models.user import BlogRole, User
-from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.blog_post import (
     BlogPostCreate,
     BlogPostResponse,
@@ -26,6 +25,7 @@ from nfm_db.schemas.blog_post import (
     WorkflowActionRequest,
     WorkflowActionResponse,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.services.blog_post import (
     approve_post,
     create_blog_post,

@@ -20,7 +20,6 @@ import pytest
 
 from nfm_db.models.source import DataSource
 
-
 # ---------------------------------------------------------------------------
 # Helpers — each test creates its own data, no cross-test dependencies
 # ---------------------------------------------------------------------------

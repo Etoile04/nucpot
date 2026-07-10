@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -193,7 +193,7 @@ async def resolve_conflict(
         record.resolved_value = await _auto_resolve(record, body.strategy)
 
     record.resolution = body.strategy
-    record.resolved_at = datetime.now(timezone.utc)
+    record.resolved_at = datetime.now(UTC)
     record.resolved_by = None  # Set by auth middleware in production
     await db.commit()
     await db.refresh(record)

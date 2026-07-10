@@ -5,14 +5,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from slowapi.errors import RateLimitExceeded
-
-from nfm_db.middleware.rate_limit import (
-    NFMRateLimitMiddleware,
-    limiter,
-    rate_limit_exceeded_handler,
-)
 
 from nfm_db.api.v1 import (
     auth_endpoints,
@@ -22,8 +15,8 @@ from nfm_db.api.v1 import (
     feedback,
     health,
     kg,
-    literature,
     lightrag,
+    literature,
     materials,
     md_verification,
     ontology,
@@ -37,6 +30,11 @@ from nfm_db.api.v1 import (
     viz,
 )
 from nfm_db.api.v4 import extraction as v4_extraction
+from nfm_db.middleware.rate_limit import (
+    NFMRateLimitMiddleware,
+    limiter,
+    rate_limit_exceeded_handler,
+)
 from nfm_db.schemas.errors import (
     ErrorCode,
     register_http_exception_handler,

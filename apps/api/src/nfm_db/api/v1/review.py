@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -168,8 +168,8 @@ async def get_pending_reviews(
     for model, table_name in tables_to_query:
         stmt = (
             select(model)
-            .where(getattr(model, "review_status") == ReviewStatus.PENDING.value)
-            .order_by(getattr(model, "created_at").desc())
+            .where(model.review_status == ReviewStatus.PENDING.value)
+            .order_by(model.created_at.desc())
         )
         result = await db.execute(stmt)
         rows = result.scalars().all()
@@ -267,7 +267,7 @@ async def update_review_status(
     row, table_name = await _find_review_item(item_id, db)
     row.review_status = body.status
     row.review_note = body.note
-    row.reviewed_at = datetime.now(timezone.utc)
+    row.reviewed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(row)
 
@@ -307,7 +307,7 @@ async def batch_review(
             row, _ = await _find_review_item(item.id, db)
             row.review_status = item.status
             row.review_note = item.note
-            row.reviewed_at = datetime.now(timezone.utc)
+            row.reviewed_at = datetime.now(UTC)
             succeeded += 1
         except HTTPException:
             failed += 1
@@ -350,7 +350,7 @@ async def get_review_stats(
     ]:
         for status in ReviewStatus:
             stmt = select(func.count()).where(
-                getattr(model, "review_status") == status.value,
+                model.review_status == status.value,
             )
             result = await db.execute(stmt)
             count = result.scalar() or 0

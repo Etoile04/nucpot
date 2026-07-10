@@ -7,7 +7,7 @@ from nfm_db.middleware.rate_limit import (
 )
 
 __all__ = [
-    "limiter",
     "NFMRateLimitMiddleware",
+    "limiter",
     "rate_limit_exceeded_handler",
 ]

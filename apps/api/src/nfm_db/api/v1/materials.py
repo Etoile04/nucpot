@@ -15,10 +15,11 @@ import logging
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
+from nfm_db.middleware.rate_limit import limiter
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.material import (
     BatchImportResult,
@@ -32,7 +33,6 @@ from nfm_db.services.batch_import_service import (
     batch_import_materials,
     get_import_lock,
 )
-from nfm_db.middleware.rate_limit import limiter
 from nfm_db.services.material_service import (
     create_material,
     get_material,
@@ -168,7 +168,7 @@ async def batch_import_endpoint(
     lock = await get_import_lock(client_ip)
     try:
         await asyncio.wait_for(lock.acquire(), timeout=0.001)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(
             status_code=409,
             detail="A batch import is already in progress for this client. "

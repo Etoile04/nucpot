@@ -20,7 +20,6 @@ import pytest
 
 from nfm_db.models.kg import KGEdge, KGNode, KGReviewQueue
 
-
 # ---------------------------------------------------------------------------
 # Helpers — each test creates its own data, no cross-test dependencies
 # ---------------------------------------------------------------------------
@@ -528,7 +527,7 @@ async def test_search_nodes_by_label(async_client, db_session) -> None:
     data = body["data"]
     assert len(data) >= 1
     labels = [n["label"] for n in data]
-    assert any("UO2" in l for l in labels)
+    assert any("UO2" in label for label in labels)
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,6 @@ from nfm_db.models.material import Material
 from nfm_db.models.property import PropertyCategory, PropertyType
 from nfm_db.models.source import DataSource
 
-
 # ---------------------------------------------------------------------------
 # Helpers — each test creates its own data, no cross-test dependencies
 # ---------------------------------------------------------------------------
