@@ -51,6 +51,7 @@ class TestGetNodeNeighbors:
             node_type="Material",
             label="UO2",
             corpus_id="test-corpus",
+            confidence=0.8,
         )
 
         mock_session = AsyncMock(spec=AsyncSession)
@@ -114,12 +115,14 @@ class TestSearchNodes:
                 node_type="Material",
                 label="Uranium Dioxide",
                 corpus_id="nucpot",
+                confidence=0.9,
             ),
             KGNode(
                 id=uuid.uuid4(),
                 node_type="Material",
                 label="Uranium",
                 corpus_id="nucpot",
+                confidence=0.7,
             ),
         ]
 
@@ -183,6 +186,7 @@ class TestGetShortestPath:
             node_type="Material",
             label="UO2",
             corpus_id="nucpot",
+            confidence=0.8,
         )
 
         mock_to_node = KGNode(
@@ -190,6 +194,7 @@ class TestGetShortestPath:
             node_type="Property",
             label="thermal_conductivity",
             corpus_id="nucpot",
+            confidence=0.6,
         )
 
         mock_session = AsyncMock(spec=AsyncSession)
@@ -214,8 +219,8 @@ class TestGetShortestPath:
 
             assert response.status_code == 200
             data = response.json()
-            assert "from_node" in data
-            assert "to_node" in data
+            assert "from" in data
+            assert "to" in data
             assert "path" in data
             assert "length" in data
 

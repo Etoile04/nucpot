@@ -94,7 +94,7 @@ def detect_conflicts(
             "value": prop.value,
             "source_id": prop.source_id,
             "confidence": prop.confidence,
-            "extracted_at": prop.extracted_at or datetime.now(UTC),
+            "extracted_at": (prop.extracted_at or datetime.now(UTC)).isoformat(),
         }
         if prop.extra:
             entry.update(prop.extra)
