@@ -173,7 +173,7 @@ class FusionPipeline:
                     resolver = ConflictResolver()
                     resolved = resolver.resolve(
                         list(conflict_group.values),
-                        strategy=effective_strategy,
+                        strategy=ResolutionStrategy(effective_strategy),
                     )
                     conflict.resolved_value = resolved
                     conflict.status = ConflictStatus.AUTO_RESOLVED

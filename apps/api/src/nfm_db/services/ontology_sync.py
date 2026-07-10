@@ -330,7 +330,7 @@ async def _incremental_sync(
     unsynced_nodes = await session.execute(
         select(KGNode).where(
             KGNode.corpus_id == corpus_filter,
-            KGNode.synced_to_graph.is_(False),  # type: ignore[union-attr]
+            KGNode.synced_to_graph.is_(False),
         )
     )
     nodes = list(unsynced_nodes.scalars().all())
@@ -346,7 +346,7 @@ async def _incremental_sync(
     unsynced_edges = await session.execute(
         select(KGEdge).where(
             KGEdge.corpus_id == corpus_filter,
-            KGEdge.synced_to_graph.is_(False),  # type: ignore[union-attr]
+            KGEdge.synced_to_graph.is_(False),
         )
     )
     edges = list(unsynced_edges.scalars().all())
@@ -453,7 +453,7 @@ async def get_sync_status(
     synced_nodes = await session.execute(
         select(func.count()).select_from(KGNode).where(
             KGNode.corpus_id == corpus_filter,
-            KGNode.synced_to_graph.is_(True),  # type: ignore[union-attr]
+            KGNode.synced_to_graph.is_(True),
         )
     )
 
@@ -465,7 +465,7 @@ async def get_sync_status(
     synced_edges = await session.execute(
         select(func.count()).select_from(KGEdge).where(
             KGEdge.corpus_id == corpus_filter,
-            KGEdge.synced_to_graph.is_(True),  # type: ignore[union-attr]
+            KGEdge.synced_to_graph.is_(True),
         )
     )
 

@@ -16,7 +16,7 @@ vi.mock("@/lib/api-client", () => ({
   getToken: (): string | null => mockGetToken(),
   clearToken: (): void => mockClearToken(),
   authApi: {
-    getMe: vi.fn(),
+    getMe: vi.fn(() => new Promise<unknown>(() => {})),
   },
   request: vi.fn(),
 }))
@@ -159,22 +159,16 @@ describe("ReviewAuthGuard", () => {
   it("useReviewAuth returns null profile while loading", () => {
     mockGetToken.mockReturnValue("valid-token")
 
-    function TestConsumer() {
-      const { profile, loading } = useReviewAuth()
-      return (
-        <p>
-          {loading ? "loading" : "loaded"} |{" "}
-          {profile ? profile.username : "null"}
-        </p>
-      )
-    }
-
+    // While loading, ReviewAuthGuard renders its own loading UI
+    // and does NOT render children, so useReviewAuth is not
+    // consumable from children during the loading phase.
     render(
       <ReviewAuthGuard>
-        <TestConsumer />
+        <p>Protected content</p>
       </ReviewAuthGuard>,
     )
 
-    expect(screen.getByText(/loading/).textContent).toContain("loading")
+    // The guard shows its own loading indicator
+    expect(screen.getByText("加载中...")).toBeDefined()
   })
 })

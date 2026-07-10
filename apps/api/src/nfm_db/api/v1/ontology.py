@@ -262,8 +262,11 @@ async def search_nodes(
         search_query = search_query.where(KGNode.corpus_id == corpus_id)
 
     # Get total count
+    where_clause = search_query.whereclause
+    if where_clause is None:
+        return []
     count_result = await session.execute(
-        select(KGNode.id).where(search_query.whereclause)
+        select(KGNode.id).where(where_clause)
     )
     total = len(count_result.all())
 
@@ -335,8 +338,8 @@ async def get_shortest_path(
     # For now, return a placeholder implementation
     # Full AGE Cypher integration requires the graph to be built first
     return ShortestPathResponse(
-        from_node=PathNode.model_validate(from_node),
-        to_node=PathNode.model_validate(to_node),
+        from_=PathNode.model_validate(from_node),
+        to=PathNode.model_validate(to_node),
         path=[],
         length=0,
     )

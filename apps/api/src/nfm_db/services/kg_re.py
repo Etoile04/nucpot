@@ -186,7 +186,7 @@ class RelationExtractor:
         """Compute relation confidence as geometric mean of entity confidences."""
         if source_confidence <= 0 or target_confidence <= 0:
             return 0.0
-        return (source_confidence * target_confidence) ** 0.5
+        return float((source_confidence * target_confidence) ** 0.5)
 
     @staticmethod
     def _build_relation_properties(
