@@ -264,7 +264,7 @@ async def search_nodes(
     # Get total count
     where_clause = search_query.whereclause
     if where_clause is None:
-        return []
+        return SearchResponse(results=[], total=0, limit=limit, offset=offset)
     count_result = await session.execute(
         select(KGNode.id).where(where_clause)
     )
