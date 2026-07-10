@@ -48,6 +48,8 @@ class TestErrorCodeEnum:
         ErrorCode.INTERNAL_ERROR,
         ErrorCode.CONFLICT,
         ErrorCode.BAD_REQUEST,
+        ErrorCode.BATCH_IMPORT_ERROR,
+        ErrorCode.REQUEST_ENTITY_TOO_LARGE,
     ]
 
     @pytest.mark.parametrize("member", EXPECTED_MEMBERS)
@@ -55,7 +57,7 @@ class TestErrorCodeEnum:
         assert member in list(ErrorCode)
 
     def test_total_member_count(self) -> None:
-        assert len(ErrorCode) == 8
+        assert len(ErrorCode) == 10
 
     def test_values_are_strings(self) -> None:
         for member in ErrorCode:
@@ -142,6 +144,8 @@ class TestBuildErrorResponse:
             ErrorCode.INTERNAL_ERROR: 500,
             ErrorCode.CONFLICT: 409,
             ErrorCode.BAD_REQUEST: 400,
+            ErrorCode.BATCH_IMPORT_ERROR: 422,
+            ErrorCode.REQUEST_ENTITY_TOO_LARGE: 413,
         }
         for code, status in expected.items():
             response = build_error_response(code)
