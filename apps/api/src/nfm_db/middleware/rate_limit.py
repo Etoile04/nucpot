@@ -1,9 +1,15 @@
 """Global rate limiting middleware using slowapi (NFM-1087).
 
-Uses the ``slowapi`` library with its ``limits`` storage backend (memory by
-default, Redis for multi-instance deployments).  Only ``/api/`` routes are
-checked; ``/docs``, ``/redoc``, ``/openapi.json`` etc. pass through
-unrestricted.  The health endpoint is exempt via ``@limiter.exempt``.
+Uses the ``slowapi`` library with the ``limits`` storage backend.  Only
+``/api/`` routes are checked; ``/docs``, ``/redoc``, ``/openapi.json`` etc.
+pass through unrestricted.  The health endpoint is exempt via
+``@limiter.exempt``.
+
+**Production note:** the default ``memory://`` storage is suitable for
+single-instance deployments.  For multi-instance or long-running
+deployments, set ``RATE_LIMIT_STORAGE_URI=redis://localhost:6379`` so that
+counters are shared across workers and don't grow unboundedly in process
+memory.
 
 Env vars
 --------
