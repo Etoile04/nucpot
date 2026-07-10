@@ -35,7 +35,7 @@ from nfm_db.services.property_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["属性管理"])
 
 
 @router.get(

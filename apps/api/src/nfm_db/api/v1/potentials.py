@@ -35,7 +35,7 @@ from nfm_db.services.upload_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["势函数管理"])
 
 
 @router.get("/potentials", response_model=ApiResponse[PotentialListResponse])

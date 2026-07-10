@@ -35,7 +35,7 @@ from nfm_db.services.domain_expert.reference_validation import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["数据验证"])
 
 
 # ---------------------------------------------------------------------------

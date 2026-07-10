@@ -14,7 +14,7 @@ from nfm_db.schemas.feedback import (
 )
 from nfm_db.services.feedback import calculate_pages, create_feedback, list_feedback
 
-router = APIRouter()
+router = APIRouter(tags=["反馈管理"])
 
 
 @router.post("/feedback", response_model=ApiResponse, status_code=201)

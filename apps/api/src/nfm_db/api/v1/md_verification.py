@@ -52,7 +52,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["MD验证"])
 
 
 # ---------------------------------------------------------------------------

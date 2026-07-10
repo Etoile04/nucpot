@@ -34,7 +34,7 @@ from nfm_db.services.material_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["材料管理"])
 
 
 @router.get("/materials", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])

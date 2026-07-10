@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from nfm_db.schemas.viz import NvlResponse, VizStatsResponse
 from nfm_db.services.ontology_service import get_nvl_data, get_viz_stats
 
-router = APIRouter()
+router = APIRouter(tags=["可视化"])
 
 
 @router.get("/viz/nvl", response_model=NvlResponse)

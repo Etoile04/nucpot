@@ -37,7 +37,7 @@ from nfm_db.services.blog_post import (
     update_blog_post,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["博客管理"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
 

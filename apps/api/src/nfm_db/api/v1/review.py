@@ -44,7 +44,7 @@ from nfm_db.schemas.review import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/review")
+router = APIRouter(prefix="/review", tags=["评审管理"])
 
 VALID_STATUSES = {s.value for s in ReviewStatus}
 

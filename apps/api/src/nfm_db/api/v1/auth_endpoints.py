@@ -34,7 +34,7 @@ from nfm_db.services.auth_service import (
     get_password_hash,
 )
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter(prefix="/auth", tags=["认证管理"])
 settings = get_settings()
 
 

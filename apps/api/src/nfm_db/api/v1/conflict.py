@@ -32,7 +32,7 @@ from nfm_db.schemas.conflict import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/kg/conflicts", tags=["conflicts"])
+router = APIRouter(prefix="/kg/conflicts", tags=["冲突管理"])
 
 VALID_STRATEGIES = {"newest", "confidence", "consensus", "manual"}
 

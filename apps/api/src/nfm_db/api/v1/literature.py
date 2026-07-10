@@ -43,7 +43,7 @@ from nfm_db.schemas.literature import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/literature")
+router = APIRouter(prefix="/literature", tags=["文献管理"])
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ from nfm_db.services.source_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["数据源管理"])
 
 
 @router.get("/sources", response_model=ApiResponse[PaginatedResponse[DataSourceResponse]])

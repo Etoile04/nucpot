@@ -23,7 +23,7 @@ from nfm_db.schemas.reference_gaps import (
 from nfm_db.services.gap_fill_service import GapFillService
 from nfm_db.services.gap_scan_service import GapScanService
 
-router = APIRouter()
+router = APIRouter(tags=["参考缺口管理"])
 
 
 @router.get("/reference-gaps", response_model=ReferenceGapsApiResponse)

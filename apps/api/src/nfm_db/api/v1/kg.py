@@ -50,7 +50,7 @@ from nfm_db.schemas.kg import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["知识图谱"])
 
 # In-memory store for ingest batches (production: use DB table or Redis).
 _ingest_batches: dict[uuid.UUID, dict] = {}

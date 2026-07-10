@@ -57,7 +57,7 @@ from nfm_db.services.verification_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["参考值管理"])
 
 
 # ---------------------------------------------------------------------------

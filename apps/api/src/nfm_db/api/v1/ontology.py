@@ -23,7 +23,7 @@ from nfm_db.services.ontology_service import (
 )
 from nfm_db.services.rate_limit import ontology_rate_limit
 
-router = APIRouter()
+router = APIRouter(tags=["本体管理"])
 
 # Safe slug — also the only form a staging ``source`` may take. Path-validated
 # (422 on mismatch); no string interpolation into SQL downstream.

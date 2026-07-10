@@ -26,7 +26,7 @@ from nfm_db.services.extraction_pipeline import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["提取管理"])
 
 
 # ---------------------------------------------------------------------------
