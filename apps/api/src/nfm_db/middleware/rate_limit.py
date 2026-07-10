@@ -67,20 +67,19 @@ def rate_limit_exceeded_handler(
     ``sync_check_limits`` which falls back to the default handler for
     async callables.
     """
-    response = JSONResponse(
-        status_code=429,
-        content={
-            "success": False,
-            "error": "Rate limit exceeded",
-            "error_code": "RATE_LIMIT_EXCEEDED",
-        },
-    )
+    response_body = {
+        "success": False,
+        "error": "Rate limit exceeded",
+        "error_code": "RATE_LIMIT_EXCEEDED",
+    }
     try:
         view_rate_limit = getattr(request.state, "view_rate_limit", None)
         if view_rate_limit is not None:
-            response: JSONResponse | Response = limiter._inject_headers(
-                response, view_rate_limit
-            )  # type: ignore[assignment]
+            response = limiter._inject_headers(
+                JSONResponse(status_code=429, content=response_body),
+                view_rate_limit,
+            )
+            return response
     except Exception:
         pass  # never let header injection crash the 429 response
-    return response
+    return JSONResponse(status_code=429, content=response_body)
