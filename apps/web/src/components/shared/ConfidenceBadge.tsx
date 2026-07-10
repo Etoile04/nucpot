@@ -44,10 +44,17 @@ const TIERS: ReadonlyArray<ConfidenceTier> = [
   },
 ]
 
+const DEFAULT_TIER: ConfidenceTier = {
+  label: '低',
+  textColor: 'text-red-400',
+  bgColor: 'bg-red-900/50',
+  dotColor: 'bg-red-400',
+}
+
 function getTier(value: number): ConfidenceTier {
-  if (value > 0.8) return TIERS[0]
-  if (value >= 0.6) return TIERS[1]
-  return TIERS[2]
+  if (value > 0.8) return TIERS[0] ?? DEFAULT_TIER
+  if (value >= 0.6) return TIERS[1] ?? DEFAULT_TIER
+  return TIERS[2] ?? DEFAULT_TIER
 }
 
 const SIZE_CLASSES: Record<string, string> = {
