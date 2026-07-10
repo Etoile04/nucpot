@@ -748,11 +748,31 @@ class TestMultimodalResultWiring:
                     "page_number": 3,
                     "source_file": "paper.pdf",
                     "extraction": {
-                        "figure_type": "line",
-                        "title": "Thermal Conductivity vs Temperature",
-                        "description": "Measured data for UO2",
-                        "confidence": 0.92,
-                        "data_points": [],
+                        "figure_type": "plot",
+                        "plot_data": {
+                            "title": "Thermal Conductivity vs Temperature",
+                            "plot_type": "line",
+                            "x_axis": {
+                                "label": "Temperature",
+                                "unit": "K",
+                                "values": [300, 600, 900, 1200],
+                            },
+                            "y_axis": {
+                                "label": "Thermal Conductivity",
+                                "unit": "W/(m·K)",
+                                "values": [8.5, 4.2, 3.1, 2.5],
+                            },
+                            "series": [
+                                {
+                                    "name": "UO2",
+                                    "values": [8.5, 4.2, 3.1, 2.5],
+                                },
+                            ],
+                            "confidence": 0.92,
+                        },
+                        "provider": "openai",
+                        "model": "gpt-4o",
+                        "extraction_time_ms": 1250.0,
                     },
                 },
             ],
@@ -761,7 +781,7 @@ class TestMultimodalResultWiring:
                     "page_number": 5,
                     "source_file": "paper.pdf",
                     "table_data": {
-                        "caption": "Property Summary",
+                        "title": "Property Summary",
                         "headers": {
                             "columns": ["Property", "Value", "Unit"],
                         },
