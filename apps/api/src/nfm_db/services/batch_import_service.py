@@ -187,14 +187,16 @@ async def batch_import_materials(
 
         # Convert raw row → typed dict
         mapped, parse_err = _row_to_material_create(raw_row, row_index)
-        if parse_err:
-            errors.append(parse_err)
+        if parse_err or mapped is None:
+            if parse_err:
+                errors.append(parse_err)
             continue
 
         # Validate against Pydantic schema
         validated, val_err = _validate_row(mapped, row_index)
-        if val_err:
-            errors.append(val_err)
+        if val_err or validated is None:
+            if val_err:
+                errors.append(val_err)
             continue
 
         # Upsert: find existing by name+formula

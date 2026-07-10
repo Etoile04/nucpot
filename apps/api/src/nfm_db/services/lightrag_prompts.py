@@ -13,7 +13,7 @@ NFM-750 — NFM-741.3: NucMat ontology injection into LightRAG prompts.
 from __future__ import annotations
 
 import json
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Protocol: any object exposing the fields we read from KEntityType / KRelationType
@@ -37,7 +37,7 @@ class RelationTypeRow(Protocol):
     name: str
     source_types: list[str] | None
     target_types: list[str] | None
-    properties_schema: dict | None
+    properties_schema: dict[str, Any] | None
     description: str | None
 
 

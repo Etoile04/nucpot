@@ -21,13 +21,14 @@ Env vars
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 _DEFAULT_LIMIT = os.environ.get("RATE_LIMIT_DEFAULT", "100/minute")
 _BURST_LIMIT = os.environ.get("RATE_LIMIT_BURST", "20/second")
@@ -48,7 +49,9 @@ class NFMRateLimitMiddleware(SlowAPIMiddleware):
     rate-limited.  Health is exempt via ``@limiter.exempt``.
     """
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(
+        self, request: Request, call_next: Any
+    ) -> Response:
         path = request.url.path
         if not path.startswith("/api/"):
             return await call_next(request)
@@ -75,7 +78,9 @@ def rate_limit_exceeded_handler(
     try:
         view_rate_limit = getattr(request.state, "view_rate_limit", None)
         if view_rate_limit is not None:
-            response = limiter._inject_headers(response, view_rate_limit)
+            response: JSONResponse | Response = limiter._inject_headers(
+                response, view_rate_limit
+            )  # type: ignore[assignment]
     except Exception:
         pass  # never let header injection crash the 429 response
     return response
