@@ -27,6 +27,7 @@ class ErrorCode(str, Enum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
     CONFLICT = "CONFLICT"
     BAD_REQUEST = "BAD_REQUEST"
+    BATCH_IMPORT_ERROR = "BATCH_IMPORT_ERROR"
 
     @property
     def message(self) -> str:
@@ -50,6 +51,7 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.INTERNAL_ERROR: "服务器内部错误",
     ErrorCode.CONFLICT: "资源冲突，操作无法完成",
     ErrorCode.BAD_REQUEST: "请求格式错误",
+    ErrorCode.BATCH_IMPORT_ERROR: "批量导入失败",
 }
 
 _HTTP_STATUS: dict[ErrorCode, int] = {
@@ -61,6 +63,7 @@ _HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.INTERNAL_ERROR: 500,
     ErrorCode.CONFLICT: 409,
     ErrorCode.BAD_REQUEST: 400,
+    ErrorCode.BATCH_IMPORT_ERROR: 422,
 }
 
 # Reverse lookup: HTTP status → ErrorCode (for the global handler)

@@ -4,6 +4,7 @@
 - GET  /materials/search       — full-text search by name/alias/formula
 - GET  /materials/{id}         — detail with aliases + composition
 - POST /materials              — create (admin)
+- POST /materials/batch-import — bulk CSV/JSON import (NFM-1141)
 - PATCH /materials/{id}        — update (admin)
 """
 
@@ -13,16 +14,21 @@ import logging
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.material import (
+    BatchImportResult,
     MaterialCreate,
     MaterialDetailResponse,
     MaterialResponse,
     MaterialUpdate,
+)
+from nfm_db.services.batch_import_service import (
+    BATCH_IMPORT_MAX_SIZE_MB,
+    batch_import_materials,
 )
 from nfm_db.services.material_service import (
     create_material,
@@ -117,4 +123,48 @@ async def update_material_endpoint(
     result = await update_material(db, material_id, payload)
     if result is None:
         raise HTTPException(status_code=404, detail="Material not found")
+    return ApiResponse(success=True, data=result)
+
+
+@router.post(
+    "/materials/batch-import",
+    response_model=ApiResponse[BatchImportResult],
+    status_code=200,
+)
+async def batch_import_endpoint(
+    file: UploadFile = File(..., description="CSV or JSON file"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[BatchImportResult]:
+    """批量导入材料数据（支持 CSV 和 JSON 文件）.
+
+    Bulk-import materials from a CSV or JSON file. Valid rows are
+    upserted (matched by name+formula); invalid rows are reported
+    in the response ``errors`` list.
+    """
+    filename = file.filename or "unknown.csv"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if ext not in ("csv", "json"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: .{ext}. Use .csv or .json",
+        )
+
+    content = await file.read()
+    max_bytes = BATCH_IMPORT_MAX_SIZE_MB * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds {BATCH_IMPORT_MAX_SIZE_MB}MB limit",
+        )
+
+    try:
+        result = await batch_import_materials(
+            db,
+            content=content,
+            filename=filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return ApiResponse(success=True, data=result)
