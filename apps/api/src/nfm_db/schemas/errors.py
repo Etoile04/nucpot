@@ -140,4 +140,5 @@ def register_http_exception_handler(application: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content=body,
+            headers=exc.headers,
         )

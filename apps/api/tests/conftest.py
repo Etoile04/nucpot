@@ -79,22 +79,27 @@ def _safe_create_all(sync_conn, metadata) -> None:
 
 
 @pytest.fixture(autouse=True, scope="session")
-def _neutralize_global_rate_limits() -> None:
-    """Disable global slowapi limits in tests; keep middleware for headers.
+def _disable_global_rate_limiting() -> None:
+    """Strip global slowapi rate-limit middleware from the test app.
 
-    The global ``NFMRateLimitMiddleware`` must stay active so that per-endpoint
-    rate-limit tests still receive ``Retry-After`` header injection via
-    ``limiter._inject_headers``.  We simply clear the global application limits
-    so the middleware never triggers 429 itself, while per-endpoint
-    ``InProcessRateLimiter`` dependency checks remain fully functional.
+    The ``20/second`` burst limit causes cascading 429 failures when the
+    full suite runs.  ``limiter.reset()`` alone is insufficient because
+    the burst counter accumulates mid-test.  Removing the middleware
+    entirely is the only reliable isolation.
+
+    Per-endpoint ``InProcessRateLimiter`` dependency checks are unaffected
+    because they raise ``HTTPException`` directly in the route layer, not
+    through the middleware.
     """
-    from nfm_db.middleware.rate_limit import limiter as global_limiter
+    from nfm_db.middleware.rate_limit import NFMRateLimitMiddleware
     from nfm_db.services.rate_limit import md_verification_limiter, ontology_limiter
 
-    # Remove global application-level limits (burst + sustained).
-    # Per-endpoint decorators (if any) are unaffected.
-    global_limiter.application_limits = []
-    global_limiter.reset()
+    app.user_middleware = [
+        mw for mw in app.user_middleware
+        if mw.cls is not NFMRateLimitMiddleware
+    ]
+
+    # Reset per-endpoint in-memory limiters.
     ontology_limiter.reset()
     md_verification_limiter.reset()
 
