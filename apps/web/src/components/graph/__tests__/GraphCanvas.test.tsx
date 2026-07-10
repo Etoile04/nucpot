@@ -92,7 +92,7 @@ describe("GraphCanvas", () => {
     fireEvent.click(node)
 
     expect(onNodeClick).toHaveBeenCalledOnce()
-    const clickedNode = onNodeClick.mock.calls[0][0]
+    const clickedNode = onNodeClick.mock.calls[0]![0]
     expect(clickedNode.id).toBe("n1")
     expect(clickedNode.label).toBe("Uranium")
   })
