@@ -40,7 +40,7 @@ _CACHE_CONTROL = "public, max-age=60"
     "/ontology/corpora/{corpus_id}/graph",
     response_model=OntologyGraphResponse,
     response_model_by_alias=True,
-    summary="Versioned NVL graph for a corpus",
+    summary="获取语料库的版本化NVL图数据",
 )
 async def get_corpus_graph(
     response: Response,
@@ -62,7 +62,7 @@ async def get_corpus_graph(
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> OntologyGraphResponse:
-    """Return the derived versioned NVL graph for ``corpus_id``.
+    """获取语料库的版本化NVL图数据。
 
     Raises:
         404: the corpus resolves to no staging rows.

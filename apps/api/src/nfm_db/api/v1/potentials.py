@@ -48,6 +48,7 @@ async def list_potentials_endpoint(
     sort: str = Query("updated", pattern="^(updated|name|type)$"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialListResponse]:
+    """获取势函数分页列表，支持类型和元素筛选。"""
     elements_list = [e for e in (elements.split(",") if elements else [])] or None
     result = await list_potentials(
         db,
@@ -66,6 +67,7 @@ async def get_potential_endpoint(
     potential_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialDetail]:
+    """获取单个势函数详情。"""
     detail = await get_potential_by_id(db, potential_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Potential not found")
@@ -77,7 +79,9 @@ async def create_potential_endpoint(
     payload: PotentialCreateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialDetail]:
-    """Create a potential (metadata).  Validation ported from legacy Supabase prior-art."""
+    """创建势函数元数据。
+
+    Create a potential (metadata).  Validation ported from legacy Supabase prior-art."""
     # PotentialUploadError (incl. PotentialNameConflict) is translated to the
     # ApiResponse envelope by the handler registered in main.py.
     potential = await create_potential(db, payload)
@@ -94,7 +98,9 @@ async def upload_potential_file_endpoint(
     db: AsyncSession = Depends(get_db),
     upload_dir: Path = Depends(get_upload_dir),
 ) -> ApiResponse[FileUploadResponse]:
-    """Attach a file to a potential.  Validates extension + size (prior-art verbatim)."""
+    """上传势函数文件。
+
+    Attach a file to a potential.  Validates extension + size (prior-art verbatim)."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
     data = await file.read()

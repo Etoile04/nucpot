@@ -42,7 +42,9 @@ async def list_sources_endpoint(
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[DataSourceResponse]]:
-    """Return a paginated, filtered list of data sources."""
+    """获取数据源分页列表，支持年份和类型筛选.
+
+    Return a paginated, filtered list of data sources."""
     result = await list_sources(
         db,
         year=year,
@@ -60,7 +62,9 @@ async def get_source_endpoint(
     source_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceDetailResponse]:
-    """Return a single source with authors ordered by author_order."""
+    """获取单个数据源详情（含作者列表）.
+
+    Return a single source with authors ordered by author_order."""
     detail = await get_source(db, source_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -72,6 +76,8 @@ async def create_source_endpoint(
     payload: DataSourceCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceResponse]:
-    """Create a new data source."""
+    """创建新数据源.
+
+    Create a new data source."""
     result = await create_source(db, payload)
     return ApiResponse(success=True, data=result)

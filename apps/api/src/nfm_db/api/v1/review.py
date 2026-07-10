@@ -130,7 +130,7 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
 @router.get(
     "/pending",
     response_model=ApiResponse[PaginatedResponse[ReviewItemResponse]],
-    summary="List pending review items across all tables",
+    summary="获取跨表待审核项列表",
 )
 async def get_pending_reviews(
     page: int = Query(1, ge=1),
@@ -138,8 +138,11 @@ async def get_pending_reviews(
     item_type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[ReviewItemResponse]]:
-    """Return pending review items, querying across extraction_results,
-    kg_nodes, kg_edges, and property_measurements in parallel."""
+    """获取跨表待审核项，查询extraction_results、kg_nodes、kg_edges和property_measurements。
+
+    Return pending review items, querying across extraction_results,
+    kg_nodes, kg_edges, and property_measurements in parallel.
+    """
     # Determine which tables to query based on item_type filter.
     tables_to_query: list[tuple[Any, str]] = [
         (ExtractionResult, "extraction_results"),
@@ -197,13 +200,16 @@ async def get_pending_reviews(
 @router.get(
     "/{item_id}/source",
     response_model=ApiResponse[SourceProvenanceResponse],
-    summary="Get source provenance for a review item",
+    summary="获取审核项数据溯源",
 )
 async def get_review_source(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[SourceProvenanceResponse]:
-    """Return the source text, page, DOI, and metadata for a review item."""
+    """返回审核项的源文本、页码、DOI和元数据。
+
+    Return the source text, page, DOI, and metadata for a review item.
+    """
     row, table_name = await _find_review_item(item_id, db)
 
     source_id = getattr(row, "source_id", None)
@@ -240,14 +246,17 @@ async def get_review_source(
 @router.patch(
     "/{item_id}",
     response_model=ApiResponse[ReviewItemResponse],
-    summary="Update review status for an item",
+    summary="更新审核项状态",
 )
 async def update_review_status(
     item_id: uuid.UUID,
     body: ReviewStatusUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewItemResponse]:
-    """Approve, reject, or request revision on a review item."""
+    """批准、驳回或要求修改审核项。
+
+    Approve, reject, or request revision on a review item.
+    """
     if body.status not in VALID_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -271,13 +280,16 @@ async def update_review_status(
 @router.post(
     "/batch",
     response_model=ApiResponse[ReviewBatchResponse],
-    summary="Batch update review status for multiple items",
+    summary="批量更新审核项状态",
 )
 async def batch_review(
     body: ReviewBatchRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewBatchResponse]:
-    """Update multiple review items in a single request."""
+    """在单个请求中批量更新多个审核项。
+
+    Update multiple review items in a single request.
+    """
     succeeded = 0
     failed = 0
     errors: list[dict[str, Any]] = []
@@ -319,12 +331,15 @@ async def batch_review(
 @router.get(
     "/stats",
     response_model=ApiResponse[ReviewStatsResponse],
-    summary="Get review statistics across all tables",
+    summary="获取跨表审核统计",
 )
 async def get_review_stats(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewStatsResponse]:
-    """Return counts of review items grouped by status across all 4 tables."""
+    """获取跨4张表的审核项状态计数统计。
+
+    Return counts of review items grouped by status across all 4 tables.
+    """
     stats = ReviewStatsResponse()
 
     for model in [

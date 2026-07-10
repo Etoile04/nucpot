@@ -22,7 +22,9 @@ async def submit_feedback(
     payload: FeedbackCreate,
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    """Submit user feedback (public endpoint)."""
+    """提交用户反馈（公开端点）.
+
+    Submit user feedback (public endpoint)."""
     feedback = await create_feedback(session, payload)
 
     return ApiResponse(
@@ -40,7 +42,9 @@ async def list_feedback_endpoint(
     limit: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    """List feedback entries with filtering and pagination (admin endpoint)."""
+    """获取反馈列表，支持筛选和分页（管理员端点）.
+
+    List feedback entries with filtering and pagination (admin endpoint)."""
     params = FeedbackListQuery(
         status=status,
         priority=priority,

@@ -102,13 +102,14 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
 @router.post(
     "/upload",
     response_model=ApiResponse[LiteratureUploadResponse],
-    summary="Upload a PDF for extraction",
+    summary="上传PDF文件用于提取",
 )
 async def upload_literature(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureUploadResponse]:
-    """Upload a PDF file for parsing and extraction.
+    """上传PDF文件进行解析和提取。
 
+    Upload a PDF file for parsing and extraction.
     Note: File upload handling requires multipart form data.
     This endpoint creates a placeholder DataSource record.
     Full file upload with OCR/VLM pipeline will be implemented in NFM-817.
@@ -133,7 +134,7 @@ async def upload_literature(
 @router.get(
     "/search",
     response_model=ApiResponse[PaginatedResponse[LiteratureListItem]],
-    summary="Full-text search across literature",
+    summary="文献全文搜索",
 )
 async def search_literature(
     q: str = Query(..., min_length=1, description="Search query"),
@@ -141,7 +142,10 @@ async def search_literature(
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[LiteratureListItem]]:
-    """Search across title, abstract, and DOI fields."""
+    """在标题、摘要和DOI字段中全文搜索。
+
+    Search across title, abstract, and DOI fields.
+    """
     stmt = select(DataSource).where(
         DataSource.source_type == "journal_article",
         or_(
@@ -177,13 +181,16 @@ async def search_literature(
 @router.get(
     "/{literature_id}/status",
     response_model=ApiResponse[LiteratureStatusResponse],
-    summary="Get processing status for a literature item",
+    summary="获取文献处理状态",
 )
 async def get_literature_status(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureStatusResponse]:
-    """Return the current processing status and progress."""
+    """返回当前处理状态和进度。
+
+    Return the current processing status and progress.
+    """
     source = await _get_source_or_404(literature_id, db)
 
     status = "uploaded"
@@ -201,13 +208,16 @@ async def get_literature_status(
 @router.get(
     "/{literature_id}",
     response_model=ApiResponse[LiteratureDetailResponse],
-    summary="Get full detail for a literature item",
+    summary="获取文献完整详情",
 )
 async def get_literature_detail(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureDetailResponse]:
-    """Return the full literature detail including extracted entities."""
+    """返回文献完整详情，包括已提取的实体。
+
+    Return the full literature detail including extracted entities.
+    """
     source = await _get_source_or_404(literature_id, db)
 
     # Count extraction figures if they exist.
@@ -243,7 +253,7 @@ async def get_literature_detail(
 @router.get(
     "",
     response_model=ApiResponse[PaginatedResponse[LiteratureListItem]],
-    summary="List literature items (paginated)",
+    summary="获取文献列表（分页）",
 )
 async def list_literature(
     page: int = Query(1, ge=1),
@@ -255,7 +265,10 @@ async def list_literature(
     sort_order: str = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[LiteratureListItem]]:
-    """Return paginated literature list with optional filters."""
+    """返回分页文献列表，支持年份和搜索筛选。
+
+    Return paginated literature list with optional filters.
+    """
     stmt = select(DataSource).where(
         DataSource.source_type == "journal_article",
     )
@@ -309,13 +322,16 @@ async def list_literature(
 @router.post(
     "/{literature_id}/reextract",
     response_model=ApiResponse[LiteratureReextractResponse],
-    summary="Trigger re-extraction for a literature item",
+    summary="触发文献重新提取",
 )
 async def reextract_literature(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureReextractResponse]:
-    """Trigger a re-extraction of the literature item."""
+    """触发文献项的重新提取流程。
+
+    Trigger a re-extraction of the literature item.
+    """
     source = await _get_source_or_404(literature_id, db)
     await db.commit()
 
@@ -331,13 +347,16 @@ async def reextract_literature(
 @router.delete(
     "/{literature_id}",
     response_model=ApiResponse[dict[str, str]],
-    summary="Delete a literature item and associated data",
+    summary="删除文献项及关联数据",
 )
 async def delete_literature(
     literature_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, str]]:
-    """Delete a literature item and all associated extraction data."""
+    """删除文献项及其所有关联的提取数据。
+
+    Delete a literature item and all associated extraction data.
+    """
     source = await _get_source_or_404(literature_id, db)
 
     # Delete associated extraction figures and results.

@@ -128,8 +128,9 @@ async def get_relations(
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[EdgeResponse]]:
-    """Return edges for a node with direction and type filters.
+    """获取节点的边关系列表，支持方向和类型筛选。
 
+    Return edges for a node with direction and type filters.
     Supports pagination via limit/offset.
     """
     # Verify node exists
@@ -205,8 +206,9 @@ async def get_node(
     node_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[NodeResponse]:
-    """Return a node by type and ID (property query).
+    """按类型和ID获取节点（属性查询）。
 
+    Return a node by type and ID (property query).
     404 if node not found or node_type does not match.
     """
     if node_type not in VALID_NODE_TYPES:
@@ -239,8 +241,9 @@ async def find_paths(
     payload: PathQueryRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[PathResponse]]:
-    """Find paths between two nodes using recursive CTE.
+    """使用递归CTE查找两节点间路径。
 
+    Find paths between two nodes using recursive CTE.
     PostgreSQL native recursive CTE (no AGE dependency).
     max_depth capped at 10, timeout 5 seconds (fail fast).
     """
@@ -362,8 +365,9 @@ async def ingest(
     payload: IngestRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[IngestResponse]:
-    """Submit text for incremental KG extraction.
+    """提交文本进行增量知识图谱提取。
 
+    Submit text for incremental KG extraction.
     Pipeline: text -> NER -> RE -> GraphBuilder -> kg_nodes/kg_edges.
     Returns 202 Accepted with a batch_id for polling.
     """
@@ -398,7 +402,10 @@ async def ingest(
 async def poll_ingest(
     batch_id: uuid.UUID,
 ) -> ApiResponse[IngestPollResponse]:
-    """Poll the status of an ingest batch."""
+    """查询提取批次状态。
+
+    Poll the status of an ingest batch.
+    """
     batch = _ingest_batches.get(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -432,7 +439,10 @@ async def list_review_items(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[ReviewItemResponse]]:
-    """List pending review queue items (paginated)."""
+    """获取审核队列待审核项（分页）。
+
+    List pending review queue items (paginated).
+    """
     query = select(KGReviewQueue).order_by(KGReviewQueue.created_at.desc())
     if status:
         query = query.where(KGReviewQueue.status == status)
@@ -480,7 +490,10 @@ async def approve_review_item(
     payload: ReviewActionRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewItemResponse]:
-    """Approve a review queue item and commit to graph."""
+    """审核通过队列项并提交到图谱。
+
+    Approve a review queue item and commit to graph.
+    """
     result = await db.execute(
         select(KGReviewQueue).where(KGReviewQueue.id == item_id)
     )
@@ -519,7 +532,10 @@ async def reject_review_item(
     payload: ReviewActionRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewItemResponse]:
-    """Reject a review queue item and remove from graph consideration."""
+    """驳回审核队列项。
+
+    Reject a review queue item and remove from graph consideration.
+    """
     result = await db.execute(
         select(KGReviewQueue).where(KGReviewQueue.id == item_id)
     )
@@ -564,8 +580,9 @@ async def search_nodes(
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[NodeResponse]]:
-    """Search nodes by label using fuzzy matching (pg_trgm on PG, ILIKE fallback).
+    """通过标签模糊搜索节点（PG使用pg_trgm，降级ILIKE）。
 
+    Search nodes by label using fuzzy matching (pg_trgm on PG, ILIKE fallback).
     Returns list of matching nodes sorted by label similarity.
     """
     query = select(KGNode).where(

@@ -46,7 +46,9 @@ async def list_materials_endpoint(
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
-    """Return a paginated list of materials, optionally filtered by category."""
+    """获取材料分页列表，支持分类筛选.
+
+    Return a paginated list of materials, optionally filtered by category."""
     result = await list_materials(
         db,
         page=page,
@@ -65,7 +67,9 @@ async def search_materials_endpoint(
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
-    """Search materials by name, formula, or alias (ILIKE)."""
+    """按名称、化学式或别名搜索材料（模糊匹配）.
+
+    Search materials by name, formula, or alias (ILIKE)."""
     result = await search_materials(
         db,
         query=q,
@@ -80,7 +84,9 @@ async def get_material_endpoint(
     material_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialDetailResponse]:
-    """Return a single material with aliases and composition."""
+    """获取单个材料详情（含别名和成分）.
+
+    Return a single material with aliases and composition."""
     detail = await get_material(db, material_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Material not found")
@@ -92,7 +98,9 @@ async def create_material_endpoint(
     payload: MaterialCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialResponse]:
-    """Create a new material."""
+    """创建新材料.
+
+    Create a new material."""
     result = await create_material(db, payload)
     return ApiResponse(success=True, data=result)
 
@@ -103,7 +111,9 @@ async def update_material_endpoint(
     payload: MaterialUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialResponse]:
-    """Update an existing material."""
+    """更新已有材料信息.
+
+    Update an existing material."""
     result = await update_material(db, material_id, payload)
     if result is None:
         raise HTTPException(status_code=404, detail="Material not found")

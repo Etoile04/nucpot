@@ -36,7 +36,9 @@ async def list_reference_gaps(
     per_page: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """List reference data gaps with filtering and pagination."""
+    """获取参考数据缺口列表，支持筛选和分页。
+
+    List reference data gaps with filtering and pagination."""
     svc = GapScanService(session)
     gaps, total = await svc.list_gaps(
         element_system=element_system,
@@ -72,7 +74,9 @@ async def list_reference_gaps(
 async def get_reference_gaps_summary(
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Get coverage statistics for reference data gaps."""
+    """获取参考数据覆盖率统计。
+
+    Get coverage statistics for reference data gaps."""
     svc = GapScanService(session)
     scan = await svc.scan_gaps()
     staging_counts = await svc._get_staging_counts()
@@ -107,7 +111,9 @@ async def fill_reference_gaps(
     payload: FillRequest,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Trigger a fill operation for a specific gap tuple.
+    """触发特定缺口的填补操作。
+
+    Trigger a fill operation for a specific gap tuple.
 
     Discovers reference values from cache, runs quality gate, and stages
     accepted values into the staging table.
@@ -151,7 +157,9 @@ async def scan_reference_gaps(
     payload: ScanRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Trigger a manual gap scan against the NFMD database.
+    """手动触发NFMD数据库缺口扫描。
+
+    Trigger a manual gap scan against the NFMD database.
 
     Identifies all missing property tuples for the specified (or all)
     element systems.

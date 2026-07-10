@@ -118,14 +118,17 @@ async def _auto_resolve(
 @router.get(
     "",
     response_model=ApiResponse[list[ConflictRecordResponse]],
-    summary="List conflict records",
+    summary="获取冲突记录列表",
 )
 async def list_conflicts(
     material_id: uuid.UUID | None = Query(None),
     property_type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[ConflictRecordResponse]]:
-    """Return conflict records, optionally filtered by material or property type."""
+    """获取冲突记录列表，支持按材料或属性类型筛选。
+
+    Return conflict records, optionally filtered by material or property type.
+    """
     stmt = select(ConflictRecord).order_by(
         ConflictRecord.created_at.desc(),
     )
@@ -157,14 +160,17 @@ async def list_conflicts(
 @router.post(
     "/{conflict_id}/resolve",
     response_model=ApiResponse[ConflictRecordResponse],
-    summary="Resolve a conflict record",
+    summary="解决冲突记录",
 )
 async def resolve_conflict(
     conflict_id: uuid.UUID,
     body: ConflictResolveRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ConflictRecordResponse]:
-    """Resolve a conflict using the specified strategy."""
+    """使用指定策略解决数据冲突。
+
+    Resolve a conflict using the specified strategy.
+    """
     if body.strategy not in VALID_STRATEGIES:
         raise HTTPException(
             status_code=400,
