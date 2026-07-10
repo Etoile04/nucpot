@@ -11,15 +11,7 @@ import json
 import pytest
 
 from nfm_mcp.server import create_mcp_server
-from nfm_mcp.tools.extraction import (
-    GetExtractionStatusInput,
-    TriggerExtractionInput,
-)
-from nfm_mcp.tools.knowledge_graph import QueryKnowledgeGraphInput
 from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
-from nfm_mcp.tools.ontology import BrowseOntologyInput
-from nfm_mcp.tools.potentials import QueryPotentialsInput
-from nfm_mcp.tools.sources import SearchSourcesInput
 
 
 # ── Fixture: create server once and expose tool callables ────────
@@ -67,16 +59,14 @@ class TestExtractionTools:
     @pytest.mark.asyncio
     async def test_trigger_extraction_returns_job_id(self, tool_map: dict) -> None:
         handler = tool_map["trigger_extraction"]
-        params = TriggerExtractionInput(file_url="https://example.com/test.pdf")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(file_url="https://example.com/test.pdf"))
         assert "job_id" in result
         assert result["status"] == "submitted"
 
     @pytest.mark.asyncio
     async def test_trigger_extraction_stores_job(self, tool_map: dict) -> None:
         handler = tool_map["trigger_extraction"]
-        params = TriggerExtractionInput(file_url="https://example.com/test.pdf")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(file_url="https://example.com/test.pdf"))
         job_id = result["job_id"]
         assert job_id in EXTRACTION_JOBS
         assert EXTRACTION_JOBS[job_id]["source_id"] == "https://example.com/test.pdf"
@@ -85,15 +75,13 @@ class TestExtractionTools:
     async def test_get_extraction_status_existing(self, tool_map: dict) -> None:
         existing_id = list(EXTRACTION_JOBS.keys())[0]
         handler = tool_map["get_extraction_status"]
-        params = GetExtractionStatusInput(job_id=existing_id)
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(job_id=existing_id))
         assert result["job_id"] == existing_id
 
     @pytest.mark.asyncio
     async def test_get_extraction_status_not_found(self, tool_map: dict) -> None:
         handler = tool_map["get_extraction_status"]
-        params = GetExtractionStatusInput(job_id="job-nonexistent")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(job_id="job-nonexistent"))
         assert "error" in result
 
 
@@ -106,8 +94,7 @@ class TestKnowledgeGraphTools:
     @pytest.mark.asyncio
     async def test_query_kg_returns_nodes(self, tool_map: dict) -> None:
         handler = tool_map["query_knowledge_graph"]
-        params = QueryKnowledgeGraphInput(query="UO2")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="UO2"))
         assert "nodes" in result
         assert "edges" in result
         assert len(result["nodes"]) > 0
@@ -115,18 +102,14 @@ class TestKnowledgeGraphTools:
     @pytest.mark.asyncio
     async def test_query_kg_entity_type_filter(self, tool_map: dict) -> None:
         handler = tool_map["query_knowledge_graph"]
-        params = QueryKnowledgeGraphInput(
-            query="material", entity_types=["material"],
-        )
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="material", entity_types=["material"]))
         for node in result["nodes"]:
             assert str(node.get("entity_type", "")).lower() == "material"
 
     @pytest.mark.asyncio
     async def test_query_kg_limit(self, tool_map: dict) -> None:
         handler = tool_map["query_knowledge_graph"]
-        params = QueryKnowledgeGraphInput(query="material", limit=1)
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="material", limit=1))
         assert len(result["nodes"]) <= 1
 
 
@@ -139,16 +122,14 @@ class TestOntologyTools:
     @pytest.mark.asyncio
     async def test_browse_ontology_returns_nodes(self, tool_map: dict) -> None:
         handler = tool_map["browse_ontology"]
-        params = BrowseOntologyInput()
-        result = json.loads(await handler(params))
+        result = json.loads(await handler())
         assert isinstance(result, list)
         assert len(result) > 0
 
     @pytest.mark.asyncio
     async def test_browse_ontology_query_filter(self, tool_map: dict) -> None:
         handler = tool_map["browse_ontology"]
-        params = BrowseOntologyInput(query="reactor")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="reactor"))
         assert len(result) > 0
         # "reactor" appears in description fields of ontology nodes
         assert any(
@@ -159,8 +140,7 @@ class TestOntologyTools:
     @pytest.mark.asyncio
     async def test_browse_ontology_entity_type_filter(self, tool_map: dict) -> None:
         handler = tool_map["browse_ontology"]
-        params = BrowseOntologyInput(entity_type="material")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(entity_type="material"))
         assert all(
             str(n.get("entity_type", "")) == "material" for n in result
         )
@@ -168,8 +148,7 @@ class TestOntologyTools:
     @pytest.mark.asyncio
     async def test_browse_ontology_parent_filter(self, tool_map: dict) -> None:
         handler = tool_map["browse_ontology"]
-        params = BrowseOntologyInput(parent_id="onto-root")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(parent_id="onto-root"))
         assert all(n.get("parent_id") == "onto-root" for n in result)
 
 
@@ -182,16 +161,14 @@ class TestPotentialTools:
     @pytest.mark.asyncio
     async def test_query_potentials_by_material(self, tool_map: dict) -> None:
         handler = tool_map["query_potentials"]
-        params = QueryPotentialsInput(material_id="UO2")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(material_id="UO2"))
         assert isinstance(result, list)
         assert all(p.get("material_id") == "UO2" for p in result)
 
     @pytest.mark.asyncio
     async def test_query_potentials_type_filter(self, tool_map: dict) -> None:
         handler = tool_map["query_potentials"]
-        params = QueryPotentialsInput(material_id="UO2", potential_type="Gibbs")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(material_id="UO2", potential_type="Gibbs"))
         assert all(
             "gibbs" in str(p.get("potential_type", "")).lower()
             for p in result
@@ -200,8 +177,7 @@ class TestPotentialTools:
     @pytest.mark.asyncio
     async def test_query_potentials_model_filter(self, tool_map: dict) -> None:
         handler = tool_map["query_potentials"]
-        params = QueryPotentialsInput(material_id="UO2", model_name="FINK")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(material_id="UO2", model_name="FINK"))
         assert all(
             "fink" in str(p.get("model_name", "")).lower() for p in result
         )
@@ -209,17 +185,13 @@ class TestPotentialTools:
     @pytest.mark.asyncio
     async def test_query_potentials_temp_range(self, tool_map: dict) -> None:
         handler = tool_map["query_potentials"]
-        params = QueryPotentialsInput(
-            material_id="UO2", temperature_range="300-3000 K",
-        )
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(material_id="UO2", temperature_range="300-3000 K"))
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
     async def test_query_potentials_no_match(self, tool_map: dict) -> None:
         handler = tool_map["query_potentials"]
-        params = QueryPotentialsInput(material_id="NONEXISTENT")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(material_id="NONEXISTENT"))
         assert result == []
 
 
@@ -232,16 +204,14 @@ class TestSourceTools:
     @pytest.mark.asyncio
     async def test_search_sources_returns_results(self, tool_map: dict) -> None:
         handler = tool_map["search_sources"]
-        params = SearchSourcesInput(query="Finkelstein")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="Finkelstein"))
         assert isinstance(result, list)
         assert len(result) > 0
 
     @pytest.mark.asyncio
     async def test_search_sources_type_filter(self, tool_map: dict) -> None:
         handler = tool_map["search_sources"]
-        params = SearchSourcesInput(query="nuclear", source_type="journal")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="nuclear", source_type="journal"))
         assert all(
             str(s.get("source_type", "")) == "journal" for s in result
         )
@@ -249,15 +219,13 @@ class TestSourceTools:
     @pytest.mark.asyncio
     async def test_search_sources_pagination(self, tool_map: dict) -> None:
         handler = tool_map["search_sources"]
-        params = SearchSourcesInput(query="nuclear", limit=1, offset=0)
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="nuclear", limit=1, offset=0))
         assert len(result) <= 1
 
     @pytest.mark.asyncio
     async def test_search_sources_no_match(self, tool_map: dict) -> None:
         handler = tool_map["search_sources"]
-        params = SearchSourcesInput(query="XYZNONEXISTENT")
-        result = json.loads(await handler(params))
+        result = json.loads(await handler(query="XYZNONEXISTENT"))
         assert result == []
 
 

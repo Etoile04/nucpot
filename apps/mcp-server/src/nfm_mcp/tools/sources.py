@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+
+from nfm_mcp.tools.mock_data import SOURCES
 
 
 class SearchSourcesInput(BaseModel):
@@ -36,6 +39,18 @@ class SearchSourcesInput(BaseModel):
     )
 
 
+def _matches_query(source: dict[str, object], query: str) -> bool:
+    """Check if a source matches a free-text query (case-insensitive)."""
+    query_lower = query.lower()
+    searchable_fields = (
+        str(source.get("authors", "")),
+        str(source.get("title", "")),
+        str(source.get("journal", "")),
+        str(source.get("doi", "")),
+    )
+    return any(query_lower in field.lower() for field in searchable_fields)
+
+
 def register_source_tools(mcp: FastMCP) -> None:
     """Register literature source MCP tools."""
 
@@ -49,7 +64,13 @@ def register_source_tools(mcp: FastMCP) -> None:
             "openWorldHint": False,
         },
     )
-    async def search_sources(params: SearchSourcesInput) -> str:
+    async def search_sources(
+        *,
+        query: str,
+        source_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> str:
         """Search the NFM literature source database.
 
         Find journal articles, technical reports, handbooks, and other
@@ -59,4 +80,17 @@ def register_source_tools(mcp: FastMCP) -> None:
             JSON array of source records with id, authors, title, year,
             and citation count.
         """
-        return "[]"
+        results = list(SOURCES)
+
+        if source_type is not None:
+            type_lower = source_type.lower()
+            results = [
+                s for s in results
+                if str(s.get("source_type", "")).lower() == type_lower
+            ]
+
+        if query:
+            results = [s for s in results if _matches_query(s, query)]
+
+        paginated = results[offset : offset + limit]
+        return json.dumps(paginated, default=str)

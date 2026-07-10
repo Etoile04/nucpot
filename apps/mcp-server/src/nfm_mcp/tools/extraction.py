@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+
+from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
 
 
 class TriggerExtractionInput(BaseModel):
@@ -49,7 +54,11 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             "openWorldHint": True,
         },
     )
-    async def trigger_extraction(params: TriggerExtractionInput) -> str:
+    async def trigger_extraction(
+        *,
+        file_url: str,
+        material_id: str = "auto",
+    ) -> str:
         """Submit a document for automated data extraction.
 
         Starts an async pipeline that parses the document, extracts
@@ -60,7 +69,31 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             JSON object with job_id, status='submitted', and
             estimated_duration.
         """
-        return '{"error": "not implemented"}'
+        job_id = generate_job_id()
+        now = datetime.now(timezone.utc).isoformat()
+
+        new_job: dict[str, object] = {
+            "job_id": job_id,
+            "source_id": file_url,
+            "material_id": material_id,
+            "status": "submitted",
+            "progress": 0,
+            "stage": "queued",
+            "started_at": now,
+            "completed_at": None,
+            "entities_extracted": 0,
+            "properties_extracted": 0,
+            "error": None,
+        }
+
+        EXTRACTION_JOBS[job_id] = new_job
+
+        return json.dumps({
+            "job_id": job_id,
+            "status": "submitted",
+            "estimated_duration_seconds": 30,
+            "message": "Document queued for extraction",
+        })
 
     @mcp.tool(
         name="get_extraction_status",
@@ -72,7 +105,7 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             "openWorldHint": False,
         },
     )
-    async def get_extraction_status(params: GetExtractionStatusInput) -> str:
+    async def get_extraction_status(*, job_id: str) -> str:
         """Check the status of a document extraction job.
 
         Returns the current stage, progress percentage, and any
@@ -82,4 +115,10 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             JSON object with job_id, status, progress, stage,
             and error (if any).
         """
-        return '{"error": "not implemented"}'
+        job = EXTRACTION_JOBS.get(job_id)
+        if job is None:
+            return json.dumps({
+                "error": f"Job '{job_id}' not found",
+            })
+
+        return json.dumps(job, default=str)

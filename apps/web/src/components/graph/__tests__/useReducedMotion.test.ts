@@ -17,7 +17,7 @@ const createMockMQL = (matches: boolean) => {
     addEventListener: vi.fn((event: string, handler: (e: MediaQueryListEvent) => void) => {
       if (event === "change") listeners.push(handler)
     }),
-    removeEventListener: vi.fn((event: string, handler: (e: MediaQueryListEvent) => void) => {
+    removeEventListener: vi.fn((_event: string, handler: (e: MediaQueryListEvent) => void) => {
       const idx = listeners.indexOf(handler)
       if (idx >= 0) listeners.splice(idx, 1)
     }),

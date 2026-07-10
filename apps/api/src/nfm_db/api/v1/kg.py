@@ -7,14 +7,13 @@ Public read-only endpoint (no auth required).
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models.kg import KGNode, VALID_NODE_TYPES
+from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
 from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse
 
 router = APIRouter()

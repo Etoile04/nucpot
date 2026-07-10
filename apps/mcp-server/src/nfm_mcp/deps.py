@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -22,7 +34,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Database connection (Phase B will use these)
+    # Database connection
     database_url: str = "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm"
     database_pool_size: int = 5
     database_pool_timeout: float = 30.0
@@ -51,10 +63,53 @@ def get_settings() -> Settings:
     return Settings()
 
 
-async def get_db_session() -> AsyncGenerator[Any, None]:
-    """Yield an async database session.
+# ── Engine lifecycle (module-level singleton) ──────────────────
 
-    **Phase A (stub):** yields ``None``.
-    **Phase B:** will swap to a real SQLAlchemy async session factory.
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def _get_engine() -> AsyncEngine:
+    """Lazily create (and cache) the async SQLAlchemy engine."""
+    global _engine, _session_factory
+    if _engine is None:
+        settings = get_settings()
+        _engine = create_async_engine(
+            settings.database_url,
+            pool_size=settings.database_pool_size,
+            pool_timeout=settings.database_pool_timeout,
+            echo=False,
+        )
+        _session_factory = async_sessionmaker(
+            _engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        logger.info("Created async engine for %s", settings.database_url)
+    return _engine
+
+
+def _get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return the cached session factory, creating the engine if needed."""
+    _get_engine()
+    assert _session_factory is not None
+    return _session_factory
+
+
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an async database session with automatic cleanup.
+
+    Creates a session from the shared engine, yields it for use in
+    tool handlers, and handles commit/rollback/close in a context
+    manager.  The caller does **not** need to commit — the service
+    layer already handles commits for write operations.
     """
-    yield None
+    factory = _get_session_factory()
+    async with factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()

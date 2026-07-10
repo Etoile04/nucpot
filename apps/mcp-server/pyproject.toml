@@ -8,7 +8,16 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "httpx>=0.28.0",
+    "nfm-db-api",
 ]
+
+# ── Sibling monorepo dependency ──────────────────────────────────
+# nfm-db-api is installed from the local ../api directory.
+# With uv:  `uv pip install -e ../api`  (or uv sync handles it
+# automatically when [tool.uv.sources] is present).
+# With pip: `pip install -e ../api`
+[tool.uv.sources]
+nfm-db-api = { path = "../api", editable = true }
 
 [project.optional-dependencies]
 dev = [
@@ -17,6 +26,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "aiosqlite>=0.20.0",
 ]
 
 [project.scripts]
@@ -36,7 +46,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["nfm_mcp"]
+known-first-party = ["nfm_mcp", "nfm_db"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -45,6 +55,10 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "nfm_db.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

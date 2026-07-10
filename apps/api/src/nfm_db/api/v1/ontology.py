@@ -19,8 +19,8 @@ from datetime import UTC
 from email.utils import format_datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, text
 
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
@@ -28,12 +28,10 @@ from nfm_db.schemas.ontology import OntologyGraphResponse
 from nfm_db.schemas.ontology_query import (
     NodeNeighborsResponse,
     NodeResponse,
+    PathNode,
     SearchResponse,
     SearchResultItem,
     ShortestPathResponse,
-    PathNode,
-    PathEdge,
-    PathStep,
     SyncResponse,
 )
 from nfm_db.services.ontology_service import (
@@ -42,9 +40,9 @@ from nfm_db.services.ontology_service import (
     derive_ontology_graph,
 )
 from nfm_db.services.ontology_sync import (
-    rebuild_graph,
     GraphNotFoundError,
     OntologySyncError,
+    rebuild_graph,
 )
 from nfm_db.services.rate_limit import ontology_rate_limit
 

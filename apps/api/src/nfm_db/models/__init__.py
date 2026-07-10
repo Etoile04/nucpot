@@ -104,6 +104,11 @@ from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
 )
+from nfm_db.models.conflict import (  # noqa: E402
+    ConflictRecord,
+    ConflictStatus,
+    ResolutionStrategy,
+)
 from nfm_db.models.feedback import (  # noqa: E402
     Feedback,
     FeedbackStatus,
@@ -184,6 +189,8 @@ __all__ = [
     "CacheLevel",
     "CompatJSONB",
     "Confidence",
+    "ConflictRecord",
+    "ConflictStatus",
     "DataSource",
     "DataSourceAuthor",
     "Dataset",
@@ -222,6 +229,7 @@ __all__ = [
     "PropertyMeasurement",
     "PropertyType",
     "RefGapFillStaging",
+    "ResolutionStrategy",
     "StagingStatus",
     "TimestampMixin",
     "Unit",

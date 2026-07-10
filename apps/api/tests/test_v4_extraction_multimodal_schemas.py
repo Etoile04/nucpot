@@ -23,7 +23,6 @@ from nfm_db.schemas.vision_extraction import (
     VisionExtractionResult,
 )
 
-
 # ---------------------------------------------------------------------------
 # V4ExtractionSubmitRequest — new multimodal fields
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ReviewQueueTable } from './ReviewQueueTable'
-import type { ReviewItem } from './ReviewQueueTable'
+import type { ReviewItem, ReviewQueueTableProps } from './ReviewQueueTable'
 
 // ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ const ITEM_3: ReviewItem = {
 
 const ALL_ITEMS: ReadonlyArray<ReviewItem> = [ITEM_1, ITEM_2, ITEM_3]
 
-function defaultProps(overrides?: Partial<ConstructorParameters<typeof ReviewQueueTable>[0]>) {
+function defaultProps(overrides?: Partial<ReviewQueueTableProps>) {
   return {
     items: ALL_ITEMS,
     selectedIds: new Set<string>(),
@@ -201,7 +201,7 @@ describe('ReviewQueueTable', () => {
     render(<ReviewQueueTable {...defaultProps({ onItemAction })} />)
 
     const approveButtons = screen.getAllByLabelText('通过 UO2 密度数据')
-    fireEvent.click(approveButtons[0])
+    fireEvent.click(approveButtons[0]!)
     expect(onItemAction).toHaveBeenCalledWith('item-1', 'approve')
   })
 
@@ -210,7 +210,7 @@ describe('ReviewQueueTable', () => {
     render(<ReviewQueueTable {...defaultProps({ onItemAction })} />)
 
     const rejectButtons = screen.getAllByLabelText('拒绝 UO2 密度数据')
-    fireEvent.click(rejectButtons[0])
+    fireEvent.click(rejectButtons[0]!)
     expect(onItemAction).toHaveBeenCalledWith('item-1', 'reject')
   })
 

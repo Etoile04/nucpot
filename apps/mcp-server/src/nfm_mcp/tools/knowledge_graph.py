@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+
+from nfm_mcp.tools.mock_data import KG_EDGES, KG_NODES
 
 
 class QueryKnowledgeGraphInput(BaseModel):
@@ -31,6 +34,14 @@ class QueryKnowledgeGraphInput(BaseModel):
     )
 
 
+def _query_matches(node: dict[str, object], query: str) -> bool:
+    """Check if a KG node label matches a query term."""
+    query_lower = query.lower()
+    label = str(node.get("label", "")).lower()
+    entity_type = str(node.get("entity_type", "")).lower()
+    return query_lower in label or query_lower in entity_type
+
+
 def register_kg_tools(mcp: FastMCP) -> None:
     """Register knowledge graph MCP tools."""
 
@@ -44,7 +55,12 @@ def register_kg_tools(mcp: FastMCP) -> None:
             "openWorldHint": False,
         },
     )
-    async def query_knowledge_graph(params: QueryKnowledgeGraphInput) -> str:
+    async def query_knowledge_graph(
+        *,
+        query: str,
+        entity_types: list[str] | None = None,
+        limit: int = 20,
+    ) -> str:
         """Query the NFM knowledge graph for material relationships.
 
         The knowledge graph connects materials, properties, sources,
@@ -55,4 +71,29 @@ def register_kg_tools(mcp: FastMCP) -> None:
             JSON object with nodes and edges representing the
             matching subgraph.
         """
-        return '{"nodes": [], "edges": []}'
+        matching_node_ids: set[str] = set()
+
+        filtered_nodes = list(KG_NODES)
+
+        if entity_types is not None:
+            allowed = {t.lower() for t in entity_types}
+            filtered_nodes = [
+                n for n in filtered_nodes
+                if str(n.get("entity_type", "")).lower() in allowed
+            ]
+
+        for node in filtered_nodes:
+            if _query_matches(node, query):
+                matching_node_ids.add(str(node.get("id", "")))
+
+        edges = [
+            e for e in KG_EDGES
+            if str(e.get("source", "")) in matching_node_ids
+            or str(e.get("target", "")) in matching_node_ids
+        ]
+
+        result_nodes = filtered_nodes[: limit]
+        return json.dumps(
+            {"nodes": result_nodes, "edges": edges},
+            default=str,
+        )

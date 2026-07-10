@@ -44,7 +44,7 @@ const SVG_REF = { current: null } as React.RefObject<SVGSVGElement | null>
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-function getAllNodeLabels(container: HTMLElement): HTMLTextElement[] {
+function getAllNodeLabels(container: HTMLElement): SVGTextElement[] {
   return Array.from(container.querySelectorAll("text.graph-node-label"))
 }
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+
+from nfm_mcp.tools.mock_data import ONTOLOGY
 
 
 class BrowseOntologyInput(BaseModel):
@@ -33,6 +36,17 @@ class BrowseOntologyInput(BaseModel):
     )
 
 
+def _matches_query(node: dict[str, object], query: str) -> bool:
+    """Check if an ontology node matches a search query."""
+    query_lower = query.lower()
+    searchable_fields = (
+        str(node.get("label", "")),
+        str(node.get("description", "")),
+        node.get("id", ""),
+    )
+    return any(query_lower in field.lower() for field in searchable_fields)
+
+
 def register_ontology_tools(mcp: FastMCP) -> None:
     """Register ontology browsing MCP tools."""
 
@@ -46,7 +60,13 @@ def register_ontology_tools(mcp: FastMCP) -> None:
             "openWorldHint": False,
         },
     )
-    async def browse_ontology(params: BrowseOntologyInput) -> str:
+    async def browse_ontology(
+        *,
+        query: str | None = None,
+        entity_type: str | None = None,
+        parent_id: str | None = None,
+        limit: int = 50,
+    ) -> str:
         """Browse the NFM domain ontology tree.
 
         The ontology defines the hierarchical classification of nuclear
@@ -59,4 +79,23 @@ def register_ontology_tools(mcp: FastMCP) -> None:
             children count. If query is provided, returns matching
             nodes; otherwise returns top-level nodes.
         """
-        return "[]"
+        results = list(ONTOLOGY)
+
+        if parent_id is not None:
+            results = [
+                n for n in results
+                if n.get("parent_id") == parent_id
+            ]
+
+        if entity_type is not None:
+            type_lower = entity_type.lower()
+            results = [
+                n for n in results
+                if str(n.get("entity_type", "")).lower() == type_lower
+            ]
+
+        if query is not None:
+            results = [n for n in results if _matches_query(n, query)]
+
+        paginated = results[: limit]
+        return json.dumps(paginated, default=str)

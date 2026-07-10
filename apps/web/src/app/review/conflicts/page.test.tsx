@@ -128,7 +128,7 @@ describe('ConflictsReviewPage', () => {
 
     // Click the first "通过" button (approve action)
     const approveButtons = screen.getAllByLabelText(/通过.*/)
-    fireEvent.click(approveButtons[0])
+    fireEvent.click(approveButtons[0]!)
 
     // Detail panel should appear with conflict info
     await waitFor(() => {
@@ -146,7 +146,7 @@ describe('ConflictsReviewPage', () => {
     })
 
     const approveButtons = screen.getAllByLabelText(/通过.*/)
-    fireEvent.click(approveButtons[0])
+    fireEvent.click(approveButtons[0]!)
 
     await waitFor(() => {
       expect(screen.getByText('版本 A')).toBeDefined()
@@ -164,7 +164,7 @@ describe('ConflictsReviewPage', () => {
     })
 
     const approveButtons = screen.getAllByLabelText(/通过.*/)
-    fireEvent.click(approveButtons[0])
+    fireEvent.click(approveButtons[0]!)
 
     await waitFor(() => {
       expect(screen.getByText('保留版本 A')).toBeDefined()
@@ -185,7 +185,7 @@ describe('ConflictsReviewPage', () => {
     })
 
     const approveButtons = screen.getAllByLabelText(/通过.*/)
-    fireEvent.click(approveButtons[0])
+    fireEvent.click(approveButtons[0]!)
 
     await waitFor(() => {
       expect(screen.getByText('跳过')).toBeDefined()

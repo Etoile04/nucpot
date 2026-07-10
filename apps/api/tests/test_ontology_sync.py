@@ -11,11 +11,12 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.ontology_sync import (
+    GraphNotFoundError,
+    OntologySyncError,
     SyncResult,
     SyncStatus,
     _build_edge_cypher,
@@ -27,8 +28,6 @@ from nfm_db.services.ontology_sync import (
     sync_corpus_to_graph,
     sync_edge_to_graph,
     sync_node_to_graph,
-    GraphNotFoundError,
-    OntologySyncError,
 )
 
 

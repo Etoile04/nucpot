@@ -160,7 +160,7 @@ function KgReviewContent() {
   }, [])
 
   const handleSelectAll = useCallback((selected: boolean) => {
-    setSelectedIds((prev) => {
+    setSelectedIds((_prev) => {
       if (selected) {
         return new Set(items.map((item) => item.id))
       }

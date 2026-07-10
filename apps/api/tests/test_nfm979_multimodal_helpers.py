@@ -24,7 +24,6 @@ from nfm_db.services.multimodal_extraction import (
     _extract_tables_from_source,
 )
 
-
 # ---------------------------------------------------------------------------
 # ExtractionJob field tests
 # ---------------------------------------------------------------------------

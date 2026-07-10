@@ -140,7 +140,7 @@ describe('KgReviewPage', () => {
 
     // Click individual reject button (拒绝) for the first item
     const rejectButtons = screen.getAllByLabelText(/拒绝.*/)
-    fireEvent.click(rejectButtons[0])
+    fireEvent.click(rejectButtons[0]!)
 
     await waitFor(() => {
       expect(mockedBatchKgAction).toHaveBeenCalledWith('reject', ['kg1'])

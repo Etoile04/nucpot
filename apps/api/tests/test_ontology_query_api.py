@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.ontology import router
 from nfm_db.database import get_db
-from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.kg import KGNode
 
 
 def _make_client(db_override=None) -> TestClient:
