@@ -1,12 +1,13 @@
 """Tests for POST /api/v1/materials/batch-import (NFM-1141).
 
 Covers CSV parsing (BOM, empty rows, encoding), JSON parsing, partial
-success, file size limit enforcement, duplicate upsert, and error
-reporting.
+success, file size limit enforcement, duplicate upsert, concurrency
+control, and error reporting.
 """
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 
@@ -20,6 +21,7 @@ from nfm_db.services.batch_import_service import (
     _parse_json_content,
     _row_to_material_create,
     _validate_row,
+    get_import_lock,
 )
 
 # ---------------------------------------------------------------------------
@@ -368,3 +370,42 @@ async def test_batch_import_result_persisted(
     list_resp = await async_client.get("/api/v1/materials")
     items = list_resp.json()["data"]["items"]
     assert any(m["name"] == "PersistedMat" for m in items)
+
+
+@pytest.mark.asyncio
+async def test_batch_import_concurrency_rejects_when_busy(
+    async_client: AsyncClient,
+) -> None:
+    """Concurrent batch import should return 409 Conflict."""
+    csv_bytes = b"name,formula\nUO2,UO2\n"
+
+    # ASGITransport sets scope["client"] = ("127.0.0.1", 123) by default
+    test_ip = "127.0.0.1"
+    lock = await get_import_lock(test_ip)
+    await lock.acquire()
+
+    try:
+        response = await async_client.post(
+            "/api/v1/materials/batch-import",
+            files={"file": ("test.csv", csv_bytes, "text/csv")},
+        )
+        assert response.status_code == 409, (
+            f"Expected 409 but got {response.status_code}: {response.text}"
+        )
+        body = response.json()
+        assert body["error_code"] == "CONFLICT"
+    finally:
+        lock.release()
+
+
+@pytest.mark.asyncio
+async def test_batch_import_413_has_error_code(async_client: AsyncClient) -> None:
+    """File too large should return 413 with REQUEST_ENTITY_TOO_LARGE code."""
+    large_content = b"x" * (BATCH_IMPORT_MAX_SIZE_MB * 1024 * 1024 + 1)
+    response = await async_client.post(
+        "/api/v1/materials/batch-import",
+        files={"file": ("big.csv", large_content, "text/csv")},
+    )
+    assert response.status_code == 413
+    body = response.json()
+    assert body["error_code"] == "REQUEST_ENTITY_TOO_LARGE"

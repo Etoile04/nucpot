@@ -6,6 +6,7 @@ data ingestion.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -24,6 +25,22 @@ logger = logging.getLogger(__name__)
 
 # Configurable via environment variable
 BATCH_IMPORT_MAX_SIZE_MB = int(os.environ.get("BATCH_IMPORT_MAX_SIZE_MB", "10"))
+
+# Per-IP concurrency lock: max 1 batch import at a time per client
+_import_locks: dict[str, asyncio.Semaphore] = {}
+_locks_mutex = asyncio.Lock()
+
+
+async def get_import_lock(client_ip: str) -> asyncio.Semaphore:
+    """Get or create a per-IP semaphore for batch import concurrency control.
+
+    Returns a semaphore with capacity 1, ensuring only one batch import
+    runs at a time per client IP.
+    """
+    async with _locks_mutex:
+        if client_ip not in _import_locks:
+            _import_locks[client_ip] = asyncio.Semaphore(1)
+        return _import_locks[client_ip]
 
 # CSV column → MaterialCreate field mapping
 _CSV_COLUMN_MAP: dict[str, str] = {
@@ -198,7 +215,11 @@ async def batch_import_materials(
         imported += 1
 
     # Single commit for the entire batch
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
     failed = len(errors)
     logger.info(

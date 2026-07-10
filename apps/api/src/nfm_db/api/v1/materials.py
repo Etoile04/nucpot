@@ -10,11 +10,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
@@ -29,7 +30,9 @@ from nfm_db.schemas.material import (
 from nfm_db.services.batch_import_service import (
     BATCH_IMPORT_MAX_SIZE_MB,
     batch_import_materials,
+    get_import_lock,
 )
+from nfm_db.middleware.rate_limit import limiter
 from nfm_db.services.material_service import (
     create_material,
     get_material,
@@ -131,7 +134,9 @@ async def update_material_endpoint(
     response_model=ApiResponse[BatchImportResult],
     status_code=200,
 )
+@limiter.exempt
 async def batch_import_endpoint(
+    request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[BatchImportResult]:
@@ -158,6 +163,18 @@ async def batch_import_endpoint(
             detail=f"File size exceeds {BATCH_IMPORT_MAX_SIZE_MB}MB limit",
         )
 
+    # Per-IP concurrency control: non-blocking acquire, fail fast if busy
+    client_ip = request.client.host if request.client else "unknown"
+    lock = await get_import_lock(client_ip)
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=0.001)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=409,
+            detail="A batch import is already in progress for this client. "
+            "Please wait for it to finish.",
+        )
+
     try:
         result = await batch_import_materials(
             db,
@@ -166,5 +183,7 @@ async def batch_import_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        lock.release()
 
     return ApiResponse(success=True, data=result)

@@ -28,6 +28,7 @@ class ErrorCode(str, Enum):
     CONFLICT = "CONFLICT"
     BAD_REQUEST = "BAD_REQUEST"
     BATCH_IMPORT_ERROR = "BATCH_IMPORT_ERROR"
+    REQUEST_ENTITY_TOO_LARGE = "REQUEST_ENTITY_TOO_LARGE"
 
     @property
     def message(self) -> str:
@@ -52,6 +53,7 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.CONFLICT: "资源冲突，操作无法完成",
     ErrorCode.BAD_REQUEST: "请求格式错误",
     ErrorCode.BATCH_IMPORT_ERROR: "批量导入失败",
+    ErrorCode.REQUEST_ENTITY_TOO_LARGE: "请求体过大，超过大小限制",
 }
 
 _HTTP_STATUS: dict[ErrorCode, int] = {
@@ -64,6 +66,7 @@ _HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.CONFLICT: 409,
     ErrorCode.BAD_REQUEST: 400,
     ErrorCode.BATCH_IMPORT_ERROR: 422,
+    ErrorCode.REQUEST_ENTITY_TOO_LARGE: 413,
 }
 
 # Reverse lookup: HTTP status → ErrorCode (for the global handler)
@@ -73,6 +76,7 @@ _STATUS_TO_CODE: dict[int, ErrorCode] = {
     403: ErrorCode.FORBIDDEN,
     404: ErrorCode.NOT_FOUND,
     409: ErrorCode.CONFLICT,
+    413: ErrorCode.REQUEST_ENTITY_TOO_LARGE,
     422: ErrorCode.VALIDATION_ERROR,
     429: ErrorCode.RATE_LIMIT_EXCEEDED,
     500: ErrorCode.INTERNAL_ERROR,
