@@ -30,6 +30,13 @@ def _coerce_aliases(v: Any) -> list[str]:
 
 UuidStr = Annotated[str, BeforeValidator(_coerce_uuid_to_str)]
 
+AliasesList = Annotated[list[str], BeforeValidator(_coerce_aliases)]
+
+PropertiesDict = Annotated[
+    dict[str, Any],
+    BeforeValidator(lambda v: v if isinstance(v, dict) else {}),
+]
+
 # ---------------------------------------------------------------------------
 # Node + Neighbors  (GET /ontology/node/{node_id})
 # ---------------------------------------------------------------------------
@@ -43,8 +50,8 @@ class NodeDetail(BaseModel):
     id: UuidStr = Field(min_length=1)
     node_type: str = Field(min_length=1)
     label: str = Field(min_length=1)
-    aliases: list[str] = Field(default_factory=list, before_validator=_coerce_aliases)
-    properties: dict[str, Any] = Field(default_factory=dict)
+    aliases: AliasesList = Field(default_factory=list)
+    properties: PropertiesDict = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0)
     corpus_id: str | None = None
 

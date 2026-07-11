@@ -40,8 +40,10 @@ class _Candidate:
         raw = self.entry.get("extracted_at")
         if isinstance(raw, datetime):
             return raw
+        if isinstance(raw, str):
+            return datetime.fromisoformat(raw)
         raise ValueError(
-            f"extracted_at must be a datetime, got {type(raw).__name__}"
+            f"extracted_at must be a datetime or ISO string, got {type(raw).__name__}"
         )
 
 
@@ -61,7 +63,7 @@ def _build_result(
 ) -> dict[str, Any]:
     """Build the resolved-value dict expected by FusionPipeline."""
     return {
-        "resolved_value": winner.value,
+        "value": winner.value,
         "resolution_reason": reason,
         "source_id": winner.source_id,
         "confidence": winner.confidence,
@@ -121,7 +123,7 @@ class ConflictResolver:
         logger.info(
             "Resolved conflict via %s strategy: value=%s source=%s",
             strategy.value,
-            result["resolved_value"],
+            result["value"],
             result.get("source_id"),
         )
         return result

@@ -307,8 +307,8 @@ async def search_nodes(
     summary="Find shortest path between two nodes",
 )
 async def get_shortest_path(
-    from_id: uuid.UUID = Query(..., description="Start node ID"),
-    to_id: uuid.UUID = Query(..., description="End node ID"),
+    from_id: uuid.UUID = Query(..., description="Start node ID", alias="from"),
+    to_id: uuid.UUID = Query(..., description="End node ID", alias="to"),
     corpus_id: str | None = Query(None, description="Corpus scope filter"),
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),

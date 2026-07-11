@@ -175,7 +175,7 @@ class FusionPipeline:
                         list(conflict_group.values),
                         strategy=ResolutionStrategy(effective_strategy),
                     )
-                    conflict.resolved_value = resolved["resolved_value"]
+                    conflict.resolved_value = resolved
                     conflict.status = ConflictStatus.AUTO_RESOLVED
                     conflict.resolution_reason = resolved.get(
                         "resolution_reason", ""
