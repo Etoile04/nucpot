@@ -15,6 +15,8 @@ from enum import StrEnum
 
 from nfm_db.models.conflict_record import ConflictRecord  # noqa: F401
 
+__all__ = ["ConflictRecord", "ConflictStatus", "ResolutionStrategy"]
+
 
 class ConflictStatus(StrEnum):
     """Lifecycle states for a conflict record."""
