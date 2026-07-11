@@ -110,6 +110,32 @@ def _disable_global_rate_limiting() -> None:
     app.dependency_overrides[md_verification_rate_limit] = _noop
 
 
+@pytest.fixture(autouse=True)
+def _reenable_rate_limit_overrides() -> None:
+    """Re-apply rate-limit no-op overrides before each test function.
+
+    Many existing test files on main call ``dependency_overrides.clear()``
+    in their teardown, which wipes the session-scoped overrides above.
+    This function-scoped guard re-applies the no-ops before every test
+    so that stray 429s never leak into unrelated tests.
+
+    Rate-limit-specific tests (e.g. ``test_ontology_rate_limit_headers``)
+    deliberately set tighter overrides in their test bodies *after* this
+    fixture runs, so their assertions are unaffected.
+    """
+    from nfm_db.services.rate_limit import (
+        md_verification_rate_limit,
+        ontology_rate_limit,
+    )
+
+    async def _noop() -> None:  # pragma: no cover
+        pass
+
+    app.dependency_overrides[ontology_rate_limit] = _noop
+    app.dependency_overrides[md_verification_rate_limit] = _noop
+    yield
+
+
 @pytest.fixture
 async def db_session() -> AsyncSession:
     """Create an in-memory SQLite async session for testing."""
