@@ -31,6 +31,13 @@ dev = [
     "mypy>=1.13.0",
     "aiosqlite>=0.20.0",
 ]
+lightrag = [
+    # Version must match docker/lightrag.Dockerfile ARG LIGHTRAG_VERSION
+    # and nfm_db.config.LIGHTRAG_VERSION. Only needed for local dev
+    # against a live LightRAG sidecar (not required in production,
+    # where the sidecar runs independently).
+    "lightrag-hku==1.5.4",
+]
 
 [tool.ruff]
 target-version = "py312"

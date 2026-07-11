@@ -1,4 +1,4 @@
-"""LightRAG sidecar integration endpoints (NFM-862).
+"""LightRAG sidecar integration endpoints (NFM-862, NFM-1223).
 
 Provides:
   GET  /lightrag/health  — check LightRAG service availability
@@ -12,7 +12,7 @@ import logging
 
 from fastapi import APIRouter
 
-from nfm_db.config import get_settings
+from nfm_db.config import LIGHTRAG_VERSION, get_settings
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.lightrag import (
     HealthResponse,
@@ -50,20 +50,32 @@ def _get_client() -> LightRAGClient:
     response_model=ApiResponse[HealthResponse],
 )
 async def health_check() -> ApiResponse[HealthResponse]:
-    """Check LightRAG sidecar service availability."""
+    """Check LightRAG sidecar service availability.
+
+    Returns the pinned LightRAG version and indicates whether
+    the rule-based fallback is currently active.
+    """
     client = _get_client()
     try:
         healthy = await client.health_check()
         if healthy:
             return ApiResponse(
                 success=True,
-                data=HealthResponse(status="healthy"),
+                data=HealthResponse(
+                    status="healthy",
+                    lightrag_version=LIGHTRAG_VERSION,
+                    active_provider="lightrag",
+                    fallback_active=False,
+                ),
             )
         return ApiResponse(
             success=True,
             data=HealthResponse(
                 status="unhealthy",
                 error="LightRAG service is not responding",
+                lightrag_version=LIGHTRAG_VERSION,
+                active_provider="rule-based-fallback",
+                fallback_active=True,
             ),
         )
     except Exception as exc:
@@ -73,6 +85,9 @@ async def health_check() -> ApiResponse[HealthResponse]:
             data=HealthResponse(
                 status="unhealthy",
                 error=str(exc),
+                lightrag_version=LIGHTRAG_VERSION,
+                active_provider="rule-based-fallback",
+                fallback_active=True,
             ),
         )
 

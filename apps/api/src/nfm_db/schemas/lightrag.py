@@ -152,3 +152,15 @@ class HealthResponse(BaseModel):
         None,
         description="Error message if service is unhealthy",
     )
+    active_provider: str = Field(
+        "lightrag",
+        description="Name of the currently active RAG provider",
+    )
+    fallback_active: bool = Field(
+        False,
+        description="Whether the rule-based fallback provider is active",
+    )
+    lightrag_version: str | None = Field(
+        None,
+        description="Pinned LightRAG version from config",
+    )
