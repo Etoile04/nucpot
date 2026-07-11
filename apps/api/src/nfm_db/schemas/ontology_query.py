@@ -9,9 +9,26 @@ Response models for the four new endpoints:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import uuid
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+
+
+def _coerce_uuid_to_str(v: Any) -> Any:
+    """Convert UUID objects to strings for JSON serialization."""
+    return str(v) if isinstance(v, uuid.UUID) else v
+
+
+def _coerce_aliases(v: Any) -> list[str]:
+    """Convert aliases from str or None to list[str]."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [v] if v else []
+    return v
+
+UuidStr = Annotated[str, BeforeValidator(_coerce_uuid_to_str)]
 
 # ---------------------------------------------------------------------------
 # Node + Neighbors  (GET /ontology/node/{node_id})
@@ -21,10 +38,12 @@ from pydantic import BaseModel, ConfigDict, Field
 class NodeDetail(BaseModel):
     """Detailed view of a single knowledge-graph node."""
 
-    id: str = Field(min_length=1)
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UuidStr = Field(min_length=1)
     node_type: str = Field(min_length=1)
     label: str = Field(min_length=1)
-    aliases: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list, before_validator=_coerce_aliases)
     properties: dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0)
     corpus_id: str | None = None
@@ -61,7 +80,7 @@ class NodeNeighborsResponse(BaseModel):
 class SearchResult(BaseModel):
     """One match from a fuzzy ontology search."""
 
-    id: str = Field(min_length=1)
+    id: UuidStr = Field(min_length=1)
     node_type: str = Field(min_length=1)
     label: str = Field(min_length=1)
     match_field: str = Field(min_length=1)
@@ -85,7 +104,9 @@ class SearchResponse(BaseModel):
 class PathNode(BaseModel):
     """Lightweight node representation inside a path."""
 
-    id: str = Field(min_length=1)
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UuidStr = Field(min_length=1)
     label: str = Field(min_length=1)
     node_type: str = Field(min_length=1)
 

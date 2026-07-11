@@ -175,7 +175,7 @@ class FusionPipeline:
                         list(conflict_group.values),
                         strategy=ResolutionStrategy(effective_strategy),
                     )
-                    conflict.resolved_value = resolved
+                    conflict.resolved_value = resolved["resolved_value"]
                     conflict.status = ConflictStatus.AUTO_RESOLVED
                     conflict.resolution_reason = resolved.get(
                         "resolution_reason", ""
@@ -190,6 +190,12 @@ class FusionPipeline:
                     )
                     conflict.status = ConflictStatus.ESCALATED
                     conflict.resolution_reason = str(exc)
+            elif auto_resolve and effective_strategy == ResolutionStrategy.MANUAL:
+                # Manual strategy cannot be auto-resolved — escalate
+                conflict.status = ConflictStatus.ESCALATED
+                conflict.resolution_reason = (
+                    "Manual strategy requires human review; cannot auto-resolve"
+                )
 
             results.append(FusionResult(
                 material_id=conflict_group.material_id,
