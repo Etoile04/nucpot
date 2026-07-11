@@ -16,7 +16,7 @@ from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
 from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse
 
-router = APIRouter()
+router = APIRouter(tags=["知识图谱"])
 
 
 def _parse_aliases(raw: str | None) -> list[str]:

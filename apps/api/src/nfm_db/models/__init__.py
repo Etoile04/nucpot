@@ -104,11 +104,10 @@ from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
 )
-from nfm_db.models.conflict import (  # noqa: E402
-    ConflictRecord,
-    ConflictStatus,
-    ResolutionStrategy,
-)
+# NOTE: nfm_db.models.conflict is imported directly by fusion_pipeline.py
+# and conflict_resolution.py. Not re-exported here to avoid duplicate
+# conflict_records table registration (conflict_record.py defines the
+# active model used by the router and tests).
 from nfm_db.models.extraction_figure import (  # noqa: E402
     ExtractionFigure,
 )
@@ -202,8 +201,7 @@ __all__ = [
     "CacheLevel",
     "CompatJSONB",
     "Confidence",
-    "ConflictRecord",
-    "ConflictStatus",
+    "Confidence",
     "DataSource",
     "DataSourceAuthor",
     "Dataset",
@@ -245,7 +243,7 @@ __all__ = [
     "PropertyMeasurement",
     "PropertyType",
     "RefGapFillStaging",
-    "ResolutionStrategy",
+    "ReviewMixin",
     "ReviewMixin",
     "ReviewStatus",
     "StagingStatus",
