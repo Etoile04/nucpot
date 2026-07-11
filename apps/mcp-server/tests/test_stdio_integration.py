@@ -379,6 +379,31 @@ class TestToolCalls:
         data = json.loads(text_parts[0])
         assert "error" in data, f"Expected 'error' key for nonexistent job, got: {data}"
 
+    def test_invalid_tool_call_returns_error(
+        self,
+        server_proc: subprocess.Popen[str],
+    ) -> None:
+        """Server should return a JSON-RPC error for an unknown tool name."""
+        _init_and_confirm(server_proc)
+        request_id = 999
+        request: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {
+                "name": "nonexistent_tool",
+                "arguments": {},
+            },
+        }
+        _send_request(server_proc, request)
+        resp = _read_response(server_proc)
+
+        assert resp.get("jsonrpc") == "2.0", f"Missing jsonrpc version: {resp}"
+        assert resp.get("id") == request_id, f"Wrong id: {resp}"
+        error = resp.get("error")
+        assert error is not None, f"Expected 'error' key for unknown tool, got: {resp}"
+        assert error.get("code") is not None, f"Error should have 'code': {error}"
+
     def test_no_unhandled_exceptions_in_tool_calls(
         self,
         server_proc: subprocess.Popen[str],
