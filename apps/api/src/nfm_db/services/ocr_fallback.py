@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 
 from nfm_db.schemas.vision_extraction import (
+    AxisInfo,
     PlotData,
     TableData,
     VisionExtractionResult,
@@ -135,8 +136,8 @@ def ocr_fallback_plot_result(
     plot_data = PlotData(
         title=title,
         plot_type="unknown",
-        x_axis=axis_labels.get("x", {}),
-        y_axis=axis_labels.get("y", {}),
+        x_axis=_build_axis_info(axis_labels.get("x")),
+        y_axis=_build_axis_info(axis_labels.get("y")),
         confidence=min(ocr_result.confidence, 0.3),
     )
 
@@ -216,6 +217,16 @@ def _extract_first_line(text: str) -> str:
         if stripped:
             return stripped
     return ""
+
+
+def _build_axis_info(label_dict: dict[str, str] | None) -> AxisInfo:
+    """Construct an AxisInfo from a label dict returned by _guess_axis_labels."""
+    if not label_dict:
+        return AxisInfo()
+    return AxisInfo(
+        label=label_dict.get("label", ""),
+        unit=label_dict.get("unit", ""),
+    )
 
 
 def _guess_axis_labels(text: str) -> dict[str, dict[str, str]]:

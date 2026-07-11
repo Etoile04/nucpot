@@ -294,6 +294,21 @@ class VisionClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if attempt == self.max_retries:
+                    raise VisionClientError(
+                        f"VLM request failed after {attempt} retries: {exc}"
+                    ) from exc
+                backoff = _BASE_BACKOFF * (2 ** (attempt - 1))
+                logger.warning(
+                    "VLM request error (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt,
+                    self.max_retries,
+                    backoff,
+                    exc,
+                )
+                await asyncio.sleep(backoff)
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 is_retryable = (
@@ -301,7 +316,9 @@ class VisionClient:
                     or exc.response.status_code == 429
                 )
                 if not is_retryable or attempt == self.max_retries:
-                    raise
+                    raise VisionClientError(
+                        f"VLM HTTP error {exc.response.status_code}: {exc}"
+                    ) from exc
                 backoff = _BASE_BACKOFF * (2 ** (attempt - 1))
                 logger.warning(
                     "VLM call failed (attempt %d/%d), retrying in %.1fs: %s",

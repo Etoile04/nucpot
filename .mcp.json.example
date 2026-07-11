@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "nfm": {
+      "command": "uv",
+      "args": ["--project", "apps/mcp-server", "run", "nfm-mcp-server"],
+      "env": {
+        "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm"
+      }
+    }
+  }
+}

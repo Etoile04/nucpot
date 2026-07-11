@@ -75,6 +75,14 @@ class ExtractionJob:
     element_systems: list[str] | None = None
     cache_level: str | None = None
     max_confidence: str | None = None
+    # Multimodal extraction fields (NFM-979)
+    extract_figures: bool = False
+    extract_tables: bool = False
+    figure_types: list[str] | None = None
+    confidence_threshold: float = 0.5
+    conflict_strategy: str = "prefer_vlm"
+    figures: list[dict[str, Any]] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Thread-safe in-memory store (access via async session in prod)
@@ -352,6 +360,11 @@ async def trigger_extraction(
     element_systems: list[str] | None = None,
     cache_level: str | None = None,
     max_confidence: str | None = None,
+    extract_figures: bool = False,
+    extract_tables: bool = False,
+    figure_types: list[str] | None = None,
+    confidence_threshold: float = 0.5,
+    conflict_strategy: str = "prefer_vlm",
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -361,6 +374,7 @@ async def trigger_extraction(
     3. Quality gate: dedup, range validate, confidence route
     4. Stage passing values to _ref_gap_fill_staging
     5. Optional: gap re-scan to close the loop
+    6. Optional: multimodal extraction (figures/tables via VLM)
 
     Returns the job tracker with current status.
     """
@@ -375,6 +389,11 @@ async def trigger_extraction(
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
+        extract_figures=extract_figures,
+        extract_tables=extract_tables,
+        figure_types=figure_types,
+        confidence_threshold=confidence_threshold,
+        conflict_strategy=conflict_strategy,
     )
     _job_store[job_id] = job
 
@@ -452,6 +471,25 @@ async def trigger_extraction(
                 logger.info("Job %s: gap re-scan completed after %d staged", job_id, staged)
             except Exception:
                 logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
+
+        # Stage 5: Multimodal extraction (figures/tables via VLM)
+        if job.extract_figures or job.extract_tables:
+            try:
+                from nfm_db.services.multimodal_extraction import run_multimodal_extraction
+
+                await run_multimodal_extraction(job, mapped)
+                logger.info(
+                    "Job %s: multimodal extraction completed (figures=%d, tables=%d)",
+                    job_id,
+                    len(job.figures),
+                    len(job.tables),
+                )
+            except Exception as mm_exc:
+                logger.warning(
+                    "Job %s: multimodal extraction failed (non-fatal): %s",
+                    job_id,
+                    mm_exc,
+                )
 
         final_status = JobStatus.PARTIAL if rejected > 0 else JobStatus.COMPLETED
         _update_job(
