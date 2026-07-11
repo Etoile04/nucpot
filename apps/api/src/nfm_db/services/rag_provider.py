@@ -92,7 +92,16 @@ class LightRAGProvider(RAGProvider):
     """RAG provider that delegates to the LightRAG sidecar service."""
 
     def __init__(self, client: LightRAGClient | None = None) -> None:
-        self._client = client or LightRAGClient()
+        if client is not None:
+            self._client = client
+        else:
+            from nfm_db.services.lightrag_lifecycle import get_shared_lightrag_client
+
+            shared = get_shared_lightrag_client()
+            if shared is not None:
+                self._client = shared
+            else:
+                self._client = LightRAGClient()
 
     @property
     def name(self) -> str:
@@ -249,7 +258,7 @@ class RuleBasedFallbackProvider(RAGProvider):
 
 
 # ---------------------------------------------------------------------------
-# Provider selector with circuit-breaker semantics
+# Provider selector — stateless health-check + try/except fallback
 # ---------------------------------------------------------------------------
 
 
@@ -259,17 +268,19 @@ class HealthStatus:
 
     lightrag_healthy: bool
     active_provider: str
-    consecutive_failures: int
-    failure_threshold: int
 
 
 class RAGProviderSelector:
     """Auto-selects the best available RAG provider.
 
     Wraps a :class:`LightRAGProvider` and a
-    :class:`RuleBasedFallbackProvider`.  When LightRAG passes health
-    checks, it is used; once ``failure_threshold`` consecutive failures
-    occur, the fallback takes over until LightRAG recovers.
+    :class:`RuleBasedFallbackProvider`.  Selection is **stateless** —
+    every ``query()`` / ``ingest()`` call first attempts LightRAG and
+    falls back to rule-based PG search on ``LightRAGClientError``.
+    A ``check_health()`` probe is available for monitoring endpoints.
+
+    Previous circuit-breaker state was per-request and never persisted,
+    so it was removed in favour of this simpler pattern (NFM-1247).
     """
 
     def __init__(
@@ -277,80 +288,47 @@ class RAGProviderSelector:
         *,
         lightrag_client: LightRAGClient | None = None,
         db_session: AsyncSession,
-        failure_threshold: int = 3,
     ) -> None:
         self._lightrag = LightRAGProvider(lightrag_client)
         self._fallback = RuleBasedFallbackProvider(db_session)
-        self._failure_threshold = failure_threshold
-        self._consecutive_failures = 0
-        self._use_fallback = False
 
     async def check_health(self) -> HealthStatus:
-        """Run a health check and update internal circuit-breaker state."""
+        """Run a health check against the LightRAG sidecar.
+
+        Returns a snapshot suitable for monitoring; does **not** influence
+        provider selection (which is handled per-request via try/except).
+        """
         lightrag_ok = await self._lightrag.health()
-
-        if lightrag_ok:
-            self._consecutive_failures = 0
-            self._use_fallback = False
-        else:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= self._failure_threshold:
-                self._use_fallback = True
-                logger.warning(
-                    "LightRAG unhealthy %d/%d consecutive failures — "
-                    "switching to fallback provider",
-                    self._consecutive_failures,
-                    self._failure_threshold,
-                )
-
-        active = self._fallback.name if self._use_fallback else self._lightrag.name
         return HealthStatus(
             lightrag_healthy=lightrag_ok,
-            active_provider=active,
-            consecutive_failures=self._consecutive_failures,
-            failure_threshold=self._failure_threshold,
+            active_provider=self._lightrag.name if lightrag_ok else self._fallback.name,
         )
 
     @property
     def status(self) -> HealthStatus:
-        """Return last-known health status without performing a check."""
-        active = self._fallback.name if self._use_fallback else self._lightrag.name
+        """Return an optimistic status without performing a network check."""
         return HealthStatus(
-            lightrag_healthy=self._consecutive_failures == 0,
-            active_provider=active,
-            consecutive_failures=self._consecutive_failures,
-            failure_threshold=self._failure_threshold,
+            lightrag_healthy=True,
+            active_provider=self._lightrag.name,
         )
 
     @property
     def active_provider(self) -> RAGProvider:
-        """Return the currently active provider."""
-        if self._use_fallback:
-            return self._fallback
+        """Return the primary (LightRAG) provider."""
         return self._lightrag
 
     async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        """Query using the active provider with automatic fallback."""
-        await self.check_health()
-        provider = self.active_provider
+        """Query using LightRAG with automatic fallback on error."""
         try:
-            return await provider.query(query=query, **kwargs)
+            return await self._lightrag.query(query=query, **kwargs)
         except LightRAGClientError:
-            if not self._use_fallback:
-                logger.warning("LightRAG query failed, falling back to rule-based")
-                self._use_fallback = True
-                return await self._fallback.query(query=query, **kwargs)
-            raise
+            logger.warning("LightRAG query failed, falling back to rule-based")
+            return await self._fallback.query(query=query, **kwargs)
 
     async def ingest(self, *, text: str, source: str | None = None) -> None:
-        """Ingest using the active provider with automatic fallback."""
-        await self.check_health()
-        provider = self.active_provider
+        """Ingest using LightRAG with automatic fallback on error."""
         try:
-            await provider.ingest(text=text, source=source)
+            await self._lightrag.ingest(text=text, source=source)
         except LightRAGClientError:
-            if not self._use_fallback:
-                logger.warning("LightRAG ingest failed, falling back to rule-based")
-                self._use_fallback = True
-                await self._fallback.ingest(text=text, source=source)
-            raise
+            logger.warning("LightRAG ingest failed, falling back to rule-based")
+            await self._fallback.ingest(text=text, source=source)

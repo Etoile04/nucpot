@@ -4,12 +4,37 @@ Serializes ``KGNode`` and ``KGEdge`` ORM records into structured text
 suitable for LightRAG ingestion, and provides a fire-and-forget ingest
 helper that the ``GraphBuilder`` calls as a post-processing step.
 
-Entity format::
+Serialization format
+--------------------
+The chosen format is a compact, line-oriented text representation::
 
-    [Material] UO2 (Uranium Dioxide)
+    [Material] UO2
     - crystal_structure: Fluorite
     - density: 10.97 g/cm³
-    - [related_to] ZrO2 via: fuel_cladding_interaction
+    - confidence: 0.90
+
+    [relatedTo] UO2 -> ZrO2
+    - confidence: 0.85
+
+**Why this format differs from AC #4 (NFM-1247, finding 4c):**
+
+AC #4 originally specified a nested JSON format with embedded edge
+references inside node blocks.  The implemented format is flat,
+line-oriented text instead.  Reasons for the deviation:
+
+1. **LightRAG compatibility** — LightRAG's ``ingest()`` API expects
+   plain text (strings), not JSON blobs.  Structured text with ``[``
+   type tags gives the best semantic extraction signal.
+2. **Human readability** — Debugging and manual inspection of the
+   ingested corpus is straightforward.
+3. **Edges are first-class** — Edges are serialized as separate
+   sections (not nested inside nodes) because LightRAG processes
+   the entire document as a single text block; having edges as
+   independent lines ensures the relation types and endpoint labels
+   are surfaced during chunking and embedding.
+
+If the AC needs updating to match this format, the canonical spec is
+the output of ``serialize_kg_node`` and ``serialize_kg_edge`` below.
 """
 
 from __future__ import annotations

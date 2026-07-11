@@ -228,8 +228,6 @@ class TestHealthStatus:
         status = HealthStatus(
             lightrag_healthy=True,
             active_provider="lightrag",
-            consecutive_failures=0,
-            failure_threshold=3,
         )
         assert status.lightrag_healthy is True
         assert status.active_provider == "lightrag"
@@ -238,8 +236,6 @@ class TestHealthStatus:
         status = HealthStatus(
             lightrag_healthy=True,
             active_provider="lightrag",
-            consecutive_failures=0,
-            failure_threshold=3,
         )
         with pytest.raises(AttributeError):
             status.active_provider = "fallback"  # type: ignore[misc]
@@ -251,7 +247,7 @@ class TestHealthStatus:
 
 
 class TestRAGProviderSelector:
-    """Tests for the auto-selecting RAG provider with circuit breaker."""
+    """Tests for the stateless RAG provider with try/except fallback."""
 
     @pytest.mark.asyncio
     async def test_uses_lightrag_when_healthy(self) -> None:
@@ -267,42 +263,23 @@ class TestRAGProviderSelector:
         assert result.fallback is False
 
     @pytest.mark.asyncio
-    async def test_switches_to_fallback_after_threshold(self) -> None:
-        """After failure_threshold consecutive failures, switch to fallback."""
-        client = _make_mock_lightrag_client(healthy=False)
+    async def test_check_health_reflects_lightrag_state(self) -> None:
+        """check_health returns lightrag when healthy, fallback when not."""
+        client = _make_mock_lightrag_client(healthy=True)
         db = _make_mock_db()
         selector = RAGProviderSelector(
             lightrag_client=client,  # type: ignore[arg-type]
             db_session=db,  # type: ignore[arg-type]
-            failure_threshold=2,
         )
 
-        status1 = await selector.check_health()
-        assert status1.active_provider == "lightrag"
-        assert status1.consecutive_failures == 1
+        status = await selector.check_health()
+        assert status.active_provider == "lightrag"
+        assert status.lightrag_healthy is True
 
-        status2 = await selector.check_health()
-        assert status2.active_provider == "rule-based-fallback"
-        assert status2.consecutive_failures == 2
-
-    @pytest.mark.asyncio
-    async def test_recovers_when_lightrag_becomes_healthy(self) -> None:
-        """When LightRAG recovers, selector should switch back."""
-        client = _make_mock_lightrag_client(healthy=False)
-        db = _make_mock_db()
-        selector = RAGProviderSelector(
-            lightrag_client=client,  # type: ignore[arg-type]
-            db_session=db,  # type: ignore[arg-type]
-            failure_threshold=1,
-        )
-
-        await selector.check_health()
-        assert selector.status.active_provider == "rule-based-fallback"
-
-        client.health_check = AsyncMock(return_value=True)
-        await selector.check_health()
-        assert selector.status.active_provider == "lightrag"
-        assert selector.status.consecutive_failures == 0
+        client.health_check = AsyncMock(return_value=False)
+        status = await selector.check_health()
+        assert status.active_provider == "rule-based-fallback"
+        assert status.lightrag_healthy is False
 
     @pytest.mark.asyncio
     async def test_query_falls_back_on_client_error(self) -> None:
@@ -317,6 +294,19 @@ class TestRAGProviderSelector:
         result = await selector.query(query="test")
         assert result.fallback is True
         assert result.provider == "rule-based-fallback"
+
+    @pytest.mark.asyncio
+    async def test_ingest_falls_back_on_client_error(self) -> None:
+        """If LightRAG raises during ingest, fallback kicks in."""
+        client = _make_mock_lightrag_client(healthy=True)
+        client.ingest = AsyncMock(side_effect=LightRAGClientError("timeout"))
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type],
+        )
+        await selector.ingest(text="some text", source="doc.pdf")
+        # fallback ingest is a no-op, but should not raise
 
     @pytest.mark.asyncio
     async def test_status_property_without_check(self) -> None:
