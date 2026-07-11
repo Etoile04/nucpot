@@ -126,9 +126,13 @@ class RuleBasedFallbackProvider(RAGProvider):
     """RAG provider using PostgreSQL full-text search as a fallback.
 
     When the LightRAG sidecar is unavailable, this provider extracts
-    keywords from the query and performs BM25-style ranking using
-    PostgreSQL ``tsvector`` / ``ts_rank`` against the
-    ``extraction_results`` table.
+    keywords from the query and performs ``ts_rank``-based matching
+    against existing database tables via a UNION of:
+
+    * ``data_sources`` — searches ``title`` and ``abstract``
+    * ``materials``   — searches ``name`` and ``description``
+    * ``kg_nodes``    — searches ``label`` and ``aliases``
+      (only ``status = 'active'`` nodes)
     """
 
     def __init__(self, db_session: AsyncSession) -> None:
@@ -147,31 +151,69 @@ class RuleBasedFallbackProvider(RAGProvider):
                 fallback=True,
             )
 
-        tsquery = " & ".join(tokens[:10])
+        limit = kwargs.get("limit", 5)
+        tsquery_str = " & ".join(tokens[:10])
 
         sql = text(
             """
-            SELECT er.id, er.raw_text, er.file_source,
-                   ts_rank(er.search_vector, plainto_tsquery(:q)) AS rank
-            FROM extraction_results er
-            WHERE er.search_vector @@ plainto_tsquery(:q)
+            SELECT source_type, source_id, snippet_text, rank
+            FROM (
+                SELECT 'data_source' AS source_type, id AS source_id,
+                       COALESCE(title, '') || ' ' || COALESCE(abstract, '') AS snippet_text,
+                       ts_rank(
+                         to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, '')),
+                         plainto_tsquery(:q)
+                       ) AS rank
+                FROM data_sources
+                WHERE to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, ''))
+                      @@ plainto_tsquery(:q)
+
+                UNION ALL
+
+                SELECT 'material' AS source_type, id AS source_id,
+                       COALESCE(name, '') || ' ' || COALESCE(description, '') AS snippet_text,
+                       ts_rank(
+                         to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, '')),
+                         plainto_tsquery(:q)
+                       ) AS rank
+                FROM materials
+                WHERE to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, ''))
+                      @@ plainto_tsquery(:q)
+
+                UNION ALL
+
+                SELECT 'kg_node' AS source_type, id AS source_id,
+                       COALESCE(label, '') || ' ' || COALESCE(aliases, '') AS snippet_text,
+                       ts_rank(
+                         to_tsvector('english', COALESCE(label, '') || ' ' || COALESCE(aliases, '')),
+                         plainto_tsquery(:q)
+                       ) AS rank
+                FROM kg_nodes
+                WHERE status = 'active'
+                  AND to_tsvector('english', COALESCE(label, '') || ' ' || COALESCE(aliases, ''))
+                      @@ plainto_tsquery(:q)
+            ) combined
             ORDER BY rank DESC
             LIMIT :limit
             """
         )
-        result = await self._db.execute(sql, {"q": tsquery, "limit": kwargs.get("limit", 5)})
+        result = await self._db.execute(
+            sql,
+            {"q": tsquery_str, "limit": limit},
+        )
         rows = (await result.mappings()).all()
 
         references: list[dict[str, Any]] = []
         snippets: list[str] = []
         for row in rows:
             references.append({
-                "source": row.get("file_source", ""),
+                "source_type": row.get("source_type", ""),
+                "source_id": str(row.get("source_id", "")),
                 "score": float(row.get("rank", 0)),
             })
-            raw = row.get("raw_text", "")
-            if raw:
-                snippets.append(raw[:500])
+            snippet = row.get("snippet_text", "")
+            if snippet:
+                snippets.append(snippet[:500])
 
         response = (
             f"Rule-based fallback: found {len(rows)} relevant results "

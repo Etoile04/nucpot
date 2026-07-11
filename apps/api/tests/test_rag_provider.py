@@ -175,9 +175,9 @@ class TestRuleBasedFallbackProvider:
     @pytest.mark.asyncio
     async def test_query_with_results(self) -> None:
         mock_row = {
-            "id": 1,
-            "raw_text": "UO2 is uranium dioxide fuel.",
-            "file_source": "fuel_handbook.pdf",
+            "source_type": "data_source",
+            "source_id": "abc-123",
+            "snippet_text": "UO2 is uranium dioxide fuel.",
             "rank": 0.85,
         }
         db = _make_mock_db(rows=[mock_row])
@@ -185,7 +185,8 @@ class TestRuleBasedFallbackProvider:
         result = await provider.query(query="UO2 fuel")
         assert "found 1 relevant results" in result.response
         assert len(result.references) == 1
-        assert result.references[0]["source"] == "fuel_handbook.pdf"
+        assert result.references[0]["source_type"] == "data_source"
+        assert result.references[0]["source_id"] == "abc-123"
 
     @pytest.mark.asyncio
     async def test_query_no_results(self) -> None:
