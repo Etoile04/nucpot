@@ -1,4 +1,4 @@
-"""Knowledge Graph neighbourhood subgraph service (NFM-1270).
+"""Knowledge Graph neighbourhood subgraph service (NFM-1280).
 
 Provides BFS-based neighbourhood traversal for the ``GET /api/v1/kg/graph``
 endpoint.  Returns a depth-limited subgraph around a focal node.
@@ -142,9 +142,7 @@ async def build_neighborhood_subgraph(
             edges_out.append(edge)
 
             other_id = (
-                edge.target_node_id
-                if edge.source_node_id == node_id
-                else edge.source_node_id
+                edge.target_node_id if edge.source_node_id == node_id else edge.source_node_id
             )
             if other_id not in visited:
                 if len(visited) >= MAX_NODES:
@@ -175,14 +173,10 @@ async def build_neighborhood_subgraph(
 
     # Post-hoc status filter (defensive)
     if status_filter == "active":
-        filtered_nodes = tuple(
-            n for n in node_map.values() if n.status == "active"
-        )
+        filtered_nodes = tuple(n for n in node_map.values() if n.status == "active")
         valid_ids = {n.id for n in filtered_nodes}
         filtered_edges = tuple(
-            e
-            for e in edges_out
-            if e.source_node_id in valid_ids and e.target_node_id in valid_ids
+            e for e in edges_out if e.source_node_id in valid_ids and e.target_node_id in valid_ids
         )
     else:
         filtered_nodes = tuple(node_map.values())

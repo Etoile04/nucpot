@@ -1,4 +1,4 @@
-"""Tests for KG Graph API endpoint (NFM-1270).
+"""Tests for KG Graph API endpoint (NFM-1280).
 
 Tests for GET /api/v1/kg/graph covering:
 - Focal node resolution (UUID, type:label, bare label, case-insensitive)
@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.api.v1.kg_graph import router
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
-
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -146,7 +145,9 @@ async def _seed_multi_edge(session: AsyncSession) -> KGNode:
 async def _seed_inactive_node(session: AsyncSession) -> KGNode:
     focal = _make_node(node_id=_A_UUID, label="ActiveMat", status="active")
     inactive = _make_node(
-        node_id=_B_UUID, label="DeprecatedMat", status="deprecated",
+        node_id=_B_UUID,
+        label="DeprecatedMat",
+        status="deprecated",
     )
     session.add(focal)
     session.add(inactive)
@@ -288,7 +289,9 @@ class TestStatusFilter:
         assert str(_B_UUID) in node_ids
 
     @pytest.mark.asyncio
-    async def test_inactive_focal_returns_404_with_active_status(self, db_session: AsyncSession) -> None:
+    async def test_inactive_focal_returns_404_with_active_status(
+        self, db_session: AsyncSession
+    ) -> None:
         node = _make_node(node_id=_A_UUID, label="DeprecatedMat", status="deprecated")
         db_session.add(node)
         await db_session.flush()
@@ -449,9 +452,11 @@ class TestHardCaps:
     async def test_caps_log_warning(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        with patch("nfm_db.services.kg_graph.MAX_NODES", 1), \
-             patch("nfm_db.services.kg_graph.MAX_EDGES", 1), \
-             patch("nfm_db.services.kg_graph.logger") as mock_logger:
+        with (
+            patch("nfm_db.services.kg_graph.MAX_NODES", 1),
+            patch("nfm_db.services.kg_graph.MAX_EDGES", 1),
+            patch("nfm_db.services.kg_graph.logger") as mock_logger,
+        ):
             resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 3})
             assert resp.status_code == 200
             assert mock_logger.warning.called

@@ -1,4 +1,4 @@
-"""Response schemas for KG search and graph endpoints (NFM-1166, NFM-1270).
+"""Response schemas for KG search and graph endpoints (NFM-1166, NFM-1280).
 
 Provides Pydantic models for GET /api/v1/kg/search and
 GET /api/v1/kg/graph responses.
@@ -48,16 +48,8 @@ class SemanticQueryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Graph endpoint schemas (NFM-1270)
+# Graph endpoint schemas (NFM-1280)
 # ---------------------------------------------------------------------------
-
-
-class KGGraphRequest(BaseModel):
-    """Query params for GET /api/v1/kg/graph."""
-
-    nodeId: str = Field(min_length=1, description="Focal node: UUID, 'type:label', or label")
-    depth: int = Field(default=2, ge=1, le=3)
-    status: str = Field(default="active", pattern="^(active|all)$")
 
 
 class KGGraphNode(BaseModel):
