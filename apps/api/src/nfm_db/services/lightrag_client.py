@@ -41,7 +41,7 @@ class LightRAGClientError(Exception):
 
 def is_lightrag_configured() -> bool:
     """Check if LightRAG host is configured in environment."""
-    return bool(os.environ.get("LIGHTRAG_HOST"))
+    return bool(os.environ.get("NFM_LIGHTRAG_HOST"))
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ class LightRAGClient:
 
     Usage::
 
-        client = LightRAGClient()  # reads LIGHTRAG_HOST/PORT from env
+        client = LightRAGClient()  # reads NFM_LIGHTRAG_HOST/PORT from env
         healthy = await client.health_check()
         result = await client.ingest(text="...", file_source="doc.pdf")
         answer = await client.query(query="What is UO2?")
@@ -67,9 +67,9 @@ class LightRAGClient:
         port: int | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
-        self.host = host or os.environ.get("LIGHTRAG_HOST", _DEFAULT_HOST)
+        self.host = host or os.environ.get("NFM_LIGHTRAG_HOST", _DEFAULT_HOST)
         self.port = port or int(
-            os.environ.get("LIGHTRAG_PORT", str(_DEFAULT_PORT))
+            os.environ.get("NFM_LIGHTRAG_PORT", str(_DEFAULT_PORT))
         )
         self.timeout = timeout
         self._base_url = f"http://{self.host}:{self.port}"

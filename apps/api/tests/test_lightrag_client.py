@@ -39,17 +39,17 @@ class TestIsConfigured:
     """Tests for the is_lightrag_configured helper."""
 
     def test_configured_when_host_set(self) -> None:
-        """Should return True when LIGHTRAG_HOST env var is set."""
+        """Should return True when NFM_LIGHTRAG_HOST env var is set."""
         from nfm_db.services.lightrag_client import is_lightrag_configured  # type: ignore[import-untyped]
 
-        with patch.dict("os.environ", {"LIGHTRAG_HOST": "localhost"}):
+        with patch.dict("os.environ", {"NFM_LIGHTRAG_HOST": "localhost"}):
             assert is_lightrag_configured() is True
 
     def test_not_configured_when_host_missing(self) -> None:
-        """Should return False when LIGHTRAG_HOST env var is not set."""
+        """Should return False when NFM_LIGHTRAG_HOST env var is not set."""
         from nfm_db.services.lightrag_client import is_lightrag_configured  # type: ignore[import-untyped]
 
-        with patch.dict("os.environ", {"LIGHTRAG_HOST": ""}):
+        with patch.dict("os.environ", {"NFM_LIGHTRAG_HOST": ""}):
             assert is_lightrag_configured() is False
 
 
