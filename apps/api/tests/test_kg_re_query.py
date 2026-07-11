@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_re import query_graph_edges, query_graph_nodes
 
-
 # ============================================================
 # Fixtures
 # ============================================================
@@ -252,3 +251,130 @@ class TestQueryGraphEdges:
             db_session, node_ids={uuid.uuid4()},
         )
         assert edges == []
+
+
+# ============================================================
+# EntityLinker._fuzzy_alias_match regression tests
+# ============================================================
+
+
+class TestFuzzyAliasMatch:
+    """Regression tests for EntityLinker._fuzzy_alias_match.
+
+    Locks the SQL-ILIKE behaviour so future changes preserve
+    the documented alias-resolution parity with the old
+    Python-side filtering approach.
+    """
+
+    @pytest.fixture
+    async def seed_alias_nodes(
+        self, db_session: AsyncSession,
+    ) -> list[KGNode]:
+        """Create nodes with JSON-encoded aliases for fuzzy matching."""
+        nodes = [
+            KGNode(
+                node_type="Material",
+                label="Uranium Dioxide",
+                aliases='["UO2", "urania", "uranium oxide"]',
+                confidence=0.95,
+            ),
+            KGNode(
+                node_type="Material",
+                label="Zircaloy-4",
+                aliases='["Zry-4", "zircaloy four", "Zr-4"]',
+                confidence=0.90,
+            ),
+            KGNode(
+                node_type="Material",
+                label="Silicon Carbide",
+                aliases='["SiC", "silicon carbide", "SiCf"]',
+                confidence=0.88,
+            ),
+            # No aliases — should never match fuzzy
+            KGNode(
+                node_type="Property",
+                label="density",
+                aliases=None,
+                confidence=0.80,
+            ),
+        ]
+        for node in nodes:
+            db_session.add(node)
+        await db_session.commit()
+        for node in nodes:
+            await db_session.refresh(node)
+        return nodes
+
+    @pytest.mark.asyncio
+    async def test_exact_alias_match(
+        self,
+        db_session: AsyncSession,
+        seed_alias_nodes: list[KGNode],
+    ) -> None:
+        """Matches an exact alias string (case-insensitive via ILIKE)."""
+        from nfm_db.services.kg_re import EntityLinker
+
+        linker = EntityLinker()
+        result = await linker._fuzzy_alias_match(db_session, "UO2", corpus_id=None)
+        assert result is not None
+        assert result.label == "Uranium Dioxide"
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_alias_match(
+        self,
+        db_session: AsyncSession,
+        seed_alias_nodes: list[KGNode],
+    ) -> None:
+        """Matches alias regardless of case (ILIKE is case-insensitive)."""
+        from nfm_db.services.kg_re import EntityLinker
+
+        linker = EntityLinker()
+        result = await linker._fuzzy_alias_match(db_session, "uo2", corpus_id=None)
+        assert result is not None
+        assert result.label == "Uranium Dioxide"
+
+    @pytest.mark.asyncio
+    async def test_partial_alias_substring_match(
+        self,
+        db_session: AsyncSession,
+        seed_alias_nodes: list[KGNode],
+    ) -> None:
+        """Matches when the label is a substring of an alias (ILIKE %label%)."""
+        from nfm_db.services.kg_re import EntityLinker
+
+        linker = EntityLinker()
+        result = await linker._fuzzy_alias_match(db_session, "carbide", corpus_id=None)
+        assert result is not None
+        # Could be Silicon Carbide or the alias "silicon carbide"
+        assert "carbide" in result.label.lower() or any(
+            "carbide" in str(a).lower()
+            for a in (result.aliases or [])
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_match_for_node_without_aliases(
+        self,
+        db_session: AsyncSession,
+        seed_alias_nodes: list[KGNode],
+    ) -> None:
+        """Returns None when no nodes have matching aliases."""
+        from nfm_db.services.kg_re import EntityLinker
+
+        linker = EntityLinker()
+        result = await linker._fuzzy_alias_match(db_session, "nonexistent", corpus_id=None)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_first_match_with_limit_1(
+        self,
+        db_session: AsyncSession,
+        seed_alias_nodes: list[KGNode],
+    ) -> None:
+        """Returns at most one node (query uses LIMIT 1)."""
+        from nfm_db.services.kg_re import EntityLinker
+
+        linker = EntityLinker()
+        result = await linker._fuzzy_alias_match(db_session, "Zr", corpus_id=None)
+        # "Zr" appears in multiple aliases — we just verify we get one node
+        assert result is not None
+        assert isinstance(result, KGNode)
