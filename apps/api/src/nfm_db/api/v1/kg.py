@@ -19,6 +19,7 @@ Conflict resolution (NFM-861):
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -35,8 +36,13 @@ from nfm_db.schemas.conflict import (
     ResolveConflictResponse,
 )
 from nfm_db.schemas.kg_query import (
+    Direction,
+    MAX_PATH_DEPTH,
+    PathQueryRequest,
     PathQueryResponse,
+    PropertyQueryRequest,
     PropertyQueryResponse,
+    RelationQueryRequest,
     RelationQueryResponse,
 )
 from nfm_db.services.kg_query_service import (
@@ -65,25 +71,19 @@ router = APIRouter()
     response_model=ApiResponse[PropertyQueryResponse],
 )
 async def property_query_endpoint(
-    node_type: str | None = Query(None, description="Filter by node type"),
-    label: str | None = Query(None, description="Exact or fuzzy label match"),
-    property_key: str | None = Query(None, description="JSON property key"),
-    property_value: str | None = Query(None, description="JSON property value"),
-    fuzzy: bool = Query(False, description="Use ILIKE for label search"),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    params: Annotated[PropertyQueryRequest, Query(description="Property-query filters")],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyQueryResponse]:
     """Find knowledge graph nodes by property value, label, or type."""
     result = await property_query(
         db,
-        node_type=node_type,
-        label=label,
-        property_key=property_key,
-        property_value=property_value,
-        fuzzy=fuzzy,
-        limit=limit,
-        offset=offset,
+        node_type=params.node_type,
+        label=params.label,
+        property_key=params.property_key,
+        property_value=params.property_value,
+        fuzzy=params.fuzzy,
+        limit=params.limit,
+        offset=params.offset,
     )
     return ApiResponse(success=True, data=result)
 
@@ -93,37 +93,23 @@ async def property_query_endpoint(
     response_model=ApiResponse[RelationQueryResponse],
 )
 async def relation_query_endpoint(
-    source_node_id: str | None = Query(None, description="Find edges FROM this node"),
-    target_node_id: str | None = Query(None, description="Find edges TO this node"),
-    relation_type: str | None = Query(None, description="Filter by relation type"),
-    direction: str = Query("outgoing", description="outgoing, incoming, or both"),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    params: Annotated[RelationQueryRequest, Query(description="Relation-query filters")],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RelationQueryResponse]:
-    """Find knowledge graph edges by relation type and/or endpoint nodes."""
-    src_uuid: UUID | None = None
-    if source_node_id:
-        try:
-            src_uuid = UUID(source_node_id)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid source_node_id UUID")
+    """Find knowledge graph edges by relation type and/or endpoint nodes.
 
-    tgt_uuid: UUID | None = None
-    if target_node_id:
-        try:
-            tgt_uuid = UUID(target_node_id)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid target_node_id UUID")
-
+    ``direction`` is restricted to ``outgoing | incoming | both`` by the
+    Pydantic ``Direction`` literal — invalid values yield 422 before the
+    service is invoked.
+    """
     result = await relation_query(
         db,
-        source_node_id=src_uuid,
-        target_node_id=tgt_uuid,
-        relation_type=relation_type,
-        direction=direction,
-        limit=limit,
-        offset=offset,
+        source_node_id=params.source_node_id,
+        target_node_id=params.target_node_id,
+        relation_type=params.relation_type,
+        direction=params.direction,
+        limit=params.limit,
+        offset=params.offset,
     )
     return ApiResponse(success=True, data=result)
 
@@ -133,33 +119,20 @@ async def relation_query_endpoint(
     response_model=ApiResponse[PathQueryResponse],
 )
 async def path_query_endpoint(
-    source_node_id: str = Query(..., description="Start node ID"),
-    target_node_id: str = Query(..., description="Target node ID"),
-    max_depth: int = Query(3, ge=1, le=5, description="Max hop depth"),
-    relation_types: str | None = Query(None, description="Comma-separated relation types"),
-    limit: int = Query(10, ge=1, le=50),
+    params: Annotated[PathQueryRequest, Query(description="Path-query parameters")],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PathQueryResponse]:
-    """Find paths between two KG nodes via multi-hop traversal."""
-    try:
-        src_uuid = UUID(source_node_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid source_node_id UUID")
+    """Find paths between two KG nodes via multi-hop traversal.
 
-    try:
-        tgt_uuid = UUID(target_node_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid target_node_id UUID")
-
-    rel_list = [r.strip() for r in relation_types.split(",") if r.strip()] if relation_types else None
-
+    ``max_depth`` is hard-capped at :data:`MAX_PATH_DEPTH` (3) per B2.4 spec.
+    """
     result = await path_query(
         db,
-        source_node_id=src_uuid,
-        target_node_id=tgt_uuid,
-        max_depth=max_depth,
-        relation_types=rel_list,
-        limit=limit,
+        source_node_id=params.source_node_id,
+        target_node_id=params.target_node_id,
+        max_depth=params.max_depth,
+        relation_types=params.relation_types,
+        limit=params.limit,
     )
     return ApiResponse(success=True, data=result)
 

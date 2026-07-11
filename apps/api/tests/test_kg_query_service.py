@@ -273,6 +273,44 @@ class TestPropertyQuery:
         for node in result.nodes:
             assert node.node_type == "Material"
 
+    @pytest.mark.asyncio
+    async def test_filter_by_property_key_value(self, db_session, seed_nodes) -> None:
+        """L1: JSON property key+value filter must return matching nodes only."""
+        result = await property_query(
+            db_session,
+            node_type="Material",
+            property_key="formula",
+            property_value="UO2",
+        )
+        assert result.total == 1
+        assert result.nodes[0].label == "Uranium Dioxide"
+        assert result.nodes[0].properties["formula"] == "UO2"
+
+    @pytest.mark.asyncio
+    async def test_filter_by_property_key_only(self, db_session, seed_nodes) -> None:
+        """L1: JSON property key-presence filter (no value) returns nodes with the key."""
+        result = await property_query(
+            db_session,
+            node_type="Property",
+            property_key="unit",
+        )
+        # seed_nodes creates two Property nodes with "unit" set
+        assert result.total == 2
+        for node in result.nodes:
+            assert "unit" in node.properties
+
+    @pytest.mark.asyncio
+    async def test_filter_by_property_key_value_no_match(self, db_session, seed_nodes) -> None:
+        """L1: JSON property key+value filter with non-matching value yields empty."""
+        result = await property_query(
+            db_session,
+            node_type="Material",
+            property_key="formula",
+            property_value="NonexistentMaterial",
+        )
+        assert result.total == 0
+        assert result.nodes == []
+
 
 # ---------------------------------------------------------------------------
 # Relation Query

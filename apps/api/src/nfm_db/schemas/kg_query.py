@@ -6,10 +6,34 @@ property query, relation query, and path query via Apache AGE Cypher.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Per ADR-NFM-817-2 / B2.4 spec: depth is hard-capped at 3 hops.
+MAX_PATH_DEPTH: int = 3
+
+# Valid edge directions for the relation query.
+Direction = Literal["outgoing", "incoming", "both"]
+
+
+def _split_csv_relations(value: Any) -> list[str] | None:
+    """Split a comma-separated relation_types string into a clean list.
+
+    Returns ``None`` when input is missing or empty so optional filtering
+    is disabled (consistent with the previous schema).
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        items: list[str] = [str(v) for v in value]
+    elif isinstance(value, str):
+        items = value.split(",")
+    else:
+        items = [str(value)]
+    out = [item.strip() for item in items if item and item.strip()]
+    return out or None
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +135,7 @@ class RelationQueryRequest(BaseModel):
         None,
         description="Filter by relation type (hasProperty, measuredIn, relatedTo, cites, hasCondition)",
     )
-    direction: str = Field(
+    direction: Direction = Field(
         "outgoing",
         description="Edge direction: outgoing, incoming, or both",
     )
@@ -153,13 +177,18 @@ class PathQueryRequest(BaseModel):
     max_depth: int = Field(
         3,
         ge=1,
-        le=5,
-        description="Maximum hop depth (1-5, default 3)",
+        le=MAX_PATH_DEPTH,
+        description=f"Maximum hop depth (1-{MAX_PATH_DEPTH}, default 3) — B2.4 spec",
     )
     relation_types: list[str] | None = Field(
         None,
-        description="Restrict traversal to these relation types",
+        description="Restrict traversal to these relation types (comma-separated or list)",
     )
+
+    @field_validator("relation_types", mode="before")
+    @classmethod
+    def _split_csv(cls, value: Any) -> list[str] | None:
+        return _split_csv_relations(value)
     limit: int = Field(
         10,
         ge=1,

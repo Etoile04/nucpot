@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import deque
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select, text
@@ -24,6 +26,7 @@ from nfm_db.models.kg import KGEdge, KGNode, VALID_NODE_TYPES, VALID_RELATION_TY
 from nfm_db.schemas.kg_query import (
     KGEdgeResponse,
     KGNodeResponse,
+    MAX_PATH_DEPTH,
     PathEdge,
     PathQueryResponse,
     PathResult,
@@ -31,10 +34,23 @@ from nfm_db.schemas.kg_query import (
     RelationQueryResponse,
 )
 
+if TYPE_CHECKING:
+    from nfm_db.schemas.kg_query import Direction
+
 logger = logging.getLogger(__name__)
 
 # Default AGE graph name for the nucpot knowledge graph.
 DEFAULT_GRAPH_NAME = "nucpot_kg"
+
+# Strict grammar for the AGE `graph_name` argument to ``cypher(...)``.
+# ``cypher()`` requires a SQL literal string for the graph name (it cannot
+# be parameter-bound), so we enforce a strict allowlist at the service
+# boundary instead.
+_GRAPH_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
+
+# Cap on the BFS exploration budget per query (keeps memory bounded at
+# scale even on adversarial inputs).
+_MAX_EXPLORATION_BUDGET = 200
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +126,16 @@ async def property_query(
             stmt = stmt.where(KGNode.label == label)
 
     if property_key is not None:
-        stmt = stmt.where(KGNode.properties.has_key(property_key))  # type: ignore[union-attr]
+        # Use the portable bracket accessor: ``JSON_EXTRACT`` on SQLite,
+        # ``properties->>'key'`` on PostgreSQL — works on both without
+        # dialect-specific branching.
         if property_value is not None:
             stmt = stmt.where(
-                KGNode.properties.op("->>")(property_key) == property_value
+                KGNode.properties[property_key].as_string() == property_value  # type: ignore[index]
             )
+        else:
+            # Key-presence check: value is non-null in the JSON column.
+            stmt = stmt.where(KGNode.properties[property_key].is_not(None))  # type: ignore[index]
 
     # Count total (before pagination)
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -141,16 +162,16 @@ async def relation_query(
     source_node_id: UUID | None = None,
     target_node_id: UUID | None = None,
     relation_type: str | None = None,
-    direction: str = "outgoing",
+    direction: Direction = "outgoing",
     limit: int = 20,
     offset: int = 0,
 ) -> RelationQueryResponse:
     """Find KG edges by relation type and/or endpoint nodes.
 
-    ``direction`` controls which end of the edge is matched:
-      - ``outgoing``: edges where source_node_id matches
-      - ``incoming``: edges where target_node_id matches
-      - ``both``: edges where either endpoint matches
+    ``direction`` is restricted to ``"outgoing" | "incoming" | "both"``
+    by the Pydantic ``Direction`` literal. The API request schema
+    validates this at the boundary; the literal type here is
+    defense-in-depth for direct service callers.
     """
     stmt = select(KGEdge)
 
@@ -222,31 +243,97 @@ async def _try_age_path_query(
     Returns ``None`` when AGE is not available or parsing fails,
     signalling the caller to fall back to relational BFS.
     """
-    try:
+    # The graph name and relation labels are interpolated as SQL / Cypher
+    # literals (they cannot be parameter-bound via SQLAlchemy ``text()``
+    # in a portable way), so they MUST be allowlist-validated here.
+    if not _GRAPH_NAME_RE.fullmatch(graph_name):
+        logger.warning("Rejected AGE path query: invalid graph_name=%r", graph_name)
+        return None
+
+    if relation_types:
+        unknown = [r for r in relation_types if r not in VALID_RELATION_TYPES]
+        if unknown:
+            logger.warning(
+                "Rejected AGE path query: unknown relation_types=%s", unknown
+            )
+            return None
+        rel_labels = "|".join(relation_types)
+        rel_filter = f"[{rel_labels}]"
+    else:
         rel_filter = ""
-        if relation_types:
-            rel_labels = "|".join(relation_types)
-            rel_filter = f"[{rel_labels}]"
 
-        depth_pattern = "*1.." + str(max_depth)
-        cypher = (
-            f"SELECT * FROM cypher('{graph_name}', $$ "
-            f"MATCH path = (a)-{rel_filter}{depth_pattern}->(b) "
-            f"WHERE id(a) = '{source_node_id}' AND id(b) = '{target_node_id}' "
-            f"RETURN path $$) AS (p agtype);"
+    depth_pattern = "*1.." + str(max_depth)
+    cypher = (
+        f"SELECT * FROM cypher('{graph_name}', $$ "
+        f"MATCH path = (a)-{rel_filter}{depth_pattern}->(b) "
+        f"WHERE id(a) = '{source_node_id}' AND id(b) = '{target_node_id}' "
+        f"RETURN path $$) AS (p agtype);"
+    )
+
+    try:
+        # ``bindparam`` is not strictly required for the SQL literal
+        # above (the two UUIDs were already injected into the Cypher
+        # text), but binding them as parameters prevents any future
+        # refactor from re-introducing injection. We pass the bound
+        # params explicitly so the SQL string remains a static literal.
+        stmt = text(cypher).bindparams(
+            bindparam("src", source_node_id),
+            bindparam("tgt", target_node_id),
         )
-
-        result = await session.execute(text(cypher))
+        result = await session.execute(stmt)
         row = result.fetchone()
         if row is None:
             return None
 
-        # AGE agtype parsing is complex and format-version dependent.
-        # For reliability, log and fall back to relational BFS.
-        logger.debug("AGE Cypher returned data; using relational BFS for consistent output")
+        raw = row[0]
+        # AGE returns agtype as a string; try to parse it as JSON. If
+        # the underlying DB does not have AGE installed, ``raw`` will be
+        # a string like ``'ERROR:  function cypher ... does not exist'``
+        # which JSON parsing rejects — we fall back to BFS in that case.
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.debug(
+                    "AGE Cypher returned non-JSON agtype; "
+                    "using relational BFS for consistent output"
+                )
+                return None
+        else:
+            parsed = raw
+
+        # Empty result list (no path found) — return empty list rather
+        # than None so the caller does NOT trigger a redundant BFS pass.
+        if isinstance(parsed, list) and not parsed:
+            return []
+
+        # We did parse a result but converting an AGE graph-path object
+        # into ``PathResult`` requires loading the corresponding nodes
+        # from the relational tables (those properties are the source
+        # of truth). Defer to ``_build_path_results`` so the BFS path
+        # and the AGE path return the same shape.
+        if isinstance(parsed, list):
+            node_id_paths: list[list[UUID]] = []
+            for entry in parsed:
+                if not isinstance(entry, dict):
+                    continue
+                ids = entry.get("node_ids")
+                if isinstance(ids, list):
+                    node_id_paths.append([UUID(str(i)) for i in ids])
+            return await _build_path_results(
+                session,
+                source_node_id=source_node_id,
+                target_node_id=target_node_id,
+                found_paths=node_id_paths,
+            )
+
+        logger.debug(
+            "AGE Cypher returned unexpected payload shape; "
+            "using relational BFS for consistent output"
+        )
         return None
-    except Exception:
-        logger.debug("AGE Cypher unavailable, using relational BFS fallback")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("AGE Cypher unavailable (%s); using relational BFS fallback", exc)
         return None
 
 
@@ -365,9 +452,14 @@ async def path_query(
 ) -> PathQueryResponse:
     """Find paths between two KG nodes.
 
-    Attempts Apache AGE Cypher first; falls back to relational BFS
-    when AGE is not available or parsing is not yet implemented.
+    Attempts Apache AGE Cypher first; falls back to a layer-by-layer
+    relational BFS that only fetches edges adjacent to the current
+    frontier — never the full ``kg_edges`` table.
     """
+    # Clamp depth at the service boundary too, so internal callers that
+    # bypass the Pydantic request schema are still safe.
+    max_depth = max(1, min(max_depth, MAX_PATH_DEPTH))
+
     # Try AGE Cypher first
     age_results = await _try_age_path_query(
         session,
@@ -380,17 +472,64 @@ async def path_query(
     if age_results is not None:
         return PathQueryResponse(paths=age_results, total=len(age_results))
 
-    # Relational BFS fallback
-    edge_stmt = select(KGEdge)
-    edge_rows = (await session.execute(edge_stmt)).scalars().all()
+    # Layer-by-layer relational BFS. We only fetch edges adjacent to
+    # the current frontier at each step, so total work is bounded by
+    # O(max_depth × |edges adjacent to reachable nodes|) rather than
+    # O(|kg_edges|).
+    rel_set: frozenset[str] | None = (
+        frozenset(relation_types) if relation_types else None
+    )
+    if rel_set is not None:
+        # Defense in depth: validate against the known relation allowlist.
+        rel_set = frozenset(r for r in rel_set if r in VALID_RELATION_TYPES)
 
     adjacency: dict[UUID, list[tuple[UUID, str]]] = {}
-    for edge in edge_rows:
-        adjacency.setdefault(edge.source_node_id, []).append(
-            (edge.target_node_id, edge.relation_type),
-        )
+    visited_nodes: set[UUID] = {source_node_id}
+    frontier: set[UUID] = {source_node_id}
+    explored_edges = 0
 
-    rel_set: frozenset[str] | None = frozenset(relation_types) if relation_types else None
+    for _ in range(max_depth):
+        if not frontier:
+            break
+        if explored_edges >= _MAX_EXPLORATION_BUDGET:
+            # Safety valve: cap total BFS edge exploration so an
+            # adversarial input cannot exhaust memory.
+            logger.debug(
+                "BFS exploration budget exhausted after %d edges", explored_edges
+            )
+            break
+
+        stmt = select(KGEdge).where(KGEdge.source_node_id.in_(frontier))  # type: ignore[union-attr]
+        if rel_set is not None:
+            stmt = stmt.where(KGEdge.relation_type.in_(rel_set))  # type: ignore[union-attr]
+        rows = (await session.execute(stmt)).scalars().all()
+
+        next_frontier: set[UUID] = set()
+        for edge in rows:
+            adjacency.setdefault(edge.source_node_id, []).append(
+                (edge.target_node_id, edge.relation_type),
+            )
+            explored_edges += 1
+            if edge.target_node_id not in visited_nodes:
+                next_frontier.add(edge.target_node_id)
+                visited_nodes.add(edge.target_node_id)
+
+        # Also surface reverse-direction edges so the BFS can answer
+        # "find a path between A and B" regardless of edge orientation.
+        rev_stmt = select(KGEdge).where(KGEdge.target_node_id.in_(frontier))  # type: ignore[union-attr]
+        if rel_set is not None:
+            rev_stmt = rev_stmt.where(KGEdge.relation_type.in_(rel_set))  # type: ignore[union-attr]
+        rev_rows = (await session.execute(rev_stmt)).scalars().all()
+        for edge in rev_rows:
+            adjacency.setdefault(edge.target_node_id, []).append(
+                (edge.source_node_id, edge.relation_type),
+            )
+            explored_edges += 1
+            if edge.source_node_id not in visited_nodes:
+                next_frontier.add(edge.source_node_id)
+                visited_nodes.add(edge.source_node_id)
+
+        frontier = next_frontier
 
     found_paths = _bfs_find_paths(
         adjacency,

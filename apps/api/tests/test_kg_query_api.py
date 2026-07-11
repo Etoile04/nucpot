@@ -208,12 +208,12 @@ class TestRelationQueryEndpoint:
             assert edge["relation_type"] == "hasProperty"
 
     @pytest.mark.asyncio
-    async def test_invalid_uuid_returns_400(self, async_client) -> None:
+    async def test_invalid_uuid_returns_422(self, async_client) -> None:
         resp = await async_client.get(
             "/api/v1/kg/query/relation",
             params={"source_node_id": "not-a-uuid"},
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_invalid_relation_type(self, async_client) -> None:
@@ -309,7 +309,7 @@ class TestPathQueryEndpoint:
             "/api/v1/kg/query/path",
             params={"source_node_id": "bad", "target_node_id": str(uuid.uuid4())},
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_invalid_target_uuid(self, async_client) -> None:
@@ -317,7 +317,7 @@ class TestPathQueryEndpoint:
             "/api/v1/kg/query/path",
             params={"source_node_id": str(uuid.uuid4()), "target_node_id": "bad"},
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_missing_required_params(self, async_client) -> None:
