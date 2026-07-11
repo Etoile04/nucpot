@@ -285,24 +285,22 @@ class EntityLinker:
         label: str,
         corpus_id: str | None,
     ) -> KGNode | None:
-        """Query for active nodes whose aliases contain the label (case-insensitive)."""
+        """Query for active nodes whose aliases contain the label (case-insensitive).
+
+        Uses SQL ILIKE against the JSON-encoded aliases text column so the
+        DB engine filters rows instead of loading every node into Python.
+        """
         query = select(KGNode).where(
             KGNode.aliases.is_not(None),
             KGNode.status == "active",
+            KGNode.aliases.ilike(f"%{label}%"),
         )
         if corpus_id is not None:
             query = query.where(KGNode.corpus_id == corpus_id)
 
+        query = query.limit(1)
         result = await session.execute(query)
-        nodes = result.scalars().all()
-
-        label_lower = label.lower().strip()
-        for node in nodes:
-            node_aliases = _parse_aliases(node.aliases)
-            if any(label_lower in alias.lower() for alias in node_aliases):
-                return node
-
-        return None
+        return result.scalar_one_or_none()
 
 
 def _parse_aliases(aliases_field: str | None) -> list[str]:
@@ -611,3 +609,83 @@ def _confidence_to_float(raw_confidence: Any) -> float:
         return mapping.get(raw_confidence.lower(), 0.6)
 
     return 0.6
+
+
+# ---------------------------------------------------------------------------
+# Graph query functions (read-only, for MCP tool layer)
+# ---------------------------------------------------------------------------
+
+
+async def query_graph_nodes(
+    session: AsyncSession,
+    *,
+    entity_types: list[str] | None = None,
+    query: str | None = None,
+    limit: int = 50,
+) -> list[KGNode]:
+    """Query knowledge graph nodes with optional filters.
+
+    Args:
+        session: Async database session.
+        entity_types: Optional list of node types to filter by
+            (e.g., ['Material', 'Property']).
+        query: Optional text to search in node labels (case-insensitive).
+        limit: Maximum number of nodes to return (1-100).
+
+    Returns:
+        List of active KGNode objects matching the filters.
+    """
+    stmt = select(KGNode).where(KGNode.status == "active")
+
+    if entity_types:
+        normalized = {t.strip() for t in entity_types if t.strip()}
+        if normalized:
+            stmt = stmt.where(KGNode.node_type.in_(normalized))
+
+    if query:
+        stmt = stmt.where(KGNode.label.ilike(f"%{query}%"))
+
+    stmt = stmt.order_by(KGNode.created_at.desc()).limit(min(limit, 100))
+
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def query_graph_edges(
+    session: AsyncSession,
+    *,
+    node_ids: set[uuid.UUID] | None = None,
+    relation_type: str | None = None,
+    limit: int = 50,
+) -> list[KGEdge]:
+    """Query knowledge graph edges connected to given nodes.
+
+    Args:
+        session: Async database session.
+        node_ids: Set of node UUIDs to find edges for.
+            Returns edges where source OR target matches.
+        relation_type: Optional relation type filter (e.g., 'hasProperty').
+        limit: Maximum number of edges to return (1-100).
+
+    Returns:
+        List of KGEdge objects matching the filters.
+    """
+    if not node_ids:
+        return []
+
+    from sqlalchemy import or_
+
+    stmt = select(KGEdge).where(
+        or_(
+            KGEdge.source_node_id.in_(node_ids),
+            KGEdge.target_node_id.in_(node_ids),
+        )
+    )
+
+    if relation_type:
+        stmt = stmt.where(KGEdge.relation_type == relation_type.strip())
+
+    stmt = stmt.order_by(KGEdge.created_at.desc()).limit(min(limit, 100))
+
+    result = await session.execute(stmt)
+    return list(result.scalars().all())

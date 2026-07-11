@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     blog_content_dir: str = "content/blog"
+    kg_cache_ttl: int = 60
 
     model_config = {"env_file": ".env", "env_prefix": "NFM_"}
 
