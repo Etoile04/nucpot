@@ -16,10 +16,10 @@ import pytest
 
 pytestmark = pytest.mark.skip(reason="Conflict model stub needs alignment (NFM-1211)")
 
-from nfm_db.models.conflict_record import ConflictRecord
-from nfm_db.models.material import Material
-from nfm_db.models.property import PropertyCategory, PropertyType
-from nfm_db.models.source import DataSource
+from nfm_db.models.conflict_record import ConflictRecord  # noqa: E402
+from nfm_db.models.material import Material  # noqa: E402
+from nfm_db.models.property import PropertyCategory, PropertyType  # noqa: E402
+from nfm_db.models.source import DataSource  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers — each test creates its own data, no cross-test dependencies

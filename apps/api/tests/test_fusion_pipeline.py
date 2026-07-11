@@ -21,11 +21,11 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Duplicate conflict_records table (model unification needed) (NFM-1211)",
 )
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
-from nfm_db.models.conflict import ConflictRecord, ConflictStatus
-from nfm_db.models.material import Material
-from nfm_db.services.fusion_pipeline import (
+from nfm_db.models.conflict import ConflictRecord, ConflictStatus  # noqa: E402
+from nfm_db.models.material import Material  # noqa: E402
+from nfm_db.services.fusion_pipeline import (  # noqa: E402
     ConflictGroup,
     ExtractedProperty,
     FusionPipeline,

@@ -23,7 +23,7 @@ import pytest
 
 pytestmark = pytest.mark.skip(reason="Literature endpoints not yet implemented (NFM-1211)")
 
-from nfm_db.models.source import DataSource
+from nfm_db.models.source import DataSource  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers — each test creates its own data, no cross-test dependencies

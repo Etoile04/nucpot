@@ -15,8 +15,8 @@ import pytest
 
 pytestmark = pytest.mark.skip(reason="Review endpoints not yet implemented (NFM-1211)")
 
-from nfm_db.models.extraction_result import ExtractionResult
-from nfm_db.models.review import ReviewStatus
+from nfm_db.models.extraction_result import ExtractionResult  # noqa: E402
+from nfm_db.models.review import ReviewStatus  # noqa: E402
 
 # NOTE: KGNode/KGEdge/PropertyMeasurement have FK references to tables that
 # don't exist in SQLite (e.g. kg_nodes.source_id → "sources.id"). Since the
