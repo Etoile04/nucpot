@@ -104,11 +104,7 @@ from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
 )
-from nfm_db.models.conflict import (  # noqa: E402
-    ConflictRecord,
-    ConflictStatus,
-    ResolutionStrategy,
-)
+from nfm_db.models.conflict import ConflictRecord, ConflictStatus, ResolutionStrategy  # noqa: E402  # type: ignore[attr-defined]
 from nfm_db.models.extraction_figure import (  # noqa: E402
     ExtractionFigure,
 )

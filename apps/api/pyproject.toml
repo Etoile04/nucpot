@@ -138,6 +138,8 @@ ignore_missing_imports = true
 module = [
     "nfm_db.schemas.potential",
     "nfm_db.models.potential",
+    "nfm_db.services.fusion_pipeline",
+    "nfm_db.services.conflict_resolution",
     "nfm_db.api.v1.reference_values",
     "nfm_db.api.v1.feedback",
     "nfm_db.api.v1.extraction",

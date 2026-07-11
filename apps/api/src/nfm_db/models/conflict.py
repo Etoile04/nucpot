@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from nfm_db.models.conflict_record import ConflictRecord  # noqa: F401
+from nfm_db.models.conflict_record import ConflictRecord
 
 __all__ = ["ConflictRecord", "ConflictStatus", "ResolutionStrategy"]
 
