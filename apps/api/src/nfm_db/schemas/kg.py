@@ -30,3 +30,17 @@ class KGSearchResponse(BaseModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
+
+
+class SemanticQueryResponse(BaseModel):
+    """Response from the LightRAG semantic query bridge.
+
+    Returned when ``mode=lightrag`` is used on the KG search endpoint.
+    """
+
+    response: str = Field(default="")
+    references: list[dict[str, Any]] = Field(default_factory=list)
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    relationships: list[dict[str, Any]] = Field(default_factory=list)
+    provider: str = Field(default="")
+    fallback: bool = Field(default=False)

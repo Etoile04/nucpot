@@ -368,6 +368,8 @@ class GraphBuilder:
 
         # Phase 2: Entity linking
         node_map: dict[str, KGNode] = {}
+        new_nodes: list[KGNode] = []
+        new_edges: list[KGEdge] = []
         nodes_created = 0
         nodes_matched = 0
         review_count = 0
@@ -383,6 +385,7 @@ class GraphBuilder:
             else:
                 new_node = await self._create_node(entity)
                 node_map[entity.label] = new_node
+                new_nodes.append(new_node)
                 nodes_created += 1
 
                 if entity.confidence < REVIEW_CONFIDENCE_THRESHOLD:
@@ -410,6 +413,7 @@ class GraphBuilder:
                 continue
 
             edge = await self._create_edge(relation, source_node.id, target_node.id)
+            new_edges.append(edge)
             edges_created += 1
 
             if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
@@ -437,6 +441,11 @@ class GraphBuilder:
             result.edges_created,
             result.review_queue_items,
         )
+
+        # Post-processing: fire-and-forget LightRAG auto-ingest (NFM-1222)
+        if nodes_created > 0 or edges_created > 0:
+            self._fire_lightrag_ingest(new_nodes, new_edges)
+
         return result
 
     def _convert_to_entities(
@@ -590,6 +599,30 @@ class GraphBuilder:
             created_at=datetime.utcnow(),
         )
         self._session.add(queue_entry)
+
+    def _fire_lightrag_ingest(
+        self,
+        nodes: list[KGNode],
+        edges: list[KGEdge],
+    ) -> None:
+        """Fire-and-forget: serialize and ingest new KG data to LightRAG.
+
+        Non-blocking — failures are logged but never propagate.
+        """
+        try:
+            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
+
+            node_labels = {n.id: n.label for n in nodes}
+            fire_ingest_to_lightrag(
+                nodes=nodes,
+                edges=edges,
+                node_labels=node_labels,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to schedule LightRAG ingest (non-fatal)",
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------
