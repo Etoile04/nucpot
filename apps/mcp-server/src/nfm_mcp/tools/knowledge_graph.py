@@ -1,14 +1,20 @@
-"""Knowledge graph query tools."""
+"""Knowledge graph query tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_mcp.tools.mock_data import KG_EDGES, KG_NODES
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class QueryKnowledgeGraphInput(BaseModel):
@@ -32,14 +38,6 @@ class QueryKnowledgeGraphInput(BaseModel):
         ge=1,
         le=100,
     )
-
-
-def _query_matches(node: dict[str, object], query: str) -> bool:
-    """Check if a KG node label matches a query term."""
-    query_lower = query.lower()
-    label = str(node.get("label", "")).lower()
-    entity_type = str(node.get("entity_type", "")).lower()
-    return query_lower in label or query_lower in entity_type
 
 
 def register_kg_tools(mcp: FastMCP) -> None:
@@ -71,29 +69,77 @@ def register_kg_tools(mcp: FastMCP) -> None:
             JSON object with nodes and edges representing the
             matching subgraph.
         """
-        matching_node_ids: set[str] = set()
+        try:
+            from nfm_db.models.kg import KGEdge, KGNode
 
-        filtered_nodes = list(KG_NODES)
+            pattern = f"%{query}%"
 
-        if entity_types is not None:
-            allowed = {t.lower() for t in entity_types}
-            filtered_nodes = [
-                n for n in filtered_nodes
-                if str(n.get("entity_type", "")).lower() in allowed
-            ]
+            async for db in get_db_session():
+                # Build base query for KGNode with ILIKE on label
+                stmt = select(KGNode).where(
+                    or_(
+                        KGNode.label.ilike(pattern),
+                        KGNode.node_type.ilike(pattern),
+                    )
+                )
 
-        for node in filtered_nodes:
-            if _query_matches(node, query):
-                matching_node_ids.add(str(node.get("id", "")))
+                # Filter by entity types if provided
+                if entity_types is not None:
+                    allowed = {t.title() for t in entity_types}
+                    stmt = stmt.where(KGNode.node_type.in_(allowed))
 
-        edges = [
-            e for e in KG_EDGES
-            if str(e.get("source", "")) in matching_node_ids
-            or str(e.get("target", "")) in matching_node_ids
-        ]
+                # Filter to active nodes only
+                stmt = stmt.where(KGNode.status == "active")
 
-        result_nodes = filtered_nodes[: limit]
-        return json.dumps(
-            {"nodes": result_nodes, "edges": edges},
-            default=str,
-        )
+                # Order by confidence descending
+                stmt = stmt.order_by(KGNode.confidence.desc())
+                stmt = stmt.limit(limit)
+
+                result = await db.execute(stmt)
+                nodes = result.scalars().all()
+
+                # Collect matching node IDs for edge retrieval
+                node_ids = {n.id for n in nodes}
+
+                # Fetch edges connected to matching nodes
+                edge_stmt = select(KGEdge).where(
+                    or_(
+                        KGEdge.source_node_id.in_(node_ids),
+                        KGEdge.target_node_id.in_(node_ids),
+                    )
+                ).limit(limit * 3)
+
+                edge_result = await db.execute(edge_stmt)
+                edges = edge_result.scalars().all()
+
+                response = {
+                    "nodes": [
+                        {
+                            "id": str(n.id),
+                            "label": n.label,
+                            "entity_type": n.node_type,
+                            "confidence": n.confidence,
+                            "properties": n.properties,
+                            "source_id": str(n.source_id) if n.source_id else None,
+                        }
+                        for n in nodes
+                    ],
+                    "edges": [
+                        {
+                            "id": str(e.id),
+                            "source": str(e.source_node_id),
+                            "target": str(e.target_node_id),
+                            "relation_type": e.relation_type,
+                            "confidence": e.confidence,
+                            "properties": e.properties,
+                        }
+                        for e in edges
+                    ],
+                    "total_nodes": len(nodes),
+                    "total_edges": len(edges),
+                }
+                return json.dumps(response, default=str)
+
+        except Exception as exc:
+            logger.exception("query_knowledge_graph failed")
+            return json.dumps({"error": f"Knowledge graph query failed: {exc}"})
