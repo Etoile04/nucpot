@@ -26,7 +26,9 @@ def _coerce_aliases(v: Any) -> list[str]:
         return []
     if isinstance(v, str):
         return [v] if v else []
-    return v
+    if isinstance(v, list):
+        return [str(item) for item in v]
+    return []
 
 UuidStr = Annotated[str, BeforeValidator(_coerce_uuid_to_str)]
 
