@@ -24,7 +24,7 @@ from nfm_db.schemas.reference_gaps import (
 from nfm_db.services.gap_fill_service import GapFillService
 from nfm_db.services.gap_scan_service import GapScanService
 
-router = APIRouter()
+router = APIRouter(tags=["参考缺口管理"])
 
 
 @router.get("/reference-gaps", response_model=ReferenceGapsApiResponse)
@@ -75,7 +75,9 @@ async def list_reference_gaps(
 async def get_reference_gaps_summary(
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Get coverage statistics for reference data gaps."""
+    """获取参考数据覆盖率统计。
+
+    Get coverage statistics for reference data gaps."""
     svc = GapScanService(session)
     scan = await svc.scan_gaps()
     staging_counts = await svc._get_staging_counts()
@@ -110,7 +112,9 @@ async def fill_reference_gaps(
     payload: FillRequest,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Trigger a fill operation for a specific gap tuple.
+    """触发特定缺口的填补操作。
+
+    Trigger a fill operation for a specific gap tuple.
 
     Discovers reference values from cache, runs quality gate, and stages
     accepted values into the staging table.
@@ -154,7 +158,9 @@ async def scan_reference_gaps(
     payload: ScanRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Trigger a manual gap scan against the NFMD database.
+    """手动触发NFMD数据库缺口扫描。
+
+    Trigger a manual gap scan against the NFMD database.
 
     Identifies all missing property tuples for the specified (or all)
     element systems.

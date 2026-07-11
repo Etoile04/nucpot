@@ -47,7 +47,7 @@ from nfm_db.services.ontology_sync import (
 )
 from nfm_db.services.rate_limit import ontology_rate_limit
 
-router = APIRouter()
+router = APIRouter(tags=["本体管理"])
 
 # Safe slug — also the only form a staging ``source`` may take. Path-validated
 # (422 on mismatch); no string interpolation into SQL downstream.
@@ -64,7 +64,7 @@ _CACHE_CONTROL = "public, max-age=60"
     "/ontology/corpora/{corpus_id}/graph",
     response_model=OntologyGraphResponse,
     response_model_by_alias=True,
-    summary="Versioned NVL graph for a corpus",
+    summary="获取语料库的版本化NVL图数据",
 )
 async def get_corpus_graph(
     response: Response,
@@ -86,7 +86,7 @@ async def get_corpus_graph(
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> OntologyGraphResponse:
-    """Return the derived versioned NVL graph for ``corpus_id``.
+    """获取语料库的版本化NVL图数据。
 
     Raises:
         404: the corpus resolves to no staging rows.

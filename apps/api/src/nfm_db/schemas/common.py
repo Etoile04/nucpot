@@ -1,4 +1,4 @@
-"""Generic API response envelopes for all endpoints.
+"""Generic API response envelopes and pagination dependencies.
 
 Provides type-safe, reusable wrappers so every endpoint shares a
 consistent JSON shape without duplicating boilerplate.
@@ -46,3 +46,5 @@ class PaginatedResponse(BaseModel, Generic[T]):
     page: int
     limit: int
     pages: int
+
+

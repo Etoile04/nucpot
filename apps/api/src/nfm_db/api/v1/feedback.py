@@ -14,7 +14,7 @@ from nfm_db.schemas.feedback import (
 )
 from nfm_db.services.feedback import calculate_pages, create_feedback, list_feedback
 
-router = APIRouter()
+router = APIRouter(tags=["反馈管理"])
 
 
 @router.post("/feedback", response_model=ApiResponse, status_code=201)
@@ -22,7 +22,9 @@ async def submit_feedback(
     payload: FeedbackCreate,
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    """Submit user feedback (public endpoint)."""
+    """提交用户反馈（公开端点）.
+
+    Submit user feedback (public endpoint)."""
     feedback = await create_feedback(session, payload)
 
     return ApiResponse(

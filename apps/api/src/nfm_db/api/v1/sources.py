@@ -29,7 +29,7 @@ from nfm_db.services.source_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["数据源管理"])
 
 
 @router.get("/sources", response_model=ApiResponse[PaginatedResponse[DataSourceResponse]])
@@ -62,7 +62,9 @@ async def get_source_endpoint(
     source_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceDetailResponse]:
-    """Return a single source with authors ordered by author_order."""
+    """获取单个数据源详情（含作者列表）.
+
+    Return a single source with authors ordered by author_order."""
     detail = await get_source(db, source_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -74,6 +76,8 @@ async def create_source_endpoint(
     payload: DataSourceCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceResponse]:
-    """Create a new data source."""
+    """创建新数据源.
+
+    Create a new data source."""
     result = await create_source(db, payload)
     return ApiResponse(success=True, data=result)

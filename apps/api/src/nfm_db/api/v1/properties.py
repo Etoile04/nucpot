@@ -35,7 +35,7 @@ from nfm_db.services.property_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["属性管理"])
 
 
 @router.get(
@@ -69,7 +69,9 @@ async def list_properties_endpoint(
 async def get_properties_stats_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyStatsResponse]:
-    """Return aggregate statistics about measurements."""
+    """获取物性测量数据汇总统计.
+
+    Return aggregate statistics about measurements."""
     stats = await get_measurement_stats(db)
     return ApiResponse(success=True, data=stats)
 
@@ -81,7 +83,9 @@ async def get_property_endpoint(
     measurement_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementDetailResponse]:
-    """Return a single measurement with conditions and dataset."""
+    """获取单条物性测量详情（含测量条件和数据集）.
+
+    Return a single measurement with conditions and dataset."""
     detail = await get_measurement(db, measurement_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Property measurement not found")
@@ -95,7 +99,9 @@ async def create_property_endpoint(
     payload: PropertyMeasurementCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementResponse]:
-    """Create a new property measurement."""
+    """创建新物性测量记录.
+
+    Create a new property measurement."""
     result = await create_measurement(db, payload)
     return ApiResponse(success=True, data=result)
 
@@ -108,7 +114,9 @@ async def update_property_endpoint(
     payload: PropertyMeasurementUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementResponse]:
-    """Update an existing property measurement."""
+    """更新已有物性测量记录.
+
+    Update an existing property measurement."""
     result = await update_measurement(db, measurement_id, payload)
     if result is None:
         raise HTTPException(status_code=404, detail="Property measurement not found")
