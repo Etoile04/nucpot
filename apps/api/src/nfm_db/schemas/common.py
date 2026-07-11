@@ -48,26 +48,3 @@ class PaginatedResponse(BaseModel, Generic[T]):
     pages: int
 
 
-class PaginationParams(BaseModel):
-    """Unified pagination query parameters for all list endpoints.
-
-    Extracts ``page`` and ``per_page`` from query string with sensible
-    defaults and constraints.  FastAPI injects this via ``Depends()``.
-    """
-
-    page: int = Field(default=1, ge=1, description="页码")
-    per_page: int = Field(default=20, ge=1, le=100, description="每页数量")
-
-    @property
-    def offset(self) -> int:
-        """Zero-based offset derived from ``page`` and ``per_page``."""
-        return (self.page - 1) * self.per_page
-
-    def pages(self, total: int) -> int:
-        """Return total number of pages for *total* items.
-
-        Returns 0 when *total* is 0.
-        """
-        if total <= 0:
-            return 0
-        return math.ceil(total / self.per_page)

@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
+from nfm_db.middleware.rate_limit import limiter
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.material import (
     BatchImportResult,
