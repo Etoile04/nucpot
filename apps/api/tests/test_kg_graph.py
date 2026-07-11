@@ -25,7 +25,6 @@ from nfm_db.api.v1.kg_graph import router
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
 
-
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------

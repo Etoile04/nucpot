@@ -33,7 +33,11 @@ router = APIRouter()
     responses={404: {"description": "Focal node not found"}},
 )
 async def get_kg_graph(
-    nodeId: str = Query(min_length=1, description="Focal node: UUID, 'type:label', or label"),
+    node_id: str = Query(
+        min_length=1,
+        alias="nodeId",
+        description="Focal node: UUID, 'type:label', or label",
+    ),
     depth: int = Query(default=2, ge=1, le=3),
     status: str = Query(default="active", pattern="^(active|all)$"),
     session: AsyncSession = Depends(get_db),
@@ -44,11 +48,11 @@ async def get_kg_graph(
     label (with case-insensitive fallback).  The *depth* parameter (1–3)
     controls how many BFS hops are included.
     """
-    focal = await resolve_focal_node(session, nodeId, status)
+    focal = await resolve_focal_node(session, node_id, status)
     if focal is None:
         raise HTTPException(
             status_code=404,
-            detail=f"KG node '{nodeId}' not found",
+            detail=f"KG node '{node_id}' not found",
         )
     subgraph = await build_neighborhood_subgraph(session, focal, depth, status)
     return _to_response(focal, subgraph)
