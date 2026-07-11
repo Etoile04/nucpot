@@ -104,8 +104,10 @@ from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
 )
-from nfm_db.models.conflict_record import (  # noqa: E402
+from nfm_db.models.conflict import (  # noqa: E402
     ConflictRecord,
+    ConflictStatus,
+    ResolutionStrategy,
 )
 from nfm_db.models.extraction_figure import (  # noqa: E402
     ExtractionFigure,
@@ -201,6 +203,7 @@ __all__ = [
     "CompatJSONB",
     "Confidence",
     "ConflictRecord",
+    "ConflictStatus",
     "DataSource",
     "DataSourceAuthor",
     "Dataset",
@@ -242,6 +245,7 @@ __all__ = [
     "PropertyMeasurement",
     "PropertyType",
     "RefGapFillStaging",
+    "ResolutionStrategy",
     "ReviewMixin",
     "ReviewStatus",
     "StagingStatus",

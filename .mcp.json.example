@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "nfm": {
+      "command": "uv",
+      "args": ["--project", "apps/mcp-server", "run", "nfm-mcp-server"],
+
+      "env": {
+        "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm",
+        "NFM_MCP_DATABASE_POOL_SIZE": "5",
+        "NFM_MCP_DATABASE_POOL_TIMEOUT": "30.0",
+
+        "NFM_MCP_API_BASE_URL": "http://localhost:8000/v1",
+        "NFM_MCP_API_TIMEOUT": "30.0",
+
+        "NFM_MCP_KG_SERVICE_URL": "http://localhost:8001",
+        "NFM_MCP_LLM_SERVICE_URL": "http://localhost:8003",
+
+        "NFM_MCP_TRANSPORT": "stdio",
+        "NFM_MCP_HOST": "127.0.0.1",
+        "NFM_MCP_PORT": "8002",
+
+        "NFM_MCP_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}

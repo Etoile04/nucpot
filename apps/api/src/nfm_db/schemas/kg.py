@@ -1,123 +1,32 @@
-"""Placeholder KG schemas — minimal stubs to unblock test imports (NFM-724).
+"""Response schemas for KG search endpoints (NFM-1166).
 
-Full implementation pending; these allow conftest.py → main.py → kg.py
-import chain to resolve without errors.
+Provides Pydantic models for GET /api/v1/kg/search responses.
 """
 
 from __future__ import annotations
 
-import enum
-from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
-class NodeResponse(BaseModel):
-    """KG node response."""
+class KGSearchItem(BaseModel):
+    """A single KG node returned by the search endpoint."""
 
-    id: UUID
-    node_type: str
-    label: str
+    id: str = Field(min_length=1)
+    node_type: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    aliases: list[str] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(ge=0.0, le=1.0)
+    status: str = Field(min_length=1)
+    source_id: str | None = None
 
 
-class NodeSummary(BaseModel):
-    """Brief node summary for list views."""
+class KGSearchResponse(BaseModel):
+    """Paginated response for GET /api/v1/kg/search."""
 
-    id: UUID
-    node_type: str
-    label: str
-
-
-class EdgeResponse(BaseModel):
-    """KG edge response."""
-
-    id: UUID
-    source_id: UUID
-    target_id: UUID
-    relation_type: str
-    properties: dict[str, Any] = Field(default_factory=dict)
-
-
-class RelationDirection(str, enum.Enum):
-    """Direction filter for relation queries."""
-
-    OUT = "outgoing"
-    IN = "incoming"
-    BOTH = "both"
-
-
-class PathQueryRequest(BaseModel):
-    """Request body for path query."""
-
-    source_id: UUID
-    target_id: UUID
-    max_depth: int = Field(default=5, ge=1, le=10)
-
-
-class PathStep(BaseModel):
-    """One step in a path result."""
-
-    node_id: UUID
-    node_type: str
-    label: str
-    edge_type: str | None = None
-
-
-class PathResponse(BaseModel):
-    """Path query result."""
-
-    source_id: UUID
-    target_id: UUID
-    steps: list[PathStep] = Field(default_factory=list)
-
-
-class IngestRequest(BaseModel):
-    """Request body for incremental KG ingest."""
-
-    nodes: list[dict[str, Any]] = Field(default_factory=list)
-    edges: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class IngestResponse(BaseModel):
-    """Response for initiated ingest."""
-
-    batch_id: str
-    status: str = "pending"
-
-
-class IngestStatus(str, enum.Enum):
-    """Status enum for ingest batches."""
-
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-class IngestPollResponse(BaseModel):
-    """Poll response for ingest status."""
-
-    batch_id: str
-    status: str
-    nodes_processed: int = 0
-    edges_processed: int = 0
-    errors: list[str] = Field(default_factory=list)
-
-
-class ReviewActionRequest(BaseModel):
-    """Request body for approve/reject review action."""
-
-    comment: str | None = None
-
-
-class ReviewItemResponse(BaseModel):
-    """Single review queue item."""
-
-    id: UUID
-    item_type: str
-    label: str
-    status: str
-    created_at: datetime
+    items: list[KGSearchItem] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)

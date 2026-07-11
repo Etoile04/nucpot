@@ -29,6 +29,7 @@ import type { V4PropertyResponse, Confidence, V4ResultResponse } from "@/lib/v4-
 import PropertyFiltersSidebar from "@/components/v4-extraction/property-filters-sidebar"
 import PropertyTable from "@/components/v4-extraction/property-table"
 import PropertyDetailDrawer from "@/components/v4-extraction/property-detail-drawer"
+import ExtractionResult from "@/components/v4-extraction/extraction-result"
 
 interface FilterState {
   confidence?: string[]
@@ -120,6 +121,8 @@ export default function ResultPage() {
 
   const resultData = resultEnvelope?.data
   const properties = resultData?.properties ?? []
+  const figures = resultData?.figures ?? []
+  const tables = resultData?.tables ?? []
   const meta = resultEnvelope?.meta
 
   if (isLoading) {
@@ -240,6 +243,26 @@ export default function ResultPage() {
           />
         </div>
       </div>
+
+      {/* Multimodal Extraction Results */}
+      {(figures.length > 0 || tables.length > 0) && (
+        <Card
+          title={
+            <span style={{ fontSize: 14, fontWeight: 600 }}>
+              多模态提取 / Multimodal Extraction
+            </span>
+          }
+          size="small"
+          style={{ marginTop: "1rem" }}
+        >
+          <ExtractionResult
+            figures={figures}
+            tables={tables}
+            loading={isLoading}
+            error={isError ? error : null}
+          />
+        </Card>
+      )}
 
       {/* Property Detail Drawer */}
       <PropertyDetailDrawer
