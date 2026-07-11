@@ -1,14 +1,17 @@
-"""Ontology browsing tools."""
+"""Ontology browsing tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import ONTOLOGY
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class BrowseOntologyInput(BaseModel):
@@ -26,7 +29,7 @@ class BrowseOntologyInput(BaseModel):
     )
     parent_id: Optional[str] = Field(
         default=None,
-        description="Start browsing from this ontology node ID",
+        description="Start browsing from this ontology node ID (maps to corpus_id)",
     )
     limit: int = Field(
         default=50,
@@ -36,15 +39,30 @@ class BrowseOntologyInput(BaseModel):
     )
 
 
-def _matches_query(node: dict[str, object], query: str) -> bool:
-    """Check if an ontology node matches a search query."""
+def _filter_nodes_by_query(
+    nodes: list[dict[str, object]],
+    query: str,
+) -> list[dict[str, object]]:
+    """Post-hoc filter ontology nodes by search query."""
     query_lower = query.lower()
-    searchable_fields = (
-        str(node.get("label", "")),
-        str(node.get("description", "")),
-        node.get("id", ""),
-    )
-    return any(query_lower in field.lower() for field in searchable_fields)
+    return [
+        n for n in nodes
+        if query_lower in str(n.get("label", "")).lower()
+        or query_lower in str(n.get("name", "")).lower()
+        or query_lower in str(n.get("id", "")).lower()
+    ]
+
+
+def _filter_nodes_by_type(
+    nodes: list[dict[str, object]],
+    entity_type: str,
+) -> list[dict[str, object]]:
+    """Post-hoc filter ontology nodes by entity type."""
+    type_lower = entity_type.lower()
+    return [
+        n for n in nodes
+        if str(n.get("type", "")).lower() == type_lower
+    ]
 
 
 def register_ontology_tools(mcp: FastMCP) -> None:
@@ -74,28 +92,48 @@ def register_ontology_tools(mcp: FastMCP) -> None:
         relationships. Useful for discovering valid search terms and
         understanding the data model.
 
+        When parent_id is provided, derives the ontology graph from
+        staging data for that corpus. Otherwise returns an error prompting
+        the caller to specify a corpus.
+
         Returns:
-            JSON array of ontology nodes with id, label, type, and
-            children count. If query is provided, returns matching
-            nodes; otherwise returns top-level nodes.
+            JSON object with ontology nodes, relationships, stats, and
+            optional pagination cursor.
         """
-        results = list(ONTOLOGY)
+        if parent_id is None:
+            return json.dumps({
+                "error": "parent_id (corpus_id) is required to browse the ontology",
+            })
 
-        if parent_id is not None:
-            results = [
-                n for n in results
-                if n.get("parent_id") == parent_id
-            ]
+        try:
+            from nfm_db.services.ontology_service import (
+                CorpusNotFoundError,
+                derive_ontology_graph,
+            )
 
-        if entity_type is not None:
-            type_lower = entity_type.lower()
-            results = [
-                n for n in results
-                if str(n.get("entity_type", "")).lower() == type_lower
-            ]
+            async for db in get_db_session():
+                graph = await derive_ontology_graph(
+                    db,
+                    corpus_id=parent_id,
+                    max_nodes=limit,
+                )
 
-        if query is not None:
-            results = [n for n in results if _matches_query(n, query)]
+                result = graph.model_dump()
+                nodes = result.get("nodes", [])
 
-        paginated = results[: limit]
-        return json.dumps(paginated, default=str)
+                # Post-hoc filtering on the derived graph
+                if entity_type is not None:
+                    nodes = _filter_nodes_by_type(nodes, entity_type)
+                if query is not None:
+                    nodes = _filter_nodes_by_query(nodes, query)
+
+                result["nodes"] = nodes
+                return json.dumps(result, default=str)
+
+        except CorpusNotFoundError:
+            return json.dumps({
+                "error": f"Corpus '{parent_id}' not found",
+            })
+        except Exception as exc:
+            logger.exception("browse_ontology failed")
+            return json.dumps({"error": f"Ontology lookup failed: {exc}"})

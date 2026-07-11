@@ -1,14 +1,16 @@
-"""Document extraction trigger and status tools."""
+"""Document extraction trigger and status tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import logging
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class TriggerExtractionInput(BaseModel):
@@ -41,6 +43,17 @@ class GetExtractionStatusInput(BaseModel):
     )
 
 
+def _job_to_dict(job: object) -> dict[str, object]:
+    """Convert an ExtractionJob dataclass to a JSON-serialisable dict."""
+    result: dict[str, object] = {}
+    for key, value in vars(job).items():
+        if isinstance(value, list):
+            result[key] = value
+        else:
+            result[key] = value
+    return result
+
+
 def register_extraction_tools(mcp: FastMCP) -> None:
     """Register extraction pipeline MCP tools."""
 
@@ -66,34 +79,25 @@ def register_extraction_tools(mcp: FastMCP) -> None:
         Returns a job ID for tracking progress.
 
         Returns:
-            JSON object with job_id, status='submitted', and
-            estimated_duration.
+            JSON object with job_id, status, and pipeline metadata.
         """
-        job_id = generate_job_id()
-        now = datetime.now(timezone.utc).isoformat()
+        try:
+            from nfm_db.services.extraction_pipeline import trigger_extraction as svc_trigger
 
-        new_job: dict[str, object] = {
-            "job_id": job_id,
-            "source_id": file_url,
-            "material_id": material_id,
-            "status": "submitted",
-            "progress": 0,
-            "stage": "queued",
-            "started_at": now,
-            "completed_at": None,
-            "entities_extracted": 0,
-            "properties_extracted": 0,
-            "error": None,
-        }
+            element_systems = None if material_id == "auto" else [material_id]
 
-        EXTRACTION_JOBS[job_id] = new_job
+            async for db in get_db_session():
+                job = await svc_trigger(
+                    db,
+                    source_reference=file_url,
+                    source_type="url",
+                    element_systems=element_systems,
+                )
+                return json.dumps(_job_to_dict(job), default=str)
 
-        return json.dumps({
-            "job_id": job_id,
-            "status": "submitted",
-            "estimated_duration_seconds": 30,
-            "message": "Document queued for extraction",
-        })
+        except Exception as exc:
+            logger.exception("trigger_extraction failed")
+            return json.dumps({"error": f"Extraction failed: {exc}"})
 
     @mcp.tool(
         name="get_extraction_status",
@@ -115,10 +119,16 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             JSON object with job_id, status, progress, stage,
             and error (if any).
         """
-        job = EXTRACTION_JOBS.get(job_id)
-        if job is None:
-            return json.dumps({
-                "error": f"Job '{job_id}' not found",
-            })
+        try:
+            from nfm_db.services.extraction_pipeline import get_job as svc_get_job
 
-        return json.dumps(job, default=str)
+            job = svc_get_job(job_id)
+            if job is None:
+                return json.dumps({
+                    "error": f"Job '{job_id}' not found",
+                })
+            return json.dumps(_job_to_dict(job), default=str)
+
+        except Exception as exc:
+            logger.exception("get_extraction_status failed")
+            return json.dumps({"error": f"Status lookup failed: {exc}"})
