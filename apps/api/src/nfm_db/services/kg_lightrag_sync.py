@@ -15,12 +15,12 @@ Entity format::
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from typing import Any
 
 from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.services.kg_utils import parse_aliases
 from nfm_db.services.lightrag_client import is_lightrag_configured
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def serialize_kg_node(node: KGNode) -> str:
     # Aliases (parsed from JSON text)
     raw_aliases = node.aliases
     if raw_aliases:
-        aliases = _parse_aliases(raw_aliases)
+        aliases = parse_aliases(raw_aliases)
         if aliases:
             lines.append(f"- aliases: {', '.join(aliases)}")
 
@@ -174,10 +174,12 @@ async def ingest_kg_to_lightrag(
         return
 
     try:
+        from nfm_db.services.lightrag_lifecycle import get_shared_lightrag_client
         from nfm_db.services.rag_provider import LightRAGProvider
 
         text = serialize_build_result(nodes, edges, node_labels)
-        provider = LightRAGProvider()
+        shared_client = get_shared_lightrag_client()
+        provider = LightRAGProvider(client=shared_client)
         await provider.ingest(text=text, source="kg_pipeline")
 
         logger.info(
@@ -226,21 +228,3 @@ def fire_ingest_to_lightrag(
     except RuntimeError:
         # No running loop (e.g. in tests) — skip fire-and-forget
         logger.debug("No event loop — skipping fire-and-forget LightRAG ingest")
-
-
-# ---------------------------------------------------------------------------
-# Utility
-# ---------------------------------------------------------------------------
-
-
-def _parse_aliases(raw: str | None) -> list[str]:
-    """Parse the JSON-encoded aliases field into a list of strings."""
-    if raw is None:
-        return []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [str(a) for a in parsed]
-        return []
-    except (json.JSONDecodeError, TypeError):
-        return []

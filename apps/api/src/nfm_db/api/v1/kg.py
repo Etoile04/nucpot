@@ -8,7 +8,6 @@ Public read-only endpoint (no auth required).
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Union
 
@@ -18,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
+from nfm_db.services.kg_utils import parse_aliases
 from nfm_db.schemas.kg import (
     KGSearchItem,
     KGSearchResponse,
@@ -27,19 +27,6 @@ from nfm_db.schemas.kg import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _parse_aliases(raw: str | None) -> list[str]:
-    """Safely parse the JSON-encoded aliases column into a list."""
-    if raw is None:
-        return []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return parsed
-        return []
-    except (json.JSONDecodeError, TypeError):
-        return []
 
 
 @router.get(
@@ -83,7 +70,7 @@ def _build_search_item(node: KGNode) -> KGSearchItem:
         id=str(node.id),
         node_type=node.node_type,
         label=node.label,
-        aliases=_parse_aliases(node.aliases),
+        aliases=parse_aliases(node.aliases),
         properties=node.properties or {},
         confidence=node.confidence,
         status=node.status,

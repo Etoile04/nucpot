@@ -28,6 +28,7 @@ from nfm_db.models.kg import (
     KGNode,
     KGReviewQueue,
 )
+from nfm_db.services.kg_utils import parse_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -298,24 +299,11 @@ class EntityLinker:
 
         label_lower = label.lower().strip()
         for node in nodes:
-            node_aliases = _parse_aliases(node.aliases)
+            node_aliases = parse_aliases(node.aliases)
             if any(label_lower in alias.lower() for alias in node_aliases):
                 return node
 
         return None
-
-
-def _parse_aliases(aliases_field: str | None) -> list[str]:
-    """Parse the JSON-encoded aliases field into a list of strings."""
-    if aliases_field is None:
-        return []
-    try:
-        parsed = json.loads(aliases_field)
-        if isinstance(parsed, list):
-            return [str(a) for a in parsed]
-        return []
-    except (json.JSONDecodeError, TypeError):
-        return []
 
 
 # ---------------------------------------------------------------------------
