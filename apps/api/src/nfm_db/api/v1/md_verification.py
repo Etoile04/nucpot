@@ -17,7 +17,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ from nfm_db.models.md_verification import (
     HpcJobStatus,
     JobStatus,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.services.md_verification import (
     DefectAnalysisResultResponse,
     MDSimulationResultResponse,
@@ -260,41 +261,50 @@ async def list_md_verification_jobs(
     potential_id: str | None = None,
     status: JobStatus | None = None,
     element_system: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    pagination: PaginationParams = Depends(PaginationParams),
+    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobListResponse:
     """List MD verification jobs with optional filters.
 
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
+
     Args:
         potential_id: Filter by potential ID
         status: Filter by job status
         element_system: Filter by element system
-        limit: Maximum number of results
-        offset: Query offset for pagination
         session: Database session
         current_user: Authenticated user
 
     Returns:
         Paginated list of jobs
     """
+    # Backward compat: when legacy limit/offset are provided, use them directly
+    # for the DB query and response, but still populate pagination for new params.
+    effective_limit = _limit if _limit is not None else pagination.per_page
+    effective_offset = _offset if _offset is not None else pagination.offset
+    if _limit is not None:
+        pagination = PaginationParams(
+            page=((_offset or 0) // _limit) + 1, per_page=_limit
+        )
     try:
         service = MDVerificationService(session)
         jobs = await service.list_jobs(
             potential_id=potential_id,
             status=status,
             element_system=element_system,
-            limit=limit,
-            offset=offset,
+            limit=effective_limit,
+            offset=effective_offset,
             owner_id=current_user.id,
         )
 
         return MDVerificationJobListResponse(
             jobs=jobs,
             total=len(jobs),
-            limit=limit,
-            offset=offset,
+            limit=effective_limit,
+            offset=effective_offset,
         )
 
     except Exception as e:
