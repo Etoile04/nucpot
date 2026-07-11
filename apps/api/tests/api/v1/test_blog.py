@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from nfm_db.models.blog_post import BlogPostMetadata
-from nfm_db.models.user import BlogRole, User
 
 BASE = "/api/v1/admin/blog"
 
@@ -56,9 +55,9 @@ async def _seed_post(
 @pytest.mark.asyncio
 async def test_create_post_success(async_client, admin_headers, tmp_path) -> None:
     """Editor/admin can create a blog post; returns 201 with post data."""
-    from pathlib import Path as P
+    from pathlib import Path
 
-    with patch("nfm_db.services.blog_post.get_content_dir", return_value=P(str(tmp_path))):
+    with patch("nfm_db.services.blog_post.get_content_dir", return_value=Path(str(tmp_path))):
         resp = await async_client.post(
             BASE + "/posts",
             json=_CREATE_PAYLOAD,
@@ -76,9 +75,9 @@ async def test_create_post_success(async_client, admin_headers, tmp_path) -> Non
 @pytest.mark.asyncio
 async def test_create_post_with_editor(async_client, editor_headers, tmp_path) -> None:
     """An editor (not admin) can also create posts."""
-    from pathlib import Path as P
+    from pathlib import Path
 
-    with patch("nfm_db.services.blog_post.get_content_dir", return_value=P(str(tmp_path))):
+    with patch("nfm_db.services.blog_post.get_content_dir", return_value=Path(str(tmp_path))):
         resp = await async_client.post(
             BASE + "/posts",
             json=_CREATE_PAYLOAD,
@@ -291,12 +290,12 @@ async def test_get_post_unauthenticated(async_client) -> None:
 @pytest.mark.asyncio
 async def test_update_post_success(async_client, admin_headers, db_session, admin_user, tmp_path) -> None:
     """Editor/admin can update a post's title and content."""
-    from pathlib import Path as P
+    from pathlib import Path
 
     slug = f"update-me-{uuid.uuid4().hex[:8]}"
     await _seed_post(db_session, slug=slug, title="Old Title", author_id=admin_user.id)
 
-    with patch("nfm_db.services.blog_post.get_content_dir", return_value=P(str(tmp_path))):
+    with patch("nfm_db.services.blog_post.get_content_dir", return_value=Path(str(tmp_path))):
         resp = await async_client.put(
             f"{BASE}/posts/{slug}",
             json={"title": "New Title"},

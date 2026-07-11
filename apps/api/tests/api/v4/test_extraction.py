@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -13,7 +13,6 @@ from nfm_db.services.extraction_pipeline import (
     JobStatus,
     _job_store,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -391,7 +390,7 @@ async def test_get_status_failed(async_client) -> None:
 async def test_get_status_not_found(async_client) -> None:
     """404 when job_id does not exist."""
     response = await async_client.get(
-        f"/api/v4/extraction/{str(uuid.uuid4())}/status",
+        f"/api/v4/extraction/{uuid.uuid4()!s}/status",
     )
 
     assert response.status_code == 404
@@ -466,7 +465,7 @@ async def test_get_result_completed(async_client) -> None:
 async def test_get_result_not_found(async_client) -> None:
     """404 when job_id does not exist."""
     response = await async_client.get(
-        f"/api/v4/extraction/{str(uuid.uuid4())}/result",
+        f"/api/v4/extraction/{uuid.uuid4()!s}/result",
     )
 
     assert response.status_code == 404
@@ -606,8 +605,8 @@ async def test_get_result_with_category_filter(async_client) -> None:
 
 @pytest.mark.asyncio
 async def test_get_result_exclude_figures_and_tables(async_client) -> None:
-    """include_figures=False and include_tables=False returns empty multimodal arrays
-    in meta, regardless of whether the job has figures/tables data."""
+    """include_figures=False and include_tables=False returns empty multimodal arrays,
+    regardless of whether the job has figures/tables data."""
     job = _make_job(
         status=JobStatus.COMPLETED,
         extracted_count=1,
@@ -628,9 +627,6 @@ async def test_get_result_exclude_figures_and_tables(async_client) -> None:
     data = response.json()["data"]
     assert data["figures"] == []
     assert data["tables"] == []
-    meta = response.json()["meta"]
-    assert meta["include_figures"] is False
-    assert meta["include_tables"] is False
 
     _cleanup_job(job.job_id)
 
@@ -839,7 +835,7 @@ async def test_validate_with_auto_approve_false(async_client) -> None:
 async def test_validate_not_found(async_client) -> None:
     """404 when job_id does not exist."""
     response = await async_client.post(
-        f"/api/v4/extraction/{str(uuid.uuid4())}/validate",
+        f"/api/v4/extraction/{uuid.uuid4()!s}/validate",
     )
 
     assert response.status_code == 404

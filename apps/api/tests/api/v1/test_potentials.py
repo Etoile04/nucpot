@@ -10,14 +10,12 @@ Tests all 4 routes:
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
 import pytest
 
 from nfm_db.main import app
 from nfm_db.models.potential import Potential
-from nfm_db.services.upload_service import _UPLOAD_DIR_OVERRIDE, get_upload_dir
-
+from nfm_db.services.upload_service import get_upload_dir
 
 # ---------------------------------------------------------------------------
 # Helpers

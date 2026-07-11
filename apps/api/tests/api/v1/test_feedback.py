@@ -6,7 +6,6 @@ import pytest
 
 from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

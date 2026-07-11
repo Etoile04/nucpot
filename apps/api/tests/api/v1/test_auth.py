@@ -15,15 +15,14 @@ passlib-based auth_service functions at the endpoint layer.
 
 from __future__ import annotations
 
-import bcrypt
 import uuid
 from unittest.mock import patch
 
+import bcrypt
 import pytest
 
 from nfm_db.models.user import BlogRole, User
 from nfm_db.services.auth_service import create_access_token
-
 
 # ---------------------------------------------------------------------------
 # Helpers — bypass passlib, use bcrypt directly

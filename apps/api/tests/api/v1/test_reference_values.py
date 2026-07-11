@@ -12,7 +12,6 @@ Tests all 6 routes:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 
@@ -21,7 +20,6 @@ from nfm_db.models.ref_gap_fill import (
     RefGapFillStaging,
     StagingStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -294,7 +292,7 @@ async def test_pending_review_invalid_status(async_client) -> None:
 
 @pytest.mark.asyncio
 async def test_pending_review_record_shape(async_client, db_session) -> None:
-    record = await _seed_staging(db_session)
+    await _seed_staging(db_session)
     response = await async_client.get("/api/v1/reference-values/pending-review")
     data = response.json()["data"]["records"][0]
     assert "id" in data

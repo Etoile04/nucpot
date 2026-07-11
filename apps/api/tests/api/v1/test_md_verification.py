@@ -340,7 +340,7 @@ async def test_list_jobs_empty(mock_service_cls: MagicMock, client_with_auth) ->
     data = response.json()
     assert data["jobs"] == []
     assert data["total"] == 0
-    assert data["limit"] == 100
+    assert data["limit"] == 20
     assert data["offset"] == 0
 
 
@@ -392,7 +392,7 @@ async def test_list_jobs_with_filters(
 async def test_list_jobs_pagination_defaults(
     mock_service_cls: MagicMock, client_with_auth
 ) -> None:
-    """Uses default limit=100, offset=0 when not specified."""
+    """Uses default limit=20, offset=0 when not specified (matches main's per_page=20 default)."""
     mock_instance = AsyncMock()
     mock_instance.list_jobs = AsyncMock(return_value=[])
     mock_service_cls.return_value = mock_instance
@@ -401,7 +401,7 @@ async def test_list_jobs_pagination_defaults(
     assert response.status_code == 200
 
     call_kwargs = mock_instance.list_jobs.call_args[1]
-    assert call_kwargs["limit"] == 100
+    assert call_kwargs["limit"] == 20
     assert call_kwargs["offset"] == 0
 
 

@@ -13,7 +13,6 @@ import pytest
 
 from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

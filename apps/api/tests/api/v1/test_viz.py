@@ -10,8 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nfm_db.schemas.viz import Node, Relationship, NvlResponse, VizStatsResponse
-
+from nfm_db.schemas.viz import Node, NvlResponse, Relationship, VizStatsResponse
 
 # ---------------------------------------------------------------------------
 # Sample data used across multiple tests
