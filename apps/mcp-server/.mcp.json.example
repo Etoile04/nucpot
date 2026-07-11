@@ -1,27 +1,39 @@
+// ── NFM MCP Server — Claude Code integration (JSONC) ────────────
+// Copy to `.mcp.json` in this directory.  Claude Code parses
+// `.mcp.json` as JSONC, so inline `//` comments are allowed.
+// `uv run --directory apps/mcp-server nfm-mcp-server` resolves
+// the entry-point declared in apps/mcp-server/pyproject.toml.
+
 {
   "mcpServers": {
-    "nfm-mcp-server": {
+    "nfm": {
+      // Runs `uv run --directory apps/mcp-server nfm-mcp-server` so the
+      // entry-point resolves from apps/mcp-server/pyproject.toml.
       "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "apps/mcp-server",
-        "nfm-mcp-server"
-      ],
+      "args": ["run", "--directory", "apps/mcp-server", "nfm-mcp-server"],
 
+      // Every NFM_MCP_* var maps 1:1 to a Settings field in
+      // apps/mcp-server/src/nfm_mcp/deps.py.  Override any value
+      // below; defaults are shown.
       "env": {
+        // Async PostgreSQL DSN (default localhost dev DB)
         "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm",
         "NFM_MCP_DATABASE_POOL_SIZE": "5",
         "NFM_MCP_DATABASE_POOL_TIMEOUT": "30.0",
 
+        // Fallback REST API base URL (used when direct DB is unavailable)
         "NFM_MCP_API_BASE_URL": "http://localhost:8000/v1",
         "NFM_MCP_API_TIMEOUT": "30.0",
 
+        // Knowledge-graph micro-service (LightRAG sidecar)
         "NFM_MCP_KG_SERVICE_URL": "http://localhost:8001",
 
+        // LLM extraction service (multi-modal pipeline)
         "NFM_MCP_LLM_SERVICE_URL": "http://localhost:8003",
 
+        // Transport: stdio (Claude Code default) | streamable_http | sse
         "NFM_MCP_TRANSPORT": "stdio",
+        // Used only when transport is streamable_http or sse
         "NFM_MCP_HOST": "127.0.0.1",
         "NFM_MCP_PORT": "8002",
 

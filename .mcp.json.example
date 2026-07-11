@@ -1,10 +1,36 @@
+// ── NFM MCP Server — Claude Code integration from repo root ─────
+// Copy to `.mcp.json` and launch Claude Code from the repo root:
+//     cp .mcp.json.example .mcp.json
+//     claude                       # cwd must be repo root
+//
+// `uv --project apps/mcp-server run nfm-mcp-server` resolves the
+// entry-point declared in apps/mcp-server/pyproject.toml without
+// requiring `--directory`.  All NFM_MCP_* vars map 1:1 to Settings
+// fields in apps/mcp-server/src/nfm_mcp/deps.py.
+
 {
   "mcpServers": {
     "nfm": {
       "command": "uv",
       "args": ["--project", "apps/mcp-server", "run", "nfm-mcp-server"],
+
       "env": {
-        "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm"
+        "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm",
+        "NFM_MCP_DATABASE_POOL_SIZE": "5",
+        "NFM_MCP_DATABASE_POOL_TIMEOUT": "30.0",
+
+        "NFM_MCP_API_BASE_URL": "http://localhost:8000/v1",
+        "NFM_MCP_API_TIMEOUT": "30.0",
+
+        "NFM_MCP_KG_SERVICE_URL": "http://localhost:8001",
+        "NFM_MCP_LLM_SERVICE_URL": "http://localhost:8003",
+
+        // Transport: stdio (Claude Code default) | streamable_http | sse
+        "NFM_MCP_TRANSPORT": "stdio",
+        "NFM_MCP_HOST": "127.0.0.1",
+        "NFM_MCP_PORT": "8002",
+
+        "NFM_MCP_LOG_LEVEL": "INFO"
       }
     }
   }
