@@ -40,20 +40,25 @@ export interface KGGraphResponse {
 
 /**
  * Maps a backend node type string to a GraphNodeType for GraphCanvas.
+ *
+ * Backend casing varies (Material/material/MATERIAL), so we normalise to
+ * lowercase once before lookup. Anything not explicitly mapped falls back
+ * to "default" so unknown types still render rather than crash.
  */
 function toGraphNodeType(nodeType: string): GraphNodeType {
-  const MATERIAL_TYPES = new Set(["material", "Material"])
-  if (MATERIAL_TYPES.has(nodeType)) return "material"
-
-  const PROPERTY_TYPES = new Set(["property", "Property"])
-  if (PROPERTY_TYPES.has(nodeType)) return "property"
-
+  const MATERIAL_TYPES = new Set(["material"])
+  const PROPERTY_TYPES = new Set(["property"])
   const ENTITY_TYPES = new Set([
-    "ontology", "Ontology", "method", "Method",
-    "source", "Source", "extraction", "Extraction",
+    "ontology",
+    "method",
+    "source",
+    "extraction",
   ])
-  if (ENTITY_TYPES.has(nodeType)) return "entity"
 
+  const normalized = nodeType.toLowerCase()
+  if (MATERIAL_TYPES.has(normalized)) return "material"
+  if (PROPERTY_TYPES.has(normalized)) return "property"
+  if (ENTITY_TYPES.has(normalized)) return "entity"
   return "default"
 }
 

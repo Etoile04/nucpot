@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
+import { ApiHttpError } from "@/lib/api-client"
 
 // ── Mock next/navigation ──────────────────────────────────────────────
 
@@ -11,7 +11,7 @@ vi.mock("next/navigation", () => ({
     replace: vi.fn(),
     prefetch: vi.fn(),
     back: vi.fn(),
-  })),
+  }),
 }))
 
 // ── Mock next/link ────────────────────────────────────────────────────
@@ -29,15 +29,20 @@ vi.mock("next/link", () => {
     return <a href={href} {...props}>{children}</a>
   }
   MockLink.displayName = "MockLink"
-  return MockLink
+  return { __esModule: true, default: MockLink }
 })
 
 // ── Mock next/dynamic to return a stub GraphCanvas ──────────────────────
 
 vi.mock("next/dynamic", () => ({
   __esModule: true,
-  default: (loader: () => Promise<{ default: unknown }>) =>
-    loader().then((mod) => mod),
+  default: () => {
+    const StubCanvas = (props: { data?: unknown }) => (
+      <div role="application" aria-label="Knowledge graph" data-props={JSON.stringify(props.data ?? null)} />
+    )
+    StubCanvas.displayName = "StubGraphCanvas"
+    return StubCanvas
+  },
 }))
 
 // ── Mock d3-force (required by GraphCanvas) ───────────────────────────
@@ -149,11 +154,7 @@ import { MaterialGraphView } from "../MaterialGraphView"
 // ── Helper ──────────────────────────────────────────────────────────────
 
 function renderView(materialId: string) {
-  return render(
-    <MemoryRouter>
-      <MaterialGraphView materialId={materialId} />
-    </MemoryRouter>,
-  )
+  return render(<MaterialGraphView materialId={materialId} />)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -191,7 +192,9 @@ describe("MaterialGraphView", () => {
   })
 
   it("shows not-found state when API returns 404", async () => {
-    mockGetKGGraph.mockRejectedValue(new Error("KG node 'test-material' not found"))
+    mockGetKGGraph.mockRejectedValue(
+      new ApiHttpError(404, "KG node 'test-material' not found"),
+    )
 
     renderView("test-material")
 
@@ -201,7 +204,7 @@ describe("MaterialGraphView", () => {
   })
 
   it("shows back-to-properties link in not-found state", async () => {
-    mockGetKGGraph.mockRejectedValue(new Error("404"))
+    mockGetKGGraph.mockRejectedValue(new ApiHttpError(404, "not found"))
 
     renderView("test-material")
 
@@ -218,7 +221,7 @@ describe("MaterialGraphView", () => {
     await waitFor(() => {
       expect(screen.getByText("加载失败")).toBeInTheDocument()
     })
-    expect(screen.getByText("重试")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /重\s*试/ })).toBeInTheDocument()
   })
 
   it("retries fetch when retry button clicked", async () => {
@@ -232,7 +235,7 @@ describe("MaterialGraphView", () => {
       expect(screen.getByText("加载失败")).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText("重试"))
+    fireEvent.click(screen.getByRole("button", { name: /重\s*试/ }))
 
     await waitFor(() => {
       expect(

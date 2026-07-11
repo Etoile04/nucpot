@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -11,8 +11,13 @@ import {
   transformGraphResponse,
   type KGGraphResponse,
 } from "@/lib/kg-api"
+import { ApiHttpError } from "@/lib/api-client"
 
 const { Title, Text } = Typography
+
+// Static layout value — kept at module scope (avoids per-render allocation
+// and the unnecessary `useMemo` wrapping a literal).
+const GRAPH_HEIGHT = "calc(100vh - 220px)"
 
 // ── Lazy-loaded GraphCanvas (minimises bundle impact) ──────────────────
 
@@ -141,7 +146,9 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "未知错误"
 
-      if (message.includes("404") || message.includes("not found")) {
+      // 404 (not-found in KG) is a normal flow, not a system error.
+      // Match on typed status, not localized message text.
+      if (err instanceof ApiHttpError && err.status === 404) {
         setState((prev) => ({ ...prev, status: "not_found" }))
       } else {
         setState((prev) => ({
@@ -161,16 +168,16 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
     (node: GraphNode) => {
       if (node.id === state.focalId) return
 
+      // Material nodes → properties page; everything else → generic KG node page.
+      // Sending non-material nodes to another /graph route would create loops.
       if (node.type === "material") {
         router.push(`/materials/${node.id}/properties`)
       } else {
-        router.push(`/materials/${node.id}/graph`)
+        router.push(`/kg/node/${node.id}`)
       }
     },
     [router, state.focalId],
   )
-
-  const graphHeight = useMemo(() => "calc(100vh - 220px)", [])
 
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-8">
@@ -216,7 +223,7 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
         <GraphCanvas
           data={state.graphData}
           onNodeClick={handleNodeClick}
-          height={graphHeight}
+          height={GRAPH_HEIGHT}
           showControls={true}
           initialZoom={1}
           className="material-graph-canvas"

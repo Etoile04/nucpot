@@ -14,6 +14,23 @@ export interface ApiError {
   readonly message?: string
 }
 
+/**
+ * HTTP error thrown by {@link request} when the response status is not OK.
+ *
+ * Carries the numeric status code so callers can branch on it (e.g.
+ * distinguishing 404 not-found from generic 5xx) instead of fragile
+ * string matching on the localized message.
+ */
+export class ApiHttpError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = "ApiHttpError"
+    this.status = status
+  }
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null
   return localStorage.getItem(TOKEN_KEY)
@@ -62,13 +79,13 @@ export async function request<T>(
     if (typeof window !== "undefined") {
       window.location.href = "/admin/login"
     }
-    throw new Error("认证已过期，请重新登录")
+    throw new ApiHttpError(401, "认证已过期，请重新登录")
   }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as ApiError | null
     const message = body?.detail ?? body?.message ?? `请求失败 (${response.status})`
-    throw new Error(message)
+    throw new ApiHttpError(response.status, message)
   }
 
   // 204 No Content
