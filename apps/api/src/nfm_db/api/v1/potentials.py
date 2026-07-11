@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.schemas.common import ApiResponse
+from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.potential import (
     FileUploadResponse,
     PotentialCreateRequest,
@@ -40,20 +40,22 @@ router = APIRouter(tags=["势函数管理"])
 
 @router.get("/potentials", response_model=ApiResponse[PotentialListResponse])
 async def list_potentials_endpoint(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     type: str | None = Query(None),
     elements: str | None = Query(None, description="Comma-separated element symbols"),
     q: str | None = Query(None),
     sort: str = Query("updated", pattern="^(updated|name|type)$"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialListResponse]:
-    """获取势函数分页列表，支持类型和元素筛选。"""
+    if _limit is not None:
+        pagination = PaginationParams(page=pagination.page, per_page=_limit)
+
     elements_list = [e for e in (elements.split(",") if elements else [])] or None
     result = await list_potentials(
         db,
-        page=page,
-        limit=limit,
+        page=pagination.page,
+        limit=pagination.per_page,
         type_filter=type,
         elements=elements_list,
         query=q,

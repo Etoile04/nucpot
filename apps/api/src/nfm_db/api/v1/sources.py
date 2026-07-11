@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.source import (
     DataSourceCreate,
     DataSourceDetailResponse,
@@ -34,23 +34,23 @@ router = APIRouter(tags=["数据源管理"])
 
 @router.get("/sources", response_model=ApiResponse[PaginatedResponse[DataSourceResponse]])
 async def list_sources_endpoint(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     year: int | None = Query(None, description="Filter by publication year"),
     source_type: str | None = Query(None, description="Filter by source type"),
     sort: str = Query("created_at", pattern="^(created_at|updated_at|title|year)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[DataSourceResponse]]:
-    """获取数据源分页列表，支持年份和类型筛选.
+    """Return a paginated, filtered list of data sources.
 
-    Return a paginated, filtered list of data sources."""
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    """
     result = await list_sources(
         db,
         year=year,
         source_type=source_type,
-        page=page,
-        per_page=per_page,
+        page=pagination.page,
+        per_page=pagination.per_page,
         sort=sort,
         order=order,
     )

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse
 
 router = APIRouter(tags=["知识图谱"])
@@ -41,15 +42,23 @@ async def search_kg_nodes(
     q: str | None = Query(default=None, description="Search term (ILIKE on label + aliases)"),
     type: str | None = Query(default=None, description="Filter by node_type"),
     status: str = Query(default="active", description="Filter by status"),
-    limit: int = Query(default=20, ge=1, le=100, description="Page size (max 100)"),
-    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    pagination: PaginationParams = Depends(PaginationParams),
+    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     session: AsyncSession = Depends(get_db),
 ) -> KGSearchResponse:
     """Search Knowledge Graph nodes with optional filters.
 
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
+
     Returns paginated results matching the given criteria.
     Defaults to active nodes only.
     """
+    if _limit is not None:
+        effective_page = ((_offset or 0) // _limit) + 1
+        pagination = PaginationParams(page=effective_page, per_page=_limit)
+    effective_limit = _limit if _limit is not None else pagination.per_page
+    effective_offset = _offset if _offset is not None else pagination.offset
     # Validate type filter against valid node types
     if type is not None and type not in VALID_NODE_TYPES:
         raise HTTPException(
@@ -86,8 +95,8 @@ async def search_kg_nodes(
         select(KGNode)
         .where(*base_filter)
         .order_by(KGNode.label.asc())
-        .limit(limit)
-        .offset(offset)
+        .limit(effective_limit)
+        .offset(effective_offset)
     )
     rows = (await session.execute(data_stmt)).scalars().all()
 
@@ -96,8 +105,8 @@ async def search_kg_nodes(
     return KGSearchResponse(
         items=items,
         total=total,
-        limit=limit,
-        offset=offset,
+        limit=effective_limit,
+        offset=effective_offset,
     )
 
 

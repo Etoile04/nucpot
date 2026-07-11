@@ -26,6 +26,7 @@ from nfm_db.models.ref_gap_fill import (
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.reference_values import (
     BulkStagingItemResult,
     BulkStagingRequest,
@@ -156,8 +157,7 @@ async def list_pending_review(
         default=None,
         description="Filter by status: pending, approved, rejected, promoted, all",
     ),
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """获取待审核暂存记录分页列表。
@@ -169,6 +169,8 @@ async def list_pending_review(
     When status is 'approved', 'rejected', 'promoted': returns records with that status.
     When status is 'all': returns all records regardless of status.
     Standard {success, data} envelope with pagination metadata.
+
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     # Validate status parameter if provided
     if status is not None:
@@ -212,13 +214,12 @@ async def list_pending_review(
     total = (await session.execute(count_stmt)).scalar_one()
 
     # Data query with pagination
-    offset = (page - 1) * per_page
     data_stmt = (
         select(RefGapFillStaging)
         .where(*base_filter)
         .order_by(RefGapFillStaging.created_at.desc())
-        .limit(per_page)
-        .offset(offset)
+        .limit(pagination.per_page)
+        .offset(pagination.offset)
     )
     result = await session.execute(data_stmt)
     records = result.scalars().all()
@@ -228,8 +229,8 @@ async def list_pending_review(
         "data": PendingReviewResponse(
             records=[StagingRecordResponse.model_validate(r) for r in records],
             total=total,
-            page=page,
-            per_page=per_page,
+            page=pagination.page,
+            per_page=pagination.per_page,
         ).model_dump(),
     }
 

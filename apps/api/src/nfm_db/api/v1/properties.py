@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.property import (
     PropertyMeasurementCreate,
     PropertyMeasurementDetailResponse,
@@ -42,21 +42,21 @@ router = APIRouter(tags=["属性管理"])
     "/properties", response_model=ApiResponse[PaginatedResponse[PropertyMeasurementResponse]]
 )
 async def list_properties_endpoint(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     material_id: UUID | None = Query(None, description="Filter by material"),
     property_type_id: UUID | None = Query(None, description="Filter by property type"),
     sort: str = Query("created_at", pattern="^(created_at|updated_at)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[PropertyMeasurementResponse]]:
-    """获取物性测量数据分页列表，支持材料和属性类型筛选.
+    """Return a paginated list of measurements, optionally filtered by material or property type.
 
-    Return a paginated list of measurements, optionally filtered by material or property type."""
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    """
     result = await list_measurements(
         db,
-        page=page,
-        per_page=per_page,
+        page=pagination.page,
+        per_page=pagination.per_page,
         sort=sort,
         order=order,
         material_id=material_id,

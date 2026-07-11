@@ -19,8 +19,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.middleware.rate_limit import limiter
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.material import (
     BatchImportResult,
     MaterialCreate,
@@ -48,20 +47,20 @@ router = APIRouter(tags=["材料管理"])
 
 @router.get("/materials", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])
 async def list_materials_endpoint(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     category_id: UUID | None = Query(None, description="Filter by category"),
     sort: str = Query("created_at", pattern="^(name|created_at|updated_at)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
-    """获取材料分页列表，支持分类筛选.
+    """Return a paginated list of materials, optionally filtered by category.
 
-    Return a paginated list of materials, optionally filtered by category."""
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    """
     result = await list_materials(
         db,
-        page=page,
-        limit=per_page,
+        page=pagination.page,
+        limit=pagination.per_page,
         sort=sort,
         order=order,
         category_id=category_id,
@@ -72,18 +71,18 @@ async def list_materials_endpoint(
 @router.get("/materials/search", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])
 async def search_materials_endpoint(
     q: str = Query("", description="Search query"),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
-    """按名称、化学式或别名搜索材料（模糊匹配）.
+    """Search materials by name, formula, or alias (ILIKE).
 
-    Search materials by name, formula, or alias (ILIKE)."""
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    """
     result = await search_materials(
         db,
         query=q,
-        page=page,
-        limit=per_page,
+        page=pagination.page,
+        limit=pagination.per_page,
     )
     return ApiResponse(success=True, data=result)
 
