@@ -24,6 +24,11 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
+from nfm_db.api.v1.batch import (
+    materials_router as batch_materials_router,
+    properties_router as batch_properties_router,
+    reference_values_router as batch_reference_values_router,
+)
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.services.upload_service import PotentialUploadError
 
@@ -76,6 +81,12 @@ app.include_router(md_verification.router, prefix="/api/v1/md-verification", tag
 app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
 app.include_router(blog.router, prefix="/api/v1", tags=["blog"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["potentials"])
+# Batch import/export (NFM-1085) — must register BEFORE entity routers
+# so /materials/export beats /materials/{material_id} in route matching.
+app.include_router(batch_materials_router, prefix="/api/v1")
+app.include_router(batch_properties_router, prefix="/api/v1")
+app.include_router(batch_reference_values_router, prefix="/api/v1")
+
 app.include_router(materials.router, prefix="/api/v1", tags=["materials"])
 app.include_router(properties.router, prefix="/api/v1", tags=["properties"])
 app.include_router(sources.router, prefix="/api/v1", tags=["sources"])
