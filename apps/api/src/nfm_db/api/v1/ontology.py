@@ -23,6 +23,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.schemas.ontology import OntologyGraphResponse
 from nfm_db.schemas.ontology_query import (
@@ -238,16 +239,24 @@ async def get_node_neighbors(
 async def search_nodes(
     q: str = Query(..., min_length=1, description="Search query"),
     corpus_id: str | None = Query(None, description="Corpus scope filter"),
-    limit: int = Query(default=20, ge=1, le=100, description="Max results"),
-    offset: int = Query(default=0, ge=0, description="Result offset"),
+    pagination: PaginationParams = Depends(PaginationParams),
+    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> SearchResponse:
     """Fuzzy search nodes by label or aliases using ILIKE.
 
+    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit/offset 参数）
+
     Returns:
         Search results with match scores and pagination metadata
     """
+    if _limit is not None:
+        effective_page = ((_offset or 0) // _limit) + 1
+        pagination = PaginationParams(page=effective_page, per_page=_limit)
+    effective_limit = _limit if _limit is not None else pagination.per_page
+    effective_offset = _offset if _offset is not None else pagination.offset
     query_pattern = f"%{q}%"
 
     # Build search query
@@ -264,14 +273,14 @@ async def search_nodes(
     # Get total count
     where_clause = search_query.whereclause
     if where_clause is None:
-        return SearchResponse(results=[], total=0, limit=limit, offset=offset)
+        return SearchResponse(results=[], total=0, limit=effective_limit, offset=effective_offset)
     count_result = await session.execute(
         select(KGNode.id).where(where_clause)
     )
     total = len(count_result.all())
 
     # Get paginated results
-    search_query = search_query.limit(limit).offset(offset)
+    search_query = search_query.limit(effective_limit).offset(effective_offset)
     results_result = await session.execute(search_query)
     nodes = results_result.scalars().all()
 
@@ -295,8 +304,8 @@ async def search_nodes(
     return SearchResponse(
         results=search_results,
         total=total,
-        limit=limit,
-        offset=offset,
+        limit=effective_limit,
+        offset=effective_offset,
     )
 
 

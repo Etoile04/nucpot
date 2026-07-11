@@ -17,6 +17,7 @@ from nfm_db.api.v1.auth import (
 from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.models.user import BlogRole, User
 from nfm_db.schemas.blog_post import (
     BlogPostCreate,
@@ -128,10 +129,17 @@ async def list_posts(
     session: AsyncSession = Depends(get_db),
     status: str | None = Query(default=None),
     author_id: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    pagination: PaginationParams = Depends(PaginationParams),
+    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
 ) -> list[BlogPostResponse]:
-    """List blog posts with filtering (admin/editor/reviewer only)."""
+    """List blog posts with filtering (admin/editor/reviewer only).
+
+    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit/offset 参数）
+    """
+    if _limit is not None:
+        effective_page = ((_offset or 0) // _limit) + 1
+        pagination = PaginationParams(page=effective_page, per_page=_limit)
     post_status = None
     if status is not None:
         try:
@@ -154,8 +162,8 @@ async def list_posts(
         session,
         status=post_status,
         author_id=parsed_author_id,
-        limit=limit,
-        offset=offset,
+        limit=pagination.per_page,
+        offset=pagination.offset,
     )
 
     return [_enrich_response(post) for post in posts]
