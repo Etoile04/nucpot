@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { Spin, Empty, Space, Typography } from "antd"
+import { Spin, Empty, Typography } from "antd"
 import { PotentialCard } from "@/components/potential/PotentialCard"
 import { ElementFilter } from "@/components/potential/ElementFilter"
 import { useDebounce } from "@/components/potential/useDebounce"
@@ -107,23 +107,16 @@ export function SearchView() {
   }, [])
 
   return (
-    <main className="max-w-[1200px] mx-auto px-6 py-8">
-      <Space direction="vertical" size="middle" className="w-full mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Title level={2} className="!m-0 text-white">
-              高级检索
-            </Title>
-            <Text type="secondary">按类型、元素或关键字检索势函数库</Text>
-          </div>
-          <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
-            浏览全部
-          </Link>
-        </div>
-      </Space>
+    <div className="space-y-6">
+      {/* Browse link */}
+      <div className="flex justify-end">
+        <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
+          浏览全部
+        </Link>
+      </div>
 
       {/* Search form */}
-      <div className="p-4 rounded-lg bg-gray-800 border border-gray-700 mb-6 space-y-4">
+      <div className="p-4 rounded-lg bg-gray-800 border border-gray-700 space-y-4">
         {/* Keyword */}
         <div>
           <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">关键词</label>
@@ -195,6 +188,6 @@ export function SearchView() {
           共 {state.total} 条结果
         </Text>
       )}
-    </main>
+    </div>
   )
 }

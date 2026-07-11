@@ -50,6 +50,7 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
     try {
       const response = await ragApi.query({
         query: trimmed,
+        mode: "hybrid",
         topK: TOP_K,
       })
 
