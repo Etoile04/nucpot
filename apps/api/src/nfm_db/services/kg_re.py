@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import (
+    VALID_NODE_TYPES,
     VALID_RELATION_TYPES,
     KGEdge,
     KGNode,
