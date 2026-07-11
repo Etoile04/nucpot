@@ -163,8 +163,8 @@ async def async_client(db_session: AsyncSession):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
-    # Clean up override
-    app.dependency_overrides.clear()
+    # Clean up only the DB override — not the session-scoped rate-limit overrides.
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
@@ -250,4 +250,4 @@ async def authenticated_client(db_session: AsyncSession, admin_user: User):
     async with AsyncClient(transport=transport, base_url="http://test", headers=headers) as client:
         yield client
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
