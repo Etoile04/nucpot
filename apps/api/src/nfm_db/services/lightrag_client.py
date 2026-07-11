@@ -6,8 +6,8 @@ Wraps the LightRAG REST API (default port 9621):
   GET  /health          — service health check
 
 Configuration via environment variables:
-  LIGHTRAG_HOST  - LightRAG server host (default: "localhost")
-  LIGHTRAG_PORT  - LightRAG server port (default: 9621)
+  NFM_LIGHTRAG_HOST  - LightRAG server host (default: "localhost")
+  NFM_LIGHTRAG_PORT  - LightRAG server port (default: 9621)
 """
 
 from __future__ import annotations
