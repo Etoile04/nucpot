@@ -2,16 +2,54 @@
 
 Exercises mock-data-based tools directly via the registered MCP
 tool callables, and tests pure helper functions in isolation.
+Service-backed tools (sources, potentials, materials) are tested
+with mocked DB sessions.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_mcp.server import create_mcp_server
 from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
+
+
+# ── Helpers ──────────────────────────────────────────────────────
+
+
+def _make_session_gen():
+    """Create a callable that returns an async generator yielding a mock session."""
+    mock_session = MagicMock(spec=AsyncSession)
+    mock_session.commit = AsyncMock()
+    mock_session.rollback = AsyncMock()
+    mock_session.close = AsyncMock()
+
+    async def _gen() -> AsyncGenerator[AsyncSession, None]:
+        yield mock_session
+
+    return _gen
+
+
+def _empty_source_list():
+    """Return an empty PaginatedResponse for sources."""
+    from nfm_db.schemas.common import PaginatedResponse
+
+    return PaginatedResponse(items=[], total=0, page=1, limit=20, pages=0)
+
+
+def _empty_potential_list():
+    """Return an empty PotentialListResponse."""
+    from nfm_db.schemas.potential import PotentialListResponse
+
+    return PotentialListResponse(
+        potentials=[], total=0, page=1, limit=100, total_pages=0,
+    )
 
 
 # ── Fixture: create server once and expose tool callables ────────
@@ -19,7 +57,7 @@ from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
 
 @pytest.fixture()
 def tool_map():
-    """Build an MCP server and return a name→callable map of tool handlers."""
+    """Build an MCP server and return a name->callable map of tool handlers."""
     mcp = create_mcp_server()
     tools = mcp._tool_manager._tools
     return {
@@ -152,81 +190,134 @@ class TestOntologyTools:
         assert all(n.get("parent_id") == "onto-root" for n in result)
 
 
-# ── Potential tools ──────────────────────────────────────────────
+# ── Potential tools (Phase B -- service-backed) ─────────────────
 
 
 class TestPotentialTools:
-    """Tests for query_potentials tool."""
+    """Tests for query_potentials and get_potential tools (service-backed)."""
 
     @pytest.mark.asyncio
-    async def test_query_potentials_by_material(self, tool_map: dict) -> None:
+    async def test_query_potentials_service_call(self, tool_map: dict) -> None:
+        """query_potentials delegates to list_potentials service."""
         handler = tool_map["query_potentials"]
-        result = json.loads(await handler(material_id="UO2"))
-        assert isinstance(result, list)
-        assert all(p.get("material_id") == "UO2" for p in result)
+        mock_gen = _make_session_gen()
+        with (
+            patch("nfm_mcp.tools.potentials.get_db_session", mock_gen),
+            patch(
+                "nfm_db.services.potential_service.list_potentials",
+                new_callable=AsyncMock,
+                return_value=_empty_potential_list(),
+            ),
+        ):
+            result = json.loads(await handler(material_id="UO2"))
+        assert "potentials" in result
+        assert "total" in result
 
     @pytest.mark.asyncio
-    async def test_query_potentials_type_filter(self, tool_map: dict) -> None:
+    async def test_query_potentials_error_returns_json(self, tool_map: dict) -> None:
+        """query_potentials returns JSON error on service failure."""
         handler = tool_map["query_potentials"]
-        result = json.loads(await handler(material_id="UO2", potential_type="Gibbs"))
-        assert all(
-            "gibbs" in str(p.get("potential_type", "")).lower()
-            for p in result
-        )
+        mock_gen = _make_session_gen()
+        with (
+            patch("nfm_mcp.tools.potentials.get_db_session", mock_gen),
+            patch(
+                "nfm_db.services.potential_service.list_potentials",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("fail"),
+            ),
+        ):
+            result = json.loads(await handler(material_id="UO2"))
+        assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_query_potentials_model_filter(self, tool_map: dict) -> None:
-        handler = tool_map["query_potentials"]
-        result = json.loads(await handler(material_id="UO2", model_name="FINK"))
-        assert all(
-            "fink" in str(p.get("model_name", "")).lower() for p in result
-        )
+    async def test_get_potential_invalid_uuid(self, tool_map: dict) -> None:
+        """get_potential returns error for non-UUID."""
+        handler = tool_map["get_potential"]
+        result = json.loads(await handler(potential_id="bad"))
+        assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_query_potentials_temp_range(self, tool_map: dict) -> None:
-        handler = tool_map["query_potentials"]
-        result = json.loads(await handler(material_id="UO2", temperature_range="300-3000 K"))
-        assert isinstance(result, list)
+    async def test_get_potential_service_call(self, tool_map: dict) -> None:
+        """get_potential delegates to get_potential_by_id service."""
+        pid = str(uuid.uuid4())
+        handler = tool_map["get_potential"]
+        mock_gen = _make_session_gen()
+        with (
+            patch("nfm_mcp.tools.potentials.get_db_session", mock_gen),
+            patch(
+                "nfm_db.services.potential_service.get_potential_by_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            result = json.loads(await handler(potential_id=pid))
+        assert "error" in result
+        assert "not found" in result["error"]
 
-    @pytest.mark.asyncio
-    async def test_query_potentials_no_match(self, tool_map: dict) -> None:
-        handler = tool_map["query_potentials"]
-        result = json.loads(await handler(material_id="NONEXISTENT"))
-        assert result == []
 
-
-# ── Source tools ────────────────────────────────────────────────
+# ── Source tools (Phase B -- service-backed) ─────────────────────
 
 
 class TestSourceTools:
-    """Tests for search_sources tool."""
+    """Tests for search_sources and get_source tools (service-backed)."""
 
     @pytest.mark.asyncio
-    async def test_search_sources_returns_results(self, tool_map: dict) -> None:
+    async def test_search_sources_service_call(self, tool_map: dict) -> None:
+        """search_sources delegates to list_sources service."""
         handler = tool_map["search_sources"]
-        result = json.loads(await handler(query="Finkelstein"))
-        assert isinstance(result, list)
-        assert len(result) > 0
+        mock_gen = _make_session_gen()
+        with (
+            patch("nfm_mcp.tools.sources.get_db_session", mock_gen),
+            patch(
+                "nfm_db.services.source_service.list_sources",
+                new_callable=AsyncMock,
+                return_value=_empty_source_list(),
+            ),
+        ):
+            result = json.loads(await handler(query="test"))
+        assert "items" in result
+        assert "total" in result
 
     @pytest.mark.asyncio
-    async def test_search_sources_type_filter(self, tool_map: dict) -> None:
+    async def test_search_sources_error_returns_json(self, tool_map: dict) -> None:
+        """search_sources returns JSON error on service failure."""
         handler = tool_map["search_sources"]
-        result = json.loads(await handler(query="nuclear", source_type="journal"))
-        assert all(
-            str(s.get("source_type", "")) == "journal" for s in result
-        )
+        mock_gen = _make_session_gen()
+        with (
+            patch("nfm_mcp.tools.sources.get_db_session", mock_gen),
+            patch(
+                "nfm_db.services.source_service.list_sources",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("fail"),
+            ),
+        ):
+            result = json.loads(await handler(query="test"))
+        assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_search_sources_pagination(self, tool_map: dict) -> None:
-        handler = tool_map["search_sources"]
-        result = json.loads(await handler(query="nuclear", limit=1, offset=0))
-        assert len(result) <= 1
+    async def test_get_source_invalid_uuid(self, tool_map: dict) -> None:
+        """get_source returns error for non-UUID."""
+        handler = tool_map["get_source"]
+        result = json.loads(await handler(source_id="bad"))
+        assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_search_sources_no_match(self, tool_map: dict) -> None:
-        handler = tool_map["search_sources"]
-        result = json.loads(await handler(query="XYZNONEXISTENT"))
-        assert result == []
+    async def test_get_source_service_call(self, tool_map: dict) -> None:
+        """get_source delegates to get_source service."""
+        sid = str(uuid.uuid4())
+        handler = tool_map["get_source"]
+        mock_gen = _make_session_gen()
+        with (
+            patch("nfm_mcp.tools.sources.get_db_session", mock_gen),
+            patch(
+                "nfm_db.services.source_service.get_source",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            result = json.loads(await handler(source_id=sid))
+        assert "error" in result
+        assert "not found" in result["error"]
 
 
 # ── Potential helper functions (imported directly) ───────────────
@@ -330,52 +421,6 @@ class TestOntologyHelpers:
             "description": "Materials used as nuclear reactor fuel",
         }
         assert _matches_query(node, "FUEL") is True
-
-
-# ── Source helper functions ─────────────────────────────────────
-
-
-class TestSourceHelpers:
-    """Tests for pure helper functions in sources module."""
-
-    def test_matches_query_authors(self) -> None:
-        from nfm_mcp.tools.sources import _matches_query
-
-        source = {
-            "authors": "J.K. Finkelstein",
-            "title": "Thermal conductivity of UO2",
-            "journal": "Journal of Nuclear Materials",
-        }
-        assert _matches_query(source, "finkelstein") is True
-        assert _matches_query(source, "nonexistent") is False
-
-    def test_matches_query_title(self) -> None:
-        from nfm_mcp.tools.sources import _matches_query
-
-        source = {
-            "authors": "IAEA",
-            "title": "Thermophysical Properties Database",
-            "journal": "IAEA-TECDOC",
-        }
-        assert _matches_query(source, "thermophysical") is True
-
-    def test_matches_query_doi(self) -> None:
-        from nfm_mcp.tools.sources import _matches_query
-
-        source = {
-            "authors": "J.K. Finkelstein",
-            "title": "Test",
-            "journal": "Test Journal",
-            "doi": "10.1016/S0022-3115",
-        }
-        assert _matches_query(source, "10.1016") is True
-
-    def test_matches_query_case_insensitive(self) -> None:
-        from nfm_mcp.tools.sources import _matches_query
-
-        source = {"authors": "IAEA", "title": "Database", "journal": ""}
-        assert _matches_query(source, "IAEA") is True
-        assert _matches_query(source, "iaea") is True
 
 
 # ── Server main() ────────────────────────────────────────────

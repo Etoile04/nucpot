@@ -1,14 +1,18 @@
-"""Literature source search tools."""
+"""Literature source search tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import SOURCES
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class SearchSourcesInput(BaseModel):
@@ -24,7 +28,7 @@ class SearchSourcesInput(BaseModel):
     )
     source_type: Optional[str] = Field(
         default=None,
-        description="Filter by source type (e.g., 'journal', 'report', 'handbook')",
+        description="Filter by source type (e.g., 'journal_article', 'report', 'book')",
     )
     limit: int = Field(
         default=20,
@@ -39,16 +43,17 @@ class SearchSourcesInput(BaseModel):
     )
 
 
-def _matches_query(source: dict[str, object], query: str) -> bool:
-    """Check if a source matches a free-text query (case-insensitive)."""
-    query_lower = query.lower()
-    searchable_fields = (
-        str(source.get("authors", "")),
-        str(source.get("title", "")),
-        str(source.get("journal", "")),
-        str(source.get("doi", "")),
+class GetSourceInput(BaseModel):
+    """Input for retrieving a single source by ID."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    source_id: str = Field(
+        ...,
+        description="Unique source identifier (UUID)",
+        min_length=1,
+        max_length=200,
     )
-    return any(query_lower in field.lower() for field in searchable_fields)
 
 
 def register_source_tools(mcp: FastMCP) -> None:
@@ -77,20 +82,67 @@ def register_source_tools(mcp: FastMCP) -> None:
         references that are cited as data sources in the database.
 
         Returns:
-            JSON array of source records with id, authors, title, year,
-            and citation count.
+            JSON object with paginated source records including id, title,
+            authors, year, and source type.
         """
-        results = list(SOURCES)
+        try:
+            from nfm_db.services.source_service import list_sources
 
-        if source_type is not None:
-            type_lower = source_type.lower()
-            results = [
-                s for s in results
-                if str(s.get("source_type", "")).lower() == type_lower
-            ]
+            page = max(1, (offset // max(1, limit)) + 1)
 
-        if query:
-            results = [s for s in results if _matches_query(s, query)]
+            async for db in get_db_session():
+                result = await list_sources(
+                    db,
+                    source_type=source_type,
+                    page=page,
+                    per_page=limit,
+                )
+                return result.model_dump_json(indent=2)
 
-        paginated = results[offset : offset + limit]
-        return json.dumps(paginated, default=str)
+        except Exception as exc:
+            logger.exception("search_sources failed")
+            return json.dumps({"error": f"Search failed: {exc}"})
+
+    @mcp.tool(
+        name="get_source",
+        annotations={
+            "title": "Get Source Details",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def get_source(*, source_id: str) -> str:
+        """Retrieve detailed information about a specific literature source.
+
+        Returns the full source record including authors, DOI, abstract,
+        and journal details.
+
+        Returns:
+            JSON object with source details or an error string if not found.
+        """
+        try:
+            from nfm_db.services.source_service import get_source
+
+            try:
+                source_uuid = uuid.UUID(source_id)
+            except ValueError:
+                return json.dumps({
+                    "error": (
+                        f"Source '{source_id}' not found. "
+                        "Provide a valid UUID identifier."
+                    ),
+                })
+
+            async for db in get_db_session():
+                result = await get_source(db, source_id=source_uuid)
+                if result is None:
+                    return json.dumps({
+                        "error": f"Source '{source_id}' not found",
+                    })
+                return result.model_dump_json(indent=2)
+
+        except Exception as exc:
+            logger.exception("get_source failed")
+            return json.dumps({"error": f"Lookup failed: {exc}"})

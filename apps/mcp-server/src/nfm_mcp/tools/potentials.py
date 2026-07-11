@@ -1,14 +1,18 @@
-"""Thermodynamic potential query tools."""
+"""Thermodynamic potential query tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import POTENTIALS
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class QueryPotentialsInput(BaseModel):
@@ -33,6 +37,19 @@ class QueryPotentialsInput(BaseModel):
     temperature_range: Optional[str] = Field(
         default=None,
         description="Temperature range filter (e.g., '300-3000 K')",
+    )
+
+
+class GetPotentialInput(BaseModel):
+    """Input for retrieving a single potential by ID."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    potential_id: str = Field(
+        ...,
+        description="Unique potential identifier (UUID)",
+        min_length=1,
+        max_length=200,
     )
 
 
@@ -88,35 +105,82 @@ def register_potential_tools(mcp: FastMCP) -> None:
         coefficients and valid temperature ranges.
 
         Returns:
-            JSON array of potential model records with model name,
-            expression type, coefficients, and valid range.
+            JSON object with paginated potential records including name,
+            type, elements, and description.
         """
-        results = [
-            p for p in POTENTIALS
-            if p.get("material_id") == material_id
-        ]
+        try:
+            from nfm_db.services.potential_service import list_potentials
 
-        if potential_type is not None:
-            type_lower = potential_type.lower()
-            results = [
-                p for p in results
-                if type_lower in str(p.get("potential_type", "")).lower()
-            ]
+            async for db in get_db_session():
+                result = await list_potentials(
+                    db,
+                    type_filter=potential_type,
+                    query=model_name,
+                    page=1,
+                    limit=100,
+                )
 
-        if model_name is not None:
-            name_lower = model_name.lower()
-            results = [
-                p for p in results
-                if name_lower in str(p.get("model_name", "")).lower()
-            ]
+                response_data = result.model_dump()
 
-        if temperature_range is not None:
-            parsed = _parse_temperature_range(temperature_range)
-            if parsed is not None:
-                results = [
-                    p for p in results
-                    if isinstance(p.get("valid_range_k"), list)
-                    and _ranges_overlap(list(p["valid_range_k"]), parsed)
-                ]
+                # Client-side post-filter: temperature range overlap
+                if temperature_range is not None:
+                    parsed = _parse_temperature_range(temperature_range)
+                    if parsed is not None:
+                        response_data["potentials"] = [
+                            p for p in response_data["potentials"]
+                            if isinstance(p.get("applicability", {}).get("temperature_range"), list)
+                            and _ranges_overlap(
+                                list(p["applicability"]["temperature_range"]),
+                                parsed,
+                            )
+                        ]
 
-        return json.dumps(results, default=str)
+                return json.dumps(response_data, default=str, indent=2)
+
+        except Exception as exc:
+            logger.exception("query_potentials failed")
+            return json.dumps({"error": f"Query failed: {exc}"})
+
+    @mcp.tool(
+        name="get_potential",
+        annotations={
+            "title": "Get Potential Details",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def get_potential(*, potential_id: str) -> str:
+        """Retrieve detailed information about a specific thermodynamic potential.
+
+        Returns the full potential record including coefficients,
+        applicability ranges, references, and verification data.
+
+        Returns:
+            JSON object with potential details or an error string if not found.
+        """
+        try:
+            from nfm_db.services.potential_service import get_potential_by_id
+
+            try:
+                potential_uuid = uuid.UUID(potential_id)
+            except ValueError:
+                return json.dumps({
+                    "error": (
+                        f"Potential '{potential_id}' not found. "
+                        "Provide a valid UUID identifier."
+                    ),
+                })
+
+            async for db in get_db_session():
+                result = await get_potential_by_id(db, potential_id=potential_uuid)
+                if result is None:
+                    return json.dumps({
+                        "error": f"Potential '{potential_id}' not found",
+                    })
+                return result.model_dump_json(indent=2)
+
+        except Exception as exc:
+            logger.exception("get_potential failed")
+            return json.dumps({"error": f"Lookup failed: {exc}"})
