@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.core.auth import get_current_user
 from nfm_db.database import get_db
 from nfm_db.models import User
-from nfm_db.schemas.common import PaginationParams
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
@@ -33,6 +32,7 @@ from nfm_db.models.md_verification import (
     HpcJobStatus,
     JobStatus,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.services.md_verification import (
     DefectAnalysisResultResponse,
     MDSimulationResultResponse,
@@ -269,7 +269,7 @@ async def list_md_verification_jobs(
 ) -> MDVerificationJobListResponse:
     """List MD verification jobs with optional filters.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit/offset 参数）
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
 
     Args:
         potential_id: Filter by potential ID

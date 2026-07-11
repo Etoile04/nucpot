@@ -42,7 +42,7 @@ async def list_feedback_endpoint(
 ) -> ApiResponse:
     """List feedback entries with filtering and pagination (admin endpoint).
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit 参数）
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit 参数)
     """
     if _limit is not None:
         pagination = PaginationParams(page=pagination.page, per_page=_limit)

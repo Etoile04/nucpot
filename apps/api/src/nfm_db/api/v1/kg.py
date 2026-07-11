@@ -49,7 +49,7 @@ async def search_kg_nodes(
 ) -> KGSearchResponse:
     """Search Knowledge Graph nodes with optional filters.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit/offset 参数）
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
 
     Returns paginated results matching the given criteria.
     Defaults to active nodes only.

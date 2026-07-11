@@ -43,7 +43,7 @@ async def list_sources_endpoint(
 ) -> ApiResponse[PaginatedResponse[DataSourceResponse]]:
     """Return a paginated, filtered list of data sources.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     result = await list_sources(
         db,

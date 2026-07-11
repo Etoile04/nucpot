@@ -23,8 +23,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.schemas.common import PaginationParams
 from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.ontology import OntologyGraphResponse
 from nfm_db.schemas.ontology_query import (
     NodeNeighborsResponse,
@@ -247,7 +247,7 @@ async def search_nodes(
 ) -> SearchResponse:
     """Fuzzy search nodes by label or aliases using ILIKE.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit/offset 参数）
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
 
     Returns:
         Search results with match scores and pagination metadata

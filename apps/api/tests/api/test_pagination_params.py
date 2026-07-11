@@ -8,14 +8,12 @@ Covers:
 
 from __future__ import annotations
 
-import math
 from typing import NamedTuple
 
 import pytest
 from pydantic import ValidationError
 
 from nfm_db.schemas.common import PaginationParams
-
 
 # ---------------------------------------------------------------------------
 # Helpers

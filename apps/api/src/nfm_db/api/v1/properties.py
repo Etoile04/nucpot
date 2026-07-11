@@ -51,7 +51,7 @@ async def list_properties_endpoint(
 ) -> ApiResponse[PaginatedResponse[PropertyMeasurementResponse]]:
     """Return a paginated list of measurements, optionally filtered by material or property type.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     result = await list_measurements(
         db,

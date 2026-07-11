@@ -17,7 +17,6 @@ from nfm_db.api.v1.auth import (
 from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus
-from nfm_db.schemas.common import PaginationParams
 from nfm_db.models.user import BlogRole, User
 from nfm_db.schemas.blog_post import (
     BlogPostCreate,
@@ -26,6 +25,7 @@ from nfm_db.schemas.blog_post import (
     WorkflowActionRequest,
     WorkflowActionResponse,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.services.blog_post import (
     approve_post,
     create_blog_post,
@@ -135,7 +135,7 @@ async def list_posts(
 ) -> list[BlogPostResponse]:
     """List blog posts with filtering (admin/editor/reviewer only).
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100（已弃用 limit/offset 参数）
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
     """
     if _limit is not None:
         effective_page = ((_offset or 0) // _limit) + 1

@@ -21,12 +21,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.schemas.common import PaginationParams
 from nfm_db.models.ref_gap_fill import (
     Confidence,
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.reference_values import (
     BulkStagingItemResult,
     BulkStagingRequest,
@@ -166,7 +166,7 @@ async def list_pending_review(
     When status is 'all': returns all records regardless of status.
     Standard {success, data} envelope with pagination metadata.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     # Validate status parameter if provided
     if status is not None:

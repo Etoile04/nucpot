@@ -47,7 +47,7 @@ async def list_materials_endpoint(
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
     """Return a paginated list of materials, optionally filtered by category.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     result = await list_materials(
         db,
@@ -68,7 +68,7 @@ async def search_materials_endpoint(
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
     """Search materials by name, formula, or alias (ILIKE).
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     result = await search_materials(
         db,

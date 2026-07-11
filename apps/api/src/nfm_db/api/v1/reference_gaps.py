@@ -38,7 +38,7 @@ async def list_reference_gaps(
 ) -> ReferenceGapsApiResponse:
     """List reference data gaps with filtering and pagination.
 
-    分页参数: page/per_page，默认 page=1 per_page=20，最大100
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     svc = GapScanService(session)
     gaps, total = await svc.list_gaps(
