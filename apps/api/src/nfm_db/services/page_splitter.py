@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass
 from typing import BinaryIO
 
-import fitz  # PyMuPDF
+import fitz  # type: ignore[import-untyped]
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -183,7 +183,7 @@ class PageSplitter:
         """
         doc = _open_document(pdf_source)
         try:
-            return doc.page_count
+            return int(doc.page_count)
         finally:
             doc.close()
 
