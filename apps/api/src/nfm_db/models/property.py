@@ -189,6 +189,11 @@ class PropertyMeasurement(TimestampMixin, Base):
         nullable=True,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[str] = mapped_column(
+        String(50),
+        default="pending",
+    )
+    reviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # -- relationships --
     dataset: Mapped["Dataset"] = relationship(back_populates="measurements")

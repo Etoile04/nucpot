@@ -162,8 +162,12 @@ class PropertyMeasurementCreate(BaseModel):
     def check_at_least_one_value(self) -> "PropertyMeasurementCreate":
         """Ensure at least one value_* field is provided."""
         value_fields = [
-            "value_scalar", "value_min", "value_max",
-            "value_expression", "value_list", "value_text",
+            "value_scalar",
+            "value_min",
+            "value_max",
+            "value_expression",
+            "value_list",
+            "value_text",
         ]
         if not any(getattr(self, field) for field in value_fields):
             raise ValueError(
@@ -202,6 +206,8 @@ class PropertyMeasurementResponse(BaseModel):
     uncertainty: float | None
     unit_id: UUID | None
     notes: str | None
+    review_status: str = "pending"
+    reviewer_note: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -243,3 +249,33 @@ class MeasurementConditionResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PropertyMeasurementDetailResponse(PropertyMeasurementResponse):
+    """Property measurement with conditions and dataset provenance."""
+
+    conditions: list[MeasurementConditionResponse] = Field(default_factory=list)
+    dataset: DatasetResponse | None = None
+
+
+class PropertyCategoryCount(BaseModel):
+    """Count of measurements grouped by property category."""
+
+    category: str
+    count: int
+
+
+class MaterialMeasurementCount(BaseModel):
+    """Count of measurements grouped by material."""
+
+    material_id: UUID
+    material_name: str
+    count: int
+
+
+class PropertyStatsResponse(BaseModel):
+    """Aggregate statistics for property measurements."""
+
+    total_measurements: int
+    by_category: list[PropertyCategoryCount] = Field(default_factory=list)
+    by_material: list[MaterialMeasurementCount] = Field(default_factory=list)

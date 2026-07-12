@@ -136,6 +136,8 @@ export interface V4ResultResponse {
   job_status: JobStatus
   total_extracted: number
   properties: V4PropertyResponse[]
+  figures: V4FigureResult[]
+  tables: V4TableResult[]
 }
 
 export interface V4BrowseResponse {
@@ -168,6 +170,81 @@ export interface V4ValidateResponse {
   sent_to_review: number
   flagged: number
   review_url?: string
+}
+
+// ─── Multimodal extraction result types (NFM-922) ───────────────
+
+export interface V4AxisInfo {
+  label: string
+  unit: string
+  values: number[]
+  scale: string
+}
+
+export interface V4SeriesData {
+  name: string
+  values: number[]
+  color: string
+  marker_style: string
+}
+
+export interface V4PlotData {
+  title: string
+  plot_type: string
+  x_axis: V4AxisInfo
+  y_axis: V4AxisInfo
+  y2_axis?: V4AxisInfo | null
+  series: V4SeriesData[]
+  legend_entries: string[]
+  annotations: string[]
+  confidence: number
+}
+
+export interface V4TableData {
+  title: string
+  headers: { columns: string[]; sub_headers?: string[] | null }
+  rows: V4TableCell[][]
+  num_columns: number
+  num_rows: number
+  has_merged_cells: boolean
+  notes: string[]
+  confidence: number
+}
+
+export interface V4TableCell {
+  value: string
+  row_span: number
+  col_span: number
+  is_header: boolean
+  confidence: number
+}
+
+export interface V4FigureResult {
+  page_number: number
+  source_file: string
+  extraction: {
+    figure_type: string
+    plot_data: V4PlotData | null
+    table_data: V4TableData | null
+    source_image_path: string | null
+    provider: string
+    model: string
+    extraction_time_ms: number
+    fallback_used: boolean
+  }
+}
+
+export interface V4TableResult {
+  page_number: number
+  source_file: string
+  table_data: V4TableData
+}
+
+export interface V4MultimodalSummary {
+  total_figures: number
+  total_tables: number
+  fallback_count: number
+  avg_confidence: number
 }
 
 // ─── API envelope ───────────────────────────────────────────────
