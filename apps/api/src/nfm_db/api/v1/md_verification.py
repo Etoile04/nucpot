@@ -46,6 +46,7 @@ from nfm_db.services.rate_limit import md_verification_rate_limit
 # Try to import Celery app (may not be available in all environments)
 try:
     from nfm_db.services.celery_app import celery_app
+
     CELERY_AVAILABLE = True
 except ImportError:
     celery_app = None
@@ -219,10 +220,7 @@ async def submit_md_verification_job(
                 {"status": JobStatus.SUBMITTED, "submitted_at": datetime.now(UTC)},
             )
 
-            logger.info(
-                f"Submitted MD verification job {job.id} "
-                f"with Celery task {task_result.id}"
-            )
+            logger.info(f"Submitted MD verification job {job.id} with Celery task {task_result.id}")
 
             # Refresh job to get updated status
             updated_job = await service.get_job(job.id, owner_id=current_user.id)
@@ -262,8 +260,17 @@ async def list_md_verification_jobs(
     status: JobStatus | None = None,
     element_system: str | None = None,
     pagination: PaginationParams = Depends(PaginationParams),
-    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
-    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
+    _offset: int | None = Query(
+        default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"
+    ),
+    _limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=100,
+        alias="limit",
+        deprecated=True,
+        description="已弃用: 请使用 per_page 参数",
+    ),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobListResponse:
@@ -286,9 +293,7 @@ async def list_md_verification_jobs(
     effective_limit = _limit if _limit is not None else pagination.per_page
     effective_offset = _offset if _offset is not None else pagination.offset
     if _limit is not None:
-        pagination = PaginationParams(
-            page=((_offset or 0) // _limit) + 1, per_page=_limit
-        )
+        pagination = PaginationParams(page=((_offset or 0) // _limit) + 1, per_page=_limit)
     try:
         service = MDVerificationService(session)
         jobs = await service.list_jobs(

@@ -124,9 +124,7 @@ def _check_uncertainty_coverage(
         if not refs:
             continue
 
-        with_uncertainty = sum(
-            1 for r in refs if r.get("uncertainty") is not None
-        )
+        with_uncertainty = sum(1 for r in refs if r.get("uncertainty") is not None)
         total = len(refs)
         pct = with_uncertainty / total if total > 0 else 1.0
         coverage[system] = pct
@@ -134,11 +132,7 @@ def _check_uncertainty_coverage(
         if pct < config.min_uncertainty_coverage:
             findings.append(
                 AuditFinding(
-                    severity=(
-                        FindingSeverity.CRITICAL
-                        if pct < 0.70
-                        else FindingSeverity.HIGH
-                    ),
+                    severity=(FindingSeverity.CRITICAL if pct < 0.70 else FindingSeverity.HIGH),
                     check_type=CheckType.UNCERTAINTY_COVERAGE,
                     element_system=system,
                     description=(
@@ -194,9 +188,7 @@ def _check_recent_verification(
                     severity=FindingSeverity.HIGH,
                     check_type=CheckType.RECENT_VERIFICATION,
                     element_system=system,
-                    description=(
-                        f"{len(stale_refs)} stale verifications in {system}"
-                    ),
+                    description=(f"{len(stale_refs)} stale verifications in {system}"),
                     recommendation=(
                         f"Re-verify: {', '.join(stale_refs[:5])}"
                         f"{'...' if len(stale_refs) > 5 else ''}"
@@ -236,7 +228,11 @@ def _check_conflicts(
                 continue
 
             mean_val = sum(values) / len(values)
-            max_dev = max(abs(v - mean_val) / abs(mean_val) for v in values) if mean_val != 0 else float("inf")
+            max_dev = (
+                max(abs(v - mean_val) / abs(mean_val) for v in values)
+                if mean_val != 0
+                else float("inf")
+            )
 
             if max_dev > 0.20:  # 20% deviation
                 findings.append(
@@ -276,18 +272,14 @@ def _check_p0_completeness(
 
     for system in config.p0_systems:
         refs = refs_by_system.get(system, [])
-        covered_props = {
-            r.get("property_name") for r in refs if r.get("property_name")
-        }
+        covered_props = {r.get("property_name") for r in refs if r.get("property_name")}
         missing = set(config.core_properties) - covered_props
 
         if missing:
             findings.append(
                 AuditFinding(
                     severity=(
-                        FindingSeverity.CRITICAL
-                        if len(missing) >= 3
-                        else FindingSeverity.HIGH
+                        FindingSeverity.CRITICAL if len(missing) >= 3 else FindingSeverity.HIGH
                     ),
                     check_type=CheckType.P0_COMPLETENESS,
                     element_system=system,
@@ -296,8 +288,7 @@ def _check_p0_completeness(
                         f"{', '.join(sorted(missing))}"
                     ),
                     recommendation=(
-                        f"Gap-fill missing properties for {system}: "
-                        f"{', '.join(sorted(missing))}"
+                        f"Gap-fill missing properties for {system}: {', '.join(sorted(missing))}"
                     ),
                     metrics={
                         "covered": len(covered_props),
@@ -323,9 +314,7 @@ def _generate_summary(findings: tuple[AuditFinding, ...]) -> str:
     low = sum(1 for f in findings if f.severity == FindingSeverity.LOW)
 
     if critical > 0:
-        overall = (
-            f"CRITICAL: {critical} critical finding(s) require immediate attention. "
-        )
+        overall = f"CRITICAL: {critical} critical finding(s) require immediate attention. "
     elif high > 3:
         overall = f"NEEDS ATTENTION: {high} high-severity findings. "
     elif high > 0:
@@ -385,30 +374,22 @@ def run_quarterly_audit(
     # Check 1: Uncertainty coverage
     uncertainty_findings = _check_uncertainty_coverage(refs, config)
     all_findings.extend(uncertainty_findings)
-    logger.info(
-        "Uncertainty coverage check: %d findings", len(uncertainty_findings)
-    )
+    logger.info("Uncertainty coverage check: %d findings", len(uncertainty_findings))
 
     # Check 2: Recent verification
     verification_findings = _check_recent_verification(refs, config)
     all_findings.extend(verification_findings)
-    logger.info(
-        "Recent verification check: %d findings", len(verification_findings)
-    )
+    logger.info("Recent verification check: %d findings", len(verification_findings))
 
     # Check 3: Conflict detection
     conflict_findings = _check_conflicts(refs, config)
     all_findings.extend(conflict_findings)
-    logger.info(
-        "Conflict detection check: %d findings", len(conflict_findings)
-    )
+    logger.info("Conflict detection check: %d findings", len(conflict_findings))
 
     # Check 4: P0 completeness
     completeness_findings = _check_p0_completeness(refs, config)
     all_findings.extend(completeness_findings)
-    logger.info(
-        "P0 completeness check: %d findings", len(completeness_findings)
-    )
+    logger.info("P0 completeness check: %d findings", len(completeness_findings))
 
     # Compile report
     findings_tuple = tuple(all_findings)
@@ -420,9 +401,7 @@ def run_quarterly_audit(
     for system in config.p0_systems:
         sys_refs = refs.get(system, [])
         if sys_refs:
-            with_unc = sum(
-                1 for r in sys_refs if r.get("uncertainty") is not None
-            )
+            with_unc = sum(1 for r in sys_refs if r.get("uncertainty") is not None)
             p0_coverage[system] = round(with_unc / len(sys_refs), 3)
         else:
             p0_coverage[system] = 0.0

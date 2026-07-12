@@ -145,14 +145,18 @@ async def search_literature(
 
     Search across title, abstract, and DOI fields.
     """
-    stmt = select(DataSource).where(
-        DataSource.source_type == "journal_article",
-        or_(
-            DataSource.title.ilike(f"%{q}%"),
-            DataSource.abstract.ilike(f"%{q}%"),
-            DataSource.doi.ilike(f"%{q}%"),
-        ),
-    ).order_by(DataSource.created_at.desc())
+    stmt = (
+        select(DataSource)
+        .where(
+            DataSource.source_type == "journal_article",
+            or_(
+                DataSource.title.ilike(f"%{q}%"),
+                DataSource.abstract.ilike(f"%{q}%"),
+                DataSource.doi.ilike(f"%{q}%"),
+            ),
+        )
+        .order_by(DataSource.created_at.desc())
+    )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total_result = await db.execute(count_stmt)

@@ -120,9 +120,7 @@ class TestV4FieldsThroughQualityGate:
         assert record.composition == "UO2"
         assert record.element == "U"
         assert record.property_category == "structural"
-        assert record.context == (
-            "Measured at 300K using DFT-GGA with PAW pseudopotentials"
-        )
+        assert record.context == ("Measured at 300K using DFT-GGA with PAW pseudopotentials")
 
     @pytest.mark.asyncio
     async def test_v4_fields_nullable_when_absent(
@@ -384,8 +382,12 @@ class TestFullPipelineWithStubMode:
 
         # The pipeline stores fill_batch_id as a string; query with a cast
         # to match the model's UUID column (SQLite stores UUIDs as strings).
-        stmt = select(func.count()).select_from(RefGapFillStaging).where(
-            RefGapFillStaging.fill_batch_id.is_not(None),
+        stmt = (
+            select(func.count())
+            .select_from(RefGapFillStaging)
+            .where(
+                RefGapFillStaging.fill_batch_id.is_not(None),
+            )
         )
         result = await db_session.execute(stmt)
         batch_count = result.scalar_one()
@@ -715,6 +717,4 @@ class TestRangeValidationE2E:
             }
 
             result = await gate.process(ref)
-            assert result.range_validated is True, (
-                f"Value {value} at boundary should be valid"
-            )
+            assert result.range_validated is True, f"Value {value} at boundary should be valid"

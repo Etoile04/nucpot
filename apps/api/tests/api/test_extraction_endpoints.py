@@ -92,7 +92,9 @@ async def test_trigger_returns_202_with_doi_source_type(mock_trigger, async_clie
 @patch("nfm_db.api.v1.extraction.trigger_extraction", new_callable=AsyncMock)
 async def test_trigger_returns_202_with_url_source_type(mock_trigger, async_client):
     """Trigger extraction with source_type='url' should return 202."""
-    mock_result = _make_trigger_result(source_type="url", source_reference="https://example.com/paper.pdf")
+    mock_result = _make_trigger_result(
+        source_type="url", source_reference="https://example.com/paper.pdf"
+    )
     mock_trigger.return_value = mock_result
 
     payload = {
@@ -113,7 +115,9 @@ async def test_trigger_returns_202_with_url_source_type(mock_trigger, async_clie
 @patch("nfm_db.api.v1.extraction.trigger_extraction", new_callable=AsyncMock)
 async def test_trigger_returns_202_with_file_source_type(mock_trigger, async_client):
     """Trigger extraction with source_type='file' should return 202."""
-    mock_result = _make_trigger_result(source_type="file", source_reference="/data/papers/nuclear-material.pdf")
+    mock_result = _make_trigger_result(
+        source_type="file", source_reference="/data/papers/nuclear-material.pdf"
+    )
     mock_trigger.return_value = mock_result
 
     payload = {

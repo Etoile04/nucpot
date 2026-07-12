@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Import nfm-md-runner (optional dependency - task will fail gracefully if not installed)
 try:
     from nfm_md_runner import AnalysisManager
+
     NFM_MD_RUNNER_AVAILABLE = True
 except ImportError:
     NFM_MD_RUNNER_AVAILABLE = False
@@ -121,8 +122,7 @@ def _run_md_verification_task_impl(
         # -------------------------------------------------------------------------
         if not NFM_MD_RUNNER_AVAILABLE:
             error_msg = (
-                "nfm-md-runner package is not installed. "
-                "Install with: pip install nfm-md-runner"
+                "nfm-md-runner package is not installed. Install with: pip install nfm-md-runner"
             )
             logger.error(error_msg)
             raise ImportError(error_msg)
@@ -203,7 +203,7 @@ def _run_md_verification_task_impl(
         except ConnectionError as e:
             # Retry: HPC connection issues
             retry_count = getattr(self.request, "retries", 0)
-            backoff = 120 * (2 ** retry_count)
+            backoff = 120 * (2**retry_count)
             logger.warning(f"HPC connection error (retryable): {e}")
             raise self.retry(exc=e, countdown=backoff)
 
@@ -240,20 +240,12 @@ def _run_md_verification_task_impl(
                         await service.create_simulation_result(
                             {
                                 "verification_job_id": job_uuid,
-                                "trajectory_file_path": sim_data.get(
-                                    "trajectory_file_path", ""
-                                ),
-                                "thermodynamic_data": sim_data.get(
-                                    "thermodynamic_data", {}
-                                ),
-                                "simulation_time_ps": sim_data.get(
-                                    "simulation_time_ps", 0
-                                ),
+                                "trajectory_file_path": sim_data.get("trajectory_file_path", ""),
+                                "thermodynamic_data": sim_data.get("thermodynamic_data", {}),
+                                "simulation_time_ps": sim_data.get("simulation_time_ps", 0),
                                 "steps_completed": sim_data.get("steps_completed", 0),
                                 "final_energy": sim_data.get("final_energy", 0.0),
-                                "final_temperature": sim_data.get(
-                                    "final_temperature", 0.0
-                                ),
+                                "final_temperature": sim_data.get("final_temperature", 0.0),
                                 "final_pressure": sim_data.get("final_pressure", 0.0),
                             }
                         )
@@ -266,9 +258,7 @@ def _run_md_verification_task_impl(
                                 "verification_job_id": job_uuid,
                                 "defect_type": defect_data.get("defect_type", "other"),
                                 "concentration": defect_data.get("concentration", 0.0),
-                                "formation_energy": defect_data.get(
-                                    "formation_energy", 0.0
-                                ),
+                                "formation_energy": defect_data.get("formation_energy", 0.0),
                                 "metadata": defect_data.get("metadata", {}),
                             }
                         )
@@ -279,20 +269,14 @@ def _run_md_verification_task_impl(
                         await service.create_fitting_result(
                             {
                                 "verification_job_id": job_uuid,
-                                "fitting_method": fit_data.get(
-                                    "fitting_method", "other"
-                                ),
+                                "fitting_method": fit_data.get("fitting_method", "other"),
                                 "parameters": fit_data.get("parameters", {}),
-                                "quality_metrics": fit_data.get(
-                                    "quality_metrics", {}
-                                ),
+                                "quality_metrics": fit_data.get("quality_metrics", {}),
                             }
                         )
 
                     await session.commit()
-                    logger.info(
-                        f"Persisted results for job {job_id} to database"
-                    )
+                    logger.info(f"Persisted results for job {job_id} to database")
 
                 except Exception:
                     await session.rollback()
@@ -305,9 +289,7 @@ def _run_md_verification_task_impl(
                 f"Failed to persist results for job {job_id}: {e}",
                 exc_info=True,
             )
-            raise RuntimeError(
-                f"Database persistence failed for job {job_id}: {e}"
-            ) from e
+            raise RuntimeError(f"Database persistence failed for job {job_id}: {e}") from e
 
         # -------------------------------------------------------------------------
         # Step 5: Return task result
@@ -322,10 +304,7 @@ def _run_md_verification_task_impl(
             "timestamp": datetime.now().isoformat(),
         }
 
-        logger.info(
-            f"MD verification task completed for job {job_id} "
-            f"in {task_duration:.2f}s"
-        )
+        logger.info(f"MD verification task completed for job {job_id} in {task_duration:.2f}s")
 
         return result
 

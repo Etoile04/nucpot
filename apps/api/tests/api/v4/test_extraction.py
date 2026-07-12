@@ -46,7 +46,9 @@ def _make_job(
         error_message=error_message,
         created_at=now,
         started_at=now if status != JobStatus.QUEUED else None,
-        completed_at=now if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.PARTIAL) else None,
+        completed_at=now
+        if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.PARTIAL)
+        else None,
         figures=figures or [],
         tables=tables or [],
     )
@@ -583,9 +585,27 @@ async def test_get_result_with_category_filter(async_client) -> None:
         "nfm_db.api.v4.extraction._get_job_properties",
         new_callable=AsyncMock,
         return_value=[
-            {"property_name": "prop_a", "property_category": "structural", "confidence": "high", "value": 1.0, "unit": "m"},
-            {"property_name": "prop_b", "property_category": "thermal", "confidence": "high", "value": 2.0, "unit": "W/(m·K)"},
-            {"property_name": "prop_c", "property_category": "structural", "confidence": "high", "value": 3.0, "unit": "GPa"},
+            {
+                "property_name": "prop_a",
+                "property_category": "structural",
+                "confidence": "high",
+                "value": 1.0,
+                "unit": "m",
+            },
+            {
+                "property_name": "prop_b",
+                "property_category": "thermal",
+                "confidence": "high",
+                "value": 2.0,
+                "unit": "W/(m·K)",
+            },
+            {
+                "property_name": "prop_c",
+                "property_category": "structural",
+                "confidence": "high",
+                "value": 3.0,
+                "unit": "GPa",
+            },
         ],
     ):
         response = await async_client.get(

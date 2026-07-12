@@ -42,9 +42,7 @@ class _Candidate:
             return raw
         if isinstance(raw, str):
             return datetime.fromisoformat(raw)
-        raise ValueError(
-            f"extracted_at must be a datetime or ISO string, got {type(raw).__name__}"
-        )
+        raise ValueError(f"extracted_at must be a datetime or ISO string, got {type(raw).__name__}")
 
 
 # Re-export frozen Candidate so callers can inspect the shape if needed.
@@ -113,9 +111,7 @@ class ConflictResolver:
         }
 
         if strategy == ResolutionStrategy.MANUAL:
-            raise ValueError(
-                "Manual strategy requires human review; cannot auto-resolve"
-            )
+            raise ValueError("Manual strategy requires human review; cannot auto-resolve")
 
         resolver_fn = handler[strategy]
         result = resolver_fn(candidates)

@@ -221,9 +221,7 @@ async def test_update_material_partial(async_client, db_session) -> None:
 @pytest.mark.asyncio
 async def test_update_material_404(async_client) -> None:
     payload = {"name": "Ghost"}
-    response = await async_client.patch(
-        f"/api/v1/materials/{uuid.uuid4()}", json=payload
-    )
+    response = await async_client.patch(f"/api/v1/materials/{uuid.uuid4()}", json=payload)
     assert response.status_code == 404
 
 

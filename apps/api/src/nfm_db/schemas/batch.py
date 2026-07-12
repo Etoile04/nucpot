@@ -54,6 +54,7 @@ class BatchExportResponse(BaseModel):
 
 # --- Property measurement import row ---
 
+
 class PropertyMeasurementRow(BaseModel):
     """Single row for property measurement batch import.
 
@@ -74,6 +75,7 @@ class PropertyMeasurementRow(BaseModel):
 
 
 # --- Reference value import row ---
+
 
 class ReferenceValueRow(BaseModel):
     """Single row for reference value batch import."""

@@ -30,45 +30,7 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
-<<<<<<< HEAD
-from nfm_db.services.upload_service import PotentialUploadError
-
-# Optional v1 modules (may not exist in all branches yet)
-try:
-    from nfm_db.api.v1 import materials as materials_mod
-except ImportError:
-    materials_mod = None  # type: ignore[assignment]
-
-try:
-    from nfm_db.api.v1 import properties as properties_mod
-except ImportError:
-    properties_mod = None  # type: ignore[assignment]
-
-try:
-    from nfm_db.api.v1 import seed as seed_mod
-except ImportError:
-    seed_mod = None  # type: ignore[assignment]
-
-try:
-    from nfm_db.api.v1 import sources as sources_mod
-except ImportError:
-    sources_mod = None  # type: ignore[assignment]
-
-try:
-    from nfm_db.api.v1 import auth_endpoints
-except ImportError:
-    auth_endpoints = None  # type: ignore[assignment]
-
-try:
-    from nfm_db.api.v4 import extraction as v4_extraction
-except ImportError:
-    v4_extraction = None  # type: ignore[assignment]
-=======
-from nfm_db.api.v1.batch import (
-    materials_router as batch_materials_router,
-    properties_router as batch_properties_router,
-    reference_values_router as batch_reference_values_router,
-)
+from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.middleware.rate_limit import (
     NFMRateLimitMiddleware,
@@ -96,7 +58,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
     await close_lightrag_client()
 
->>>>>>> origin/main
 
 app = FastAPI(
     title="核燃料与材料物性数据库 API",
@@ -132,17 +93,32 @@ app = FastAPI(
     version="0.1.0",
     openapi_tags=[
         {"name": "材料管理", "description": "核燃料与材料的元数据管理(CRUD、搜索、分类)。"},
-        {"name": "物性数据", "description": "实验与计算物性测量数据,支持按材料/属性类型/时间筛选与统计分析。"},
+        {
+            "name": "物性数据",
+            "description": "实验与计算物性测量数据,支持按材料/属性类型/时间筛选与统计分析。",
+        },
         {"name": "势函数", "description": "分子动力学势函数元数据与文件附件管理。"},
         {"name": "数据源", "description": "参考数据源(期刊、数据库、报告)的元数据与作者管理。"},
-        {"name": "参考值", "description": "参考值批量入库、质量门控、审核队列、批准/驳回、外部校验回调。"},
+        {
+            "name": "参考值",
+            "description": "参考值批量入库、质量门控、审核队列、批准/驳回、外部校验回调。",
+        },
         {"name": "参考值缺口", "description": "覆盖率统计、缺口扫描与填充触发。"},
         {"name": "信息抽取", "description": "OntoFuel 文献信息抽取流水线(触发、状态查询)。"},
-        {"name": "本体管理", "description": "NFMD 本体的 NVL 图、节点邻居查询、模糊搜索、最短路径与同步。"},
+        {
+            "name": "本体管理",
+            "description": "NFMD 本体的 NVL 图、节点邻居查询、模糊搜索、最短路径与同步。",
+        },
         {"name": "可视化", "description": "本体统计与 NVL 可视化数据接口。"},
         {"name": "知识图谱", "description": "知识图谱节点的检索与查询。"},
-        {"name": "MD 验证", "description": "分子动力学验证作业的提交、列表、详情、状态、取消、模拟/缺陷/拟合结果。"},
-        {"name": "领域专家审核", "description": "领域专家审核工作流:参考值校验、F 级裁决、季度审计。"},
+        {
+            "name": "MD 验证",
+            "description": "分子动力学验证作业的提交、列表、详情、状态、取消、模拟/缺陷/拟合结果。",
+        },
+        {
+            "name": "领域专家审核",
+            "description": "领域专家审核工作流:参考值校验、F 级裁决、季度审计。",
+        },
         {"name": "冲突解决", "description": "多源数据冲突的列示与自动/手动解决策略。"},
         {"name": "审核流程", "description": "跨表的待审条目、溯源、状态更新、批量操作与统计。"},
         {"name": "文献管理", "description": "PDF 上传、解析与提取、检索与删除。"},
@@ -211,28 +187,6 @@ async def _upload_error_handler(_request: Request, exc: PotentialUploadError) ->
     )
 
 
-<<<<<<< HEAD
-app.include_router(health.router, prefix="/api/v1", tags=["health"])
-app.include_router(feedback.router, prefix="/api/v1", tags=["feedback"])
-app.include_router(reference_values.router, prefix="/api/v1", tags=["reference-values"])
-app.include_router(reference_gaps.router, prefix="/api/v1", tags=["reference-gaps"])
-app.include_router(extraction.router, prefix="/api/v1", tags=["extraction"])
-app.include_router(viz.router, prefix="/api/v1", tags=["visualization"])
-app.include_router(ontology.router, prefix="/api/v1", tags=["ontology"])
-app.include_router(verification.router, prefix="/api/v1/verification", tags=["verification"])
-app.include_router(md_verification.router, prefix="/api/v1/md-verification", tags=["md-verification"])
-if auth_endpoints is not None:
-    app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["authentication"])
-app.include_router(blog.router, prefix="/api/v1", tags=["blog"])
-app.include_router(potentials.router, prefix="/api/v1", tags=["potentials"])
-app.include_router(materials.router, prefix="/api/v1", tags=["materials"])
-app.include_router(properties.router, prefix="/api/v1", tags=["properties"])
-app.include_router(sources.router, prefix="/api/v1", tags=["sources"])
-if seed_mod is not None:
-    app.include_router(seed_mod.router, prefix="/api/v1", tags=["seed"])
-if v4_extraction is not None:
-    app.include_router(v4_extraction.router, prefix="/api/v4", tags=["v4-extraction"])
-=======
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["反馈"])
 app.include_router(reference_values.router, prefix="/api/v1", tags=["参考值"])
@@ -242,7 +196,7 @@ app.include_router(viz.router, prefix="/api/v1", tags=["可视化"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["本体管理"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["领域专家审核"])
 app.include_router(md_verification.router, prefix="/api/v1/md-verification", tags=["MD 验证"])
-app.include_router(auth_endpoints.router, prefix="/api/v1", tags=["认证"])
+app.include_router(auth_endpoints, prefix="/api/v1", tags=["认证"])
 app.include_router(blog.router, prefix="/api/v1", tags=["博客"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["势函数"])
 app.include_router(materials.router, prefix="/api/v1", tags=["材料管理"])
@@ -254,4 +208,3 @@ app.include_router(conflict.router, prefix="/api/v1/conflicts", tags=["冲突解
 app.include_router(literature.router, prefix="/api/v1/literature", tags=["文献管理"])
 app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
->>>>>>> origin/main

@@ -30,8 +30,7 @@ def _node_map(graph) -> dict[str, dict]:
 
 def _edge_set(graph) -> set[tuple[str, str, str]]:
     return {
-        (r["from"], r["to"], r["type"])
-        for r in graph.model_dump(by_alias=True)["relationships"]
+        (r["from"], r["to"], r["type"]) for r in graph.model_dump(by_alias=True)["relationships"]
     }
 
 
@@ -243,6 +242,4 @@ def test_build_record_ref_is_deterministic_relative_and_encoded() -> None:
     )
 
     # URL-encodes unsafe path/query segments.
-    assert build_record_ref("smirnov 2014", "U O2") == (
-        "/materials/U%20O2?corpus=smirnov%202014"
-    )
+    assert build_record_ref("smirnov 2014", "U O2") == ("/materials/U%20O2?corpus=smirnov%202014")

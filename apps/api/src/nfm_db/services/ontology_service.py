@@ -127,8 +127,7 @@ async def get_nvl_data(
     # Get relationships for filtered nodes
     node_ids = {n.id for n in nodes}
     relationships = [
-        r for r in SAMPLE_RELATIONSHIPS
-        if r.source in node_ids and r.target in node_ids
+        r for r in SAMPLE_RELATIONSHIPS if r.source in node_ids and r.target in node_ids
     ]
 
     return NvlResponse(nodes=nodes, relationships=relationships)
@@ -301,8 +300,7 @@ def _chunk_by_material(
 
     page_nodes = [nodes_by_id[nid] for nid in sorted(page_ids)]
     page_relationships = [
-        rel for rel in relationships
-        if rel.from_ in page_ids and rel.to in page_ids
+        rel for rel in relationships if rel.from_ in page_ids and rel.to in page_ids
     ]
     next_offset = index if index < total else None
     return page_nodes, page_relationships, next_offset
@@ -400,9 +398,7 @@ async def derive_ontology_graph(
     corpus_digest = _compute_source_digest(full_nodes, relationship_list)
 
     effective_limit = (
-        HARD_MAX_NODES
-        if max_nodes is None
-        else min(max(1, max_nodes), HARD_MAX_NODES)
+        HARD_MAX_NODES if max_nodes is None else min(max(1, max_nodes), HARD_MAX_NODES)
     )
 
     if total_nodes <= effective_limit:
@@ -424,9 +420,7 @@ async def derive_ontology_graph(
             offset=_decode_cursor(cursor),
         )
         pagination = OntologyPagination(
-            next_cursor=(
-                _encode_cursor(next_offset) if next_offset is not None else None
-            ),
+            next_cursor=(_encode_cursor(next_offset) if next_offset is not None else None),
             total=total_nodes,
         )
 

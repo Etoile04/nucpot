@@ -131,11 +131,13 @@ async def test_list_potentials_filter_by_elements(async_client, db_session) -> N
 @pytest.mark.asyncio
 async def test_list_potentials_filter_by_query(async_client, db_session) -> None:
     await _seed_potential(
-        db_session, name="uranium-eam",
+        db_session,
+        name="uranium-eam",
         description="Uranium EAM potential for nuclear fuel",
     )
     await _seed_potential(
-        db_session, name="zirconium-meam",
+        db_session,
+        name="zirconium-meam",
         description="Zirconium MEAM potential",
     )
 

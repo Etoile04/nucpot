@@ -14,7 +14,6 @@ Review queue (NFM-859):
 
 from __future__ import annotations
 
-import json
 import logging
 from uuid import UUID
 
@@ -52,8 +51,17 @@ async def search_kg_nodes(
         description="Query mode: omit or 'structured' for ILIKE search, 'lightrag' for semantic query",
     ),
     pagination: PaginationParams = Depends(PaginationParams),
-    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
-    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
+    _offset: int | None = Query(
+        default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"
+    ),
+    _limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=100,
+        alias="limit",
+        deprecated=True,
+        description="已弃用: 请使用 per_page 参数",
+    ),
     session: AsyncSession = Depends(get_db),
 ) -> KGSearchResponse | SemanticQueryResponse:
     """Search Knowledge Graph nodes with optional filters.
@@ -123,7 +131,12 @@ async def _semantic_query(
     if not is_lightrag_configured():
         logger.info("LightRAG not configured — falling back to structured search")
         return await _structured_search(
-            q=q, type=None, status="active", limit=limit, offset=0, session=session,
+            q=q,
+            type=None,
+            status="active",
+            limit=limit,
+            offset=0,
+            session=session,
         )
 
     try:
@@ -146,7 +159,12 @@ async def _semantic_query(
             exc_info=True,
         )
         return await _structured_search(
-            q=q, type=None, status="active", limit=limit, offset=0, session=session,
+            q=q,
+            type=None,
+            status="active",
+            limit=limit,
+            offset=0,
+            session=session,
         )
 
 
@@ -197,11 +215,7 @@ async def _structured_search(
 
     # Data query with pagination
     data_stmt = (
-        select(KGNode)
-        .where(*base_filter)
-        .order_by(KGNode.label.asc())
-        .limit(limit)
-        .offset(offset)
+        select(KGNode).where(*base_filter).order_by(KGNode.label.asc()).limit(limit).offset(offset)
     )
     rows = (await session.execute(data_stmt)).scalars().all()
 

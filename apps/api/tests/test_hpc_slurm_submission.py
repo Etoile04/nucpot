@@ -15,9 +15,7 @@ class TestSLURMScriptGeneration:
     def test_generate_slurm_script_with_basic_params(self):
         """Test SLURM script generation with basic parameters."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
@@ -28,7 +26,7 @@ class TestSLURMScriptGeneration:
             "memory": "16G",
             "walltime": "02:00:00",
             "partition": "compute",
-            "output_file": "lammps.out"
+            "output_file": "lammps.out",
         }
 
         script = orchestrator._generate_slurm_script(params)
@@ -45,9 +43,7 @@ class TestSLURMScriptGeneration:
     def test_generate_slurm_script_with_lammps_commands(self):
         """Test SLURM script includes LAMMPS execution commands."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
@@ -55,7 +51,7 @@ class TestSLURMScriptGeneration:
             "job_name": "md_sim",
             "lammps_executable": "/path/to/lmp_mpi",
             "input_file": "in.lammps",
-            "output_file": "lammps.out"
+            "output_file": "lammps.out",
         }
 
         script = orchestrator._generate_slurm_script(params)
@@ -72,9 +68,7 @@ class TestJobSubmissionInterface:
     async def test_submit_job_creates_database_record(self):
         """Test submit_job creates record in hpc_jobs table."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
@@ -87,14 +81,14 @@ class TestJobSubmissionInterface:
             "nodes": 1,
             "cpus_per_task": 4,
             "memory": "16G",
-            "walltime": "02:00:00"
+            "walltime": "02:00:00",
         }
 
         # Mock both SLURM submission and database operations
-        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
+        with patch("nfm_db.services.hpc_orchestration.submit_to_slurm") as mock_submit:
             mock_submit.return_value = "slurm-job-12345"
 
-            with patch('nfm_db.database.get_db') as mock_get_db:
+            with patch("nfm_db.database.get_db") as mock_get_db:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
@@ -103,11 +97,7 @@ class TestJobSubmissionInterface:
 
                 mock_get_db.return_value = mock_db_gen()
 
-                hpc_job_id = await orchestrator.submit_job(
-                    task_id,
-                    crystal_structure_file,
-                    params
-                )
+                hpc_job_id = await orchestrator.submit_job(task_id, crystal_structure_file, params)
 
                 assert hpc_job_id == "slurm-job-12345"
                 mock_submit.assert_called_once()
@@ -116,16 +106,14 @@ class TestJobSubmissionInterface:
     async def test_submit_job_queue_full_error(self):
         """Test submit_job raises error when SLURM queue is full."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
         task_id = str(uuid.uuid4())
         params = {"temperature": 300, "pressure": 1.0, "steps": 10000}
 
-        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
+        with patch("nfm_db.services.hpc_orchestration.submit_to_slurm") as mock_submit:
             # Simulate SLURM queue full error
             mock_submit.side_effect = JobSubmissionError("Slurm queue is full")
 
@@ -137,16 +125,14 @@ class TestJobSubmissionInterface:
     async def test_submit_job_permission_error(self):
         """Test submit_job raises error on permission denied."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
         task_id = str(uuid.uuid4())
         params = {"temperature": 300, "pressure": 1.0, "steps": 10000}
 
-        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
+        with patch("nfm_db.services.hpc_orchestration.submit_to_slurm") as mock_submit:
             # Simulate permission error
             mock_submit.side_effect = JobSubmissionError("Permission denied")
 
@@ -158,9 +144,7 @@ class TestJobSubmissionInterface:
     async def test_submit_job_invalid_parameters(self):
         """Test submit_job validates input parameters."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
@@ -182,9 +166,7 @@ class TestHPCJobsTablePopulation:
     async def test_submit_job_populates_hpc_jobs_table(self):
         """Test submit_job creates record in hpc_jobs table."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
@@ -192,10 +174,10 @@ class TestHPCJobsTablePopulation:
         crystal_structure_file = "/path/to/structure.cif"
         params = {"temperature": 300, "pressure": 1.0, "steps": 10000, "walltime": "02:00:00"}
 
-        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
+        with patch("nfm_db.services.hpc_orchestration.submit_to_slurm") as mock_submit:
             mock_submit.return_value = "slurm-67890"
 
-            with patch('nfm_db.database.get_db') as mock_get_db:
+            with patch("nfm_db.database.get_db") as mock_get_db:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
@@ -204,11 +186,7 @@ class TestHPCJobsTablePopulation:
 
                 mock_get_db.return_value = mock_db_gen()
 
-                hpc_job_id = await orchestrator.submit_job(
-                    task_id,
-                    crystal_structure_file,
-                    params
-                )
+                hpc_job_id = await orchestrator.submit_job(task_id, crystal_structure_file, params)
 
                 # Verify hpc_jobs record would be created
                 assert hpc_job_id == "slurm-67890"
@@ -217,19 +195,17 @@ class TestHPCJobsTablePopulation:
     async def test_hpc_job_record_contains_required_fields(self):
         """Test hpc_jobs record contains all required fields."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
         task_id = str(uuid.uuid4())
         params = {"temperature": 300, "pressure": 1.0, "steps": 5000, "walltime": "01:00:00"}
 
-        with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
+        with patch("nfm_db.services.hpc_orchestration.submit_to_slurm") as mock_submit:
             mock_submit.return_value = "slurm-11111"
 
-            with patch('nfm_db.database.get_db') as mock_get_db:
+            with patch("nfm_db.database.get_db") as mock_get_db:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
@@ -238,11 +214,7 @@ class TestHPCJobsTablePopulation:
 
                 mock_get_db.return_value = mock_db_gen()
 
-                hpc_job_id = await orchestrator.submit_job(
-                    task_id,
-                    "/path/file.cif",
-                    params
-                )
+                hpc_job_id = await orchestrator.submit_job(task_id, "/path/file.cif", params)
 
                 # Verify job submission ID format
                 assert "slurm-" in hpc_job_id
@@ -255,9 +227,7 @@ class TestJobSubmissionSuccessRate:
     async def test_submit_job_success_rate_above_threshold(self):
         """Test job submission success rate exceeds 90% threshold."""
         config = SSHConnectionConfig(
-            hosts=("login01.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("login01.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
         orchestrator = HPCOrchestrator(config)
 
@@ -267,7 +237,7 @@ class TestJobSubmissionSuccessRate:
 
         for i in range(total_attempts):
             task_id = str(uuid.uuid4())
-            with patch('nfm_db.services.hpc_orchestration.submit_to_slurm') as mock_submit:
+            with patch("nfm_db.services.hpc_orchestration.submit_to_slurm") as mock_submit:
                 # Simulate 95% success rate (only 1 failure)
                 if i == 5:
                     mock_submit.side_effect = JobSubmissionError("Transient error")
@@ -275,7 +245,8 @@ class TestJobSubmissionSuccessRate:
                     mock_submit.return_value = f"slurm-{i}"
 
                 # Mock database to avoid connection errors
-                with patch('nfm_db.database.get_db') as mock_get_db:
+                with patch("nfm_db.database.get_db") as mock_get_db:
+
                     async def mock_db_gen():
                         mock_db = AsyncMock()
                         mock_db.add = MagicMock()

@@ -215,13 +215,9 @@ class TestSubmitMDVerificationJob:
         mock_instance.get_job = AsyncMock(return_value=submitted_job)
         mock_service_cls.return_value = mock_instance
 
-        mock_celery_app.send_task = MagicMock(
-            return_value=MagicMock(id=MOCK_CELERY_TASK_ID)
-        )
+        mock_celery_app.send_task = MagicMock(return_value=MagicMock(id=MOCK_CELERY_TASK_ID))
 
-        with patch(
-            "nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True
-        ):
+        with patch("nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True):
             response = await client_with_auth.post(
                 f"{BASE_URL}/jobs",
                 json=SUBMIT_PAYLOAD,

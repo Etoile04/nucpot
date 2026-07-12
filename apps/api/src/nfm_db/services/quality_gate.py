@@ -32,9 +32,9 @@ from nfm_db.models.ref_gap_fill import (
 logger = logging.getLogger(__name__)
 
 # Default path to property-mapping.json (bundled with nfm-ref-gapfill)
-_DEFAULT_PROPERTY_MAPPING_PATH = Path(
-    __file__
-).resolve().parent.parent.parent.parent.parent / "property-mapping.json"
+_DEFAULT_PROPERTY_MAPPING_PATH = (
+    Path(__file__).resolve().parent.parent.parent.parent.parent / "property-mapping.json"
+)
 
 
 class GateDecision(StrEnum):
@@ -149,13 +149,15 @@ def compute_dedup_hash(
     Per NFM-54 design: SHA256("{element_system}|{phase}|{property_name}|{method}|{source}").
     Same 5-field key as write_ref_value.py in nfm-ref-gapfill.
     """
-    key = "|".join([
-        str(element_system or ""),
-        str(phase or ""),
-        str(property_name or ""),
-        str(method or ""),
-        str(source or ""),
-    ])
+    key = "|".join(
+        [
+            str(element_system or ""),
+            str(phase or ""),
+            str(property_name or ""),
+            str(method or ""),
+            str(source or ""),
+        ]
+    )
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
@@ -223,9 +225,13 @@ class QualityGateService:
 
     async def check_duplicate(self, dedup_hash: str) -> bool:
         """Return True if a record with this dedup_hash already exists in staging."""
-        stmt = select(RefGapFillStaging.id).where(
-            RefGapFillStaging.dedup_hash == dedup_hash,
-        ).limit(1)
+        stmt = (
+            select(RefGapFillStaging.id)
+            .where(
+                RefGapFillStaging.dedup_hash == dedup_hash,
+            )
+            .limit(1)
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -300,7 +306,9 @@ class QualityGateService:
         # Step 4: Confidence routing
         confidence = Confidence(ref_data.get("confidence", "medium"))
         decision, _ = self._route_confidence(
-            confidence, range_result.is_valid, range_result.range_exists,
+            confidence,
+            range_result.is_valid,
+            range_result.range_exists,
         )
 
         return GateResult(
@@ -355,9 +363,7 @@ class QualityGateService:
         record = RefGapFillStaging(
             element_system=str(ref_data.get("element_system", "")),
             phase=ref_data.get("phase"),
-            property_name=str(
-                ref_data.get("property", ref_data.get("property_name", ""))
-            ),
+            property_name=str(ref_data.get("property", ref_data.get("property_name", ""))),
             value=float(ref_data.get("value", 0)),
             unit=str(ref_data.get("unit", "")),
             method=ref_data.get("method"),

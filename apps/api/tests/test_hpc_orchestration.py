@@ -22,7 +22,7 @@ class TestSSHConnectionManager:
             host="test.example.com",
             username="testuser",
             ssh_key_path="/path/to/key",
-            max_connections=10
+            max_connections=10,
         )
 
         assert manager.host == "test.example.com"
@@ -37,10 +37,10 @@ class TestSSHConnectionManager:
             username="testuser",
             ssh_key_path="/path/to/key",
             max_connections=2,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch("paramiko.SSHClient") as mock_ssh:
             mock_client = MagicMock()
             mock_ssh.return_value = mock_client
 
@@ -57,11 +57,11 @@ class TestSSHConnectionManager:
             username="testuser",
             ssh_key_path="/path/to/key",
             max_connections=1,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         # Acquire the only connection
-        with patch('paramiko.SSHClient'):
+        with patch("paramiko.SSHClient"):
             manager.acquire_connection()
 
             # Try to acquire another - should fail
@@ -75,10 +75,10 @@ class TestSSHConnectionManager:
             username="testuser",
             ssh_key_path="/path/to/key",
             max_connections=2,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
-        with patch('paramiko.SSHClient'):
+        with patch("paramiko.SSHClient"):
             conn = manager.acquire_connection()
             assert manager.available_connections == 1
 
@@ -91,10 +91,10 @@ class TestSSHConnectionManager:
             host="test.example.com",
             username="testuser",
             ssh_key_path="/path/to/key",
-            max_connections=2
+            max_connections=2,
         )
 
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch("paramiko.SSHClient") as mock_ssh:
             mock_client = MagicMock()
             mock_client.exec_command.return_value = (MagicMock(), MagicMock(), MagicMock())
             mock_ssh.return_value = mock_client
@@ -110,7 +110,7 @@ class TestSSHConnectionManager:
             host="test.example.com",
             username="testuser",
             ssh_key_path="/path/to/key",
-            max_connections=2
+            max_connections=2,
         )
 
         mock_client = MagicMock()
@@ -127,10 +127,10 @@ class TestSSHConnectionManager:
             username="testuser",
             ssh_key_path="/path/to/key",
             max_connections=2,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch("paramiko.SSHClient") as mock_ssh:
             # First connection fails, second succeeds
             mock_ssh.side_effect = [Exception("Failed"), MagicMock()]
 
@@ -146,7 +146,7 @@ class TestSSHConnectionManager:
             hosts=["login01.example.com", "login02.example.com", "login03.example.com"],
             username="testuser",
             ssh_key_path="/path/to/key",
-            max_connections=10
+            max_connections=10,
         )
 
         assert len(manager.hosts) == 3
@@ -165,10 +165,10 @@ class TestSSHKeyAuthentication:
             username="testuser",
             ssh_key_path="/path/to/key",
             max_connections=2,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch("paramiko.SSHClient") as mock_ssh:
             mock_client = MagicMock()
             mock_ssh.return_value = mock_client
             mock_client.connect.return_value = None
@@ -177,8 +177,8 @@ class TestSSHKeyAuthentication:
 
             # Verify password was never used
             call_kwargs = mock_client.connect.call_args[1] if mock_client.connect.call_args else {}
-            assert 'password' not in call_kwargs
-            assert 'key_filename' in call_kwargs or 'pkey' in call_kwargs
+            assert "password" not in call_kwargs
+            assert "key_filename" in call_kwargs or "pkey" in call_kwargs
 
     def test_missing_ssh_key_raises_error(self):
         """Test missing SSH key file raises appropriate error."""
@@ -186,7 +186,7 @@ class TestSSHKeyAuthentication:
             host="test.example.com",
             username="testuser",
             ssh_key_path="/nonexistent/path/to/key",
-            max_connections=2
+            max_connections=2,
         )
 
         with pytest.raises(FileNotFoundError, match="SSH key file not found"):
@@ -205,7 +205,7 @@ class TestPhase45Failover:
             backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
-            failover_threshold_seconds=300
+            failover_threshold_seconds=300,
         )
 
         orchestrator = HPCOrchestrator(config)
@@ -219,7 +219,7 @@ class TestPhase45Failover:
         config = SSHConnectionConfig(
             hosts=("primary.example.com",),
             username="primary_user",
-            ssh_key_path="/path/to/primary_key"
+            ssh_key_path="/path/to/primary_key",
         )
 
         orchestrator = HPCOrchestrator(config)
@@ -233,12 +233,14 @@ class TestPhase45Failover:
             hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
 
-        with patch.object(orchestrator.ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(
+            orchestrator.ssh_manager, "acquire_connection_with_retry"
+        ) as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
@@ -253,12 +255,14 @@ class TestPhase45Failover:
             hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
 
-        with patch.object(orchestrator.ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(
+            orchestrator.ssh_manager, "acquire_connection_with_retry"
+        ) as mock_acquire:
             mock_acquire.return_value = None
 
             is_healthy = orchestrator.check_primary_health()
@@ -271,7 +275,7 @@ class TestPhase45Failover:
             hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
@@ -294,7 +298,7 @@ class TestPhase45Failover:
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             failover_threshold_seconds=300,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
@@ -315,12 +319,14 @@ class TestPhase45Failover:
             backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
 
-        with patch.object(orchestrator.failover_manager._backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(
+            orchestrator.failover_manager._backup_ssh_manager, "acquire_connection_with_retry"
+        ) as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
@@ -333,9 +339,7 @@ class TestPhase45Failover:
     def test_trigger_failover_no_backup(self):
         """Test failover fails when no backup configured."""
         config = SSHConnectionConfig(
-            hosts=("primary.example.com",),
-            username="testuser",
-            ssh_key_path="/path/to/key"
+            hosts=("primary.example.com",), username="testuser", ssh_key_path="/path/to/key"
         )
 
         orchestrator = HPCOrchestrator(config)
@@ -350,14 +354,14 @@ class TestPhase45Failover:
             hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
         orchestrator.failover_manager.primary_healthy = False
 
-        with patch.object(orchestrator.failover_manager, 'check_primary_health', return_value=True):
-            with patch.object(orchestrator.failover_manager, 'log_failover_event'):
+        with patch.object(orchestrator.failover_manager, "check_primary_health", return_value=True):
+            with patch.object(orchestrator.failover_manager, "log_failover_event"):
                 recovered = asyncio.run(orchestrator.try_recover_primary())
 
             assert recovered is True
@@ -375,13 +379,13 @@ class TestThreadSafety:
             username="testuser",
             ssh_key_path="/path/to/key",
             max_connections=2,
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         # Verify _connection_lock is a threading.Lock instance
-        assert hasattr(manager._connection_lock, 'acquire')
-        assert hasattr(manager._connection_lock, 'release')
-        assert hasattr(manager._connection_lock, 'locked')
+        assert hasattr(manager._connection_lock, "acquire")
+        assert hasattr(manager._connection_lock, "release")
+        assert hasattr(manager._connection_lock, "locked")
 
 
 class TestCleanup:
@@ -393,13 +397,13 @@ class TestCleanup:
             hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
 
         # cleanup() delegates to failover_manager.cleanup()
-        with patch.object(orchestrator.failover_manager, 'cleanup') as mock_cleanup:
+        with patch.object(orchestrator.failover_manager, "cleanup") as mock_cleanup:
             orchestrator.cleanup()
             mock_cleanup.assert_called_once()
 
@@ -412,12 +416,12 @@ class TestCleanup:
             backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
 
         orchestrator = HPCOrchestrator(config)
 
         # Cleanup delegates to failover_manager which handles both primary and backup
-        with patch.object(orchestrator.failover_manager, 'cleanup') as mock_failover_cleanup:
+        with patch.object(orchestrator.failover_manager, "cleanup") as mock_failover_cleanup:
             orchestrator.cleanup()
             mock_failover_cleanup.assert_called_once()

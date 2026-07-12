@@ -70,12 +70,12 @@ def _build_detection_prompt() -> str:
         "research papers. Analyze this page image and identify ALL figure and "
         "table regions.\n\n"
         "For each detected region, return:\n"
-        "1. \"type\": one of \"plot\", \"table\", \"microstructure\", \"diagram\"\n"
-        "2. \"bbox\": [x, y, width, height] in pixels (top-left origin)\n"
-        "3. \"confidence\": 0.0 to 1.0\n"
-        "4. \"caption\": any caption or label text near the figure\n\n"
-        "Return ONLY a JSON object with key \"figures\" containing a list of "
-        "these objects. If no figures are found, return {\"figures\": []}.\n\n"
+        '1. "type": one of "plot", "table", "microstructure", "diagram"\n'
+        '2. "bbox": [x, y, width, height] in pixels (top-left origin)\n'
+        '3. "confidence": 0.0 to 1.0\n'
+        '4. "caption": any caption or label text near the figure\n\n'
+        'Return ONLY a JSON object with key "figures" containing a list of '
+        'these objects. If no figures are found, return {"figures": []}.\n\n'
         "Important:\n"
         "- Include ALL figures, tables, charts, and microstructure images\n"
         "- Bounding boxes must be within the page dimensions\n"
@@ -87,7 +87,7 @@ def _build_detection_prompt() -> str:
 def _build_classification_prompt(figure_type: str) -> str:
     """Build a refinement prompt for ambiguous figure types."""
     return (
-        f"You classified a figure as \"{figure_type}\". "
+        f'You classified a figure as "{figure_type}". '
         "Confirm or correct the classification. "
         "Choose from: plot, table, microstructure, diagram. "
         "Return ONLY the type string, nothing else."
@@ -133,9 +133,7 @@ class FigureDetector:
             os.environ.get("FIGURE_DETECTION_MIN_AREA", _DEFAULT_MIN_AREA)
         )
         self.overlap_threshold = overlap_threshold or float(
-            os.environ.get(
-                "FIGURE_DETECTION_OVERLAP_THRESHOLD", _DEFAULT_OVERLAP_THRESHOLD
-            )
+            os.environ.get("FIGURE_DETECTION_OVERLAP_THRESHOLD", _DEFAULT_OVERLAP_THRESHOLD)
         )
         self._vision_client = vision_client
         self._page_splitter = page_splitter or PageSplitter()
@@ -163,9 +161,7 @@ class FigureDetector:
         try:
             page_images = self._page_splitter.split(pdf_source)
         except PageSplitterError as exc:
-            raise FigureDetectorError(
-                f"Failed to split PDF for detection: {exc}"
-            ) from exc
+            raise FigureDetectorError(f"Failed to split PDF for detection: {exc}") from exc
 
         if not page_images:
             return FigureDetectionResult(
@@ -223,10 +219,7 @@ class FigureDetector:
         """Run detection on a single page image."""
         raw_figures = await self._call_vlm_detection(page)
 
-        detected = [
-            self._parse_detected_figure(raw_fig, page.index)
-            for raw_fig in raw_figures
-        ]
+        detected = [self._parse_detected_figure(raw_fig, page.index) for raw_fig in raw_figures]
 
         filtered = self._filter_figures(detected, page.width, page.height)
         deduplicated = self._non_max_suppression(filtered)
@@ -238,9 +231,7 @@ class FigureDetector:
             figures=deduplicated,
         )
 
-    async def _call_vlm_detection(
-        self, page: PageImage
-    ) -> list[dict[str, Any]]:
+    async def _call_vlm_detection(self, page: PageImage) -> list[dict[str, Any]]:
         """Call VLM to detect figure regions on a page image.
 
         Returns a list of raw figure dicts from the VLM response.

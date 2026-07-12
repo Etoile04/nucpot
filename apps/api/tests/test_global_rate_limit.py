@@ -38,9 +38,7 @@ def _build_app(limiter_instance: Limiter) -> FastAPI:
 
     # Sync handler — SlowAPIMiddleware uses sync_check_limits which
     # falls back to the default handler for async callables.
-    def _rate_limit_handler(
-        request: Request, exc: RateLimitExceeded
-    ) -> JSONResponse:
+    def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
         response = JSONResponse(
             status_code=429,
             content={
@@ -70,16 +68,12 @@ def _build_app(limiter_instance: Limiter) -> FastAPI:
             handler = _find_route_handler(app.routes, request.scope)
             if _should_exempt(inner_limiter, handler):
                 return await call_next(request)
-            error_response, should_inject = sync_check_limits(
-                inner_limiter, request, handler, app
-            )
+            error_response, should_inject = sync_check_limits(inner_limiter, request, handler, app)
             if error_response is not None:
                 return error_response
             response = await call_next(request)
             if should_inject:
-                response = inner_limiter._inject_headers(
-                    response, request.state.view_rate_limit
-                )
+                response = inner_limiter._inject_headers(response, request.state.view_rate_limit)
             return response
 
     app.add_middleware(APIOnlyRateLimitMiddleware)

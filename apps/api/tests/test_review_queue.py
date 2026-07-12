@@ -302,11 +302,15 @@ class TestListPendingReviews:
         await db_session.flush()
 
         await add_to_review_queue(
-            db_session, item_type="entity", item_id=node1.id,
+            db_session,
+            item_type="entity",
+            item_id=node1.id,
             review_reason="Low confidence",
         )
         await add_to_review_queue(
-            db_session, item_type="entity", item_id=node2.id,
+            db_session,
+            item_type="entity",
+            item_id=node2.id,
             review_reason="Very low confidence",
         )
         await db_session.flush()
@@ -324,7 +328,9 @@ class TestListPendingReviews:
         await db_session.flush()
 
         await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence entity",
         )
 
@@ -337,12 +343,15 @@ class TestListPendingReviews:
         db_session.add(edge)
         await db_session.flush()
         await add_to_review_queue(
-            db_session, item_type="relation", item_id=edge.id,
+            db_session,
+            item_type="relation",
+            item_id=edge.id,
             review_reason="Low confidence relation",
         )
 
         entity_items, entity_total = await list_pending_reviews(
-            db_session, item_type="entity",
+            db_session,
+            item_type="entity",
         )
         assert entity_total == 1
         assert entity_items[0]["item_type"] == "entity"
@@ -354,7 +363,9 @@ class TestListPendingReviews:
         await db_session.flush()
 
         item = await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence",
         )
 
@@ -367,14 +378,18 @@ class TestListPendingReviews:
     @pytest.mark.asyncio
     async def test_entity_data_attached(self, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", confidence=0.4,
+            node_type="Material",
+            label="UO2",
+            confidence=0.4,
             properties={"chemical_formula": "UO2"},
         )
         db_session.add(node)
         await db_session.flush()
 
         await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence",
         )
 
@@ -390,19 +405,25 @@ class TestApproveReviewItem:
     @pytest.mark.asyncio
     async def test_approve_entity_sets_active(self, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", status="pending_review",
+            node_type="Material",
+            label="UO2",
+            status="pending_review",
             confidence=0.4,
         )
         db_session.add(node)
         await db_session.flush()
 
         item = await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence",
         )
 
         result = await approve_review_item(
-            db_session, review_id=item.id, reviewer_notes="Looks valid",
+            db_session,
+            review_id=item.id,
+            reviewer_notes="Looks valid",
         )
         assert result["status"] == "approved"
         assert result["reviewer_notes"] == "Looks valid"
@@ -413,25 +434,32 @@ class TestApproveReviewItem:
     @pytest.mark.asyncio
     async def test_approve_nonexistent_returns_404(self, db_session: AsyncSession) -> None:
         import uuid
+
         result = await approve_review_item(
-            db_session, review_id=uuid.uuid4(),
+            db_session,
+            review_id=uuid.uuid4(),
         )
         assert result["error"] == "Review item not found"
         assert result["status_code"] == 404
 
     @pytest.mark.asyncio
     async def test_approve_already_approved_returns_409(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", status="pending_review",
+            node_type="Material",
+            label="UO2",
+            status="pending_review",
             confidence=0.4,
         )
         db_session.add(node)
         await db_session.flush()
 
         item = await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence",
         )
         await approve_review_item(db_session, review_id=item.id)
@@ -447,19 +475,25 @@ class TestRejectReviewItem:
     @pytest.mark.asyncio
     async def test_reject_entity_deprecates_node(self, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", status="pending_review",
+            node_type="Material",
+            label="UO2",
+            status="pending_review",
             confidence=0.3,
         )
         db_session.add(node)
         await db_session.flush()
 
         item = await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence",
         )
 
         result = await reject_review_item(
-            db_session, review_id=item.id, reason="Invalid material",
+            db_session,
+            review_id=item.id,
+            reason="Invalid material",
         )
         assert result["status"] == "rejected"
         assert result["reviewer_notes"] == "Invalid material"
@@ -484,12 +518,16 @@ class TestRejectReviewItem:
         await db_session.flush()
 
         item = await add_to_review_queue(
-            db_session, item_type="relation", item_id=edge.id,
+            db_session,
+            item_type="relation",
+            item_id=edge.id,
             review_reason="Low confidence relation",
         )
 
         await reject_review_item(
-            db_session, review_id=item.id, reason="Incorrect relation",
+            db_session,
+            review_id=item.id,
+            reason="Incorrect relation",
         )
 
         deleted = await db_session.get(KGEdge, edge.id)
@@ -498,33 +536,45 @@ class TestRejectReviewItem:
     @pytest.mark.asyncio
     async def test_reject_nonexistent_returns_404(self, db_session: AsyncSession) -> None:
         import uuid
+
         result = await reject_review_item(
-            db_session, review_id=uuid.uuid4(), reason="No such item",
+            db_session,
+            review_id=uuid.uuid4(),
+            reason="No such item",
         )
         assert result["error"] == "Review item not found"
         assert result["status_code"] == 404
 
     @pytest.mark.asyncio
     async def test_reject_already_rejected_returns_409(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", status="pending_review",
+            node_type="Material",
+            label="UO2",
+            status="pending_review",
             confidence=0.3,
         )
         db_session.add(node)
         await db_session.flush()
 
         item = await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence",
         )
         await reject_review_item(
-            db_session, review_id=item.id, reason="Invalid",
+            db_session,
+            review_id=item.id,
+            reason="Invalid",
         )
 
         result = await reject_review_item(
-            db_session, review_id=item.id, reason="Still invalid",
+            db_session,
+            review_id=item.id,
+            reason="Still invalid",
         )
         assert "already rejected" in result["error"]
         assert result["status_code"] == 409
@@ -541,7 +591,9 @@ class TestAutoRouteToReview:
     @pytest.mark.asyncio
     async def test_low_confidence_node_routed(self, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="Unknown", confidence=0.4,
+            node_type="Material",
+            label="Unknown",
+            confidence=0.4,
         )
         db_session.add(node)
         await db_session.flush()
@@ -557,7 +609,9 @@ class TestAutoRouteToReview:
     @pytest.mark.asyncio
     async def test_high_confidence_node_not_routed(self, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", confidence=0.9,
+            node_type="Material",
+            label="UO2",
+            confidence=0.9,
         )
         db_session.add(node)
         await db_session.flush()
@@ -628,7 +682,9 @@ class TestReviewQueueAPI:
     @pytest.mark.asyncio
     async def test_get_queue_with_items(self, async_client, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", confidence=0.4,
+            node_type="Material",
+            label="UO2",
+            confidence=0.4,
             status="pending_review",
         )
         db_session.add(node)
@@ -651,7 +707,9 @@ class TestReviewQueueAPI:
     @pytest.mark.asyncio
     async def test_approve_endpoint(self, async_client, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", confidence=0.4,
+            node_type="Material",
+            label="UO2",
+            confidence=0.4,
             status="pending_review",
         )
         db_session.add(node)
@@ -677,7 +735,9 @@ class TestReviewQueueAPI:
     @pytest.mark.asyncio
     async def test_reject_endpoint(self, async_client, db_session: AsyncSession) -> None:
         node = KGNode(
-            node_type="Material", label="UO2", confidence=0.3,
+            node_type="Material",
+            label="UO2",
+            confidence=0.3,
             status="pending_review",
         )
         db_session.add(node)
@@ -703,6 +763,7 @@ class TestReviewQueueAPI:
     @pytest.mark.asyncio
     async def test_approve_nonexistent_returns_404(self, async_client) -> None:
         import uuid
+
         response = await async_client.post(
             f"/api/v1/kg/review/{uuid.uuid4()}/approve",
             json={},
@@ -712,6 +773,7 @@ class TestReviewQueueAPI:
     @pytest.mark.asyncio
     async def test_reject_nonexistent_returns_404(self, async_client) -> None:
         import uuid
+
         response = await async_client.post(
             f"/api/v1/kg/review/{uuid.uuid4()}/reject",
             json={"reason": "Not found"},
@@ -720,10 +782,14 @@ class TestReviewQueueAPI:
 
     @pytest.mark.asyncio
     async def test_filter_queue_by_entity_type(
-        self, async_client, db_session: AsyncSession,
+        self,
+        async_client,
+        db_session: AsyncSession,
     ) -> None:
         node = KGNode(
-            node_type="Material", label="Mat-A", confidence=0.4,
+            node_type="Material",
+            label="Mat-A",
+            confidence=0.4,
             status="pending_review",
         )
         source = KGNode(node_type="Material", label="UO2")
@@ -732,7 +798,9 @@ class TestReviewQueueAPI:
         await db_session.flush()
 
         await add_to_review_queue(
-            db_session, item_type="entity", item_id=node.id,
+            db_session,
+            item_type="entity",
+            item_id=node.id,
             review_reason="Low confidence entity",
         )
 
@@ -745,7 +813,9 @@ class TestReviewQueueAPI:
         db_session.add(edge)
         await db_session.flush()
         await add_to_review_queue(
-            db_session, item_type="relation", item_id=edge.id,
+            db_session,
+            item_type="relation",
+            item_id=edge.id,
             review_reason="Low confidence relation",
         )
         await db_session.commit()

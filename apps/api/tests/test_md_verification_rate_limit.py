@@ -36,6 +36,7 @@ _JOB_PAYLOAD = {
 @pytest.fixture
 async def _auth_override(admin_user: User):
     """Override get_current_user so the stub auth doesn't block tests."""
+
     async def _fake_current_user() -> User:
         return admin_user
 
@@ -53,14 +54,13 @@ async def test_md_job_submission_rate_limit_returns_429(
 ) -> None:
     """After the limit, the next submission request is 429 with a Retry-After header."""
     tight = InProcessRateLimiter(max_requests=2, window_seconds=60)
-    app.dependency_overrides[md_verification_rate_limit] = (
-        make_rate_limit_dependency(tight)
-    )
+    app.dependency_overrides[md_verification_rate_limit] = make_rate_limit_dependency(tight)
 
     try:
         with (
             patch(
-                "nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True,
+                "nfm_db.api.v1.md_verification.CELERY_AVAILABLE",
+                True,
             ),
             patch(
                 "nfm_db.api.v1.md_verification.celery_app.send_task",
@@ -69,24 +69,23 @@ async def test_md_job_submission_rate_limit_returns_429(
             mock_send_task.return_value = MagicMock(id="test-task-id")
 
             first = await async_client.post(
-                _SUBMIT_URL, json=_JOB_PAYLOAD,
+                _SUBMIT_URL,
+                json=_JOB_PAYLOAD,
             )
             second = await async_client.post(
-                _SUBMIT_URL, json=_JOB_PAYLOAD,
+                _SUBMIT_URL,
+                json=_JOB_PAYLOAD,
             )
             third = await async_client.post(
-                _SUBMIT_URL, json=_JOB_PAYLOAD,
+                _SUBMIT_URL,
+                json=_JOB_PAYLOAD,
             )
 
-            assert first.status_code == 201, (
-                f"Expected 201, got {first.status_code}: {first.text}"
-            )
+            assert first.status_code == 201, f"Expected 201, got {first.status_code}: {first.text}"
             assert second.status_code == 201, (
                 f"Expected 201, got {second.status_code}: {second.text}"
             )
-            assert third.status_code == 429, (
-                f"Expected 429, got {third.status_code}: {third.text}"
-            )
+            assert third.status_code == 429, f"Expected 429, got {third.status_code}: {third.text}"
             assert "retry-after" in {k.lower() for k in third.headers}
     finally:
         app.dependency_overrides.pop(md_verification_rate_limit, None)
@@ -101,14 +100,13 @@ async def test_md_job_submission_under_limit_succeeds(
 ) -> None:
     """Requests within the rate limit are accepted normally."""
     limiter = InProcessRateLimiter(max_requests=5, window_seconds=60)
-    app.dependency_overrides[md_verification_rate_limit] = (
-        make_rate_limit_dependency(limiter)
-    )
+    app.dependency_overrides[md_verification_rate_limit] = make_rate_limit_dependency(limiter)
 
     try:
         with (
             patch(
-                "nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True,
+                "nfm_db.api.v1.md_verification.CELERY_AVAILABLE",
+                True,
             ),
             patch(
                 "nfm_db.api.v1.md_verification.celery_app.send_task",
@@ -117,7 +115,8 @@ async def test_md_job_submission_under_limit_succeeds(
             mock_send_task.return_value = MagicMock(id="test-task-id")
 
             response = await async_client.post(
-                _SUBMIT_URL, json=_JOB_PAYLOAD,
+                _SUBMIT_URL,
+                json=_JOB_PAYLOAD,
             )
 
             assert response.status_code == 201, (

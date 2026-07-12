@@ -32,7 +32,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_with_defaults(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode can be created with required fields; defaults applied."""
         node = KGNode(
@@ -56,7 +57,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_property(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode node_type=Property accepted."""
         node = KGNode(node_type="Property", label="Thermal Conductivity")
@@ -68,7 +70,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_experiment(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode node_type=Experiment accepted."""
         node = KGNode(node_type="Experiment", label="Irradiation Test #42")
@@ -80,7 +83,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_condition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode node_type=Condition accepted."""
         node = KGNode(node_type="Condition", label="1200K, inert atmosphere")
@@ -92,7 +96,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_publication(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode node_type=Publication accepted."""
         node = KGNode(node_type="Publication", label="Finkelstein 2001")
@@ -104,7 +109,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_with_jsonb_properties(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode stores JSONB properties correctly."""
         props = {
@@ -127,7 +133,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_with_confidence(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode stores non-default confidence."""
         node = KGNode(
@@ -143,7 +150,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_with_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode stores non-default status."""
         node = KGNode(
@@ -159,7 +167,8 @@ class TestKGNodeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_node_with_source_id(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode stores source_id FK to data_sources."""
         from nfm_db.models import DataSource
@@ -190,7 +199,8 @@ class TestKGEdgeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_edge_with_defaults(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge can be created with required fields; defaults applied."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -218,7 +228,8 @@ class TestKGEdgeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_edge_with_jsonb_properties(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge stores JSONB properties (e.g., value + unit)."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -242,7 +253,8 @@ class TestKGEdgeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_edge_measured_in(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge with relation_type=measuredIn accepted."""
         source_node = KGNode(node_type="Experiment", label="Exp-001")
@@ -263,7 +275,8 @@ class TestKGEdgeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_edge_cites(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge with relation_type=cites accepted."""
         source_node = KGNode(node_type="Publication", label="Paper A")
@@ -284,7 +297,8 @@ class TestKGEdgeCreation:
 
     @pytest.mark.asyncio
     async def test_create_kg_edge_with_source_id(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge stores source_id FK to data_sources."""
         from nfm_db.models import DataSource
@@ -321,7 +335,8 @@ class TestKGConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_edge_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate (source_node_id, target_node_id, relation_type) rejected."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -348,7 +363,8 @@ class TestKGConstraints:
 
     @pytest.mark.asyncio
     async def test_different_relation_type_same_nodes_accepted(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Different relation_types on same node pair accepted."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -356,18 +372,20 @@ class TestKGConstraints:
         db_session.add_all([source_node, target_node])
         await db_session.flush()
 
-        db_session.add_all([
-            KGEdge(
-                source_node_id=source_node.id,
-                target_node_id=target_node.id,
-                relation_type="cites",
-            ),
-            KGEdge(
-                source_node_id=source_node.id,
-                target_node_id=target_node.id,
-                relation_type="relatedTo",
-            ),
-        ])
+        db_session.add_all(
+            [
+                KGEdge(
+                    source_node_id=source_node.id,
+                    target_node_id=target_node.id,
+                    relation_type="cites",
+                ),
+                KGEdge(
+                    source_node_id=source_node.id,
+                    target_node_id=target_node.id,
+                    relation_type="relatedTo",
+                ),
+            ]
+        )
         await db_session.commit()
 
         # Both edges should exist
@@ -376,7 +394,8 @@ class TestKGConstraints:
 
     @pytest.mark.asyncio
     async def test_edge_fk_to_nonexistent_source_node_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge with non-existent source_node_id rejected."""
         import uuid
@@ -396,7 +415,8 @@ class TestKGConstraints:
 
     @pytest.mark.asyncio
     async def test_edge_fk_to_nonexistent_target_node_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge with non-existent target_node_id rejected."""
         import uuid
@@ -416,7 +436,8 @@ class TestKGConstraints:
 
     @pytest.mark.asyncio
     async def test_node_fk_to_nonexistent_source_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode with non-existent source_id rejected."""
         import uuid
@@ -449,7 +470,8 @@ class TestKGRelationships:
 
     @pytest.mark.asyncio
     async def test_node_has_outgoing_edges(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode -> outgoing_edges relationship works."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -458,18 +480,20 @@ class TestKGRelationships:
         db_session.add_all([source_node, target1, target2])
         await db_session.flush()
 
-        db_session.add_all([
-            KGEdge(
-                source_node_id=source_node.id,
-                target_node_id=target1.id,
-                relation_type="hasProperty",
-            ),
-            KGEdge(
-                source_node_id=source_node.id,
-                target_node_id=target2.id,
-                relation_type="hasProperty",
-            ),
-        ])
+        db_session.add_all(
+            [
+                KGEdge(
+                    source_node_id=source_node.id,
+                    target_node_id=target1.id,
+                    relation_type="hasProperty",
+                ),
+                KGEdge(
+                    source_node_id=source_node.id,
+                    target_node_id=target2.id,
+                    relation_type="hasProperty",
+                ),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, source_node, "outgoing_edges")
 
@@ -479,7 +503,8 @@ class TestKGRelationships:
 
     @pytest.mark.asyncio
     async def test_node_has_incoming_edges(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode -> incoming_edges relationship works."""
         target_node = KGNode(node_type="Publication", label="Paper A")
@@ -488,18 +513,20 @@ class TestKGRelationships:
         db_session.add_all([target_node, source1, source2])
         await db_session.flush()
 
-        db_session.add_all([
-            KGEdge(
-                source_node_id=source1.id,
-                target_node_id=target_node.id,
-                relation_type="cites",
-            ),
-            KGEdge(
-                source_node_id=source2.id,
-                target_node_id=target_node.id,
-                relation_type="cites",
-            ),
-        ])
+        db_session.add_all(
+            [
+                KGEdge(
+                    source_node_id=source1.id,
+                    target_node_id=target_node.id,
+                    relation_type="cites",
+                ),
+                KGEdge(
+                    source_node_id=source2.id,
+                    target_node_id=target_node.id,
+                    relation_type="cites",
+                ),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, target_node, "incoming_edges")
 
@@ -507,7 +534,8 @@ class TestKGRelationships:
 
     @pytest.mark.asyncio
     async def test_edge_source_node_relationship(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge -> source_node relationship works."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -528,7 +556,8 @@ class TestKGRelationships:
 
     @pytest.mark.asyncio
     async def test_edge_target_node_relationship(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge -> target_node relationship works."""
         source_node = KGNode(node_type="Material", label="UO2")
@@ -599,7 +628,8 @@ class TestKGNodeCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_node_type_check_constraint(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode with invalid node_type is rejected."""
         node = KGNode(node_type="InvalidType", label="Bad Node")
@@ -609,7 +639,8 @@ class TestKGNodeCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_status_check_constraint(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode with invalid status is rejected."""
         node = KGNode(node_type="Material", label="Bad Status", status="deleted")
@@ -619,11 +650,14 @@ class TestKGNodeCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_confidence_bounds_check(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode with confidence > 1.0 is rejected."""
         node = KGNode(
-            node_type="Material", label="Overconfident", confidence=1.5,
+            node_type="Material",
+            label="Overconfident",
+            confidence=1.5,
         )
         db_session.add(node)
         with pytest.raises((IntegrityError, OperationalError)):
@@ -631,7 +665,8 @@ class TestKGNodeCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_edge_confidence_bounds_check(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge with confidence < 0.0 is rejected."""
         source_node = KGNode(node_type="Material", label="UO2")

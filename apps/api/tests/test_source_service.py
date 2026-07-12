@@ -135,9 +135,7 @@ class TestListSources:
         await _seed_source(db_session, title="Journal", source_type="journal_article")
         await _seed_source(db_session, title="Book", source_type="book")
 
-        result = await list_sources(
-            db_session, page=1, per_page=20, source_type="book"
-        )
+        result = await list_sources(db_session, page=1, per_page=20, source_type="book")
 
         assert result.total == 1
         assert result.items[0].source_type == "book"
@@ -148,9 +146,7 @@ class TestListSources:
         await _seed_source(db_session, title="Alpha")
         await _seed_source(db_session, title="Bravo")
 
-        result = await list_sources(
-            db_session, page=1, per_page=20, sort="title", order="asc"
-        )
+        result = await list_sources(db_session, page=1, per_page=20, sort="title", order="asc")
 
         titles = [s.title for s in result.items]
         assert titles == ["Alpha", "Bravo", "Charlie"]
@@ -160,9 +156,7 @@ class TestListSources:
         await _seed_source(db_session, title="Alpha")
         await _seed_source(db_session, title="Bravo")
 
-        result = await list_sources(
-            db_session, page=1, per_page=20, sort="title", order="desc"
-        )
+        result = await list_sources(db_session, page=1, per_page=20, sort="title", order="desc")
 
         titles = [s.title for s in result.items]
         assert titles == ["Bravo", "Alpha"]
@@ -177,17 +171,12 @@ class TestListSources:
 
     @pytest.mark.asyncio
     async def test_list_combined_year_and_type_filter(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
-        await _seed_source(
-            db_session, title="Match", year=2020, source_type="journal_article"
-        )
-        await _seed_source(
-            db_session, title="Wrong Year", year=2019, source_type="journal_article"
-        )
-        await _seed_source(
-            db_session, title="Wrong Type", year=2020, source_type="book"
-        )
+        await _seed_source(db_session, title="Match", year=2020, source_type="journal_article")
+        await _seed_source(db_session, title="Wrong Year", year=2019, source_type="journal_article")
+        await _seed_source(db_session, title="Wrong Type", year=2020, source_type="book")
 
         result = await list_sources(
             db_session, page=1, per_page=20, year=2020, source_type="journal_article"
@@ -223,7 +212,8 @@ class TestGetSource:
 
     @pytest.mark.asyncio
     async def test_get_includes_authors_ordered(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         source = await _seed_source(db_session, title="Authored Paper")
         author1 = await _seed_author(db_session, full_name="Bob B", last_name="B")
@@ -245,7 +235,8 @@ class TestGetSource:
 
     @pytest.mark.asyncio
     async def test_get_without_authors(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         source = await _seed_source(db_session, title="No Authors")
 

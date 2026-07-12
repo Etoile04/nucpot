@@ -141,8 +141,7 @@ def _apply_conflict_resolution(
     valid_strategies = {"prefer_vlm", "prefer_text", "merge"}
     if strategy not in valid_strategies:
         raise ValueError(
-            f"Unknown conflict strategy: {strategy!r}. "
-            f"Must be one of {sorted(valid_strategies)}"
+            f"Unknown conflict strategy: {strategy!r}. Must be one of {sorted(valid_strategies)}"
         )
 
     text_names = {p.get("property_name") for p in text_props}
@@ -166,9 +165,7 @@ def _apply_conflict_resolution(
         # and VLM version in final_vlm (for downstream review).
         # Unique items from both sides go into final_text.
         final_text = list(text_props) + [
-            p
-            for p in vlm_props
-            if p.get("property_name") not in conflicts
+            p for p in vlm_props if p.get("property_name") not in conflicts
         ]
         final_vlm = [p for p in vlm_props if p.get("property_name") in conflicts]
 
@@ -219,9 +216,7 @@ async def _extract_figures_from_source(
                     "figure_type": result.figure_type,
                     "title": (result.plot_data.title if result.plot_data else ""),
                     "source": source_reference,
-                    "confidence": (
-                        result.plot_data.confidence if result.plot_data else 0.0
-                    ),
+                    "confidence": (result.plot_data.confidence if result.plot_data else 0.0),
                     "provider": result.provider,
                     "model": result.model,
                     "extraction_time_ms": result.extraction_time_ms,
@@ -245,15 +240,9 @@ async def _extract_figures_from_source(
                 all_figures = [
                     {
                         "figure_type": ocr_fig.figure_type,
-                        "title": (
-                            ocr_fig.plot_data.title if ocr_fig.plot_data else ""
-                        ),
+                        "title": (ocr_fig.plot_data.title if ocr_fig.plot_data else ""),
                         "source": source_reference,
-                        "confidence": (
-                            ocr_fig.plot_data.confidence
-                            if ocr_fig.plot_data
-                            else 0.0
-                        ),
+                        "confidence": (ocr_fig.plot_data.confidence if ocr_fig.plot_data else 0.0),
                         "provider": ocr_fig.provider,
                         "model": ocr_fig.model,
                         "extraction_time_ms": ocr_fig.extraction_time_ms,
@@ -320,21 +309,11 @@ async def _extract_tables_from_source(
             all_tables = [
                 {
                     "figure_type": result.figure_type,
-                    "title": (
-                        result.table_data.title if result.table_data else ""
-                    ),
+                    "title": (result.table_data.title if result.table_data else ""),
                     "source": source_reference,
-                    "confidence": (
-                        result.table_data.confidence if result.table_data else 0.0
-                    ),
-                    "headers": (
-                        result.table_data.headers.columns
-                        if result.table_data
-                        else []
-                    ),
-                    "num_rows": (
-                        result.table_data.num_rows if result.table_data else 0
-                    ),
+                    "confidence": (result.table_data.confidence if result.table_data else 0.0),
+                    "headers": (result.table_data.headers.columns if result.table_data else []),
+                    "num_rows": (result.table_data.num_rows if result.table_data else 0),
                     "provider": result.provider,
                     "model": result.model,
                     "extraction_time_ms": result.extraction_time_ms,
@@ -358,25 +337,15 @@ async def _extract_tables_from_source(
                 all_tables = [
                     {
                         "figure_type": ocr_tbl.figure_type,
-                        "title": (
-                            ocr_tbl.table_data.title if ocr_tbl.table_data else ""
-                        ),
+                        "title": (ocr_tbl.table_data.title if ocr_tbl.table_data else ""),
                         "source": source_reference,
                         "confidence": (
-                            ocr_tbl.table_data.confidence
-                            if ocr_tbl.table_data
-                            else 0.0
+                            ocr_tbl.table_data.confidence if ocr_tbl.table_data else 0.0
                         ),
                         "headers": (
-                            ocr_tbl.table_data.headers.columns
-                            if ocr_tbl.table_data
-                            else []
+                            ocr_tbl.table_data.headers.columns if ocr_tbl.table_data else []
                         ),
-                        "num_rows": (
-                            ocr_tbl.table_data.num_rows
-                            if ocr_tbl.table_data
-                            else 0
-                        ),
+                        "num_rows": (ocr_tbl.table_data.num_rows if ocr_tbl.table_data else 0),
                         "provider": ocr_tbl.provider,
                         "model": ocr_tbl.model,
                         "extraction_time_ms": ocr_tbl.extraction_time_ms,
@@ -475,12 +444,8 @@ async def run_multimodal_extraction(
             )
 
             # Update job with resolved VLM properties
-            resolved_figures = [
-                p for p in resolved_vlm if p.get("figure_type") != "table"
-            ]
-            resolved_tables = [
-                p for p in resolved_vlm if p.get("figure_type") == "table"
-            ]
+            resolved_figures = [p for p in resolved_vlm if p.get("figure_type") != "table"]
+            resolved_tables = [p for p in resolved_vlm if p.get("figure_type") == "table"]
             _update_job(job, figures=resolved_figures, tables=resolved_tables)
 
             # Note: resolved_text reflects which text props should win/lose.

@@ -48,7 +48,6 @@ async def _seed_extraction_result(db_session, **overrides):
     return obj
 
 
-
 # ---------------------------------------------------------------------------
 # R1: GET /api/v1/review/pending — paginated pending items
 # ---------------------------------------------------------------------------
@@ -332,16 +331,20 @@ async def test_batch_review_invalid_status(async_client, db_session) -> None:
 async def test_review_stats_with_data(async_client, db_session) -> None:
     """Stats aggregate counts across statuses."""
     await _seed_extraction_result(
-        db_session, review_status=ReviewStatus.PENDING.value,
+        db_session,
+        review_status=ReviewStatus.PENDING.value,
     )
     await _seed_extraction_result(
-        db_session, review_status=ReviewStatus.APPROVED.value,
+        db_session,
+        review_status=ReviewStatus.APPROVED.value,
     )
     await _seed_extraction_result(
-        db_session, review_status=ReviewStatus.REJECTED.value,
+        db_session,
+        review_status=ReviewStatus.REJECTED.value,
     )
     await _seed_extraction_result(
-        db_session, review_status=ReviewStatus.NEEDS_REVISION.value,
+        db_session,
+        review_status=ReviewStatus.NEEDS_REVISION.value,
     )
 
     response = await async_client.get("/api/v1/review/stats")
@@ -371,7 +374,8 @@ async def test_review_stats_empty(async_client) -> None:
 async def test_review_stats_reflects_changes(async_client, db_session) -> None:
     """Stats update after PATCH status change."""
     er = await _seed_extraction_result(
-        db_session, review_status=ReviewStatus.PENDING.value,
+        db_session,
+        review_status=ReviewStatus.PENDING.value,
     )
 
     # Verify initial state

@@ -108,11 +108,7 @@ async def get_corpus_graph(
     # source_digest is the stable corpus identity (NFM-227); for paginated
     # responses the request cursor is folded into the ETag so each page has a
     # distinct, cache-correct validator.
-    etag_base = (
-        graph.source_digest
-        if cursor is None
-        else f"{graph.source_digest}#{cursor}"
-    )
+    etag_base = graph.source_digest if cursor is None else f"{graph.source_digest}#{cursor}"
     response.headers["ETag"] = f'"{etag_base}"'
     last_modified = graph._last_modified
     if last_modified is not None:
@@ -151,9 +147,7 @@ async def get_node_neighbors(
         422: invalid parameters
     """
     # Load the target node
-    node_result = await session.execute(
-        select(KGNode).where(KGNode.id == node_id)
-    )
+    node_result = await session.execute(select(KGNode).where(KGNode.id == node_id))
     node = node_result.scalar_one_or_none()
 
     if not node:
@@ -240,8 +234,17 @@ async def search_nodes(
     q: str = Query(..., min_length=1, description="Search query"),
     corpus_id: str | None = Query(None, description="Corpus scope filter"),
     pagination: PaginationParams = Depends(PaginationParams),
-    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
-    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
+    _offset: int | None = Query(
+        default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"
+    ),
+    _limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=100,
+        alias="limit",
+        deprecated=True,
+        description="已弃用: 请使用 per_page 参数",
+    ),
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> SearchResponse:
@@ -274,9 +277,7 @@ async def search_nodes(
     where_clause = search_query.whereclause
     if where_clause is None:
         return SearchResponse(results=[], total=0, limit=effective_limit, offset=effective_offset)
-    count_result = await session.execute(
-        select(KGNode.id).where(where_clause)
-    )
+    count_result = await session.execute(select(KGNode.id).where(where_clause))
     total = len(count_result.all())
 
     # Get paginated results
@@ -328,14 +329,10 @@ async def get_shortest_path(
         Shortest path with nodes, edges, and path length
     """
     # Load source and target nodes
-    from_result = await session.execute(
-        select(KGNode).where(KGNode.id == from_id)
-    )
+    from_result = await session.execute(select(KGNode).where(KGNode.id == from_id))
     from_node = from_result.scalar_one_or_none()
 
-    to_result = await session.execute(
-        select(KGNode).where(KGNode.id == to_id)
-    )
+    to_result = await session.execute(select(KGNode).where(KGNode.id == to_id))
     to_node = to_result.scalar_one_or_none()
 
     if not from_node or not to_node:

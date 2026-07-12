@@ -159,9 +159,7 @@ async def get_pending_reviews(
                 detail=f"Invalid item_type: {item_type}. "
                 f"Must be one of: {list(type_to_table.keys())}",
             )
-        tables_to_query = [
-            (m, t) for m, t in tables_to_query if t == table_name
-        ]
+        tables_to_query = [(m, t) for m, t in tables_to_query if t == table_name]
 
     # Fetch all matching items across tables.
     all_items: list[ReviewItemResponse] = []
@@ -260,8 +258,7 @@ async def update_review_status(
     if body.status not in VALID_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status: {body.status}. "
-            f"Must be one of: {VALID_STATUSES}",
+            detail=f"Invalid status: {body.status}. Must be one of: {VALID_STATUSES}",
         )
 
     row, table_name = await _find_review_item(item_id, db)
@@ -297,10 +294,12 @@ async def batch_review(
     for item in body.items:
         if item.status not in VALID_STATUSES:
             failed += 1
-            errors.append({
-                "id": str(item.id),
-                "error": f"Invalid status: {item.status}",
-            })
+            errors.append(
+                {
+                    "id": str(item.id),
+                    "error": f"Invalid status: {item.status}",
+                }
+            )
             continue
 
         try:
@@ -311,10 +310,12 @@ async def batch_review(
             succeeded += 1
         except HTTPException:
             failed += 1
-            errors.append({
-                "id": str(item.id),
-                "error": "Item not found",
-            })
+            errors.append(
+                {
+                    "id": str(item.id),
+                    "error": "Item not found",
+                }
+            )
 
     await db.commit()
 

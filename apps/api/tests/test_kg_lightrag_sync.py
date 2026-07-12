@@ -248,7 +248,9 @@ class TestIngestKGToLightRAG:
         ):
             node = _make_node()
             await ingest_kg_to_lightrag(
-                nodes=[node], edges=[], node_labels={node.id: "UO2"},
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
             )
 
     @pytest.mark.asyncio
@@ -266,15 +268,20 @@ class TestIngestKGToLightRAG:
         mock_provider = AsyncMock()
         node = _make_node(label="UO2")
 
-        with patch(
-            "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
-            return_value=True,
-        ), patch(
-            "nfm_db.services.rag_provider.LightRAGProvider",
-            return_value=mock_provider,
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                return_value=mock_provider,
+            ),
         ):
             await ingest_kg_to_lightrag(
-                nodes=[node], edges=[], node_labels={node.id: "UO2"},
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
             )
 
             mock_provider.ingest.assert_called_once()
@@ -285,17 +292,22 @@ class TestIngestKGToLightRAG:
     @pytest.mark.asyncio
     async def test_handles_exception_gracefully(self) -> None:
         """Should catch and log exceptions without propagating."""
-        with patch(
-            "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
-            return_value=True,
-        ), patch(
-            "nfm_db.services.rag_provider.LightRAGProvider",
-            side_effect=RuntimeError("connection refused"),
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                side_effect=RuntimeError("connection refused"),
+            ),
         ):
             node = _make_node()
             # Should NOT raise
             await ingest_kg_to_lightrag(
-                nodes=[node], edges=[], node_labels={node.id: "UO2"},
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
             )
 
 
@@ -317,12 +329,15 @@ class TestFireIngestToLightRAG:
 
     def test_skips_when_no_running_loop(self) -> None:
         """Should not raise when there is no running event loop."""
-        with patch(
-            "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
-            return_value=True,
-        ), patch(
-            "nfm_db.services.kg_lightrag_sync.asyncio.get_running_loop",
-            side_effect=RuntimeError("no running loop"),
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.asyncio.get_running_loop",
+                side_effect=RuntimeError("no running loop"),
+            ),
         ):
             fire_ingest_to_lightrag(nodes=[], edges=[], node_labels={})
 
@@ -331,18 +346,24 @@ class TestFireIngestToLightRAG:
         mock_loop = MagicMock()
         mock_task = MagicMock()
 
-        with patch(
-            "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
-            return_value=True,
-        ), patch(
-            "nfm_db.services.kg_lightrag_sync.asyncio.get_running_loop",
-            return_value=mock_loop,
-        ), patch(
-            "nfm_db.services.kg_lightrag_sync.asyncio.create_task",
-            return_value=mock_task,
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.asyncio.get_running_loop",
+                return_value=mock_loop,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.asyncio.create_task",
+                return_value=mock_task,
+            ),
         ):
             node = _make_node()
             fire_ingest_to_lightrag(
-                nodes=[node], edges=[], node_labels={node.id: "UO2"},
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
             )
             mock_loop.create_task.assert_called_once()

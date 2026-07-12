@@ -39,6 +39,7 @@ _QUARTERLY_AUDIT = "nfm_db.api.v1.verification.run_quarterly_audit"
 @pytest.fixture
 async def client_with_auth(async_client: AsyncClient, admin_user) -> AsyncClient:
     """Return an AsyncClient with get_current_user overridden to pass auth."""
+
     async def _override():
         return admin_user
 
@@ -291,7 +292,9 @@ class TestCheckGapEndpoint:
         client_with_auth: AsyncClient,
     ) -> None:
         """Endpoint returns 500 when validate_reference raises an exception."""
-        with patch(_VALIDATE_REF, side_effect=RuntimeError("External service unavailable")) as mock_validate:
+        with patch(
+            _VALIDATE_REF, side_effect=RuntimeError("External service unavailable")
+        ) as mock_validate:
             response = await client_with_auth.post(
                 "/api/v1/verification/check-gap",
                 json=VALID_CHECK_GAP_PAYLOAD,
@@ -421,7 +424,9 @@ class TestAdjudicateGradeEndpoint:
         client_with_auth: AsyncClient,
     ) -> None:
         """Endpoint returns 500 when adjudicate_f_grade raises an exception."""
-        with patch(_ADJUDICATE, side_effect=RuntimeError("Pattern matching engine crashed")) as mock_adjudicate:
+        with patch(
+            _ADJUDICATE, side_effect=RuntimeError("Pattern matching engine crashed")
+        ) as mock_adjudicate:
             response = await client_with_auth.post(
                 "/api/v1/verification/adjudicate-grade",
                 json=VALID_ADJUDICATE_PAYLOAD,
@@ -570,7 +575,9 @@ class TestQuarterlyAuditEndpoint:
         client_with_auth: AsyncClient,
     ) -> None:
         """Endpoint returns 500 when run_quarterly_audit raises an exception."""
-        with patch(_QUARTERLY_AUDIT, side_effect=RuntimeError("Database connection lost")) as mock_audit:
+        with patch(
+            _QUARTERLY_AUDIT, side_effect=RuntimeError("Database connection lost")
+        ) as mock_audit:
             response = await client_with_auth.post(
                 "/api/v1/verification/quarterly-audit",
                 json=VALID_QUARTERLY_AUDIT_PAYLOAD,

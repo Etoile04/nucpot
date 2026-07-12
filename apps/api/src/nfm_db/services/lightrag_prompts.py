@@ -153,7 +153,9 @@ def get_relation_extraction_prompt(
         desc_cn = _FALLBACK_RELATION_CN.get(rt.name, "")
         sources = ", ".join(rt.source_types) if rt.source_types else "Any"
         targets = ", ".join(rt.target_types) if rt.target_types else "Any"
-        schema = json.dumps(rt.properties_schema, ensure_ascii=False) if rt.properties_schema else ""
+        schema = (
+            json.dumps(rt.properties_schema, ensure_ascii=False) if rt.properties_schema else ""
+        )
 
         lines.append(f"## {rt.name} ({desc_cn})")
         lines.append(f"   English: {desc_en}")

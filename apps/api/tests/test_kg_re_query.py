@@ -56,7 +56,8 @@ async def seed_kg_nodes(db_session: AsyncSession) -> list[KGNode]:
 
 @pytest.fixture
 async def seed_kg_edges(
-    db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+    db_session: AsyncSession,
+    seed_kg_nodes: list[KGNode],
 ) -> list[KGEdge]:
     """Create edges linking the seeded nodes."""
     uo2, zr4, tc, density, pellet, ss316, _ = seed_kg_nodes
@@ -105,7 +106,9 @@ class TestQueryGraphNodes:
 
     @pytest.mark.asyncio
     async def test_query_all_active_nodes(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Returns all active nodes when no filters are applied."""
         nodes = await query_graph_nodes(db_session)
@@ -117,7 +120,9 @@ class TestQueryGraphNodes:
 
     @pytest.mark.asyncio
     async def test_filter_by_entity_type(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Filters nodes by a single entity type."""
         nodes = await query_graph_nodes(db_session, entity_types=["Material"])
@@ -128,18 +133,23 @@ class TestQueryGraphNodes:
 
     @pytest.mark.asyncio
     async def test_filter_by_multiple_entity_types(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Filters nodes by multiple entity types."""
         nodes = await query_graph_nodes(
-            db_session, entity_types=["Material", "Property"],
+            db_session,
+            entity_types=["Material", "Property"],
         )
         types = {n.node_type for n in nodes}
         assert types == {"Material", "Property"}
 
     @pytest.mark.asyncio
     async def test_text_search_on_label(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Finds nodes whose label contains the query string (case-insensitive)."""
         nodes = await query_graph_nodes(db_session, query="uranium")
@@ -149,18 +159,24 @@ class TestQueryGraphNodes:
 
     @pytest.mark.asyncio
     async def test_text_search_combined_with_type_filter(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Combines text search with entity type filter."""
         nodes = await query_graph_nodes(
-            db_session, query="conductivity", entity_types=["Property"],
+            db_session,
+            query="conductivity",
+            entity_types=["Property"],
         )
         assert len(nodes) == 1
         assert nodes[0].label == "thermal conductivity"
 
     @pytest.mark.asyncio
     async def test_limit_enforcement(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Respects the limit parameter."""
         nodes = await query_graph_nodes(db_session, limit=2)
@@ -168,7 +184,8 @@ class TestQueryGraphNodes:
 
     @pytest.mark.asyncio
     async def test_empty_database_returns_empty(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Returns empty list when no active nodes exist."""
         nodes = await query_graph_nodes(db_session)
@@ -176,7 +193,9 @@ class TestQueryGraphNodes:
 
     @pytest.mark.asyncio
     async def test_no_match_returns_empty(
-        self, db_session: AsyncSession, seed_kg_nodes: list[KGNode],
+        self,
+        db_session: AsyncSession,
+        seed_kg_nodes: list[KGNode],
     ) -> None:
         """Returns empty list when no nodes match the query."""
         nodes = await query_graph_nodes(db_session, query="nonexistent material")
@@ -215,7 +234,9 @@ class TestQueryGraphEdges:
         """Filters edges by relation type."""
         uo2 = seed_kg_nodes[0]
         edges = await query_graph_edges(
-            db_session, node_ids={uo2.id}, relation_type="hasProperty",
+            db_session,
+            node_ids={uo2.id},
+            relation_type="hasProperty",
         )
         assert all(e.relation_type == "hasProperty" for e in edges)
         assert len(edges) == 2
@@ -234,7 +255,9 @@ class TestQueryGraphEdges:
 
     @pytest.mark.asyncio
     async def test_empty_node_ids_returns_empty(
-        self, db_session: AsyncSession, seed_kg_edges: list[KGEdge],
+        self,
+        db_session: AsyncSession,
+        seed_kg_edges: list[KGEdge],
     ) -> None:
         """Returns empty list when no node IDs provided."""
         edges = await query_graph_edges(db_session, node_ids=set())
@@ -242,13 +265,16 @@ class TestQueryGraphEdges:
 
     @pytest.mark.asyncio
     async def test_nonexistent_node_ids_returns_empty(
-        self, db_session: AsyncSession, seed_kg_edges: list[KGEdge],
+        self,
+        db_session: AsyncSession,
+        seed_kg_edges: list[KGEdge],
     ) -> None:
         """Returns empty list when node IDs don't exist in DB."""
         import uuid
 
         edges = await query_graph_edges(
-            db_session, node_ids={uuid.uuid4()},
+            db_session,
+            node_ids={uuid.uuid4()},
         )
         assert edges == []
 
@@ -268,7 +294,8 @@ class TestFuzzyAliasMatch:
 
     @pytest.fixture
     async def seed_alias_nodes(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> list[KGNode]:
         """Create nodes with JSON-encoded aliases for fuzzy matching."""
         nodes = [
@@ -347,8 +374,7 @@ class TestFuzzyAliasMatch:
         assert result is not None
         # Could be Silicon Carbide or the alias "silicon carbide"
         assert "carbide" in result.label.lower() or any(
-            "carbide" in str(a).lower()
-            for a in (result.aliases or [])
+            "carbide" in str(a).lower() for a in (result.aliases or [])
         )
 
     @pytest.mark.asyncio

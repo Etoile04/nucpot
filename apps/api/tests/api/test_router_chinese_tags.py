@@ -49,14 +49,10 @@ def _extract_router_tags(filename: str) -> list[str]:
                     if isinstance(node.value, ast.Call):
                         call = node.value
                         # Check if it's APIRouter(...)
-                        func_name = (
-                            call.func.id if isinstance(call.func, ast.Name) else None
-                        )
+                        func_name = call.func.id if isinstance(call.func, ast.Name) else None
                         if func_name == "APIRouter":
                             for keyword in call.keywords:
-                                if keyword.arg == "tags" and isinstance(
-                                    keyword.value, ast.List
-                                ):
+                                if keyword.arg == "tags" and isinstance(keyword.value, ast.List):
                                     return [
                                         elt.value
                                         for elt in keyword.value.elts
@@ -69,9 +65,7 @@ def _extract_router_tags(filename: str) -> list[str]:
 def test_router_has_chinese_tag(filename: str, expected_tag: str) -> None:
     """Every v1 router must declare the expected Chinese tag."""
     tags = _extract_router_tags(filename)
-    assert expected_tag in tags, (
-        f"{filename}: expected tag '{expected_tag}' in {tags!r}"
-    )
+    assert expected_tag in tags, f"{filename}: expected tag '{expected_tag}' in {tags!r}"
 
 
 @pytest.mark.parametrize("filename,expected_tag", ROUTER_SPECS)

@@ -21,6 +21,7 @@ from nfm_db.services.plot_extractor import PlotExtractor, extract_plot_data
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _sample_png_bytes() -> bytes:
     """Minimal valid PNG bytes (1x1 transparent pixel)."""
     return (
@@ -123,8 +124,10 @@ class TestExtractPlotData:
         mock_response = _mock_vlm_chat_response(vlm_data)
 
         with patch.object(
-            extractor.client, "_call_provider",
-            new_callable=AsyncMock, return_value=mock_response,
+            extractor.client,
+            "_call_provider",
+            new_callable=AsyncMock,
+            return_value=mock_response,
         ):
             result = await extractor.extract(
                 image_data=_sample_png_bytes(),
@@ -148,8 +151,10 @@ class TestExtractPlotData:
         mock_response = _mock_vlm_chat_response(vlm_data)
 
         with patch.object(
-            extractor.client, "_call_provider",
-            new_callable=AsyncMock, return_value=mock_response,
+            extractor.client,
+            "_call_provider",
+            new_callable=AsyncMock,
+            return_value=mock_response,
         ):
             result = await extractor.extract(
                 image_data=_sample_png_bytes(),
@@ -176,8 +181,10 @@ class TestExtractPlotData:
             extractor = PlotExtractor()
 
         with patch.object(
-            extractor.client, "_call_provider",
-            new_callable=AsyncMock, return_value=mock_response,
+            extractor.client,
+            "_call_provider",
+            new_callable=AsyncMock,
+            return_value=mock_response,
         ):
             result = await extractor.extract(image_data=_sample_png_bytes())
 
@@ -194,8 +201,10 @@ class TestExtractPlotData:
             extractor = PlotExtractor()
 
         with patch.object(
-            extractor.client, "_call_provider",
-            new_callable=AsyncMock, return_value=mock_response,
+            extractor.client,
+            "_call_provider",
+            new_callable=AsyncMock,
+            return_value=mock_response,
         ):
             result = await extractor.extract(image_data=_sample_png_bytes())
 
@@ -213,8 +222,10 @@ class TestExtractPlotData:
             extractor = PlotExtractor()
 
         with patch.object(
-            extractor.client, "_call_provider",
-            new_callable=AsyncMock, return_value=mock_response,
+            extractor.client,
+            "_call_provider",
+            new_callable=AsyncMock,
+            return_value=mock_response,
         ):
             result = await extractor.extract(image_data=_sample_png_bytes())
 
@@ -236,9 +247,7 @@ class TestConvenienceFunction:
         vlm_data = _mock_vlm_response()
 
         with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
-            with patch(
-                "nfm_db.services.plot_extractor.VisionClient"
-            ) as MockClient:
+            with patch("nfm_db.services.plot_extractor.VisionClient") as MockClient:
                 mock_instance = MockClient.return_value
                 mock_instance.provider = "openai"
                 mock_instance.model = "gpt-4o"

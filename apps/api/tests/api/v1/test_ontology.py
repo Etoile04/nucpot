@@ -120,7 +120,9 @@ async def test_get_corpus_graph_nodes_have_required_fields(async_client, db_sess
 
 
 @pytest.mark.asyncio
-async def test_get_corpus_graph_relationships_have_required_fields(async_client, db_session) -> None:
+async def test_get_corpus_graph_relationships_have_required_fields(
+    async_client, db_session
+) -> None:
     """All relationships contain id, from, to, type per NVL contract."""
     corpus_id = "rel-check"
     await _seed_staging_rows(db_session, corpus_id=corpus_id)
@@ -329,9 +331,7 @@ async def test_get_corpus_graph_stats_consistency(async_client, db_session) -> N
 
     assert data["stats"]["nodes"] == len(data["nodes"])
     assert data["stats"]["relationships"] == len(data["relationships"])
-    assert data["stats"]["classes"] == sum(
-        1 for n in data["nodes"] if n["type"] == "class"
-    )
+    assert data["stats"]["classes"] == sum(1 for n in data["nodes"] if n["type"] == "class")
     assert data["stats"]["individuals"] == sum(
         1 for n in data["nodes"] if n["type"] == "individual"
     )

@@ -45,6 +45,7 @@ _QUARTERLY_AUDIT = "nfm_db.api.v1.verification.run_quarterly_audit"
 @pytest.fixture
 async def client_with_auth(async_client, admin_user: User):
     """Return an AsyncClient with get_current_user overridden to pass auth."""
+
     async def _override():
         return admin_user
 
@@ -309,7 +310,8 @@ async def test_check_gap_unauthenticated(async_client) -> None:
 async def test_check_gap_service_error(client_with_auth) -> None:
     """Endpoint returns 500 when validate_reference raises an exception."""
     with patch(
-        _VALIDATE_REF, side_effect=RuntimeError("External service unavailable"),
+        _VALIDATE_REF,
+        side_effect=RuntimeError("External service unavailable"),
     ) as mock_fn:
         response = await client_with_auth.post(
             "/api/v1/verification/check-gap",
@@ -462,7 +464,8 @@ async def test_adjudicate_grade_unauthenticated(async_client) -> None:
 async def test_adjudicate_grade_service_error(client_with_auth) -> None:
     """Endpoint returns 500 when adjudicate_f_grade raises an exception."""
     with patch(
-        _ADJUDICATE, side_effect=RuntimeError("Pattern matching engine crashed"),
+        _ADJUDICATE,
+        side_effect=RuntimeError("Pattern matching engine crashed"),
     ) as mock_fn:
         response = await client_with_auth.post(
             "/api/v1/verification/adjudicate-grade",
@@ -634,7 +637,8 @@ async def test_quarterly_audit_unauthenticated(async_client) -> None:
 async def test_quarterly_audit_service_error(client_with_auth) -> None:
     """Endpoint returns 500 when run_quarterly_audit raises an exception."""
     with patch(
-        _QUARTERLY_AUDIT, side_effect=RuntimeError("Database connection lost"),
+        _QUARTERLY_AUDIT,
+        side_effect=RuntimeError("Database connection lost"),
     ) as mock_fn:
         response = await client_with_auth.post(
             "/api/v1/verification/quarterly-audit",

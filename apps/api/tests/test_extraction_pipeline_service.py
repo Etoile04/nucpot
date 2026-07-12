@@ -333,9 +333,17 @@ class TestOntoFuelExtractLLMFallback:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="content"),
-            patch("nfm_db.services.extraction_pipeline.build_extraction_system_prompt", return_value="prompt"),
-            patch("nfm_db.services.extraction_pipeline.call_llm", side_effect=RuntimeError("API error")),
+            patch(
+                "nfm_db.services.extraction_pipeline._load_source_content", return_value="content"
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value="prompt",
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                side_effect=RuntimeError("API error"),
+            ),
         ):
             results = await ontofuel_extract("failing.md", "file")
             assert results == []
@@ -349,9 +357,18 @@ class TestOntoFuelExtractLLMFallback:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="content"),
-            patch("nfm_db.services.extraction_pipeline.build_extraction_system_prompt", return_value="prompt"),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=llm_results),
+            patch(
+                "nfm_db.services.extraction_pipeline._load_source_content", return_value="content"
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value="prompt",
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=llm_results,
+            ),
         ):
             results = await ontofuel_extract("source.md", "file")
             assert len(results) >= 1
@@ -364,9 +381,18 @@ class TestOntoFuelExtractLLMFallback:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="content"),
-            patch("nfm_db.services.extraction_pipeline.build_extraction_system_prompt", return_value="prompt"),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=llm_result),
+            patch(
+                "nfm_db.services.extraction_pipeline._load_source_content", return_value="content"
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value="prompt",
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=llm_result,
+            ),
         ):
             results = await ontofuel_extract("source.md", "file")
             assert len(results) >= 1
@@ -379,9 +405,18 @@ class TestOntoFuelExtractLLMFallback:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="content"),
-            patch("nfm_db.services.extraction_pipeline.build_extraction_system_prompt", return_value="prompt"),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=llm_result),
+            patch(
+                "nfm_db.services.extraction_pipeline._load_source_content", return_value="content"
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value="prompt",
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=llm_result,
+            ),
         ):
             results = await ontofuel_extract("source.md", "file")
             assert len(results) >= 1
@@ -393,7 +428,10 @@ class TestOntoFuelExtractLLMFallback:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline._load_source_content", side_effect=FileNotFoundError("not found")),
+            patch(
+                "nfm_db.services.extraction_pipeline._load_source_content",
+                side_effect=FileNotFoundError("not found"),
+            ),
         ):
             results = await ontofuel_extract("missing.md", "file")
             assert results == []
@@ -519,7 +557,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
             patch("nfm_db.services.extraction_pipeline.GapScanService"),
         ):
@@ -545,7 +587,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, side_effect=RuntimeError("extraction failed")),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("extraction failed"),
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
             patch("nfm_db.services.extraction_pipeline.GapScanService"),
         ):
@@ -577,11 +623,17 @@ class TestTriggerExtraction:
             )
         )
 
-        extracted = [{"property_name": "density", "value": 10.0, "source": "test", "confidence": "high"}]
+        extracted = [
+            {"property_name": "density", "value": 10.0, "source": "test", "confidence": "high"}
+        ]
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
         ):
             job = await trigger_extraction(
@@ -627,7 +679,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
             patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="test_hash"),
@@ -673,7 +729,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
             patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
@@ -719,7 +779,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
             patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
@@ -783,7 +847,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
             patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
@@ -830,7 +898,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
             patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
@@ -877,7 +949,11 @@ class TestTriggerExtraction:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
             patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),

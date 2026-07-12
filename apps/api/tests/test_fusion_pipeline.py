@@ -43,11 +43,13 @@ async def _seed_material(session: AsyncSession) -> uuid.UUID:
     """Create a minimal Material record for FK references."""
     material = await session.get(Material, _SEED_MATERIAL_ID)
     if material is None:
-        session.add(Material(
-            id=_SEED_MATERIAL_ID,
-            name="UO2-Test",
-            formula="UO2",
-        ))
+        session.add(
+            Material(
+                id=_SEED_MATERIAL_ID,
+                name="UO2-Test",
+                formula="UO2",
+            )
+        )
         await session.flush()
     return _SEED_MATERIAL_ID
 
@@ -55,6 +57,7 @@ async def _seed_material(session: AsyncSession) -> uuid.UUID:
 # ---------------------------------------------------------------------------
 # detect_conflicts() — pure function tests (no DB needed)
 # ---------------------------------------------------------------------------
+
 
 class TestDetectConflicts:
     """Tests for the synchronous detect_conflicts() function."""
@@ -129,20 +132,28 @@ class TestDetectConflicts:
         mat_b = str(uuid.uuid4())
         props = [
             ExtractedProperty(
-                material_id=mat_a, property_type="density",
-                value=10.0, source_id="s1",
+                material_id=mat_a,
+                property_type="density",
+                value=10.0,
+                source_id="s1",
             ),
             ExtractedProperty(
-                material_id=mat_a, property_type="density",
-                value=11.0, source_id="s2",
+                material_id=mat_a,
+                property_type="density",
+                value=11.0,
+                source_id="s2",
             ),
             ExtractedProperty(
-                material_id=mat_b, property_type="melting_point",
-                value=2800.0, source_id="s1",
+                material_id=mat_b,
+                property_type="melting_point",
+                value=2800.0,
+                source_id="s1",
             ),
             ExtractedProperty(
-                material_id=mat_b, property_type="melting_point",
-                value=2850.0, source_id="s3",
+                material_id=mat_b,
+                property_type="melting_point",
+                value=2850.0,
+                source_id="s3",
             ),
         ]
         result = detect_conflicts(props)
@@ -205,6 +216,7 @@ class TestDetectConflicts:
 # ---------------------------------------------------------------------------
 # FusionPipeline.run() — async DB-backed tests
 # ---------------------------------------------------------------------------
+
 
 class TestFusionPipelineRun:
     """Tests for FusionPipeline.run() with in-memory SQLite."""
@@ -413,6 +425,7 @@ class TestFusionPipelineRun:
 # FusionPipeline.get_conflicts() — async filtered query tests
 # ---------------------------------------------------------------------------
 
+
 class TestFusionPipelineGetConflicts:
     """Tests for FusionPipeline.get_conflicts() filtered queries."""
 
@@ -425,10 +438,12 @@ class TestFusionPipelineGetConflicts:
         material_id = await _seed_material(db_session)
 
         conflicts: list[ConflictRecord] = []
-        for i, (prop_type, status) in enumerate([
-            ("density", ConflictStatus.PENDING),
-            ("melting_point", ConflictStatus.AUTO_RESOLVED),
-        ]):
+        for i, (prop_type, status) in enumerate(
+            [
+                ("density", ConflictStatus.PENDING),
+                ("melting_point", ConflictStatus.AUTO_RESOLVED),
+            ]
+        ):
             record = ConflictRecord(
                 material_id=material_id,
                 property_type=prop_type,
@@ -436,7 +451,7 @@ class TestFusionPipelineGetConflicts:
                 resolution_strategy="confidence",
                 conflicting_values=[
                     {"value": 10.0 + i, "source_id": f"s{i}"},
-                    {"value": 11.0 + i, "source_id": f"s{i+1}"},
+                    {"value": 11.0 + i, "source_id": f"s{i + 1}"},
                 ],
             )
             db_session.add(record)
@@ -521,6 +536,7 @@ class TestFusionPipelineGetConflicts:
 # ---------------------------------------------------------------------------
 # FusionPipeline.resolve_conflict() — async manual resolution tests
 # ---------------------------------------------------------------------------
+
 
 class TestFusionPipelineResolveConflict:
     """Tests for FusionPipeline.resolve_conflict() manual resolution."""

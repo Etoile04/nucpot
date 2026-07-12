@@ -24,17 +24,20 @@ logger = logging.getLogger(__name__)
 
 class JobSubmissionError(Exception):
     """Exception raised when SLURM job submission fails."""
+
     pass
 
 
 class HPCConnectionError(Exception):
     """Exception raised when HPC cluster connection fails."""
+
     pass
 
 
 @dataclass(frozen=True)
 class SSHConnectionConfig:
     """Immutable SSH connection configuration."""
+
     hosts: tuple[str, ...]
     username: str
     ssh_key_path: str
@@ -161,9 +164,7 @@ class SSHConnectionManager:
             return client
 
     def acquire_connection_with_retry(
-        self,
-        max_retries: int = 3,
-        backoff_base: float = 1.0
+        self, max_retries: int = 3, backoff_base: float = 1.0
     ) -> paramiko.SSHClient | None:
         """Acquire connection with automatic retry on failure.
 
@@ -182,8 +183,10 @@ class SSHConnectionManager:
                     logger.error(f"Failed to acquire connection after {max_retries} attempts: {e}")
                     return None
 
-                wait_time = backoff_base * (2 ** attempt)
-                logger.warning(f"Connection attempt {attempt + 1} failed, retrying in {wait_time}s: {e}")
+                wait_time = backoff_base * (2**attempt)
+                logger.warning(
+                    f"Connection attempt {attempt + 1} failed, retrying in {wait_time}s: {e}"
+                )
                 time.sleep(wait_time)
 
         return None
@@ -215,7 +218,7 @@ class SSHConnectionManager:
         with self._connection_lock:
             for client in list(self._active_connections):
                 try:
-                    if hasattr(client, 'transport') and client.transport:
+                    if hasattr(client, "transport") and client.transport:
                         client.transport.close()
                     client.close()
                 except Exception:
@@ -272,10 +275,7 @@ class SSHConnectionManager:
 
         try:
             client.connect(
-                hostname=host,
-                username=self.username,
-                key_filename=self.ssh_key_path,
-                timeout=10
+                hostname=host, username=self.username, key_filename=self.ssh_key_path, timeout=10
             )
             logger.info(f"SSH connection established to {host}")
 
@@ -285,16 +285,16 @@ class SSHConnectionManager:
             return client
         except paramiko.AuthenticationException as e:
             if PROMETHEUS_AVAILABLE:
-                hpc_connection_errors.labels(cluster=host, error_type='authentication').inc()
+                hpc_connection_errors.labels(cluster=host, error_type="authentication").inc()
             client.close()
             raise ConnectionError(f"Authentication failed for {host}: {e}")
         except paramiko.SSHException as e:
             if PROMETHEUS_AVAILABLE:
-                hpc_connection_errors.labels(cluster=host, error_type='ssh').inc()
+                hpc_connection_errors.labels(cluster=host, error_type="ssh").inc()
             client.close()
             raise ConnectionError(f"SSH connection failed to {host}: {e}")
         except Exception as e:
             if PROMETHEUS_AVAILABLE:
-                hpc_connection_errors.labels(cluster=host, error_type='unknown').inc()
+                hpc_connection_errors.labels(cluster=host, error_type="unknown").inc()
             client.close()
             raise ConnectionError(f"Failed to connect to {host}: {e}")

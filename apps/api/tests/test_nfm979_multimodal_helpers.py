@@ -132,9 +132,7 @@ class TestExtractFiguresFromSource:
     @pytest.mark.asyncio
     async def test_confidence_threshold_filter(self) -> None:
         """Results below threshold are filtered out."""
-        results = await _extract_figures_from_source(
-            "paper.md", figure_types=None, threshold=0.9
-        )
+        results = await _extract_figures_from_source("paper.md", figure_types=None, threshold=0.9)
         for r in results:
             assert r["confidence"] >= 0.9
 
@@ -159,11 +157,12 @@ class TestExtractFiguresFromSource:
         mock_path.return_value.read_bytes.return_value = b"fake_png"
         mock_extract.side_effect = RuntimeError("VLM timeout")
 
-        with patch(
-            "nfm_db.services.ocr_fallback.OcrFallback"
-        ) as mock_ocr_cls, patch(
-            "nfm_db.services.ocr_fallback.ocr_fallback_plot_result",
-            side_effect=RuntimeError("OCR also failed"),
+        with (
+            patch("nfm_db.services.ocr_fallback.OcrFallback") as mock_ocr_cls,
+            patch(
+                "nfm_db.services.ocr_fallback.ocr_fallback_plot_result",
+                side_effect=RuntimeError("OCR also failed"),
+            ),
         ):
             mock_ocr_cls.return_value.extract_text = AsyncMock(
                 side_effect=RuntimeError("OCR failed")

@@ -156,9 +156,7 @@ class TestGetJobPropertiesFromStaging:
             await db_session.commit()
 
             # Call result endpoint
-            response = await db_client.get(
-                f"/api/v4/extraction/{job_id}/result"
-            )
+            response = await db_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 200
             body = response.json()
             assert body["success"] is True
@@ -212,9 +210,7 @@ class TestGetJobPropertiesFromStaging:
             )
             await db_session.commit()
 
-            response = await db_client.get(
-                f"/api/v4/extraction/{job_id}/result"
-            )
+            response = await db_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 200
             properties = response.json()["data"]["properties"]
             assert len(properties) == 1
@@ -242,9 +238,7 @@ class TestGetJobPropertiesFromStaging:
 
         _make_completed_job(job_id, fill_batch_id=fill_batch_id)
         try:
-            response = await db_client.get(
-                f"/api/v4/extraction/{job_id}/result"
-            )
+            response = await db_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 200
             properties = response.json()["data"]["properties"]
             assert properties == []
@@ -261,9 +255,7 @@ class TestGetJobPropertiesFromStaging:
 
         _make_completed_job(job_id, fill_batch_id=None)
         try:
-            response = await db_client.get(
-                f"/api/v4/extraction/{job_id}/result"
-            )
+            response = await db_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 200
             properties = response.json()["data"]["properties"]
             assert properties == []
@@ -275,9 +267,7 @@ class TestGetJobPropertiesFromStaging:
         self, db_client: AsyncClient, db_session: AsyncSession
     ):
         """Result should return empty properties when job is unknown."""
-        response = await db_client.get(
-            "/api/v4/extraction/unknown-job/result"
-        )
+        response = await db_client.get("/api/v4/extraction/unknown-job/result")
         # Job not found returns 404, not empty properties
         assert response.status_code == 404
 
@@ -429,9 +419,7 @@ class TestGetJobPropertiesFromStaging:
             )
             await db_session.commit()
 
-            response = await db_client.get(
-                f"/api/v4/extraction/{job_id}/result"
-            )
+            response = await db_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 200
             prop = response.json()["data"]["properties"][0]
             assert prop["cache_level"] is None

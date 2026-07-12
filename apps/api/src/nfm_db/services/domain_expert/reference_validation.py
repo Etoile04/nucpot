@@ -263,9 +263,7 @@ def validate_reference(
     # Step 4: Literature agreement (if matches provided)
     if matches:
         avg_agreement = sum(m.agreement_pct for m in matches) / len(matches)
-        notes_parts.append(
-            f"Literature: {len(matches)} matches, avg agreement {avg_agreement:.1%}"
-        )
+        notes_parts.append(f"Literature: {len(matches)} matches, avg agreement {avg_agreement:.1%}")
         # Boost source score if multiple independent sources agree
         if len(matches) >= 2 and avg_agreement > 0.90:
             source_score = min(1.0, source_score + 0.1)

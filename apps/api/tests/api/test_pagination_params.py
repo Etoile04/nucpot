@@ -145,9 +145,7 @@ class TestPublicEndpointPaginationValidation:
 
     @pytest.mark.parametrize("endpoint", PUBLIC_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio
-    async def test_page_zero_returns_422(
-        self, async_client, endpoint: Endpoint
-    ) -> None:
+    async def test_page_zero_returns_422(self, async_client, endpoint: Endpoint) -> None:
         url = f"{endpoint.path}?page=0"
         if endpoint.extra_params:
             url += f"&{endpoint.extra_params}"
@@ -156,9 +154,7 @@ class TestPublicEndpointPaginationValidation:
 
     @pytest.mark.parametrize("endpoint", PUBLIC_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio
-    async def test_per_page_exceeds_max_returns_422(
-        self, async_client, endpoint: Endpoint
-    ) -> None:
+    async def test_per_page_exceeds_max_returns_422(self, async_client, endpoint: Endpoint) -> None:
         url = f"{endpoint.path}?per_page=101"
         if endpoint.extra_params:
             url += f"&{endpoint.extra_params}"
@@ -167,9 +163,7 @@ class TestPublicEndpointPaginationValidation:
 
     @pytest.mark.parametrize("endpoint", PUBLIC_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio
-    async def test_valid_pagination_returns_200(
-        self, async_client, endpoint: Endpoint
-    ) -> None:
+    async def test_valid_pagination_returns_200(self, async_client, endpoint: Endpoint) -> None:
         url = f"{endpoint.path}?page=1&per_page=1"
         if endpoint.extra_params:
             url += f"&{endpoint.extra_params}"

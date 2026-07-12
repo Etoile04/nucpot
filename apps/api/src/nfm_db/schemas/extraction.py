@@ -33,8 +33,7 @@ class ExtractionTriggerRequest(BaseModel):
         min_length=1,
         max_length=500,
         description=(
-            "Literature source reference: file path (PDF), DOI, URL, "
-            "or internal document ID."
+            "Literature source reference: file path (PDF), DOI, URL, or internal document ID."
         ),
     )
     source_type: str = Field(
@@ -141,9 +140,7 @@ class ExtractedProperty(BaseModel):
         description="Composition from source text or material name itself",
     )
     phase: str | None = Field(default=None, description="Material phase (alpha, beta, gamma, etc.)")
-    element: str | None = Field(
-        default=None, description="Element if property is element-specific"
-    )
+    element: str | None = Field(default=None, description="Element if property is element-specific")
     property_category: str | None = Field(
         default=None, description="Property category from fixed catalog"
     )

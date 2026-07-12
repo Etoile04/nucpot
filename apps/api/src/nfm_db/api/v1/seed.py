@@ -94,7 +94,5 @@ async def review_measurement_endpoint(
         reviewer_note=payload.reviewer_note,
     )
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Property measurement not found"
-        )
+        raise HTTPException(status_code=404, detail="Property measurement not found")
     return ApiResponse(success=True, data=result)

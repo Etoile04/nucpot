@@ -170,7 +170,9 @@ class TestCalculateExtractionAccuracy:
         from nfm_db.services.quality_service import calculate_extraction_accuracy
 
         # Seed records with unique property names for deterministic matching
-        records = await _seed_staging_records(db_session, count=5, confidence=Confidence.HIGH, unique_names=True)
+        records = await _seed_staging_records(
+            db_session, count=5, confidence=Confidence.HIGH, unique_names=True
+        )
         # Build references that match each record's value exactly
         references = [
             {

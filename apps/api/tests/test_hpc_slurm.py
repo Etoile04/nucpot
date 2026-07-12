@@ -152,9 +152,7 @@ class TestGenerateSlurmScript:
         assert "/opt/lammps/bin/lmp_mpi" in script
 
     @pytest.mark.unit
-    def test_with_lammps_executable_and_input_file(
-        self, default_params: dict
-    ) -> None:
+    def test_with_lammps_executable_and_input_file(self, default_params: dict) -> None:
         """mpirun references the provided input_file."""
         default_params["lammps_executable"] = "/opt/lammps/bin/lmp_mpi"
         default_params["input_file"] = "in.uo2_vacancy"
@@ -163,9 +161,7 @@ class TestGenerateSlurmScript:
         assert "mpirun /opt/lammps/bin/lmp_mpi -in in.uo2_vacancy" in script
 
     @pytest.mark.unit
-    def test_with_lammps_executable_default_input_file(
-        self, default_params: dict
-    ) -> None:
+    def test_with_lammps_executable_default_input_file(self, default_params: dict) -> None:
         """When lammps_executable is set but input_file omitted, defaults to in.lammps."""
         default_params["lammps_executable"] = "/opt/lammps/bin/lmp_mpi"
         script: str = generate_slurm_script(default_params)
@@ -173,9 +169,7 @@ class TestGenerateSlurmScript:
         assert "in.lammps" in script
 
     @pytest.mark.unit
-    def test_without_lammps_executable_no_mpirun(
-        self, default_params: dict
-    ) -> None:
+    def test_without_lammps_executable_no_mpirun(self, default_params: dict) -> None:
         """Without lammps_executable, no mpirun command appears."""
         script: str = generate_slurm_script(default_params)
 
@@ -410,9 +404,7 @@ class TestUploadScriptViaSftp:
 
         mock_client.open_sftp.assert_called_once()
         mock_sftp.mkdir.assert_called_once_with("/scratch/nfm-md/task1")
-        mock_sftp.file.assert_called_once_with(
-            "/scratch/nfm-md/task1/submit.sh", "w"
-        )
+        mock_sftp.file.assert_called_once_with("/scratch/nfm-md/task1/submit.sh", "w")
         mock_file.write.assert_called_once_with("#!/bin/bash\necho hello")
         mock_sftp.close.assert_called_once()
 
@@ -427,9 +419,7 @@ class TestUploadScriptViaSftp:
         mock_sftp.file.return_value.__exit__ = MagicMock(return_value=False)
         mock_client.open_sftp.return_value = mock_sftp
 
-        upload_script_via_sftp(
-            mock_client, "script body", "/scratch/nfm-md/task1/run.sh"
-        )
+        upload_script_via_sftp(mock_client, "script body", "/scratch/nfm-md/task1/run.sh")
 
         mock_sftp.mkdir.assert_called_once()
         # Should still have written the file
@@ -484,14 +474,11 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ) as mock_upload, patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp") as mock_upload,
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False),
         ):
-            result = await submit_to_slurm(
-                mock_manager, "cluster01", "task-abc", "#!/bin/bash"
-            )
+            result = await submit_to_slurm(mock_manager, "cluster01", "task-abc", "#!/bin/bash")
 
         assert result == "slurm-12345"
         mock_upload.assert_called_once()
@@ -513,19 +500,14 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True),
         ):
             mock_prom_inc = MagicMock()
-            with patch(
-                "nfm_db.services.hpc_slurm.hpc_job_submissions"
-            ) as mock_metric:
+            with patch("nfm_db.services.hpc_slurm.hpc_job_submissions") as mock_metric:
                 mock_metric.labels.return_value.inc = mock_prom_inc
-                with pytest.raises(
-                    JobSubmissionError, match="queue is full"
-                ):
+                with pytest.raises(JobSubmissionError, match="queue is full"):
                     await submit_to_slurm(
                         mock_manager,
                         "cluster01",
@@ -533,9 +515,7 @@ class TestSubmitToSlurm:
                         "script",
                     )
 
-        mock_metric.labels.assert_called_with(
-            cluster="cluster01", status="queue_full"
-        )
+        mock_metric.labels.assert_called_with(cluster="cluster01", status="queue_full")
         mock_prom_inc.assert_called_once()
         mock_manager.release_connection.assert_called_once_with(mock_client)
 
@@ -551,18 +531,14 @@ class TestSubmitToSlurm:
         mock_stdout.channel = mock_channel
         mock_stdout.read.return_value = b""
         mock_stderr = MagicMock()
-        mock_stderr.read.return_value = (
-            b"sbatch: error: qos: QOSMaxSubmitJobLimit\n"
-        )
+        mock_stderr.read.return_value = b"sbatch: error: qos: QOSMaxSubmitJobLimit\n"
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False
-        ), pytest.raises(
-            JobSubmissionError, match="queue is full"
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False),
+            pytest.raises(JobSubmissionError, match="queue is full"),
         ):
             await submit_to_slurm(
                 mock_manager,
@@ -587,18 +563,14 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True
-        ), patch(
-            "nfm_db.services.hpc_slurm.hpc_job_submissions"
-        ) as mock_metric:
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True),
+            patch("nfm_db.services.hpc_slurm.hpc_job_submissions") as mock_metric,
+        ):
             mock_prom_inc = MagicMock()
             mock_metric.labels.return_value.inc = mock_prom_inc
-            with pytest.raises(
-                JobSubmissionError, match="Permission denied"
-            ):
+            with pytest.raises(JobSubmissionError, match="Permission denied"):
                 await submit_to_slurm(
                     mock_manager,
                     "cluster01",
@@ -606,9 +578,7 @@ class TestSubmitToSlurm:
                     "script",
                 )
 
-        mock_metric.labels.assert_called_with(
-            cluster="cluster01", status="permission_denied"
-        )
+        mock_metric.labels.assert_called_with(cluster="cluster01", status="permission_denied")
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -626,12 +596,10 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False
-        ), pytest.raises(
-            JobSubmissionError, match="submission failed"
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False),
+            pytest.raises(JobSubmissionError, match="submission failed"),
         ):
             await submit_to_slurm(
                 mock_manager,
@@ -656,18 +624,14 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True
-        ), patch(
-            "nfm_db.services.hpc_slurm.hpc_job_submissions"
-        ) as mock_metric:
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True),
+            patch("nfm_db.services.hpc_slurm.hpc_job_submissions") as mock_metric,
+        ):
             mock_prom_inc = MagicMock()
             mock_metric.labels.return_value.inc = mock_prom_inc
-            with pytest.raises(
-                JobSubmissionError, match="Invalid job ID"
-            ):
+            with pytest.raises(JobSubmissionError, match="Invalid job ID"):
                 await submit_to_slurm(
                     mock_manager,
                     "cluster01",
@@ -675,9 +639,7 @@ class TestSubmitToSlurm:
                     "script",
                 )
 
-        mock_metric.labels.assert_called_with(
-            cluster="cluster01", status="invalid_response"
-        )
+        mock_metric.labels.assert_called_with(cluster="cluster01", status="invalid_response")
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -686,16 +648,13 @@ class TestSubmitToSlurm:
         mock_manager = MagicMock()
         mock_manager.acquire_connection.side_effect = ConnectionError("SSH down")
 
-        with patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True
-        ), patch(
-            "nfm_db.services.hpc_slurm.hpc_job_submissions"
-        ) as mock_metric:
+        with (
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True),
+            patch("nfm_db.services.hpc_slurm.hpc_job_submissions") as mock_metric,
+        ):
             mock_prom_inc = MagicMock()
             mock_metric.labels.return_value.inc = mock_prom_inc
-            with pytest.raises(
-                JobSubmissionError, match="HPC connection failed"
-            ):
+            with pytest.raises(JobSubmissionError, match="HPC connection failed"):
                 await submit_to_slurm(
                     mock_manager,
                     "cluster01",
@@ -703,9 +662,7 @@ class TestSubmitToSlurm:
                     "script",
                 )
 
-        mock_metric.labels.assert_called_with(
-            cluster="cluster01", status="error"
-        )
+        mock_metric.labels.assert_called_with(cluster="cluster01", status="error")
         mock_manager.release_connection.assert_not_called()
 
     @pytest.mark.unit
@@ -715,9 +672,10 @@ class TestSubmitToSlurm:
         mock_manager = MagicMock()
         mock_manager.acquire_connection.side_effect = RuntimeError("timeout")
 
-        with patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False
-        ), pytest.raises(JobSubmissionError, match="HPC connection failed"):
+        with (
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False),
+            pytest.raises(JobSubmissionError, match="HPC connection failed"),
+        ):
             await submit_to_slurm(
                 mock_manager,
                 "cluster01",
@@ -741,11 +699,11 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False
-        ), pytest.raises(JobSubmissionError):
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", False),
+            pytest.raises(JobSubmissionError),
+        ):
             await submit_to_slurm(
                 mock_manager,
                 "cluster01",
@@ -771,13 +729,11 @@ class TestSubmitToSlurm:
         mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
         mock_manager.acquire_connection.return_value = mock_client
 
-        with patch(
-            "nfm_db.services.hpc_slurm.upload_script_via_sftp"
-        ), patch(
-            "nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True
-        ), patch(
-            "nfm_db.services.hpc_slurm.hpc_job_submissions"
-        ) as mock_metric:
+        with (
+            patch("nfm_db.services.hpc_slurm.upload_script_via_sftp"),
+            patch("nfm_db.services.hpc_slurm.PROMETHEUS_AVAILABLE", True),
+            patch("nfm_db.services.hpc_slurm.hpc_job_submissions") as mock_metric,
+        ):
             mock_prom_inc = MagicMock()
             mock_metric.labels.return_value.inc = mock_prom_inc
 
@@ -789,9 +745,7 @@ class TestSubmitToSlurm:
             )
 
         assert result == "slurm-98765"
-        mock_metric.labels.assert_called_with(
-            cluster="gpu-cluster", status="success"
-        )
+        mock_metric.labels.assert_called_with(cluster="gpu-cluster", status="success")
         mock_prom_inc.assert_called_once()
 
 
@@ -817,24 +771,19 @@ class TestCreateHpcJobRecord:
         async def mock_db_gen():
             yield mock_db_session
 
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.md_verification.HpcJob", autospec=True
-        ) as mock_hpc_job_cls:
-            mock_hpc_job_cls.return_value = MagicMock(
-                id=uuid.uuid4()
-            )
-            await create_hpc_job_record(
-                task_id, "slurm-12345", params, "cluster01"
-            )
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch("nfm_db.models.md_verification.HpcJob", autospec=True) as mock_hpc_job_cls,
+        ):
+            mock_hpc_job_cls.return_value = MagicMock(id=uuid.uuid4())
+            await create_hpc_job_record(task_id, "slurm-12345", params, "cluster01")
 
         mock_db_session.add.assert_called_once()
         mock_db_session.commit.assert_awaited_once()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_database_error_triggers_rollback(
-        self, mock_db_session: AsyncMock
-    ) -> None:
+    async def test_database_error_triggers_rollback(self, mock_db_session: AsyncMock) -> None:
         """On exception, rollback is called and exception propagates."""
         task_id = str(uuid.uuid4())
         params: dict = {}
@@ -844,12 +793,12 @@ class TestCreateHpcJobRecord:
 
         mock_db_session.commit.side_effect = RuntimeError("DB down")
 
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.md_verification.HpcJob", autospec=True
-        ), pytest.raises(RuntimeError, match="DB down"):
-            await create_hpc_job_record(
-                task_id, "slurm-12345", params, "cluster01"
-            )
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch("nfm_db.models.md_verification.HpcJob", autospec=True),
+            pytest.raises(RuntimeError, match="DB down"),
+        ):
+            await create_hpc_job_record(task_id, "slurm-12345", params, "cluster01")
 
         mock_db_session.rollback.assert_awaited_once()
 
@@ -863,19 +812,17 @@ class TestCreateHpcJobRecord:
         async def mock_db_gen():
             yield mock_db_session
 
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.md_verification.HpcJob", autospec=True
-        ) as mock_hpc_job_cls:
-            await create_hpc_job_record(
-                task_id, "slurm-99", params, "cluster01"
-            )
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch("nfm_db.models.md_verification.HpcJob", autospec=True) as mock_hpc_job_cls,
+        ):
+            await create_hpc_job_record(task_id, "slurm-99", params, "cluster01")
 
         # HpcJob was constructed with partition="compute"
         _call = mock_hpc_job_cls.call_args
         assert _call is not None
         assert (
-            _call.kwargs.get("partition") == "compute"
-            or _call[1].get("partition") == "compute"  # type: ignore[index]
+            _call.kwargs.get("partition") == "compute" or _call[1].get("partition") == "compute"  # type: ignore[index]
         )
 
     @pytest.mark.unit
@@ -888,18 +835,16 @@ class TestCreateHpcJobRecord:
         async def mock_db_gen():
             yield mock_db_session
 
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.md_verification.HpcJob", autospec=True
-        ) as mock_hpc_job_cls:
-            await create_hpc_job_record(
-                task_id, "slurm-99", params, "cluster01"
-            )
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch("nfm_db.models.md_verification.HpcJob", autospec=True) as mock_hpc_job_cls,
+        ):
+            await create_hpc_job_record(task_id, "slurm-99", params, "cluster01")
 
         _call = mock_hpc_job_cls.call_args
         assert _call is not None
         assert (
-            _call.kwargs.get("nodes") == 1
-            or _call[1].get("nodes") == 1  # type: ignore[index]
+            _call.kwargs.get("nodes") == 1 or _call[1].get("nodes") == 1  # type: ignore[index]
         )
 
     @pytest.mark.unit
@@ -912,26 +857,22 @@ class TestCreateHpcJobRecord:
         async def mock_db_gen():
             yield mock_db_session
 
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.md_verification.HpcJob", autospec=True
-        ) as mock_hpc_job_cls:
-            await create_hpc_job_record(
-                task_id, "slurm-99", params, "cluster01"
-            )
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch("nfm_db.models.md_verification.HpcJob", autospec=True) as mock_hpc_job_cls,
+        ):
+            await create_hpc_job_record(task_id, "slurm-99", params, "cluster01")
 
         _call = mock_hpc_job_cls.call_args
         assert _call is not None
         walltime_val = (
-            _call.kwargs.get("walltime_requested")
-            or _call[1].get("walltime_requested")  # type: ignore[index]
+            _call.kwargs.get("walltime_requested") or _call[1].get("walltime_requested")  # type: ignore[index]
         )
         assert walltime_val == 120
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_db_generator_exhausted(
-        self, mock_db_session: AsyncMock
-    ) -> None:
+    async def test_db_generator_exhausted(self, mock_db_session: AsyncMock) -> None:
         """Second __anext__ call (cleanup) is handled gracefully."""
         task_id = str(uuid.uuid4())
         params: dict = {}
@@ -939,12 +880,11 @@ class TestCreateHpcJobRecord:
         async def mock_db_gen():
             yield mock_db_session
 
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.md_verification.HpcJob", autospec=True
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch("nfm_db.models.md_verification.HpcJob", autospec=True),
         ):
-            await create_hpc_job_record(
-                task_id, "slurm-99", params, "cluster01"
-            )
+            await create_hpc_job_record(task_id, "slurm-99", params, "cluster01")
 
         # The generator should have been fully consumed (cleanup __anext__)
         # No assertion needed -- just ensuring no StopAsyncIteration leak
@@ -1079,9 +1019,7 @@ class TestGenerateSlurmScriptInjectionPrevention:
             generate_slurm_script(params)
 
     @pytest.mark.unit
-    def test_lammps_executable_command_sub_rejected(
-        self, default_params: dict
-    ) -> None:
+    def test_lammps_executable_command_sub_rejected(self, default_params: dict) -> None:
         """lammps_executable with $() raises ValueError."""
         params = {**default_params, "lammps_executable": "$(whoami)"}
         with pytest.raises(ValueError, match="lammps_executable"):

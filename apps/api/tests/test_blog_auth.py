@@ -43,9 +43,7 @@ class TestBlogPostTitleColumn:
     """Tests for the title column on BlogPostMetadata."""
 
     @pytest.mark.asyncio
-    async def test_create_populates_title(
-        self, db_session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_create_populates_title(self, db_session: AsyncSession, tmp_path: Path) -> None:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             metadata, _ = await create_blog_post(
                 session=db_session,
@@ -77,9 +75,7 @@ class TestBlogPostTitleColumn:
         assert response.status == PostStatus.DRAFT.value
 
     @pytest.mark.asyncio
-    async def test_create_without_title_raises(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_create_without_title_raises(self, db_session: AsyncSession) -> None:
         """BlogPostMetadata requires title — SQLAlchemy NOT NULL constraint."""
         with pytest.raises(Exception):
             post = BlogPostMetadata(
@@ -115,17 +111,13 @@ class TestDeleteAdminOverride:
         admin_id = uuid.uuid4()
 
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
-            await delete_blog_post(
-                db_session, "admin-delete-me", admin_id, is_admin=True
-            )
+            await delete_blog_post(db_session, "admin-delete-me", admin_id, is_admin=True)
 
         result = await db_session.get(BlogPostMetadata, post.id)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_non_admin_cannot_delete_others_post(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_non_admin_cannot_delete_others_post(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
             slug="not-yours",
             title="Not Yours",
@@ -137,9 +129,7 @@ class TestDeleteAdminOverride:
 
         other_id = uuid.uuid4()
         with pytest.raises(PermissionError):
-            await delete_blog_post(
-                db_session, "not-yours", other_id, is_admin=False
-            )
+            await delete_blog_post(db_session, "not-yours", other_id, is_admin=False)
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +141,7 @@ class TestBlogAPIAuthWiring:
     """Integration tests for blog API auth dependencies."""
 
     @pytest.mark.asyncio
-    async def test_create_post_requires_auth(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_create_post_requires_auth(self, db_session: AsyncSession) -> None:
         """POST /admin/blog/posts returns 401 without auth token."""
         from nfm_db.database import get_db
         from nfm_db.main import app
@@ -180,7 +168,10 @@ class TestBlogAPIAuthWiring:
 
     @pytest.mark.asyncio
     async def test_create_post_with_editor_auth(
-        self, db_session: AsyncSession, editor_user: User, editor_headers: dict,
+        self,
+        db_session: AsyncSession,
+        editor_user: User,
+        editor_headers: dict,
         tmp_path: Path,
     ) -> None:
         """POST /admin/blog/posts succeeds with editor auth."""
@@ -215,7 +206,10 @@ class TestBlogAPIAuthWiring:
 
     @pytest.mark.asyncio
     async def test_create_post_rejected_for_reviewer(
-        self, db_session: AsyncSession, reviewer_user: User, reviewer_headers: dict,
+        self,
+        db_session: AsyncSession,
+        reviewer_user: User,
+        reviewer_headers: dict,
     ) -> None:
         """POST /admin/blog/posts returns 403 for reviewer (not editor/admin)."""
         from nfm_db.database import get_db
@@ -244,9 +238,7 @@ class TestBlogAPIAuthWiring:
         app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_list_posts_requires_auth(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_list_posts_requires_auth(self, db_session: AsyncSession) -> None:
         """GET /admin/blog/posts returns 401 without auth."""
         from nfm_db.database import get_db
         from nfm_db.main import app
@@ -265,7 +257,10 @@ class TestBlogAPIAuthWiring:
 
     @pytest.mark.asyncio
     async def test_list_posts_with_admin_auth(
-        self, db_session: AsyncSession, admin_user: User, admin_headers: dict,
+        self,
+        db_session: AsyncSession,
+        admin_user: User,
+        admin_headers: dict,
     ) -> None:
         """GET /admin/blog/posts succeeds with admin auth."""
         from nfm_db.database import get_db
@@ -288,7 +283,10 @@ class TestBlogAPIAuthWiring:
 
     @pytest.mark.asyncio
     async def test_list_posts_status_validation(
-        self, db_session: AsyncSession, admin_user: User, admin_headers: dict,
+        self,
+        db_session: AsyncSession,
+        admin_user: User,
+        admin_headers: dict,
     ) -> None:
         """GET /admin/blog/posts returns 400 for invalid status query param."""
         from nfm_db.database import get_db
@@ -310,7 +308,10 @@ class TestBlogAPIAuthWiring:
 
     @pytest.mark.asyncio
     async def test_no_raw_author_id_param(
-        self, db_session: AsyncSession, editor_user: User, editor_headers: dict,
+        self,
+        db_session: AsyncSession,
+        editor_user: User,
+        editor_headers: dict,
         tmp_path: Path,
     ) -> None:
         """Create endpoint ignores raw author_id — it comes from JWT."""

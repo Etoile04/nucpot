@@ -182,32 +182,24 @@ class TestExtractFiguresStubMode:
 
     @pytest.mark.asyncio
     async def test_returns_stub_figures(self) -> None:
-        results = await _extract_figures_from_source(
-            "test_source.pdf", None, 0.0
-        )
+        results = await _extract_figures_from_source("test_source.pdf", None, 0.0)
         assert len(results) == 3
         assert all("figure_type" in r for r in results)
 
     @pytest.mark.asyncio
     async def test_filters_by_figure_types(self) -> None:
-        results = await _extract_figures_from_source(
-            "test_source.pdf", ["line"], 0.0
-        )
+        results = await _extract_figures_from_source("test_source.pdf", ["line"], 0.0)
         assert all(r["figure_type"] == "line" for r in results)
 
     @pytest.mark.asyncio
     async def test_filters_by_confidence_threshold(self) -> None:
-        results = await _extract_figures_from_source(
-            "test_source.pdf", None, 0.75
-        )
+        results = await _extract_figures_from_source("test_source.pdf", None, 0.75)
         assert all(r["confidence"] >= 0.75 for r in results)
         assert len(results) >= 1
 
     @pytest.mark.asyncio
     async def test_no_results_when_threshold_too_high(self) -> None:
-        results = await _extract_figures_from_source(
-            "test_source.pdf", None, 1.0
-        )
+        results = await _extract_figures_from_source("test_source.pdf", None, 1.0)
         assert results == []
 
 
@@ -274,11 +266,12 @@ class TestExtractFiguresFaultTolerance:
         mock_path.return_value.read_bytes.return_value = b"fake_png"
         mock_extract.side_effect = RuntimeError("VLM timeout")
 
-        with patch(
-            "nfm_db.services.ocr_fallback.OcrFallback"
-        ) as mock_ocr_cls, patch(
-            "nfm_db.services.ocr_fallback.ocr_fallback_plot_result",
-            side_effect=RuntimeError("OCR also failed"),
+        with (
+            patch("nfm_db.services.ocr_fallback.OcrFallback") as mock_ocr_cls,
+            patch(
+                "nfm_db.services.ocr_fallback.ocr_fallback_plot_result",
+                side_effect=RuntimeError("OCR also failed"),
+            ),
         ):
             mock_ocr_cls.return_value.extract_text = AsyncMock(
                 side_effect=RuntimeError("OCR failed")
@@ -318,11 +311,12 @@ class TestExtractTablesFaultTolerance:
         mock_path.return_value.read_bytes.return_value = b"fake_png"
         mock_extract.side_effect = RuntimeError("VLM timeout")
 
-        with patch(
-            "nfm_db.services.ocr_fallback.OcrFallback"
-        ) as mock_ocr_cls, patch(
-            "nfm_db.services.ocr_fallback.ocr_fallback_table_result",
-            side_effect=RuntimeError("OCR also failed"),
+        with (
+            patch("nfm_db.services.ocr_fallback.OcrFallback") as mock_ocr_cls,
+            patch(
+                "nfm_db.services.ocr_fallback.ocr_fallback_table_result",
+                side_effect=RuntimeError("OCR also failed"),
+            ),
         ):
             mock_ocr_cls.return_value.extract_text = AsyncMock(
                 side_effect=RuntimeError("OCR failed")
@@ -377,9 +371,7 @@ class TestRunMultimodalExtraction:
 
     @pytest.mark.asyncio
     async def test_extracts_both_when_both_flags_set(self) -> None:
-        job = self._make_job(
-            extract_figures=True, extract_tables=True, confidence_threshold=0.0
-        )
+        job = self._make_job(extract_figures=True, extract_tables=True, confidence_threshold=0.0)
         await run_multimodal_extraction(job, [])
         assert len(job.figures) > 0
         assert len(job.tables) > 0

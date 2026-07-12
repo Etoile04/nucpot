@@ -156,7 +156,7 @@ def mock_task_request() -> Mock:
 @pytest.mark.integration
 @pytest.mark.skipif(
     True,  # Skip by default, enable with: pytest -v -m integration --runxfail
-    reason="Requires nfm-md-runner installation and real execution"
+    reason="Requires nfm-md-runner installation and real execution",
 )
 class TestMDVerificationIntegration:
     """Integration tests with real nfm-md-runner execution."""
@@ -263,10 +263,7 @@ class TestDatabasePersistence:
         service = MDVerificationService(db_session)
 
         # Simulate status update
-        updated_job = await service.update_job(
-            test_job.id,
-            {"status": JobStatus.SUBMITTED}
-        )
+        updated_job = await service.update_job(test_job.id, {"status": JobStatus.SUBMITTED})
 
         assert updated_job is not None
         assert updated_job.status == JobStatus.SUBMITTED
@@ -313,8 +310,7 @@ class TestTaskIsolation:
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    True,
-    reason="Performance tests - run manually with pytest -v -m integration --runxfail"
+    True, reason="Performance tests - run manually with pytest -v -m integration --runxfail"
 )
 class TestTaskPerformance:
     """Performance tests for MD verification tasks."""

@@ -144,9 +144,7 @@ class TestIngest:
                 "message": "Text inserted successfully",
                 "track_id": "track-abc-123",
             },
-            request=httpx.Request(
-                "POST", "http://localhost:9621/documents/text"
-            ),
+            request=httpx.Request("POST", "http://localhost:9621/documents/text"),
         )
 
         with patch.object(
@@ -177,17 +175,18 @@ class TestIngest:
         mock_response = httpx.Response(
             500,
             json={"detail": "Internal server error"},
-            request=httpx.Request(
-                "POST", "http://localhost:9621/documents/text"
-            ),
+            request=httpx.Request("POST", "http://localhost:9621/documents/text"),
         )
 
-        with patch.object(
-            client._http_client,  # type: ignore[attr-defined]
-            "post",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ), pytest.raises(LightRAGClientError):
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            pytest.raises(LightRAGClientError),
+        ):
             await client.ingest(text="test content")
 
     @pytest.mark.asyncio
@@ -200,12 +199,15 @@ class TestIngest:
 
         client = LightRAGClient(host="localhost", port=9621)
 
-        with patch.object(
-            client._http_client,  # type: ignore[attr-defined]
-            "post",
-            new_callable=AsyncMock,
-            side_effect=httpx.ConnectError("Connection refused"),
-        ), pytest.raises(LightRAGClientError):
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("Connection refused"),
+            ),
+            pytest.raises(LightRAGClientError),
+        ):
             await client.ingest(text="test content")
 
 
@@ -235,9 +237,7 @@ class TestQuery:
                     }
                 ],
             },
-            request=httpx.Request(
-                "POST", "http://localhost:9621/query"
-            ),
+            request=httpx.Request("POST", "http://localhost:9621/query"),
         )
 
         with patch.object(
@@ -269,9 +269,7 @@ class TestQuery:
                 "response": "Answer text",
                 "references": [],
             },
-            request=httpx.Request(
-                "POST", "http://localhost:9621/query"
-            ),
+            request=httpx.Request("POST", "http://localhost:9621/query"),
         )
 
         with patch.object(
@@ -299,17 +297,18 @@ class TestQuery:
         mock_response = httpx.Response(
             500,
             json={"detail": "Query processing failed"},
-            request=httpx.Request(
-                "POST", "http://localhost:9621/query"
-            ),
+            request=httpx.Request("POST", "http://localhost:9621/query"),
         )
 
-        with patch.object(
-            client._http_client,  # type: ignore[attr-defined]
-            "post",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ), pytest.raises(LightRAGClientError):
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            pytest.raises(LightRAGClientError),
+        ):
             await client.query(query="test query")
 
     @pytest.mark.asyncio
@@ -322,12 +321,15 @@ class TestQuery:
 
         client = LightRAGClient(host="localhost", port=9621)
 
-        with patch.object(
-            client._http_client,  # type: ignore[attr-defined]
-            "post",
-            new_callable=AsyncMock,
-            side_effect=httpx.ReadTimeout("Timed out"),
-        ), pytest.raises(LightRAGClientError):
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ReadTimeout("Timed out"),
+            ),
+            pytest.raises(LightRAGClientError),
+        ):
             await client.query(query="test query")
 
 

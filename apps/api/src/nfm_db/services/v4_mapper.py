@@ -28,9 +28,7 @@ def _get_phase_mapper() -> PhaseMapper:
     if _phase_mapper is None:
         from pathlib import Path
 
-        config_path = (
-            Path(__file__).resolve().parent.parent / "config" / "phase_mapping.json"
-        )
+        config_path = Path(__file__).resolve().parent.parent / "config" / "phase_mapping.json"
         _phase_mapper = PhaseMapper.from_config(config_path)
     return _phase_mapper
 

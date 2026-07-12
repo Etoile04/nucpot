@@ -68,9 +68,7 @@ class LightRAGClient:
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         self.host = host or os.environ.get("NFM_LIGHTRAG_HOST", _DEFAULT_HOST)
-        self.port = port or int(
-            os.environ.get("NFM_LIGHTRAG_PORT", str(_DEFAULT_PORT))
-        )
+        self.port = port or int(os.environ.get("NFM_LIGHTRAG_PORT", str(_DEFAULT_PORT)))
         self.timeout = timeout
         self._base_url = f"http://{self.host}:{self.port}"
         self._http_client = httpx.AsyncClient(
@@ -140,13 +138,10 @@ class LightRAGClient:
             return response.json()
         except httpx.HTTPStatusError as exc:
             raise LightRAGClientError(
-                f"LightRAG ingest failed: HTTP {exc.response.status_code} "
-                f"- {exc.response.text}"
+                f"LightRAG ingest failed: HTTP {exc.response.status_code} - {exc.response.text}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise LightRAGClientError(
-                f"LightRAG ingest failed: {exc}"
-            ) from exc
+            raise LightRAGClientError(f"LightRAG ingest failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Query
@@ -187,13 +182,10 @@ class LightRAGClient:
             return response.json()
         except httpx.HTTPStatusError as exc:
             raise LightRAGClientError(
-                f"LightRAG query failed: HTTP {exc.response.status_code} "
-                f"- {exc.response.text}"
+                f"LightRAG query failed: HTTP {exc.response.status_code} - {exc.response.text}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise LightRAGClientError(
-                f"LightRAG query failed: {exc}"
-            ) from exc
+            raise LightRAGClientError(f"LightRAG query failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Lifecycle

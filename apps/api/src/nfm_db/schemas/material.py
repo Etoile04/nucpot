@@ -127,9 +127,7 @@ class MaterialAliasCreate(BaseModel):
     @classmethod
     def alias_type_enum(cls, v: str) -> str:
         if v not in VALID_ALIAS_TYPES:
-            raise ValueError(
-                f"alias_type must be one of: {', '.join(VALID_ALIAS_TYPES)}"
-            )
+            raise ValueError(f"alias_type must be one of: {', '.join(VALID_ALIAS_TYPES)}")
         return v
 
 
@@ -147,9 +145,7 @@ class MaterialAliasUpdate(BaseModel):
     @classmethod
     def alias_type_enum(cls, v: str | None) -> str | None:
         if v is not None and v not in VALID_ALIAS_TYPES:
-            raise ValueError(
-                f"alias_type must be one of: {', '.join(VALID_ALIAS_TYPES)}"
-            )
+            raise ValueError(f"alias_type must be one of: {', '.join(VALID_ALIAS_TYPES)}")
         return v
 
 

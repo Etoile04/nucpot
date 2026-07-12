@@ -132,8 +132,17 @@ async def list_posts(
     status: str | None = Query(default=None),
     author_id: str | None = Query(default=None),
     pagination: PaginationParams = Depends(PaginationParams),
-    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
-    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
+    _offset: int | None = Query(
+        default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"
+    ),
+    _limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=100,
+        alias="limit",
+        deprecated=True,
+        description="已弃用: 请使用 per_page 参数",
+    ),
 ) -> list[BlogPostResponse]:
     """List blog posts with filtering (admin/editor/reviewer only).
 
@@ -147,18 +156,14 @@ async def list_posts(
         try:
             post_status = PostStatus(status)
         except ValueError:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid status: {status}"
-            )
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
     parsed_author_id = None
     if author_id is not None:
         try:
             parsed_author_id = uuid.UUID(author_id)
         except ValueError:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid author_id: {author_id}"
-            )
+            raise HTTPException(status_code=400, detail=f"Invalid author_id: {author_id}")
 
     posts = await list_blog_posts(
         session,

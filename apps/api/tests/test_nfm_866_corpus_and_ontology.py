@@ -30,7 +30,8 @@ class TestKGNodeCorpusColumns:
 
     @pytest.mark.asyncio
     async def test_node_corpus_defaults(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """New KGNode has corpus_id=None, synced_to_graph=False."""
         node = KGNode(node_type="Material", label="UO2")
@@ -44,7 +45,8 @@ class TestKGNodeCorpusColumns:
 
     @pytest.mark.asyncio
     async def test_node_corpus_explicit(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGNode accepts explicit corpus_id and sync fields."""
         node = KGNode(
@@ -67,7 +69,8 @@ class TestKGNodeCorpusColumns:
 
     @pytest.mark.asyncio
     async def test_node_existing_fields_unchanged(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Existing KGNode fields still work with corpus fields."""
         node = KGNode(
@@ -98,7 +101,8 @@ class TestKGEdgeCorpusColumns:
 
     @pytest.mark.asyncio
     async def test_edge_corpus_defaults(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """New KGEdge has corpus_id=None, synced_to_graph=False."""
         source = KGNode(node_type="Material", label="UO2")
@@ -121,7 +125,8 @@ class TestKGEdgeCorpusColumns:
 
     @pytest.mark.asyncio
     async def test_edge_corpus_explicit(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """KGEdge accepts explicit corpus_id and sync fields."""
         source = KGNode(node_type="Material", label="UO2")
@@ -160,7 +165,8 @@ class TestOntologyIdMapCreation:
 
     @pytest.mark.asyncio
     async def test_create_ontology_id_map(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """OntologyIdMap can be created with required fields."""
         node = KGNode(node_type="Material", label="UO2")
@@ -185,7 +191,8 @@ class TestOntologyIdMapCreation:
 
     @pytest.mark.asyncio
     async def test_create_ontology_id_map_defaults(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """OntologyIdMap graph_label is optional, created_at auto-set."""
         node = KGNode(node_type="Property", label="Thermal Conductivity")
@@ -206,7 +213,8 @@ class TestOntologyIdMapCreation:
 
     @pytest.mark.asyncio
     async def test_duplicate_nvl_corpus_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate (nvl_id, corpus_id) rejected via unique constraint."""
         node1 = KGNode(node_type="Material", label="UO2")
@@ -233,7 +241,8 @@ class TestOntologyIdMapCreation:
 
     @pytest.mark.asyncio
     async def test_same_nvl_different_corpus_accepted(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Same nvl_id with different corpus_id is accepted."""
         node1 = KGNode(node_type="Material", label="UO2")
@@ -241,18 +250,20 @@ class TestOntologyIdMapCreation:
         db_session.add_all([node1, node2])
         await db_session.flush()
 
-        db_session.add_all([
-            OntologyIdMap(
-                nvl_id="MAT-001",
-                corpus_id="nvl-1.1",
-                node_id=node1.id,
-            ),
-            OntologyIdMap(
-                nvl_id="MAT-001",
-                corpus_id="other-corpus",
-                node_id=node2.id,
-            ),
-        ])
+        db_session.add_all(
+            [
+                OntologyIdMap(
+                    nvl_id="MAT-001",
+                    corpus_id="nvl-1.1",
+                    node_id=node1.id,
+                ),
+                OntologyIdMap(
+                    nvl_id="MAT-001",
+                    corpus_id="other-corpus",
+                    node_id=node2.id,
+                ),
+            ]
+        )
         await db_session.commit()
 
         from sqlalchemy import select
@@ -263,7 +274,8 @@ class TestOntologyIdMapCreation:
 
     @pytest.mark.asyncio
     async def test_fk_to_nonexistent_node_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """OntologyIdMap with non-existent node_id FK rejected."""
         import uuid
@@ -279,7 +291,8 @@ class TestOntologyIdMapCreation:
 
     @pytest.mark.asyncio
     async def test_cascade_delete_from_node(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Deleting a KGNode cascades to its OntologyIdMap entries."""
         node = KGNode(node_type="Material", label="UO2")
@@ -309,7 +322,8 @@ class TestOntologyIdMapRelationship:
 
     @pytest.mark.asyncio
     async def test_mapping_node_relationship(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """OntologyIdMap.node resolves to the correct KGNode."""
         node = KGNode(node_type="Material", label="UO2")

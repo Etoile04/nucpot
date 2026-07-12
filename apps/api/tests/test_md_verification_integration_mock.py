@@ -48,11 +48,11 @@ def mock_db_session():
 
     async def mock_refresh(obj: Any) -> None:
         # Simulate database setting generated fields
-        if hasattr(obj, 'id') and not obj.id:
+        if hasattr(obj, "id") and not obj.id:
             obj.id = uuid.uuid4()
-        if hasattr(obj, 'created_at'):
+        if hasattr(obj, "created_at"):
             obj.created_at = datetime.now()
-        if hasattr(obj, 'updated_at'):
+        if hasattr(obj, "updated_at"):
             obj.updated_at = datetime.now()
 
     session.add = mock_add
@@ -187,9 +187,10 @@ class TestMockedHPCIntegration:
         """
         job_id = uuid.uuid4()
 
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager:
-
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock
             MockManager.return_value = mock_analysis_manager
 
@@ -233,9 +234,10 @@ class TestMockedHPCIntegration:
 
         job_id = uuid.uuid4()
 
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager:
-
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock to raise ConnectionError (HPC unreachable)
             mock_manager = MagicMock()
             mock_manager.run_verification_pipeline.side_effect = ConnectionError(
@@ -273,9 +275,10 @@ class TestMockedHPCIntegration:
         """Test error handling when potential file is not found."""
         job_id = uuid.uuid4()
 
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager"):
-
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager"),
+        ):
             task_instance = MagicMock()
             task_instance.request = mock_task_request
 
@@ -297,9 +300,10 @@ class TestMockedHPCIntegration:
         tmp_test_files,
     ):
         """Test validation errors for invalid input parameters."""
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager"):
-
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager"),
+        ):
             task_instance = MagicMock()
             task_instance.request = mock_task_request
 
@@ -335,9 +339,10 @@ class TestMockedHPCIntegration:
 
         job_id = uuid.uuid4()
 
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager:
-
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock to raise ConnectionError (HPC unreachable)
             mock_manager = MagicMock()
             mock_manager.run_verification_pipeline.side_effect = ConnectionError(
@@ -424,7 +429,9 @@ class TestDatabasePersistence:
         assert updated_job["status"] == JobStatus.SUBMITTED
 
         # Simulate completion
-        completed_job = await service.update_job(job_response["id"], {"status": JobStatus.COMPLETED})
+        completed_job = await service.update_job(
+            job_response["id"], {"status": JobStatus.COMPLETED}
+        )
         assert completed_job is not None
         assert completed_job["status"] == JobStatus.COMPLETED
 
@@ -551,9 +558,10 @@ class TestErrorScenarios:
         """Test timeout handling during long-running simulations."""
         job_id = uuid.uuid4()
 
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), \
-             patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager:
-
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock to simulate timeout
             mock_manager = MagicMock()
             mock_manager.run_verification_pipeline.side_effect = TimeoutError(

@@ -83,15 +83,18 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with patch.object(
-            builder._linker,
-            "find_matching_node",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch.object(
-            builder,
-            "_fire_lightrag_ingest",
-        ) as mock_fire:
+        with (
+            patch.object(
+                builder._linker,
+                "find_matching_node",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_fire_lightrag_ingest",
+            ) as mock_fire,
+        ):
             result = await builder.build_from_extraction(extracted)
 
         assert result.nodes_created == 1
@@ -133,15 +136,18 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with patch.object(
-            builder._linker,
-            "find_matching_node",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch.object(
-            builder,
-            "_fire_lightrag_ingest",
-        ) as mock_fire:
+        with (
+            patch.object(
+                builder._linker,
+                "find_matching_node",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_fire_lightrag_ingest",
+            ) as mock_fire,
+        ):
             result = await builder.build_from_extraction(extracted)
 
         assert result.nodes_created == 2
@@ -176,15 +182,18 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with patch.object(
-            builder._linker,
-            "find_matching_node",
-            new_callable=AsyncMock,
-            return_value=existing_node,
-        ), patch.object(
-            builder,
-            "_fire_lightrag_ingest",
-        ) as mock_fire:
+        with (
+            patch.object(
+                builder._linker,
+                "find_matching_node",
+                new_callable=AsyncMock,
+                return_value=existing_node,
+            ),
+            patch.object(
+                builder,
+                "_fire_lightrag_ingest",
+            ) as mock_fire,
+        ):
             result = await builder.build_from_extraction(extracted)
 
         assert result.nodes_created == 0
@@ -212,14 +221,17 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with patch.object(
-            builder._linker,
-            "find_matching_node",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch(
-            "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag",
-            side_effect=ImportError("module not installed"),
+        with (
+            patch.object(
+                builder._linker,
+                "find_matching_node",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag",
+                side_effect=ImportError("module not installed"),
+            ),
         ):
             result = await builder.build_from_extraction(extracted)
             assert result.nodes_created == 1

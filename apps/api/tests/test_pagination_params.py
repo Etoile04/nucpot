@@ -42,9 +42,7 @@ class TestPaginationParamsOffset:
             (100, 100, 9900),
         ],
     )
-    def test_offset_calculation(
-        self, page: int, per_page: int, expected: int
-    ) -> None:
+    def test_offset_calculation(self, page: int, per_page: int, expected: int) -> None:
         params = PaginationParams(page=page, per_page=per_page)
         assert params.offset == expected
 

@@ -17,7 +17,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from nfm_db.schemas.batch import (
-    BatchImportResult,
     BatchRowError,
     PropertyMeasurementRow,
     ReferenceValueRow,
@@ -133,22 +132,30 @@ def _coerce_material_row(
             elif lower in ("false", "0", "no"):
                 mapped[field_name] = False
             else:
-                return None, BatchRowError(
-                    row=row_idx or 0,
-                    field=csv_col,
-                    message=f"Invalid boolean value: '{value}'",
-                ), row_idx
+                return (
+                    None,
+                    BatchRowError(
+                        row=row_idx or 0,
+                        field=csv_col,
+                        message=f"Invalid boolean value: '{value}'",
+                    ),
+                    row_idx,
+                )
         elif field_name == "category_id":
             mapped[field_name] = str_val
         else:
             mapped[field_name] = str_val
 
     if "name" not in mapped:
-        return None, BatchRowError(
-            row=row_idx or 0,
-            field="name",
-            message="Missing required field 'name'",
-        ), row_idx
+        return (
+            None,
+            BatchRowError(
+                row=row_idx or 0,
+                field="name",
+                message="Missing required field 'name'",
+            ),
+            row_idx,
+        )
 
     return mapped, None, row_idx
 
@@ -219,20 +226,41 @@ def validate_property_row(
 
 # Columns for each entity's CSV export
 _MATERIAL_CSV_COLUMNS = [
-    "id", "name", "formula", "crystal_structure",
-    "category_id", "description", "is_active",
+    "id",
+    "name",
+    "formula",
+    "crystal_structure",
+    "category_id",
+    "description",
+    "is_active",
 ]
 
 _REF_VALUE_CSV_COLUMNS = [
-    "element_system", "phase", "property_name", "value", "unit",
-    "method", "source", "source_doi", "uncertainty", "temperature",
+    "element_system",
+    "phase",
+    "property_name",
+    "value",
+    "unit",
+    "method",
+    "source",
+    "source_doi",
+    "uncertainty",
+    "temperature",
 ]
 
 _PROPERTY_CSV_COLUMNS = [
-    "id", "dataset_id", "property_type_id",
-    "value_scalar", "value_min", "value_max",
-    "value_expression", "value_list", "value_text",
-    "uncertainty", "unit_id", "notes",
+    "id",
+    "dataset_id",
+    "property_type_id",
+    "value_scalar",
+    "value_min",
+    "value_max",
+    "value_expression",
+    "value_list",
+    "value_text",
+    "uncertainty",
+    "unit_id",
+    "notes",
 ]
 
 

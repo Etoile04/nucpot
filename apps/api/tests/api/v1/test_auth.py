@@ -34,7 +34,8 @@ _HASHED_PW = bcrypt.hashpw(b"testpass123", bcrypt.gensalt(rounds=4)).decode()
 def _hash_password(plaintext: str) -> str:
     """Hash a password using bcrypt directly (bypasses broken passlib)."""
     return bcrypt.hashpw(
-        plaintext.encode("utf-8"), bcrypt.gensalt(rounds=4),
+        plaintext.encode("utf-8"),
+        bcrypt.gensalt(rounds=4),
     ).decode()
 
 
@@ -106,9 +107,7 @@ def _auth_patches(
 @pytest.mark.asyncio
 async def test_login_success(async_client, db_session) -> None:
     """Valid credentials return a bearer token."""
-    user, _hashed = await _seed_user(
-        db_session, username="logintest", password="secret123"
-    )
+    user, _hashed = await _seed_user(db_session, username="logintest", password="secret123")
 
     with patch(
         "nfm_db.api.v1.auth_endpoints.authenticate_user",
@@ -127,9 +126,7 @@ async def test_login_success(async_client, db_session) -> None:
 @pytest.mark.asyncio
 async def test_login_updates_last_login(async_client, db_session) -> None:
     """Successful login persists last_login timestamp."""
-    user, _hashed = await _seed_user(
-        db_session, username="lastlogin", password="pw"
-    )
+    user, _hashed = await _seed_user(db_session, username="lastlogin", password="pw")
     assert user.last_login is None
 
     with patch(
@@ -225,7 +222,9 @@ async def test_register_duplicate_username(_mock_hash, async_client, db_session)
     """Registering with an existing username returns 400."""
     # Seed user directly in DB (no password hashing needed)
     user = User(
-        username="dup", email="dup@old.com", hashed_password=_HASHED_PW,
+        username="dup",
+        email="dup@old.com",
+        hashed_password=_HASHED_PW,
     )
     db_session.add(user)
     await db_session.commit()
@@ -246,7 +245,9 @@ async def test_register_duplicate_username(_mock_hash, async_client, db_session)
 async def test_register_duplicate_email(_mock_hash, async_client, db_session) -> None:
     """Registering with an existing email returns 400."""
     user = User(
-        username="emaildup", email="same@example.com", hashed_password=_HASHED_PW,
+        username="emaildup",
+        email="same@example.com",
+        hashed_password=_HASHED_PW,
     )
     db_session.add(user)
     await db_session.commit()
@@ -516,9 +517,7 @@ async def test_assign_role_editor_forbidden(async_client, editor_user, db_sessio
 @pytest.mark.asyncio
 async def test_assign_role_no_token_returns_401(async_client, db_session) -> None:
     """Unauthenticated role assignment returns 401."""
-    target, _hashed = await _seed_user(
-        db_session, username="unauth", email="unauth@example.com"
-    )
+    target, _hashed = await _seed_user(db_session, username="unauth", email="unauth@example.com")
 
     response = await async_client.put(
         f"/api/v1/auth/users/{target.id}/role",
@@ -543,9 +542,7 @@ async def test_assign_role_invalid_uuid_returns_422(async_client, admin_user) ->
 @pytest.mark.asyncio
 async def test_assign_role_invalid_role_value(async_client, admin_user, db_session) -> None:
     """Invalid role value returns 422."""
-    target, _hashed = await _seed_user(
-        db_session, username="badrole", email="badrole@example.com"
-    )
+    target, _hashed = await _seed_user(db_session, username="badrole", email="badrole@example.com")
     headers = _auth_headers(admin_user)
 
     response = await async_client.put(
@@ -595,9 +592,7 @@ async def test_register_then_login(_mock_auth, _mock_hash, async_client, db_sess
         "email": "reglogin@example.com",
         "password": "mypassword1",
     }
-    reg_resp = await async_client.post(
-        "/api/v1/auth/register", json=register_payload
-    )
+    reg_resp = await async_client.post("/api/v1/auth/register", json=register_payload)
     assert reg_resp.status_code == 201
 
     login_resp = await async_client.post(

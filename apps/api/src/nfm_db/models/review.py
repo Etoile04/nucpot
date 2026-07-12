@@ -25,7 +25,8 @@ class ReviewMixin:
     status: Mapped[str] = mapped_column(String, default=ReviewStatus.PENDING)
     reviewer_comment: Mapped[str | None] = mapped_column(String, default=None)
     reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None,
+        DateTime(timezone=True),
+        default=None,
     )
 
 
@@ -36,5 +37,6 @@ class Review(Base):
     result_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
     data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
     )

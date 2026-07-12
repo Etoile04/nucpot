@@ -41,7 +41,8 @@ def _build_app(limiter_instance: Limiter) -> FastAPI:
     app.state.limiter = limiter_instance
 
     def _rate_limit_handler(
-        request: Request, exc: RateLimitExceeded,
+        request: Request,
+        exc: RateLimitExceeded,
     ) -> JSONResponse:
         response = JSONResponse(
             status_code=429,
@@ -73,14 +74,18 @@ def _build_app(limiter_instance: Limiter) -> FastAPI:
             if _should_exempt(limiter, handler):
                 return await call_next(request)
             error_response, should_inject = sync_check_limits(
-                limiter, request, handler, app,
+                limiter,
+                request,
+                handler,
+                app,
             )
             if error_response is not None:
                 return error_response
             response = await call_next(request)
             if should_inject:
                 response = limiter._inject_headers(
-                    response, request.state.view_rate_limit,
+                    response,
+                    request.state.view_rate_limit,
                 )
             return response
 
@@ -238,7 +243,7 @@ async def test_health_unlimited_burst(_app_3: FastAPI) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         for i in range(20):
             resp = await client.get("/api/v1/health")
-            assert resp.status_code == 200, f"health returned {resp.status_code} on request {i+1}"
+            assert resp.status_code == 200, f"health returned {resp.status_code} on request {i + 1}"
 
 
 @pytest.mark.asyncio

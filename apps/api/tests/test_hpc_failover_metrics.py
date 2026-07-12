@@ -21,6 +21,7 @@ class TestPrometheusMetricsExist:
         """
         try:
             from nfm_db.services.hpc_metrics import failover_total
+
             assert failover_total is not None
         except ImportError as e:
             pytest.fail(f"failover_total metric should exist but import failed: {e}")
@@ -34,6 +35,7 @@ class TestPrometheusMetricsExist:
         """
         try:
             from nfm_db.services.hpc_metrics import failover_duration_seconds
+
             assert failover_duration_seconds is not None
         except ImportError as e:
             pytest.fail(f"failover_duration_seconds metric should exist but import failed: {e}")
@@ -47,6 +49,7 @@ class TestPrometheusMetricsExist:
         """
         try:
             from nfm_db.services.hpc_metrics import health_check_success
+
             assert health_check_success is not None
         except ImportError as e:
             pytest.fail(f"health_check_success metric should exist but import failed: {e}")
@@ -66,9 +69,9 @@ class TestFailoverCounterMetric:
 
         # Increment counter
         failover_total.labels(
-            source_cluster='guangzhou.example.com',
-            target_cluster='tianjin.example.com',
-            reason='ssh_timeout'
+            source_cluster="guangzhou.example.com",
+            target_cluster="tianjin.example.com",
+            reason="ssh_timeout",
         ).inc()
 
         # If no exception raised, counter works correctly
@@ -85,9 +88,9 @@ class TestFailoverCounterMetric:
 
         # Try to use metric with labels
         failover_total.labels(
-            source_cluster='guangzhou.example.com',
-            target_cluster='tianjin.example.com',
-            reason='ssh_timeout'
+            source_cluster="guangzhou.example.com",
+            target_cluster="tianjin.example.com",
+            reason="ssh_timeout",
         )
 
         # If no exception, labels are configured correctly
@@ -107,8 +110,7 @@ class TestFailoverDurationHistogram:
 
         # Observe a duration
         failover_duration_seconds.labels(
-            source_cluster='guangzhou.example.com',
-            target_cluster='tianjin.example.com'
+            source_cluster="guangzhou.example.com", target_cluster="tianjin.example.com"
         ).observe(45.5)
 
         # If no exception raised, histogram works correctly
@@ -125,8 +127,7 @@ class TestFailoverDurationHistogram:
 
         # Try to use metric with labels
         failover_duration_seconds.labels(
-            source_cluster='guangzhou.example.com',
-            target_cluster='tianjin.example.com'
+            source_cluster="guangzhou.example.com", target_cluster="tianjin.example.com"
         )
 
         # If no exception, labels are configured correctly
@@ -145,7 +146,7 @@ class TestHealthCheckGauge:
         from nfm_db.services.hpc_metrics import health_check_success
 
         # Set gauge to healthy (1)
-        health_check_success.labels(cluster='guangzhou.example.com').set(1)
+        health_check_success.labels(cluster="guangzhou.example.com").set(1)
 
         # If no exception raised, gauge works correctly
         # Note: Prometheus client doesn't expose samples in test context
@@ -160,6 +161,6 @@ class TestHealthCheckGauge:
         from nfm_db.services.hpc_metrics import health_check_success
 
         # Try to use metric with labels
-        health_check_success.labels(cluster='guangzhou.example.com')
+        health_check_success.labels(cluster="guangzhou.example.com")
 
         # If no exception, labels are configured correctly

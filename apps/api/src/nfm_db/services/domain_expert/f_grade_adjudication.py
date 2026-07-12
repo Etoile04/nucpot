@@ -344,7 +344,11 @@ def _compute_adjudication_confidence(
 
     # Known potential type helps
     if potential_type is not None and potential_type in {
-        "EAM", "MEAM", "Buckingham", "Tersoff", "AIREBO",
+        "EAM",
+        "MEAM",
+        "Buckingham",
+        "Tersoff",
+        "AIREBO",
     }:
         score += 0.05
 
@@ -383,11 +387,7 @@ def adjudicate_f_grade(request: AdjudicationRequest) -> AdjudicationResult:
     logger.info("Generated %d fix suggestions", len(suggestions))
 
     # Step 3: Compute confidence
-    avg_fix_conf = (
-        sum(s.confidence for s in suggestions) / len(suggestions)
-        if suggestions
-        else 0.0
-    )
+    avg_fix_conf = sum(s.confidence for s in suggestions) / len(suggestions) if suggestions else 0.0
     confidence = _compute_adjudication_confidence(
         matched_count=len(matched_categories),
         fix_count=len(suggestions),
@@ -417,9 +417,7 @@ def adjudicate_f_grade(request: AdjudicationRequest) -> AdjudicationResult:
 
     notes_parts: list[str] = []
     if primary == FailureCategory.UNKNOWN:
-        notes_parts.append(
-            "No known failure pattern matched — escalate to Lili for manual review"
-        )
+        notes_parts.append("No known failure pattern matched — escalate to Lili for manual review")
     elif needs_escalation:
         notes_parts.append(
             f"Confidence {confidence:.0%} below {ESCALATION_THRESHOLD:.0%} threshold — escalate to human"

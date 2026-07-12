@@ -271,9 +271,7 @@ class TestGetEntityExtractionPrompt:
 
     def test_contains_condition_label_template(self) -> None:
         prompt = get_entity_extraction_prompt(SEED_ENTITY_TYPES)
-        assert (
-            "{name}: {value} {unit}" in prompt
-        ), "Condition label template not preserved"
+        assert "{name}: {value} {unit}" in prompt, "Condition label template not preserved"
 
     def test_contains_publication_label_template(self) -> None:
         prompt = get_entity_extraction_prompt(SEED_ENTITY_TYPES)
@@ -288,8 +286,7 @@ class TestGetEntityExtractionPrompt:
         prompt = get_entity_extraction_prompt(SEED_ENTITY_TYPES)
         # At least one Chinese term present
         assert any(
-            term in prompt
-            for term in ("材料", "性质", "实验", "条件", "出版物", "核燃料")
+            term in prompt for term in ("材料", "性质", "实验", "条件", "出版物", "核燃料")
         ), "Prompt missing Chinese entity type terms"
 
     def test_is_bilingual_english(self) -> None:
@@ -387,19 +384,22 @@ class TestBuildLightRAGConfig:
 
     def test_returns_dict(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         assert isinstance(config, dict)
 
     def test_has_entity_types_guidance_key(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         assert "entity_types_guidance" in config
 
     def test_guidance_contains_all_entity_types(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         guidance = config["entity_types_guidance"]
         for name in EXPECTED_ENTITY_NAMES:
@@ -407,32 +407,33 @@ class TestBuildLightRAGConfig:
 
     def test_guidance_is_nonempty(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         assert len(config["entity_types_guidance"]) > 50
 
     def test_guidance_is_bilingual(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         guidance = config["entity_types_guidance"]
         # Contains at least one Chinese term
-        assert any(
-            term in guidance
-            for term in ("材料", "性质", "实验", "条件", "出版物")
-        )
+        assert any(term in guidance for term in ("材料", "性质", "实验", "条件", "出版物"))
         # Contains English term
         assert "Material" in guidance
 
     def test_has_relation_types_guidance_key(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         assert "relation_types_guidance" in config
 
     def test_relation_guidance_contains_all_relation_types(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         guidance = config["relation_types_guidance"]
         for name in EXPECTED_RELATION_NAMES:
@@ -440,13 +441,11 @@ class TestBuildLightRAGConfig:
 
     def test_relation_guidance_is_bilingual(self) -> None:
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         guidance = config["relation_types_guidance"]
-        assert any(
-            term in guidance
-            for term in ("关系", "测量", "引用", "实验", "材料")
-        )
+        assert any(term in guidance for term in ("关系", "测量", "引用", "实验", "材料"))
 
     def test_empty_inputs_return_minimal_config(self) -> None:
         config = build_lightrag_config([], [])
@@ -457,7 +456,8 @@ class TestBuildLightRAGConfig:
     def test_config_is_mergeable_with_lightrag_addon_params(self) -> None:
         """Config dict can be spread into LightRAG addon_params."""
         config = build_lightrag_config(
-            SEED_ENTITY_TYPES, SEED_RELATION_TYPES,
+            SEED_ENTITY_TYPES,
+            SEED_RELATION_TYPES,
         )
         # Simulate merging with other addon params
         addon_params: dict[str, Any] = {"language": "English"}

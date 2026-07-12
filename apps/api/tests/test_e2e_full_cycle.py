@@ -43,9 +43,7 @@ def _override_get_db(session: AsyncSession):
 async def client(db_session: AsyncSession):
     """Create an HTTP client with database session override."""
     app.dependency_overrides[get_db] = _override_get_db(db_session)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
 

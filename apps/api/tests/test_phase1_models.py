@@ -49,7 +49,8 @@ class TestMaterialCategoryCreation:
 
     @pytest.mark.asyncio
     async def test_create_material_category(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """MaterialCategory can be created with name, slug, timestamps."""
         category = MaterialCategory(name="Fuel", slug="fuel")
@@ -96,7 +97,8 @@ class TestMaterialAliasCreation:
 
     @pytest.mark.asyncio
     async def test_create_material_alias(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """MaterialAlias can be created with FK to material."""
         material = Material(name="Zircaloy-4")
@@ -122,7 +124,8 @@ class TestMaterialCompositionCreation:
 
     @pytest.mark.asyncio
     async def test_create_material_composition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """MaterialComposition can be created with element and fraction."""
         material = Material(name="UO2")
@@ -165,7 +168,8 @@ class TestUnitConversionCreation:
 
     @pytest.mark.asyncio
     async def test_create_unit_conversion(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """UnitConversion can be created between two units."""
         k = Unit(symbol="K", name="kelvin", dimension="temperature")
@@ -194,7 +198,8 @@ class TestPropertyCategoryCreation:
 
     @pytest.mark.asyncio
     async def test_create_property_category(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """PropertyCategory can be created."""
         cat = PropertyCategory(name="Thermal", slug="thermal")
@@ -282,7 +287,8 @@ class TestDataSourceAuthorCreation:
 
     @pytest.mark.asyncio
     async def test_create_data_source_author(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """DataSourceAuthor can be created as M2M join."""
         source = DataSource(title="Paper A", source_type="journal_article")
@@ -337,7 +343,8 @@ class TestPropertyMeasurementCreation:
 
     @pytest.mark.asyncio
     async def test_create_property_measurement(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """PropertyMeasurement can be created with value_scalar."""
         unit = Unit(symbol="W/(m·K)", name="thermal conductivity", dimension="power")
@@ -346,8 +353,11 @@ class TestPropertyMeasurementCreation:
         await db_session.flush()
 
         pt = PropertyType(
-            category_id=cat.id, name="TC", slug="tc",
-            value_type="scalar", unit_id=unit.id,
+            category_id=cat.id,
+            name="TC",
+            slug="tc",
+            value_type="scalar",
+            unit_id=unit.id,
         )
         db_session.add(pt)
         await db_session.flush()
@@ -380,7 +390,8 @@ class TestMeasurementConditionCreation:
 
     @pytest.mark.asyncio
     async def test_create_measurement_condition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """MeasurementCondition can be created with FK to measurement."""
         unit = Unit(symbol="K", name="kelvin", dimension="temperature")
@@ -389,8 +400,11 @@ class TestMeasurementConditionCreation:
         await db_session.flush()
 
         pt = PropertyType(
-            category_id=cat.id, name="TC", slug="tc",
-            value_type="scalar", unit_id=unit.id,
+            category_id=cat.id,
+            name="TC",
+            slug="tc",
+            value_type="scalar",
+            unit_id=unit.id,
         )
         db_session.add(pt)
         await db_session.flush()
@@ -405,7 +419,9 @@ class TestMeasurementConditionCreation:
         await db_session.flush()
 
         measurement = PropertyMeasurement(
-            dataset_id=dataset.id, property_type_id=pt.id, value_scalar=3.5,
+            dataset_id=dataset.id,
+            property_type_id=pt.id,
+            value_scalar=3.5,
         )
         db_session.add(measurement)
         await db_session.flush()
@@ -435,23 +451,28 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_material_has_many_aliases(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """material -> material_aliases (one-to-many, cascade delete)."""
         material = Material(name="Zircaloy-4")
         db_session.add(material)
         await db_session.flush()
 
-        db_session.add_all([
-            MaterialAlias(
-                material_id=material.id, alias_name="Zr-4", alias_type="abbreviation",
-            ),
-            MaterialAlias(
-                material_id=material.id,
-                alias_name="Zircaloy 4",
-                alias_type="common_name",
-            ),
-        ])
+        db_session.add_all(
+            [
+                MaterialAlias(
+                    material_id=material.id,
+                    alias_name="Zr-4",
+                    alias_type="abbreviation",
+                ),
+                MaterialAlias(
+                    material_id=material.id,
+                    alias_name="Zircaloy 4",
+                    alias_type="common_name",
+                ),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, material, "aliases")
 
@@ -462,17 +483,20 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_material_has_many_compositions(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """material -> material_compositions (one-to-many, cascade delete)."""
         material = Material(name="UO2")
         db_session.add(material)
         await db_session.flush()
 
-        db_session.add_all([
-            MaterialComposition(material_id=material.id, element="U", fraction=0.6667),
-            MaterialComposition(material_id=material.id, element="O", fraction=0.3333),
-        ])
+        db_session.add_all(
+            [
+                MaterialComposition(material_id=material.id, element="U", fraction=0.6667),
+                MaterialComposition(material_id=material.id, element="O", fraction=0.3333),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, material, "composition")
 
@@ -480,7 +504,8 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_material_category_self_referential(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """material_category -> children (self-referential one-to-many)."""
         parent = MaterialCategory(name="Fuel", slug="fuel")
@@ -488,7 +513,9 @@ class TestRelationships:
         await db_session.flush()
 
         child = MaterialCategory(
-            name="UO2 Fuel", slug="uo2-fuel", parent_id=parent.id,
+            name="UO2 Fuel",
+            slug="uo2-fuel",
+            parent_id=parent.id,
         )
         db_session.add(child)
         await db_session.commit()
@@ -499,7 +526,8 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_dataset_has_many_measurements(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """dataset -> property_measurements (one-to-many, cascade delete)."""
         cat = PropertyCategory(name="Thermal", slug="thermal")
@@ -507,7 +535,9 @@ class TestRelationships:
         await db_session.flush()
 
         pt = PropertyType(
-            category_id=cat.id, name="TC", slug="tc",
+            category_id=cat.id,
+            name="TC",
+            slug="tc",
             value_type="scalar",
         )
         db_session.add(pt)
@@ -522,14 +552,20 @@ class TestRelationships:
         db_session.add(dataset)
         await db_session.flush()
 
-        db_session.add_all([
-            PropertyMeasurement(
-                dataset_id=dataset.id, property_type_id=pt.id, value_scalar=3.5,
-            ),
-            PropertyMeasurement(
-                dataset_id=dataset.id, property_type_id=pt.id, value_scalar=4.0,
-            ),
-        ])
+        db_session.add_all(
+            [
+                PropertyMeasurement(
+                    dataset_id=dataset.id,
+                    property_type_id=pt.id,
+                    value_scalar=3.5,
+                ),
+                PropertyMeasurement(
+                    dataset_id=dataset.id,
+                    property_type_id=pt.id,
+                    value_scalar=4.0,
+                ),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, dataset, "measurements")
 
@@ -537,7 +573,8 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_measurement_has_many_conditions(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """property_measurement -> measurement_conditions (cascade delete)."""
         cat = PropertyCategory(name="Thermal", slug="thermal")
@@ -545,7 +582,9 @@ class TestRelationships:
         await db_session.flush()
 
         pt = PropertyType(
-            category_id=cat.id, name="TC", slug="tc",
+            category_id=cat.id,
+            name="TC",
+            slug="tc",
             value_type="scalar",
         )
         db_session.add(pt)
@@ -561,15 +600,19 @@ class TestRelationships:
         await db_session.flush()
 
         measurement = PropertyMeasurement(
-            dataset_id=dataset.id, property_type_id=pt.id, value_scalar=3.5,
+            dataset_id=dataset.id,
+            property_type_id=pt.id,
+            value_scalar=3.5,
         )
         db_session.add(measurement)
         await db_session.flush()
 
-        db_session.add_all([
-            MeasurementCondition(measurement_id=measurement.id, temperature=800.0),
-            MeasurementCondition(measurement_id=measurement.id, temperature=1200.0),
-        ])
+        db_session.add_all(
+            [
+                MeasurementCondition(measurement_id=measurement.id, temperature=800.0),
+                MeasurementCondition(measurement_id=measurement.id, temperature=1200.0),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, measurement, "conditions")
 
@@ -577,7 +620,8 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_data_source_has_many_author_links(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """data_source -> data_source_authors (one-to-many)."""
         source = DataSource(title="Paper A", source_type="journal_article")
@@ -589,10 +633,12 @@ class TestRelationships:
         db_session.add_all([author1, author2])
         await db_session.flush()
 
-        db_session.add_all([
-            DataSourceAuthor(data_source_id=source.id, author_id=author1.id, author_order=1),
-            DataSourceAuthor(data_source_id=source.id, author_id=author2.id, author_order=2),
-        ])
+        db_session.add_all(
+            [
+                DataSourceAuthor(data_source_id=source.id, author_id=author1.id, author_order=1),
+                DataSourceAuthor(data_source_id=source.id, author_id=author2.id, author_order=2),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, source, "data_source_authors")
 
@@ -600,23 +646,30 @@ class TestRelationships:
 
     @pytest.mark.asyncio
     async def test_property_category_has_many_types(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """property_category -> property_types (cascade delete)."""
         cat = PropertyCategory(name="Mechanical", slug="mechanical")
         db_session.add(cat)
         await db_session.flush()
 
-        db_session.add_all([
-            PropertyType(
-                category_id=cat.id, name="Young Modulus",
-                slug="young-modulus", value_type="scalar",
-            ),
-            PropertyType(
-                category_id=cat.id, name="Yield Strength",
-                slug="yield-strength", value_type="scalar",
-            ),
-        ])
+        db_session.add_all(
+            [
+                PropertyType(
+                    category_id=cat.id,
+                    name="Young Modulus",
+                    slug="young-modulus",
+                    value_type="scalar",
+                ),
+                PropertyType(
+                    category_id=cat.id,
+                    name="Yield Strength",
+                    slug="yield-strength",
+                    value_type="scalar",
+                ),
+            ]
+        )
         await db_session.commit()
         await _refresh_rel(db_session, cat, "property_types")
 
@@ -633,7 +686,8 @@ class TestCrossDomainChain:
 
     @pytest.mark.asyncio
     async def test_material_to_dataset_to_measurement_chain(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Verify the full FK chain from material to condition."""
         cat = PropertyCategory(name="Thermal", slug="thermal")
@@ -641,8 +695,10 @@ class TestCrossDomainChain:
         await db_session.flush()
 
         pt = PropertyType(
-            category_id=cat.id, name="Thermal conductivity",
-            slug="thermal-conductivity", value_type="scalar",
+            category_id=cat.id,
+            name="Thermal conductivity",
+            slug="thermal-conductivity",
+            value_type="scalar",
         )
         db_session.add(pt)
         await db_session.flush()
@@ -653,19 +709,24 @@ class TestCrossDomainChain:
         await db_session.flush()
 
         dataset = Dataset(
-            material_id=material.id, source_id=source.id, title="UO2 Thermal",
+            material_id=material.id,
+            source_id=source.id,
+            title="UO2 Thermal",
         )
         db_session.add(dataset)
         await db_session.flush()
 
         measurement = PropertyMeasurement(
-            dataset_id=dataset.id, property_type_id=pt.id, value_scalar=8.5,
+            dataset_id=dataset.id,
+            property_type_id=pt.id,
+            value_scalar=8.5,
         )
         db_session.add(measurement)
         await db_session.flush()
 
         condition = MeasurementCondition(
-            measurement_id=measurement.id, temperature=300.0,
+            measurement_id=measurement.id,
+            temperature=300.0,
         )
         db_session.add(condition)
         await db_session.commit()
@@ -691,7 +752,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_material_category_name_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate material_category name rejected."""
         db_session.add(MaterialCategory(name="Fuel", slug="fuel"))
@@ -704,7 +766,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_alias_name_type_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate (alias_name, alias_type) rejected."""
         material = Material(name="UO2")
@@ -713,13 +776,17 @@ class TestDatabaseConstraints:
 
         db_session.add(
             MaterialAlias(
-                material_id=material.id, alias_name="UO2", alias_type="common_name",
+                material_id=material.id,
+                alias_name="UO2",
+                alias_type="common_name",
             ),
         )
         await db_session.commit()
 
         dup = MaterialAlias(
-            material_id=material.id, alias_name="UO2", alias_type="common_name",
+            material_id=material.id,
+            alias_name="UO2",
+            alias_type="common_name",
         )
         db_session.add(dup)
         with pytest.raises((IntegrityError, OperationalError)):
@@ -727,7 +794,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_unit_symbol_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate unit symbol rejected."""
         db_session.add(Unit(symbol="K", name="kelvin", dimension="temperature"))
@@ -740,7 +808,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_composition_fraction_out_of_range_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """MaterialComposition fraction > 1 rejected by CHECK constraint."""
         material = Material(name="UO2")
@@ -754,7 +823,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_composition_fraction_negative_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """MaterialComposition fraction < 0 rejected by CHECK constraint."""
         material = Material(name="UO2")
@@ -768,18 +838,23 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_doi_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate data_source DOI rejected."""
         db_session.add(
             DataSource(
-                doi="10.1000/test", title="Paper A", source_type="journal_article",
+                doi="10.1000/test",
+                title="Paper A",
+                source_type="journal_article",
             ),
         )
         await db_session.commit()
 
         dup = DataSource(
-            doi="10.1000/test", title="Paper B", source_type="journal_article",
+            doi="10.1000/test",
+            title="Paper B",
+            source_type="journal_article",
         )
         db_session.add(dup)
         with pytest.raises((IntegrityError, OperationalError)):
@@ -787,7 +862,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_orcid_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate author ORCID rejected."""
         db_session.add(
@@ -802,7 +878,8 @@ class TestDatabaseConstraints:
 
     @pytest.mark.asyncio
     async def test_duplicate_unit_conversion_pair_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Duplicate (source_unit_id, target_unit_id) pair rejected."""
         u1 = Unit(symbol="K", name="kelvin", dimension="temperature")

@@ -208,7 +208,8 @@ class TestHPCOrchestratorInit:
 
     @pytest.mark.unit
     def test_creates_backup_ssh_manager_when_configured(
-        self, backup_config: SSHConnectionConfig,
+        self,
+        backup_config: SSHConnectionConfig,
     ) -> None:
         """Constructor should create backup SSH manager when backup hosts configured."""
         _, mock_map, patchers = _build_orchestrator(backup_config)
@@ -226,7 +227,8 @@ class TestHPCOrchestratorInit:
 
     @pytest.mark.unit
     def test_no_backup_manager_when_not_configured(
-        self, primary_config: SSHConnectionConfig,
+        self,
+        primary_config: SSHConnectionConfig,
     ) -> None:
         """Constructor should not create backup SSH manager when backup not configured."""
         _, mock_map, patchers = _build_orchestrator(primary_config)
@@ -259,7 +261,9 @@ class TestHPCOrchestratorCleanup:
     """Tests for HPCOrchestrator.cleanup and __del__."""
 
     @pytest.mark.unit
-    def test_cleanup_delegates_to_failover_manager(self, primary_config: SSHConnectionConfig) -> None:
+    def test_cleanup_delegates_to_failover_manager(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """cleanup() should delegate to failover_manager.cleanup()."""
         orchestrator, _, patchers = _build_orchestrator(primary_config)
         try:
@@ -294,7 +298,9 @@ class TestHPCOrchestratorCleanup:
             _cleanup(patchers)
 
     @pytest.mark.unit
-    def test_del_works_when_failover_manager_missing(self, primary_config: SSHConnectionConfig) -> None:
+    def test_del_works_when_failover_manager_missing(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """__del__ should handle missing failover_manager gracefully."""
         orchestrator, _, patchers = _build_orchestrator(primary_config)
         try:
@@ -328,7 +334,8 @@ class TestFailoverDelegates:
             mock_db.add = MagicMock()
             mock_db.commit = AsyncMock()
 
-            with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+            with patch("nfm_db.services.hpc_orchestration.get_db") as mock_get_db:
+
                 async def mock_db_gen():
                     yield mock_db
 
@@ -415,7 +422,9 @@ class TestSlurmDelegates:
     """Tests for SLURM submission delegate methods."""
 
     @pytest.mark.unit
-    def test_validate_simulation_params_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    def test_validate_simulation_params_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """_validate_simulation_params should call validate_simulation_params."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
@@ -483,7 +492,8 @@ class TestJobMonitorDelegates:
             # _execute_squeue -> execute_squeue(ssh_manager, job_id)
             result = await orchestrator.poll_job_status("slurm-12345")
             mock_map["execute_squeue"].assert_called_once_with(
-                orchestrator.ssh_manager, "slurm-12345",
+                orchestrator.ssh_manager,
+                "slurm-12345",
             )
             assert result == "RUNNING"
         finally:
@@ -497,7 +507,8 @@ class TestJobMonitorDelegates:
         try:
             result = await orchestrator._execute_squeue("slurm-12345")
             mock_map["execute_squeue"].assert_called_once_with(
-                orchestrator.ssh_manager, "slurm-12345",
+                orchestrator.ssh_manager,
+                "slurm-12345",
             )
             assert result == "slurm-12345 RUNNING"
         finally:
@@ -511,20 +522,25 @@ class TestJobMonitorDelegates:
         try:
             await orchestrator.update_job_status("task-123", "slurm-456")
             mock_map["update_job_status"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-123", "slurm-456",
+                orchestrator.ssh_manager,
+                "task-123",
+                "slurm-456",
             )
         finally:
             _cleanup(patchers)
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_check_job_completion_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_check_job_completion_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """_check_job_completion should delegate with ssh_manager and task_id."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             result = await orchestrator._check_job_completion("task-123")
             mock_map["check_job_completion"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-123",
+                orchestrator.ssh_manager,
+                "task-123",
             )
             assert result is True
         finally:
@@ -544,7 +560,9 @@ class TestJobMonitorDelegates:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_sync_all_active_jobs_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_sync_all_active_jobs_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """sync_all_active_jobs calls _get_active_jobs and update_job_status."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
@@ -572,7 +590,10 @@ class TestFileTransferDelegates:
         try:
             result = await orchestrator.upload_file("task-1", "/local/file", "/remote/file")
             mock_map["_upload_file"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", "/local/file", "/remote/file",
+                orchestrator.ssh_manager,
+                "task-1",
+                "/local/file",
+                "/remote/file",
             )
             assert result is True
         finally:
@@ -587,7 +608,9 @@ class TestFileTransferDelegates:
             files = [("/local/a", "/remote/a")]
             result = await orchestrator.upload_files("task-1", files)
             mock_map["_upload_files"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", files,
+                orchestrator.ssh_manager,
+                "task-1",
+                files,
             )
             assert result == {"file.txt": True}
         finally:
@@ -595,13 +618,16 @@ class TestFileTransferDelegates:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_create_task_directory_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_create_task_directory_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """_create_task_directory should delegate to _create_task_directory."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             await orchestrator._create_task_directory("task-1")
             mock_map["_create_task_directory"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1",
+                orchestrator.ssh_manager,
+                "task-1",
             )
         finally:
             _cleanup(patchers)
@@ -614,7 +640,10 @@ class TestFileTransferDelegates:
         try:
             await orchestrator.download_file("task-1", "/remote/out", "/local/out")
             mock_map["_download_file"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", "/remote/out", "/local/out",
+                orchestrator.ssh_manager,
+                "task-1",
+                "/remote/out",
+                "/local/out",
             )
         finally:
             _cleanup(patchers)
@@ -627,7 +656,8 @@ class TestFileTransferDelegates:
         try:
             result = await orchestrator.download_results("task-1")
             mock_map["_download_results"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1",
+                orchestrator.ssh_manager,
+                "task-1",
             )
             assert result == {}
         finally:
@@ -641,7 +671,8 @@ class TestFileTransferDelegates:
         try:
             result = await orchestrator.verify_checksum("/local/file", "abc123")
             mock_map["_verify_checksum"].assert_called_once_with(
-                "/local/file", "abc123",
+                "/local/file",
+                "abc123",
             )
             assert result is True
         finally:
@@ -655,7 +686,9 @@ class TestFileTransferDelegates:
         try:
             result = await orchestrator.get_remote_checksum("task-1", "/remote/file")
             mock_map["_get_remote_checksum"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", "/remote/file",
+                orchestrator.ssh_manager,
+                "task-1",
+                "/remote/file",
             )
             assert result == "abc123"
         finally:
@@ -663,14 +696,17 @@ class TestFileTransferDelegates:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_save_to_object_storage_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_save_to_object_storage_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """save_to_object_storage should delegate to _save_to_object_storage."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             downloaded: dict[str, str] = {"out.txt": "/local/out.txt"}
             result = await orchestrator.save_to_object_storage("task-1", downloaded)
             mock_map["_save_to_object_storage"].assert_called_once_with(
-                "task-1", downloaded,
+                "task-1",
+                downloaded,
             )
             assert result == {}
         finally:
@@ -690,15 +726,24 @@ class TestFileTransferDelegates:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_upload_file_with_retry_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_upload_file_with_retry_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """upload_file_with_retry should delegate with all params."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             result = await orchestrator.upload_file_with_retry(
-                "task-1", "/local/file", "/remote/file", max_retries=5,
+                "task-1",
+                "/local/file",
+                "/remote/file",
+                max_retries=5,
             )
             mock_map["_upload_file_with_retry"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", "/local/file", "/remote/file", 5,
+                orchestrator.ssh_manager,
+                "task-1",
+                "/local/file",
+                "/remote/file",
+                5,
             )
             assert result is True
         finally:
@@ -706,15 +751,24 @@ class TestFileTransferDelegates:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_upload_file_with_resume_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_upload_file_with_resume_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """upload_file_with_resume should delegate with resume position."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             result = await orchestrator.upload_file_with_resume(
-                "task-1", "/local/file", "/remote/file", resume_position=1024,
+                "task-1",
+                "/local/file",
+                "/remote/file",
+                resume_position=1024,
             )
             mock_map["_upload_file_with_resume"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", "/local/file", "/remote/file", 1024,
+                orchestrator.ssh_manager,
+                "task-1",
+                "/local/file",
+                "/remote/file",
+                1024,
             )
             assert result is True
         finally:
@@ -722,13 +776,17 @@ class TestFileTransferDelegates:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_get_remote_file_position_delegates(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_get_remote_file_position_delegates(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """get_remote_file_position should delegate to _get_remote_file_position."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             result = await orchestrator.get_remote_file_position("task-1", "/remote/file")
             mock_map["_get_remote_file_position"].assert_called_once_with(
-                orchestrator.ssh_manager, "task-1", "/remote/file",
+                orchestrator.ssh_manager,
+                "task-1",
+                "/remote/file",
             )
             assert result == 0
         finally:
@@ -745,7 +803,9 @@ class TestSubmitJobFlow:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_submit_job_validates_params_first(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_submit_job_validates_params_first(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """submit_job should call validate_simulation_params before submission."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
@@ -764,7 +824,9 @@ class TestSubmitJobFlow:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_submit_job_generates_slurm_script(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_submit_job_generates_slurm_script(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """submit_job should call generate_slurm_script with params."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
@@ -797,7 +859,10 @@ class TestSubmitJobFlow:
             hpc_job_id = await orchestrator.submit_job("task-1", "/input.cif", params)
 
             mock_map["create_hpc_job_record"].assert_called_once_with(
-                "task-1", "slurm-12345", params, "primary",
+                "task-1",
+                "slurm-12345",
+                params,
+                "primary",
             )
             assert hpc_job_id == "slurm-12345"
         finally:
@@ -826,7 +891,9 @@ class TestSubmitJobFlow:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_submit_job_triggers_failover_when_needed(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_submit_job_triggers_failover_when_needed(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """submit_job should trigger failover when should_trigger_failover returns True."""
         orchestrator, _mock_map, patchers = _build_orchestrator(primary_config)
         try:
@@ -847,7 +914,9 @@ class TestSubmitJobFlow:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_submit_job_raises_when_failover_fails(self, primary_config: SSHConnectionConfig) -> None:
+    async def test_submit_job_raises_when_failover_fails(
+        self, primary_config: SSHConnectionConfig
+    ) -> None:
         """submit_job should raise when failover and submission both fail."""
         orchestrator, _mock_map, patchers = _build_orchestrator(primary_config)
         try:
@@ -864,7 +933,8 @@ class TestSubmitJobFlow:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_submit_job_retries_on_backup_after_primary_failure(
-        self, primary_config: SSHConnectionConfig,
+        self,
+        primary_config: SSHConnectionConfig,
     ) -> None:
         """submit_job should retry on backup when primary submission fails."""
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
@@ -893,7 +963,8 @@ class TestSubmitJobFlow:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_submit_job_recovers_primary_before_submission(
-        self, primary_config: SSHConnectionConfig,
+        self,
+        primary_config: SSHConnectionConfig,
     ) -> None:
         """submit_job should try to recover primary when currently on backup."""
         orchestrator, _mock_map, patchers = _build_orchestrator(primary_config)
@@ -929,10 +1000,16 @@ class TestCreateHpcJobRecord:
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             await orchestrator._create_hpc_job_record(
-                "task-1", "slurm-123", {"temp": 300}, cluster_used="primary",
+                "task-1",
+                "slurm-123",
+                {"temp": 300},
+                cluster_used="primary",
             )
             mock_map["create_hpc_job_record"].assert_called_once_with(
-                "task-1", "slurm-123", {"temp": 300}, "login01.example.com",
+                "task-1",
+                "slurm-123",
+                {"temp": 300},
+                "login01.example.com",
             )
         finally:
             _cleanup(patchers)
@@ -944,10 +1021,16 @@ class TestCreateHpcJobRecord:
         orchestrator, mock_map, patchers = _build_orchestrator(backup_config)
         try:
             await orchestrator._create_hpc_job_record(
-                "task-1", "slurm-123", {"temp": 300}, cluster_used="backup",
+                "task-1",
+                "slurm-123",
+                {"temp": 300},
+                cluster_used="backup",
             )
             mock_map["create_hpc_job_record"].assert_called_once_with(
-                "task-1", "slurm-123", {"temp": 300}, "backup01.example.com",
+                "task-1",
+                "slurm-123",
+                {"temp": 300},
+                "backup01.example.com",
             )
         finally:
             _cleanup(patchers)
@@ -959,10 +1042,16 @@ class TestCreateHpcJobRecord:
         orchestrator, mock_map, patchers = _build_orchestrator(primary_config)
         try:
             await orchestrator._create_hpc_job_record(
-                "task-1", "slurm-123", {"temp": 300}, cluster_used="backup",
+                "task-1",
+                "slurm-123",
+                {"temp": 300},
+                cluster_used="backup",
             )
             mock_map["create_hpc_job_record"].assert_called_once_with(
-                "task-1", "slurm-123", {"temp": 300}, "unknown",
+                "task-1",
+                "slurm-123",
+                {"temp": 300},
+                "unknown",
             )
         finally:
             _cleanup(patchers)

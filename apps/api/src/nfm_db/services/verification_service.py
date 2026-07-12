@@ -122,9 +122,7 @@ async def export_for_verification(
             Confidence.LOW: 2,
         }
         min_rank = confidence_ranking[min_confidence]
-        allowed = [
-            c for c, rank in confidence_ranking.items() if rank <= min_rank
-        ]
+        allowed = [c for c, rank in confidence_ranking.items() if rank <= min_rank]
         conditions.append(RefGapFillStaging.confidence.in_(allowed))
 
     if from_date is not None:
@@ -134,11 +132,7 @@ async def export_for_verification(
         conditions.append(RefGapFillStaging.created_at <= to_date)
 
     # Count query
-    count_stmt = (
-        select(func.count())
-        .select_from(RefGapFillStaging)
-        .where(*conditions)
-    )
+    count_stmt = select(func.count()).select_from(RefGapFillStaging).where(*conditions)
     total = (await session.execute(count_stmt)).scalar_one()
 
     # Data query

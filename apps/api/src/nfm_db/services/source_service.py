@@ -88,11 +88,7 @@ async def get_source(
 
     stmt = (
         select(DataSource)
-        .options(
-            selectinload(DataSource.data_source_authors).selectinload(
-                DataSourceAuthor.author
-            )
-        )
+        .options(selectinload(DataSource.data_source_authors).selectinload(DataSourceAuthor.author))
         .where(DataSource.id == source_id)
     )
     row = (await db.execute(stmt)).scalar_one_or_none()

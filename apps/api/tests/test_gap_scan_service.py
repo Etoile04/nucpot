@@ -47,6 +47,7 @@ def _make_staging_record_kwargs(
         "status": status,
     }
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -158,7 +159,9 @@ class TestDataClassImmutability:
     """Test that all public dataclasses are frozen."""
 
     def test_gap_tuple_is_frozen(self) -> None:
-        gap = GapTuple(element_system="U", phase="BCC", property_name="lattice_constant", priority=11)
+        gap = GapTuple(
+            element_system="U", phase="BCC", property_name="lattice_constant", priority=11
+        )
         with pytest.raises(AttributeError):
             gap.priority = 99  # type: ignore[misc]
 
@@ -204,7 +207,8 @@ class TestScanGaps:
 
     @pytest.mark.asyncio
     async def test_covered_tuples_excluded_from_gaps(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Covered tuples are excluded from gap results."""
         await _insert_covered_record(db_session, "U", "BCC", "lattice_constant")
@@ -217,7 +221,8 @@ class TestScanGaps:
 
     @pytest.mark.asyncio
     async def test_element_systems_filter(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """element_systems filter restricts scan to specified systems."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -228,7 +233,8 @@ class TestScanGaps:
 
     @pytest.mark.asyncio
     async def test_coverage_stats_invariant(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """CoverageStats invariant: total = covered + gaps."""
         await _insert_covered_record(db_session, "U", "BCC", "lattice_constant")
@@ -241,7 +247,8 @@ class TestScanGaps:
 
     @pytest.mark.asyncio
     async def test_system_breakdown_sums_to_totals(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """System breakdown totals sum to overall totals."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -257,7 +264,8 @@ class TestScanGaps:
 
     @pytest.mark.asyncio
     async def test_gaps_sorted_by_priority(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Gap tuples are sorted by priority (ascending = highest priority first)."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -268,7 +276,8 @@ class TestScanGaps:
 
     @pytest.mark.asyncio
     async def test_coverage_percent_calculation(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """coverage_percent is correctly calculated and rounded."""
         await _insert_covered_record(db_session, "U", "BCC", "lattice_constant")
@@ -289,7 +298,8 @@ class TestListGaps:
 
     @pytest.mark.asyncio
     async def test_default_pagination(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Default pagination returns page=1, per_page=20."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -300,7 +310,8 @@ class TestListGaps:
 
     @pytest.mark.asyncio
     async def test_filter_by_element_system(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Filter by element_system returns only matching gaps."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -315,7 +326,8 @@ class TestListGaps:
 
     @pytest.mark.asyncio
     async def test_filter_by_property_name(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Filter by property_name returns only matching gaps."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -329,7 +341,8 @@ class TestListGaps:
 
     @pytest.mark.asyncio
     async def test_sort_by_priority(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Sorting by priority returns gaps in priority order."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -340,7 +353,8 @@ class TestListGaps:
 
     @pytest.mark.asyncio
     async def test_sort_by_element_system(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Sorting by element_system returns gaps in alphabetical system order."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)
@@ -351,7 +365,8 @@ class TestListGaps:
 
     @pytest.mark.asyncio
     async def test_pagination_second_page(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Second page returns correct offset."""
         svc = GapScanService(db_session, target_tuples=_SAMPLE_TARGETS)

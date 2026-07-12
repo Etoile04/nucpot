@@ -40,10 +40,12 @@ class MDVerificationUser(HttpUser):
 
     def on_start(self):
         """Attempt login (may fail without DB, that's OK)"""
-        self.client.post("/api/v1/auth/login", json={
-            "username": "test_user",
-            "password": "test_password"
-        }, catch_response=True, name="/auth/login")
+        self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "test_user", "password": "test_password"},
+            catch_response=True,
+            name="/auth/login",
+        )
 
     @task(7)
     def view_job_list(self):
@@ -77,7 +79,7 @@ class MDVerificationUser(HttpUser):
                 "potential_file": "/data/potentials/test.empirical",
                 "structure_file": "/data/structures/test.cif",
                 "temperature": 300,
-                "pressure": 0.1
+                "pressure": 0.1,
             },
             name="/jobs/submit",
         )
@@ -97,10 +99,12 @@ class AdminUser(HttpUser):
 
     def on_start(self):
         """Login as admin (may fail without DB)"""
-        self.client.post("/api/v1/auth/login", json={
-            "username": "admin",
-            "password": "admin_password"
-        }, catch_response=True, name="/auth/admin/login")
+        self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": "admin_password"},
+            catch_response=True,
+            name="/auth/admin/login",
+        )
 
     @task(5)
     def view_system_status(self):
@@ -128,10 +132,12 @@ class PerformanceTestUser(HttpUser):
 
     def on_start(self):
         """Quick login (may fail without DB)"""
-        self.client.post("/api/v1/auth/login", json={
-            "username": "perf_test_user",
-            "password": "test_password"
-        }, catch_response=True, name="/auth/login")
+        self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "perf_test_user", "password": "test_password"},
+            catch_response=True,
+            name="/auth/login",
+        )
 
     @task(10)
     def rapid_job_list_checks(self):
@@ -149,6 +155,7 @@ class PerformanceTestUser(HttpUser):
 
 
 # Custom event handlers for performance metrics
+
 
 @events.request.add_listener
 def on_request(request_type, name, response_time, response_length, exception, **kwargs):

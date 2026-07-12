@@ -75,10 +75,12 @@ class RefGapFillStaging(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(200), nullable=False)
     source_doi: Mapped[str | None] = mapped_column(String(200), nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
-        Float, nullable=True,
+        Float,
+        nullable=True,
     )
     temperature: Mapped[float | None] = mapped_column(
-        Float, nullable=True,
+        Float,
+        nullable=True,
     )
 
     # --- v4 output fields (CTO evaluation §3.1) ---
@@ -98,13 +100,19 @@ class RefGapFillStaging(TimestampMixin, Base):
     )
     dedup_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     range_validated: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True,
+        Boolean,
+        nullable=False,
+        default=True,
     )
 
     # --- Review workflow ---
 
     status: Mapped[StagingStatus] = mapped_column(
-        Enum(StagingStatus, name="staging_status_enum", values_callable=lambda e: [x.value for x in e]),
+        Enum(
+            StagingStatus,
+            name="staging_status_enum",
+            values_callable=lambda e: [x.value for x in e],
+        ),
         nullable=False,
         default=StagingStatus.PENDING,
     )
@@ -113,7 +121,8 @@ class RefGapFillStaging(TimestampMixin, Base):
         nullable=True,
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     # --- Promotion tracking ---
@@ -122,7 +131,8 @@ class RefGapFillStaging(TimestampMixin, Base):
         nullable=True,
     )
     promoted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     # --- Metadata ---

@@ -86,8 +86,10 @@ class PageSplitter:
         max_pages: int | None = None,
     ) -> None:
         self.dpi = dpi or int(os.environ.get("PAGE_SPLITTER_DPI", _DEFAULT_DPI))
-        self.max_pages = max_pages if max_pages is not None else int(
-            os.environ.get("PAGE_SPLITTER_MAX_PAGES", _DEFAULT_MAX_PAGES)
+        self.max_pages = (
+            max_pages
+            if max_pages is not None
+            else int(os.environ.get("PAGE_SPLITTER_MAX_PAGES", _DEFAULT_MAX_PAGES))
         )
 
         if self.dpi < 72:
@@ -162,9 +164,7 @@ class PageSplitter:
             return pages
 
         except Exception as exc:
-            raise PageSplitterError(
-                f"Failed to render PDF pages: {exc}"
-            ) from exc
+            raise PageSplitterError(f"Failed to render PDF pages: {exc}") from exc
         finally:
             doc.close()
 
@@ -204,9 +204,7 @@ def _open_document(source: bytes | BinaryIO | str) -> fitz.Document:
             return fitz.open("pdf", source.read())
         raise PageSplitterError(f"Unsupported PDF source type: {type(source)}")
     except Exception as exc:
-        raise PageSplitterError(
-            f"Cannot open PDF document: {exc}"
-        ) from exc
+        raise PageSplitterError(f"Cannot open PDF document: {exc}") from exc
 
 
 def _resolve_range(

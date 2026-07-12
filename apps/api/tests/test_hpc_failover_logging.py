@@ -39,7 +39,7 @@ class TestFailoverEventLogging:
             backup_hosts=("tianjin.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
-            skip_key_validation=True
+            skip_key_validation=True,
         )
         return HPCOrchestrator(config)
 
@@ -52,7 +52,7 @@ class TestFailoverEventLogging:
         THEN: Database record is created with all required fields
         """
         # Mock get_db to return our mock session
-        with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+        with patch("nfm_db.services.hpc_orchestration.get_db") as mock_get_db:
             # Configure the async generator properly
             async def mock_db_gen():
                 yield db_session
@@ -68,12 +68,13 @@ class TestFailoverEventLogging:
                 reason="Primary cluster SSH timeout after 5 consecutive failures",
                 success=True,
                 failure_count=5,
-                event_metadata={"failover_duration_seconds": 45}
+                event_metadata={"failover_duration_seconds": 45},
             )
 
             # Verify database session.commit was called (success case)
-            assert db_session.commit.called, \
+            assert db_session.commit.called, (
                 "Database commit should be called for successful logging"
+            )
 
     @pytest.mark.asyncio
     async def test_log_failover_event_includes_all_required_fields(self, orchestrator, db_session):
@@ -83,7 +84,8 @@ class TestFailoverEventLogging:
         WHEN: Event is logged
         THEN: Event includes timestamp, type, clusters, reason, success, metadata
         """
-        with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+        with patch("nfm_db.services.hpc_orchestration.get_db") as mock_get_db:
+
             async def mock_db_gen():
                 yield db_session
 
@@ -96,19 +98,19 @@ class TestFailoverEventLogging:
                 reason="Primary cluster down",
                 success=True,
                 failure_count=3,
-                event_metadata={"test": "data"}
+                event_metadata={"test": "data"},
             )
 
             # Verify the call captured required fields
             if db_session.add.called:
                 added_obj = db_session.add.call_args[0][0]
-                assert hasattr(added_obj, 'event_time')
-                assert hasattr(added_obj, 'event_type')
-                assert hasattr(added_obj, 'source_cluster')
-                assert hasattr(added_obj, 'target_cluster')
-                assert hasattr(added_obj, 'reason')
-                assert hasattr(added_obj, 'success')
-                assert hasattr(added_obj, 'event_metadata')
+                assert hasattr(added_obj, "event_time")
+                assert hasattr(added_obj, "event_type")
+                assert hasattr(added_obj, "source_cluster")
+                assert hasattr(added_obj, "target_cluster")
+                assert hasattr(added_obj, "reason")
+                assert hasattr(added_obj, "success")
+                assert hasattr(added_obj, "event_metadata")
 
     @pytest.mark.asyncio
     async def test_log_failover_event_fallback_to_stdout_on_db_error(self, orchestrator):
@@ -118,7 +120,7 @@ class TestFailoverEventLogging:
         WHEN: Failover event is logged
         THEN: Event is logged to stdout/stderr instead
         """
-        with patch('nfm_db.database.get_db') as mock_get_db:
+        with patch("nfm_db.database.get_db") as mock_get_db:
             # Simulate database error
             mock_get_db.side_effect = Exception("Database connection failed")
 
@@ -130,7 +132,7 @@ class TestFailoverEventLogging:
                     target_cluster="tianjin",
                     reason="Test fallback",
                     success=True,
-                    event_metadata={}
+                    event_metadata={},
                 )
                 # If we get here, fallback worked
                 assert True
@@ -145,11 +147,13 @@ class TestFailoverEventLogging:
         WHEN: Failover is triggered
         THEN: Failover event is logged to database
         """
-        with patch.object(orchestrator.failover_manager._backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(
+            orchestrator.failover_manager._backup_ssh_manager, "acquire_connection_with_retry"
+        ) as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
-            with patch.object(orchestrator, '_log_failover_event') as mock_log:
+            with patch.object(orchestrator, "_log_failover_event") as mock_log:
                 await orchestrator.trigger_failover()
 
                 # Verify logging was called
@@ -157,11 +161,11 @@ class TestFailoverEventLogging:
 
                 # Verify correct parameters were passed
                 call_kwargs = mock_log.call_args[1]
-                assert call_kwargs['event_type'] in ['failover_triggered', 'failover_failed']
+                assert call_kwargs["event_type"] in ["failover_triggered", "failover_failed"]
                 # Check for guangzhou (or the test cluster name)
-                source = call_kwargs.get('source_cluster')
-                assert source == 'guangzhou.example.com' or source == orchestrator.hpc_cluster
-                assert call_kwargs['success']
+                source = call_kwargs.get("source_cluster")
+                assert source == "guangzhou.example.com" or source == orchestrator.hpc_cluster
+                assert call_kwargs["success"]
 
     @pytest.mark.asyncio
     async def test_try_recover_primary_logs_recovery_event(self, orchestrator, db_session):
@@ -171,16 +175,16 @@ class TestFailoverEventLogging:
         WHEN: Recovery is detected
         THEN: Recovery event is logged to database
         """
-        with patch.object(orchestrator.failover_manager, 'check_primary_health', return_value=True):
-            with patch.object(orchestrator, '_log_failover_event') as mock_log:
+        with patch.object(orchestrator.failover_manager, "check_primary_health", return_value=True):
+            with patch.object(orchestrator, "_log_failover_event") as mock_log:
                 await orchestrator.try_recover_primary()
 
                 # Verify recovery was logged
                 assert mock_log.called, "try_recover_primary should log recovery event"
 
                 call_kwargs = mock_log.call_args[1]
-                assert call_kwargs['event_type'] in ['primary_recovered', 'recovery_attempted']
-                assert call_kwargs['success']
+                assert call_kwargs["event_type"] in ["primary_recovered", "recovery_attempted"]
+                assert call_kwargs["success"]
 
 
 class TestHPCFailoverEventModel:
@@ -195,6 +199,7 @@ class TestHPCFailoverEventModel:
         """
         try:
             from nfm_db.models.hpc_failover_event import HPCFailoverEvent
+
             assert HPCFailoverEvent is not None
         except ImportError as e:
             pytest.fail(f"HPCFailoverEvent model should exist but import failed: {e}")
@@ -209,11 +214,17 @@ class TestHPCFailoverEventModel:
         from nfm_db.models.hpc_failover_event import HPCFailoverEvent
 
         required_columns = [
-            'id', 'event_time', 'event_type', 'source_cluster',
-            'target_cluster', 'reason', 'failure_count',
-            'success', 'event_metadata', 'created_at'
+            "id",
+            "event_time",
+            "event_type",
+            "source_cluster",
+            "target_cluster",
+            "reason",
+            "failure_count",
+            "success",
+            "event_metadata",
+            "created_at",
         ]
 
         for col in required_columns:
-            assert hasattr(HPCFailoverEvent, col), \
-                f"HPCFailoverEvent should have column: {col}"
+            assert hasattr(HPCFailoverEvent, col), f"HPCFailoverEvent should have column: {col}"

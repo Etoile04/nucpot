@@ -448,14 +448,17 @@ class TestBackwardCompatibleAliases:
 
     def test_sync_node_alias_exists(self) -> None:
         from nfm_db.services.ontology_sync import sync_node
+
         assert sync_node is sync_node_to_graph
 
     def test_sync_edge_alias_exists(self) -> None:
         from nfm_db.services.ontology_sync import sync_edge
+
         assert sync_edge is sync_edge_to_graph
 
     def test_rebuild_graph_alias_exists(self) -> None:
         from nfm_db.services.ontology_sync import rebuild_graph
+
         assert rebuild_graph is rebuild_ontology_graph
 
 

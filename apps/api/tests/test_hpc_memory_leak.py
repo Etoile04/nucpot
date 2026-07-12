@@ -41,7 +41,7 @@ class TestOrchestratorMemoryLeak:
                 username="test",
                 ssh_key_path="/tmp/test_key",
                 max_connections=5,
-                skip_key_validation=True  # Skip for testing
+                skip_key_validation=True,  # Skip for testing
             )
             orchestrator = HPCOrchestrator(config)
 
@@ -53,15 +53,16 @@ class TestOrchestratorMemoryLeak:
         snapshot2 = tracemalloc.take_snapshot()
 
         # Calculate memory difference
-        top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        top_stats = snapshot2.compare_to(snapshot1, "lineno")
         total_leaked = sum(stat.size_diff for stat in top_stats)
 
         tracemalloc.stop()
 
         # Assert memory leak is minimal (< 10MB for 100 iterations)
         # 10MB = 100KB per iteration (acceptable overhead)
-        assert total_leaked < 10_000_000, \
+        assert total_leaked < 10_000_000, (
             f"Memory leak detected: {total_leaked / 1_000_000:.2f} MB leaked over 100 iterations"
+        )
 
     @pytest.mark.integration
     def test_orchestrator_without_cleanup_leaks_memory(self):
@@ -86,7 +87,7 @@ class TestOrchestratorMemoryLeak:
                 username="test",
                 ssh_key_path="/tmp/test_key",
                 max_connections=5,
-                skip_key_validation=True
+                skip_key_validation=True,
             )
             HPCOrchestrator(config)
             # Keep reference to prevent GC (simulates real-world leak)
@@ -96,7 +97,7 @@ class TestOrchestratorMemoryLeak:
         gc.collect()
         snapshot2 = tracemalloc.take_snapshot()
 
-        top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        top_stats = snapshot2.compare_to(snapshot1, "lineno")
         total_leaked = sum(stat.size_diff for stat in top_stats)
 
         tracemalloc.stop()
@@ -106,8 +107,7 @@ class TestOrchestratorMemoryLeak:
         # orchestrators WITHOUT cleanup still exist and accumulate memory
         # (total_leaked > 0). The cleanup test (above) verifies the fix.
         # Previously this asserted > 5MB which required real SSH connections.
-        assert total_leaked > 0, \
-            "Expected some memory accumulation without cleanup"
+        assert total_leaked > 0, "Expected some memory accumulation without cleanup"
 
 
 class TestCeleryTaskMemoryLeak:
@@ -137,12 +137,14 @@ class TestCeleryTaskMemoryLeak:
 
         # Run sync task 10 times (simulating 5 minutes of Celery beat)
         for _i in range(10):
-            with patch('nfm_db.services.hpc_orchestration.get_db') as mock_get_db:
+            with patch("nfm_db.services.hpc_orchestration.get_db") as mock_get_db:
                 # Mock database operations
                 mock_db = MagicMock()
                 mock_get_db.return_value = mock_db
 
-                with patch('nfm_db.services.hpc_orchestration.HpcOrchestrator') as mock_orchestrator_cls:
+                with patch(
+                    "nfm_db.services.hpc_orchestration.HpcOrchestrator"
+                ) as mock_orchestrator_cls:
                     # Mock orchestrator
                     mock_orchestrator = MagicMock()
                     mock_orchestrator.sync_all_active_jobs = MagicMock(return_value=None)
@@ -163,8 +165,9 @@ class TestCeleryTaskMemoryLeak:
 
         # Assert memory growth is minimal (< 50MB for 10 iterations)
         # 50MB = 5MB per iteration (acceptable overhead for Python objects)
-        assert memory_growth < 50_000_000, \
+        assert memory_growth < 50_000_000, (
             f"Memory leak detected: {memory_growth / 1_000_000:.2f} MB growth over 10 iterations"
+        )
 
     @pytest.mark.integration
     def test_celery_sync_task_with_real_orchestrator(self):
@@ -181,12 +184,15 @@ class TestCeleryTaskMemoryLeak:
 
         # Run sync task 5 times
         for _i in range(5):
-            with patch.dict('os.environ', {
-                'NFM_HPC_PRIMARY_HOST': 'test.example.com',
-                'NFM_HPC_PRIMARY_USER': 'testuser',
-                'NFM_HPC_PRIMARY_SSH_KEY_PATH': '/tmp/test_key',
-                'NFM_HPC_MAX_CONNECTIONS': '5'
-            }):
+            with patch.dict(
+                "os.environ",
+                {
+                    "NFM_HPC_PRIMARY_HOST": "test.example.com",
+                    "NFM_HPC_PRIMARY_USER": "testuser",
+                    "NFM_HPC_PRIMARY_SSH_KEY_PATH": "/tmp/test_key",
+                    "NFM_HPC_MAX_CONNECTIONS": "5",
+                },
+            ):
                 result = sync_hpc_job_status()
                 # Will fail due to connection errors, but that's OK - we're testing memory
                 assert result is not None
@@ -194,14 +200,15 @@ class TestCeleryTaskMemoryLeak:
         gc.collect()
         snapshot2 = tracemalloc.take_snapshot()
 
-        top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        top_stats = snapshot2.compare_to(snapshot1, "lineno")
         total_leaked = sum(stat.size_diff for stat in top_stats)
 
         tracemalloc.stop()
 
         # After ADR-004 fix, memory leak should be < 10MB
-        assert total_leaked < 10_000_000, \
+        assert total_leaked < 10_000_000, (
             f"Memory leak detected: {total_leaked / 1_000_000:.2f} MB leaked over 5 iterations"
+        )
 
 
 class TestEventLoopResourceLeak:
@@ -248,7 +255,7 @@ class TestEventLoopResourceLeak:
         gc.collect()
         snapshot2 = tracemalloc.take_snapshot()
 
-        top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        top_stats = snapshot2.compare_to(snapshot1, "lineno")
         total_leaked = sum(stat.size_diff for stat in top_stats)
 
         tracemalloc.stop()

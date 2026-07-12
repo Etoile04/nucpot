@@ -16,7 +16,6 @@ from httpx import ASGITransport, AsyncClient
 from nfm_db.database import get_db
 from nfm_db.main import app
 
-
 # ── Material Import ──────────────────────────────────────────────────
 
 
@@ -47,6 +46,7 @@ class TestMaterialImport:
         assert data["errors"] == []
 
         from sqlalchemy import select
+
         from nfm_db.models.material import Material
 
         result = await db_session.execute(select(Material))
@@ -57,10 +57,12 @@ class TestMaterialImport:
         assert "Fe" in names
 
     async def test_import_json_creates_materials(self, client, db_session) -> None:
-        json_content = json.dumps([
-            {"name": "UO2", "formula": "UO2"},
-            {"name": "bad" * 200},
-        ]).encode()
+        json_content = json.dumps(
+            [
+                {"name": "UO2", "formula": "UO2"},
+                {"name": "bad" * 200},
+            ]
+        ).encode()
         resp = await client.post(
             "/api/v1/materials/import",
             files={"file": ("materials.json", json_content, "application/json")},
@@ -164,9 +166,7 @@ class TestReferenceValueImport:
             yield c
         app.dependency_overrides.clear()
 
-    async def test_import_csv_creates_staging_records(
-        self, client, db_session
-    ) -> None:
+    async def test_import_csv_creates_staging_records(self, client, db_session) -> None:
         csv_content = (
             b"element_system,property_name,value,unit,source\n"
             b"UO2,lattice_constant,5.47,angstrom,Smirnov2014\n"
@@ -182,21 +182,23 @@ class TestReferenceValueImport:
         assert data["failed"] == 0
 
     async def test_import_json_with_errors(self, client) -> None:
-        json_content = json.dumps([
-            {
-                "element_system": "UO2",
-                "property_name": "lattice_constant",
-                "value": 5.47,
-                "unit": "angstrom",
-                "source": "Smirnov2014",
-            },
-            {
-                "property_name": "lattice_constant",
-                "value": 5.47,
-                "unit": "angstrom",
-                "source": "Smirnov2014",
-            },
-        ]).encode()
+        json_content = json.dumps(
+            [
+                {
+                    "element_system": "UO2",
+                    "property_name": "lattice_constant",
+                    "value": 5.47,
+                    "unit": "angstrom",
+                    "source": "Smirnov2014",
+                },
+                {
+                    "property_name": "lattice_constant",
+                    "value": 5.47,
+                    "unit": "angstrom",
+                    "source": "Smirnov2014",
+                },
+            ]
+        ).encode()
         resp = await client.post(
             "/api/v1/reference-values/import",
             files={"file": ("ref_values.json", json_content, "application/json")},
@@ -233,10 +235,12 @@ class TestPropertyImport:
 
     async def test_import_json_properties(self, client) -> None:
         """Property import without FK-referenced dataset/property_type returns 409."""
-        json_content = json.dumps([
-            {"value_scalar": 5.47, "notes": "test measurement"},
-            {"value_scalar": 170.0},
-        ]).encode()
+        json_content = json.dumps(
+            [
+                {"value_scalar": 5.47, "notes": "test measurement"},
+                {"value_scalar": 170.0},
+            ]
+        ).encode()
         resp = await client.post(
             "/api/v1/properties/import",
             files={"file": ("properties.json", json_content, "application/json")},

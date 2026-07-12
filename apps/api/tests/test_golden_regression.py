@@ -27,7 +27,6 @@ import pytest
 from nfm_db.core.extraction_rules import (
     assess_confidence,
     clean_latex,
-    is_extractable,
     parse_value,
 )
 from nfm_db.services.quality_gate import compute_dedup_hash
@@ -141,15 +140,12 @@ class TestGoldenRegression:
             )
         else:
             assert parsed.uncertainty is None, (
-                f"expected no uncertainty in {source_path}, "
-                f"got {parsed.uncertainty}"
+                f"expected no uncertainty in {source_path}, got {parsed.uncertainty}"
             )
 
         if expected_parsed.get("range") is not None:
             expected_range = expected_parsed["range"]
-            assert parsed.range is not None, (
-                f"expected range in {source_path}, got None"
-            )
+            assert parsed.range is not None, f"expected range in {source_path}, got None"
             assert parsed.range[0] == pytest.approx(expected_range[0]), (
                 f"range min mismatch in {source_path}: "
                 f"expected {expected_range[0]}, got {parsed.range[0]}"
@@ -159,9 +155,7 @@ class TestGoldenRegression:
                 f"expected {expected_range[1]}, got {parsed.range[1]}"
             )
         else:
-            assert parsed.range is None, (
-                f"expected no range in {source_path}, got {parsed.range}"
-            )
+            assert parsed.range is None, f"expected no range in {source_path}, got {parsed.range}"
 
     @pytest.mark.golden
     @pytest.mark.parametrize(
@@ -301,9 +295,7 @@ class TestGoldenFixtureIntegrity:
     def test_minimum_fixture_count(self) -> None:
         """At least 10 golden fixture files must exist."""
         json_files = list(GOLDEN_DIR.glob("*.json"))
-        assert len(json_files) >= 10, (
-            f"Expected >= 10 golden fixtures, found {len(json_files)}"
-        )
+        assert len(json_files) >= 10, f"Expected >= 10 golden fixtures, found {len(json_files)}"
 
     @pytest.mark.golden
     @pytest.mark.parametrize(
@@ -421,9 +413,7 @@ def regenerate_all_fixtures() -> None:
             record["expected"] = _regenerate_golden_output(record["input"])
 
         # Remove internal metadata before writing
-        output_fixture = {
-            k: v for k, v in fixture.items() if not k.startswith("_")
-        }
+        output_fixture = {k: v for k, v in fixture.items() if not k.startswith("_")}
         with open(source_path, "w", encoding="utf-8") as f:
             json.dump(output_fixture, f, indent=2, ensure_ascii=False)
             f.write("\n")

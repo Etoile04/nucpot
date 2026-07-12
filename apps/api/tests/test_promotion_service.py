@@ -113,7 +113,8 @@ class TestApproveStagingRecord:
 
     @pytest.mark.asyncio
     async def test_approve_pending_sets_promoted_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving a pending record sets status to PROMOTED."""
         record = await _insert_staging_record(db_session)
@@ -123,7 +124,8 @@ class TestApproveStagingRecord:
 
     @pytest.mark.asyncio
     async def test_approve_sets_timestamps(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving sets both reviewed_at and promoted_at."""
         record = await _insert_staging_record(db_session)
@@ -134,7 +136,8 @@ class TestApproveStagingRecord:
 
     @pytest.mark.asyncio
     async def test_approve_with_reviewer_id_and_note(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Reviewer ID and note are persisted on approval."""
         reviewer_id = uuid.uuid4()
@@ -151,7 +154,8 @@ class TestApproveStagingRecord:
 
     @pytest.mark.asyncio
     async def test_approve_nonexistent_raises_not_found(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving a non-existent record raises StagingRecordNotFoundError."""
         fake_id = uuid.uuid4()
@@ -163,11 +167,13 @@ class TestApproveStagingRecord:
 
     @pytest.mark.asyncio
     async def test_approve_already_promoted_raises_invalid_transition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving an already-promoted record raises InvalidTransitionError."""
         record = await _insert_staging_record(
-            db_session, status=StagingStatus.PROMOTED,
+            db_session,
+            status=StagingStatus.PROMOTED,
         )
 
         with pytest.raises(InvalidTransitionError) as exc_info:
@@ -178,11 +184,13 @@ class TestApproveStagingRecord:
 
     @pytest.mark.asyncio
     async def test_approve_already_rejected_raises_invalid_transition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving an already-rejected record raises InvalidTransitionError."""
         record = await _insert_staging_record(
-            db_session, status=StagingStatus.REJECTED,
+            db_session,
+            status=StagingStatus.REJECTED,
         )
 
         with pytest.raises(InvalidTransitionError) as exc_info:
@@ -201,7 +209,8 @@ class TestRejectStagingRecord:
 
     @pytest.mark.asyncio
     async def test_reject_pending_sets_rejected_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting a pending record sets status to REJECTED."""
         record = await _insert_staging_record(db_session)
@@ -211,7 +220,8 @@ class TestRejectStagingRecord:
 
     @pytest.mark.asyncio
     async def test_reject_sets_reviewed_at_timestamp(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting sets reviewed_at but not promoted_at."""
         record = await _insert_staging_record(db_session)
@@ -222,7 +232,8 @@ class TestRejectStagingRecord:
 
     @pytest.mark.asyncio
     async def test_reject_with_review_note(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Review note is persisted on rejection."""
         record = await _insert_staging_record(db_session)
@@ -236,7 +247,8 @@ class TestRejectStagingRecord:
 
     @pytest.mark.asyncio
     async def test_reject_nonexistent_raises_not_found(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting a non-existent record raises StagingRecordNotFoundError."""
         fake_id = uuid.uuid4()
@@ -248,11 +260,13 @@ class TestRejectStagingRecord:
 
     @pytest.mark.asyncio
     async def test_reject_already_rejected_raises_invalid_transition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting an already-rejected record raises InvalidTransitionError."""
         record = await _insert_staging_record(
-            db_session, status=StagingStatus.REJECTED,
+            db_session,
+            status=StagingStatus.REJECTED,
         )
 
         with pytest.raises(InvalidTransitionError) as exc_info:
@@ -263,11 +277,13 @@ class TestRejectStagingRecord:
 
     @pytest.mark.asyncio
     async def test_reject_already_promoted_raises_invalid_transition(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting an already-promoted record raises InvalidTransitionError."""
         record = await _insert_staging_record(
-            db_session, status=StagingStatus.PROMOTED,
+            db_session,
+            status=StagingStatus.PROMOTED,
         )
 
         with pytest.raises(InvalidTransitionError) as exc_info:
@@ -287,11 +303,13 @@ class TestPromoteToMeasurements:
 
     @pytest.mark.asyncio
     async def test_always_raises_not_implemented(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """promote_to_measurements always raises PromotionNotImplementedError."""
         record = await _insert_staging_record(
-            db_session, status=StagingStatus.PROMOTED,
+            db_session,
+            status=StagingStatus.PROMOTED,
         )
 
         with pytest.raises(PromotionNotImplementedError):
@@ -325,7 +343,9 @@ class TestInvalidTransitionError:
         """Error stores current and target statuses."""
         fake_id = uuid.uuid4()
         exc = InvalidTransitionError(
-            fake_id, StagingStatus.PROMOTED, StagingStatus.REJECTED,
+            fake_id,
+            StagingStatus.PROMOTED,
+            StagingStatus.REJECTED,
         )
         assert exc.staging_id == fake_id
         assert exc.current == StagingStatus.PROMOTED
@@ -335,7 +355,9 @@ class TestInvalidTransitionError:
         """Error message includes both status values."""
         fake_id = uuid.uuid4()
         exc = InvalidTransitionError(
-            fake_id, StagingStatus.PENDING, StagingStatus.PROMOTED,
+            fake_id,
+            StagingStatus.PENDING,
+            StagingStatus.PROMOTED,
         )
         msg = str(exc)
         assert "pending" in msg.lower()
@@ -393,27 +415,33 @@ class TestApproveEdgeCases:
 
     @pytest.mark.asyncio
     async def test_approve_with_none_reviewer_id(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving with reviewer_id=None works and stores None."""
         from nfm_db.services.promotion_service import approve_staging_record
 
         record = await _insert_staging_record(db_session)
         result = await approve_staging_record(
-            db_session, record.id, reviewer_id=None,
+            db_session,
+            record.id,
+            reviewer_id=None,
         )
         assert result.reviewer_id is None
 
     @pytest.mark.asyncio
     async def test_approve_with_none_review_note(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Approving with review_note=None stores None."""
         from nfm_db.services.promotion_service import approve_staging_record
 
         record = await _insert_staging_record(db_session)
         result = await approve_staging_record(
-            db_session, record.id, review_note=None,
+            db_session,
+            record.id,
+            review_note=None,
         )
         assert result.review_note is None
 
@@ -428,7 +456,8 @@ class TestRejectEdgeCases:
 
     @pytest.mark.asyncio
     async def test_reject_with_reviewer_id(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting with reviewer_id stores it."""
         from nfm_db.services.promotion_service import reject_staging_record
@@ -436,19 +465,24 @@ class TestRejectEdgeCases:
         reviewer_id = uuid.uuid4()
         record = await _insert_staging_record(db_session)
         result = await reject_staging_record(
-            db_session, record.id, reviewer_id=reviewer_id,
+            db_session,
+            record.id,
+            reviewer_id=reviewer_id,
         )
         assert result.reviewer_id == reviewer_id
 
     @pytest.mark.asyncio
     async def test_reject_with_none_reviewer_id(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Rejecting with reviewer_id=None stores None."""
         from nfm_db.services.promotion_service import reject_staging_record
 
         record = await _insert_staging_record(db_session)
         result = await reject_staging_record(
-            db_session, record.id, reviewer_id=None,
+            db_session,
+            record.id,
+            reviewer_id=None,
         )
         assert result.reviewer_id is None

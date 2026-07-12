@@ -182,7 +182,9 @@ class TestAdjudicateGradeEndpoint:
         assert response.status_code == 200
         data = response.json()
 
-        assert "potential" in data["primary_category"].lower() or data["primary_category"] == "unknown"
+        assert (
+            "potential" in data["primary_category"].lower() or data["primary_category"] == "unknown"
+        )
 
     async def test_adjudicate_unknown_error(
         self,

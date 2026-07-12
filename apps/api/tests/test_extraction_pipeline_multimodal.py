@@ -415,13 +415,16 @@ class TestMultimodalFailureIsolation:
             mock_gate.stage_record = AsyncMock()
             mock_qg.return_value = mock_gate
 
-            with patch(
-                "nfm_db.services.multimodal_extraction.run_multimodal_extraction",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("VLM service unavailable"),
-            ), patch(
-                "nfm_db.services.quality_gate.compute_dedup_hash",
-                return_value="h1",
+            with (
+                patch(
+                    "nfm_db.services.multimodal_extraction.run_multimodal_extraction",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("VLM service unavailable"),
+                ),
+                patch(
+                    "nfm_db.services.quality_gate.compute_dedup_hash",
+                    return_value="h1",
+                ),
             ):
                 job = await trigger_extraction(
                     session,
@@ -446,11 +449,14 @@ class TestMultimodalFailureIsolation:
                 return_value=MagicMock(accepted=[], rejected=[], duplicates=[]),
             )
 
-            with patch(
-                "nfm_db.services.multimodal_extraction.run_multimodal_extraction",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("VLM down"),
-            ), patch("nfm_db.services.extraction_pipeline.logger") as mock_logger:
+            with (
+                patch(
+                    "nfm_db.services.multimodal_extraction.run_multimodal_extraction",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("VLM down"),
+                ),
+                patch("nfm_db.services.extraction_pipeline.logger") as mock_logger,
+            ):
                 await trigger_extraction(
                     session,
                     source_reference="test_source",
@@ -459,9 +465,7 @@ class TestMultimodalFailureIsolation:
                 )
                 # Verify warning was logged
                 mock_logger.warning.assert_called()
-                warning_calls = [
-                    c for c in mock_logger.warning.call_args_list
-                ]
+                warning_calls = [c for c in mock_logger.warning.call_args_list]
                 assert any(
                     "multimodal" in str(c).lower() or "non-fatal" in str(c).lower()
                     for c in warning_calls

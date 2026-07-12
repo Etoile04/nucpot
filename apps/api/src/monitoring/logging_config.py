@@ -35,10 +35,28 @@ class StructuredFormatter(logging.Formatter):
 
         # Add extra fields from record
         for key, value in record.__dict__.items():
-            if key not in {"name", "msg", "args", "levelname", "levelno", "pathname",
-                          "filename", "module", "lineno", "funcName", "created",
-                          "msecs", "relativeCreated", "thread", "threadName",
-                          "processName", "process", "exc_info", "exc_text", "stack_info"}:
+            if key not in {
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+            }:
                 log_data[key] = value
 
         return json.dumps(log_data)
@@ -72,9 +90,7 @@ class SensitiveDataFilter(logging.Filter):
 
 
 def setup_logging(
-    log_level: str = "INFO",
-    log_file: str | None = None,
-    environment: str = "production"
+    log_level: str = "INFO", log_file: str | None = None, environment: str = "production"
 ) -> None:
     """
     Setup structured logging configuration.
@@ -224,7 +240,7 @@ def log_request(
     status_code: int,
     duration_ms: float,
     user_id: str | None = None,
-    **kwargs: object
+    **kwargs: object,
 ) -> None:
     """
     Log HTTP request with structured data.
@@ -245,7 +261,7 @@ def log_request(
         "status_code": status_code,
         "duration_ms": duration_ms,
         "user_id": user_id,
-        **kwargs
+        **kwargs,
     }
 
     # Determine log level based on status code
@@ -262,7 +278,7 @@ def log_task_event(
     event_type: str,
     status: str,
     duration_seconds: float | None = None,
-    **kwargs: object
+    **kwargs: object,
 ) -> None:
     """
     Log MD task event with structured data.
@@ -281,7 +297,7 @@ def log_task_event(
         "event_type": event_type,
         "status": status,
         "duration_seconds": duration_seconds,
-        **kwargs
+        **kwargs,
     }
 
     # Determine log level based on status
@@ -298,7 +314,7 @@ def log_hpc_event(
     event_type: str,
     success: bool,
     duration_seconds: float | None = None,
-    **kwargs: object
+    **kwargs: object,
 ) -> None:
     """
     Log HPC cluster event with structured data.
@@ -317,7 +333,7 @@ def log_hpc_event(
         "event_type": event_type,
         "success": success,
         "duration_seconds": duration_seconds,
-        **kwargs
+        **kwargs,
     }
 
     # Determine log level based on success
@@ -332,7 +348,7 @@ def log_database_query(
     table: str,
     duration_ms: float,
     rows_affected: int | None = None,
-    **kwargs: object
+    **kwargs: object,
 ) -> None:
     """
     Log database query with structured data.
@@ -351,7 +367,7 @@ def log_database_query(
         "table": table,
         "duration_ms": duration_ms,
         "rows_affected": rows_affected,
-        **kwargs
+        **kwargs,
     }
 
     # Warn if query is slow (> 1 second)
@@ -368,16 +384,10 @@ def initialize_logging() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 
     if environment == "production":
-        setup_logging(
-            log_level=log_level,
-            environment=environment
-        )
+        setup_logging(log_level=log_level, environment=environment)
     else:
         # Development logging - more verbose
-        setup_logging(
-            log_level="DEBUG",
-            environment=environment
-        )
+        setup_logging(log_level="DEBUG", environment=environment)
 
 
 # Auto-initialize on import

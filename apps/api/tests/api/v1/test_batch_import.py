@@ -122,17 +122,13 @@ class TestRowToMaterialCreate:
 
     def test_boolean_true_variants(self) -> None:
         for val in ("true", "True", "TRUE", "1", "yes", "Yes"):
-            data, err = _row_to_material_create(
-                {"name": "UO2", "is_active": val}, row_index=1
-            )
+            data, err = _row_to_material_create({"name": "UO2", "is_active": val}, row_index=1)
             assert err is None
             assert data["is_active"] is True
 
     def test_boolean_false_variants(self) -> None:
         for val in ("false", "False", "FALSE", "0", "no", "No"):
-            data, err = _row_to_material_create(
-                {"name": "UO2", "is_active": val}, row_index=1
-            )
+            data, err = _row_to_material_create({"name": "UO2", "is_active": val}, row_index=1)
             assert err is None
             assert data["is_active"] is False
 
@@ -174,10 +170,12 @@ def _make_csv(content_rows: list[dict]) -> bytes:
 @pytest.mark.asyncio
 async def test_batch_import_csv_valid(async_client: AsyncClient) -> None:
     """POST a valid CSV file and verify import succeeds."""
-    csv_bytes = _make_csv([
-        {"name": "UO2", "formula": "UO2", "crystal_structure": "Fluorite"},
-        {"name": "UN", "formula": "UN", "crystal_structure": "NaCl"},
-    ])
+    csv_bytes = _make_csv(
+        [
+            {"name": "UO2", "formula": "UO2", "crystal_structure": "Fluorite"},
+            {"name": "UN", "formula": "UN", "crystal_structure": "NaCl"},
+        ]
+    )
 
     response = await async_client.post(
         "/api/v1/materials/batch-import",
@@ -281,9 +279,7 @@ async def test_batch_import_partial_success(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_import_upsert_duplicate(
-    async_client: AsyncClient, db_session
-) -> None:
+async def test_batch_import_upsert_duplicate(async_client: AsyncClient, db_session) -> None:
     """Importing the same name+formula should update the existing record."""
     mat = Material(name="UO2", formula="UO2", crystal_structure="OldStructure")
     db_session.add(mat)
@@ -355,9 +351,7 @@ async def test_batch_import_empty_json(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_import_result_persisted(
-    async_client: AsyncClient, db_session
-) -> None:
+async def test_batch_import_result_persisted(async_client: AsyncClient, db_session) -> None:
     """Imported materials should be queryable after import."""
     csv_bytes = b"name,formula\nPersistedMat,PM1\n"
     response = await async_client.post(

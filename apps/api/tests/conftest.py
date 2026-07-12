@@ -40,15 +40,16 @@ def _strip_dangling_fks(metadata) -> None:
     for table in metadata.tables.values():
         for col in table.columns:
             dangling = [
-                fk for fk in list(col.foreign_keys)
+                fk
+                for fk in list(col.foreign_keys)
                 if fk._colspec.split(".")[0].strip('"') not in registered
             ]
             for fk in dangling:
                 col.foreign_keys.discard(fk)
         table_fks_to_remove = [
-            fkc for fkc in list(table.constraints)
-            if hasattr(fkc, "_colspec")
-            and fkc._colspec.split(".")[0].strip('"') not in registered
+            fkc
+            for fkc in list(table.constraints)
+            if hasattr(fkc, "_colspec") and fkc._colspec.split(".")[0].strip('"') not in registered
         ]
         for fkc in table_fks_to_remove:
             table.constraints.discard(fkc)
@@ -97,10 +98,7 @@ def _disable_global_rate_limiting() -> None:
     )
 
     # 1. Remove global middleware.
-    app.user_middleware = [
-        mw for mw in app.user_middleware
-        if mw.cls is not NFMRateLimitMiddleware
-    ]
+    app.user_middleware = [mw for mw in app.user_middleware if mw.cls is not NFMRateLimitMiddleware]
 
     # 2. Override per-endpoint rate-limit dependencies with no-ops.
     async def _noop() -> None:  # pragma: no cover
@@ -151,7 +149,9 @@ async def db_session() -> AsyncSession:
         await conn.run_sync(_safe_create_all, Base.metadata)
 
     session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False,
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
     async with session_factory() as session:
         # Seed deterministic users so FK references in blog/md_verification tests resolve.
@@ -162,10 +162,14 @@ async def db_session() -> AsyncSession:
         ]:
             existing = await session.get(User, uid)
             if existing is None:
-                session.add(User(
-                    id=uid, username=name, email=email,
-                    hashed_password="hashed",
-                ))
+                session.add(
+                    User(
+                        id=uid,
+                        username=name,
+                        email=email,
+                        hashed_password="hashed",
+                    )
+                )
         await session.flush()
         yield session
 

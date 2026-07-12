@@ -102,8 +102,17 @@ class TestQuarterlyAuditWorkflow:
         # Only 50% have uncertainty
         refs_by_system = {
             "U": [
-                {"property_name": "lattice_constant", "value": 2.85, "unit": "Å", "uncertainty": 0.01},
-                {"property_name": "cohesive_energy", "value": 5.0, "unit": "eV/atom"},  # No uncertainty
+                {
+                    "property_name": "lattice_constant",
+                    "value": 2.85,
+                    "unit": "Å",
+                    "uncertainty": 0.01,
+                },
+                {
+                    "property_name": "cohesive_energy",
+                    "value": 5.0,
+                    "unit": "eV/atom",
+                },  # No uncertainty
             ],
         }
 
@@ -216,7 +225,12 @@ class TestSeverityClassification:
         # Only 60% coverage
         refs_by_system = {
             "U": [
-                {"property_name": "lattice_constant", "value": 2.85, "unit": "Å", "uncertainty": 0.01},
+                {
+                    "property_name": "lattice_constant",
+                    "value": 2.85,
+                    "unit": "Å",
+                    "uncertainty": 0.01,
+                },
                 {"property_name": "cohesive_energy", "value": 5.0, "unit": "eV/atom"},
                 {"property_name": "bulk_modulus", "value": 100.0, "unit": "GPa"},
                 {"property_name": "thermal_expansion", "value": 12.0, "unit": "10⁻⁶/K"},
@@ -254,8 +268,7 @@ class TestSeverityClassification:
         high_findings = [
             f
             for f in result.findings
-            if f.severity == FindingSeverity.HIGH
-            and f.check_type == CheckType.UNCERTAINTY_COVERAGE
+            if f.severity == FindingSeverity.HIGH and f.check_type == CheckType.UNCERTAINTY_COVERAGE
         ]
         assert len(high_findings) > 0
 
@@ -307,7 +320,12 @@ class TestReportGeneration:
 
         refs_by_system = {
             "U": [
-                {"property_name": "lattice_constant", "value": 2.85, "unit": "Å", "uncertainty": 0.01},
+                {
+                    "property_name": "lattice_constant",
+                    "value": 2.85,
+                    "unit": "Å",
+                    "uncertainty": 0.01,
+                },
             ],
             "UO2": [
                 {"property_name": "lattice_constant", "value": 5.45, "unit": "Å"},  # No uncertainty

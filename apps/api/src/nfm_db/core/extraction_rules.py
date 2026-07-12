@@ -199,9 +199,7 @@ def parse_value(raw_string: str) -> ParsedValue:
     if match:
         main_val = float(match.group(1))
         uncertainty = float(match.group(2))
-        return ParsedValue(
-            main_value=main_val, uncertainty=uncertainty, raw=raw_string
-        )
+        return ParsedValue(main_value=main_val, uncertainty=uncertainty, raw=raw_string)
 
     # Pattern 3: Scientific notation (e.g., "1.5e-3", "1.5×10^-3")
     sci_patterns = [
@@ -306,7 +304,15 @@ def assess_confidence(record: dict[str, Any]) -> Confidence:
     Returns:
         Confidence level (high/medium/low)
     """
-    required_fields = ["source_file", "material_name", "property_category", "property", "value", "unit", "reference"]
+    required_fields = [
+        "source_file",
+        "material_name",
+        "property_category",
+        "property",
+        "value",
+        "unit",
+        "reference",
+    ]
 
     # Check high confidence: all required fields + phase/conditions
     has_all_required = all(record.get(field) for field in required_fields)

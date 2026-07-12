@@ -39,16 +39,18 @@ logger = logging.getLogger(__name__)
 _ACCURACY_THRESHOLD = 0.70
 
 # Expected property categories for completeness scoring
-_EXPECTED_CATEGORIES = frozenset({
-    "thermal",
-    "mechanical",
-    "nuclear",
-    "electrical",
-    "optical",
-    "magnetic",
-    "chemical",
-    "dimensional",
-})
+_EXPECTED_CATEGORIES = frozenset(
+    {
+        "thermal",
+        "mechanical",
+        "nuclear",
+        "electrical",
+        "optical",
+        "magnetic",
+        "chemical",
+        "dimensional",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +85,12 @@ async def calculate_extraction_accuracy(
     stmt = (
         select(RefGapFillStaging)
         .where(
-            RefGapFillStaging.status.in_([
-                StagingStatus.APPROVED,
-                StagingStatus.PENDING,
-            ]),
+            RefGapFillStaging.status.in_(
+                [
+                    StagingStatus.APPROVED,
+                    StagingStatus.PENDING,
+                ]
+            ),
         )
         .order_by(RefGapFillStaging.created_at.desc())
         .limit(sample_size)
@@ -106,9 +110,7 @@ async def calculate_extraction_accuracy(
 
     # No references → confidence-based estimation
     if not references:
-        correct = sum(
-            1 for r in records if r.confidence in (Confidence.HIGH, Confidence.MEDIUM)
-        )
+        correct = sum(1 for r in records if r.confidence in (Confidence.HIGH, Confidence.MEDIUM))
         total = len(records)
         score = correct / total if total > 0 else 0.0
 
@@ -153,8 +155,7 @@ async def calculate_extraction_accuracy(
                     extracted_value=str(actual),
                     expected_value=str(expected),
                     reason=(
-                        f"value {actual} outside tolerance ±{tolerance} "
-                        f"of expected {expected}"
+                        f"value {actual} outside tolerance ±{tolerance} of expected {expected}"
                     ),
                 )
             )
@@ -380,9 +381,7 @@ async def _apply_review(
     if record is None:
         raise ValueError(f"Extraction {extraction_id} not found")
 
-    new_status = (
-        StagingStatus.APPROVED if action == "approve" else StagingStatus.REJECTED
-    )
+    new_status = StagingStatus.APPROVED if action == "approve" else StagingStatus.REJECTED
 
     # Immutable-style: assign attributes directly on the ORM instance
     # (SQLAlchemy tracks dirty attributes — no copy needed for DB updates)

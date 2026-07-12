@@ -53,9 +53,7 @@ async def _seed_author(db_session, **overrides):
     return auth
 
 
-async def _seed_source_author(
-    db_session, source_id, author_id, **overrides
-):
+async def _seed_source_author(db_session, source_id, author_id, **overrides):
     defaults = dict(
         data_source_id=source_id,
         author_id=author_id,
@@ -116,9 +114,7 @@ async def test_list_sources_type_filter(async_client, db_session) -> None:
     await _seed_source(db_session, title="Journal", source_type="journal_article")
     await _seed_source(db_session, title="Book", source_type="book")
 
-    response = await async_client.get(
-        "/api/v1/sources?source_type=journal_article"
-    )
+    response = await async_client.get("/api/v1/sources?source_type=journal_article")
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["total"] == 1
@@ -165,12 +161,8 @@ async def test_get_source_detail(async_client, db_session) -> None:
     auth2 = await _seed_author(
         db_session, full_name="Second, B.", last_name="Second", first_name="B."
     )
-    await _seed_source_author(
-        db_session, src.id, auth1.id, author_order=2
-    )
-    await _seed_source_author(
-        db_session, src.id, auth2.id, author_order=1
-    )
+    await _seed_source_author(db_session, src.id, auth1.id, author_order=2)
+    await _seed_source_author(db_session, src.id, auth2.id, author_order=1)
 
     response = await async_client.get(f"/api/v1/sources/{src.id}")
     assert response.status_code == 200

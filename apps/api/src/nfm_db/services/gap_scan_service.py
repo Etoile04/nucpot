@@ -143,30 +143,21 @@ class GapScanService:
 
     async def _get_covered_tuples(self) -> set[tuple[str, str | None, str]]:
         """Query staging table for existing (element_system, phase, property_name) tuples."""
-        stmt = (
-            select(
-                RefGapFillStaging.element_system,
-                RefGapFillStaging.phase,
-                RefGapFillStaging.property_name,
-            )
-            .distinct()
-        )
+        stmt = select(
+            RefGapFillStaging.element_system,
+            RefGapFillStaging.phase,
+            RefGapFillStaging.property_name,
+        ).distinct()
 
         result = await self._session.execute(stmt)
-        return {
-            (row[0], row[1], row[2])
-            for row in result.all()
-        }
+        return {(row[0], row[1], row[2]) for row in result.all()}
 
     async def _get_staging_counts(self) -> StagingCounts:
         """Count staging records grouped by status."""
-        stmt = (
-            select(
-                RefGapFillStaging.status,
-                func.count().label("cnt"),
-            )
-            .group_by(RefGapFillStaging.status)
-        )
+        stmt = select(
+            RefGapFillStaging.status,
+            func.count().label("cnt"),
+        ).group_by(RefGapFillStaging.status)
 
         result = await self._session.execute(stmt)
         return _parse_staging_counts(list(result.all()))  # type: ignore[arg-type]
@@ -187,10 +178,7 @@ class GapScanService:
 
         targets = self._targets
         if element_systems is not None:
-            targets = [
-                t for t in targets
-                if t["element_system"] in element_systems
-            ]
+            targets = [t for t in targets if t["element_system"] in element_systems]
 
         gaps: list[GapTuple] = []
         covered_count = 0
@@ -216,12 +204,14 @@ class GapScanService:
                 # Assert non-None for type safety: element_system and property_name are always strings
                 assert es is not None and prop is not None
                 priority = _compute_priority(es, phase, prop)
-                gaps.append(GapTuple(
-                    element_system=es,
-                    phase=phase,
-                    property_name=prop,
-                    priority=priority,
-                ))
+                gaps.append(
+                    GapTuple(
+                        element_system=es,
+                        phase=phase,
+                        property_name=prop,
+                        priority=priority,
+                    )
+                )
 
         gap_count = len(gaps)
         coverage_pct = (covered_count / total * 100) if total > 0 else 0.0

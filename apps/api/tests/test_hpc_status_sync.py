@@ -36,7 +36,8 @@ class TestSLURMStatusPolling:
         orchestrator = _make_orchestrator()
 
         with patch.object(
-            orchestrator, '_execute_squeue',
+            orchestrator,
+            "_execute_squeue",
             new_callable=AsyncMock,
             return_value="RUNNING slurm-12345",
         ):
@@ -49,7 +50,8 @@ class TestSLURMStatusPolling:
         orchestrator = _make_orchestrator()
 
         with patch.object(
-            orchestrator, '_execute_squeue',
+            orchestrator,
+            "_execute_squeue",
             new_callable=AsyncMock,
             return_value="PENDING slurm-67890",
         ):
@@ -61,14 +63,19 @@ class TestSLURMStatusPolling:
         """Test polling squeue returns COMPLETED status when job exits queue."""
         orchestrator = _make_orchestrator()
 
-        with patch.object(
-            orchestrator, '_execute_squeue',
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch.object(
-            orchestrator, '_check_job_completion',
-            new_callable=AsyncMock,
-            return_value=True,
+        with (
+            patch.object(
+                orchestrator,
+                "_execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                orchestrator,
+                "_check_job_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             status = await orchestrator.poll_job_status("slurm-99999")
             assert status == "COMPLETED"
@@ -83,7 +90,8 @@ class TestStateMachine:
         orchestrator = _make_orchestrator()
 
         with patch.object(
-            orchestrator, '_execute_squeue',
+            orchestrator,
+            "_execute_squeue",
             new_callable=AsyncMock,
             return_value="RUNNING slurm-11111",
         ):
@@ -95,14 +103,19 @@ class TestStateMachine:
         """Test state machine transition from RUNNING to COMPLETED."""
         orchestrator = _make_orchestrator()
 
-        with patch.object(
-            orchestrator, '_execute_squeue',
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch.object(
-            orchestrator, '_check_job_completion',
-            new_callable=AsyncMock,
-            return_value=True,
+        with (
+            patch.object(
+                orchestrator,
+                "_execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                orchestrator,
+                "_check_job_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             status = await orchestrator.poll_job_status("slurm-22222")
             assert status == "COMPLETED"
@@ -112,14 +125,19 @@ class TestStateMachine:
         """Test state machine transition to FAILED on job failure."""
         orchestrator = _make_orchestrator()
 
-        with patch.object(
-            orchestrator, '_execute_squeue',
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch.object(
-            orchestrator, '_check_job_completion',
-            new_callable=AsyncMock,
-            return_value=False,
+        with (
+            patch.object(
+                orchestrator,
+                "_execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                orchestrator,
+                "_check_job_completion",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
         ):
             status = await orchestrator.poll_job_status("slurm-33333")
             assert status == "FAILED"
@@ -134,7 +152,8 @@ class TestDatabaseStatusUpdates:
         orchestrator = _make_orchestrator()
 
         with patch.object(
-            orchestrator, '_execute_squeue',
+            orchestrator,
+            "_execute_squeue",
             new_callable=AsyncMock,
             return_value="RUNNING slurm-44444",
         ):
@@ -146,14 +165,19 @@ class TestDatabaseStatusUpdates:
         """Test hpc_jobs.status field gets updated."""
         orchestrator = _make_orchestrator()
 
-        with patch.object(
-            orchestrator, '_execute_squeue',
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch.object(
-            orchestrator, '_check_job_completion',
-            new_callable=AsyncMock,
-            return_value=True,
+        with (
+            patch.object(
+                orchestrator,
+                "_execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                orchestrator,
+                "_check_job_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             status = await orchestrator.poll_job_status("slurm-55555")
             assert status == "COMPLETED"
@@ -168,11 +192,11 @@ class TestOutputFileDetection:
         orchestrator = _make_orchestrator()
         task_id = str(uuid.uuid4())
 
-        with patch.object(orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
+        with patch.object(orchestrator.ssh_manager, "acquire_connection") as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
-            with patch.object(orchestrator.ssh_manager, 'release_connection'):
+            with patch.object(orchestrator.ssh_manager, "release_connection"):
                 mock_sftp = MagicMock()
                 mock_client.open_sftp.return_value = mock_sftp
 
@@ -189,11 +213,11 @@ class TestOutputFileDetection:
         orchestrator = _make_orchestrator()
         task_id = str(uuid.uuid4())
 
-        with patch.object(orchestrator.ssh_manager, 'acquire_connection') as mock_acquire:
+        with patch.object(orchestrator.ssh_manager, "acquire_connection") as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
-            with patch.object(orchestrator.ssh_manager, 'release_connection'):
+            with patch.object(orchestrator.ssh_manager, "release_connection"):
                 mock_sftp = MagicMock()
                 mock_client.open_sftp.return_value = mock_sftp
 
@@ -212,7 +236,8 @@ class TestStatusSyncLatency:
         orchestrator = _make_orchestrator()
 
         with patch.object(
-            orchestrator, '_execute_squeue',
+            orchestrator,
+            "_execute_squeue",
             new_callable=AsyncMock,
             return_value="RUNNING slurm-66666",
         ):
@@ -236,18 +261,18 @@ class TestCeleryBeatIntegration:
         except Exception:
             pytest.skip("Celery app not available in test environment")
 
-        assert hasattr(celery_app.conf, 'beat_schedule')
+        assert hasattr(celery_app.conf, "beat_schedule")
 
         beat_schedule = celery_app.conf.beat_schedule
         if not beat_schedule:
             pytest.skip("Celery beat_schedule not configured")
 
-        assert 'sync-hpc-job-status' in beat_schedule
+        assert "sync-hpc-job-status" in beat_schedule
 
-        task_config = beat_schedule['sync-hpc-job-status']
-        assert task_config['schedule'] == 30.0
-        assert 'task' in task_config
-        assert 'sync_hpc_job_status' in task_config['task']
+        task_config = beat_schedule["sync-hpc-job-status"]
+        assert task_config["schedule"] == 30.0
+        assert "task" in task_config
+        assert "sync_hpc_job_status" in task_config["task"]
 
     @pytest.mark.asyncio
     async def test_periodic_task_polls_all_active_jobs(self):
@@ -258,13 +283,18 @@ class TestCeleryBeatIntegration:
         mock_job2 = MagicMock(verification_job_id=uuid.uuid4(), hpc_job_id="slurm-88888")
         mock_job3 = MagicMock(verification_job_id=uuid.uuid4(), hpc_job_id="slurm-99999")
 
-        with patch.object(
-            orchestrator, '_get_active_jobs',
-            new_callable=AsyncMock,
-            return_value=[mock_job1, mock_job2, mock_job3],
-        ), patch.object(
-            orchestrator, 'update_job_status',
-            new_callable=AsyncMock,
-        ) as mock_update:
+        with (
+            patch.object(
+                orchestrator,
+                "_get_active_jobs",
+                new_callable=AsyncMock,
+                return_value=[mock_job1, mock_job2, mock_job3],
+            ),
+            patch.object(
+                orchestrator,
+                "update_job_status",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
             await orchestrator.sync_all_active_jobs()
             assert mock_update.call_count == 3
