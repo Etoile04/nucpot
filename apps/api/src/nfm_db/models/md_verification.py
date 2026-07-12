@@ -496,10 +496,7 @@ class PotentialFittingResult(TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<PotentialFittingResult id={self.id!s} "
-            f"method={self.fitting_method.value!r}>"
-        )
+        return f"<PotentialFittingResult id={self.id!s} method={self.fitting_method.value!r}>"
 
 
 class VerificationResultMD(TimestampMixin, Base):

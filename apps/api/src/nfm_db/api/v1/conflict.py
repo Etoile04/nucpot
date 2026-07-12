@@ -98,10 +98,7 @@ async def _auto_resolve(
 
     if strategy == "consensus":
         # Average numeric values, or most common non-numeric.
-        numeric_vals = [
-            v["value"] for v in values
-            if isinstance(v.get("value"), (int, float))
-        ]
+        numeric_vals = [v["value"] for v in values if isinstance(v.get("value"), (int, float))]
         if numeric_vals:
             return {"value": sum(numeric_vals) / len(numeric_vals)}
         return values[0].get("value", {})
@@ -174,8 +171,7 @@ async def resolve_conflict(
     if body.strategy not in VALID_STRATEGIES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid strategy: {body.strategy}. "
-            f"Must be one of: {VALID_STRATEGIES}",
+            detail=f"Invalid strategy: {body.strategy}. Must be one of: {VALID_STRATEGIES}",
         )
 
     record = await db.get(ConflictRecord, conflict_id)

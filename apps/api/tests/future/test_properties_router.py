@@ -30,9 +30,7 @@ from nfm_db.models import Material as MaterialModel
 _seed_counter = [0]
 
 
-async def _seed_material(
-    db: AsyncSession, *, name="UO2", formula="UO2"
-) -> MaterialModel:
+async def _seed_material(db: AsyncSession, *, name="UO2", formula="UO2") -> MaterialModel:
     mat = MaterialModel(name=name, formula=formula)
     db.add(mat)
     await db.commit()
@@ -40,9 +38,7 @@ async def _seed_material(
     return mat
 
 
-async def _seed_source(
-    db: AsyncSession, *, title="Test Source"
-) -> DataSourceModel:
+async def _seed_source(db: AsyncSession, *, title="Test Source") -> DataSourceModel:
     source = DataSourceModel(title=title, source_type="journal_article", year=2020)
     db.add(source)
     await db.commit()
@@ -115,17 +111,15 @@ class TestListPropertiesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_returns_success_envelope(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session)
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
-        await _seed_measurement(
-            db_session, dataset_id=dataset.id, property_type_id=prop_type.id
-        )
+        await _seed_measurement(db_session, dataset_id=dataset.id, property_type_id=prop_type.id)
 
         resp = await async_client.get("/api/v1/properties")
 
@@ -138,13 +132,13 @@ class TestListPropertiesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_paginates_correctly(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session)
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
 
         # Create 5 measurements
@@ -165,29 +159,21 @@ class TestListPropertiesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_filters_by_material_id(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat1 = await _seed_material(db_session, name="Material1")
         mat2 = await _seed_material(db_session, name="Material2")
         src = await _seed_source(db_session)
-        dataset1 = await _seed_dataset(
-            db_session, material_id=mat1.id, source_id=src.id
-        )
-        dataset2 = await _seed_dataset(
-            db_session, material_id=mat2.id, source_id=src.id
-        )
+        dataset1 = await _seed_dataset(db_session, material_id=mat1.id, source_id=src.id)
+        dataset2 = await _seed_dataset(db_session, material_id=mat2.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
 
-        await _seed_measurement(
-            db_session, dataset_id=dataset1.id, property_type_id=prop_type.id
-        )
-        await _seed_measurement(
-            db_session, dataset_id=dataset2.id, property_type_id=prop_type.id
-        )
+        await _seed_measurement(db_session, dataset_id=dataset1.id, property_type_id=prop_type.id)
+        await _seed_measurement(db_session, dataset_id=dataset2.id, property_type_id=prop_type.id)
 
-        resp = await async_client.get(
-            f"/api/v1/properties?material_id={mat1.id}"
-        )
+        resp = await async_client.get(f"/api/v1/properties?material_id={mat1.id}")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -196,30 +182,20 @@ class TestListPropertiesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_filters_by_property_type_id(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session)
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
-        prop_type1 = await _seed_property_type(
-            db_session, name="Type1", slug="type1"
-        )
-        prop_type2 = await _seed_property_type(
-            db_session, name="Type2", slug="type2"
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
+        prop_type1 = await _seed_property_type(db_session, name="Type1", slug="type1")
+        prop_type2 = await _seed_property_type(db_session, name="Type2", slug="type2")
 
-        await _seed_measurement(
-            db_session, dataset_id=dataset.id, property_type_id=prop_type1.id
-        )
-        await _seed_measurement(
-            db_session, dataset_id=dataset.id, property_type_id=prop_type2.id
-        )
+        await _seed_measurement(db_session, dataset_id=dataset.id, property_type_id=prop_type1.id)
+        await _seed_measurement(db_session, dataset_id=dataset.id, property_type_id=prop_type2.id)
 
-        resp = await async_client.get(
-            f"/api/v1/properties?property_type_id={prop_type1.id}"
-        )
+        resp = await async_client.get(f"/api/v1/properties?property_type_id={prop_type1.id}")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -228,7 +204,8 @@ class TestListPropertiesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_empty_database(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         resp = await async_client.get("/api/v1/properties")
 
@@ -249,13 +226,13 @@ class TestGetPropertyEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_returns_measurement_detail(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session)
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
         measurement = await _seed_measurement(
             db_session, dataset_id=dataset.id, property_type_id=prop_type.id
@@ -282,7 +259,8 @@ class TestGetPropertyEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_returns_404_for_missing(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         fake_id = uuid.uuid4()
         resp = await async_client.get(f"/api/v1/properties/{fake_id}")
@@ -300,13 +278,13 @@ class TestCreatePropertyEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_returns_201_with_data(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session)
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
 
         payload = {
@@ -325,7 +303,8 @@ class TestCreatePropertyEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_validates_required_fields(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         # Missing required fields
         payload = {"dataset_id": str(uuid.uuid4())}
@@ -346,13 +325,13 @@ class TestUpdatePropertyEndpoint:
 
     @pytest.mark.asyncio
     async def test_patch_modifies_existing_measurement(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session)
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
         measurement = await _seed_measurement(
             db_session, dataset_id=dataset.id, property_type_id=prop_type.id, value_scalar=100.0
@@ -360,9 +339,7 @@ class TestUpdatePropertyEndpoint:
 
         payload = {"value_scalar": 999.9}
 
-        resp = await async_client.patch(
-            f"/api/v1/properties/{measurement.id}", json=payload
-        )
+        resp = await async_client.patch(f"/api/v1/properties/{measurement.id}", json=payload)
 
         assert resp.status_code == 200
         body = resp.json()
@@ -371,14 +348,13 @@ class TestUpdatePropertyEndpoint:
 
     @pytest.mark.asyncio
     async def test_patch_returns_404_for_missing(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         fake_id = uuid.uuid4()
         payload = {"value_scalar": 1.0}
 
-        resp = await async_client.patch(
-            f"/api/v1/properties/{fake_id}", json=payload
-        )
+        resp = await async_client.patch(f"/api/v1/properties/{fake_id}", json=payload)
 
         assert resp.status_code == 404
 
@@ -393,13 +369,13 @@ class TestPropertiesStatsEndpoint:
 
     @pytest.mark.asyncio
     async def test_stats_returns_aggregated_data(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session, name="UO2")
         src = await _seed_source(db_session)
-        dataset = await _seed_dataset(
-            db_session, material_id=mat.id, source_id=src.id
-        )
+        dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
 
         # Create a category and property type
         cat = PropertyCategory(name="thermal", slug="thermal")
@@ -439,7 +415,8 @@ class TestPropertiesStatsEndpoint:
 
     @pytest.mark.asyncio
     async def test_stats_empty_database(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         resp = await async_client.get("/api/v1/properties/stats")
 

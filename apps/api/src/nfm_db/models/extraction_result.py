@@ -22,5 +22,6 @@ class ExtractionResult(Base):
     confidence: Mapped[float] = mapped_column(default=0.0)
     source: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
     )

@@ -26,9 +26,11 @@ class ConflictRecord(Base):
     resolution: Mapped[str | None] = mapped_column(String, default=None)
     resolved_value: Mapped[Any] = mapped_column(JSON, default=None)
     resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None,
+        DateTime(timezone=True),
+        default=None,
     )
     resolved_by: Mapped[str | None] = mapped_column(String, default=None)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
     )

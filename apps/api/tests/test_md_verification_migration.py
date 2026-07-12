@@ -39,9 +39,7 @@ async def migration_db_session():
         await conn.run_sync(lambda conn: command.upgrade(alembic_config, "head"))
 
     # Create session factory
-    session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with session_factory() as session:
         yield session
@@ -61,12 +59,14 @@ class TestMDVerificationMigration:
     async def test_md_verification_jobs_table_exists(self, migration_db_session):
         """Test that md_verification_jobs table was created with correct columns."""
         # Query to check table exists and has correct columns
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT column_name, data_type, is_nullable
             FROM information_schema.columns
             WHERE table_name = 'md_verification_jobs'
             ORDER BY ordinal_position;
-        """))
+        """)
+        )
 
         columns = {row[0]: {"type": row[1], "nullable": row[2]} for row in result}
 
@@ -87,12 +87,14 @@ class TestMDVerificationMigration:
     async def test_hpc_jobs_table_exists(self, migration_db_session):
         """Test that hpc_jobs table was created with foreign key constraint."""
         # Query to check table exists
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = 'hpc_jobs'
             ORDER BY ordinal_position;
-        """))
+        """)
+        )
 
         columns = {row[0]: row[1] for row in result}
 
@@ -100,7 +102,8 @@ class TestMDVerificationMigration:
         assert "verification_job_id" in columns
 
         # Query to check foreign key constraint exists
-        fk_result = await migration_db_session.execute(text("""
+        fk_result = await migration_db_session.execute(
+            text("""
             SELECT
                 tc.constraint_name,
                 kcu.column_name,
@@ -113,7 +116,8 @@ class TestMDVerificationMigration:
             WHERE tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_name = 'hpc_jobs'
                 AND kcu.column_name = 'verification_job_id';
-        """))
+        """)
+        )
 
         fk_info = fk_result.fetchone()
         assert fk_info is not None
@@ -122,12 +126,14 @@ class TestMDVerificationMigration:
     @pytest.mark.asyncio
     async def test_md_simulation_results_table_exists(self, migration_db_session):
         """Test that md_simulation_results table was created."""
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = 'md_simulation_results'
             ORDER BY ordinal_position;
-        """))
+        """)
+        )
 
         columns = {row[0]: row[1] for row in result}
 
@@ -143,12 +149,14 @@ class TestMDVerificationMigration:
     @pytest.mark.asyncio
     async def test_defect_analysis_results_table_exists(self, migration_db_session):
         """Test that defect_analysis_results table was created."""
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = 'defect_analysis_results'
             ORDER BY ordinal_position;
-        """))
+        """)
+        )
 
         columns = {row[0]: row[1] for row in result}
 
@@ -165,12 +173,14 @@ class TestMDVerificationMigration:
     @pytest.mark.asyncio
     async def test_potential_fitting_results_table_exists(self, migration_db_session):
         """Test that potential_fitting_results table was created."""
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = 'potential_fitting_results'
             ORDER BY ordinal_position;
-        """))
+        """)
+        )
 
         columns = {row[0]: row[1] for row in result}
 
@@ -188,7 +198,8 @@ class TestMDVerificationMigration:
     @pytest.mark.asyncio
     async def test_indexes_created(self, migration_db_session):
         """Test that all performance indexes were created."""
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT indexname, tablename
             FROM pg_indexes
             WHERE indexname LIKE 'idx_%'
@@ -199,7 +210,8 @@ class TestMDVerificationMigration:
                     'potential_fitting_results'
                 )
             ORDER BY indexname;
-        """))
+        """)
+        )
 
         indexes = {row[0]: row[1] for row in result}
 
@@ -228,55 +240,76 @@ class TestMDVerificationMigration:
         # Insert a test md_verification_jobs record
         verification_job_id = uuid4()
 
-        await migration_db_session.execute(text("""
+        await migration_db_session.execute(
+            text("""
             INSERT INTO md_verification_jobs (id, potential_id, element_system, config, status)
             VALUES (:id, :potential_id, :element_system, :config, 'pending')
-        """), {
-            "id": str(verification_job_id),
-            "potential_id": "test_potential_001",
-            "element_system": "Cu-Ag",
-            "config": '{"temperature": 300, "pressure": 0}'
-        })
+        """),
+            {
+                "id": str(verification_job_id),
+                "potential_id": "test_potential_001",
+                "element_system": "Cu-Ag",
+                "config": '{"temperature": 300, "pressure": 0}',
+            },
+        )
 
         await migration_db_session.commit()
 
         # Insert related hpc_jobs record
-        await migration_db_session.execute(text("""
+        await migration_db_session.execute(
+            text("""
             INSERT INTO hpc_jobs (verification_job_id, hpc_cluster, status)
             VALUES (:verification_job_id, 'guangzhou', 'pending')
-        """), {"verification_job_id": str(verification_job_id)})
+        """),
+            {"verification_job_id": str(verification_job_id)},
+        )
 
         # Insert related md_simulation_results record
-        await migration_db_session.execute(text("""
+        await migration_db_session.execute(
+            text("""
             INSERT INTO md_simulation_results (verification_job_id, simulation_time_ps)
             VALUES (:verification_job_id, 100.5)
-        """), {"verification_job_id": str(verification_job_id)})
+        """),
+            {"verification_job_id": str(verification_job_id)},
+        )
 
         await migration_db_session.commit()
 
         # Verify records exist
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT COUNT(*) FROM hpc_jobs WHERE verification_job_id = :id
-        """), {"id": str(verification_job_id)})
+        """),
+            {"id": str(verification_job_id)},
+        )
         hpc_count = result.scalar()
         assert hpc_count == 1
 
         # Delete parent record (should cascade)
-        await migration_db_session.execute(text("""
+        await migration_db_session.execute(
+            text("""
             DELETE FROM md_verification_jobs WHERE id = :id
-        """), {"id": str(verification_job_id)})
+        """),
+            {"id": str(verification_job_id)},
+        )
         await migration_db_session.commit()
 
         # Verify cascade worked - child records should be deleted
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT COUNT(*) FROM hpc_jobs WHERE verification_job_id = :id
-        """), {"id": str(verification_job_id)})
+        """),
+            {"id": str(verification_job_id)},
+        )
         hpc_count_after = result.scalar()
         assert hpc_count_after == 0
 
-        result = await migration_db_session.execute(text("""
+        result = await migration_db_session.execute(
+            text("""
             SELECT COUNT(*) FROM md_simulation_results WHERE verification_job_id = :id
-        """), {"id": str(verification_job_id)})
+        """),
+            {"id": str(verification_job_id)},
+        )
         sim_count_after = result.scalar()
         assert sim_count_after == 0
 
@@ -285,18 +318,21 @@ class TestMDVerificationMigration:
         """Test that check constraints are enforced."""
         # Test md_verification_jobs status constraint
         with pytest.raises(Exception):  # Should raise database constraint error
-            await migration_db_session.execute(text("""
+            await migration_db_session.execute(
+                text("""
                 INSERT INTO md_verification_jobs
                 (id, potential_id, element_system, config, status)
                 VALUES (gen_random_uuid(), 'test', 'Cu', '{}', 'invalid_status')
-            """))
+            """)
+            )
             await migration_db_session.commit()
 
         await migration_db_session.rollback()
 
         # Test defect_analysis_results defect_type constraint
         with pytest.raises(Exception):  # Should raise database constraint error
-            await migration_db_session.execute(text("""
+            await migration_db_session.execute(
+                text("""
                 INSERT INTO defect_analysis_results
                 (id, verification_job_id, defect_type, concentration)
                 VALUES (
@@ -305,7 +341,8 @@ class TestMDVerificationMigration:
                     'invalid_defect',
                     0.5
                 )
-            """))
+            """)
+            )
             await migration_db_session.commit()
 
         await migration_db_session.rollback()
@@ -328,10 +365,12 @@ async def test_migration_rollback():
 
         # Verify tables exist
         async with engine.begin() as conn:
-            result = await conn.execute(text("""
+            result = await conn.execute(
+                text("""
                 SELECT table_name FROM information_schema.tables
                 WHERE table_name = 'md_verification_jobs'
-            """))
+            """)
+            )
             assert result.fetchone() is not None
 
         # Downgrade
@@ -340,10 +379,12 @@ async def test_migration_rollback():
 
         # Verify tables are dropped
         async with engine.begin() as conn:
-            result = await conn.execute(text("""
+            result = await conn.execute(
+                text("""
                 SELECT table_name FROM information_schema.tables
                 WHERE table_name = 'md_verification_jobs'
-            """))
+            """)
+            )
             assert result.fetchone() is None
 
     finally:

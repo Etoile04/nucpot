@@ -24,7 +24,9 @@ from nfm_db.core.phase_rules import PhaseMapper
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_PHASE_MAPPING_PATH = Path(__file__).resolve().parent.parent / "src" / "nfm_db" / "config" / "phase_mapping.json"
+_PHASE_MAPPING_PATH = (
+    Path(__file__).resolve().parent.parent / "src" / "nfm_db" / "config" / "phase_mapping.json"
+)
 
 
 @pytest.fixture
@@ -197,33 +199,38 @@ class TestStep3ContextClues:
 
     def test_context_with_alpha_matrix(self, phase_mapper: PhaseMapper) -> None:
         """Context mentioning 'alpha matrix' infers alpha."""
-        assert phase_mapper.infer_phase(
-            None, None, "The alpha matrix of Zircaloy-4 was examined"
-        ) == "alpha"
+        assert (
+            phase_mapper.infer_phase(None, None, "The alpha matrix of Zircaloy-4 was examined")
+            == "alpha"
+        )
 
     def test_context_with_oxide_layer(self, phase_mapper: PhaseMapper) -> None:
         """Context mentioning 'oxide layer' infers oxide."""
-        assert phase_mapper.infer_phase(
-            None, None, "The oxide layer thickness was measured at 2 μm"
-        ) == "oxide"
+        assert (
+            phase_mapper.infer_phase(None, None, "The oxide layer thickness was measured at 2 μm")
+            == "oxide"
+        )
 
     def test_context_with_delta_hydride(self, phase_mapper: PhaseMapper) -> None:
         """Context mentioning 'δ-hydride' infers delta-hydride."""
-        assert phase_mapper.infer_phase(
-            None, None, "The δ-hydride precipitates were observed"
-        ) == "delta-hydride"
+        assert (
+            phase_mapper.infer_phase(None, None, "The δ-hydride precipitates were observed")
+            == "delta-hydride"
+        )
 
     def test_context_with_no_phase_keywords_returns_none(self, phase_mapper: PhaseMapper) -> None:
         """Context without phase keywords → None."""
-        assert phase_mapper.infer_phase(
-            None, None, "The sample was heated to 500°C for 1 hour"
-        ) is None
+        assert (
+            phase_mapper.infer_phase(None, None, "The sample was heated to 500°C for 1 hour")
+            is None
+        )
 
     def test_context_step3_only_when_step1_and_2_fail(self, phase_mapper: PhaseMapper) -> None:
         """Step 3 is skipped if Step 1 already found a match."""
-        assert phase_mapper.infer_phase(
-            "beta", "Zircaloy-4", "The alpha matrix was examined"
-        ) == "beta"
+        assert (
+            phase_mapper.infer_phase("beta", "Zircaloy-4", "The alpha matrix was examined")
+            == "beta"
+        )
 
 
 # ---------------------------------------------------------------------------

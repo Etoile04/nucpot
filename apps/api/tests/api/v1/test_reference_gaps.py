@@ -18,8 +18,14 @@ from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
 # ---------------------------------------------------------------------------
 
 
-async def _seed_staging(db_session, *, element_system="U", phase="BCC",
-                        property_name="lattice_constant", status=StagingStatus.PENDING):
+async def _seed_staging(
+    db_session,
+    *,
+    element_system="U",
+    phase="BCC",
+    property_name="lattice_constant",
+    status=StagingStatus.PENDING,
+):
     """Insert a minimal staging record to represent a covered tuple."""
     record = RefGapFillStaging(
         element_system=element_system,
@@ -227,8 +233,11 @@ async def test_summary_increases_on_seed(async_client, db_session) -> None:
 async def test_summary_staging_counts(async_client, db_session) -> None:
     await _seed_staging(db_session, status=StagingStatus.PENDING)
     await _seed_staging(
-        db_session, element_system="UO2", phase="FCC",
-        property_name="bulk_modulus", status=StagingStatus.APPROVED,
+        db_session,
+        element_system="UO2",
+        phase="FCC",
+        property_name="bulk_modulus",
+        status=StagingStatus.APPROVED,
     )
 
     response = await async_client.get("/api/v1/reference-gaps/summary")

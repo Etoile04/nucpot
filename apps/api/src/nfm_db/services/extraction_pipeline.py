@@ -269,7 +269,9 @@ async def ontofuel_extract(
         system_prompt = build_extraction_system_prompt()
 
         # Build user message with optional element filter
-        user_message = f"Extract all nuclear material properties from the following file:\n\n{content}"
+        user_message = (
+            f"Extract all nuclear material properties from the following file:\n\n{content}"
+        )
         if element_systems:
             user_message = (
                 f"Extract properties for these element systems only: "

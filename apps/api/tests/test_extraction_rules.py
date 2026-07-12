@@ -57,9 +57,7 @@ class TestCleanLatex:
 
     def test_combined_latex(self):
         """Test combined LaTeX patterns."""
-        assert (
-            clean_latex("$1.5\\times10^{-3}$") == "1.5×10^-3"
-        )
+        assert clean_latex("$1.5\\times10^{-3}$") == "1.5×10^-3"
 
 
 # ---------------------------------------------------------------------------

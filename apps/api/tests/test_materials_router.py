@@ -120,7 +120,9 @@ class TestListMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_returns_success_envelope(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_material(db_session, name="UO2")
 
@@ -135,7 +137,9 @@ class TestListMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_paginates_correctly(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         for i in range(5):
             await _seed_material(db_session, name=f"Material{i}")
@@ -150,7 +154,9 @@ class TestListMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_filters_by_category_id(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         cat_oxide = await _seed_category(db_session, name="oxide", slug="oxide")
         cat_metal = await _seed_category(db_session, name="metal", slug="metal")
@@ -167,7 +173,9 @@ class TestListMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_sort_and_order(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_material(db_session, name="ZrO2")
         await _seed_material(db_session, name="UO2")
@@ -181,7 +189,8 @@ class TestListMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_empty_database(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         resp = await async_client.get("/api/v1/materials")
 
@@ -202,7 +211,9 @@ class TestGetMaterialEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_returns_material_with_aliases_and_composition(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session, name="UO2")
         await _seed_alias(db_session, material_id=mat.id, alias_name="uranium dioxide")
@@ -223,7 +234,8 @@ class TestGetMaterialEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_returns_404_for_missing(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         fake_id = uuid.uuid4()
         resp = await async_client.get(f"/api/v1/materials/{fake_id}")
@@ -241,7 +253,9 @@ class TestCreateMaterialEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_returns_201_with_data(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         cat = await _seed_category(db_session)
         payload = {
@@ -260,7 +274,8 @@ class TestCreateMaterialEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_validates_required_fields(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         # Missing required 'name' field
         payload = {"category_id": str(uuid.uuid4())}
@@ -281,15 +296,15 @@ class TestUpdateMaterialEndpoint:
 
     @pytest.mark.asyncio
     async def test_patch_modifies_existing_material(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session, name="UO2")
 
         payload = {"name": "Uranium Dioxide"}
 
-        resp = await async_client.patch(
-            f"/api/v1/materials/{mat.id}", json=payload
-        )
+        resp = await async_client.patch(f"/api/v1/materials/{mat.id}", json=payload)
 
         assert resp.status_code == 200
         body = resp.json()
@@ -298,14 +313,13 @@ class TestUpdateMaterialEndpoint:
 
     @pytest.mark.asyncio
     async def test_patch_returns_404_for_missing(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         fake_id = uuid.uuid4()
         payload = {"name": "Test"}
 
-        resp = await async_client.patch(
-            f"/api/v1/materials/{fake_id}", json=payload
-        )
+        resp = await async_client.patch(f"/api/v1/materials/{fake_id}", json=payload)
 
         assert resp.status_code == 404
 
@@ -320,7 +334,9 @@ class TestSearchMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_returns_matching_materials(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         mat = await _seed_material(db_session, name="UO2")
         await _seed_alias(db_session, material_id=mat.id, alias_name="uranium dioxide")
@@ -334,7 +350,9 @@ class TestSearchMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_paginates(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         for i in range(5):
             await _seed_material(db_session, name=f"Material{i}")
@@ -349,7 +367,9 @@ class TestSearchMaterialsEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_empty_query(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_material(db_session, name="UO2")
 

@@ -218,7 +218,8 @@ async def test_get_relations_empty(async_client, db_session) -> None:
 @_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_relations_with_relation_type_filter(
-    async_client, db_session,
+    async_client,
+    db_session,
 ) -> None:
     """GET /kg/nodes/{id}/relations?relation_type=contains filters correctly."""
     node_a = await _seed_node(db_session, label="NodeA")

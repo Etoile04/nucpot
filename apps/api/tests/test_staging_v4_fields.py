@@ -80,6 +80,7 @@ def test_staging_model_v4_column_types() -> None:
 # 2. Pydantic schema
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_extracted_property_has_v4_fields() -> None:
     """ExtractedProperty Pydantic schema must include the 5 new v4 fields."""
@@ -104,6 +105,7 @@ def test_extracted_property_v4_fields_optional() -> None:
 # ---------------------------------------------------------------------------
 # 3. Migration upgrade/downgrade SQL generation (offline, no PG needed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_migration_upgrade_adds_columns() -> None:
@@ -157,7 +159,9 @@ def test_migration_downgrade_removes_columns() -> None:
     assert len(drop_ops) == 5, f"Expected 5 DROP_COLUMN ops, got {len(drop_ops)}: {drop_ops}"
 
     dropped_names = {op.split(":")[2] for op in drop_ops}
-    assert dropped_names == V4_COLUMNS, f"Column mismatch: expected {V4_COLUMNS}, got {dropped_names}"
+    assert dropped_names == V4_COLUMNS, (
+        f"Column mismatch: expected {V4_COLUMNS}, got {dropped_names}"
+    )
 
 
 @pytest.mark.unit
@@ -174,6 +178,7 @@ def test_migration_revision_chain() -> None:
 # ---------------------------------------------------------------------------
 # 4. SQLite round-trip: upgrade + downgrade on live table
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -209,7 +214,9 @@ async def test_migration_sqlite_add_and_drop_columns() -> None:
     # Simulate upgrade: add 5 v4 columns
     async with engine.begin() as conn:
         for col_name in V4_COLUMNS:
-            await conn.execute(text(f"ALTER TABLE _ref_gap_fill_staging ADD COLUMN {col_name} TEXT"))
+            await conn.execute(
+                text(f"ALTER TABLE _ref_gap_fill_staging ADD COLUMN {col_name} TEXT")
+            )
 
     # Verify post-upgrade state
     async with engine.begin() as conn:
@@ -217,7 +224,9 @@ async def test_migration_sqlite_add_and_drop_columns() -> None:
             lambda c: c.execute(text("PRAGMA table_info(_ref_gap_fill_staging)"))
         )
         post_columns = {row[1] for row in result}
-    assert V4_COLUMNS.issubset(post_columns), f"v4 columns missing after upgrade: {V4_COLUMNS - post_columns}"
+    assert V4_COLUMNS.issubset(post_columns), (
+        f"v4 columns missing after upgrade: {V4_COLUMNS - post_columns}"
+    )
 
     # Simulate downgrade: drop 5 v4 columns (SQLite 3.35+ supports DROP COLUMN)
     async with engine.begin() as conn:

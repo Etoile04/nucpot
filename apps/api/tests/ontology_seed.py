@@ -33,9 +33,7 @@ async def seed_corpus(
             method=row.get("method"),
             phase=row.get("phase"),
             confidence=Confidence.MEDIUM,
-            dedup_hash=(
-                f"{source}:{index}:{row['element_system']}:{row['property_name']}"
-            ),
+            dedup_hash=(f"{source}:{index}:{row['element_system']}:{row['property_name']}"),
             range_validated=True,
             status=status,
         )

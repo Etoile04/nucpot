@@ -191,9 +191,7 @@ async def test_e2e_mock_extract_persist_and_verify_db(
 
     # Verify DataSource in DB
     source = (
-        await db_session.execute(
-            select(DataSource).where(DataSource.doi == doi)
-        )
+        await db_session.execute(select(DataSource).where(DataSource.doi == doi))
     ).scalar_one_or_none()
     assert source is not None
     assert source.doi == doi
@@ -201,9 +199,7 @@ async def test_e2e_mock_extract_persist_and_verify_db(
 
     # Verify Material in DB
     material = (
-        await db_session.execute(
-            select(Material).where(Material.name == "UO2")
-        )
+        await db_session.execute(select(Material).where(Material.name == "UO2"))
     ).scalar_one_or_none()
     assert material is not None
     assert material.name == "UO2"
@@ -337,9 +333,7 @@ async def test_e2e_multiple_materials_distinct_entities(
         assert result.created_materials >= 1
 
     # Verify each material was created distinctly
-    all_materials = (
-        await db_session.execute(select(Material))
-    ).scalars().all()
+    all_materials = (await db_session.execute(select(Material))).scalars().all()
     material_names = {m.name for m in all_materials}
     for mat_name, _, _ in materials:
         assert mat_name in material_names, f"Material {mat_name} not found in DB"

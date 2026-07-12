@@ -31,6 +31,7 @@ from nfm_db.services.vision_client import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_chat_response(content: dict[str, Any]) -> dict[str, Any]:
     """Build a mock OpenAI-compatible chat completion response."""
     return {
@@ -230,7 +231,9 @@ class TestVisionClientExtract:
         with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
             client = VisionClient()
 
-        with patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=capture_call):
+        with patch.object(
+            client, "_call_provider", new_callable=AsyncMock, side_effect=capture_call
+        ):
             await client.extract(image_data=_sample_png_bytes(), prompt="Extract")
 
         assert len(call_args) == 1
@@ -242,9 +245,7 @@ class TestVisionClientExtract:
         """Should raise VisionClientError when VLM returns non-JSON."""
         bad_response = {
             "id": "chatcmpl-test",
-            "choices": [
-                {"message": {"role": "assistant", "content": "Not valid JSON"}}
-            ],
+            "choices": [{"message": {"role": "assistant", "content": "Not valid JSON"}}],
         }
 
         with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
@@ -259,11 +260,7 @@ class TestVisionClientExtract:
     @pytest.mark.asyncio
     async def test_raises_on_empty_response(self) -> None:
         """Should raise VisionClientError when VLM returns empty content."""
-        empty_response = {
-            "choices": [
-                {"message": {"role": "assistant", "content": ""}}
-            ]
-        }
+        empty_response = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
 
         with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
             client = VisionClient()
@@ -321,7 +318,9 @@ class TestVisionClientRetry:
         with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):
             client = VisionClient(max_retries=2)
 
-        with patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=always_fail):
+        with patch.object(
+            client, "_call_provider", new_callable=AsyncMock, side_effect=always_fail
+        ):
             with pytest.raises(VisionClientError, match="VLM HTTP error 500"):
                 await client.extract(image_data=_sample_png_bytes(), prompt="Extract")
 
@@ -415,9 +414,7 @@ class TestNonDictResponse:
         """Should raise VisionClientError when VLM returns a JSON list."""
         list_response = {
             "id": "chatcmpl-test",
-            "choices": [
-                {"message": {"role": "assistant", "content": "[1, 2, 3]"}}
-            ],
+            "choices": [{"message": {"role": "assistant", "content": "[1, 2, 3]"}}],
         }
 
         with patch.dict("os.environ", {"VLM_API_KEY": "test-key"}):

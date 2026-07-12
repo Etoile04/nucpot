@@ -86,7 +86,9 @@ class TestListSourcesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_returns_success_envelope(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_source(db_session)
 
@@ -101,7 +103,9 @@ class TestListSourcesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_filters_by_year(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_source(db_session, title="Old", year=2019)
         await _seed_source(db_session, title="New", year=2021)
@@ -114,7 +118,9 @@ class TestListSourcesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_filters_by_source_type(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_source(db_session, title="Journal", source_type="journal_article")
         await _seed_source(db_session, title="Book", source_type="book")
@@ -127,7 +133,9 @@ class TestListSourcesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_paginates(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         for i in range(5):
             await _seed_source(db_session, title=f"Paper {i}")
@@ -141,14 +149,14 @@ class TestListSourcesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_sort_order(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         await _seed_source(db_session, title="Alpha")
         await _seed_source(db_session, title="Bravo")
 
-        resp = await async_client.get(
-            "/api/v1/sources?sort=title&order=desc"
-        )
+        resp = await async_client.get("/api/v1/sources?sort=title&order=desc")
 
         body = resp.json()
         titles = [item["title"] for item in body["data"]["items"]]
@@ -156,7 +164,8 @@ class TestListSourcesEndpoint:
 
     @pytest.mark.asyncio
     async def test_list_empty(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         resp = await async_client.get("/api/v1/sources")
 
@@ -176,7 +185,9 @@ class TestGetSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_returns_source(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         source = await _seed_source(db_session, title="Found Paper")
 
@@ -190,7 +201,9 @@ class TestGetSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_includes_authors(
-        self, async_client: AsyncClient, db_session: AsyncSession,
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
     ) -> None:
         source = await _seed_source(db_session, title="Authored")
         author = await _seed_author(db_session, full_name="Alice A", last_name="A")
@@ -207,7 +220,8 @@ class TestGetSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_404_for_missing(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         resp = await async_client.get(f"/api/v1/sources/{uuid.uuid4()}")
 
@@ -224,7 +238,8 @@ class TestCreateSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_returns_201(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         payload = {
             "doi": "10.1016/j.jnucmat.2020.152300",
@@ -243,7 +258,8 @@ class TestCreateSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_without_doi(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         payload = {
             "title": "Internal Report",
@@ -258,7 +274,8 @@ class TestCreateSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_validates_doi_format(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         payload = {
             "doi": "not-a-doi",
@@ -272,7 +289,8 @@ class TestCreateSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_validates_source_type(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         payload = {
             "title": "Bad Type Paper",
@@ -285,7 +303,8 @@ class TestCreateSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_validates_title_required(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         payload = {
             "source_type": "journal_article",
@@ -297,7 +316,8 @@ class TestCreateSourceEndpoint:
 
     @pytest.mark.asyncio
     async def test_create_returns_response_envelope(
-        self, async_client: AsyncClient,
+        self,
+        async_client: AsyncClient,
     ) -> None:
         payload = {
             "title": "Envelope Test",

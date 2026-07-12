@@ -257,10 +257,9 @@ class TestSyncCorpusGraph:
         """Test successful graph sync."""
         corpus_id = "test-corpus"
 
-        with patch(
-            "nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock
-        ) as mock_rebuild:
+        with patch("nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock) as mock_rebuild:
             from nfm_db.services.ontology_sync import SyncResult
+
             mock_rebuild.return_value = SyncResult(
                 nodes_synced=150,
                 edges_synced=320,
@@ -285,9 +284,7 @@ class TestSyncCorpusGraph:
 
         corpus_id = "test-corpus"
 
-        with patch(
-            "nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock
-        ) as mock_rebuild:
+        with patch("nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock) as mock_rebuild:
             mock_rebuild.side_effect = GraphNotFoundError("graph not found")
 
             mock_session = AsyncMock(spec=AsyncSession)
@@ -304,9 +301,7 @@ class TestSyncCorpusGraph:
 
         corpus_id = "test-corpus"
 
-        with patch(
-            "nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock
-        ) as mock_rebuild:
+        with patch("nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock) as mock_rebuild:
             mock_rebuild.side_effect = OntologySyncError("sync failed")
 
             mock_session = AsyncMock(spec=AsyncSession)

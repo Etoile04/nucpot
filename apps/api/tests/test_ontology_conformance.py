@@ -33,7 +33,11 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 _CANONICAL_FIXTURE = _FIXTURES / "nvl_contract_sample.json"
 _VIEWER_ARTIFACT = (
     Path(__file__).resolve().parents[2]
-    / "apps" / "web" / "public" / "ontology-viewer" / "data"
+    / "apps"
+    / "web"
+    / "public"
+    / "ontology-viewer"
+    / "data"
     / "nvl_ontology_data.json"
 )
 
@@ -177,9 +181,7 @@ async def test_record_ref_stability(
     assert_nvl_contract(payload, corpus_id=FIXTURE_CORPUS, check_record_ref=True)
 
     individuals = {
-        n["id"]: n["record_ref"]
-        for n in payload["nodes"]
-        if n.get("type") == "individual"
+        n["id"]: n["record_ref"] for n in payload["nodes"] if n.get("type") == "individual"
     }
     # Deterministic per material identity, identical across providers.
     assert individuals["mat:UO2"] == "/materials/UO2?corpus=smirnov2014"
@@ -198,8 +200,8 @@ async def test_record_ref_stability(
     "ref",
     [
         "/materials/stats-alloy?corpus=constants-db",  # 'ts' inside 'stats'/'constants'
-        "/materials/nts-specimen?corpus=x",            # 'ts' inside 'nts'
-        "/materials/Ts?corpus=x",                       # standalone 'Ts' segment
+        "/materials/nts-specimen?corpus=x",  # 'ts' inside 'nts'
+        "/materials/Ts?corpus=x",  # standalone 'Ts' segment
     ],
 )
 def test_record_ref_does_not_false_positive_on_ts_substrings(ref: str) -> None:
@@ -223,4 +225,3 @@ def test_record_ref_still_rejects_transient_keys(ref: str) -> None:
     of the actual transient/auth keys that make a deep link session-bound."""
     with pytest.raises(ContractViolationError):
         _assert_valid_record_ref(ref, where="test")
-

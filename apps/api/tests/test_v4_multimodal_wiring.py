@@ -144,7 +144,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -168,7 +172,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -191,7 +199,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -216,7 +228,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -240,7 +256,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -264,7 +284,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -289,7 +313,11 @@ class TestTriggerExtractionMultimodalParams:
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_qg = mock_qg_cls.return_value
             mock_qg.process_bulk = AsyncMock(
@@ -330,7 +358,11 @@ class TestMultimodalStageStubMode:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
         ):
             job = await trigger_extraction(
@@ -359,7 +391,11 @@ class TestMultimodalStageStubMode:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
         ):
             job = await trigger_extraction(
@@ -388,7 +424,11 @@ class TestMultimodalStageStubMode:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
         ):
             job = await trigger_extraction(
@@ -418,7 +458,11 @@ class TestMultimodalStageStubMode:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
         ):
             job = await trigger_extraction(
@@ -455,7 +499,11 @@ class TestMultimodalStageFailure:
 
         with (
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
-            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=extracted,
+            ),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
             patch(
                 "nfm_db.services.multimodal_extraction._extract_figures_from_source",

@@ -23,6 +23,7 @@ from nfm_db.services.hpc_ssh import SSHConnectionConfig
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def primary_config() -> SSHConnectionConfig:
     """Create a primary cluster SSH config."""
@@ -98,6 +99,7 @@ def manager_with_backup(
 # __init__ tests
 # ---------------------------------------------------------------------------
 
+
 class TestInit:
     """Tests for HPCFailoverManager.__init__."""
 
@@ -150,6 +152,7 @@ class TestInit:
 # ---------------------------------------------------------------------------
 # hpc_cluster property tests
 # ---------------------------------------------------------------------------
+
 
 class TestHpcClusterProperty:
     """Tests for the hpc_cluster property."""
@@ -204,6 +207,7 @@ class TestHpcClusterProperty:
 # has_backup property tests
 # ---------------------------------------------------------------------------
 
+
 class TestHasBackupProperty:
     """Tests for the has_backup property."""
 
@@ -233,6 +237,7 @@ class TestHasBackupProperty:
 # ---------------------------------------------------------------------------
 # current_ssh_manager property tests
 # ---------------------------------------------------------------------------
+
 
 class TestCurrentSshManagerProperty:
     """Tests for the current_ssh_manager property."""
@@ -279,6 +284,7 @@ class TestCurrentSshManagerProperty:
 # ---------------------------------------------------------------------------
 # current_cluster_name property tests
 # ---------------------------------------------------------------------------
+
 
 class TestCurrentClusterNameProperty:
     """Tests for the current_cluster_name property."""
@@ -338,6 +344,7 @@ class TestCurrentClusterNameProperty:
 # log_failover_event tests
 # ---------------------------------------------------------------------------
 
+
 class TestLogFailoverEvent:
     """Tests for HPCFailoverManager.log_failover_event."""
 
@@ -360,6 +367,7 @@ class TestLogFailoverEvent:
         WHEN log_failover_event is called
         THEN event is added to session and committed.
         """
+
         async def mock_db_gen():
             yield mock_db_session
 
@@ -389,6 +397,7 @@ class TestLogFailoverEvent:
         WHEN log_failover_event is called
         THEN no exception propagates and the method returns gracefully.
         """
+
         async def broken_db_gen():
             raise RuntimeError("DB connection lost")
             yield
@@ -441,13 +450,17 @@ class TestLogFailoverEvent:
         WHEN log_failover_event is called
         THEN the event is created with an empty dict for metadata.
         """
+
         async def mock_db_gen():
             yield mock_db_session
 
         mock_event_cls = MagicMock(return_value=MagicMock())
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
-            mock_event_cls,
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch(
+                "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
+                mock_event_cls,
+            ),
         ):
             await manager_with_backup.log_failover_event(
                 event_type="failover_triggered",
@@ -470,13 +483,17 @@ class TestLogFailoverEvent:
         WHEN log_failover_event is called
         THEN the metadata is forwarded to the event constructor.
         """
+
         async def mock_db_gen():
             yield mock_db_session
 
         mock_event_cls = MagicMock(return_value=MagicMock())
-        with patch("nfm_db.database.get_db", return_value=mock_db_gen()), patch(
-            "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
-            mock_event_cls,
+        with (
+            patch("nfm_db.database.get_db", return_value=mock_db_gen()),
+            patch(
+                "nfm_db.models.hpc_failover_event.HPCFailoverEvent",
+                mock_event_cls,
+            ),
         ):
             custom_meta: dict = {"failover_duration": 12.5, "retries": 3}
             await manager_with_backup.log_failover_event(
@@ -493,6 +510,7 @@ class TestLogFailoverEvent:
 # ---------------------------------------------------------------------------
 # check_primary_health tests
 # ---------------------------------------------------------------------------
+
 
 class TestCheckPrimaryHealth:
     """Tests for HPCFailoverManager.check_primary_health."""
@@ -543,9 +561,7 @@ class TestCheckPrimaryHealth:
         WHEN check_primary_health is called
         THEN returns False without propagating the exception.
         """
-        mock_ssh_manager.acquire_connection_with_retry.side_effect = RuntimeError(
-            "SSH timeout"
-        )
+        mock_ssh_manager.acquire_connection_with_retry.side_effect = RuntimeError("SSH timeout")
 
         result: bool = manager_with_backup.check_primary_health()
 
@@ -574,6 +590,7 @@ class TestCheckPrimaryHealth:
 # ---------------------------------------------------------------------------
 # should_trigger_failover tests
 # ---------------------------------------------------------------------------
+
 
 class TestShouldTriggerFailover:
     """Tests for HPCFailoverManager.should_trigger_failover."""
@@ -709,6 +726,7 @@ class TestShouldTriggerFailover:
 # trigger_failover tests
 # ---------------------------------------------------------------------------
 
+
 class TestTriggerFailover:
     """Tests for HPCFailoverManager.trigger_failover."""
 
@@ -722,7 +740,9 @@ class TestTriggerFailover:
         WHEN trigger_failover is called
         THEN returns False and logs a failover_failed event.
         """
-        with patch.object(manager_no_backup, "log_failover_event", new_callable=AsyncMock) as mock_log:
+        with patch.object(
+            manager_no_backup, "log_failover_event", new_callable=AsyncMock
+        ) as mock_log:
             result: bool = await manager_no_backup.trigger_failover()
 
         assert result is False
@@ -771,9 +791,7 @@ class TestTriggerFailover:
         mock_backup_ssh_manager.acquire_connection_with_retry.return_value = mock_client
 
         with (
-            patch.object(
-                manager_with_backup, "log_failover_event", new_callable=AsyncMock
-            ),
+            patch.object(manager_with_backup, "log_failover_event", new_callable=AsyncMock),
             patch("nfm_db.services.hpc_failover.PROMETHEUS_AVAILABLE", False),
         ):
             result = await manager_with_backup.trigger_failover()
@@ -832,9 +850,7 @@ class TestTriggerFailover:
         mock_counter = MagicMock()
 
         with (
-            patch.object(
-                manager_with_backup, "log_failover_event", new_callable=AsyncMock
-            ),
+            patch.object(manager_with_backup, "log_failover_event", new_callable=AsyncMock),
             patch("nfm_db.services.hpc_failover.PROMETHEUS_AVAILABLE", True),
             patch(
                 "nfm_db.services.hpc_failover.hpc_failover_events",
@@ -890,9 +906,7 @@ class TestTriggerFailover:
         mock_backup_ssh_manager.acquire_connection_with_retry.return_value = MagicMock()
 
         with (
-            patch.object(
-                manager_with_backup, "log_failover_event", new_callable=AsyncMock
-            ),
+            patch.object(manager_with_backup, "log_failover_event", new_callable=AsyncMock),
             patch("nfm_db.services.hpc_failover.PROMETHEUS_AVAILABLE", False),
         ):
             await manager_with_backup.trigger_failover()
@@ -905,6 +919,7 @@ class TestTriggerFailover:
 # ---------------------------------------------------------------------------
 # try_recover_primary tests
 # ---------------------------------------------------------------------------
+
 
 class TestTryRecoverPrimary:
     """Tests for HPCFailoverManager.try_recover_primary."""
@@ -995,6 +1010,7 @@ class TestTryRecoverPrimary:
 # ---------------------------------------------------------------------------
 # cleanup tests
 # ---------------------------------------------------------------------------
+
 
 class TestCleanup:
     """Tests for HPCFailoverManager.cleanup."""

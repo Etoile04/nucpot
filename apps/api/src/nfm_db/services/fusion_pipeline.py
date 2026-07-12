@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # Data types
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ExtractedProperty:
     """A single extracted property value from one source."""
@@ -66,6 +67,7 @@ class FusionResult:
 # ---------------------------------------------------------------------------
 # Conflict detection
 # ---------------------------------------------------------------------------
+
 
 def detect_conflicts(
     properties: list[ExtractedProperty],
@@ -108,11 +110,13 @@ def detect_conflicts(
         numeric_values = {v["value"] for v in values}
 
         if len(source_ids) >= 2 and len(numeric_values) >= 2:
-            conflicts.append(ConflictGroup(
-                material_id=material_id,
-                property_type=property_type,
-                values=tuple(values),
-            ))
+            conflicts.append(
+                ConflictGroup(
+                    material_id=material_id,
+                    property_type=property_type,
+                    values=tuple(values),
+                )
+            )
 
     return conflicts
 
@@ -120,6 +124,7 @@ def detect_conflicts(
 # ---------------------------------------------------------------------------
 # Fusion pipeline (DB-backed)
 # ---------------------------------------------------------------------------
+
 
 class FusionPipeline:
     """Multi-source fusion pipeline with conflict detection and resolution.
@@ -177,9 +182,7 @@ class FusionPipeline:
                     )
                     conflict.resolved_value = resolved
                     conflict.status = ConflictStatus.AUTO_RESOLVED
-                    conflict.resolution_reason = resolved.get(
-                        "resolution_reason", ""
-                    )
+                    conflict.resolution_reason = resolved.get("resolution_reason", "")
                     conflict.resolved_at = datetime.now(UTC)
                 except ValueError as exc:
                     logger.warning(
@@ -197,14 +200,16 @@ class FusionPipeline:
                     "Manual strategy requires human review; cannot auto-resolve"
                 )
 
-            results.append(FusionResult(
-                material_id=conflict_group.material_id,
-                property_type=conflict_group.property_type,
-                conflict_detected=True,
-                conflict_id=str(conflict.id),
-                resolved_value=conflict.resolved_value,
-                strategy_used=effective_strategy,
-            ))
+            results.append(
+                FusionResult(
+                    material_id=conflict_group.material_id,
+                    property_type=conflict_group.property_type,
+                    conflict_detected=True,
+                    conflict_id=str(conflict.id),
+                    resolved_value=conflict.resolved_value,
+                    strategy_used=effective_strategy,
+                )
+            )
 
         await self._session.commit()
         logger.info(
@@ -235,13 +240,9 @@ class FusionPipeline:
         query = select(ConflictRecord)
 
         if material_id is not None:
-            query = query.where(
-                ConflictRecord.material_id == uuid.UUID(material_id)
-            )
+            query = query.where(ConflictRecord.material_id == uuid.UUID(material_id))
         if property_type is not None:
-            query = query.where(
-                ConflictRecord.property_type == property_type
-            )
+            query = query.where(ConflictRecord.property_type == property_type)
         if status is not None:
             query = query.where(ConflictRecord.status == status)
 
@@ -271,26 +272,20 @@ class FusionPipeline:
         Raises:
             ValueError: If conflict not found or already resolved.
         """
-        conflict = await self._session.get(
-            ConflictRecord, uuid.UUID(conflict_id)
-        )
+        conflict = await self._session.get(ConflictRecord, uuid.UUID(conflict_id))
         if conflict is None:
             raise ValueError(f"Conflict {conflict_id} not found")
         if conflict.status in (
             ConflictStatus.AUTO_RESOLVED,
             ConflictStatus.MANUALLY_RESOLVED,
         ):
-            raise ValueError(
-                f"Conflict {conflict_id} already resolved (status={conflict.status})"
-            )
+            raise ValueError(f"Conflict {conflict_id} already resolved (status={conflict.status})")
 
         # Create new state (immutable pattern)
         conflict.status = ConflictStatus.MANUALLY_RESOLVED
         conflict.resolved_value = resolved_value
         conflict.resolution_reason = resolution_reason
-        conflict.resolved_by = (
-            uuid.UUID(resolved_by) if resolved_by else None
-        )
+        conflict.resolved_by = uuid.UUID(resolved_by) if resolved_by else None
         conflict.resolved_at = datetime.now(UTC)
 
         await self._session.commit()

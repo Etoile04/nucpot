@@ -224,14 +224,13 @@ class TestExportForVerification:
         )
 
         assert total == 2
-        assert all(
-            r.confidence in {Confidence.HIGH, Confidence.MEDIUM} for r in records
-        )
+        assert all(r.confidence in {Confidence.HIGH, Confidence.MEDIUM} for r in records)
         assert all(r.confidence != Confidence.LOW for r in records)
 
     @pytest.mark.asyncio
     async def test_export_with_status_approved_excludes_promoted(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ):
         """Filter by status=approved excludes promoted records."""
         await _insert_staging_record(
@@ -255,7 +254,8 @@ class TestExportForVerification:
 
     @pytest.mark.asyncio
     async def test_export_with_exact_confidence_filter(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ):
         """Filter by exact confidence returns correct subset."""
         await _insert_staging_record(
@@ -556,7 +556,8 @@ class TestProcessVerificationResults:
 
     @pytest.mark.asyncio
     async def test_process_non_f_grade_does_not_change_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ):
         """Non-F grades do not change the staging status."""
         record = await _insert_staging_record(

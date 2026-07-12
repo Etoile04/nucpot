@@ -24,15 +24,20 @@ class TestCeleryAppConfiguration:
         assert isinstance(celery_app, Celery)
         assert celery_app.main == "nfm_tasks"
 
-    @patch.dict(os.environ, {
-        "CELERY_BROKER_URL": "redis://localhost:6379/0",
-        "CELERY_RESULT_BACKEND": "redis://localhost:6379/0",
-    }, clear=False)
+    @patch.dict(
+        os.environ,
+        {
+            "CELERY_BROKER_URL": "redis://localhost:6379/0",
+            "CELERY_RESULT_BACKEND": "redis://localhost:6379/0",
+        },
+        clear=False,
+    )
     def test_broker_url_configuration(self) -> None:
         """Test Redis broker URL configuration."""
         import importlib
 
         from nfm_db.services import celery_app
+
         importlib.reload(celery_app)
 
         from nfm_db.services.celery_app import celery_app as reloaded_app
@@ -41,15 +46,20 @@ class TestCeleryAppConfiguration:
         assert reloaded_app.conf.broker_url == "redis://localhost:6379/0"
         assert reloaded_app.conf.result_backend == "redis://localhost:6379/0"
 
-    @patch.dict(os.environ, {
-        "CELERY_BROKER_URL": "redis://localhost:6379/0",
-        "CELERY_RESULT_BACKEND": "redis://localhost:6379/0",
-    }, clear=False)
+    @patch.dict(
+        os.environ,
+        {
+            "CELERY_BROKER_URL": "redis://localhost:6379/0",
+            "CELERY_RESULT_BACKEND": "redis://localhost:6379/0",
+        },
+        clear=False,
+    )
     def test_custom_broker_configuration(self) -> None:
         """Test custom Redis broker configuration from environment."""
         import importlib
 
         from nfm_db.services import celery_app
+
         importlib.reload(celery_app)
 
         from nfm_db.services.celery_app import celery_app as reloaded_app
@@ -85,7 +95,7 @@ class TestCeleryAppConfiguration:
         from nfm_db.services.celery_app import celery_app
 
         # Check that retry settings are configured (may use Celery defaults)
-        assert hasattr(celery_app.conf, 'task_acks_late')
+        assert hasattr(celery_app.conf, "task_acks_late")
         assert celery_app.conf.task_acks_late is True
 
     def test_task_time_limits(self) -> None:
@@ -103,8 +113,8 @@ class TestCeleryAppConfiguration:
         from nfm_db.services.celery_app import celery_app
 
         # Check that default routing is configured
-        assert hasattr(celery_app.conf, 'task_default_routing')
-        assert celery_app.conf.task_default_routing == 'nfm.tasks.md'
+        assert hasattr(celery_app.conf, "task_default_routing")
+        assert celery_app.conf.task_default_routing == "nfm.tasks.md"
 
     def test_result_expiration(self) -> None:
         """Test result expiration configuration."""
@@ -112,6 +122,7 @@ class TestCeleryAppConfiguration:
         from datetime import timedelta
 
         from nfm_db.services.celery_app import celery_app
+
         assert celery_app.conf.result_expires == timedelta(days=1)
 
 
@@ -149,8 +160,9 @@ class TestTaskRegistration:
 
         # Check cleanup task is scheduled
         assert "cleanup-old-results-daily" in beat_schedule
-        assert "nfm_db.services.md_tasks.cleanup_old_results" in (
-            beat_schedule["cleanup-old-results-daily"]["task"]
+        assert (
+            "nfm_db.services.md_tasks.cleanup_old_results"
+            in (beat_schedule["cleanup-old-results-daily"]["task"])
         )
 
 
@@ -175,6 +187,7 @@ class TestCeleryWorkerScript:
 
         try:
             import celery_worker
+
             assert hasattr(celery_worker, "main")
         finally:
             sys.path.remove(str(scripts_dir))

@@ -94,23 +94,29 @@ async def bulk_stage_reference_values(
         matching_raw = _find_matching_raw(raw_values, gate_result.dedup_hash)
         if matching_raw is not None:
             record = await gate.stage_record(matching_raw, gate_result)
-            results.append(BulkStagingItemResult(
-                staging_id=record.id,
-                status=gate_result.decision.value,
-                confidence=gate_result.confidence,
-            ))
+            results.append(
+                BulkStagingItemResult(
+                    staging_id=record.id,
+                    status=gate_result.decision.value,
+                    confidence=gate_result.confidence,
+                )
+            )
 
     for gate_result in bulk_result.duplicates:
-        results.append(BulkStagingItemResult(
-            status=gate_result.decision.value,
-            confidence=gate_result.confidence,
-        ))
+        results.append(
+            BulkStagingItemResult(
+                status=gate_result.decision.value,
+                confidence=gate_result.confidence,
+            )
+        )
 
     for gate_result in bulk_result.rejected:
-        results.append(BulkStagingItemResult(
-            status=gate_result.decision.value,
-            confidence=gate_result.confidence,
-        ))
+        results.append(
+            BulkStagingItemResult(
+                status=gate_result.decision.value,
+                confidence=gate_result.confidence,
+            )
+        )
 
     return {
         "success": True,

@@ -199,9 +199,11 @@ def get_next_actions(status: PostStatus) -> list[dict[str, str]]:
     valid_transitions = VALID_TRANSITIONS.get(status, [])
 
     for transition in valid_transitions:
-        actions.append({
-            "action": transition.to_status.value,
-            "permission": transition.requires_permission or "",
-        })
+        actions.append(
+            {
+                "action": transition.to_status.value,
+                "permission": transition.requires_permission or "",
+            }
+        )
 
     return actions

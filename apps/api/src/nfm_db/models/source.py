@@ -27,9 +27,7 @@ class DataSource(TimestampMixin, Base):
     """A data source (journal article, report, database, etc.)."""
 
     __tablename__ = "data_sources"
-    __table_args__ = (
-        UniqueConstraint("doi", name="uq_data_sources_doi"),
-    )
+    __table_args__ = (UniqueConstraint("doi", name="uq_data_sources_doi"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
@@ -66,9 +64,7 @@ class Author(TimestampMixin, Base):
     """An author of a data source."""
 
     __tablename__ = "authors"
-    __table_args__ = (
-        UniqueConstraint("orcid", name="uq_authors_orcid"),
-    )
+    __table_args__ = (UniqueConstraint("orcid", name="uq_authors_orcid"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,

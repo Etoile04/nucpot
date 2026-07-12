@@ -393,10 +393,7 @@ class MDVerificationService:
         result = await self._session.execute(query)
         jobs = result.scalars().all()
 
-        return [
-            MDVerificationJobResponse.model_validate(job)
-            for job in jobs
-        ]
+        return [MDVerificationJobResponse.model_validate(job) for job in jobs]
 
     async def update_job(
         self,
@@ -435,9 +432,7 @@ class MDVerificationService:
             return await self.get_job(job_id)
 
         await self._session.execute(
-            update(MDVerificationJob)
-            .where(MDVerificationJob.id == job_id)
-            .values(**update_values),
+            update(MDVerificationJob).where(MDVerificationJob.id == job_id).values(**update_values),
         )
         await self._session.flush()
 
@@ -857,10 +852,7 @@ class MDVerificationService:
         result = await self._session.execute(query)
         results = result.scalars().all()
 
-        return [
-            DefectAnalysisResultResponse.model_validate(r)
-            for r in results
-        ]
+        return [DefectAnalysisResultResponse.model_validate(r) for r in results]
 
     async def update_defect_result(
         self,
@@ -1063,8 +1055,7 @@ class MDVerificationService:
             Dictionary with job and all related data, or None if not found
         """
         result = await self._session.execute(
-            select(MDVerificationJob)
-            .where(MDVerificationJob.id == job_id),
+            select(MDVerificationJob).where(MDVerificationJob.id == job_id),
         )
         job = result.scalar_one_or_none()
 
@@ -1128,7 +1119,4 @@ class MDVerificationService:
         )
         results = result.scalars().all()
 
-        return [
-            PotentialFittingResultResponse.model_validate(r)
-            for r in results
-        ]
+        return [PotentialFittingResultResponse.model_validate(r) for r in results]

@@ -45,6 +45,7 @@ def migration_006_source() -> str:
 # AC-1: Migration 005 exists and creates verification_results_md table
 # ---------------------------------------------------------------------------
 
+
 class TestMigration005Exists:
     """Verify migration 005 creates verification_results_md table."""
 
@@ -114,6 +115,7 @@ class TestMigration005Exists:
 # AC-2: Migration 006 exists and extends status check constraint
 # ---------------------------------------------------------------------------
 
+
 class TestMigration006Exists:
     """Verify migration 006 extends check_md_job_status constraint."""
 
@@ -161,6 +163,7 @@ class TestMigration006Exists:
 # AC-3: Migration chain is linear (no conflicts between 005 and 006)
 # ---------------------------------------------------------------------------
 
+
 class TestMigrationChainLinearity:
     """Verify the migration chain from 005 to 007 is linear."""
 
@@ -198,19 +201,22 @@ class TestMigrationChainLinearity:
 # AC-4: Migrations are additive-only
 # ---------------------------------------------------------------------------
 
+
 class TestAdditiveOnlyUpgrades:
     """Verify upgrade paths are additive-only (no destructive operations)."""
 
-    ADDITIVE_OPS = frozenset({
-        "add_column",
-        "create_table",
-        "create_index",
-        "create_check_constraint",
-        "create_unique_constraint",
-        "create_primary_key",
-        "create_foreign_key",
-        "bulk_insert",
-    })
+    ADDITIVE_OPS = frozenset(
+        {
+            "add_column",
+            "create_table",
+            "create_index",
+            "create_check_constraint",
+            "create_unique_constraint",
+            "create_primary_key",
+            "create_foreign_key",
+            "bulk_insert",
+        }
+    )
 
     CONSTRAINT_REPLACE_PATTERN = re.compile(
         r"drop_constraint.*create_check_constraint",
@@ -223,9 +229,7 @@ class TestAdditiveOnlyUpgrades:
         upgrade_ops = re.findall(r"op\.(\w+)\(", upgrade_section)
 
         for op in upgrade_ops:
-            assert op in self.ADDITIVE_OPS, (
-                f"Non-additive operation in 005 upgrade: op.{op}()"
-            )
+            assert op in self.ADDITIVE_OPS, f"Non-additive operation in 005 upgrade: op.{op}()"
 
     def test_006_upgrade_constraint_replace_only(self, migration_006_source: str):
         """Migration 006 upgrade only replaces a constraint (no data loss)."""

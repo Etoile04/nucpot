@@ -155,8 +155,11 @@ class TestRequirePermission:
     async def test_user_with_permission_succeeds(self) -> None:
         """Admin user with DELETE_POST permission passes."""
         user = User(
-            id=uuid4(), username="admin", email="a@t.com",
-            hashed_password="h", blog_role=BlogRole.ADMIN,
+            id=uuid4(),
+            username="admin",
+            email="a@t.com",
+            hashed_password="h",
+            blog_role=BlogRole.ADMIN,
         )
         dep = RequirePermission(Permission.DELETE_POST)
         result = await dep(user)
@@ -166,8 +169,11 @@ class TestRequirePermission:
     async def test_user_without_permission_raises_forbidden(self) -> None:
         """Editor lacking PUBLISH_POST permission raises 403."""
         user = User(
-            id=uuid4(), username="editor", email="e@t.com",
-            hashed_password="h", blog_role=BlogRole.EDITOR,
+            id=uuid4(),
+            username="editor",
+            email="e@t.com",
+            hashed_password="h",
+            blog_role=BlogRole.EDITOR,
         )
         dep = RequirePermission(Permission.PUBLISH_POST)
         with pytest.raises(ForbiddenError) as exc_info:
@@ -178,7 +184,9 @@ class TestRequirePermission:
     async def test_user_no_role_raises_forbidden(self) -> None:
         """User without blog role has no permissions."""
         user = User(
-            id=uuid4(), username="norole", email="n@t.com",
+            id=uuid4(),
+            username="norole",
+            email="n@t.com",
             hashed_password="h",
         )
         dep = RequirePermission(Permission.CREATE_POST)
@@ -198,8 +206,11 @@ class TestRequireRole:
     async def test_user_with_matching_role_succeeds(self) -> None:
         """Admin matches require_admin."""
         user = User(
-            id=uuid4(), username="admin", email="a@t.com",
-            hashed_password="h", blog_role=BlogRole.ADMIN,
+            id=uuid4(),
+            username="admin",
+            email="a@t.com",
+            hashed_password="h",
+            blog_role=BlogRole.ADMIN,
         )
         dep = RequireRole(BlogRole.ADMIN)
         result = await dep(user)
@@ -209,7 +220,9 @@ class TestRequireRole:
     async def test_user_with_no_role_raises_forbidden(self) -> None:
         """User without blog role raises 403."""
         user = User(
-            id=uuid4(), username="norole", email="n@t.com",
+            id=uuid4(),
+            username="norole",
+            email="n@t.com",
             hashed_password="h",
         )
         dep = RequireRole(BlogRole.ADMIN)
@@ -221,8 +234,11 @@ class TestRequireRole:
     async def test_user_with_wrong_role_raises_forbidden(self) -> None:
         """Reviewer doesn't match require_admin."""
         user = User(
-            id=uuid4(), username="reviewer", email="r@t.com",
-            hashed_password="h", blog_role=BlogRole.REVIEWER,
+            id=uuid4(),
+            username="reviewer",
+            email="r@t.com",
+            hashed_password="h",
+            blog_role=BlogRole.REVIEWER,
         )
         dep = RequireRole(BlogRole.ADMIN)
         with pytest.raises(ForbiddenError) as exc_info:
@@ -234,8 +250,11 @@ class TestRequireRole:
     async def test_multi_role_accepts_any_match(self) -> None:
         """RequireRole(ADMIN, REVIEWER) accepts reviewer."""
         user = User(
-            id=uuid4(), username="rev", email="r@t.com",
-            hashed_password="h", blog_role=BlogRole.REVIEWER,
+            id=uuid4(),
+            username="rev",
+            email="r@t.com",
+            hashed_password="h",
+            blog_role=BlogRole.REVIEWER,
         )
         dep = RequireRole(BlogRole.ADMIN, BlogRole.REVIEWER)
         result = await dep(user)

@@ -117,13 +117,15 @@ class TableExtractor:
             row: list[TableCell] = []
             for cell_data in row_data:
                 if isinstance(cell_data, dict):
-                    row.append(TableCell(
-                        value=cell_data.get("value", ""),
-                        row_span=cell_data.get("row_span", 1),
-                        col_span=cell_data.get("col_span", 1),
-                        is_header=cell_data.get("is_header", False),
-                        confidence=cell_data.get("confidence", 1.0),
-                    ))
+                    row.append(
+                        TableCell(
+                            value=cell_data.get("value", ""),
+                            row_span=cell_data.get("row_span", 1),
+                            col_span=cell_data.get("col_span", 1),
+                            is_header=cell_data.get("is_header", False),
+                            confidence=cell_data.get("confidence", 1.0),
+                        )
+                    )
                 elif isinstance(cell_data, str):
                     row.append(TableCell(value=cell_data))
             rows.append(row)

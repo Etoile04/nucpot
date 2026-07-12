@@ -180,9 +180,7 @@ async def scan_reference_gaps(
             element_system=es,
             phase=None,
             gaps_found=system_gaps.get(es, 0),
-            properties_scanned=len(
-                [g for g in scan.gaps if g.element_system == es]
-            ),
+            properties_scanned=len([g for g in scan.gaps if g.element_system == es]),
         )
         for es in sorted(system_gaps)
     ]

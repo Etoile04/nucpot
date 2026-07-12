@@ -177,47 +177,55 @@ class GapFillService:
 
             if gate_result.decision == GateDecision.DUPLICATE:
                 dup_count += 1
-                items.append(FillResultItem(
-                    element_system=element_system,
-                    phase=phase,
-                    property_name=property_name,
-                    status="duplicate",
-                    confidence=gate_result.confidence,
-                    source=ref_data.get("source"),
-                ))
+                items.append(
+                    FillResultItem(
+                        element_system=element_system,
+                        phase=phase,
+                        property_name=property_name,
+                        status="duplicate",
+                        confidence=gate_result.confidence,
+                        source=ref_data.get("source"),
+                    )
+                )
                 continue
 
             if not gate_result.should_stage:
-                items.append(FillResultItem(
-                    element_system=element_system,
-                    phase=phase,
-                    property_name=property_name,
-                    status="rejected",
-                    confidence=gate_result.confidence,
-                    source=ref_data.get("source"),
-                ))
+                items.append(
+                    FillResultItem(
+                        element_system=element_system,
+                        phase=phase,
+                        property_name=property_name,
+                        status="rejected",
+                        confidence=gate_result.confidence,
+                        source=ref_data.get("source"),
+                    )
+                )
                 continue
 
             if not dry_run:
                 await self._gate.stage_record(ref_data, gate_result, fill_batch_id=batch_id)
                 staged_count += 1
-                items.append(FillResultItem(
-                    element_system=element_system,
-                    phase=phase,
-                    property_name=property_name,
-                    status="staged",
-                    confidence=gate_result.confidence,
-                    source=ref_data.get("source"),
-                ))
+                items.append(
+                    FillResultItem(
+                        element_system=element_system,
+                        phase=phase,
+                        property_name=property_name,
+                        status="staged",
+                        confidence=gate_result.confidence,
+                        source=ref_data.get("source"),
+                    )
+                )
             else:
-                items.append(FillResultItem(
-                    element_system=element_system,
-                    phase=phase,
-                    property_name=property_name,
-                    status="found",
-                    confidence=gate_result.confidence,
-                    source=ref_data.get("source"),
-                ))
+                items.append(
+                    FillResultItem(
+                        element_system=element_system,
+                        phase=phase,
+                        property_name=property_name,
+                        status="found",
+                        confidence=gate_result.confidence,
+                        source=ref_data.get("source"),
+                    )
+                )
 
         return FillResult(
             batch_id=batch_id,

@@ -39,7 +39,14 @@ async def list_feedback_endpoint(
     priority: Priority | None = Query(default=None),
     feedback_type: FeedbackType | None = Query(default=None),
     pagination: PaginationParams = Depends(PaginationParams),
-    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
+    _limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=100,
+        alias="limit",
+        deprecated=True,
+        description="已弃用: 请使用 per_page 参数",
+    ),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
     """List feedback entries with filtering and pagination (admin endpoint).

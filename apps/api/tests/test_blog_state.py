@@ -62,9 +62,7 @@ class TestRequiredPermissions:
 
     def test_approve_requires_review_permission(self):
         """Approve requires review permission."""
-        perm = get_required_permission(
-            PostStatus.UNDER_REVIEW, PostStatus.APPROVED
-        )
+        perm = get_required_permission(PostStatus.UNDER_REVIEW, PostStatus.APPROVED)
         assert perm == "review_post"
 
     def test_reject_requires_review_permission(self):

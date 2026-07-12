@@ -127,11 +127,12 @@ class RelationExtractor:
         relations: list[ExtractedRelation] = []
 
         for i, source in enumerate(entities):
-            for target in entities[i + 1:]:
+            for target in entities[i + 1 :]:
                 candidates = self._find_candidate_relations(source, target)
                 for relation_type in candidates:
                     confidence = self._compute_relation_confidence(
-                        source.confidence, target.confidence,
+                        source.confidence,
+                        target.confidence,
                     )
                     relations.append(
                         ExtractedRelation(
@@ -176,9 +177,7 @@ class RelationExtractor:
             candidates.extend(self._TYPE_PAIR_RULES[reverse])
 
         # Validate against known relation types
-        return [
-            rt for rt in candidates if rt in VALID_RELATION_TYPES
-        ]
+        return [rt for rt in candidates if rt in VALID_RELATION_TYPES]
 
     @staticmethod
     def _compute_relation_confidence(
@@ -235,7 +234,10 @@ class EntityLinker:
         """
         # Strategy 1: Exact label + type match
         exact_match = await self._exact_label_match(
-            session, entity.label, entity.entity_type, corpus_id,
+            session,
+            entity.label,
+            entity.entity_type,
+            corpus_id,
         )
         if exact_match is not None:
             logger.debug(
@@ -248,7 +250,9 @@ class EntityLinker:
 
         # Strategy 2: Fuzzy alias match
         alias_match = await self._fuzzy_alias_match(
-            session, entity.label, corpus_id,
+            session,
+            entity.label,
+            corpus_id,
         )
         if alias_match is not None:
             logger.debug(
@@ -365,7 +369,9 @@ class GraphBuilder:
 
         for entity in entities:
             existing = await self._linker.find_matching_node(
-                self._session, entity, self._corpus_id,
+                self._session,
+                entity,
+                self._corpus_id,
             )
 
             if existing is not None:
@@ -379,7 +385,8 @@ class GraphBuilder:
 
                 if entity.confidence < REVIEW_CONFIDENCE_THRESHOLD:
                     await self._queue_for_review(
-                        new_node.id, "entity",
+                        new_node.id,
+                        "entity",
                         f"Low confidence entity: {entity.label} "
                         f"(confidence={entity.confidence:.2f})",
                     )
@@ -407,7 +414,8 @@ class GraphBuilder:
 
             if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
                 await self._queue_for_review(
-                    edge.id, "relation",
+                    edge.id,
+                    "relation",
                     f"Low confidence relation: "
                     f"{relation.source_label} -[{relation.relation_type}]-> "
                     f"{relation.target_label} (confidence={relation.confidence:.2f})",
@@ -451,7 +459,9 @@ class GraphBuilder:
 
         for prop in properties:
             # Material entity
-            material_name = prop.get("material_name") or prop.get("composition") or prop.get("element_system")
+            material_name = (
+                prop.get("material_name") or prop.get("composition") or prop.get("element_system")
+            )
             if material_name and material_name not in seen_labels:
                 seen_labels.add(material_name)
                 entities.append(
@@ -493,7 +503,10 @@ class GraphBuilder:
                                 label=cond_label,
                                 entity_type="Condition",
                                 confidence=_confidence_to_float(prop.get("confidence")) * 0.8,
-                                properties={"condition_key": cond_key, "condition_value": str(cond_value)},
+                                properties={
+                                    "condition_key": cond_key,
+                                    "condition_value": str(cond_value),
+                                },
                                 source_id=source_id,
                             )
                         )
@@ -524,7 +537,9 @@ class GraphBuilder:
             confidence=entity.confidence,
             source_id=entity.source_id,
             corpus_id=self._corpus_id,
-            status="active" if entity.confidence >= REVIEW_CONFIDENCE_THRESHOLD else "pending_review",
+            status="active"
+            if entity.confidence >= REVIEW_CONFIDENCE_THRESHOLD
+            else "pending_review",
         )
         self._session.add(node)
 

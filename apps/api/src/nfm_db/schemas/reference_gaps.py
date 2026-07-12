@@ -155,9 +155,5 @@ class ScanResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 ReferenceGapsApiResponse = ApiResponse[
-    ReferenceGapsListResponse
-    | ReferenceGapsSummaryResponse
-    | FillResponse
-    | ScanResponse
-    | None
+    ReferenceGapsListResponse | ReferenceGapsSummaryResponse | FillResponse | ScanResponse | None
 ]

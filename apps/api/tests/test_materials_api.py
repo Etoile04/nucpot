@@ -121,9 +121,7 @@ async def test_detail_with_aliases_and_composition(async_client, db_session) -> 
     mat = await _seed_material(db_session, name="UO2")
     await _seed_alias(db_session, mat.id, alias_name="Urania")
 
-    comp = MaterialComposition(
-        material_id=mat.id, element="U", fraction=0.88
-    )
+    comp = MaterialComposition(material_id=mat.id, element="U", fraction=0.88)
     db_session.add(comp)
     await db_session.commit()
 
@@ -184,9 +182,7 @@ async def test_create_material_with_category(async_client, db_session) -> None:
 async def test_update_material(async_client, db_session) -> None:
     mat = await _seed_material(db_session, name="UO2")
     payload = {"description": "Updated description"}
-    response = await async_client.patch(
-        f"/api/v1/materials/{mat.id}", json=payload
-    )
+    response = await async_client.patch(f"/api/v1/materials/{mat.id}", json=payload)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -197,9 +193,7 @@ async def test_update_material(async_client, db_session) -> None:
 @pytest.mark.asyncio
 async def test_update_material_404(async_client) -> None:
     payload = {"name": "Ghost"}
-    response = await async_client.patch(
-        f"/api/v1/materials/{uuid.uuid4()}", json=payload
-    )
+    response = await async_client.patch(f"/api/v1/materials/{uuid.uuid4()}", json=payload)
     assert response.status_code == 404
 
 

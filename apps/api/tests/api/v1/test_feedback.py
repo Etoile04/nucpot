@@ -186,13 +186,9 @@ async def test_list_feedback_returns_all(async_client, db_session) -> None:
 async def test_list_feedback_filter_by_status(async_client, db_session) -> None:
     """Filtering by status returns only matching entries."""
     await _seed_feedback(db_session, title="Open item", status=FeedbackStatus.OPEN)
-    await _seed_feedback(
-        db_session, title="Resolved item", status=FeedbackStatus.RESOLVED
-    )
+    await _seed_feedback(db_session, title="Resolved item", status=FeedbackStatus.RESOLVED)
 
-    response = await async_client.get(
-        "/api/v1/feedback", params={"status": "resolved"}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"status": "resolved"})
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
@@ -207,9 +203,7 @@ async def test_list_feedback_filter_by_priority(async_client, db_session) -> Non
     await _seed_feedback(db_session, title="Urgent", priority=Priority.URGENT)
     await _seed_feedback(db_session, title="Low", priority=Priority.LOW)
 
-    response = await async_client.get(
-        "/api/v1/feedback", params={"priority": "urgent"}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"priority": "urgent"})
     assert response.status_code == 200
     body = response.json()
     data = body["data"]
@@ -220,9 +214,7 @@ async def test_list_feedback_filter_by_priority(async_client, db_session) -> Non
 @pytest.mark.asyncio
 async def test_list_feedback_filter_by_type(async_client, db_session) -> None:
     """Filtering by feedback_type returns only matching entries."""
-    await _seed_feedback(
-        db_session, title="Bug", feedback_type=FeedbackType.BUG_REPORT
-    )
+    await _seed_feedback(db_session, title="Bug", feedback_type=FeedbackType.BUG_REPORT)
     await _seed_feedback(
         db_session,
         title="Feature",
@@ -285,9 +277,7 @@ async def test_list_feedback_pagination(async_client, db_session) -> None:
     for i in range(5):
         await _seed_feedback(db_session, title=f"Item {i}")
 
-    response = await async_client.get(
-        "/api/v1/feedback", params={"page": 1, "limit": 2}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"page": 1, "limit": 2})
     assert response.status_code == 200
     body = response.json()
     data = body["data"]
@@ -304,9 +294,7 @@ async def test_list_feedback_second_page(async_client, db_session) -> None:
     for i in range(5):
         await _seed_feedback(db_session, title=f"Item {i}")
 
-    response = await async_client.get(
-        "/api/v1/feedback", params={"page": 2, "limit": 2}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"page": 2, "limit": 2})
     assert response.status_code == 200
     body = response.json()
     data = body["data"]
@@ -319,9 +307,7 @@ async def test_list_feedback_filter_no_matches(async_client, db_session) -> None
     """Filter returning no matches returns empty list with total=0."""
     await _seed_feedback(db_session, title="Open item", status=FeedbackStatus.OPEN)
 
-    response = await async_client.get(
-        "/api/v1/feedback", params={"status": "resolved"}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"status": "resolved"})
     assert response.status_code == 200
     body = response.json()
     data = body["data"]
@@ -343,16 +329,12 @@ async def test_list_feedback_page_defaults(async_client, db_session) -> None:
 @pytest.mark.asyncio
 async def test_list_feedback_invalid_status_rejects(async_client) -> None:
     """Invalid status query param returns 422."""
-    response = await async_client.get(
-        "/api/v1/feedback", params={"status": "not_a_status"}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"status": "not_a_status"})
     assert response.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_list_feedback_page_zero_rejects(async_client) -> None:
     """Page < 1 should return 422 validation error."""
-    response = await async_client.get(
-        "/api/v1/feedback", params={"page": 0}
-    )
+    response = await async_client.get("/api/v1/feedback", params={"page": 0})
     assert response.status_code == 422

@@ -39,7 +39,11 @@ class HPCFailoverManager:
     @property
     def hpc_cluster(self) -> str:
         """Get primary cluster hostname."""
-        return self._config.hosts[0] if isinstance(self._config.hosts, (list, tuple)) and self._config.hosts else ""
+        return (
+            self._config.hosts[0]
+            if isinstance(self._config.hosts, (list, tuple)) and self._config.hosts
+            else ""
+        )
 
     @property
     def has_backup(self) -> bool:
@@ -100,7 +104,9 @@ class HPCFailoverManager:
                 )
                 db.add(event)
                 await db.commit()
-                logger.info(f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}")
+                logger.info(
+                    f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}"
+                )
                 break
         except Exception as e:
             logger.error(f"Failed to log failover event to database: {e}")
@@ -142,7 +148,9 @@ class HPCFailoverManager:
         if self.last_health_check:
             time_since_healthy = (datetime.now() - self.last_health_check).total_seconds()
             if time_since_healthy > self._config.failover_threshold_seconds:
-                logger.error(f"Primary cluster unhealthy for {time_since_healthy:.1f}s - triggering failover")
+                logger.error(
+                    f"Primary cluster unhealthy for {time_since_healthy:.1f}s - triggering failover"
+                )
                 self.primary_healthy = False
                 return True
 
@@ -151,7 +159,9 @@ class HPCFailoverManager:
             if self.last_health_check:
                 time_since_healthy = (datetime.now() - self.last_health_check).total_seconds()
                 if time_since_healthy > self._config.failover_threshold_seconds:
-                    logger.error(f"Primary cluster unhealthy for {time_since_healthy:.1f}s - triggering failover")
+                    logger.error(
+                        f"Primary cluster unhealthy for {time_since_healthy:.1f}s - triggering failover"
+                    )
                     self.primary_healthy = False
                     return True
             else:

@@ -139,7 +139,8 @@ async def test_list_conflicts_returns_records(async_client, db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_list_conflicts_filter_by_material_id(
-    async_client, db_session,
+    async_client,
+    db_session,
 ) -> None:
     """GET /kg/conflicts?material_id=... filters correctly."""
     mat_a = await _seed_material(db_session, name="Mat-A")
@@ -159,21 +160,30 @@ async def test_list_conflicts_filter_by_material_id(
 
 @pytest.mark.asyncio
 async def test_list_conflicts_filter_by_property_type(
-    async_client, db_session,
+    async_client,
+    db_session,
 ) -> None:
     """GET /kg/conflicts?property_type=... filters by name substring."""
     mat = await _seed_material(db_session)
     pt_thermal = await _seed_property_type(
-        db_session, name="Thermal Conductivity", slug="thermal-k",
+        db_session,
+        name="Thermal Conductivity",
+        slug="thermal-k",
     )
     pt_mech = await _seed_property_type(
-        db_session, name="Young Modulus", slug="young-modulus",
+        db_session,
+        name="Young Modulus",
+        slug="young-modulus",
     )
     await _seed_conflict(
-        db_session, material_id=mat.id, property_type_id=pt_thermal.id,
+        db_session,
+        material_id=mat.id,
+        property_type_id=pt_thermal.id,
     )
     await _seed_conflict(
-        db_session, material_id=mat.id, property_type_id=pt_mech.id,
+        db_session,
+        material_id=mat.id,
+        property_type_id=pt_mech.id,
     )
 
     response = await async_client.get(

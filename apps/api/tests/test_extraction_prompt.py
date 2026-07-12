@@ -99,7 +99,9 @@ class TestSkillSectionsPresent:
 
     # §10: Multi-paper file handling
     def test_section10_multi_paper(self) -> None:
-        assert "REFERENCE" in self.prompt or "多论文" in self.prompt or "multi" in self.prompt.lower()
+        assert (
+            "REFERENCE" in self.prompt or "多论文" in self.prompt or "multi" in self.prompt.lower()
+        )
 
     # §11: Extraction priority (4 levels)
     def test_section11_extraction_priority(self) -> None:
@@ -215,8 +217,7 @@ class TestTokenBudget:
         # Rough token estimate: ~4 chars per token for mixed CJK/English
         token_estimate = len(prompt) / 3.0  # CJK-heavy, ~3 chars/token
         assert token_estimate < 4000, (
-            f"Prompt too large: ~{token_estimate:.0f} tokens "
-            f"({len(prompt)} chars)"
+            f"Prompt too large: ~{token_estimate:.0f} tokens ({len(prompt)} chars)"
         )
 
 
@@ -243,4 +244,3 @@ class TestPromptStructure:
         assert "{" in self.prompt and "}" in self.prompt
         # Should have at least one string value in quotes
         assert '"' in self.prompt
-

@@ -111,9 +111,7 @@ class PhaseMapper:
             for r in data.get("laTeX_patterns", [])
         )
 
-        not_phase = frozenset(
-            item.lower() for item in data.get("not_phase", [])
-        )
+        not_phase = frozenset(item.lower() for item in data.get("not_phase", []))
 
         return PhaseMapper(
             _alias_to_canonical=dict(alias_to_canonical),

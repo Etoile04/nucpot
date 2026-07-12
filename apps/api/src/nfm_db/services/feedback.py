@@ -9,16 +9,18 @@ from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Prior
 from nfm_db.schemas.feedback import FeedbackCreate, FeedbackListQuery
 
 # Keywords that escalate bug_report priority to high
-_HIGH_PRIORITY_KEYWORDS = frozenset({
-    "不可用",
-    "无法访问",
-    "500",
-    "崩溃",
-    "crash",
-    "down",
-    "unavailable",
-    "error",
-})
+_HIGH_PRIORITY_KEYWORDS = frozenset(
+    {
+        "不可用",
+        "无法访问",
+        "500",
+        "崩溃",
+        "crash",
+        "down",
+        "unavailable",
+        "error",
+    }
+)
 
 
 def classify_priority(

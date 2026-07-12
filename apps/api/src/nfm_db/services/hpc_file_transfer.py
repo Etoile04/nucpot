@@ -17,7 +17,7 @@ from nfm_db.database import get_db
 logger = logging.getLogger(__name__)
 
 # Pattern for safe remote file paths (alphanumeric, /, ., -, _, and :)
-_REMOTE_PATH_SAFE_PATTERN = re.compile(r'^[a-zA-Z0-9/.:_-]+$')
+_REMOTE_PATH_SAFE_PATTERN = re.compile(r"^[a-zA-Z0-9/.:_-]+$")
 
 
 def validate_remote_path(path: str) -> str:
@@ -227,7 +227,7 @@ async def verify_checksum(local_file: str, expected_checksum: str) -> bool:
     """
     try:
         sha256_hash = hashlib.sha256()
-        with open(local_file, 'rb') as f:
+        with open(local_file, "rb") as f:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
 
@@ -338,7 +338,7 @@ async def upload_file_with_retry(
                 return True
 
             logger.warning(f"Upload attempt {attempt + 1} failed for {local_file}, retrying...")
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(2**attempt)
 
         except Exception as e:
             logger.error(f"Upload attempt {attempt + 1} failed: {e}")
@@ -377,17 +377,19 @@ async def upload_file_with_resume(
         try:
             sftp = client.open_sftp()
 
-            with open(local_file, 'rb') as local_f:
+            with open(local_file, "rb") as local_f:
                 local_f.seek(resume_position)
 
-                with sftp.file(remote_file, 'ab') as remote_f:
+                with sftp.file(remote_file, "ab") as remote_f:
                     while True:
                         chunk = local_f.read(65536)  # 64KB chunks
                         if not chunk:
                             break
                         remote_f.write(chunk)
 
-            logger.info(f"Resumed upload from position {resume_position}: {local_file} -> {remote_file}")
+            logger.info(
+                f"Resumed upload from position {resume_position}: {local_file} -> {remote_file}"
+            )
             return True
 
         finally:

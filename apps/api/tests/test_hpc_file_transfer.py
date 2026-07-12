@@ -721,14 +721,17 @@ class TestUploadFileWithRetry:
         sample_remote_file: str,
     ) -> None:
         """First attempt succeeds without sleeping."""
-        with patch(
-            "nfm_db.services.hpc_file_transfer.upload_file",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_upload, patch(
-            "nfm_db.services.hpc_file_transfer.asyncio.sleep",
-            new_callable=AsyncMock,
-        ) as mock_sleep:
+        with (
+            patch(
+                "nfm_db.services.hpc_file_transfer.upload_file",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_upload,
+            patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep,
+        ):
             result = await upload_file_with_retry(
                 mock_ssh_manager,
                 sample_task_id,
@@ -758,13 +761,16 @@ class TestUploadFileWithRetry:
             call_count += 1
             return call_count == 3
 
-        with patch(
-            "nfm_db.services.hpc_file_transfer.upload_file",
-            side_effect=_fake_upload,
-        ), patch(
-            "nfm_db.services.hpc_file_transfer.asyncio.sleep",
-            new_callable=AsyncMock,
-        ) as mock_sleep:
+        with (
+            patch(
+                "nfm_db.services.hpc_file_transfer.upload_file",
+                side_effect=_fake_upload,
+            ),
+            patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep,
+        ):
             result = await upload_file_with_retry(
                 mock_ssh_manager,
                 sample_task_id,
@@ -790,14 +796,17 @@ class TestUploadFileWithRetry:
         sample_remote_file: str,
     ) -> None:
         """All retries exhausted returns False."""
-        with patch(
-            "nfm_db.services.hpc_file_transfer.upload_file",
-            new_callable=AsyncMock,
-            return_value=False,
-        ) as mock_upload, patch(
-            "nfm_db.services.hpc_file_transfer.asyncio.sleep",
-            new_callable=AsyncMock,
-        ) as mock_sleep:
+        with (
+            patch(
+                "nfm_db.services.hpc_file_transfer.upload_file",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_upload,
+            patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep,
+        ):
             result = await upload_file_with_retry(
                 mock_ssh_manager,
                 sample_task_id,
@@ -820,13 +829,16 @@ class TestUploadFileWithRetry:
         sample_remote_file: str,
     ) -> None:
         """Exceptions during upload trigger retry, last attempt returns False."""
-        with patch(
-            "nfm_db.services.hpc_file_transfer.upload_file",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("connection reset"),
-        ), patch(
-            "nfm_db.services.hpc_file_transfer.asyncio.sleep",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "nfm_db.services.hpc_file_transfer.upload_file",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("connection reset"),
+            ),
+            patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await upload_file_with_retry(
                 mock_ssh_manager,
@@ -848,13 +860,16 @@ class TestUploadFileWithRetry:
         sample_remote_file: str,
     ) -> None:
         """max_retries=1 tries exactly once."""
-        with patch(
-            "nfm_db.services.hpc_file_transfer.upload_file",
-            new_callable=AsyncMock,
-            return_value=False,
-        ) as mock_upload, patch(
-            "nfm_db.services.hpc_file_transfer.asyncio.sleep",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "nfm_db.services.hpc_file_transfer.upload_file",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_upload,
+            patch(
+                "nfm_db.services.hpc_file_transfer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await upload_file_with_retry(
                 mock_ssh_manager,
@@ -1009,7 +1024,9 @@ class TestGetRemoteFilePosition:
         mock_stat.st_size = 1048576
         mock_sftp.stat.return_value = mock_stat
 
-        result = await get_remote_file_position(mock_ssh_manager, sample_task_id, sample_remote_file)
+        result = await get_remote_file_position(
+            mock_ssh_manager, sample_task_id, sample_remote_file
+        )
 
         assert result == 1048576
         mock_sftp.stat.assert_called_once_with(sample_remote_file)
@@ -1030,7 +1047,9 @@ class TestGetRemoteFilePosition:
         mock_ssh_manager.acquire_connection.return_value = client
         mock_sftp.stat.side_effect = OSError("No such file")
 
-        result = await get_remote_file_position(mock_ssh_manager, sample_task_id, sample_remote_file)
+        result = await get_remote_file_position(
+            mock_ssh_manager, sample_task_id, sample_remote_file
+        )
 
         assert result == 0
         mock_sftp.close.assert_called_once()
@@ -1049,7 +1068,9 @@ class TestGetRemoteFilePosition:
         client.open_sftp.side_effect = RuntimeError("broken")
         mock_ssh_manager.acquire_connection.return_value = client
 
-        result = await get_remote_file_position(mock_ssh_manager, sample_task_id, sample_remote_file)
+        result = await get_remote_file_position(
+            mock_ssh_manager, sample_task_id, sample_remote_file
+        )
 
         assert result == 0
         mock_ssh_manager.release_connection.assert_called_once_with(client)
@@ -1201,9 +1222,7 @@ class TestPathValidationInTransferFunctions:
         sample_local_file: str,
     ) -> None:
         """upload_file returns False when remote path contains injection."""
-        result = await upload_file(
-            mock_ssh_manager, sample_task_id, sample_local_file, "$(whoami)"
-        )
+        result = await upload_file(mock_ssh_manager, sample_task_id, sample_local_file, "$(whoami)")
         assert result is False
         mock_ssh_manager.acquire_connection.assert_not_called()
 
@@ -1263,9 +1282,7 @@ class TestPathValidationInTransferFunctions:
         sample_task_id: str,
     ) -> None:
         """download_file returns None for backtick injection."""
-        result = await download_file(
-            mock_ssh_manager, sample_task_id, "`whoami`", "/local/out.dat"
-        )
+        result = await download_file(mock_ssh_manager, sample_task_id, "`whoami`", "/local/out.dat")
         assert result is None
 
     @pytest.mark.unit
@@ -1276,8 +1293,6 @@ class TestPathValidationInTransferFunctions:
         sample_task_id: str,
     ) -> None:
         """get_remote_checksum returns None when path contains injection."""
-        result = await get_remote_checksum(
-            mock_ssh_manager, sample_task_id, "file; rm -rf /"
-        )
+        result = await get_remote_checksum(mock_ssh_manager, sample_task_id, "file; rm -rf /")
         assert result is None
         mock_ssh_manager.acquire_connection.assert_not_called()

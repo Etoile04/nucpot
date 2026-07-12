@@ -56,7 +56,9 @@ class ReferenceCandidateRequest(BaseModel):
         description="Credibility tier of the source",
     )
     source_doi: str | None = Field(None, max_length=100, description="DOI if available")
-    method: str | None = Field(None, max_length=100, description="Methodology (e.g., DFT, experimental)")
+    method: str | None = Field(
+        None, max_length=100, description="Methodology (e.g., DFT, experimental)"
+    )
     uncertainty: float | None = Field(None, description="Uncertainty estimate")
     temperature: float | None = Field(None, description="Temperature in K")
     phase: str | None = Field(None, max_length=50, description="Phase (e.g., alpha, beta)")
@@ -189,7 +191,7 @@ class QuarterlyAuditResponse(BaseModel):
     status_code=status.HTTP_200_OK,
     summary="验证参考候选值",
     description="Runs reference-validation-workflow: literature search, source validation, "
-                "uncertainty estimation, confidence scoring. Escalates if confidence < 80%.",
+    "uncertainty estimation, confidence scoring. Escalates if confidence < 80%.",
 )
 async def check_reference_gap(
     request: ReferenceCandidateRequest,
@@ -261,7 +263,7 @@ async def check_reference_gap(
     status_code=status.HTTP_200_OK,
     summary="F级LAMMPS失败裁决",
     description="Runs f-grade-adjudication-workflow: analyzes LAMMPS error logs, "
-                "pattern matches known failures, suggests fixes. Escalates if confidence < 70%.",
+    "pattern matches known failures, suggests fixes. Escalates if confidence < 70%.",
 )
 async def adjudicate_f_grade_endpoint(
     request: AdjudicationRequest,
@@ -324,7 +326,7 @@ async def adjudicate_f_grade_endpoint(
     status_code=status.HTTP_200_OK,
     summary="运行P0季度审计",
     description="Runs quarterly-audit-workflow: checks all P0 systems for uncertainty coverage, "
-                "verification freshness, and conflicts. Generates audit report with findings.",
+    "verification freshness, and conflicts. Generates audit report with findings.",
 )
 async def run_quarterly_audit_endpoint(
     request: QuarterlyAuditRequest,

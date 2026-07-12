@@ -328,9 +328,7 @@ class TestValidateMetadata:
             PotentialUploadError,
             match="License name",
         ):
-            _validate_metadata(
-                _make_payload(license_type="open_license")
-            )
+            _validate_metadata(_make_payload(license_type="open_license"))
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +401,9 @@ class TestAttachPotentialFile:
 
     @pytest.mark.asyncio
     async def test_attach_file_successfully(
-        self, db_session: AsyncSession, tmp_path: Path,
+        self,
+        db_session: AsyncSession,
+        tmp_path: Path,
     ) -> None:
         """GIVEN valid file and existing potential, THEN file is written and DB updated."""
         from nfm_db.models import Potential
@@ -437,7 +437,9 @@ class TestAttachPotentialFile:
 
     @pytest.mark.asyncio
     async def test_attach_file_sanitizes_filename(
-        self, db_session: AsyncSession, tmp_path: Path,
+        self,
+        db_session: AsyncSession,
+        tmp_path: Path,
     ) -> None:
         """GIVEN filename with special chars, THEN sanitized in file URL."""
         from nfm_db.models import Potential
@@ -466,7 +468,9 @@ class TestAttachPotentialFile:
 
     @pytest.mark.asyncio
     async def test_attach_file_rejects_bad_extension(
-        self, db_session: AsyncSession, tmp_path: Path,
+        self,
+        db_session: AsyncSession,
+        tmp_path: Path,
     ) -> None:
         """GIVEN file with unsupported extension, THEN raises PotentialUploadError."""
         from nfm_db.models import Potential
@@ -494,7 +498,9 @@ class TestAttachPotentialFile:
 
     @pytest.mark.asyncio
     async def test_attach_file_rejects_oversize(
-        self, db_session: AsyncSession, tmp_path: Path,
+        self,
+        db_session: AsyncSession,
+        tmp_path: Path,
     ) -> None:
         """GIVEN file over 50MB, THEN raises PotentialUploadError."""
         from nfm_db.models import Potential
@@ -522,7 +528,9 @@ class TestAttachPotentialFile:
 
     @pytest.mark.asyncio
     async def test_attach_file_rejects_missing_potential(
-        self, db_session: AsyncSession, tmp_path: Path,
+        self,
+        db_session: AsyncSession,
+        tmp_path: Path,
     ) -> None:
         """GIVEN potential_id does not exist, THEN raises PotentialNotFoundError."""
         with pytest.raises(PotentialNotFoundError, match="not found"):

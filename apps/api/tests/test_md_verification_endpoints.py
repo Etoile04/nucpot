@@ -202,21 +202,21 @@ class TestSubmitMDVerificationJob:
         monkeypatch.setattr(md_verification_module, "celery_app", mock_celery_app)
 
         response = await async_client_with_auth.post(
-                "/api/v1/md-verification/jobs",
-                json={
-                    "potential_id": "EAM_U_test",
-                    "element_system": "U",
-                    "phase": "BCC",
-                    "potential_file": "/data/potentials/U.eam.alloy",
-                    "structure_file": "/data/structures/U_BCC.cif",
-                    "config": {
-                        "temperature": 300,
-                        "pressure": 0,
-                        "simulation_time": 100,
-                    },
-                    "priority": 5,
+            "/api/v1/md-verification/jobs",
+            json={
+                "potential_id": "EAM_U_test",
+                "element_system": "U",
+                "phase": "BCC",
+                "potential_file": "/data/potentials/U.eam.alloy",
+                "structure_file": "/data/structures/U_BCC.cif",
+                "config": {
+                    "temperature": 300,
+                    "pressure": 0,
+                    "simulation_time": 100,
                 },
-            )
+                "priority": 5,
+            },
+        )
 
         assert response.status_code == 201
         data = response.json()
@@ -256,9 +256,7 @@ class TestListMDVerificationJobs:
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing all jobs returns both jobs."""
-        response = await async_client_with_auth.get(
-                "/api/v1/md-verification/jobs"
-            )
+        response = await async_client_with_auth.get("/api/v1/md-verification/jobs")
 
         assert response.status_code == 200
         data = response.json()
@@ -275,9 +273,7 @@ class TestListMDVerificationJobs:
         pending_md_job: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by status."""
-        response = await async_client_with_auth.get(
-            "/api/v1/md-verification/jobs?status=completed"
-        )
+        response = await async_client_with_auth.get("/api/v1/md-verification/jobs?status=completed")
 
         assert response.status_code == 200
         data = response.json()
@@ -289,9 +285,7 @@ class TestListMDVerificationJobs:
         md_job_with_results: dict[str, str],
     ) -> None:
         """Test listing jobs filtered by element system."""
-        response = await async_client_with_auth.get(
-            "/api/v1/md-verification/jobs?element_system=U"
-        )
+        response = await async_client_with_auth.get("/api/v1/md-verification/jobs?element_system=U")
 
         assert response.status_code == 200
         data = response.json()
@@ -302,9 +296,7 @@ class TestListMDVerificationJobs:
         async_client_with_auth: AsyncClient,
     ) -> None:
         """Test listing jobs with pagination."""
-        response = await async_client_with_auth.get(
-            "/api/v1/md-verification/jobs?limit=1&offset=0"
-        )
+        response = await async_client_with_auth.get("/api/v1/md-verification/jobs?limit=1&offset=0")
 
         assert response.status_code == 200
         data = response.json()
@@ -325,9 +317,7 @@ class TestGetMDVerificationJob:
         """Test getting existing job returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client_with_auth.get(
-            f"/api/v1/md-verification/jobs/{job_id}"
-        )
+        response = await async_client_with_auth.get(f"/api/v1/md-verification/jobs/{job_id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -339,9 +329,7 @@ class TestGetMDVerificationJob:
         """Test getting non-existent job returns 404."""
         job_id = uuid.uuid4()
 
-        response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}"
-            )
+        response = await async_client_with_auth.get(f"/api/v1/md-verification/jobs/{job_id}")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -359,9 +347,7 @@ class TestGetJobStatus:
         """Test getting job status returns 200."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/status"
-            )
+        response = await async_client_with_auth.get(f"/api/v1/md-verification/jobs/{job_id}/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -377,9 +363,7 @@ class TestGetJobStatus:
         """Test getting status of pending job returns 200."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/status"
-            )
+        response = await async_client_with_auth.get(f"/api/v1/md-verification/jobs/{job_id}/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -401,9 +385,7 @@ class TestCancelMDVerificationJob:
         """Test cancelling pending job returns 200."""
         job_id = pending_md_job["job_id"]
 
-        response = await async_client_with_auth.delete(
-                f"/api/v1/md-verification/jobs/{job_id}"
-            )
+        response = await async_client_with_auth.delete(f"/api/v1/md-verification/jobs/{job_id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -426,9 +408,7 @@ class TestCancelMDVerificationJob:
         """Test cancelling completed job returns 400."""
         job_id = md_job_with_results["job_id"]
 
-        response = await async_client_with_auth.delete(
-                f"/api/v1/md-verification/jobs/{job_id}"
-            )
+        response = await async_client_with_auth.delete(f"/api/v1/md-verification/jobs/{job_id}")
 
         assert response.status_code == 400
         assert "cancel" in response.json()["detail"].lower()
@@ -437,9 +417,7 @@ class TestCancelMDVerificationJob:
         """Test cancelling non-existent job returns 404."""
         job_id = uuid.uuid4()
 
-        response = await async_client_with_auth.delete(
-                f"/api/v1/md-verification/jobs/{job_id}"
-            )
+        response = await async_client_with_auth.delete(f"/api/v1/md-verification/jobs/{job_id}")
 
         assert response.status_code == 404
 
@@ -457,8 +435,8 @@ class TestGetSimulationResults:
         job_id = md_job_with_results["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/simulation"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/simulation"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -477,8 +455,8 @@ class TestGetSimulationResults:
         job_id = pending_md_job["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/simulation"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/simulation"
+        )
 
         assert response.status_code == 404
         assert "no simulation results" in response.json()["detail"].lower()
@@ -497,8 +475,8 @@ class TestGetDefectAnalysisResults:
         job_id = md_job_with_results["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/defects"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/defects"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -517,8 +495,8 @@ class TestGetDefectAnalysisResults:
         job_id = md_job_with_results["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/defects?defect_type=vacancy"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -534,8 +512,8 @@ class TestGetDefectAnalysisResults:
         job_id = pending_md_job["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/defects"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/defects"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -555,8 +533,8 @@ class TestGetFittingResults:
         job_id = md_job_with_results["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/fitting"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/fitting"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -577,8 +555,8 @@ class TestGetFittingResults:
         job_id = md_job_with_results["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/fitting?fitting_method=arc-dpa"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/fitting?fitting_method=arc-dpa"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -594,8 +572,8 @@ class TestGetFittingResults:
         job_id = pending_md_job["job_id"]
 
         response = await async_client_with_auth.get(
-                f"/api/v1/md-verification/jobs/{job_id}/fitting"
-            )
+            f"/api/v1/md-verification/jobs/{job_id}/fitting"
+        )
 
         assert response.status_code == 200
         data = response.json()

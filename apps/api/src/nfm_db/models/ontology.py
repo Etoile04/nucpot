@@ -29,9 +29,7 @@ class KEntityType(TimestampMixin, Base):
     """
 
     __tablename__ = "kg_entity_types"
-    __table_args__ = (
-        UniqueConstraint("name", name="uq_kg_entity_types_name"),
-    )
+    __table_args__ = (UniqueConstraint("name", name="uq_kg_entity_types_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
@@ -39,7 +37,8 @@ class KEntityType(TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(50), unique=True)
     label_template: Mapped[str | None] = mapped_column(
-        String(200), nullable=True,
+        String(200),
+        nullable=True,
     )
     required_properties: Mapped[list[str] | None] = mapped_column(
         JSONArray,
@@ -59,9 +58,7 @@ class KRelationType(TimestampMixin, Base):
     """
 
     __tablename__ = "kg_relation_types"
-    __table_args__ = (
-        UniqueConstraint("name", name="uq_kg_relation_types_name"),
-    )
+    __table_args__ = (UniqueConstraint("name", name="uq_kg_relation_types_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,

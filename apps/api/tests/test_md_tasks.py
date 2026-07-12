@@ -132,16 +132,13 @@ class TestHappyPath:
     ) -> None:
         """Test successful task execution with valid inputs."""
         # Patch nfm-md-runner imports
-        with patch(
-            "nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True
-        ), patch(
-            "nfm_db.services.md_tasks.AnalysisManager"
-        ) as MockManager:
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock
             mock_manager_instance = Mock()
-            mock_manager_instance.run_verification_pipeline.return_value = (
-                mock_verification_results
-            )
+            mock_manager_instance.run_verification_pipeline.return_value = mock_verification_results
             MockManager.return_value = mock_manager_instance
 
             # Create task instance with mock request
@@ -184,11 +181,10 @@ class TestHappyPath:
             "fitting_params": {"param1": 1.0, "param2": 2.0},
         }
 
-        with patch(
-            "nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True
-        ), patch(
-            "nfm_db.services.md_tasks.AnalysisManager"
-        ) as MockManager:
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             mock_manager_instance = Mock()
             mock_manager_instance.run_verification_pipeline.return_value = {
                 "timestamp": datetime.now().isoformat(),
@@ -364,13 +360,14 @@ class TestRetryLogic:
         mock_task_request: Mock,
     ) -> None:
         """Test retry on file access errors (transient)."""
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), patch(
-            "nfm_db.services.md_tasks.AnalysisManager"
-        ) as MockManager:
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock to raise FileNotFoundError
             mock_manager_instance = Mock()
-            mock_manager_instance.run_verification_pipeline.side_effect = (
-                FileNotFoundError("Temporary NFS timeout")
+            mock_manager_instance.run_verification_pipeline.side_effect = FileNotFoundError(
+                "Temporary NFS timeout"
             )
             MockManager.return_value = mock_manager_instance
 
@@ -402,9 +399,10 @@ class TestRetryLogic:
         mock_task_request: Mock,
     ) -> None:
         """Test retry on HPC connection errors."""
-        with patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True), patch(
-            "nfm_db.services.md_tasks.AnalysisManager"
-        ) as MockManager:
+        with (
+            patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+            patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+        ):
             # Setup mock to raise ConnectionError
             mock_manager_instance = Mock()
             mock_manager_instance.run_verification_pipeline.side_effect = ConnectionError(
@@ -445,12 +443,13 @@ class TestRetryLogic:
         for retry_count in range(3):
             mock_task_request.retries = retry_count
 
-            with patch(
-                "nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True
-            ), patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager:
+            with (
+                patch("nfm_db.services.md_tasks.NFM_MD_RUNNER_AVAILABLE", True),
+                patch("nfm_db.services.md_tasks.AnalysisManager") as MockManager,
+            ):
                 mock_manager_instance = Mock()
-                mock_manager_instance.run_verification_pipeline.side_effect = (
-                    ConnectionError("HPC cluster unreachable")
+                mock_manager_instance.run_verification_pipeline.side_effect = ConnectionError(
+                    "HPC cluster unreachable"
                 )
                 MockManager.return_value = mock_manager_instance
 
@@ -468,7 +467,7 @@ class TestRetryLogic:
                     )
 
                 # Verify exponential backoff: 120 * 2^retry_count
-                expected_countdown = 120 * (2 ** retry_count)
+                expected_countdown = 120 * (2**retry_count)
                 call_kwargs = task_instance.retry.call_args.kwargs
                 assert call_kwargs["countdown"] == expected_countdown
 

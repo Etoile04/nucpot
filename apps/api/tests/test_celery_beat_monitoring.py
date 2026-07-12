@@ -23,8 +23,10 @@ class TestCeleryBeatMonitoring:
         """
         try:
             from nfm_db.services.celery_app import monitor_primary_cluster_health
-            assert callable(monitor_primary_cluster_health), \
+
+            assert callable(monitor_primary_cluster_health), (
                 "monitor_primary_cluster_health should be a callable task"
+            )
         except ImportError as e:
             pytest.fail(f"monitor_primary_cluster_health task should exist but import failed: {e}")
 
@@ -38,19 +40,24 @@ class TestCeleryBeatMonitoring:
         from nfm_db.services.celery_app import monitor_primary_cluster_health
 
         # Set environment variables for HPC validation
-        with patch.dict('os.environ', {
-            'NFM_HPC_PRIMARY_HOST': 'test.example.com',
-            'NFM_HPC_PRIMARY_USER': 'testuser',
-            'NFM_HPC_PRIMARY_SSH_KEY_PATH': '/tmp/test_key'
-        }):
+        with patch.dict(
+            "os.environ",
+            {
+                "NFM_HPC_PRIMARY_HOST": "test.example.com",
+                "NFM_HPC_PRIMARY_USER": "testuser",
+                "NFM_HPC_PRIMARY_SSH_KEY_PATH": "/tmp/test_key",
+            },
+        ):
             # Patch _validate_hpc_environment to skip SSH key file check
-            with patch('nfm_db.services.celery_app._validate_hpc_environment'):
+            with patch("nfm_db.services.celery_app._validate_hpc_environment"):
                 # Patch HPCOrchestrator where it's imported inside the monitor function
-                with patch('nfm_db.services.hpc_orchestration.HPCOrchestrator') as mock_orchestrator_class:
+                with patch(
+                    "nfm_db.services.hpc_orchestration.HPCOrchestrator"
+                ) as mock_orchestrator_class:
                     mock_orchestrator = MagicMock()
                     mock_orchestrator_class.return_value = mock_orchestrator
 
-                    with patch.object(mock_orchestrator, 'check_primary_health', return_value=True):
+                    with patch.object(mock_orchestrator, "check_primary_health", return_value=True):
                         # Mock other methods
                         mock_orchestrator.should_trigger_failover = Mock(return_value=False)
                         mock_orchestrator.primary_healthy = True
@@ -61,7 +68,7 @@ class TestCeleryBeatMonitoring:
 
                         # Verify health check was called
                         mock_orchestrator.check_primary_health.assert_called_once()
-                        assert result['status'] == 'success'
+                        assert result["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_monitor_task_triggers_failover_after_threshold(self):
@@ -74,33 +81,47 @@ class TestCeleryBeatMonitoring:
         from nfm_db.services.celery_app import monitor_primary_cluster_health
 
         # Set environment variables for HPC validation
-        with patch.dict('os.environ', {
-            'NFM_HPC_PRIMARY_HOST': 'test.example.com',
-            'NFM_HPC_PRIMARY_USER': 'testuser',
-            'NFM_HPC_PRIMARY_SSH_KEY_PATH': '/tmp/test_key'
-        }):
+        with patch.dict(
+            "os.environ",
+            {
+                "NFM_HPC_PRIMARY_HOST": "test.example.com",
+                "NFM_HPC_PRIMARY_USER": "testuser",
+                "NFM_HPC_PRIMARY_SSH_KEY_PATH": "/tmp/test_key",
+            },
+        ):
             # Patch _validate_hpc_environment to skip SSH key file check
-            with patch('nfm_db.services.celery_app._validate_hpc_environment'):
+            with patch("nfm_db.services.celery_app._validate_hpc_environment"):
                 # Patch HPCOrchestrator where it's imported
-                with patch('nfm_db.services.hpc_orchestration.HPCOrchestrator') as mock_orchestrator_class:
+                with patch(
+                    "nfm_db.services.hpc_orchestration.HPCOrchestrator"
+                ) as mock_orchestrator_class:
                     mock_orchestrator = MagicMock()
                     mock_orchestrator_class.return_value = mock_orchestrator
 
                     # Mock health check to fail (primary down)
-                    with patch.object(mock_orchestrator, 'check_primary_health', return_value=False):
+                    with patch.object(
+                        mock_orchestrator, "check_primary_health", return_value=False
+                    ):
                         # Mock should_trigger_failover to return True (threshold exceeded)
-                        with patch.object(mock_orchestrator, 'should_trigger_failover', return_value=True):
+                        with patch.object(
+                            mock_orchestrator, "should_trigger_failover", return_value=True
+                        ):
                             # Mock trigger_failover to succeed (needs to be async)
                             async def mock_trigger_failover():
                                 return True
-                            with patch.object(mock_orchestrator, 'trigger_failover', side_effect=mock_trigger_failover):
+
+                            with patch.object(
+                                mock_orchestrator,
+                                "trigger_failover",
+                                side_effect=mock_trigger_failover,
+                            ):
                                 mock_orchestrator.current_cluster = "backup"
                                 mock_orchestrator.cleanup = Mock()
 
                                 result = monitor_primary_cluster_health()
 
                                 # Verify failover was triggered
-                                assert result['status'] == 'failover_triggered'
+                                assert result["status"] == "failover_triggered"
 
     def test_monitor_task_recovers_primary(self):
         """Test that monitor task attempts primary recovery when on backup.
@@ -113,14 +134,19 @@ class TestCeleryBeatMonitoring:
         from nfm_db.services.hpc_orchestration import HPCOrchestrator
 
         # Patch Redis functions to avoid connection errors
-        with patch('nfm_db.services.celery_app.increment_failure_count', return_value=0):
-            with patch('nfm_db.services.celery_app.reset_failure_count'):
+        with patch("nfm_db.services.celery_app.increment_failure_count", return_value=0):
+            with patch("nfm_db.services.celery_app.reset_failure_count"):
                 # Patch the methods at the class level
-                with patch.object(HPCOrchestrator, 'check_primary_health', return_value=False):
-                    with patch.object(HPCOrchestrator, 'try_recover_primary', new_callable=AsyncMock, return_value=True):
-                        with patch.object(HPCOrchestrator, 'cleanup'):
+                with patch.object(HPCOrchestrator, "check_primary_health", return_value=False):
+                    with patch.object(
+                        HPCOrchestrator,
+                        "try_recover_primary",
+                        new_callable=AsyncMock,
+                        return_value=True,
+                    ):
+                        with patch.object(HPCOrchestrator, "cleanup"):
                             # Set the attributes that will be checked
-                            with patch.object(HPCOrchestrator, '__init__', return_value=None):
+                            with patch.object(HPCOrchestrator, "__init__", return_value=None):
                                 # Create instance and set attributes
                                 mock_inst = MagicMock(spec=HPCOrchestrator)
                                 mock_inst.current_cluster = "backup"
@@ -129,7 +155,10 @@ class TestCeleryBeatMonitoring:
                                 mock_inst.try_recover_primary = AsyncMock(return_value=True)
                                 mock_inst.cleanup = Mock()
 
-                                with patch('nfm_db.services.hpc_orchestration.HPCOrchestrator', return_value=mock_inst):
+                                with patch(
+                                    "nfm_db.services.hpc_orchestration.HPCOrchestrator",
+                                    return_value=mock_inst,
+                                ):
                                     result = monitor_primary_cluster_health()
 
                                     # Verify result is success (may have error but that's ok for this test)
@@ -149,7 +178,7 @@ class TestRedisFailureCounter:
         from nfm_db.services.celery_app import increment_failure_count
 
         # Mock Redis client returned by _get_redis_client
-        with patch('nfm_db.services.celery_app._get_redis_client') as mock_get_client:
+        with patch("nfm_db.services.celery_app._get_redis_client") as mock_get_client:
             mock_redis = MagicMock()
             mock_get_client.return_value = mock_redis
 
@@ -176,7 +205,7 @@ class TestRedisFailureCounter:
         from nfm_db.services.celery_app import increment_failure_count
 
         # Mock Redis client
-        with patch('nfm_db.services.celery_app._get_redis_client') as mock_get_client:
+        with patch("nfm_db.services.celery_app._get_redis_client") as mock_get_client:
             mock_redis = MagicMock()
             mock_get_client.return_value = mock_redis
 
@@ -200,7 +229,7 @@ class TestRedisFailureCounter:
         from nfm_db.services.celery_app import reset_failure_count
 
         # Mock Redis client
-        with patch('nfm_db.services.celery_app._get_redis_client') as mock_get_client:
+        with patch("nfm_db.services.celery_app._get_redis_client") as mock_get_client:
             mock_redis = MagicMock()
             mock_get_client.return_value = mock_redis
 
@@ -223,15 +252,14 @@ class TestCeleryBeatSchedule:
         from nfm_db.services.celery_app import celery_app, monitor_primary_cluster_health
 
         # Verify the task exists and is callable (required for beat scheduling)
-        assert callable(monitor_primary_cluster_health), \
+        assert callable(monitor_primary_cluster_health), (
             "monitor_primary_cluster_health task must be callable for beat scheduling"
+        )
 
         # Verify celery_app has configuration capability
-        assert hasattr(celery_app, 'conf'), \
-            "Celery app should have configuration"
+        assert hasattr(celery_app, "conf"), "Celery app should have configuration"
 
         # Note: Actual beat_schedule configuration is typically done in
         # deployment config (e.g., /etc/celery/beat.py or supervisor config)
         # The task name 'hpc.monitor_primary_cluster_health' is registered and
         # can be scheduled in production beat configuration.
-

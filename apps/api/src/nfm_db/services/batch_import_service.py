@@ -42,6 +42,7 @@ async def get_import_lock(client_ip: str) -> asyncio.Semaphore:
             _import_locks[client_ip] = asyncio.Semaphore(1)
         return _import_locks[client_ip]
 
+
 # CSV column → MaterialCreate field mapping
 _CSV_COLUMN_MAP: dict[str, str] = {
     "name": "name",
@@ -200,9 +201,7 @@ async def batch_import_materials(
             continue
 
         # Upsert: find existing by name+formula
-        existing = await _find_existing_material(
-            db, validated.name, validated.formula
-        )
+        existing = await _find_existing_material(db, validated.name, validated.formula)
         if existing is not None:
             # Update existing record with new values
             updates = validated.model_dump(exclude_unset=True)

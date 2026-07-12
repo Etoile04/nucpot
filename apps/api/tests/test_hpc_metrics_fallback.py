@@ -29,6 +29,7 @@ class TestRealPrometheusMetrics:
 
         if PROMETHEUS_AVAILABLE:
             from prometheus_client import Counter
+
             assert isinstance(hpc_job_submissions, Counter)
         else:
             # In fallback path, it should be MockMetric
@@ -41,6 +42,7 @@ class TestRealPrometheusMetrics:
 
         if PROMETHEUS_AVAILABLE:
             from prometheus_client import Histogram
+
             assert isinstance(hpc_job_duration, Histogram)
         else:
             assert hasattr(hpc_job_duration, "observe")
@@ -52,6 +54,7 @@ class TestRealPrometheusMetrics:
 
         if PROMETHEUS_AVAILABLE:
             from prometheus_client import Gauge
+
             assert isinstance(hpc_active_connections, Gauge)
         else:
             assert hasattr(hpc_active_connections, "set")
@@ -68,6 +71,7 @@ class TestRealPrometheusMetrics:
 
         if PROMETHEUS_AVAILABLE:
             from prometheus_client import Counter, Gauge, Histogram
+
             assert isinstance(failover_total, Counter)
             assert isinstance(failover_duration_seconds, Histogram)
             assert isinstance(health_check_success, Gauge)

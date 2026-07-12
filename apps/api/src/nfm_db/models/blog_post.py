@@ -96,8 +96,4 @@ class BlogPostMetadata(TimestampMixin, Base):
         return new_status in valid_transitions.get(self.post_status, [])
 
     def __repr__(self) -> str:
-        return (
-            f"<BlogPostMetadata id={self.id!s} "
-            f"slug={self.slug!r} "
-            f"status={self.status}>"
-        )
+        return f"<BlogPostMetadata id={self.id!s} slug={self.slug!r} status={self.status}>"

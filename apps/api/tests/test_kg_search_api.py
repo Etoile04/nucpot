@@ -73,9 +73,7 @@ class TestKGSearchBasic:
         node = _make_node(label="Test Material")
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search", params={"q": "test", "type": "Material"})
@@ -93,9 +91,7 @@ class TestKGSearchBasic:
         node = _make_node(label="UO2")
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search")
@@ -128,9 +124,7 @@ class TestKGSearchTypeValidation:
     async def test_valid_types_accepted(self, valid_type: str) -> None:
         """All valid node types should be accepted without error."""
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(0, [])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(0, []))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search", params={"type": valid_type})
@@ -156,9 +150,7 @@ class TestKGSearchResponseSchema:
         )
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search")
@@ -189,9 +181,7 @@ class TestKGSearchResponseSchema:
         node = _make_node(source_id=None)
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search")
@@ -207,9 +197,7 @@ class TestKGSearchPagination:
     async def test_custom_limit_and_offset(self) -> None:
         """Custom limit and offset should be reflected in response."""
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(0, [])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(0, []))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search", params={"limit": 50, "offset": 10})
@@ -225,9 +213,7 @@ class TestKGSearchPagination:
         node = _make_node(aliases=None)
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search")
@@ -260,12 +246,15 @@ class TestSemanticQueryBridge:
 
         mock_session = AsyncMock(spec=AsyncSession)
 
-        with patch(
-            "nfm_db.services.lightrag_client.is_lightrag_configured",
-            return_value=True,
-        ), patch(
-            "nfm_db.services.rag_provider.RAGProviderSelector",
-            return_value=mock_selector,
+        with (
+            patch(
+                "nfm_db.services.lightrag_client.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.RAGProviderSelector",
+                return_value=mock_selector,
+            ),
         ):
             client = _make_client(lambda: mock_session)
             resp = client.get("/kg/search", params={"q": "What is UO2?", "mode": "lightrag"})
@@ -282,9 +271,7 @@ class TestSemanticQueryBridge:
         """mode=lightrag should fall back to structured search when not configured."""
         node = _make_node(label="UO2")
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         with patch(
             "nfm_db.services.lightrag_client.is_lightrag_configured",
@@ -304,16 +291,17 @@ class TestSemanticQueryBridge:
         """mode=lightrag should fall back when LightRAG raises an exception."""
         node = _make_node(label="UO2")
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
-        with patch(
-            "nfm_db.services.lightrag_client.is_lightrag_configured",
-            return_value=True,
-        ), patch(
-            "nfm_db.services.rag_provider.RAGProviderSelector",
-            side_effect=RuntimeError("connection refused"),
+        with (
+            patch(
+                "nfm_db.services.lightrag_client.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.RAGProviderSelector",
+                side_effect=RuntimeError("connection refused"),
+            ),
         ):
             client = _make_client(lambda: mock_session)
             resp = client.get("/kg/search", params={"q": "UO2", "mode": "lightrag"})
@@ -328,9 +316,7 @@ class TestSemanticQueryBridge:
     async def test_lightrag_mode_without_query_uses_structured(self) -> None:
         """mode=lightrag without q parameter should use structured search."""
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(0, [])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(0, []))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search", params={"mode": "lightrag"})
@@ -345,9 +331,7 @@ class TestSemanticQueryBridge:
         """mode=structured should behave exactly like the original endpoint."""
         node = _make_node(label="ZrO2")
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=_mock_session_side_effect(1, [node])
-        )
+        mock_session.execute = AsyncMock(side_effect=_mock_session_side_effect(1, [node]))
 
         client = _make_client(lambda: mock_session)
         resp = client.get("/kg/search", params={"q": "ZrO2", "mode": "structured"})

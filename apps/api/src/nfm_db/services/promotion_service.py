@@ -40,8 +40,7 @@ class InvalidTransitionError(Exception):
         self.current = current
         self.target = target
         super().__init__(
-            f"Cannot transition staging record {staging_id} "
-            f"from {current.value} to {target.value}"
+            f"Cannot transition staging record {staging_id} from {current.value} to {target.value}"
         )
 
 

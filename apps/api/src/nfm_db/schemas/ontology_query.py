@@ -30,6 +30,7 @@ def _coerce_aliases(v: Any) -> list[str]:
         return [str(item) for item in v]
     return []
 
+
 UuidStr = Annotated[str, BeforeValidator(_coerce_uuid_to_str)]
 
 AliasesList = Annotated[list[str], BeforeValidator(_coerce_aliases)]

@@ -123,9 +123,7 @@ def serialize_kg_edge(
     """
     lines: list[str] = []
 
-    lines.append(
-        f"[{edge.relation_type}] {source_label} -> {target_label}"
-    )
+    lines.append(f"[{edge.relation_type}] {source_label} -> {target_label}")
 
     # Properties
     props = edge.properties or {}

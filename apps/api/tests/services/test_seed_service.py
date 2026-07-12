@@ -197,9 +197,7 @@ class TestStartBatch:
         assert isinstance(batch_id, str)
 
     @pytest.mark.asyncio
-    async def test_tracks_single_doi_completion(
-        self, mock_extract, mock_mapper
-    ):
+    async def test_tracks_single_doi_completion(self, mock_extract, mock_mapper):
         with (
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -222,9 +220,7 @@ class TestStartBatch:
         assert progress.failed == 0
 
     @pytest.mark.asyncio
-    async def test_tracks_multiple_dois(
-        self, mock_extract, mock_mapper
-    ):
+    async def test_tracks_multiple_dois(self, mock_extract, mock_mapper):
         with (
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -245,9 +241,7 @@ class TestStartBatch:
         assert progress.completed == 3
 
     @pytest.mark.asyncio
-    async def test_extraction_failure_marks_item_failed(
-        self, mock_mapper
-    ):
+    async def test_extraction_failure_marks_item_failed(self, mock_mapper):
         failing_extract = AsyncMock(return_value=[])
         with (
             patch(
@@ -269,9 +263,7 @@ class TestStartBatch:
         assert progress.completed == 0
 
     @pytest.mark.asyncio
-    async def test_mapper_failure_marks_item_failed(
-        self, mock_extract
-    ):
+    async def test_mapper_failure_marks_item_failed(self, mock_extract):
         failing_mapper = AsyncMock(
             map_and_persist=AsyncMock(
                 side_effect=RuntimeError("DB connection lost"),
@@ -297,9 +289,7 @@ class TestStartBatch:
         assert progress.completed == 0
 
     @pytest.mark.asyncio
-    async def test_retries_on_failure_then_succeeds(
-        self, mock_mapper
-    ):
+    async def test_retries_on_failure_then_succeeds(self, mock_mapper):
         """Extraction fails twice, succeeds on third attempt."""
         call_count = 0
 
@@ -339,9 +329,7 @@ class TestStartBatch:
         assert progress.failed == 0
 
     @pytest.mark.asyncio
-    async def test_max_retries_exhausted_marks_failed(
-        self, mock_mapper
-    ):
+    async def test_max_retries_exhausted_marks_failed(self, mock_mapper):
         """Extraction fails all 3 attempts — item marked failed."""
         always_fails = AsyncMock(side_effect=RuntimeError("Persistent error"))
         with (
@@ -385,9 +373,7 @@ class TestGetBatchStatus:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_progress_after_batch_starts(
-        self, mock_extract, mock_mapper
-    ):
+    async def test_returns_progress_after_batch_starts(self, mock_extract, mock_mapper):
         with (
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",

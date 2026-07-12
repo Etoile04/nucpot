@@ -90,11 +90,7 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
 def _build_progress(status: JobStatus) -> V4JobProgress:
     """Build the V4JobProgress from the current job status."""
     status_value = status.value
-    current_idx = (
-        _ORDERED_STEPS.index(status_value)
-        if status_value in _ORDERED_STEPS
-        else 0
-    )
+    current_idx = _ORDERED_STEPS.index(status_value) if status_value in _ORDERED_STEPS else 0
     return V4JobProgress(
         current_step=status_value,
         steps_completed=_ORDERED_STEPS[:current_idx],
@@ -117,11 +113,7 @@ def _to_v4_property(
     if conditions is None:
         # Build conditions from flat temperature/pressure/method fields
         flat_keys = ("temperature", "pressure", "method")
-        flat_vals = {
-            k: str(v)
-            for k, v in prop.items()
-            if k in flat_keys and v is not None
-        }
+        flat_vals = {k: str(v) for k, v in prop.items() if k in flat_keys and v is not None}
         conditions = flat_vals if flat_vals else None
 
     return V4PropertyResponse(
@@ -167,9 +159,7 @@ async def _get_job_properties(
 
     batch_uuid = uuid.UUID(job.fill_batch_id)
     result = await session.execute(
-        select(RefGapFillStaging).where(
-            RefGapFillStaging.fill_batch_id == batch_uuid
-        )
+        select(RefGapFillStaging).where(RefGapFillStaging.fill_batch_id == batch_uuid)
     )
     rows = result.scalars().all()
 
@@ -356,24 +346,18 @@ async def get_extraction_result(
     raw_properties = await _get_job_properties(job_id, session)
 
     if confidence is not None:
-        raw_properties = [
-            p for p in raw_properties if p.get("confidence") == confidence
-        ]
+        raw_properties = [p for p in raw_properties if p.get("confidence") == confidence]
 
     if property_category is not None:
         raw_properties = [
-            p
-            for p in raw_properties
-            if p.get("property_category") == property_category
+            p for p in raw_properties if p.get("property_category") == property_category
         ]
 
     total = len(raw_properties)
     start = (page - 1) * limit
     page_properties = raw_properties[start : start + limit]
 
-    properties = [
-        _to_v4_property(p, job_id=job_id) for p in page_properties
-    ]
+    properties = [_to_v4_property(p, job_id=job_id) for p in page_properties]
 
     return JSONResponse(
         content={
@@ -418,8 +402,7 @@ async def browse_properties(
     if sort_by not in VALID_SORT_FIELDS:
         return _error_response(
             400,
-            f"Invalid sort_by '{sort_by}'. "
-            f"Must be one of: {', '.join(sorted(VALID_SORT_FIELDS))}",
+            f"Invalid sort_by '{sort_by}'. Must be one of: {', '.join(sorted(VALID_SORT_FIELDS))}",
         )
     if sort_order not in VALID_SORT_ORDERS:
         return _error_response(
@@ -448,15 +431,9 @@ async def browse_properties(
     if phase is not None:
         filtered = [p for p in filtered if p.get("phase") == phase]
     if property_category is not None:
-        filtered = [
-            p
-            for p in filtered
-            if p.get("property_category") == property_category
-        ]
+        filtered = [p for p in filtered if p.get("property_category") == property_category]
     if staging_status is not None:
-        filtered = [
-            p for p in filtered if p.get("staging_status") == staging_status
-        ]
+        filtered = [p for p in filtered if p.get("staging_status") == staging_status]
     if temperature_min is not None:
         filtered = [
             p
@@ -539,9 +516,7 @@ async def validate_extraction(
     total_properties = len(raw_properties)
 
     high_count = sum(1 for p in raw_properties if p.get("confidence") == "high")
-    medium_count = sum(
-        1 for p in raw_properties if p.get("confidence") == "medium"
-    )
+    medium_count = sum(1 for p in raw_properties if p.get("confidence") == "medium")
     low_count = sum(1 for p in raw_properties if p.get("confidence") == "low")
 
     auto_approved = high_count if auto_approve else 0
@@ -583,14 +558,10 @@ async def list_material_systems(
     systems = _build_material_systems_index()
 
     if has_pending_review:
-        systems = [
-            s for s in systems if s.get("pending_review_count", 0) > 0
-        ]
+        systems = [s for s in systems if s.get("pending_review_count", 0) > 0]
 
     if category is not None:
-        systems = [
-            s for s in systems if category in s.get("categories", [])
-        ]
+        systems = [s for s in systems if category in s.get("categories", [])]
 
     summaries = [
         V4MaterialSystemSummary(
@@ -598,9 +569,7 @@ async def list_material_systems(
             display_name=s.get("display_name", s["name"]),
             total_properties=s.get("total_properties", 0),
             categories=s.get("categories", []),
-            confidence_summary=V4ConfidenceSummary(
-                **s.get("confidence_summary", {})
-            ),
+            confidence_summary=V4ConfidenceSummary(**s.get("confidence_summary", {})),
             pending_review_count=s.get("pending_review_count", 0),
             last_extraction_at=s.get("last_extraction_at"),
         ).model_dump(mode="json")

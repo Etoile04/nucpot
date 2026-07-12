@@ -98,16 +98,12 @@ def _validate_json_schema(
     """
     schema_type = schema.get("type")
     if schema_type == "object" and not isinstance(data, dict):
-        raise ValueError(
-            f"Schema validation failed: expected object, got {type(data).__name__}"
-        )
+        raise ValueError(f"Schema validation failed: expected object, got {type(data).__name__}")
 
     required = schema.get("required", [])
     for field in required:
         if field not in data:
-            raise ValueError(
-                f"Schema validation failed: missing required field '{field}'"
-            )
+            raise ValueError(f"Schema validation failed: missing required field '{field}'")
 
     properties = schema.get("properties", {})
     for key, prop_schema in properties.items():
@@ -215,9 +211,7 @@ class LLMClient:
             raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
 
         if not isinstance(data, dict):
-            raise ValueError(
-                f"LLM returned non-dict JSON: {type(data).__name__}"
-            )
+            raise ValueError(f"LLM returned non-dict JSON: {type(data).__name__}")
 
         # Schema validation
         _validate_json_schema(data, schema)
@@ -255,10 +249,7 @@ class LLMClient:
                 )
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
-                is_retryable = (
-                    exc.response.status_code >= 500
-                    or exc.response.status_code == 429
-                )
+                is_retryable = exc.response.status_code >= 500 or exc.response.status_code == 429
                 if not is_retryable or attempt == self.max_retries:
                     raise
                 backoff = _BASE_BACKOFF * (2 ** (attempt - 1))
@@ -406,7 +397,7 @@ def _strip_code_fences(text: str) -> str:
     if stripped.startswith("```"):
         first_newline = stripped.find("\n")
         if first_newline != -1:
-            stripped = stripped[first_newline + 1:]
+            stripped = stripped[first_newline + 1 :]
         if stripped.endswith("```"):
             stripped = stripped[:-3].rstrip()
     return stripped

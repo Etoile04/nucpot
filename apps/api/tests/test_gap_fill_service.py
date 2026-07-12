@@ -67,7 +67,8 @@ class TestQueryCache:
 
     @pytest.mark.asyncio
     async def test_lattice_constant_returns_two_values(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """lattice_constant returns 2 values (DFT + EXP)."""
         svc = GapFillService(db_session)
@@ -88,7 +89,8 @@ class TestQueryCache:
 
     @pytest.mark.asyncio
     async def test_bulk_modulus_returns_one_value(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """bulk_modulus returns 1 value."""
         svc = GapFillService(db_session)
@@ -105,7 +107,8 @@ class TestQueryCache:
 
     @pytest.mark.asyncio
     async def test_thermal_conductivity_returns_one_value(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """thermal_conductivity returns 1 value."""
         svc = GapFillService(db_session)
@@ -122,7 +125,8 @@ class TestQueryCache:
 
     @pytest.mark.asyncio
     async def test_unknown_property_returns_empty(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Unknown property returns empty list."""
         svc = GapFillService(db_session)
@@ -168,7 +172,8 @@ class TestFillGapDryRun:
 
     @pytest.mark.asyncio
     async def test_dry_run_unknown_property(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Dry run with unknown property → values_found=0, staged=0."""
         svc = GapFillService(db_session)
@@ -227,7 +232,8 @@ class TestFillGapDuplicate:
 
     @pytest.mark.asyncio
     async def test_duplicate_items_have_duplicate_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Items with DUPLICATE gate decision get status='duplicate'."""
         dup_result = _make_gate_result(decision=GateDecision.DUPLICATE)
@@ -257,7 +263,8 @@ class TestFillGapRejected:
 
     @pytest.mark.asyncio
     async def test_rejected_items_have_rejected_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Items rejected by gate get status='rejected'."""
         rejected_result = _make_gate_result(

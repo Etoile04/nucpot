@@ -91,6 +91,7 @@ class TestMockMetricClass:
 
         def _make_mock_metric_class() -> type:
             """Create a MockMetric matching the module definition."""
+
             class MockMetric:
                 """Mock Prometheus metric for graceful degradation."""
 

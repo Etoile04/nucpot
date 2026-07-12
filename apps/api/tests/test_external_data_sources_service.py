@@ -208,7 +208,9 @@ class TestExternalDataSourceClient:
     """Tests for the main external data source client."""
 
     @pytest.mark.asyncio
-    async def test_query_nist_ipr_returns_placeholder(self, clean_cache, clean_rate_limiters) -> None:
+    async def test_query_nist_ipr_returns_placeholder(
+        self, clean_cache, clean_rate_limiters
+    ) -> None:
         """NIST IPR query returns placeholder structure (no real API)."""
         client = ExternalDataSourceClient(timeout=5.0)
         try:
@@ -222,7 +224,9 @@ class TestExternalDataSourceClient:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_query_openkim_returns_placeholder(self, clean_cache, clean_rate_limiters) -> None:
+    async def test_query_openkim_returns_placeholder(
+        self, clean_cache, clean_rate_limiters
+    ) -> None:
         """OpenKIM query returns placeholder structure."""
         client = ExternalDataSourceClient(timeout=5.0)
         try:
@@ -235,7 +239,9 @@ class TestExternalDataSourceClient:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_query_materials_project_returns_placeholder(self, clean_cache, clean_rate_limiters) -> None:
+    async def test_query_materials_project_returns_placeholder(
+        self, clean_cache, clean_rate_limiters
+    ) -> None:
         """Materials Project query returns placeholder structure."""
         client = ExternalDataSourceClient(timeout=5.0)
         try:
@@ -334,8 +340,10 @@ class TestExternalDataSourceClient:
         """HTTP 500 returns None."""
         client = ExternalDataSourceClient(timeout=5.0)
         try:
+
             async def _error_query(formula, property_name):
                 import httpx
+
                 raise httpx.HTTPStatusError(
                     "Server Error",
                     request=Request("GET", "http://example.com"),
@@ -358,6 +366,7 @@ class TestExternalDataSourceClient:
         """Unexpected exceptions return None."""
         client = ExternalDataSourceClient(timeout=5.0)
         try:
+
             async def _crash_query(formula, property_name):
                 raise RuntimeError("unexpected error")
 
@@ -373,7 +382,9 @@ class TestExternalDataSourceClient:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_query_result_cached_after_success(self, clean_cache, clean_rate_limiters) -> None:
+    async def test_query_result_cached_after_success(
+        self, clean_cache, clean_rate_limiters
+    ) -> None:
         """Successful query caches the result."""
         client = ExternalDataSourceClient(timeout=5.0)
         try:

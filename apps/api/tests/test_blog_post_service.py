@@ -133,7 +133,9 @@ class TestUpdateMarkdownStatus:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             slug = "test-post"
             file_path = tmp_path / f"{slug}.md"
-            file_path.write_text("---\ntitle: Test\nstatus: draft\n---\nContent here", encoding="utf-8")
+            file_path.write_text(
+                "---\ntitle: Test\nstatus: draft\n---\nContent here", encoding="utf-8"
+            )
 
             update_markdown_status(slug, "under_review")
 
@@ -144,7 +146,9 @@ class TestUpdateMarkdownStatus:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             slug = "test-post-no-status"
             file_path = tmp_path / f"{slug}.md"
-            file_path.write_text("---\ntitle: Test\nsummary: A post\n---\nContent", encoding="utf-8")
+            file_path.write_text(
+                "---\ntitle: Test\nsummary: A post\n---\nContent", encoding="utf-8"
+            )
 
             update_markdown_status(slug, "approved")
 
@@ -272,7 +276,9 @@ class TestListBlogPosts:
     @pytest.fixture
     async def seeded_posts(self, db_session: AsyncSession) -> list[BlogPostMetadata]:
         posts = [
-            BlogPostMetadata(slug=f"post-{i}", title=f"Post {i}", status=status, author_id=AUTHOR_ID)
+            BlogPostMetadata(
+                slug=f"post-{i}", title=f"Post {i}", status=status, author_id=AUTHOR_ID
+            )
             for i, status in enumerate(
                 [PostStatus.DRAFT.value, PostStatus.PUBLISHED.value, PostStatus.DRAFT.value]
             )
@@ -319,30 +325,26 @@ class TestSubmitForReview:
     """Tests for the submit-for-review workflow."""
 
     @pytest.mark.asyncio
-    async def test_submit_draft_to_review(
-        self, db_session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_submit_draft_to_review(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="review-me", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post", slug="review-me", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
         await db_session.flush()
 
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             # Create the markdown file
-            (tmp_path / "review-me.md").write_text("---\nstatus: draft\n---\nBody", encoding="utf-8")
-            result = await submit_for_review(
-                db_session, "review-me", AUTHOR_ID, EDITOR_PERMS
+            (tmp_path / "review-me.md").write_text(
+                "---\nstatus: draft\n---\nBody", encoding="utf-8"
             )
+            result = await submit_for_review(db_session, "review-me", AUTHOR_ID, EDITOR_PERMS)
 
         assert result.status == PostStatus.UNDER_REVIEW.value
 
     @pytest.mark.asyncio
     async def test_submit_rejects_non_owner(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="not-mine", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post", slug="not-mine", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
         await db_session.flush()
@@ -354,8 +356,7 @@ class TestSubmitForReview:
     @pytest.mark.asyncio
     async def test_submit_rejects_missing_permission(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="no-perm", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post", slug="no-perm", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
         await db_session.flush()
@@ -375,14 +376,18 @@ class TestApprovePost:
     @pytest.mark.asyncio
     async def test_approve_under_review(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="approve-me", status=PostStatus.UNDER_REVIEW.value, author_id=AUTHOR_ID
+            title="Test Post",
+            slug="approve-me",
+            status=PostStatus.UNDER_REVIEW.value,
+            author_id=AUTHOR_ID,
         )
         db_session.add(post)
         await db_session.flush()
 
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
-            (tmp_path / "approve-me.md").write_text("---\nstatus: under_review\n---\nBody", encoding="utf-8")
+            (tmp_path / "approve-me.md").write_text(
+                "---\nstatus: under_review\n---\nBody", encoding="utf-8"
+            )
             result = await approve_post(db_session, "approve-me", REVIEWER_ID, REVIEWER_PERMS)
 
         assert result.status == PostStatus.APPROVED.value
@@ -392,8 +397,7 @@ class TestApprovePost:
     @pytest.mark.asyncio
     async def test_approve_invalid_transition(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="draft-post", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post", slug="draft-post", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
         await db_session.flush()
@@ -404,8 +408,10 @@ class TestApprovePost:
     @pytest.mark.asyncio
     async def test_approve_missing_permission(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="no-perm-approve", status=PostStatus.UNDER_REVIEW.value, author_id=AUTHOR_ID
+            title="Test Post",
+            slug="no-perm-approve",
+            status=PostStatus.UNDER_REVIEW.value,
+            author_id=AUTHOR_ID,
         )
         db_session.add(post)
         await db_session.flush()
@@ -420,14 +426,18 @@ class TestRejectPost:
     @pytest.mark.asyncio
     async def test_reject_under_review(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="reject-me", status=PostStatus.UNDER_REVIEW.value, author_id=AUTHOR_ID
+            title="Test Post",
+            slug="reject-me",
+            status=PostStatus.UNDER_REVIEW.value,
+            author_id=AUTHOR_ID,
         )
         db_session.add(post)
         await db_session.flush()
 
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
-            (tmp_path / "reject-me.md").write_text("---\nstatus: under_review\n---\nBody", encoding="utf-8")
+            (tmp_path / "reject-me.md").write_text(
+                "---\nstatus: under_review\n---\nBody", encoding="utf-8"
+            )
             result = await reject_post(
                 db_session, "reject-me", REVIEWER_ID, "Not rigorous enough", REVIEWER_PERMS
             )
@@ -443,14 +453,18 @@ class TestPublishPost:
     @pytest.mark.asyncio
     async def test_publish_approved(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="publish-me", status=PostStatus.APPROVED.value, author_id=AUTHOR_ID
+            title="Test Post",
+            slug="publish-me",
+            status=PostStatus.APPROVED.value,
+            author_id=AUTHOR_ID,
         )
         db_session.add(post)
         await db_session.flush()
 
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
-            (tmp_path / "publish-me.md").write_text("---\nstatus: approved\n---\nBody", encoding="utf-8")
+            (tmp_path / "publish-me.md").write_text(
+                "---\nstatus: approved\n---\nBody", encoding="utf-8"
+            )
             result = await publish_post(db_session, "publish-me", {"publish_post"})
 
         assert result.status == PostStatus.PUBLISHED.value
@@ -459,8 +473,10 @@ class TestPublishPost:
     @pytest.mark.asyncio
     async def test_publish_invalid_from_draft(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="cant-publish", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post",
+            slug="cant-publish",
+            status=PostStatus.DRAFT.value,
+            author_id=AUTHOR_ID,
         )
         db_session.add(post)
         await db_session.flush()
@@ -478,12 +494,9 @@ class TestDeleteBlogPost:
     """Tests for blog post deletion."""
 
     @pytest.mark.asyncio
-    async def test_delete_removes_record(
-        self, db_session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_delete_removes_record(self, db_session: AsyncSession, tmp_path: Path) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="delete-me", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post", slug="delete-me", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
         )
         db_session.add(post)
         await db_session.flush()
@@ -501,8 +514,10 @@ class TestDeleteBlogPost:
     @pytest.mark.asyncio
     async def test_delete_rejects_non_owner(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
-            slug="not-mine-del", status=PostStatus.DRAFT.value, author_id=AUTHOR_ID
+            title="Test Post",
+            slug="not-mine-del",
+            status=PostStatus.DRAFT.value,
+            author_id=AUTHOR_ID,
         )
         db_session.add(post)
         await db_session.flush()
@@ -592,6 +607,7 @@ class TestFullWorkflow:
             PostStatus(metadata.status)
             # Rejected → Draft is valid
             from nfm_db.core.blog_state import can_transition
+
             assert can_transition(PostStatus.REJECTED, PostStatus.DRAFT)
 
 
@@ -640,9 +656,7 @@ class TestUpdateBlogPost:
     """Tests for in-place blog post update."""
 
     @pytest.mark.asyncio
-    async def test_update_title_only(
-        self, db_session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_update_title_only(self, db_session: AsyncSession, tmp_path: Path) -> None:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             _, slug = await create_blog_post(
                 session=db_session,
@@ -667,9 +681,7 @@ class TestUpdateBlogPost:
             assert "title: Updated Title" in content
 
     @pytest.mark.asyncio
-    async def test_update_content_only(
-        self, db_session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_update_content_only(self, db_session: AsyncSession, tmp_path: Path) -> None:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             _, slug = await create_blog_post(
                 session=db_session,
@@ -694,9 +706,7 @@ class TestUpdateBlogPost:
             assert "title: Title" in raw
 
     @pytest.mark.asyncio
-    async def test_update_all_fields(
-        self, db_session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_update_all_fields(self, db_session: AsyncSession, tmp_path: Path) -> None:
         with patch("nfm_db.services.blog_post.get_content_dir", return_value=tmp_path):
             _, slug = await create_blog_post(
                 session=db_session,

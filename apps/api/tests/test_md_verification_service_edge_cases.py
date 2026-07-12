@@ -98,26 +98,30 @@ class TestServiceDictInput:
     async def test_create_hpc_job_from_dict(self, db_session: AsyncSession) -> None:
         # First create a verification job
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={"temp": 300}
-        ))
-        hpc = await svc.create_hpc_job({
-            "verification_job_id": job.id,
-            "hpc_cluster": "cluster1",
-        })
+        job = await svc.create_job(
+            MDVerificationJobCreate(potential_id="UO2", element_system="UO2", config={"temp": 300})
+        )
+        hpc = await svc.create_hpc_job(
+            {
+                "verification_job_id": job.id,
+                "hpc_cluster": "cluster1",
+            }
+        )
         assert hpc.hpc_cluster == "cluster1"
 
     @pytest.mark.asyncio
     async def test_create_fitting_from_dict(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}
-        ))
-        fitting = await svc.create_fitting_result({
-            "verification_job_id": job.id,
-            "fitting_method": "arc-dpa",
-            "parameters": {"a": 1.0},
-        })
+        job = await svc.create_job(
+            MDVerificationJobCreate(potential_id="UO2", element_system="UO2", config={})
+        )
+        fitting = await svc.create_fitting_result(
+            {
+                "verification_job_id": job.id,
+                "fitting_method": "arc-dpa",
+                "parameters": {"a": 1.0},
+            }
+        )
         assert fitting.fitting_method == FittingMethod.ARC_DPA
 
 
@@ -132,18 +136,22 @@ class TestGetJobOwnerFilter:
     @pytest.mark.asyncio
     async def test_get_job_with_wrong_owner_returns_none(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(
+                potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
+            )
+        )
         result = await svc.get_job(job.id, owner_id=_OWNER_ID_B)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_get_job_with_correct_owner_returns_job(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(
+                potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
+            )
+        )
         result = await svc.get_job(job.id, owner_id=_OWNER_ID_A)
         assert result is not None
         assert result.owner_id == _OWNER_ID_A
@@ -151,9 +159,11 @@ class TestGetJobOwnerFilter:
     @pytest.mark.asyncio
     async def test_get_job_without_owner_returns_any(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(
+                potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
+            )
+        )
         result = await svc.get_job(job.id)
         assert result is not None
 
@@ -169,12 +179,16 @@ class TestListJobsOwnerFilter:
     @pytest.mark.asyncio
     async def test_list_jobs_by_owner(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        await svc.create_job(MDVerificationJobCreate(
-            potential_id="A", element_system="A", config={}, owner_id=_OWNER_ID_A
-        ))
-        await svc.create_job(MDVerificationJobCreate(
-            potential_id="B", element_system="B", config={}, owner_id=_OWNER_ID_B
-        ))
+        await svc.create_job(
+            MDVerificationJobCreate(
+                potential_id="A", element_system="A", config={}, owner_id=_OWNER_ID_A
+            )
+        )
+        await svc.create_job(
+            MDVerificationJobCreate(
+                potential_id="B", element_system="B", config={}, owner_id=_OWNER_ID_B
+            )
+        )
         results = await svc.list_jobs(owner_id=_OWNER_ID_A)
         assert len(results) == 1
         assert results[0].potential_id == "A"
@@ -189,11 +203,13 @@ class TestUpdateJobNoOp:
     """Tests for update_job when all values are None."""
 
     @pytest.mark.asyncio
-    async def test_update_job_with_all_none_returns_existing(self, db_session: AsyncSession) -> None:
+    async def test_update_job_with_all_none_returns_existing(
+        self, db_session: AsyncSession
+    ) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={"temp": 300}
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(potential_id="UO2", element_system="UO2", config={"temp": 300})
+        )
         result = await svc.update_job(job.id, MDVerificationJobUpdate())
         assert result is not None
         assert result.id == job.id
@@ -230,7 +246,9 @@ class TestUpdateSimulationResultNotFound:
     """Tests for simulation result update when not found."""
 
     @pytest.mark.asyncio
-    async def test_update_nonexistent_sim_result_returns_none(self, db_session: AsyncSession) -> None:
+    async def test_update_nonexistent_sim_result_returns_none(
+        self, db_session: AsyncSession
+    ) -> None:
         svc = MDVerificationService(db_session)
         result = await svc.update_simulation_result(
             uuid.uuid4(),
@@ -250,15 +268,17 @@ class TestUpdateDefectResultFieldMapping:
     @pytest.mark.asyncio
     async def test_defect_update_maps_metadata_to_column(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}
-        ))
-        await svc.create_defect_result(DefectAnalysisResultCreate(
-            verification_job_id=job.id,
-            defect_type=DefectType.VACANCY,
-            concentration=0.01,
-            metadata={},
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(potential_id="UO2", element_system="UO2", config={})
+        )
+        await svc.create_defect_result(
+            DefectAnalysisResultCreate(
+                verification_job_id=job.id,
+                defect_type=DefectType.VACANCY,
+                concentration=0.01,
+                metadata={},
+            )
+        )
         defects = await svc.list_defect_results(verification_job_id=job.id)
         assert len(defects) == 1
 
@@ -281,14 +301,16 @@ class TestUpdateFittingResultNoOp:
     @pytest.mark.asyncio
     async def test_update_fitting_all_none_returns_existing(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}
-        ))
-        fitting = await svc.create_fitting_result(PotentialFittingResultCreate(
-            verification_job_id=job.id,
-            fitting_method=FittingMethod.ARC_DPA,
-            parameters={"a": 1.0, "b": 2.0},
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(potential_id="UO2", element_system="UO2", config={})
+        )
+        fitting = await svc.create_fitting_result(
+            PotentialFittingResultCreate(
+                verification_job_id=job.id,
+                fitting_method=FittingMethod.ARC_DPA,
+                parameters={"a": 1.0, "b": 2.0},
+            )
+        )
         result = await svc.update_fitting_result(fitting.id, PotentialFittingResultUpdate())
         assert result is not None
         assert result.parameters == {"a": 1.0, "b": 2.0}
@@ -305,9 +327,9 @@ class TestGetJobWithResultsEmpty:
     @pytest.mark.asyncio
     async def test_job_with_results_no_hpc_jobs(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
-        job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}
-        ))
+        job = await svc.create_job(
+            MDVerificationJobCreate(potential_id="UO2", element_system="UO2", config={})
+        )
         result = await svc.get_job_with_results(job.id)
         assert result is not None
         assert result["hpc_jobs"] == []

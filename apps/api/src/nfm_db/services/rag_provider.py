@@ -215,19 +215,20 @@ class RuleBasedFallbackProvider(RAGProvider):
         references: list[dict[str, Any]] = []
         snippets: list[str] = []
         for row in rows:
-            references.append({
-                "source_type": row.get("source_type", ""),
-                "source_id": str(row.get("source_id", "")),
-                "score": float(row.get("rank", 0)),
-            })
+            references.append(
+                {
+                    "source_type": row.get("source_type", ""),
+                    "source_id": str(row.get("source_id", "")),
+                    "score": float(row.get("rank", 0)),
+                }
+            )
             snippet = row.get("snippet_text", "")
             if snippet:
                 snippets.append(snippet[:500])
 
         response = (
             f"Rule-based fallback: found {len(rows)} relevant results "
-            f"for query '{query}'.\n\n"
-            + "\n---\n".join(snippets)
+            f"for query '{query}'.\n\n" + "\n---\n".join(snippets)
             if snippets
             else f"No results found for query '{query}'."
         )

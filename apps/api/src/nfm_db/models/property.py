@@ -170,19 +170,23 @@ class PropertyMeasurement(TimestampMixin, Base):
         index=True,
     )
     value_scalar: Mapped[float | None] = mapped_column(
-        Numeric(16, 6), nullable=True,
+        Numeric(16, 6),
+        nullable=True,
     )
     value_min: Mapped[float | None] = mapped_column(
-        Numeric(16, 6), nullable=True,
+        Numeric(16, 6),
+        nullable=True,
     )
     value_max: Mapped[float | None] = mapped_column(
-        Numeric(16, 6), nullable=True,
+        Numeric(16, 6),
+        nullable=True,
     )
     value_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     value_list: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
-        Numeric(16, 6), nullable=True,
+        Numeric(16, 6),
+        nullable=True,
     )
     unit_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("units.id", ondelete="SET NULL"),
@@ -214,9 +218,7 @@ class MeasurementCondition(TimestampMixin, Base):
     """Experimental conditions for a measurement (T, P, environment, etc.)."""
 
     __tablename__ = "measurement_conditions"
-    __table_args__ = (
-        Index("idx_mc_measurement", "measurement_id"),
-    )
+    __table_args__ = (Index("idx_mc_measurement", "measurement_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
@@ -227,14 +229,17 @@ class MeasurementCondition(TimestampMixin, Base):
         index=True,
     )
     temperature: Mapped[float | None] = mapped_column(
-        Numeric(10, 2), nullable=True,
+        Numeric(10, 2),
+        nullable=True,
     )
     pressure: Mapped[float | None] = mapped_column(
-        Numeric(10, 2), nullable=True,
+        Numeric(10, 2),
+        nullable=True,
     )
     environment: Mapped[str | None] = mapped_column(String(200), nullable=True)
     irradiation_dose: Mapped[float | None] = mapped_column(
-        Numeric(16, 6), nullable=True,
+        Numeric(16, 6),
+        nullable=True,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -244,7 +249,4 @@ class MeasurementCondition(TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<MeasurementCondition id={self.id!s} "
-            f"measurement={self.measurement_id!s}>"
-        )
+        return f"<MeasurementCondition id={self.id!s} measurement={self.measurement_id!s}>"

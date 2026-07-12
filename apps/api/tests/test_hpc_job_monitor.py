@@ -128,9 +128,7 @@ class TestExecuteSqueue:
         result = await execute_squeue(ssh_manager, "slurm-12345")
 
         assert result == "RUNNING test-job"
-        mock_client.exec_command.assert_called_once_with(
-            "squeue -j 12345 -o '%T %j'"
-        )
+        mock_client.exec_command.assert_called_once_with("squeue -j 12345 -o '%T %j'")
         ssh_manager.release_connection.assert_called_once_with(mock_client)
 
     @pytest.mark.unit
@@ -262,13 +260,9 @@ class TestCheckJobCompletion:
 
         mock_sftp = MagicMock()
         mock_sftp.stat.side_effect = [
-            _make_sftp_stat(
-                "$SCRATCH/nfm-md/task-001/lammps.out", size=1024
-            ),
+            _make_sftp_stat("$SCRATCH/nfm-md/task-001/lammps.out", size=1024),
         ]
-        mock_sftp.stat = _make_sftp_stat(
-            "$SCRATCH/nfm-md/task-001/lammps.out", size=1024
-        )
+        mock_sftp.stat = _make_sftp_stat("$SCRATCH/nfm-md/task-001/lammps.out", size=1024)
         mock_client.open_sftp.return_value = mock_sftp
 
         result = await check_job_completion(ssh_manager, "task-001")
@@ -396,9 +390,7 @@ class TestPollJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_returns_running_when_squeue_has_running(
-        self, ssh_manager: MagicMock
-    ) -> None:
+    async def test_returns_running_when_squeue_has_running(self, ssh_manager: MagicMock) -> None:
         with patch(
             "nfm_db.services.hpc_job_monitor.execute_squeue",
             new_callable=AsyncMock,
@@ -411,9 +403,7 @@ class TestPollJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_returns_pending_when_squeue_has_pending(
-        self, ssh_manager: MagicMock
-    ) -> None:
+    async def test_returns_pending_when_squeue_has_pending(self, ssh_manager: MagicMock) -> None:
         with patch(
             "nfm_db.services.hpc_job_monitor.execute_squeue",
             new_callable=AsyncMock,
@@ -429,15 +419,18 @@ class TestPollJobStatus:
     async def test_returns_completed_when_job_gone_and_output_exists(
         self, ssh_manager: MagicMock
     ) -> None:
-        with patch(
-            "nfm_db.services.hpc_job_monitor.execute_squeue",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.check_job_completion",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_check:
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.check_job_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_check,
+        ):
             result = await poll_job_status(ssh_manager, "slurm-12345")
 
         assert result == "COMPLETED"
@@ -445,18 +438,19 @@ class TestPollJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_returns_failed_when_job_gone_and_no_output(
-        self, ssh_manager: MagicMock
-    ) -> None:
-        with patch(
-            "nfm_db.services.hpc_job_monitor.execute_squeue",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.check_job_completion",
-            new_callable=AsyncMock,
-            return_value=False,
-        ) as mock_check:
+    async def test_returns_failed_when_job_gone_and_no_output(self, ssh_manager: MagicMock) -> None:
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.check_job_completion",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_check,
+        ):
             result = await poll_job_status(ssh_manager, "slurm-12345")
 
         assert result == "FAILED"
@@ -464,9 +458,7 @@ class TestPollJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_returns_failed_on_unknown_squeue_output(
-        self, ssh_manager: MagicMock
-    ) -> None:
+    async def test_returns_failed_on_unknown_squeue_output(self, ssh_manager: MagicMock) -> None:
         with patch(
             "nfm_db.services.hpc_job_monitor.execute_squeue",
             new_callable=AsyncMock,
@@ -478,9 +470,7 @@ class TestPollJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_returns_failed_on_general_exception(
-        self, ssh_manager: MagicMock
-    ) -> None:
+    async def test_returns_failed_on_general_exception(self, ssh_manager: MagicMock) -> None:
         with patch(
             "nfm_db.services.hpc_job_monitor.execute_squeue",
             new_callable=AsyncMock,
@@ -492,18 +482,19 @@ class TestPollJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_extracts_task_id_from_hpc_job_id(
-        self, ssh_manager: MagicMock
-    ) -> None:
-        with patch(
-            "nfm_db.services.hpc_job_monitor.execute_squeue",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.check_job_completion",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_check:
+    async def test_extracts_task_id_from_hpc_job_id(self, ssh_manager: MagicMock) -> None:
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.execute_squeue",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.check_job_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_check,
+        ):
             await poll_job_status(ssh_manager, "slurm-98765")
 
         mock_check.assert_called_once_with(ssh_manager, "98765")
@@ -535,13 +526,16 @@ class TestUpdateJobStatus:
 
         db_gen = _mock_db_gen(mock_db_session)
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.poll_job_status",
-            new_callable=AsyncMock,
-            return_value="RUNNING",
-        ), patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.poll_job_status",
+                new_callable=AsyncMock,
+                return_value="RUNNING",
+            ),
+            patch(
+                _DB_PATCH_TARGET,
+                return_value=db_gen,
+            ),
         ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
 
@@ -565,13 +559,16 @@ class TestUpdateJobStatus:
 
         db_gen = _mock_db_gen(mock_db_session)
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.poll_job_status",
-            new_callable=AsyncMock,
-            return_value="COMPLETED",
-        ), patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.poll_job_status",
+                new_callable=AsyncMock,
+                return_value="COMPLETED",
+            ),
+            patch(
+                _DB_PATCH_TARGET,
+                return_value=db_gen,
+            ),
         ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
 
@@ -590,31 +587,36 @@ class TestUpdateJobStatus:
 
         db_gen = _mock_db_gen(mock_db_session)
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.poll_job_status",
-            new_callable=AsyncMock,
-            return_value="FAILED",
-        ), patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
-        ), pytest.raises(RuntimeError, match="DB error"):
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.poll_job_status",
+                new_callable=AsyncMock,
+                return_value="FAILED",
+            ),
+            patch(
+                _DB_PATCH_TARGET,
+                return_value=db_gen,
+            ),
+            pytest.raises(RuntimeError, match="DB error"),
+        ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
 
         mock_db_session.rollback.assert_called_once()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_general_exception_is_raised(
-        self, ssh_manager: MagicMock
-    ) -> None:
+    async def test_general_exception_is_raised(self, ssh_manager: MagicMock) -> None:
         task_id = "a0000000-0000-0000-0000-000000000001"
         hpc_job_id = "slurm-12345"
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.poll_job_status",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("poll failed"),
-        ), pytest.raises(RuntimeError, match="poll failed"):
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.poll_job_status",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("poll failed"),
+            ),
+            pytest.raises(RuntimeError, match="poll failed"),
+        ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
 
     @pytest.mark.unit
@@ -632,13 +634,16 @@ class TestUpdateJobStatus:
 
         db_gen = _mock_db_gen(mock_db_session)
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.poll_job_status",
-            new_callable=AsyncMock,
-            return_value="RUNNING",
-        ), patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.poll_job_status",
+                new_callable=AsyncMock,
+                return_value="RUNNING",
+            ),
+            patch(
+                _DB_PATCH_TARGET,
+                return_value=db_gen,
+            ),
         ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
 
@@ -677,13 +682,9 @@ class TestGetActiveJobs:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_active_jobs(
-        self, mock_db_session: AsyncMock
-    ) -> None:
+    async def test_returns_empty_list_when_no_active_jobs(self, mock_db_session: AsyncMock) -> None:
         mock_db_session.execute = AsyncMock(
-            return_value=SimpleNamespace(
-                scalars=lambda: SimpleNamespace(all=lambda: [])
-            )
+            return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
         )
 
         db_gen = _mock_db_gen(mock_db_session)
@@ -698,30 +699,25 @@ class TestGetActiveJobs:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_database_error_is_propagated(
-        self, mock_db_session: AsyncMock
-    ) -> None:
-        mock_db_session.execute = AsyncMock(
-            side_effect=RuntimeError("connection lost")
-        )
+    async def test_database_error_is_propagated(self, mock_db_session: AsyncMock) -> None:
+        mock_db_session.execute = AsyncMock(side_effect=RuntimeError("connection lost"))
 
         db_gen = _mock_db_gen(mock_db_session)
 
-        with patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
-        ), pytest.raises(RuntimeError, match="connection lost"):
+        with (
+            patch(
+                _DB_PATCH_TARGET,
+                return_value=db_gen,
+            ),
+            pytest.raises(RuntimeError, match="connection lost"),
+        ):
             await get_active_jobs()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_db_generator_is_exhausted(
-        self, mock_db_session: AsyncMock
-    ) -> None:
+    async def test_db_generator_is_exhausted(self, mock_db_session: AsyncMock) -> None:
         mock_db_session.execute = AsyncMock(
-            return_value=SimpleNamespace(
-                scalars=lambda: SimpleNamespace(all=lambda: [])
-            )
+            return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
         )
 
         db_gen = _mock_db_gen(mock_db_session)
@@ -756,14 +752,17 @@ class TestSyncAllActiveJobs:
             verification_job_id="a0000000-0000-0000-0000-000000000002",
         )
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.get_active_jobs",
-            new_callable=AsyncMock,
-            return_value=[sample_hpc_job, job_two],
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.update_job_status",
-            new_callable=AsyncMock,
-        ) as mock_update:
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.get_active_jobs",
+                new_callable=AsyncMock,
+                return_value=[sample_hpc_job, job_two],
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.update_job_status",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
             await sync_all_active_jobs(ssh_manager)
 
         assert mock_update.call_count == 2
@@ -791,39 +790,41 @@ class TestSyncAllActiveJobs:
             verification_job_id="a0000000-0000-0000-0000-000000000002",
         )
 
-        with patch(
-            "nfm_db.services.hpc_job_monitor.get_active_jobs",
-            new_callable=AsyncMock,
-            return_value=[sample_hpc_job, job_two],
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.update_job_status",
-            new_callable=AsyncMock,
-            side_effect=[None, RuntimeError("per-job failure")],
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.get_active_jobs",
+                new_callable=AsyncMock,
+                return_value=[sample_hpc_job, job_two],
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.update_job_status",
+                new_callable=AsyncMock,
+                side_effect=[None, RuntimeError("per-job failure")],
+            ),
         ):
             await sync_all_active_jobs(ssh_manager)
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_handles_empty_job_list(
-        self, ssh_manager: MagicMock
-    ) -> None:
-        with patch(
-            "nfm_db.services.hpc_job_monitor.get_active_jobs",
-            new_callable=AsyncMock,
-            return_value=[],
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.update_job_status",
-            new_callable=AsyncMock,
-        ) as mock_update:
+    async def test_handles_empty_job_list(self, ssh_manager: MagicMock) -> None:
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.get_active_jobs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.update_job_status",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
             await sync_all_active_jobs(ssh_manager)
 
         mock_update.assert_not_called()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_handles_general_error_in_get_active_jobs(
-        self, ssh_manager: MagicMock
-    ) -> None:
+    async def test_handles_general_error_in_get_active_jobs(self, ssh_manager: MagicMock) -> None:
         with patch(
             "nfm_db.services.hpc_job_monitor.get_active_jobs",
             new_callable=AsyncMock,
@@ -838,16 +839,18 @@ class TestSyncAllActiveJobs:
         ssh_manager: MagicMock,
         sample_hpc_job: HpcJob,
     ) -> None:
-        with patch(
-            "nfm_db.services.hpc_job_monitor.get_active_jobs",
-            new_callable=AsyncMock,
-            return_value=[sample_hpc_job],
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.update_job_status",
-            new_callable=AsyncMock,
-        ), patch(
-            "nfm_db.services.hpc_job_monitor.logger"
-        ) as mock_logger:
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.get_active_jobs",
+                new_callable=AsyncMock,
+                return_value=[sample_hpc_job],
+            ),
+            patch(
+                "nfm_db.services.hpc_job_monitor.update_job_status",
+                new_callable=AsyncMock,
+            ),
+            patch("nfm_db.services.hpc_job_monitor.logger") as mock_logger,
+        ):
             await sync_all_active_jobs(ssh_manager)
 
             mock_logger.info.assert_called_with("Synced 1 active jobs")

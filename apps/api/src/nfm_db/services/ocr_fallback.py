@@ -75,11 +75,10 @@ class OcrFallback:
         if self._tesseract_available is None:
             try:
                 import pytesseract  # noqa: F401
+
                 self._tesseract_available = True
             except ImportError:
-                logger.warning(
-                    "pytesseract not installed; OCR fallback will use stub mode"
-                )
+                logger.warning("pytesseract not installed; OCR fallback will use stub mode")
                 self._tesseract_available = False
         return self._tesseract_available
 
@@ -170,11 +169,7 @@ def ocr_fallback_table_result(
     rows: list[list[TableCell]] = []
     for line in lines:
         cells = re.split(r"\s{2,}", line)
-        row = [
-            TableCell(value=c, confidence=0.2)
-            for c in cells
-            if c
-        ]
+        row = [TableCell(value=c, confidence=0.2) for c in cells if c]
         if row:
             rows.append(row)
 

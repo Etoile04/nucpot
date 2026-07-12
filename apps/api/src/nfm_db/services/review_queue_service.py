@@ -13,7 +13,7 @@ routed to ``kg_review_queue`` during extraction or graph building.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -50,7 +50,7 @@ async def add_to_review_queue(
         item_id=item_id,
         review_reason=review_reason,
         status="pending",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     session.add(queue_item)
     await session.flush()
@@ -164,7 +164,7 @@ async def approve_review_item(
 
     queue_item.status = "approved"
     queue_item.reviewer_notes = reviewer_notes
-    queue_item.reviewed_at = datetime.now(timezone.utc)
+    queue_item.reviewed_at = datetime.now(UTC)
 
     # Promote entity to active status
     if queue_item.item_type == "entity":
@@ -186,9 +186,7 @@ async def approve_review_item(
         "item_id": queue_item.item_id,
         "status": queue_item.status,
         "reviewer_notes": queue_item.reviewer_notes,
-        "reviewed_at": (
-            queue_item.reviewed_at.isoformat() if queue_item.reviewed_at else None
-        ),
+        "reviewed_at": (queue_item.reviewed_at.isoformat() if queue_item.reviewed_at else None),
     }
 
 
@@ -222,7 +220,7 @@ async def reject_review_item(
 
     queue_item.status = "rejected"
     queue_item.reviewer_notes = reason
-    queue_item.reviewed_at = datetime.now(timezone.utc)
+    queue_item.reviewed_at = datetime.now(UTC)
 
     # Deprecate entity or delete relation
     if queue_item.item_type == "entity":
@@ -252,9 +250,7 @@ async def reject_review_item(
         "item_id": queue_item.item_id,
         "status": queue_item.status,
         "reviewer_notes": queue_item.reviewer_notes,
-        "reviewed_at": (
-            queue_item.reviewed_at.isoformat() if queue_item.reviewed_at else None
-        ),
+        "reviewed_at": (queue_item.reviewed_at.isoformat() if queue_item.reviewed_at else None),
     }
 
 
@@ -277,8 +273,7 @@ async def auto_route_to_review(
     """
     if node is not None and should_route_to_review(node.confidence):
         reason = reason_override or (
-            f"Low confidence ({node.confidence:.2f}) for "
-            f"{node.node_type}: {node.label}"
+            f"Low confidence ({node.confidence:.2f}) for {node.node_type}: {node.label}"
         )
         node.status = "pending_review"
         await session.flush()
@@ -291,8 +286,7 @@ async def auto_route_to_review(
 
     if edge is not None and should_route_to_review(edge.confidence):
         reason = reason_override or (
-            f"Low confidence ({edge.confidence:.2f}) for "
-            f"relation: {edge.relation_type}"
+            f"Low confidence ({edge.confidence:.2f}) for relation: {edge.relation_type}"
         )
         return await add_to_review_queue(
             session,

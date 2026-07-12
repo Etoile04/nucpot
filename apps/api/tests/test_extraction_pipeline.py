@@ -569,15 +569,19 @@ class TestTriggerExtraction:
                 return matching_raw
             return None
 
-        with patch(
-            "nfm_db.services.extraction_pipeline.QualityGateService",
-            return_value=mock_gate,
-        ), patch(
-            "nfm_db.services.extraction_pipeline.GapScanService",
-            return_value=mock_scanner,
-        ), patch(
-            "nfm_db.services.extraction_pipeline._find_matching",
-            side_effect=find_match_side_effect,
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.QualityGateService",
+                return_value=mock_gate,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.GapScanService",
+                return_value=mock_scanner,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline._find_matching",
+                side_effect=find_match_side_effect,
+            ),
         ):
             job = await trigger_extraction(
                 session=db_session,
@@ -604,12 +608,15 @@ class TestTriggerExtraction:
         mock_scanner = AsyncMock()
         mock_scanner.scan_gaps = AsyncMock(return_value=None)
 
-        with patch(
-            "nfm_db.services.extraction_pipeline.QualityGateService",
-            return_value=mock_gate,
-        ), patch(
-            "nfm_db.services.extraction_pipeline.GapScanService",
-            return_value=mock_scanner,
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.QualityGateService",
+                return_value=mock_gate,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.GapScanService",
+                return_value=mock_scanner,
+            ),
         ):
             job = await trigger_extraction(
                 session=db_session,
@@ -660,15 +667,19 @@ class TestTriggerExtraction:
                 return matching_raw
             return None
 
-        with patch(
-            "nfm_db.services.extraction_pipeline.QualityGateService",
-            return_value=mock_gate,
-        ), patch(
-            "nfm_db.services.extraction_pipeline.GapScanService",
-            return_value=mock_scanner,
-        ), patch(
-            "nfm_db.services.extraction_pipeline._find_matching",
-            side_effect=find_match_side_effect,
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.QualityGateService",
+                return_value=mock_gate,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.GapScanService",
+                return_value=mock_scanner,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline._find_matching",
+                side_effect=find_match_side_effect,
+            ),
         ):
             job = await trigger_extraction(
                 session=db_session,

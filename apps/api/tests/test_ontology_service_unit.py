@@ -290,15 +290,23 @@ class TestMaterialEgoComponents:
         nodes = {
             "mat:UO2": OntologyNode(id="mat:UO2", type="individual", name="UO2", label="UO2"),
             "mat:U": OntologyNode(id="mat:U", type="individual", name="U", label="U"),
-            "prop:density": OntologyNode(id="prop:density", type="class", name="density", label="density"),
-            "prop:lattice": OntologyNode(id="prop:lattice", type="class", name="lattice", label="lattice"),
+            "prop:density": OntologyNode(
+                id="prop:density", type="class", name="density", label="density"
+            ),
+            "prop:lattice": OntologyNode(
+                id="prop:lattice", type="class", name="lattice", label="lattice"
+            ),
             "method:DFT": OntologyNode(id="method:DFT", type="class", name="DFT", label="DFT"),
-            "src:corpus1": OntologyNode(id="src:corpus1", type="class", name="corpus1", label="corpus1"),
+            "src:corpus1": OntologyNode(
+                id="src:corpus1", type="class", name="corpus1", label="corpus1"
+            ),
         }
         relationships = [
             OntologyRelationship(id="r1", from_="mat:UO2", to="prop:density", type="HAS_PROPERTY"),
             OntologyRelationship(id="r2", from_="mat:UO2", to="prop:lattice", type="HAS_PROPERTY"),
-            OntologyRelationship(id="r3", from_="prop:density", to="method:DFT", type="MEASURED_BY"),
+            OntologyRelationship(
+                id="r3", from_="prop:density", to="method:DFT", type="MEASURED_BY"
+            ),
             OntologyRelationship(id="r4", from_="method:DFT", to="src:corpus1", type="CITED_IN"),
             OntologyRelationship(id="r5", from_="mat:U", to="prop:lattice", type="HAS_PROPERTY"),
         ]
@@ -380,9 +388,7 @@ class TestChunkByMaterial:
             "mat:B": {"mat:B", "prop:X", "src:S"},
         }
         # max_nodes=3 means only one material fits per page (ego size=3)
-        page_nodes, _, next_offset = _chunk_by_material(
-            nodes, rels, ego, max_nodes=3, offset=0
-        )
+        page_nodes, _, next_offset = _chunk_by_material(nodes, rels, ego, max_nodes=3, offset=0)
         assert len(page_nodes) == 3
         assert next_offset == 1  # Next page starts at material B
 
@@ -390,7 +396,9 @@ class TestChunkByMaterial:
         """When a single ego exceeds max_nodes, it is truncated."""
         nodes = {"mat:A": OntologyNode(id="mat:A", type="individual", name="A", label="A")}
         for i in range(20):
-            nodes[f"prop:P{i}"] = OntologyNode(id=f"prop:P{i}", type="class", name=f"P{i}", label=f"P{i}")
+            nodes[f"prop:P{i}"] = OntologyNode(
+                id=f"prop:P{i}", type="class", name=f"P{i}", label=f"P{i}"
+            )
         rels = [
             OntologyRelationship(id=f"r{i}", from_="mat:A", to=f"prop:P{i}", type="HAS")
             for i in range(20)
@@ -409,9 +417,7 @@ class TestChunkByMaterial:
         rels = []
         ego = {m: {m, "src:S"} for m in nodes if m.startswith("mat:")}
 
-        page_nodes, _, next_offset = _chunk_by_material(
-            nodes, rels, ego, max_nodes=2, offset=1
-        )
+        page_nodes, _, next_offset = _chunk_by_material(nodes, rels, ego, max_nodes=2, offset=1)
         ids = {n.id for n in page_nodes}
         assert "mat:A" not in ids  # Skipped
         assert next_offset == 2
@@ -469,13 +475,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-sv",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": "DFT",
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": "DFT",
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-sv")
@@ -488,13 +496,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-cid",
-            rows=[{
-                "element_system": "U",
-                "property_name": "mass",
-                "value": 238.0,
-                "unit": "amu",
-                "method": None,
-            }],
+            rows=[
+                {
+                    "element_system": "U",
+                    "property_name": "mass",
+                    "value": 238.0,
+                    "unit": "amu",
+                    "method": None,
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-cid")
@@ -507,13 +517,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-nopag",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": "DFT",
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": "DFT",
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-nopag", max_nodes=100)
@@ -526,13 +538,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-types",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": "DFT",
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": "DFT",
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-types")
@@ -547,13 +561,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-ptype",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": "DFT",
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": "DFT",
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-ptype")
@@ -568,13 +584,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-rref",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": "DFT",
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": "DFT",
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-rref")
@@ -590,13 +608,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-nomethod",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": None,
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": None,
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-nomethod")
@@ -642,13 +662,15 @@ class TestDeriveOntologyGraph:
         await seed_corpus(
             db_session,
             source="test-cap",
-            rows=[{
-                "element_system": "UO2",
-                "property_name": "density",
-                "value": 10.0,
-                "unit": "g/cm3",
-                "method": "DFT",
-            }],
+            rows=[
+                {
+                    "element_system": "UO2",
+                    "property_name": "density",
+                    "value": 10.0,
+                    "unit": "g/cm3",
+                    "method": "DFT",
+                }
+            ],
         )
 
         graph = await derive_ontology_graph(db_session, "test-cap", max_nodes=100_000)

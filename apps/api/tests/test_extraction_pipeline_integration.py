@@ -316,13 +316,16 @@ class TestOntoFuelExtractLLM:
         """LLM extraction returns post-processed properties."""
         # Remove source_file from mock so post-processing fills it in
         response_without_source = [
-            {k: v for k, v in prop.items() if k != "source_file"}
-            for prop in mock_llm_response
+            {k: v for k, v in prop.items() if k != "source_file"} for prop in mock_llm_response
         ]
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=response_without_source),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=response_without_source,
+            ),
         ):
             results = await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -342,7 +345,11 @@ class TestOntoFuelExtractLLM:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=single_response),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=single_response,
+            ),
         ):
             results = await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -361,7 +368,11 @@ class TestOntoFuelExtractLLM:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=wrapped_response),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=wrapped_response,
+            ),
         ):
             results = await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -379,7 +390,11 @@ class TestOntoFuelExtractLLM:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=wrapped_response),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=wrapped_response,
+            ),
         ):
             results = await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -396,7 +411,11 @@ class TestOntoFuelExtractLLM:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=mock_llm_response) as mock_call,
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=mock_llm_response,
+            ) as mock_call,
         ):
             await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -415,7 +434,11 @@ class TestOntoFuelExtractLLM:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, side_effect=RuntimeError("API timeout")),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("API timeout"),
+            ),
         ):
             results = await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -440,7 +463,8 @@ class TestOntoFuelExtractLLM:
 
     @pytest.mark.asyncio
     async def test_no_llm_key_falls_back_to_stub(
-        self, sample_source_file: Path,
+        self,
+        sample_source_file: Path,
     ):
         """When LLM_API_KEY is not set, falls back to stub mode."""
         with (
@@ -463,7 +487,11 @@ class TestOntoFuelExtractLLM:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
-            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock, return_value=mock_llm_response),
+            patch(
+                "nfm_db.services.extraction_pipeline.call_llm",
+                new_callable=AsyncMock,
+                return_value=mock_llm_response,
+            ),
         ):
             results = await ontofuel_extract(
                 source_reference=str(sample_source_file),
@@ -471,9 +499,19 @@ class TestOntoFuelExtractLLM:
             )
 
         v4_fields = [
-            "source_file", "material_name", "composition", "phase",
-            "element", "property_category", "property", "value",
-            "unit", "conditions", "context", "confidence", "reference",
+            "source_file",
+            "material_name",
+            "composition",
+            "phase",
+            "element",
+            "property_category",
+            "property",
+            "value",
+            "unit",
+            "conditions",
+            "context",
+            "confidence",
+            "reference",
         ]
         for prop in results:
             for field_name in v4_fields:

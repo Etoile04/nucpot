@@ -117,12 +117,8 @@ class TestMDVerificationIDOR:
         from nfm_db.main import app
 
         # Create a job for each user
-        await _create_job_for_user(
-            db_session, owner_user.id, potential_id="owner_job"
-        )
-        await _create_job_for_user(
-            db_session, other_user.id, potential_id="other_job"
-        )
+        await _create_job_for_user(db_session, owner_user.id, potential_id="owner_job")
+        await _create_job_for_user(db_session, other_user.id, potential_id="other_job")
 
         # List as owner_user
         app.dependency_overrides[get_current_user] = _make_auth_override(owner_user)
@@ -170,9 +166,7 @@ class TestMDVerificationIDOR:
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}"
-                )
+                response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}")
             assert response.status_code == 404
         finally:
             app.dependency_overrides.clear()
@@ -200,9 +194,7 @@ class TestMDVerificationIDOR:
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.delete(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}"
-                )
+                response = await client.delete(f"/api/v1/md-verification/jobs/{owned_job_id}")
             assert response.status_code == 404
         finally:
             app.dependency_overrides.clear()
@@ -230,9 +222,7 @@ class TestMDVerificationIDOR:
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}/status"
-                )
+                response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/status")
             assert response.status_code == 404
         finally:
             app.dependency_overrides.clear()
@@ -290,9 +280,7 @@ class TestMDVerificationIDOR:
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}/defects"
-                )
+                response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/defects")
             assert response.status_code == 404
         finally:
             app.dependency_overrides.clear()
@@ -320,9 +308,7 @@ class TestMDVerificationIDOR:
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}/fitting"
-                )
+                response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/fitting")
             assert response.status_code == 404
         finally:
             app.dependency_overrides.clear()
@@ -342,29 +328,21 @@ class TestMDVerificationIDOR:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 # GET job
-                resp = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}"
-                )
+                resp = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}")
                 assert resp.status_code == 200
                 assert resp.json()["id"] == str(owned_job_id)
                 assert resp.json()["owner_id"] == str(owner_user.id)
 
                 # GET status
-                resp = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}/status"
-                )
+                resp = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/status")
                 assert resp.status_code == 200
 
                 # GET defects
-                resp = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}/defects"
-                )
+                resp = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/defects")
                 assert resp.status_code == 200
 
                 # GET fitting
-                resp = await client.get(
-                    f"/api/v1/md-verification/jobs/{owned_job_id}/fitting"
-                )
+                resp = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/fitting")
                 assert resp.status_code == 200
         finally:
             app.dependency_overrides.clear()

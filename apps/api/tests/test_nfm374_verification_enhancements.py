@@ -301,9 +301,7 @@ class TestCompositeResultsEndpoint:
         """Test composite results endpoint returns job + simulation + defects + fitting."""
         job_id = md_cascade_job["job_id"]
 
-        response = await client_with_auth.get(
-            f"/api/v1/md-verification/jobs/{job_id}/results"
-        )
+        response = await client_with_auth.get(f"/api/v1/md-verification/jobs/{job_id}/results")
 
         assert response.status_code == 200
         data = response.json()
@@ -323,9 +321,7 @@ class TestCompositeResultsEndpoint:
         """Test composite results returns 404 for missing job."""
         job_id = uuid.uuid4()
 
-        response = await client_with_auth.get(
-            f"/api/v1/md-verification/jobs/{job_id}/results"
-        )
+        response = await client_with_auth.get(f"/api/v1/md-verification/jobs/{job_id}/results")
 
         assert response.status_code == 404
 
@@ -348,9 +344,7 @@ class TestCompositeResultsEndpoint:
         )
         await db_session.commit()
 
-        response = await client_with_auth.get(
-            f"/api/v1/md-verification/jobs/{job.id}/results"
-        )
+        response = await client_with_auth.get(f"/api/v1/md-verification/jobs/{job.id}/results")
 
         assert response.status_code == 200
         data = response.json()
@@ -381,6 +375,7 @@ class TestSubmitWithCascadeFields:
             return type("MockTask", (), {"id": "test-task-id"})()
 
         import nfm_db.api.v1.md_verification as md_module
+
         mock_celery_app = MagicMock()
         mock_celery_app.send_task.return_value = type("MockTask", (), {"id": "test-task-id"})()
         monkeypatch.setattr(md_module, "celery_app", mock_celery_app)

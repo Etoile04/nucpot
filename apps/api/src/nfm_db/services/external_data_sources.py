@@ -185,10 +185,7 @@ class RateLimiter:
 
         # Clean old tokens
         if key in self._tokens:
-            self._tokens[key] = [
-                ts for ts in self._tokens[key]
-                if ts >= window_start
-            ]
+            self._tokens[key] = [ts for ts in self._tokens[key] if ts >= window_start]
         else:
             self._tokens[key] = []
 
@@ -203,8 +200,7 @@ class RateLimiter:
 
 # Rate limiters per data source
 _rate_limiters: dict[ExternalDataSource, RateLimiter] = {
-    source: RateLimiter(config.rate_limit)
-    for source, config in DATASOURCE_CONFIGS.items()
+    source: RateLimiter(config.rate_limit) for source, config in DATASOURCE_CONFIGS.items()
 }
 
 

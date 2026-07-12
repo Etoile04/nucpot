@@ -6,7 +6,6 @@ and extended md_verification_jobs columns.
 Uses SQLite in-memory via conftest.py fixtures (no PostgreSQL required).
 """
 
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -40,7 +39,9 @@ async def db_session():
             await conn.run_sync(table.create)
 
     session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False,
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
     async with session_factory() as session:
         yield session
@@ -200,8 +201,7 @@ class TestVerificationResultMDModel:
 
         # Query by simulation_result_id
         stmt = select(VerificationResultMD).where(
-            VerificationResultMD.simulation_result_id
-            == sample_simulation_result.id
+            VerificationResultMD.simulation_result_id == sample_simulation_result.id
         )
         result = await db_session.execute(stmt)
         rows = result.scalars().all()
@@ -325,9 +325,7 @@ class TestMDVerificationJobExtension:
 
         await db_session.commit()
 
-        stmt = select(MDVerificationJob).where(
-            MDVerificationJob.job_type == JobType.MD_SIMULATION
-        )
+        stmt = select(MDVerificationJob).where(MDVerificationJob.job_type == JobType.MD_SIMULATION)
         result = await db_session.execute(stmt)
         md_jobs = result.scalars().all()
 

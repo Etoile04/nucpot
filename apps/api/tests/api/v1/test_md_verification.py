@@ -62,6 +62,7 @@ SUBMIT_PAYLOAD: dict = {
 @pytest.fixture
 async def client_with_auth(async_client, admin_user: User):
     """AsyncClient with ``get_current_user`` overridden to return admin_user."""
+
     async def _override():
         return admin_user
 
@@ -205,9 +206,7 @@ async def test_submit_job_success(
     mock_instance.delete_job = AsyncMock(return_value=True)
     mock_service_cls.return_value = mock_instance
 
-    mock_celery_app.send_task = MagicMock(
-        return_value=MagicMock(id=MOCK_CELERY_TASK_ID)
-    )
+    mock_celery_app.send_task = MagicMock(return_value=MagicMock(id=MOCK_CELERY_TASK_ID))
 
     with patch("nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True):
         response = await client_with_auth.post(f"{BASE_URL}/jobs", json=SUBMIT_PAYLOAD)
@@ -247,9 +246,7 @@ async def test_submit_job_with_pk_parameters(
     mock_instance.get_job = AsyncMock(return_value=submitted_job)
     mock_service_cls.return_value = mock_instance
 
-    mock_celery_app.send_task = MagicMock(
-        return_value=MagicMock(id=MOCK_CELERY_TASK_ID)
-    )
+    mock_celery_app.send_task = MagicMock(return_value=MagicMock(id=MOCK_CELERY_TASK_ID))
 
     payload = {
         **SUBMIT_PAYLOAD,
@@ -346,9 +343,7 @@ async def test_list_jobs_empty(mock_service_cls: MagicMock, client_with_auth) ->
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_list_jobs_with_filters(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_list_jobs_with_filters(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Passes query params through to the service layer."""
     job = _make_job_response(
         id=uuid.uuid4(),
@@ -389,9 +384,7 @@ async def test_list_jobs_with_filters(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_list_jobs_pagination_defaults(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_list_jobs_pagination_defaults(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Uses default limit=20, offset=0 when not specified (matches main's per_page=20 default)."""
     mock_instance = AsyncMock()
     mock_instance.list_jobs = AsyncMock(return_value=[])
@@ -419,9 +412,7 @@ async def test_list_jobs_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_job_success(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_job_success(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with job details."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.RUNNING)
@@ -440,9 +431,7 @@ async def test_get_job_success(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_job_not_found(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_job_not_found(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 404 when the job does not exist."""
     job_id = uuid.uuid4()
 
@@ -471,9 +460,7 @@ async def test_get_job_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_status_with_hpc_info(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_status_with_hpc_info(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with HPC status when HPC jobs are present."""
     job_id = uuid.uuid4()
     job = _make_job_response(
@@ -504,9 +491,7 @@ async def test_get_status_with_hpc_info(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_status_without_hpc_info(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_status_without_hpc_info(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with null HPC fields when no HPC jobs exist."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.PENDING)
@@ -526,9 +511,7 @@ async def test_get_status_without_hpc_info(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_status_job_not_found(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_status_job_not_found(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 404 when the job does not exist."""
     job_id = uuid.uuid4()
 
@@ -555,9 +538,7 @@ async def test_get_status_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_cancel_pending_job(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_cancel_pending_job(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 when cancelling a PENDING job."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.PENDING)
@@ -584,9 +565,7 @@ async def test_cancel_pending_job(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_cancel_running_job(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_cancel_running_job(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 when cancelling a RUNNING job."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.RUNNING)
@@ -606,9 +585,7 @@ async def test_cancel_running_job(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_cancel_submitted_job(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_cancel_submitted_job(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 when cancelling a SUBMITTED job."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.SUBMITTED)
@@ -646,9 +623,7 @@ async def test_cancel_completed_job_returns_400(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_cancel_failed_job_returns_400(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_cancel_failed_job_returns_400(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 400 when trying to cancel a FAILED job."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.FAILED)
@@ -712,9 +687,7 @@ async def test_cancel_job_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_simulation_success(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_simulation_success(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with simulation result data."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
@@ -782,18 +755,12 @@ async def test_get_simulation_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_defects_success(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_defects_success(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with list of defect results."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
-    defect1 = _make_defect_result(
-        verification_job_id=job_id, defect_type=DefectType.VACANCY
-    )
-    defect2 = _make_defect_result(
-        verification_job_id=job_id, defect_type=DefectType.INTERSTITIAL
-    )
+    defect1 = _make_defect_result(verification_job_id=job_id, defect_type=DefectType.VACANCY)
+    defect2 = _make_defect_result(verification_job_id=job_id, defect_type=DefectType.INTERSTITIAL)
 
     mock_instance = AsyncMock()
     mock_instance.get_job = AsyncMock(return_value=job)
@@ -809,9 +776,7 @@ async def test_get_defects_success(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_defects_empty(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_defects_empty(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with empty list when no defect results exist."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
@@ -829,15 +794,11 @@ async def test_get_defects_empty(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_defects_with_filter(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_defects_with_filter(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Passes defect_type query param through to service."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
-    defect = _make_defect_result(
-        verification_job_id=job_id, defect_type=DefectType.VACANCY
-    )
+    defect = _make_defect_result(verification_job_id=job_id, defect_type=DefectType.VACANCY)
 
     mock_instance = AsyncMock()
     mock_instance.get_job = AsyncMock(return_value=job)
@@ -890,15 +851,11 @@ async def test_get_defects_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_fitting_success(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_fitting_success(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with list of fitting results."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
-    fitting = _make_fitting_result(
-        verification_job_id=job_id, fitting_method=FittingMethod.ARC_DPA
-    )
+    fitting = _make_fitting_result(verification_job_id=job_id, fitting_method=FittingMethod.ARC_DPA)
 
     mock_instance = AsyncMock()
     mock_instance.get_job = AsyncMock(return_value=job)
@@ -914,24 +871,18 @@ async def test_get_fitting_success(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_fitting_with_filter(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_fitting_with_filter(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Filters fitting results by fitting_method in Python."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
     fitting_arc = _make_fitting_result(
         verification_job_id=job_id, fitting_method=FittingMethod.ARC_DPA
     )
-    fitting_rpa = _make_fitting_result(
-        verification_job_id=job_id, fitting_method=FittingMethod.RPA
-    )
+    fitting_rpa = _make_fitting_result(verification_job_id=job_id, fitting_method=FittingMethod.RPA)
 
     mock_instance = AsyncMock()
     mock_instance.get_job = AsyncMock(return_value=job)
-    mock_instance.list_fitting_results_by_job = AsyncMock(
-        return_value=[fitting_arc, fitting_rpa]
-    )
+    mock_instance.list_fitting_results_by_job = AsyncMock(return_value=[fitting_arc, fitting_rpa])
     mock_service_cls.return_value = mock_instance
 
     response = await client_with_auth.get(
@@ -946,9 +897,7 @@ async def test_get_fitting_with_filter(
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_get_fitting_empty(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_get_fitting_empty(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with empty list when no fitting results exist."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)
@@ -995,9 +944,7 @@ async def test_get_fitting_unauthenticated(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
-async def test_composite_results_success(
-    mock_service_cls: MagicMock, client_with_auth
-) -> None:
+async def test_composite_results_success(mock_service_cls: MagicMock, client_with_auth) -> None:
     """Returns 200 with job + all associated results."""
     job_id = uuid.uuid4()
     job = _make_job_response(id=job_id, status=JobStatus.COMPLETED)

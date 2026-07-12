@@ -65,9 +65,7 @@ async def _load_age_extension(session: AsyncSession) -> None:
     returns a coroutine that must be awaited.
     """
     await session.execute(text("LOAD age;"))
-    await session.execute(
-        text('SET search_path TO ag_catalog, "$user", public;')
-    )
+    await session.execute(text('SET search_path TO ag_catalog, "$user", public;'))
 
 
 def _graph_name(corpus_id: str) -> str:
@@ -110,11 +108,7 @@ def _build_vertex_cypher(
     node_id_str = str(node.id)
     node_type = _escape_cypher_string(node.node_type)
     label = _escape_cypher_string(node.label)
-    aliases = (
-        _escape_cypher_string(str(node.aliases))
-        if node.aliases
-        else "[]"
-    )
+    aliases = _escape_cypher_string(str(node.aliases)) if node.aliases else "[]"
 
     return (
         f"SELECT * FROM cypher('{graph_name}', $$ "
@@ -143,10 +137,7 @@ def _build_edge_cypher(
     source_id_str = str(edge.source_node_id)
     target_id_str = str(edge.target_node_id)
     relation_type = _escape_cypher_string(edge.relation_type)
-    safe_label = "".join(
-        c if c.isalnum() or c == "_" else "_"
-        for c in edge.relation_type
-    )
+    safe_label = "".join(c if c.isalnum() or c == "_" else "_" for c in edge.relation_type)
 
     return (
         f"SELECT * FROM cypher('{graph_name}', $$ "
@@ -182,9 +173,7 @@ async def _create_age_graph(session: AsyncSession, corpus_id: str) -> None:
     await _load_age_extension(session)
     graph_name = _graph_name(corpus_id)
 
-    await session.execute(
-        text(f"CREATE GRAPH IF NOT EXISTS {graph_name}")
-    )
+    await session.execute(text(f"CREATE GRAPH IF NOT EXISTS {graph_name}"))
     await session.commit()
 
 
@@ -196,9 +185,7 @@ async def _drop_age_graph(session: AsyncSession, corpus_id: str) -> None:
     await _load_age_extension(session)
     graph_name = _graph_name(corpus_id)
 
-    await session.execute(
-        text(f"DROP GRAPH IF EXISTS {graph_name}")
-    )
+    await session.execute(text(f"DROP GRAPH IF EXISTS {graph_name}"))
     await session.commit()
 
 
@@ -240,9 +227,7 @@ async def rebuild_ontology_graph(
     await _load_age_extension(session)  # re-init after DDL
 
     # Load and materialize nodes
-    nodes_result = await session.execute(
-        select(KGNode).where(KGNode.corpus_id == corpus_filter)
-    )
+    nodes_result = await session.execute(select(KGNode).where(KGNode.corpus_id == corpus_filter))
     nodes = list(nodes_result.scalars().all())
 
     for node in nodes:
@@ -253,9 +238,7 @@ async def rebuild_ontology_graph(
         node.graph_synced_at = func.now()
 
     # Load and materialize edges
-    edges_result = await session.execute(
-        select(KGEdge).where(KGEdge.corpus_id == corpus_filter)
-    )
+    edges_result = await session.execute(select(KGEdge).where(KGEdge.corpus_id == corpus_filter))
     edges = list(edges_result.scalars().all())
 
     for edge in edges:
@@ -296,9 +279,7 @@ async def sync_corpus_to_graph(
         OntologySyncError: If AGE operations fail
     """
     if mode not in ("full", "incremental"):
-        raise ValueError(
-            f"Invalid sync mode: {mode!r}. Must be 'full' or 'incremental'."
-        )
+        raise ValueError(f"Invalid sync mode: {mode!r}. Must be 'full' or 'incremental'.")
 
     if mode == "full":
         return await rebuild_ontology_graph(session, corpus_id)
@@ -379,9 +360,7 @@ async def sync_node_to_graph(
     """
     await _load_age_extension(session)
 
-    node_result = await session.execute(
-        select(KGNode).where(KGNode.id == node_id)
-    )
+    node_result = await session.execute(select(KGNode).where(KGNode.id == node_id))
     node = node_result.scalar_one_or_none()
 
     if not node:
@@ -412,9 +391,7 @@ async def sync_edge_to_graph(
     """
     await _load_age_extension(session)
 
-    edge_result = await session.execute(
-        select(KGEdge).where(KGEdge.id == edge_id)
-    )
+    edge_result = await session.execute(select(KGEdge).where(KGEdge.id == edge_id))
     edge = edge_result.scalar_one_or_none()
 
     if not edge:
@@ -446,24 +423,24 @@ async def get_sync_status(
     corpus_filter = corpus_id if corpus_id else None
 
     total_nodes = await session.execute(
-        select(func.count()).select_from(KGNode).where(
-            KGNode.corpus_id == corpus_filter
-        )
+        select(func.count()).select_from(KGNode).where(KGNode.corpus_id == corpus_filter)
     )
     synced_nodes = await session.execute(
-        select(func.count()).select_from(KGNode).where(
+        select(func.count())
+        .select_from(KGNode)
+        .where(
             KGNode.corpus_id == corpus_filter,
             KGNode.synced_to_graph.is_(True),
         )
     )
 
     total_edges = await session.execute(
-        select(func.count()).select_from(KGEdge).where(
-            KGEdge.corpus_id == corpus_filter
-        )
+        select(func.count()).select_from(KGEdge).where(KGEdge.corpus_id == corpus_filter)
     )
     synced_edges = await session.execute(
-        select(func.count()).select_from(KGEdge).where(
+        select(func.count())
+        .select_from(KGEdge)
+        .where(
             KGEdge.corpus_id == corpus_filter,
             KGEdge.synced_to_graph.is_(True),
         )

@@ -289,10 +289,7 @@ class KGReviewQueue(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<KGReviewQueue id={self.id!s} type={self.item_type!r} "
-            f"status={self.status!r}>"
-        )
+        return f"<KGReviewQueue id={self.id!s} type={self.item_type!r} status={self.status!r}>"
 
 
 class OntologyIdMap(Base):

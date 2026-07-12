@@ -124,9 +124,7 @@ async def test_list_measurements_empty(async_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_measurements_paginated(
-    async_client, db_session
-) -> None:
+async def test_list_measurements_paginated(async_client, db_session) -> None:
     mat = await _seed_material(db_session)
     cat = await _seed_category(db_session)
     pt = await _seed_property_type(db_session, cat.id)
@@ -142,9 +140,7 @@ async def test_list_measurements_paginated(
 
 
 @pytest.mark.asyncio
-async def test_list_measurements_filter_by_material(
-    async_client, db_session
-) -> None:
+async def test_list_measurements_filter_by_material(async_client, db_session) -> None:
     mat_a = await _seed_material(db_session, name="Mat-A")
     mat_b = await _seed_material(db_session, name="Mat-B")
     cat = await _seed_category(db_session)
@@ -154,18 +150,14 @@ async def test_list_measurements_filter_by_material(
     await _seed_measurement(db_session, ds_a.id, pt.id, value_scalar=1.0)
     await _seed_measurement(db_session, ds_b.id, pt.id, value_scalar=2.0)
 
-    response = await async_client.get(
-        f"/api/v1/properties?material_id={mat_a.id}"
-    )
+    response = await async_client.get(f"/api/v1/properties?material_id={mat_a.id}")
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["total"] == 1
 
 
 @pytest.mark.asyncio
-async def test_list_measurements_filter_by_property_type(
-    async_client, db_session
-) -> None:
+async def test_list_measurements_filter_by_property_type(async_client, db_session) -> None:
     mat = await _seed_material(db_session)
     cat1 = await _seed_category(db_session, name="Thermal", slug="thermal")
     cat2 = await _seed_category(db_session, name="Mechanical", slug="mechanical")
@@ -175,18 +167,14 @@ async def test_list_measurements_filter_by_property_type(
     await _seed_measurement(db_session, ds.id, pt1.id, value_scalar=1.0)
     await _seed_measurement(db_session, ds.id, pt2.id, value_scalar=2.0)
 
-    response = await async_client.get(
-        f"/api/v1/properties?property_type_id={pt1.id}"
-    )
+    response = await async_client.get(f"/api/v1/properties?property_type_id={pt1.id}")
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["total"] == 1
 
 
 @pytest.mark.asyncio
-async def test_list_measurements_pagination_edge_cases(
-    async_client, db_session
-) -> None:
+async def test_list_measurements_pagination_edge_cases(async_client, db_session) -> None:
     response = await async_client.get("/api/v1/properties?page=999")
     assert response.status_code == 200
     data = response.json()["data"]
@@ -222,9 +210,7 @@ async def test_get_measurement_detail(async_client, db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_get_measurement_404(async_client) -> None:
-    response = await async_client.get(
-        f"/api/v1/properties/{uuid.uuid4()}"
-    )
+    response = await async_client.get(f"/api/v1/properties/{uuid.uuid4()}")
     assert response.status_code == 404
 
 
@@ -304,9 +290,7 @@ async def test_update_measurement(async_client, db_session) -> None:
     pm = await _seed_measurement(db_session, ds.id, pt.id, value_scalar=1.0)
 
     payload = {"value_scalar": 99.9, "notes": "Updated"}
-    response = await async_client.patch(
-        f"/api/v1/properties/{pm.id}", json=payload
-    )
+    response = await async_client.patch(f"/api/v1/properties/{pm.id}", json=payload)
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["value_scalar"] == 99.9
@@ -316,9 +300,7 @@ async def test_update_measurement(async_client, db_session) -> None:
 @pytest.mark.asyncio
 async def test_update_measurement_404(async_client) -> None:
     payload = {"notes": "Ghost"}
-    response = await async_client.patch(
-        f"/api/v1/properties/{uuid.uuid4()}", json=payload
-    )
+    response = await async_client.patch(f"/api/v1/properties/{uuid.uuid4()}", json=payload)
     assert response.status_code == 404
 
 

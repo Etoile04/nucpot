@@ -75,16 +75,12 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_unhealthy(self, client: AsyncClient) -> None:
         """Should return unhealthy status when LightRAG is unavailable."""
-        with patch(
-            "nfm_db.api.v1.lightrag.LightRAGClient"
-        ) as mock_cls:
+        with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
             mock_instance = mock_cls.return_value
             mock_instance.health_check = AsyncMock(return_value=False)
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 response = await ac.get("/api/v1/lightrag/health")
 
         assert response.status_code == 200
@@ -147,27 +143,21 @@ class TestIngestEndpoint:
         """Should return error when LightRAG service fails."""
         from nfm_db.services.lightrag_client import LightRAGClientError
 
-        with patch(
-            "nfm_db.api.v1.lightrag.LightRAGClient"
-        ) as mock_cls:
+        with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
             mock_instance = mock_cls.return_value
-            mock_instance.ingest = AsyncMock(
-                side_effect=LightRAGClientError("Service unavailable")
-            )
+            mock_instance.ingest = AsyncMock(side_effect=LightRAGClientError("Service unavailable"))
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 payload = {"text": "test content"}
-                response = await ac.post(
-                    "/api/v1/lightrag/ingest", json=payload
-                )
+                response = await ac.post("/api/v1/lightrag/ingest", json=payload)
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
         assert "LightRAG" in data["error"]
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -228,22 +218,14 @@ class TestQueryEndpoint:
         """Should return error when LightRAG service fails."""
         from nfm_db.services.lightrag_client import LightRAGClientError
 
-        with patch(
-            "nfm_db.api.v1.lightrag.LightRAGClient"
-        ) as mock_cls:
+        with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
             mock_instance = mock_cls.return_value
-            mock_instance.query = AsyncMock(
-                side_effect=LightRAGClientError("Query failed")
-            )
+            mock_instance.query = AsyncMock(side_effect=LightRAGClientError("Query failed"))
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 payload = {"query": "test query"}
-                response = await ac.post(
-                    "/api/v1/lightrag/query", json=payload
-                )
+                response = await ac.post("/api/v1/lightrag/query", json=payload)
 
         assert response.status_code == 200
         data = response.json()

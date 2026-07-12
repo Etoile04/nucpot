@@ -58,8 +58,12 @@ def _run_sync(**env_overrides):
 
     with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config):
         with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-            with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
-                with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv(**env_overrides)):
+            with patch(
+                "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+            ):
+                with patch(
+                    "nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv(**env_overrides)
+                ):
                     return sync_hpc_job_status()
 
 
@@ -90,11 +94,16 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config):
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ):
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+                ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         from nfm_db.services.hpc_sync import sync_hpc_job_status
+
                         sync_hpc_job_status()
 
         mock_manager.cleanup.assert_called_once()
@@ -107,9 +116,15 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config):
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ):
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock, side_effect=RuntimeError("sync failed")):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("sync failed"),
+                ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         result = sync_hpc_job_status()
 
@@ -126,9 +141,15 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config):
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ):
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock, side_effect=ValueError("bad data")):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs",
+                    new_callable=AsyncMock,
+                    side_effect=ValueError("bad data"),
+                ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         result = sync_hpc_job_status()
 
@@ -144,9 +165,13 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config) as mock_from_lists:
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ) as mock_from_lists:
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+                ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         sync_hpc_job_status()
 
@@ -160,10 +185,14 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config):
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ):
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager") as mock_cls:
                 mock_cls.return_value = mock_manager
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+                ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         sync_hpc_job_status()
 
@@ -182,15 +211,22 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config) as mock_from_lists:
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ) as mock_from_lists:
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
-                    with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv(
-                        NFM_HPC_BACKUP_HOST="backup.example.com",
-                        NFM_HPC_BACKUP_USER="backup_user",
-                        NFM_HPC_BACKUP_SSH_KEY_PATH="/path/to/backup_key",
-                        NFM_HPC_FAILOVER_THRESHOLD_SECONDS="600",
-                    )):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+                ):
+                    with patch(
+                        "nfm_db.services.hpc_sync.os.getenv",
+                        side_effect=_make_getenv(
+                            NFM_HPC_BACKUP_HOST="backup.example.com",
+                            NFM_HPC_BACKUP_USER="backup_user",
+                            NFM_HPC_BACKUP_SSH_KEY_PATH="/path/to/backup_key",
+                            NFM_HPC_FAILOVER_THRESHOLD_SECONDS="600",
+                        ),
+                    ):
                         sync_hpc_job_status()
 
         call_kwargs = mock_from_lists.call_args[1]
@@ -207,9 +243,13 @@ class TestSyncJobsInnerCoroutine:
         mock_config = _make_mock_config()
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config) as mock_from_lists:
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ) as mock_from_lists:
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+                ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
                         sync_hpc_job_status()
 
@@ -228,15 +268,22 @@ class TestSyncJobsInnerCoroutine:
         mock_config.max_connections = 20
         mock_manager = _make_mock_manager()
 
-        with patch("nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config) as mock_from_lists:
+        with patch(
+            "nfm_db.services.hpc_ssh.SSHConnectionConfig.from_lists", return_value=mock_config
+        ) as mock_from_lists:
             with patch("nfm_db.services.hpc_ssh.SSHConnectionManager", return_value=mock_manager):
-                with patch("nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock):
-                    with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv(
-                        NFM_HPC_PRIMARY_HOST="custom-host.org",
-                        NFM_HPC_PRIMARY_USER="customuser",
-                        NFM_HPC_PRIMARY_SSH_KEY_PATH="/custom/key",
-                        NFM_HPC_MAX_CONNECTIONS="20",
-                    )):
+                with patch(
+                    "nfm_db.services.hpc_job_monitor.sync_all_active_jobs", new_callable=AsyncMock
+                ):
+                    with patch(
+                        "nfm_db.services.hpc_sync.os.getenv",
+                        side_effect=_make_getenv(
+                            NFM_HPC_PRIMARY_HOST="custom-host.org",
+                            NFM_HPC_PRIMARY_USER="customuser",
+                            NFM_HPC_PRIMARY_SSH_KEY_PATH="/custom/key",
+                            NFM_HPC_MAX_CONNECTIONS="20",
+                        ),
+                    ):
                         sync_hpc_job_status()
 
         call_kwargs = mock_from_lists.call_args[1]

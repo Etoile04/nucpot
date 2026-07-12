@@ -119,15 +119,18 @@ class TestCheckGapRequest:
                 source="test",
             )
 
-    @pytest.mark.parametrize("field,value,max_len", [
-        ("element_system", "x", 50),
-        ("property_name", "p", 100),
-        ("source", "s", 200),
-        ("unit", "u", 20),
-        ("source_doi", "d", 200),
-        ("method", "m", 100),
-        ("phase", "p", 50),
-    ])
+    @pytest.mark.parametrize(
+        "field,value,max_len",
+        [
+            ("element_system", "x", 50),
+            ("property_name", "p", 100),
+            ("source", "s", 200),
+            ("unit", "u", 20),
+            ("source_doi", "d", 200),
+            ("method", "m", 100),
+            ("phase", "p", 50),
+        ],
+    )
     def test_field_max_length(self, field: str, value: str, max_len: int) -> None:
         base: dict = {
             "element_system": "X",
@@ -239,12 +242,18 @@ class TestLiteratureMatch:
 
     def test_agreement_pct_boundaries(self) -> None:
         m_low = LiteratureMatch(
-            source_name="s", source_type=SourceCredibility.UNKNOWN,
-            value=1.0, unit="u", agreement_pct=0,
+            source_name="s",
+            source_type=SourceCredibility.UNKNOWN,
+            value=1.0,
+            unit="u",
+            agreement_pct=0,
         )
         m_high = LiteratureMatch(
-            source_name="s", source_type=SourceCredibility.UNKNOWN,
-            value=1.0, unit="u", agreement_pct=100,
+            source_name="s",
+            source_type=SourceCredibility.UNKNOWN,
+            value=1.0,
+            unit="u",
+            agreement_pct=100,
         )
         assert m_low.agreement_pct == 0
         assert m_high.agreement_pct == 100
@@ -285,8 +294,10 @@ class TestValidationResult:
 
     def test_with_literature_matches(self) -> None:
         match = LiteratureMatch(
-            source_name="NIST", source_type=SourceCredibility.NIST_IPR,
-            value=10.0, unit="g/cm3",
+            source_name="NIST",
+            source_type=SourceCredibility.NIST_IPR,
+            value=10.0,
+            unit="g/cm3",
         )
         r = self._make_result(literature_matches=[match])
         assert len(r.literature_matches) == 1
@@ -353,7 +364,8 @@ class TestFixRecommendation:
 
     def test_custom_priority(self) -> None:
         r = FixRecommendation(
-            category="potential", description="Fix potential",
+            category="potential",
+            description="Fix potential",
             priority="high",
         )
         assert r.priority == "high"
@@ -391,25 +403,37 @@ class TestAdjudicationAnalysis:
     def test_confidence_ge_zero(self) -> None:
         with pytest.raises(ValidationError):
             AdjudicationAnalysis(
-                element_system="X", property_name="p", value=1.0,
-                error_type="e", confidence=-0.1,
+                element_system="X",
+                property_name="p",
+                value=1.0,
+                error_type="e",
+                confidence=-0.1,
             )
 
     def test_confidence_le_one(self) -> None:
         with pytest.raises(ValidationError):
             AdjudicationAnalysis(
-                element_system="X", property_name="p", value=1.0,
-                error_type="e", confidence=1.1,
+                element_system="X",
+                property_name="p",
+                value=1.0,
+                error_type="e",
+                confidence=1.1,
             )
 
     def test_confidence_boundaries(self) -> None:
         a0 = AdjudicationAnalysis(
-            element_system="X", property_name="p", value=1.0,
-            error_type="e", confidence=0.0,
+            element_system="X",
+            property_name="p",
+            value=1.0,
+            error_type="e",
+            confidence=0.0,
         )
         a1 = AdjudicationAnalysis(
-            element_system="X", property_name="p", value=1.0,
-            error_type="e", confidence=1.0,
+            element_system="X",
+            property_name="p",
+            value=1.0,
+            error_type="e",
+            confidence=1.0,
         )
         assert a0.confidence == 0.0
         assert a1.confidence == 1.0
@@ -425,8 +449,11 @@ class TestAdjudicationResponse:
 
     def test_success_response(self) -> None:
         analysis = AdjudicationAnalysis(
-            element_system="UO2", property_name="density", value=10.0,
-            error_type="e", confidence=0.9,
+            element_system="UO2",
+            property_name="density",
+            value=10.0,
+            error_type="e",
+            confidence=0.9,
         )
         r = AdjudicationResponse(
             success=True,
@@ -493,8 +520,11 @@ class TestRankedSource:
 
     def test_valid_source(self) -> None:
         r = RankedSource(
-            id=uuid4(), source="NIST IPR", method="DFT",
-            uncertainty=0.01, rank=1,
+            id=uuid4(),
+            source="NIST IPR",
+            method="DFT",
+            uncertainty=0.01,
+            rank=1,
         )
         assert r.rank == 1
 

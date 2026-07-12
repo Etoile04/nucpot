@@ -50,7 +50,9 @@ async def client():
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False,
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
 
     app.dependency_overrides[get_db] = _override_get_db(engine, session_factory)

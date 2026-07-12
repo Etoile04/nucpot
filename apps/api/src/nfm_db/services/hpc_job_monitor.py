@@ -153,9 +153,7 @@ async def update_job_status(
         db = await db_gen.__anext__()
 
         try:
-            hpc_result = await db.execute(
-                select(HpcJob).where(HpcJob.hpc_job_id == hpc_job_id)
-            )
+            hpc_result = await db.execute(select(HpcJob).where(HpcJob.hpc_job_id == hpc_job_id))
             hpc_job = hpc_result.scalar_one_or_none()
 
             if hpc_job:
@@ -194,9 +192,7 @@ async def get_active_jobs() -> list[HpcJob]:
 
     try:
         result = await db.execute(
-            select(HpcJob).where(
-                HpcJob.status.in_([HpcJobStatus.PENDING, HpcJobStatus.RUNNING])
-            )
+            select(HpcJob).where(HpcJob.status.in_([HpcJobStatus.PENDING, HpcJobStatus.RUNNING]))
         )
         return result.scalars().all()
     finally:

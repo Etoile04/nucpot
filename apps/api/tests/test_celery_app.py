@@ -23,7 +23,9 @@ class TestGetRedisClient:
         mock_redis_module = MagicMock()
         mock_redis_module.Redis.return_value = mock_redis_instance
 
-        with patch.dict("os.environ", {"REDIS_HOST": "localhost", "REDIS_PORT": "6379", "REDIS_DB": "0"}):
+        with patch.dict(
+            "os.environ", {"REDIS_HOST": "localhost", "REDIS_PORT": "6379", "REDIS_DB": "0"}
+        ):
             with patch.dict("sys.modules", {"redis": mock_redis_module}):
                 result = _get_redis_client()
                 assert result is mock_redis_instance
@@ -45,7 +47,9 @@ class TestGetRedisClient:
         mock_redis_module = MagicMock()
         mock_redis_module.Redis.side_effect = Exception("Connection refused")
 
-        with patch.dict("os.environ", {"REDIS_HOST": "badhost", "REDIS_PORT": "6379", "REDIS_DB": "0"}):
+        with patch.dict(
+            "os.environ", {"REDIS_HOST": "badhost", "REDIS_PORT": "6379", "REDIS_DB": "0"}
+        ):
             with patch.dict("sys.modules", {"redis": mock_redis_module}):
                 result = _get_redis_client()
                 assert result is None
@@ -197,11 +201,14 @@ class TestMonitorPrimaryClusterHealthErrors:
         THEN monitor returns error status with message."""
         from nfm_db.services.celery_app import monitor_primary_cluster_health
 
-        with patch.dict("os.environ", {
-            "NFM_HPC_PRIMARY_HOST": "test.example.com",
-            "NFM_HPC_PRIMARY_USER": "testuser",
-            "NFM_HPC_PRIMARY_SSH_KEY_PATH": '/tmp/test_key',
-        }):
+        with patch.dict(
+            "os.environ",
+            {
+                "NFM_HPC_PRIMARY_HOST": "test.example.com",
+                "NFM_HPC_PRIMARY_USER": "testuser",
+                "NFM_HPC_PRIMARY_SSH_KEY_PATH": "/tmp/test_key",
+            },
+        ):
             with patch("nfm_db.services.celery_app._validate_hpc_environment"):
                 with patch(
                     "nfm_db.services.hpc_orchestration.HPCOrchestrator",
@@ -225,11 +232,14 @@ class TestMonitorPrimaryClusterHealthErrors:
         async def mock_trigger_failover_fail():
             return False
 
-        with patch.dict("os.environ", {
-            "NFM_HPC_PRIMARY_HOST": "test.example.com",
-            "NFM_HPC_PRIMARY_USER": "testuser",
-            "NFM_HPC_PRIMARY_SSH_KEY_PATH": '/tmp/test_key',
-        }):
+        with patch.dict(
+            "os.environ",
+            {
+                "NFM_HPC_PRIMARY_HOST": "test.example.com",
+                "NFM_HPC_PRIMARY_USER": "testuser",
+                "NFM_HPC_PRIMARY_SSH_KEY_PATH": "/tmp/test_key",
+            },
+        ):
             with patch("nfm_db.services.celery_app._validate_hpc_environment"):
                 with patch(
                     "nfm_db.services.hpc_orchestration.HPCOrchestrator",
@@ -249,11 +259,14 @@ class TestMonitorPrimaryClusterHealthErrors:
         THEN monitor returns success status."""
         from nfm_db.services.celery_app import monitor_primary_cluster_health
 
-        with patch.dict("os.environ", {
-            "NFM_HPC_PRIMARY_HOST": "test.example.com",
-            "NFM_HPC_PRIMARY_USER": "testuser",
-            "NFM_HPC_PRIMARY_SSH_KEY_PATH": '/tmp/test_key',
-        }):
+        with patch.dict(
+            "os.environ",
+            {
+                "NFM_HPC_PRIMARY_HOST": "test.example.com",
+                "NFM_HPC_PRIMARY_USER": "testuser",
+                "NFM_HPC_PRIMARY_SSH_KEY_PATH": "/tmp/test_key",
+            },
+        ):
             with patch("nfm_db.services.celery_app._validate_hpc_environment"):
                 with patch(
                     "nfm_db.services.hpc_orchestration.HPCOrchestrator",

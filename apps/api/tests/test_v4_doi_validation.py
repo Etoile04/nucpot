@@ -49,9 +49,7 @@ class TestDoiFormatValidation:
             "source_reference": "10.1016/j.nucengdes.2020.110756",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 202
         body = response.json()
         assert body["success"] is True
@@ -63,43 +61,33 @@ class TestDoiFormatValidation:
             "source_reference": "not-a-doi",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 400
         body = response.json()
         assert body["success"] is False
         assert "Invalid DOI format" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_invalid_doi_non_numeric_registrant_returns_400(
-        self, doi_client: AsyncClient
-    ):
+    async def test_invalid_doi_non_numeric_registrant_returns_400(self, doi_client: AsyncClient):
         """DOI with non-numeric registrant '10.abc/something' should return 400."""
         payload = {
             "source_reference": "10.abc/something",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 400
         body = response.json()
         assert body["success"] is False
         assert "Invalid DOI format" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_doi_with_whitespace_in_suffix_returns_400(
-        self, doi_client: AsyncClient
-    ):
+    async def test_doi_with_whitespace_in_suffix_returns_400(self, doi_client: AsyncClient):
         """DOI with embedded whitespace should fail regex validation."""
         payload = {
             "source_reference": "10.1016/some thing",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 400
         body = response.json()
         assert body["success"] is False
@@ -111,9 +99,7 @@ class TestDoiFormatValidation:
             "source_reference": "https://example.com/paper",
             "source_type": "url",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 202
         body = response.json()
         assert body["success"] is True
@@ -125,25 +111,19 @@ class TestDoiFormatValidation:
             "source_reference": "uploaded_paper.pdf",
             "source_type": "file",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 202
         body = response.json()
         assert body["success"] is True
 
     @pytest.mark.asyncio
-    async def test_internal_id_source_type_not_affected(
-        self, doi_client: AsyncClient
-    ):
+    async def test_internal_id_source_type_not_affected(self, doi_client: AsyncClient):
         """source_type=internal_id with arbitrary string should still pass."""
         payload = {
             "source_reference": "REF-001",
             "source_type": "internal_id",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 202
         body = response.json()
         assert body["success"] is True
@@ -155,24 +135,18 @@ class TestDoiFormatValidation:
             "source_reference": "",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         # Empty string fails Pydantic validation → 422, or our empty check → 400
         assert response.status_code in (400, 422)
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_doi_caught_by_existing_check(
-        self, doi_client: AsyncClient
-    ):
+    async def test_whitespace_only_doi_caught_by_existing_check(self, doi_client: AsyncClient):
         """Whitespace-only DOI should be caught by the existing empty-check."""
         payload = {
             "source_reference": "   ",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code in (400, 422)
 
     @pytest.mark.asyncio
@@ -182,8 +156,6 @@ class TestDoiFormatValidation:
             "source_reference": "10.1234/test",
             "source_type": "doi",
         }
-        response = await doi_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         # Passes regex but may fail extraction pipeline — that's fine
         assert response.status_code in (202, 500)

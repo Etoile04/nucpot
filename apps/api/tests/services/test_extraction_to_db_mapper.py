@@ -155,9 +155,7 @@ class TestMapAndPersistValidation:
 class TestMapAndPersistDedup:
     """Tests for deduplication by DOI (sources) and formula (materials)."""
 
-    async def test_dedup_same_doi_single_source(
-        self, db_session: AsyncSession
-    ):
+    async def test_dedup_same_doi_single_source(self, db_session: AsyncSession):
         """Two properties from same DOI should create only one DataSource."""
         await _seed_property_type(db_session)
 
@@ -176,9 +174,7 @@ class TestMapAndPersistDedup:
         assert result.created_sources == 1
         assert result.skipped_duplicates >= 1
 
-    async def test_dedup_same_material_single_material(
-        self, db_session: AsyncSession
-    ):
+    async def test_dedup_same_material_single_material(self, db_session: AsyncSession):
         """Two properties with same material_name should create one Material."""
         await _seed_property_type(db_session)
 
@@ -202,9 +198,7 @@ class TestMapAndPersistDedup:
 
         assert result.created_materials == 1
 
-    async def test_different_dois_two_sources(
-        self, db_session: AsyncSession
-    ):
+    async def test_different_dois_two_sources(self, db_session: AsyncSession):
         """Properties from different DOIs should create two DataSources."""
         await _seed_property_type(db_session)
 
@@ -222,9 +216,7 @@ class TestMapAndPersistDedup:
 class TestMapAndPersistMapping:
     """Tests for correct extraction-to-DB field mapping."""
 
-    async def test_creates_data_source_from_extraction(
-        self, db_session: AsyncSession
-    ):
+    async def test_creates_data_source_from_extraction(self, db_session: AsyncSession):
         """DataSource should be created with title from reference field."""
         await _seed_property_type(db_session)
 
@@ -243,9 +235,7 @@ class TestMapAndPersistMapping:
         assert sources[0].doi == "10.1000/test1"
         assert "Smith" in sources[0].title
 
-    async def test_creates_material_from_extraction(
-        self, db_session: AsyncSession
-    ):
+    async def test_creates_material_from_extraction(self, db_session: AsyncSession):
         """Material should be created with name and formula from extraction."""
         await _seed_property_type(db_session)
 
@@ -264,9 +254,7 @@ class TestMapAndPersistMapping:
         assert materials[0].name == "UO2"
         assert materials[0].formula == "UO2"
 
-    async def test_creates_dataset_linking_material_and_source(
-        self, db_session: AsyncSession
-    ):
+    async def test_creates_dataset_linking_material_and_source(self, db_session: AsyncSession):
         """Dataset should link material and source correctly."""
         await _seed_property_type(db_session)
 
@@ -285,9 +273,7 @@ class TestMapAndPersistMapping:
         assert ds.material_id is not None
         assert ds.source_id is not None
 
-    async def test_creates_property_measurement(
-        self, db_session: AsyncSession
-    ):
+    async def test_creates_property_measurement(self, db_session: AsyncSession):
         """PropertyMeasurement should store extracted value as scalar."""
         pt = await _seed_property_type(
             db_session,
@@ -307,18 +293,12 @@ class TestMapAndPersistMapping:
         result = await map_and_persist(db_session, inputs)
 
         assert result.created_measurements == 1
-        measurements = (
-            (await db_session.execute(select(PropertyMeasurement)))
-            .scalars()
-            .all()
-        )
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) == 1
         assert measurements[0].value_scalar == 8.5
         assert measurements[0].property_type_id == pt.id
 
-    async def test_creates_measurement_conditions(
-        self, db_session: AsyncSession
-    ):
+    async def test_creates_measurement_conditions(self, db_session: AsyncSession):
         """Conditions dict should map to MeasurementCondition fields."""
         await _seed_property_type(
             db_session,
@@ -338,19 +318,13 @@ class TestMapAndPersistMapping:
 
         await map_and_persist(db_session, inputs)
 
-        conditions = (
-            (await db_session.execute(select(MeasurementCondition)))
-            .scalars()
-            .all()
-        )
+        conditions = (await db_session.execute(select(MeasurementCondition))).scalars().all()
         assert len(conditions) == 1
         assert float(conditions[0].temperature) == 1000.0
         assert float(conditions[0].pressure) == 0.1
         assert conditions[0].environment == "argon atmosphere"
 
-    async def test_skips_unknown_property_type(
-        self, db_session: AsyncSession
-    ):
+    async def test_skips_unknown_property_type(self, db_session: AsyncSession):
         """Properties with unknown category/name should not create measurements."""
         # Don't seed any PropertyType
         inputs = [_make_extracted_property(property_category="unknown_cat")]
@@ -367,9 +341,7 @@ class TestMapAndPersistMapping:
 class TestMapAndPersistTransaction:
     """Tests for transactional behavior."""
 
-    async def test_validation_error_does_not_create_partial_records(
-        self, db_session: AsyncSession
-    ):
+    async def test_validation_error_does_not_create_partial_records(self, db_session: AsyncSession):
         """If any item fails validation, no DB records should be created."""
         await _seed_property_type(db_session)
 
@@ -425,9 +397,7 @@ class TestMappingError:
 class TestMapAndPersistIntegration:
     """Integration test: full extraction output → DB records."""
 
-    async def test_full_extraction_pipeline_output(
-        self, db_session: AsyncSession
-    ):
+    async def test_full_extraction_pipeline_output(self, db_session: AsyncSession):
         """Given realistic extraction output, verify correct DB records."""
         await _seed_property_type(
             db_session,
@@ -512,18 +482,10 @@ class TestMapAndPersistIntegration:
         datasets = (await db_session.execute(select(Dataset))).scalars().all()
         assert len(datasets) == 1
 
-        measurements = (
-            (await db_session.execute(select(PropertyMeasurement)))
-            .scalars()
-            .all()
-        )
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) == 3
 
-        conditions = (
-            (await db_session.execute(select(MeasurementCondition)))
-            .scalars()
-            .all()
-        )
+        conditions = (await db_session.execute(select(MeasurementCondition))).scalars().all()
         assert len(conditions) == 3
 
         # Verify specific condition mapping

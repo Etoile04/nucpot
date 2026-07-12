@@ -53,9 +53,7 @@ class TestAuthenticationFlow:
 class TestRoleManagementFlow:
     """Test role assignment and management flows."""
 
-    async def test_list_roles_as_admin(
-        self, async_client: AsyncClient, admin_headers, db_session
-    ):
+    async def test_list_roles_as_admin(self, async_client: AsyncClient, admin_headers, db_session):
         """Test admin can list all available roles."""
         response = await async_client.get(
             "/api/v1/auth/roles",
@@ -70,9 +68,7 @@ class TestRoleManagementFlow:
         role_names = {role["role"] for role in roles}
         assert role_names == {"admin", "editor", "reviewer"}
 
-    async def test_assign_role_to_user(
-        self, async_client: AsyncClient, admin_headers, db_session
-    ):
+    async def test_assign_role_to_user(self, async_client: AsyncClient, admin_headers, db_session):
         """Test admin can assign role to user."""
         # Create test user
         user = User(
@@ -120,9 +116,7 @@ class TestRoleManagementFlow:
         assert data["success"] is True
         assert data["data"]["new_role"] is None
 
-    async def test_non_admin_cannot_list_roles(
-        self, async_client: AsyncClient, editor_headers
-    ):
+    async def test_non_admin_cannot_list_roles(self, async_client: AsyncClient, editor_headers):
         """Test non-admin cannot list roles."""
         response = await async_client.get(
             "/api/v1/auth/roles",
@@ -158,9 +152,7 @@ class TestRoleManagementFlow:
 class TestAuthorizationFlow:
     """Test authorization middleware flows."""
 
-    async def test_admin_can_access_admin_endpoints(
-        self, async_client: AsyncClient, admin_headers
-    ):
+    async def test_admin_can_access_admin_endpoints(self, async_client: AsyncClient, admin_headers):
         """Test admin can access admin-only endpoints."""
         response = await async_client.get(
             "/api/v1/auth/roles",
@@ -180,9 +172,7 @@ class TestAuthorizationFlow:
 
         assert response.status_code == 403
 
-    async def test_unauthenticated_request_denied(
-        self, async_client: AsyncClient
-    ):
+    async def test_unauthenticated_request_denied(self, async_client: AsyncClient):
         """Test unauthenticated requests are denied."""
         response = await async_client.get("/api/v1/auth/me")
 

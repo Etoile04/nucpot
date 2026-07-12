@@ -191,9 +191,7 @@ class TestHttpExceptionHandlerIntegration:
 
         @application.get("/auth-required")
         async def auth_required() -> None:
-            raise HTTPException(
-                status_code=401, detail="Authentication required"
-            )
+            raise HTTPException(status_code=401, detail="Authentication required")
 
         @application.get("/rate-limited")
         async def rate_limited() -> None:
@@ -201,17 +199,13 @@ class TestHttpExceptionHandlerIntegration:
 
         @application.get("/internal-error")
         async def internal_error() -> None:
-            raise HTTPException(
-                status_code=500, detail="Internal server error"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         return application
 
     @pytest.fixture
     def client(self, app: FastAPI) -> AsyncClient:
-        return AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        )
+        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     @pytest.mark.asyncio
     async def test_404_has_error_code(self, client: AsyncClient) -> None:
@@ -279,9 +273,7 @@ class TestHttpExceptionHandlerIntegration:
         assert data["error_code"] == "INTERNAL_ERROR"
 
     @pytest.mark.asyncio
-    async def test_backward_compatible_error_field(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_backward_compatible_error_field(self, client: AsyncClient) -> None:
         """The 'error' field with Chinese message must exist."""
         response = await client.get("/not-found")
         data = response.json()
@@ -291,9 +283,7 @@ class TestHttpExceptionHandlerIntegration:
         assert len(data["error"]) > 0
 
     @pytest.mark.asyncio
-    async def test_unknown_status_code_falls_back_to_internal(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_unknown_status_code_falls_back_to_internal(self, client: AsyncClient) -> None:
         """Status codes without explicit mapping should get INTERNAL_ERROR."""
         application = FastAPI()
         register_http_exception_handler(application)
@@ -302,9 +292,7 @@ class TestHttpExceptionHandlerIntegration:
         async def unknown() -> None:
             raise HTTPException(status_code=502, detail="Bad gateway")
 
-        test_client = AsyncClient(
-            transport=ASGITransport(app=application), base_url="http://test"
-        )
+        test_client = AsyncClient(transport=ASGITransport(app=application), base_url="http://test")
         response = await test_client.get("/unknown")
         data = response.json()
 

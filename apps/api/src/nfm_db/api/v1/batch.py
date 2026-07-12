@@ -31,6 +31,7 @@ from nfm_db.models.ref_gap_fill import RefGapFillStaging
 from nfm_db.schemas.batch import (
     BatchImportResult,
     BatchRowError,
+    ReferenceValueRow,
 )
 from nfm_db.services.batch_service import (
     BATCH_IMPORT_MAX_ROWS,
@@ -60,6 +61,7 @@ def _generate_dedup_hash(row: ReferenceValueRow) -> str:
     )
     return hashlib.sha256(key.encode()).hexdigest()
 
+
 # Separate routers for each entity (different prefixes in main.py)
 materials_router = APIRouter(tags=["材料管理"])
 properties_router = APIRouter(tags=["属性管理"])
@@ -84,9 +86,7 @@ def _measurement_to_dict(m: PropertyMeasurement) -> dict:
     return {
         "id": str(m.id),
         "dataset_id": str(m.dataset_id) if m.dataset_id else None,
-        "property_type_id": (
-            str(m.property_type_id) if m.property_type_id else None
-        ),
+        "property_type_id": (str(m.property_type_id) if m.property_type_id else None),
         "value_scalar": m.value_scalar,
         "value_min": m.value_min,
         "value_max": m.value_max,

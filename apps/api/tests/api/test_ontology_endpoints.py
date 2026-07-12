@@ -21,6 +21,7 @@ from nfm_db.services.ontology_service import CorpusNotFoundError
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_graph_response(
     *,
     corpus_id: str = "test-corpus",
@@ -68,11 +69,7 @@ def _build_graph_response(
                 label="has property",
             ),
         ],
-        pagination=(
-            OntologyPagination(next_cursor="abc123", total=10)
-            if has_pagination
-            else None
-        ),
+        pagination=(OntologyPagination(next_cursor="abc123", total=10) if has_pagination else None),
     )
     if last_modified is not None:
         graph._last_modified = last_modified
@@ -82,6 +79,7 @@ def _build_graph_response(
 # ---------------------------------------------------------------------------
 # GET /ontology/corpora/{corpus_id}/graph — 200 success
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.ontology.derive_ontology_graph", new_callable=AsyncMock)
@@ -152,6 +150,7 @@ async def test_get_corpus_graph_200_success(
 # GET /ontology/corpora/{corpus_id}/graph — 200 with pagination cursor
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.ontology.derive_ontology_graph", new_callable=AsyncMock)
 async def test_get_corpus_graph_200_with_pagination_cursor(
@@ -194,6 +193,7 @@ async def test_get_corpus_graph_200_with_pagination_cursor(
 # GET /ontology/corpora/{corpus_id}/graph — 200 with max_nodes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.ontology.derive_ontology_graph", new_callable=AsyncMock)
 async def test_get_corpus_graph_200_with_max_nodes(
@@ -220,6 +220,7 @@ async def test_get_corpus_graph_200_with_max_nodes(
 # ---------------------------------------------------------------------------
 # GET /ontology/corpora/{corpus_id}/graph — 200 with Last-Modified header
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.ontology.derive_ontology_graph", new_callable=AsyncMock)
@@ -252,6 +253,7 @@ async def test_get_corpus_graph_200_last_modified_header(
 # GET /ontology/corpora/{corpus_id}/graph — 404 corpus not found
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.ontology.derive_ontology_graph", new_callable=AsyncMock)
 async def test_get_corpus_graph_404_not_found(
@@ -275,15 +277,16 @@ async def test_get_corpus_graph_404_not_found(
 # GET /ontology/corpora/{corpus_id}/graph — 422 malformed corpus_id
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_corpus_id",
     [
-        "-starts-with-hyphen",       # starts with hyphen
-        ".starts-with-dot",          # starts with dot
-        "has spaces!",               # invalid characters (space + exclamation)
-        "has@at-sign",               # at-sign not allowed
-        "a" * 65,                     # exceeds 64-char ceiling
+        "-starts-with-hyphen",  # starts with hyphen
+        ".starts-with-dot",  # starts with dot
+        "has spaces!",  # invalid characters (space + exclamation)
+        "has@at-sign",  # at-sign not allowed
+        "a" * 65,  # exceeds 64-char ceiling
     ],
 )
 @patch("nfm_db.api.v1.ontology.derive_ontology_graph", new_callable=AsyncMock)
@@ -299,8 +302,7 @@ async def test_get_corpus_graph_422_malformed_corpus_id(
     )
 
     assert response.status_code == 422, (
-        f"Expected 422 for corpus_id={bad_corpus_id!r}, "
-        f"got {response.status_code}: {response.text}"
+        f"Expected 422 for corpus_id={bad_corpus_id!r}, got {response.status_code}: {response.text}"
     )
     # Service must NOT be invoked for malformed corpus IDs
     mock_derive.assert_not_awaited()

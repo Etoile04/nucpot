@@ -75,16 +75,12 @@ class TestExtractStructured:
     """Tests for the extract_structured method."""
 
     @pytest.mark.asyncio
-    async def test_returns_parsed_dict_from_valid_response(
-        self, client: LLMClient
-    ) -> None:
+    async def test_returns_parsed_dict_from_valid_response(self, client: LLMClient) -> None:
         """extract_structured should return a parsed dict from a valid LLM response."""
         expected = {"element": "U", "property": "density", "value": 19.1}
         mock_body = _mock_openai_response(expected)
 
-        with patch.object(
-            client, "_call_provider", new_callable=AsyncMock, return_value=mock_body
-        ):
+        with patch.object(client, "_call_provider", new_callable=AsyncMock, return_value=mock_body):
             result = await client.extract_structured(
                 prompt="Extract properties from this text.",
                 schema={"type": "object", "properties": {"element": {"type": "string"}}},
@@ -93,9 +89,7 @@ class TestExtractStructured:
         assert result == expected
 
     @pytest.mark.asyncio
-    async def test_passes_system_prompt_to_provider(
-        self, client: LLMClient
-    ) -> None:
+    async def test_passes_system_prompt_to_provider(self, client: LLMClient) -> None:
         """extract_structured should forward the system prompt."""
         system_prompt = "You are a materials scientist."
         mock_body = _mock_openai_response({"ok": True})
@@ -113,9 +107,7 @@ class TestExtractStructured:
             assert call_kwargs[1]["system_prompt"] == system_prompt
 
     @pytest.mark.asyncio
-    async def test_defaults_system_prompt_to_extraction_role(
-        self, client: LLMClient
-    ) -> None:
+    async def test_defaults_system_prompt_to_extraction_role(self, client: LLMClient) -> None:
         """When no system_prompt given, use a sensible default."""
         mock_body = _mock_openai_response({"ok": True})
 
@@ -212,9 +204,7 @@ class TestCaching:
         int(key, 16)  # valid hex
 
     @pytest.mark.asyncio
-    async def test_identical_prompt_returns_cached_result(
-        self, client: LLMClient
-    ) -> None:
+    async def test_identical_prompt_returns_cached_result(self, client: LLMClient) -> None:
         """Second call with same prompt+model should return cached result without HTTP call."""
         expected = {"cached": True}
         mock_body = _mock_openai_response(expected)
@@ -243,9 +233,7 @@ class TestCaching:
         assert result2 == expected
 
     @pytest.mark.asyncio
-    async def test_different_prompt_bypasses_cache(
-        self, client: LLMClient
-    ) -> None:
+    async def test_different_prompt_bypasses_cache(self, client: LLMClient) -> None:
         """Different prompt should trigger a new provider call."""
         mock_body = _mock_openai_response({"ok": True})
 
@@ -267,9 +255,7 @@ class TestCaching:
             assert mock_call.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_different_system_prompt_bypasses_cache(
-        self, client: LLMClient
-    ) -> None:
+    async def test_different_system_prompt_bypasses_cache(self, client: LLMClient) -> None:
         """Same prompt but different system_prompt should bypass cache."""
         mock_body = _mock_openai_response({"ok": True})
 
@@ -293,9 +279,7 @@ class TestCaching:
             assert mock_call.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_different_schema_bypasses_cache(
-        self, client: LLMClient
-    ) -> None:
+    async def test_different_schema_bypasses_cache(self, client: LLMClient) -> None:
         """Same prompt and system_prompt but different schema should bypass cache."""
         mock_body = _mock_openai_response({"ok": True})
 
@@ -337,13 +321,13 @@ class TestRetry:
                 mock_resp = MagicMock(spec=httpx.Response)
                 mock_resp.status_code = 500
                 mock_resp.text = "Internal Server Error"
-                err = httpx.HTTPStatusError(
-                    "Server Error", request=MagicMock(), response=mock_resp
-                )
+                err = httpx.HTTPStatusError("Server Error", request=MagicMock(), response=mock_resp)
                 raise err
             return _mock_openai_response({"retried": True})
 
-        with patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=_fail_then_succeed):
+        with patch.object(
+            client, "_call_provider", new_callable=AsyncMock, side_effect=_fail_then_succeed
+        ):
             result = await client.extract_structured(
                 prompt="Retry me.",
                 schema={"type": "object"},
@@ -359,13 +343,13 @@ class TestRetry:
         mock_resp.text = "Server Error"
 
         def _always_fail(**kwargs: Any) -> dict[str, Any]:
-            err = httpx.HTTPStatusError(
-                "Server Error", request=MagicMock(), response=mock_resp
-            )
+            err = httpx.HTTPStatusError("Server Error", request=MagicMock(), response=mock_resp)
             raise err
 
         with (
-            patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=_always_fail),
+            patch.object(
+                client, "_call_provider", new_callable=AsyncMock, side_effect=_always_fail
+            ),
             pytest.raises(httpx.HTTPStatusError),
         ):
             await client.extract_structured(
@@ -385,13 +369,13 @@ class TestRetry:
                 mock_resp = MagicMock(spec=httpx.Response)
                 mock_resp.status_code = 429
                 mock_resp.text = "Too Many Requests"
-                err = httpx.HTTPStatusError(
-                    "Rate Limited", request=MagicMock(), response=mock_resp
-                )
+                err = httpx.HTTPStatusError("Rate Limited", request=MagicMock(), response=mock_resp)
                 raise err
             return _mock_openai_response({"ok": True})
 
-        with patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=_rate_limit_then_ok):
+        with patch.object(
+            client, "_call_provider", new_callable=AsyncMock, side_effect=_rate_limit_then_ok
+        ):
             result = await client.extract_structured(
                 prompt="Rate limited.",
                 schema={"type": "object"},
@@ -414,13 +398,13 @@ class TestRetry:
                 mock_resp = MagicMock(spec=httpx.Response)
                 mock_resp.status_code = 500
                 mock_resp.text = "Server Error"
-                err = httpx.HTTPStatusError(
-                    "Server Error", request=MagicMock(), response=mock_resp
-                )
+                err = httpx.HTTPStatusError("Server Error", request=MagicMock(), response=mock_resp)
                 raise err
             return _mock_openai_response({"done": True})
 
-        with patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=_record_time):
+        with patch.object(
+            client, "_call_provider", new_callable=AsyncMock, side_effect=_record_time
+        ):
             await client.extract_structured(
                 prompt="Measure delays.",
                 schema={"type": "object"},
@@ -490,9 +474,7 @@ class TestSchemaValidation:
     """Tests for JSON schema validation of LLM responses."""
 
     @pytest.mark.asyncio
-    async def test_valid_response_passes_schema_validation(
-        self, client: LLMClient
-    ) -> None:
+    async def test_valid_response_passes_schema_validation(self, client: LLMClient) -> None:
         """A response conforming to the schema should be returned as-is."""
         schema = {
             "type": "object",
@@ -505,9 +487,7 @@ class TestSchemaValidation:
         valid_data = {"name": "Uranium", "value": 238.0}
         mock_body = _mock_openai_response(valid_data)
 
-        with patch.object(
-            client, "_call_provider", new_callable=AsyncMock, return_value=mock_body
-        ):
+        with patch.object(client, "_call_provider", new_callable=AsyncMock, return_value=mock_body):
             result = await client.extract_structured(
                 prompt="Extract element.",
                 schema=schema,
@@ -516,9 +496,7 @@ class TestSchemaValidation:
         assert result == valid_data
 
     @pytest.mark.asyncio
-    async def test_invalid_schema_raises_value_error(
-        self, client: LLMClient
-    ) -> None:
+    async def test_invalid_schema_raises_value_error(self, client: LLMClient) -> None:
         """A response not matching the schema should raise ValueError."""
         schema = {
             "type": "object",
@@ -529,9 +507,7 @@ class TestSchemaValidation:
         mock_body = _mock_openai_response(invalid_data)
 
         with (
-            patch.object(
-                client, "_call_provider", new_callable=AsyncMock, return_value=mock_body
-            ),
+            patch.object(client, "_call_provider", new_callable=AsyncMock, return_value=mock_body),
             pytest.raises(ValueError, match="Schema validation"),
         ):
             await client.extract_structured(
@@ -540,9 +516,7 @@ class TestSchemaValidation:
             )
 
     @pytest.mark.asyncio
-    async def test_wrong_type_field_raises_value_error(
-        self, client: LLMClient
-    ) -> None:
+    async def test_wrong_type_field_raises_value_error(self, client: LLMClient) -> None:
         """A number field with a string value should raise ValueError."""
         schema = {
             "type": "object",
@@ -554,9 +528,7 @@ class TestSchemaValidation:
         mock_body = _mock_openai_response(bad_data)
 
         with (
-            patch.object(
-                client, "_call_provider", new_callable=AsyncMock, return_value=mock_body
-            ),
+            patch.object(client, "_call_provider", new_callable=AsyncMock, return_value=mock_body),
             pytest.raises(ValueError, match="expected number"),
         ):
             await client.extract_structured(
@@ -584,9 +556,7 @@ class TestSchemaValidation:
             )
 
     @pytest.mark.asyncio
-    async def test_non_json_response_raises_value_error(
-        self, client: LLMClient
-    ) -> None:
+    async def test_non_json_response_raises_value_error(self, client: LLMClient) -> None:
         """If the LLM returns non-JSON content, should raise ValueError."""
         bad_content = _mock_openai_response({"valid": True})
         bad_content["choices"][0]["message"]["content"] = "Not JSON at all!"
@@ -603,9 +573,7 @@ class TestSchemaValidation:
             )
 
     @pytest.mark.asyncio
-    async def test_non_dict_json_response_raises_value_error(
-        self, client: LLMClient
-    ) -> None:
+    async def test_non_dict_json_response_raises_value_error(self, client: LLMClient) -> None:
         """If the LLM returns valid JSON but not a dict (e.g. a list), raise ValueError."""
         bad_content = _mock_openai_response({"valid": True})
         bad_content["choices"][0]["message"]["content"] = json.dumps([1, 2, 3])
@@ -666,9 +634,7 @@ class TestConfiguration:
         with pytest.raises(ValueError, match="LLM_API_KEY"):
             LLMClient()
 
-    def test_base_url_defaults_if_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_base_url_defaults_if_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """LLM_BASE_URL should fall back to a provider default if missing."""
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
@@ -704,9 +670,7 @@ class TestCallProvider:
         return mock_client
 
     @pytest.mark.asyncio
-    async def test_posts_to_correct_endpoint(
-        self, client: LLMClient
-    ) -> None:
+    async def test_posts_to_correct_endpoint(self, client: LLMClient) -> None:
         """Should POST to /chat/completions on the configured base URL."""
         mock_http = self._build_mock_http_client(_mock_openai_response({"ok": True}))
 
@@ -726,9 +690,7 @@ class TestCallProvider:
             assert url == "https://api.example.com/v1/chat/completions"
 
     @pytest.mark.asyncio
-    async def test_sends_correct_headers(
-        self, client: LLMClient
-    ) -> None:
+    async def test_sends_correct_headers(self, client: LLMClient) -> None:
         """Should include Authorization Bearer and Content-Type headers."""
         mock_http = self._build_mock_http_client(_mock_openai_response({"ok": True}))
 
@@ -748,9 +710,7 @@ class TestCallProvider:
             assert headers["Content-Type"] == "application/json"
 
     @pytest.mark.asyncio
-    async def test_sends_correct_payload(
-        self, client: LLMClient
-    ) -> None:
+    async def test_sends_correct_payload(self, client: LLMClient) -> None:
         """Payload should include model, messages, temperature, seed."""
         mock_http = self._build_mock_http_client(_mock_openai_response({"ok": True}))
 
@@ -774,9 +734,7 @@ class TestCallProvider:
             assert payload["seed"] == 42
 
     @pytest.mark.asyncio
-    async def test_returns_response_body_with_latency(
-        self, client: LLMClient
-    ) -> None:
+    async def test_returns_response_body_with_latency(self, client: LLMClient) -> None:
         """Should return the response JSON body with _latency_ms injected."""
         mock_body = _mock_openai_response({"ok": True})
         mock_http = self._build_mock_http_client(mock_body)
@@ -820,9 +778,7 @@ class TestNonRetryableErrors:
             )
 
         with (
-            patch.object(
-                client, "_call_provider", new_callable=AsyncMock, side_effect=_raise_400
-            ),
+            patch.object(client, "_call_provider", new_callable=AsyncMock, side_effect=_raise_400),
             pytest.raises(httpx.HTTPStatusError) as exc_info,
         ):
             await client.extract_structured(
@@ -880,9 +836,7 @@ class TestNonRetryableErrors:
 class TestLegacyFunctions:
     """Tests for legacy backward-compatibility functions."""
 
-    def test_get_config_reads_env_vars(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_get_config_reads_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_get_config should read LLM config from environment."""
         monkeypatch.setenv("LLM_API_KEY", "key-123")
         monkeypatch.setenv("LLM_BASE_URL", "https://custom.api/v1")
@@ -908,9 +862,7 @@ class TestLegacyFunctions:
         raw = '```\n{"key": "value"}\n```'
         assert _strip_code_fences(raw) == '{"key": "value"}'
 
-    def test_is_llm_configured_returns_true_with_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_is_llm_configured_returns_true_with_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """is_llm_configured should return True when API key is set."""
         monkeypatch.setenv("LLM_API_KEY", "has-key")
         assert is_llm_configured() is True
@@ -935,7 +887,9 @@ class TestNoAgentDependency:
         """The llm_client module should not import anthropic or openai SDKs."""
         from pathlib import Path
 
-        source = Path(__file__).resolve().parent.parent / "src" / "nfm_db" / "services" / "llm_client.py"
+        source = (
+            Path(__file__).resolve().parent.parent / "src" / "nfm_db" / "services" / "llm_client.py"
+        )
         text = source.read_text(encoding="utf-8")
         assert "import anthropic" not in text
         assert "from anthropic" not in text

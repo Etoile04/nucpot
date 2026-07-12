@@ -269,13 +269,13 @@ class TestUnitNormalizer:
 
         config_path = (
             Path(__file__).resolve().parent.parent
-            / "src" / "nfm_db" / "config"
+            / "src"
+            / "nfm_db"
+            / "config"
             / "property_mapping.json"
         )
 
-        assert config_path.exists(), (
-            f"property_mapping.json not found at {config_path}"
-        )
+        assert config_path.exists(), f"property_mapping.json not found at {config_path}"
 
         with open(config_path) as f:
             data = json.load(f)

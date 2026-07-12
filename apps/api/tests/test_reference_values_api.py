@@ -107,24 +107,26 @@ async def test_bulk_stage_multiple_values(db_session: AsyncSession) -> None:
     """Bulk endpoint processes multiple values correctly."""
     app.dependency_overrides[get_db] = _override_get_db(db_session)
 
-    payload = _bulk_payload([
-        {
-            "element_system": "U",
-            "property_name": "lattice_constant",
-            "value": 2.85,
-            "unit": "angstrom",
-            "source": "SourceA",
-            "confidence": "medium",
-        },
-        {
-            "element_system": "UO2",
-            "property_name": "bulk_modulus",
-            "value": 200.0,
-            "unit": "GPa",
-            "source": "SourceB",
-            "confidence": "high",
-        },
-    ])
+    payload = _bulk_payload(
+        [
+            {
+                "element_system": "U",
+                "property_name": "lattice_constant",
+                "value": 2.85,
+                "unit": "angstrom",
+                "source": "SourceA",
+                "confidence": "medium",
+            },
+            {
+                "element_system": "UO2",
+                "property_name": "bulk_modulus",
+                "value": 200.0,
+                "unit": "GPa",
+                "source": "SourceB",
+                "confidence": "high",
+            },
+        ]
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

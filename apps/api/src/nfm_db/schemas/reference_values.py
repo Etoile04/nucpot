@@ -129,7 +129,9 @@ class BulkStagingItemResult(BaseModel):
     """Result for a single item in bulk staging response."""
 
     staging_id: UUID | None = None
-    status: str = Field(description="Result status: auto_staged, pending_review, duplicate, rejected.")
+    status: str = Field(
+        description="Result status: auto_staged, pending_review, duplicate, rejected."
+    )
     confidence: Confidence
 
 

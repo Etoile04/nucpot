@@ -42,18 +42,14 @@ class DataSourceCreate(BaseModel):
     @classmethod
     def doi_format(cls, v: str | None) -> str | None:
         if v is not None and not _DOI_PATTERN.match(v):
-            raise ValueError(
-                "DOI must match format 10.XXXX/XXXX (e.g. 10.1000/xyz123)"
-            )
+            raise ValueError("DOI must match format 10.XXXX/XXXX (e.g. 10.1000/xyz123)")
         return v
 
     @field_validator("source_type")
     @classmethod
     def source_type_enum(cls, v: str) -> str:
         if v not in VALID_SOURCE_TYPES:
-            raise ValueError(
-                f"source_type must be one of: {', '.join(VALID_SOURCE_TYPES)}"
-            )
+            raise ValueError(f"source_type must be one of: {', '.join(VALID_SOURCE_TYPES)}")
         return v
 
 
@@ -74,18 +70,14 @@ class DataSourceUpdate(BaseModel):
     @classmethod
     def doi_format(cls, v: str | None) -> str | None:
         if v is not None and not _DOI_PATTERN.match(v):
-            raise ValueError(
-                "DOI must match format 10.XXXX/XXXX (e.g. 10.1000/xyz123)"
-            )
+            raise ValueError("DOI must match format 10.XXXX/XXXX (e.g. 10.1000/xyz123)")
         return v
 
     @field_validator("source_type")
     @classmethod
     def source_type_enum(cls, v: str | None) -> str | None:
         if v is not None and v not in VALID_SOURCE_TYPES:
-            raise ValueError(
-                f"source_type must be one of: {', '.join(VALID_SOURCE_TYPES)}"
-            )
+            raise ValueError(f"source_type must be one of: {', '.join(VALID_SOURCE_TYPES)}")
         return v
 
 
@@ -121,9 +113,7 @@ class AuthorCreate(BaseModel):
     @classmethod
     def orcid_format(cls, v: str | None) -> str | None:
         if v is not None and not _ORCID_PATTERN.match(v):
-            raise ValueError(
-                "ORCID must match format XXXX-XXXX-XXXX-XXXX"
-            )
+            raise ValueError("ORCID must match format XXXX-XXXX-XXXX-XXXX")
         return v
 
 
@@ -140,9 +130,7 @@ class AuthorUpdate(BaseModel):
     @classmethod
     def orcid_format(cls, v: str | None) -> str | None:
         if v is not None and not _ORCID_PATTERN.match(v):
-            raise ValueError(
-                "ORCID must match format XXXX-XXXX-XXXX-XXXX"
-            )
+            raise ValueError("ORCID must match format XXXX-XXXX-XXXX-XXXX")
         return v
 
 

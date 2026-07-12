@@ -215,7 +215,8 @@ class TestConfidenceRouting:
 
     @pytest.mark.asyncio
     async def test_range_invalid_rejects_regardless_of_confidence(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Range validation failure → rejected, even with high confidence."""
         loader = PropertyMappingLoader()
@@ -293,7 +294,8 @@ class TestRangeValidationFailure:
 
     @pytest.mark.asyncio
     async def test_range_invalid_sets_range_validated_false(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Range validation failure sets range_validated=False on GateResult."""
         fake_ranges = {"lattice_constant": {"min": 10.0, "max": 20.0}}
@@ -311,7 +313,8 @@ class TestRangeValidationFailure:
 
     @pytest.mark.asyncio
     async def test_range_valid_sets_range_validated_true(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Value within range sets range_validated=True."""
         fake_ranges = {"lattice_constant": {"min": 2.0, "max": 5.0}}
@@ -327,7 +330,8 @@ class TestRangeValidationFailure:
 
     @pytest.mark.asyncio
     async def test_unknown_property_range_validated_true(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Unknown property with no range definition defaults to valid."""
         gate = QualityGateService(db_session)
@@ -355,9 +359,9 @@ class TestBulkProcessing:
         gate._mapping_loader._ranges = fake_ranges
 
         values = [
-            _make_ref(confidence="high", source="Src1"),      # accepted (auto-approved)
-            _make_ref(confidence="medium", source="Src2"),     # accepted (pending)
-            _make_ref(confidence="low", source="Src3"),        # accepted (flagged)
+            _make_ref(confidence="high", source="Src1"),  # accepted (auto-approved)
+            _make_ref(confidence="medium", source="Src2"),  # accepted (pending)
+            _make_ref(confidence="low", source="Src3"),  # accepted (flagged)
         ]
 
         result = await gate.process_bulk(values)
@@ -375,8 +379,8 @@ class TestBulkProcessing:
         gate._mapping_loader._ranges = fake_ranges
 
         values = [
-            _make_ref(value=3.0, source="Src1"),    # valid
-            _make_ref(value=99.0, source="Src2"),    # out of range
+            _make_ref(value=3.0, source="Src1"),  # valid
+            _make_ref(value=99.0, source="Src2"),  # out of range
         ]
 
         result = await gate.process_bulk(values)
@@ -450,7 +454,8 @@ class TestStageRecord:
 
     @pytest.mark.asyncio
     async def test_stage_record_persists_with_correct_fields(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """stage_record inserts a row with all quality gate fields."""
         ref = _make_ref(confidence="high")
@@ -468,7 +473,8 @@ class TestStageRecord:
 
     @pytest.mark.asyncio
     async def test_stage_medium_confidence_sets_pending_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Medium confidence staging record gets pending status."""
         ref = _make_ref(confidence="medium")
@@ -480,7 +486,8 @@ class TestStageRecord:
 
     @pytest.mark.asyncio
     async def test_stage_low_confidence_sets_pending_status(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Low confidence staging record gets pending status."""
         ref = _make_ref(confidence="low")
@@ -615,7 +622,8 @@ class TestMissingRangePassThrough:
 
     @pytest.mark.asyncio
     async def test_no_range_high_confidence_auto_approved(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """No range data + high confidence → auto_approved."""
         gate = QualityGateService(db_session)
@@ -629,7 +637,8 @@ class TestMissingRangePassThrough:
 
     @pytest.mark.asyncio
     async def test_no_range_medium_confidence_pending_review(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """No range data + medium confidence → pending_review."""
         gate = QualityGateService(db_session)
@@ -643,7 +652,8 @@ class TestMissingRangePassThrough:
 
     @pytest.mark.asyncio
     async def test_no_range_low_confidence_pending_flagged(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """No range data + low confidence → pending_flagged."""
         gate = QualityGateService(db_session)
@@ -657,7 +667,8 @@ class TestMissingRangePassThrough:
 
     @pytest.mark.asyncio
     async def test_structural_keys_in_mapping_dont_reject(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """AC-2 real-world: property-mapping.json with only structural keys
         (no range definitions) must not reject any properties."""
@@ -688,7 +699,8 @@ class TestPresentRangeStillRejects:
 
     @pytest.mark.asyncio
     async def test_present_range_invalid_value_rejects(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Range exists + value out of range → rejected."""
         gate = QualityGateService(db_session)
@@ -703,7 +715,8 @@ class TestPresentRangeStillRejects:
 
     @pytest.mark.asyncio
     async def test_present_range_valid_value_passes(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Range exists + value in range → routes by confidence."""
         gate = QualityGateService(db_session)

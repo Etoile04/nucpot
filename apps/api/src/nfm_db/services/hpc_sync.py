@@ -34,10 +34,14 @@ def sync_hpc_job_status() -> dict:
                 username=os.getenv("NFM_HPC_PRIMARY_USER", "user"),
                 ssh_key_path=os.getenv("NFM_HPC_PRIMARY_SSH_KEY_PATH", "/path/to/key"),
                 max_connections=int(os.getenv("NFM_HPC_MAX_CONNECTIONS", "10")),
-                backup_hosts=[os.getenv("NFM_HPC_BACKUP_HOST", "backup.example.com")] if os.getenv("NFM_HPC_BACKUP_HOST") else None,
+                backup_hosts=[os.getenv("NFM_HPC_BACKUP_HOST", "backup.example.com")]
+                if os.getenv("NFM_HPC_BACKUP_HOST")
+                else None,
                 backup_username=os.getenv("NFM_HPC_BACKUP_USER"),
                 backup_ssh_key_path=os.getenv("NFM_HPC_BACKUP_SSH_KEY_PATH"),
-                failover_threshold_seconds=int(os.getenv("NFM_HPC_FAILOVER_THRESHOLD_SECONDS", "300")),
+                failover_threshold_seconds=int(
+                    os.getenv("NFM_HPC_FAILOVER_THRESHOLD_SECONDS", "300")
+                ),
             )
 
             manager = SSHConnectionManager(

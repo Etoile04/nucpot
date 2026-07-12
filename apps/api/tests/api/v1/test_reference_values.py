@@ -136,14 +136,16 @@ async def test_bulk_stage_duplicate_detection(async_client, db_session) -> None:
     # First insert succeeds
     item = _bulk_item(source="DupSource1")
     resp1 = await async_client.post(
-        "/api/v1/reference-values/bulk", json={"values": [item]},
+        "/api/v1/reference-values/bulk",
+        json={"values": [item]},
     )
     assert resp1.status_code == 201
     assert resp1.json()["data"]["accepted"] == 1
 
     # Second insert with same dedup key should be flagged duplicate
     resp2 = await async_client.post(
-        "/api/v1/reference-values/bulk", json={"values": [item]},
+        "/api/v1/reference-values/bulk",
+        json={"values": [item]},
     )
     assert resp2.status_code == 201
     data2 = resp2.json()["data"]
@@ -155,7 +157,8 @@ async def test_bulk_stage_duplicate_detection(async_client, db_session) -> None:
 async def test_bulk_stage_high_confidence_auto_approved(async_client) -> None:
     item = _bulk_item(confidence="high", source="UniqueHigh1")
     response = await async_client.post(
-        "/api/v1/reference-values/bulk", json={"values": [item]},
+        "/api/v1/reference-values/bulk",
+        json={"values": [item]},
     )
     assert response.status_code == 201
     result = response.json()["data"]["results"][0]
@@ -166,7 +169,8 @@ async def test_bulk_stage_high_confidence_auto_approved(async_client) -> None:
 async def test_bulk_stage_medium_confidence_pending_review(async_client) -> None:
     item = _bulk_item(confidence="medium", source="UniqueMed1")
     response = await async_client.post(
-        "/api/v1/reference-values/bulk", json={"values": [item]},
+        "/api/v1/reference-values/bulk",
+        json={"values": [item]},
     )
     assert response.status_code == 201
     result = response.json()["data"]["results"][0]
@@ -193,11 +197,15 @@ async def test_pending_review_empty(async_client) -> None:
 async def test_pending_review_returns_pending_only(async_client, db_session) -> None:
     await _seed_staging(db_session, status=StagingStatus.PENDING)
     await _seed_staging(
-        db_session, property_name="bulk_modulus", status=StagingStatus.APPROVED,
+        db_session,
+        property_name="bulk_modulus",
+        status=StagingStatus.APPROVED,
         dedup_hash_override="b" * 64,
     )
     await _seed_staging(
-        db_session, property_name="thermal_conductivity", status=StagingStatus.REJECTED,
+        db_session,
+        property_name="thermal_conductivity",
+        status=StagingStatus.REJECTED,
         dedup_hash_override="c" * 64,
     )
 
@@ -229,7 +237,9 @@ async def test_pending_review_pagination(async_client, db_session) -> None:
 async def test_pending_review_filter_element_system(async_client, db_session) -> None:
     await _seed_staging(db_session, element_system="U")
     await _seed_staging(
-        db_session, element_system="Zr", dedup_hash_override="e" * 64,
+        db_session,
+        element_system="Zr",
+        dedup_hash_override="e" * 64,
     )
 
     response = await async_client.get(
@@ -244,7 +254,9 @@ async def test_pending_review_filter_element_system(async_client, db_session) ->
 async def test_pending_review_filter_status_all(async_client, db_session) -> None:
     await _seed_staging(db_session, status=StagingStatus.PENDING)
     await _seed_staging(
-        db_session, status=StagingStatus.APPROVED, dedup_hash_override="f" * 64,
+        db_session,
+        status=StagingStatus.APPROVED,
+        dedup_hash_override="f" * 64,
     )
 
     response = await async_client.get("/api/v1/reference-values/pending-review?status=all")
@@ -256,7 +268,9 @@ async def test_pending_review_filter_status_all(async_client, db_session) -> Non
 async def test_pending_review_filter_status_approved(async_client, db_session) -> None:
     await _seed_staging(db_session, status=StagingStatus.PENDING)
     await _seed_staging(
-        db_session, status=StagingStatus.APPROVED, dedup_hash_override="g" * 64,
+        db_session,
+        status=StagingStatus.APPROVED,
+        dedup_hash_override="g" * 64,
     )
 
     response = await async_client.get(
@@ -271,7 +285,9 @@ async def test_pending_review_filter_status_approved(async_client, db_session) -
 async def test_pending_review_filter_confidence(async_client, db_session) -> None:
     await _seed_staging(db_session, confidence=Confidence.HIGH)
     await _seed_staging(
-        db_session, confidence=Confidence.LOW, dedup_hash_override="h" * 64,
+        db_session,
+        confidence=Confidence.LOW,
+        dedup_hash_override="h" * 64,
     )
 
     response = await async_client.get(
@@ -461,10 +477,14 @@ async def test_export_response_shape(async_client, db_session) -> None:
 async def test_export_returns_approved_and_promoted(async_client, db_session) -> None:
     await _seed_staging(db_session, status=StagingStatus.APPROVED)
     await _seed_staging(
-        db_session, status=StagingStatus.PROMOTED, dedup_hash_override="i" * 64,
+        db_session,
+        status=StagingStatus.PROMOTED,
+        dedup_hash_override="i" * 64,
     )
     await _seed_staging(
-        db_session, status=StagingStatus.PENDING, dedup_hash_override="j" * 64,
+        db_session,
+        status=StagingStatus.PENDING,
+        dedup_hash_override="j" * 64,
     )
 
     payload = {"filters": {}, "limit": 100}
@@ -479,10 +499,14 @@ async def test_export_returns_approved_and_promoted(async_client, db_session) ->
 @pytest.mark.asyncio
 async def test_export_filter_by_element_system(async_client, db_session) -> None:
     await _seed_staging(
-        db_session, status=StagingStatus.APPROVED, element_system="U",
+        db_session,
+        status=StagingStatus.APPROVED,
+        element_system="U",
     )
     await _seed_staging(
-        db_session, status=StagingStatus.APPROVED, element_system="Zr",
+        db_session,
+        status=StagingStatus.APPROVED,
+        element_system="Zr",
         dedup_hash_override="k" * 64,
     )
 
@@ -497,7 +521,9 @@ async def test_export_filter_by_element_system(async_client, db_session) -> None
 async def test_export_filter_by_status(async_client, db_session) -> None:
     await _seed_staging(db_session, status=StagingStatus.APPROVED)
     await _seed_staging(
-        db_session, status=StagingStatus.PROMOTED, dedup_hash_override="l" * 64,
+        db_session,
+        status=StagingStatus.PROMOTED,
+        dedup_hash_override="l" * 64,
     )
 
     payload = {"filters": {"status": "approved"}, "limit": 100}
@@ -622,7 +648,9 @@ async def test_verify_callback_f_grade_auto_rejects(async_client, db_session) ->
 async def test_verify_callback_multiple_results(async_client, db_session) -> None:
     rec1 = await _seed_staging(db_session, status=StagingStatus.APPROVED)
     rec2 = await _seed_staging(
-        db_session, status=StagingStatus.APPROVED, dedup_hash_override="n" * 64,
+        db_session,
+        status=StagingStatus.APPROVED,
+        dedup_hash_override="n" * 64,
     )
 
     payload = {

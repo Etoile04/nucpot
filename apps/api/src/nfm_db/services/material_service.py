@@ -43,9 +43,7 @@ async def list_materials(
         stmt = stmt.where(Material.category_id == category_id)
 
     sort_column = _SORT_COLUMNS.get(sort, Material.created_at)
-    stmt = stmt.order_by(
-        sort_column.desc() if order == "desc" else sort_column.asc()
-    )
+    stmt = stmt.order_by(sort_column.desc() if order == "desc" else sort_column.asc())
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar_one()
@@ -64,9 +62,7 @@ async def list_materials(
     )
 
 
-async def get_material(
-    db: AsyncSession, material_id: uuid.UUID
-) -> MaterialDetailResponse | None:
+async def get_material(db: AsyncSession, material_id: uuid.UUID) -> MaterialDetailResponse | None:
     """Return a material with aliases and composition eager-loaded, or None."""
     stmt = (
         select(Material)
@@ -81,9 +77,7 @@ async def get_material(
         return None
 
     aliases = [MaterialAliasResponse.model_validate(a) for a in row.aliases]
-    composition = [
-        MaterialCompositionResponse.model_validate(c) for c in row.composition
-    ]
+    composition = [MaterialCompositionResponse.model_validate(c) for c in row.composition]
     base = MaterialResponse.model_validate(row)
     return MaterialDetailResponse(
         **base.model_dump(),
@@ -92,9 +86,7 @@ async def get_material(
     )
 
 
-async def create_material(
-    db: AsyncSession, data: MaterialCreate
-) -> MaterialResponse:
+async def create_material(db: AsyncSession, data: MaterialCreate) -> MaterialResponse:
     """Create a new material and return it."""
     mat = Material(**data.model_dump())
     db.add(mat)

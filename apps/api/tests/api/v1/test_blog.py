@@ -158,7 +158,9 @@ async def test_list_posts_with_data(async_client, admin_headers, db_session, adm
 
 
 @pytest.mark.asyncio
-async def test_list_posts_filter_by_status(async_client, admin_headers, db_session, admin_user) -> None:
+async def test_list_posts_filter_by_status(
+    async_client, admin_headers, db_session, admin_user
+) -> None:
     """Filtering by status=draft returns only draft posts."""
     await _seed_post(db_session, title="Draft-A", status="draft", author_id=admin_user.id)
     await _seed_post(db_session, title="Published-B", status="published", author_id=admin_user.id)
@@ -186,7 +188,9 @@ async def test_list_posts_filter_invalid_status(async_client, admin_headers) -> 
 
 
 @pytest.mark.asyncio
-async def test_list_posts_filter_by_author(async_client, admin_headers, db_session, admin_user, editor_user) -> None:
+async def test_list_posts_filter_by_author(
+    async_client, admin_headers, db_session, admin_user, editor_user
+) -> None:
     """Filtering by author_id returns posts for that author only."""
     await _seed_post(db_session, title="Admin-Post", author_id=admin_user.id)
     await _seed_post(db_session, title="Editor-Post", author_id=editor_user.id)
@@ -230,7 +234,9 @@ async def test_list_posts_pagination(async_client, admin_headers, db_session, ad
 
 
 @pytest.mark.asyncio
-async def test_list_posts_reviewer_allowed(async_client, reviewer_headers, db_session, admin_user) -> None:
+async def test_list_posts_reviewer_allowed(
+    async_client, reviewer_headers, db_session, admin_user
+) -> None:
     """Reviewer role can access the list endpoint."""
     await _seed_post(db_session, title="Visible", author_id=admin_user.id)
 
@@ -288,7 +294,9 @@ async def test_get_post_unauthenticated(async_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_post_success(async_client, admin_headers, db_session, admin_user, tmp_path) -> None:
+async def test_update_post_success(
+    async_client, admin_headers, db_session, admin_user, tmp_path
+) -> None:
     """Editor/admin can update a post's title and content."""
     from pathlib import Path
 
@@ -367,7 +375,9 @@ async def test_delete_post_as_author(async_client, editor_headers, db_session, e
 
 
 @pytest.mark.asyncio
-async def test_delete_post_other_author_forbidden(async_client, editor_user, db_session, admin_user) -> None:
+async def test_delete_post_other_author_forbidden(
+    async_client, editor_user, db_session, admin_user
+) -> None:
     """A non-author, non-admin user receives 403."""
     from nfm_db.services.auth_service import create_access_token
 
@@ -414,12 +424,17 @@ async def test_delete_post_unauthenticated(async_client) -> None:
 @pytest.mark.asyncio
 @patch("nfm_db.services.blog_post.update_markdown_status")
 @patch("nfm_db.services.blog_post.validate_transition")
-async def test_workflow_submit(mock_validate, mock_md, async_client, admin_headers, db_session, admin_user) -> None:
+async def test_workflow_submit(
+    mock_validate, mock_md, async_client, admin_headers, db_session, admin_user
+) -> None:
     """Admin can submit a draft post for review."""
     slug = f"wf-submit-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="Submit Me",
-        status="draft", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="Submit Me",
+        status="draft",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(
@@ -436,12 +451,17 @@ async def test_workflow_submit(mock_validate, mock_md, async_client, admin_heade
 
 @pytest.mark.asyncio
 @patch("nfm_db.services.blog_post.update_markdown_status")
-async def test_workflow_approve(mock_md, async_client, admin_headers, db_session, admin_user) -> None:
+async def test_workflow_approve(
+    mock_md, async_client, admin_headers, db_session, admin_user
+) -> None:
     """Admin can approve a post under review."""
     slug = f"wf-approve-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="Approve Me",
-        status="under_review", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="Approve Me",
+        status="under_review",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(
@@ -456,12 +476,17 @@ async def test_workflow_approve(mock_md, async_client, admin_headers, db_session
 
 @pytest.mark.asyncio
 @patch("nfm_db.services.blog_post.update_markdown_status")
-async def test_workflow_reject(mock_md, async_client, admin_headers, db_session, admin_user) -> None:
+async def test_workflow_reject(
+    mock_md, async_client, admin_headers, db_session, admin_user
+) -> None:
     """Admin can reject a post under review with a reason."""
     slug = f"wf-reject-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="Reject Me",
-        status="under_review", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="Reject Me",
+        status="under_review",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(
@@ -475,12 +500,17 @@ async def test_workflow_reject(mock_md, async_client, admin_headers, db_session,
 
 
 @pytest.mark.asyncio
-async def test_workflow_reject_without_reason(async_client, admin_headers, db_session, admin_user) -> None:
+async def test_workflow_reject_without_reason(
+    async_client, admin_headers, db_session, admin_user
+) -> None:
     """Reject without rejection_reason returns 400."""
     slug = f"wf-reject-nr-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="Reject No Reason",
-        status="under_review", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="Reject No Reason",
+        status="under_review",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(
@@ -493,12 +523,17 @@ async def test_workflow_reject_without_reason(async_client, admin_headers, db_se
 
 @pytest.mark.asyncio
 @patch("nfm_db.services.blog_post.update_markdown_status")
-async def test_workflow_publish(mock_md, async_client, admin_headers, db_session, admin_user) -> None:
+async def test_workflow_publish(
+    mock_md, async_client, admin_headers, db_session, admin_user
+) -> None:
     """Admin can publish an approved post."""
     slug = f"wf-publish-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="Publish Me",
-        status="approved", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="Publish Me",
+        status="approved",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(
@@ -516,8 +551,11 @@ async def test_workflow_invalid_action(async_client, admin_headers, db_session, 
     """An unrecognized action is rejected by Pydantic validation (422)."""
     slug = f"wf-invalid-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="Invalid Action",
-        status="draft", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="Invalid Action",
+        status="draft",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(
@@ -533,8 +571,11 @@ async def test_workflow_unauthenticated(async_client, db_session, admin_user) ->
     """Unauthenticated requests receive 401."""
     slug = f"wf-noauth-{uuid.uuid4().hex[:8]}"
     await _seed_post(
-        db_session, slug=slug, title="No Auth",
-        status="draft", author_id=admin_user.id,
+        db_session,
+        slug=slug,
+        title="No Auth",
+        status="draft",
+        author_id=admin_user.id,
     )
 
     resp = await async_client.post(

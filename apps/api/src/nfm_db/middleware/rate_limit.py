@@ -49,18 +49,14 @@ class NFMRateLimitMiddleware(SlowAPIMiddleware):
     rate-limited.  Health is exempt via ``@limiter.exempt``.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: Any
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
         path = request.url.path
         if not path.startswith("/api/"):
             return cast(Response, await call_next(request))
         return await super().dispatch(request, call_next)
 
 
-def rate_limit_exceeded_handler(
-    request: Request, exc: RateLimitExceeded
-) -> Response:
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
     """Custom 429 handler with NFM standard error envelope.
 
     **Must be sync** — ``SlowAPIMiddleware`` calls via

@@ -147,9 +147,7 @@ def _assert_nodes(nodes: list[Any]) -> set[str]:
     return node_ids
 
 
-def _assert_relationships(
-    relationships: list[Any], node_ids: set[str]
-) -> None:
+def _assert_relationships(relationships: list[Any], node_ids: set[str]) -> None:
     rel_ids: set[str] = set()
     for idx, rel in enumerate(relationships):
         if not isinstance(rel, dict):
@@ -185,15 +183,13 @@ def _assert_valid_record_ref(value: Any, where: str) -> None:
         )
     if not value.startswith("/"):
         raise ContractViolationError(
-            f"{where} record_ref {value!r} "
-            f"must be a root-relative path (start with '/')",
+            f"{where} record_ref {value!r} must be a root-relative path (start with '/')",
         )
     lowered = value.lower()
     for key in _RECORD_REF_FORBIDDEN_SUBSTRINGS:
         if key in lowered:
             raise ContractViolationError(
-                f"{where} record_ref {value!r} must not carry "
-                f"transient/auth key {key!r}",
+                f"{where} record_ref {value!r} must not carry transient/auth key {key!r}",
             )
 
 

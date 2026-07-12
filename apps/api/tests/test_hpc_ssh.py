@@ -311,7 +311,9 @@ class TestSSHConnectionManagerInit:
 
     def test_known_hosts_path_custom(self) -> None:
         mgr = SSHConnectionManager(
-            host="hpc", username="u", ssh_key_path="/k",
+            host="hpc",
+            username="u",
+            ssh_key_path="/k",
             known_hosts_path="/etc/hpc/known_hosts",
         )
         assert mgr._known_hosts_path == "/etc/hpc/known_hosts"
@@ -343,14 +345,15 @@ class TestSSHConnectionManagerProperties:
     """Tests for SSHConnectionManager property accessors."""
 
     def test_available_connections_when_pool_empty(self) -> None:
-        mgr = SSHConnectionManager(
-            host="hpc", username="u", ssh_key_path="/k", max_connections=5
-        )
+        mgr = SSHConnectionManager(host="hpc", username="u", ssh_key_path="/k", max_connections=5)
         assert mgr.available_connections == 5
 
     def test_available_connections_decreases(self, mock_paramiko_constructor) -> None:
         mgr = SSHConnectionManager(
-            host="hpc", username="u", ssh_key_path="/k", max_connections=3,
+            host="hpc",
+            username="u",
+            ssh_key_path="/k",
+            max_connections=3,
             skip_key_validation=True,
         )
         client1 = mgr.acquire_connection()
@@ -363,9 +366,7 @@ class TestSSHConnectionManagerProperties:
         assert mgr.host == "hpc-01"
 
     def test_host_property_multi_host(self) -> None:
-        mgr = SSHConnectionManager(
-            hosts=["hpc-01", "hpc-02"], username="u", ssh_key_path="/k"
-        )
+        mgr = SSHConnectionManager(hosts=["hpc-01", "hpc-02"], username="u", ssh_key_path="/k")
         assert mgr.host == "hpc-01"
 
     def test_host_property_empty_list(self) -> None:
@@ -382,9 +383,7 @@ class TestSSHConnectionManagerProperties:
 class TestSSHConnectionManagerAcquire:
     """Tests for SSHConnectionManager.acquire_connection."""
 
-    def test_acquire_success(
-        self, mock_paramiko_constructor, mock_prometheus
-    ) -> None:
+    def test_acquire_success(self, mock_paramiko_constructor, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
             host="hpc-01",
             username="testuser",
@@ -395,16 +394,19 @@ class TestSSHConnectionManagerAcquire:
         assert client is mock_paramiko_constructor
         assert len(mgr._active_connections) == 1
 
-    def test_acquire_calls_connect(
-        self, mock_paramiko_constructor, mock_prometheus
-    ) -> None:
+    def test_acquire_calls_connect(self, mock_paramiko_constructor, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         mgr.acquire_connection()
         mock_paramiko_constructor.connect.assert_called_once_with(
-            hostname="hpc-01", username="u", key_filename="/k", timeout=10,
+            hostname="hpc-01",
+            username="u",
+            key_filename="/k",
+            timeout=10,
         )
 
     def test_acquire_sets_auto_add_policy_when_skip_key_validation(
@@ -413,7 +415,9 @@ class TestSSHConnectionManagerAcquire:
         """When skip_key_validation=True, AutoAddPolicy should be used."""
         with patch("nfm_db.services.hpc_ssh.paramiko.AutoAddPolicy") as mock_policy:
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             mgr.acquire_connection()
@@ -427,7 +431,9 @@ class TestSSHConnectionManagerAcquire:
         with patch("nfm_db.services.hpc_ssh.paramiko.RejectPolicy") as mock_reject:
             with patch.object(Path, "exists", return_value=True):
                 mgr = SSHConnectionManager(
-                    host="hpc-01", username="u", ssh_key_path="/k",
+                    host="hpc-01",
+                    username="u",
+                    ssh_key_path="/k",
                 )
                 mgr.acquire_connection()
                 mock_reject.assert_called_once()
@@ -440,7 +446,9 @@ class TestSSHConnectionManagerAcquire:
         with patch("nfm_db.services.hpc_ssh.paramiko.RejectPolicy") as mock_reject:
             with patch.object(Path, "exists", return_value=True):
                 mgr = SSHConnectionManager(
-                    host="hpc-01", username="u", ssh_key_path="/k",
+                    host="hpc-01",
+                    username="u",
+                    ssh_key_path="/k",
                     known_hosts_path="/etc/hpc/known_hosts",
                 )
                 mgr.acquire_connection()
@@ -456,17 +464,20 @@ class TestSSHConnectionManagerAcquire:
         with patch("nfm_db.services.hpc_ssh.paramiko.RejectPolicy"):
             with patch.object(Path, "exists", return_value=True):
                 mgr = SSHConnectionManager(
-                    host="hpc-01", username="u", ssh_key_path="/k",
+                    host="hpc-01",
+                    username="u",
+                    ssh_key_path="/k",
                 )
                 mgr.acquire_connection()
                 mock_paramiko_constructor.load_host_keys.assert_not_called()
 
-    def test_pool_exhausted_raises_connection_error(
-        self, mock_prometheus
-    ) -> None:
+    def test_pool_exhausted_raises_connection_error(self, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
-            max_connections=1, skip_key_validation=True,
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
+            max_connections=1,
+            skip_key_validation=True,
         )
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_client = MagicMock()
@@ -476,11 +487,11 @@ class TestSSHConnectionManagerAcquire:
         with pytest.raises(ConnectionError, match="Connection pool exhausted"):
             mgr.acquire_connection()
 
-    def test_ssh_key_not_found_raises_file_not_found(
-        self, mock_prometheus
-    ) -> None:
+    def test_ssh_key_not_found_raises_file_not_found(self, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/nonexistent/key",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/nonexistent/key",
         )
         with pytest.raises(FileNotFoundError, match="SSH key file not found"):
             mgr.acquire_connection()
@@ -489,20 +500,22 @@ class TestSSHConnectionManagerAcquire:
         self, mock_paramiko_constructor, mock_prometheus
     ) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/existing/key",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/existing/key",
         )
         with patch.object(Path, "exists", return_value=True):
             client = mgr.acquire_connection()
         assert client is mock_paramiko_constructor
 
-    def test_acquire_prometheus_active_inc(
-        self, mock_paramiko_constructor
-    ) -> None:
+    def test_acquire_prometheus_active_inc(self, mock_paramiko_constructor) -> None:
         with patch("nfm_db.services.hpc_ssh.PROMETHEUS_AVAILABLE", True):
             mock_active = MagicMock()
             with patch("nfm_db.services.hpc_ssh.hpc_active_connections", mock_active):
                 mgr = SSHConnectionManager(
-                    host="hpc-01", username="u", ssh_key_path="/k",
+                    host="hpc-01",
+                    username="u",
+                    ssh_key_path="/k",
                     skip_key_validation=True,
                 )
                 mgr.acquire_connection()
@@ -519,10 +532,7 @@ class TestSSHConnectionManagerAcquire:
 class TestSSHConnectionManagerCreateSSH:
     """Tests for SSHConnectionManager._create_ssh_connection."""
 
-    def test_auth_exception_raises_connection_error(
-        self, mock_prometheus
-    ) -> None:
-
+    def test_auth_exception_raises_connection_error(self, mock_prometheus) -> None:
 
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_client = MagicMock()
@@ -530,17 +540,16 @@ class TestSSHConnectionManagerCreateSSH:
             mock_client.connect.side_effect = paramiko.AuthenticationException("auth fail")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             with pytest.raises(ConnectionError, match="Authentication failed"):
                 mgr._create_ssh_connection()
             mock_client.close.assert_called_once()
 
-    def test_ssh_exception_raises_connection_error(
-        self, mock_prometheus
-    ) -> None:
-
+    def test_ssh_exception_raises_connection_error(self, mock_prometheus) -> None:
 
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_client = MagicMock()
@@ -548,33 +557,32 @@ class TestSSHConnectionManagerCreateSSH:
             mock_client.connect.side_effect = paramiko.SSHException("ssh fail")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             with pytest.raises(ConnectionError, match="SSH connection failed"):
                 mgr._create_ssh_connection()
             mock_client.close.assert_called_once()
 
-    def test_generic_exception_raises_connection_error(
-        self, mock_prometheus
-    ) -> None:
+    def test_generic_exception_raises_connection_error(self, mock_prometheus) -> None:
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
             mock_client.connect.side_effect = OSError("network down")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             with pytest.raises(ConnectionError, match="Failed to connect"):
                 mgr._create_ssh_connection()
             mock_client.close.assert_called_once()
 
-    def test_prometheus_auth_error_increment(
-        self, mock_prometheus
-    ) -> None:
-
+    def test_prometheus_auth_error_increment(self, mock_prometheus) -> None:
 
         with patch("nfm_db.services.hpc_ssh.PROMETHEUS_AVAILABLE", True):
             mock_errors = MagicMock()
@@ -585,7 +593,9 @@ class TestSSHConnectionManagerCreateSSH:
                     mock_client.connect.side_effect = paramiko.AuthenticationException("bad")
 
                     mgr = SSHConnectionManager(
-                        host="hpc-01", username="u", ssh_key_path="/k",
+                        host="hpc-01",
+                        username="u",
+                        ssh_key_path="/k",
                         skip_key_validation=True,
                     )
                     with pytest.raises(ConnectionError):
@@ -596,10 +606,7 @@ class TestSSHConnectionManagerCreateSSH:
                     )
                     mock_errors.labels.return_value.inc.assert_called_once()
 
-    def test_prometheus_ssh_error_increment(
-        self, mock_prometheus
-    ) -> None:
-
+    def test_prometheus_ssh_error_increment(self, mock_prometheus) -> None:
 
         with patch("nfm_db.services.hpc_ssh.PROMETHEUS_AVAILABLE", True):
             mock_errors = MagicMock()
@@ -610,19 +617,17 @@ class TestSSHConnectionManagerCreateSSH:
                     mock_client.connect.side_effect = paramiko.SSHException("broken")
 
                     mgr = SSHConnectionManager(
-                        host="hpc-01", username="u", ssh_key_path="/k",
+                        host="hpc-01",
+                        username="u",
+                        ssh_key_path="/k",
                         skip_key_validation=True,
                     )
                     with pytest.raises(ConnectionError):
                         mgr._create_ssh_connection()
 
-                    mock_errors.labels.assert_called_with(
-                        cluster="hpc-01", error_type="ssh"
-                    )
+                    mock_errors.labels.assert_called_with(cluster="hpc-01", error_type="ssh")
 
-    def test_prometheus_unknown_error_increment(
-        self, mock_prometheus
-    ) -> None:
+    def test_prometheus_unknown_error_increment(self, mock_prometheus) -> None:
         with patch("nfm_db.services.hpc_ssh.PROMETHEUS_AVAILABLE", True):
             mock_errors = MagicMock()
             with patch("nfm_db.services.hpc_ssh.hpc_connection_errors", mock_errors):
@@ -632,15 +637,15 @@ class TestSSHConnectionManagerCreateSSH:
                     mock_client.connect.side_effect = RuntimeError("unexpected")
 
                     mgr = SSHConnectionManager(
-                        host="hpc-01", username="u", ssh_key_path="/k",
+                        host="hpc-01",
+                        username="u",
+                        ssh_key_path="/k",
                         skip_key_validation=True,
                     )
                     with pytest.raises(ConnectionError):
                         mgr._create_ssh_connection()
 
-                    mock_errors.labels.assert_called_with(
-                        cluster="hpc-01", error_type="unknown"
-                    )
+                    mock_errors.labels.assert_called_with(cluster="hpc-01", error_type="unknown")
 
 
 # ---------------------------------------------------------------------------
@@ -652,19 +657,17 @@ class TestSSHConnectionManagerCreateSSH:
 class TestSSHConnectionManagerAcquireWithRetry:
     """Tests for SSHConnectionManager.acquire_connection_with_retry."""
 
-    def test_success_on_first_try(
-        self, mock_paramiko_constructor, mock_prometheus
-    ) -> None:
+    def test_success_on_first_try(self, mock_paramiko_constructor, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         client = mgr.acquire_connection_with_retry(max_retries=3)
         assert client is mock_paramiko_constructor
 
-    def test_retries_with_backoff_then_succeeds(
-        self, mock_prometheus
-    ) -> None:
+    def test_retries_with_backoff_then_succeeds(self, mock_prometheus) -> None:
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_client = MagicMock()
             mock_cls.side_effect = [
@@ -673,47 +676,45 @@ class TestSSHConnectionManagerAcquireWithRetry:
             ]
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
 
             with patch("nfm_db.services.hpc_ssh.time.sleep") as mock_sleep:
-                result = mgr.acquire_connection_with_retry(
-                    max_retries=3, backoff_base=0.1
-                )
+                result = mgr.acquire_connection_with_retry(max_retries=3, backoff_base=0.1)
                 assert result is mock_client
                 mock_sleep.assert_called_once_with(0.1)
 
-    def test_all_retries_fail_returns_none(
-        self, mock_prometheus
-    ) -> None:
+    def test_all_retries_fail_returns_none(self, mock_prometheus) -> None:
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             MagicMock()
             mock_cls.side_effect = Exception("always fail")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
 
             with patch("nfm_db.services.hpc_ssh.time.sleep") as mock_sleep:
-                result = mgr.acquire_connection_with_retry(
-                    max_retries=3, backoff_base=0.1
-                )
+                result = mgr.acquire_connection_with_retry(max_retries=3, backoff_base=0.1)
                 assert result is None
                 assert mock_sleep.call_count == 2
                 # backoff: 0.1 * 2^0 = 0.1, then 0.1 * 2^1 = 0.2
                 mock_sleep.assert_any_call(0.1)
                 mock_sleep.assert_any_call(0.2)
 
-    def test_single_retry_exhausted_returns_none(
-        self, mock_prometheus
-    ) -> None:
+    def test_single_retry_exhausted_returns_none(self, mock_prometheus) -> None:
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_cls.side_effect = ConnectionError("pool exhausted")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
 
@@ -721,14 +722,14 @@ class TestSSHConnectionManagerAcquireWithRetry:
                 result = mgr.acquire_connection_with_retry(max_retries=1)
                 assert result is None
 
-    def test_exponential_backoff_timing(
-        self, mock_prometheus
-    ) -> None:
+    def test_exponential_backoff_timing(self, mock_prometheus) -> None:
         with patch("nfm_db.services.hpc_ssh.paramiko.SSHClient") as mock_cls:
             mock_cls.side_effect = Exception("fail")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
 
@@ -738,13 +739,13 @@ class TestSSHConnectionManagerAcquireWithRetry:
                 calls = [c.args[0] for c in mock_sleep.call_args_list]
                 assert calls == [1.0, 2.0, 4.0]
 
-    def test_zero_retries_returns_none_via_post_loop(
-        self, mock_prometheus
-    ) -> None:
+    def test_zero_retries_returns_none_via_post_loop(self, mock_prometheus) -> None:
         """When max_retries=0 the for-loop body never executes,
         falling through to the post-loop `return None` (line 182)."""
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         result = mgr.acquire_connection_with_retry(max_retries=0)
@@ -760,11 +761,11 @@ class TestSSHConnectionManagerAcquireWithRetry:
 class TestSSHConnectionManagerRelease:
     """Tests for SSHConnectionManager.release_connection."""
 
-    def test_release_removes_from_pool(
-        self, mock_paramiko_constructor, mock_prometheus
-    ) -> None:
+    def test_release_removes_from_pool(self, mock_paramiko_constructor, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         client = mgr.acquire_connection()
@@ -773,11 +774,11 @@ class TestSSHConnectionManagerRelease:
         mgr.release_connection(client)
         assert len(mgr._active_connections) == 0
 
-    def test_release_closes_client(
-        self, mock_paramiko_constructor, mock_prometheus
-    ) -> None:
+    def test_release_closes_client(self, mock_paramiko_constructor, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         client = mgr.acquire_connection()
@@ -786,7 +787,9 @@ class TestSSHConnectionManagerRelease:
 
     def test_release_unknown_client_noop(self, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         unknown_client = MagicMock()
@@ -798,7 +801,9 @@ class TestSSHConnectionManagerRelease:
         self, mock_paramiko_constructor, mock_prometheus
     ) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         client = mgr.acquire_connection()
@@ -817,7 +822,9 @@ class TestSSHConnectionManagerRelease:
                     mock_cls.return_value = mock_client
 
                     mgr = SSHConnectionManager(
-                        host="hpc-01", username="u", ssh_key_path="/k",
+                        host="hpc-01",
+                        username="u",
+                        ssh_key_path="/k",
                         skip_key_validation=True,
                     )
                     mgr.acquire_connection()
@@ -843,8 +850,11 @@ class TestSSHConnectionManagerCleanup:
             mock_cls.side_effect = [mock_client1, mock_client2]
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
-                skip_key_validation=True, max_connections=5,
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
+                skip_key_validation=True,
+                max_connections=5,
             )
             mgr.acquire_connection()
             mgr.acquire_connection()
@@ -857,7 +867,9 @@ class TestSSHConnectionManagerCleanup:
 
     def test_cleanup_clears_hosts(self, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
             skip_key_validation=True,
         )
         assert mgr.hosts == ["hpc-01"]
@@ -872,7 +884,9 @@ class TestSSHConnectionManagerCleanup:
             mock_cls.return_value = mock_client
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             mgr.acquire_connection()
@@ -889,7 +903,9 @@ class TestSSHConnectionManagerCleanup:
             delattr(mock_client, "transport")
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             mgr._active_connections.add(mock_client)
@@ -903,7 +919,9 @@ class TestSSHConnectionManagerCleanup:
             mock_cls.return_value = mock_client
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             mgr.acquire_connection()
@@ -917,7 +935,9 @@ class TestSSHConnectionManagerCleanup:
             mock_cls.return_value = mock_client
 
             mgr = SSHConnectionManager(
-                host="hpc-01", username="u", ssh_key_path="/k",
+                host="hpc-01",
+                username="u",
+                ssh_key_path="/k",
                 skip_key_validation=True,
             )
             mgr.acquire_connection()
@@ -927,7 +947,9 @@ class TestSSHConnectionManagerCleanup:
 
     def test_cleanup_empty_pool(self, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         mgr.cleanup()
         assert len(mgr._active_connections) == 0
@@ -945,20 +967,22 @@ class TestSSHConnectionManagerDel:
 
     def test_del_calls_cleanup(self, mock_prometheus) -> None:
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         with patch.object(SSHConnectionManager, "cleanup") as mock_cleanup:
             mgr.__del__()
             mock_cleanup.assert_called_once()
 
-    def test_del_calls_cleanup_even_when_cleanup_raises(
-        self, mock_prometheus
-    ) -> None:
+    def test_del_calls_cleanup_even_when_cleanup_raises(self, mock_prometheus) -> None:
         """Verify __del__ delegates to cleanup.  Python's GC swallows
         exceptions from __del__ with a RuntimeWarning; here we simply
         confirm the delegation path."""
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         with patch.object(SSHConnectionManager, "cleanup") as mock_cleanup:
             mgr.__del__()
@@ -981,7 +1005,9 @@ class TestSSHConnectionManagerCheckHealth:
         client.exec_command.return_value = (MagicMock(), mock_stdout, mock_stderr)
 
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         assert mgr.check_health(client) is True
         client.exec_command.assert_called_once_with("echo 'health_check'")
@@ -992,7 +1018,9 @@ class TestSSHConnectionManagerCheckHealth:
         client.exec_command.side_effect = Exception("connection lost")
 
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         assert mgr.check_health(client) is False
 
@@ -1003,7 +1031,9 @@ class TestSSHConnectionManagerCheckHealth:
         client.exec_command.return_value = (MagicMock(), mock_stdout, MagicMock())
 
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         assert mgr.check_health(client) is False
 
@@ -1014,6 +1044,8 @@ class TestSSHConnectionManagerCheckHealth:
         client.exec_command.return_value = (MagicMock(), mock_stdout, MagicMock())
 
         mgr = SSHConnectionManager(
-            host="hpc-01", username="u", ssh_key_path="/k",
+            host="hpc-01",
+            username="u",
+            ssh_key_path="/k",
         )
         assert mgr.check_health(client) is False

@@ -208,9 +208,7 @@ class VisionClient:
         self.max_retries = max_retries
 
         if not self.api_key and self.provider == "openai":
-            raise ValueError(
-                "VLM_API_KEY is required for remote VLM providers but was not set"
-            )
+            raise ValueError("VLM_API_KEY is required for remote VLM providers but was not set")
 
     async def extract(
         self,
@@ -260,14 +258,10 @@ class VisionClient:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise VisionClientError(
-                f"VLM returned invalid JSON: {exc}"
-            ) from exc
+            raise VisionClientError(f"VLM returned invalid JSON: {exc}") from exc
 
         if not isinstance(data, dict):
-            raise VisionClientError(
-                f"VLM returned non-dict JSON: {type(data).__name__}"
-            )
+            raise VisionClientError(f"VLM returned non-dict JSON: {type(data).__name__}")
 
         return data
 
@@ -311,10 +305,7 @@ class VisionClient:
                 await asyncio.sleep(backoff)
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
-                is_retryable = (
-                    exc.response.status_code >= 500
-                    or exc.response.status_code == 429
-                )
+                is_retryable = exc.response.status_code >= 500 or exc.response.status_code == 429
                 if not is_retryable or attempt == self.max_retries:
                     raise VisionClientError(
                         f"VLM HTTP error {exc.response.status_code}: {exc}"
@@ -405,7 +396,7 @@ def _strip_code_fences(text: str) -> str:
     if stripped.startswith("```"):
         first_newline = stripped.find("\n")
         if first_newline != -1:
-            stripped = stripped[first_newline + 1:]
+            stripped = stripped[first_newline + 1 :]
         if stripped.endswith("```"):
             stripped = stripped[:-3].rstrip()
     return stripped

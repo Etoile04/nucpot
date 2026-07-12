@@ -95,8 +95,7 @@ class UnitNormalizer:
         """Load unit normalization rules from JSON config."""
         config = _load_config()
         self._rules = {
-            key.lower(): value
-            for key, value in config.get("unit_normalization", {}).items()
+            key.lower(): value for key, value in config.get("unit_normalization", {}).items()
         }
 
     def normalize(self, unit: str) -> str:

@@ -28,9 +28,7 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
     try:
         cursor.execute("SELECT current_database()")
         cursor.execute("LOAD 'age';")
-        cursor.execute(
-            "SET search_path TO ag_catalog, \"$current_schema\";"
-        )
+        cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
     except Exception:
         # Non-PostgreSQL or AGE not installed — skip silently
         pass

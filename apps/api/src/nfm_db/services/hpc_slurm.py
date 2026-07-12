@@ -59,19 +59,13 @@ def generate_slurm_script(params: dict[str, Any]) -> str:
         ValueError: If any user-controlled string parameter contains
             shell-unsafe characters.
     """
-    job_name = validate_shell_safe(
-        str(params.get("job_name", "md_verification")), "job_name"
-    )
+    job_name = validate_shell_safe(str(params.get("job_name", "md_verification")), "job_name")
     nodes = params.get("nodes", 1)
     cpus_per_task = params.get("cpus_per_task", 4)
     memory = params.get("memory", "16G")
     walltime = params.get("walltime", "02:00:00")
-    partition = validate_shell_safe(
-        str(params.get("partition", "compute")), "partition"
-    )
-    output_file = validate_shell_safe(
-        str(params.get("output_file", "lammps.out")), "output_file"
-    )
+    partition = validate_shell_safe(str(params.get("partition", "compute")), "partition")
+    output_file = validate_shell_safe(str(params.get("output_file", "lammps.out")), "output_file")
 
     script = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
@@ -92,12 +86,8 @@ echo "Job ID: $SLURM_JOB_ID"
 """
 
     if "lammps_executable" in params:
-        lammps_exec = validate_shell_safe(
-            str(params["lammps_executable"]), "lammps_executable"
-        )
-        input_file = validate_shell_safe(
-            str(params.get("input_file", "in.lammps")), "input_file"
-        )
+        lammps_exec = validate_shell_safe(str(params["lammps_executable"]), "lammps_executable")
+        input_file = validate_shell_safe(str(params.get("input_file", "in.lammps")), "input_file")
         script += f"""
 # Run LAMMPS with MPI
 mpirun {lammps_exec} -in {input_file}
@@ -170,7 +160,7 @@ def upload_script_via_sftp(
         except OSError:
             pass  # Directory may already exist
 
-        with sftp.file(remote_path, 'w') as f:
+        with sftp.file(remote_path, "w") as f:
             f.write(script_content)
     finally:
         if sftp:
@@ -211,27 +201,29 @@ async def submit_to_slurm(
             error_msg = stderr.read().decode()
             if "Socket timed out" in error_msg or "qos: QOSMaxSubmitJobLimit" in error_msg:
                 if PROMETHEUS_AVAILABLE:
-                    hpc_job_submissions.labels(cluster=cluster_name, status='queue_full').inc()
+                    hpc_job_submissions.labels(cluster=cluster_name, status="queue_full").inc()
                 raise JobSubmissionError(f"SLURM queue is full: {error_msg}")
             elif "Permission denied" in error_msg:
                 if PROMETHEUS_AVAILABLE:
-                    hpc_job_submissions.labels(cluster=cluster_name, status='permission_denied').inc()
+                    hpc_job_submissions.labels(
+                        cluster=cluster_name, status="permission_denied"
+                    ).inc()
                 raise JobSubmissionError(f"Permission denied: {error_msg}")
             else:
                 if PROMETHEUS_AVAILABLE:
-                    hpc_job_submissions.labels(cluster=cluster_name, status='failed').inc()
+                    hpc_job_submissions.labels(cluster=cluster_name, status="failed").inc()
                 raise JobSubmissionError(f"SLURM submission failed: {error_msg}")
 
         job_id = stdout.read().decode().strip()
         if not job_id.isdigit():
             if PROMETHEUS_AVAILABLE:
-                hpc_job_submissions.labels(cluster=cluster_name, status='invalid_response').inc()
+                hpc_job_submissions.labels(cluster=cluster_name, status="invalid_response").inc()
             raise JobSubmissionError(f"Invalid job ID returned: {job_id}")
 
         logger.info(f"Job submitted successfully to {cluster_name}: {job_id}")
 
         if PROMETHEUS_AVAILABLE:
-            hpc_job_submissions.labels(cluster=cluster_name, status='success').inc()
+            hpc_job_submissions.labels(cluster=cluster_name, status="success").inc()
 
         return f"slurm-{job_id}"
 
@@ -240,7 +232,7 @@ async def submit_to_slurm(
     except Exception as e:
         logger.error(f"Failed to submit job to {cluster_name}: {e}")
         if PROMETHEUS_AVAILABLE:
-            hpc_job_submissions.labels(cluster=cluster_name, status='error').inc()
+            hpc_job_submissions.labels(cluster=cluster_name, status="error").inc()
         raise JobSubmissionError(f"HPC connection failed: {e}")
     finally:
         if client:

@@ -70,7 +70,9 @@ class TestFGradeAdjudicationWorkflow:
         result = adjudicate_f_grade(request)
 
         assert FailureCategory.TIMESTEP_TOO_LARGE in result.matched_patterns
-        assert any("0.25" in fix.description or "0.5" in fix.description for fix in result.suggested_fixes)
+        assert any(
+            "0.25" in fix.description or "0.5" in fix.description for fix in result.suggested_fixes
+        )
 
     def test_unknown_pattern_triggers_escalation(self) -> None:
         """Unknown failure pattern triggers escalation."""
@@ -87,7 +89,9 @@ class TestFGradeAdjudicationWorkflow:
         assert result.primary_category == FailureCategory.UNKNOWN
         assert result.confidence_score < 0.50
         assert result.needs_escalation is True
-        assert "unrecognized" in result.escalation_reason.lower() if result.escalation_reason else True
+        assert (
+            "unrecognized" in result.escalation_reason.lower() if result.escalation_reason else True
+        )
 
     def test_confidence_above_threshold_resolves(self) -> None:
         """High confidence adjudication resolves without escalation."""
@@ -142,7 +146,9 @@ class TestFixSuggestionCategorization:
 
         result = adjudicate_f_grade(request)
 
-        potential_fixes = [f for f in result.suggested_fixes if "potential" in f.description.lower()]
+        potential_fixes = [
+            f for f in result.suggested_fixes if "potential" in f.description.lower()
+        ]
         assert len(potential_fixes) > 0
         assert potential_fixes[0].category == "potential"
 

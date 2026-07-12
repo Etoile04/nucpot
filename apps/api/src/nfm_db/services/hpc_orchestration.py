@@ -167,8 +167,7 @@ class HPCOrchestrator:
                 db.add(event)
                 await db.commit()
                 logger.info(
-                    f"Logged failover event: {event_type} - "
-                    f"{source_cluster} -> {target_cluster}"
+                    f"Logged failover event: {event_type} - {source_cluster} -> {target_cluster}"
                 )
                 break
         except Exception as e:
@@ -188,9 +187,7 @@ class HPCOrchestrator:
 
     async def trigger_failover(self) -> bool:
         """Trigger failover to backup cluster."""
-        result = await self.failover_manager.trigger_failover(
-            log_event_fn=self._log_failover_event
-        )
+        result = await self.failover_manager.trigger_failover(log_event_fn=self._log_failover_event)
         return result
 
     async def try_recover_primary(self) -> bool:
@@ -250,7 +247,9 @@ class HPCOrchestrator:
                     logger.warning(f"Primary submission failed, retrying on backup: {e}")
                     cluster_manager = self.failover_manager.current_ssh_manager
                     cluster_name = self.failover_manager.current_cluster_name
-                    hpc_job_id = await submit_to_slurm(cluster_manager, cluster_name, task_id, slurm_script)
+                    hpc_job_id = await submit_to_slurm(
+                        cluster_manager, cluster_name, task_id, slurm_script
+                    )
                 else:
                     raise HPCConnectionError(f"Job submission failed on all clusters: {e}")
             else:
@@ -277,12 +276,17 @@ class HPCOrchestrator:
     def _upload_script_via_sftp(self, client, script_content: str, remote_path: str) -> None:
         """Upload script content to remote path via SFTP."""
         from nfm_db.services.hpc_slurm import upload_script_via_sftp
+
         upload_script_via_sftp(client, script_content, remote_path)
 
-    async def _create_hpc_job_record(self, task_id: str, hpc_job_id: str, params: dict[str, Any], cluster_used: str = "primary") -> None:
+    async def _create_hpc_job_record(
+        self, task_id: str, hpc_job_id: str, params: dict[str, Any], cluster_used: str = "primary"
+    ) -> None:
         """Create record in hpc_jobs table."""
-        hpc_cluster = self.hpc_cluster if cluster_used == "primary" else (
-            self.config.backup_hosts[0] if self.config.backup_hosts else "unknown"
+        hpc_cluster = (
+            self.hpc_cluster
+            if cluster_used == "primary"
+            else (self.config.backup_hosts[0] if self.config.backup_hosts else "unknown")
         )
         await create_hpc_job_record(task_id, hpc_job_id, params, hpc_cluster)
 
@@ -347,9 +351,7 @@ class HPCOrchestrator:
 
             for job in active_jobs:
                 try:
-                    await self.update_job_status(
-                        str(job.verification_job_id), job.hpc_job_id
-                    )
+                    await self.update_job_status(str(job.verification_job_id), job.hpc_job_id)
                 except Exception as e:
                     logger.error(f"Failed to sync job {job.hpc_job_id}: {e}")
 
@@ -390,7 +392,9 @@ class HPCOrchestrator:
         """Get checksum of remote file via SSH."""
         return await _get_remote_checksum(self.ssh_manager, task_id, remote_file)
 
-    async def save_to_object_storage(self, task_id: str, downloaded_files: dict[str, str]) -> dict[str, str]:
+    async def save_to_object_storage(
+        self, task_id: str, downloaded_files: dict[str, str]
+    ) -> dict[str, str]:
         """Save downloaded files to NFMD object storage."""
         return await _save_to_object_storage(task_id, downloaded_files)
 
@@ -398,13 +402,21 @@ class HPCOrchestrator:
         """Save file metadata to database."""
         return await _save_metadata(task_id, file_metadata)
 
-    async def upload_file_with_retry(self, task_id: str, local_file: str, remote_file: str, max_retries: int = 3) -> bool:
+    async def upload_file_with_retry(
+        self, task_id: str, local_file: str, remote_file: str, max_retries: int = 3
+    ) -> bool:
         """Upload file with automatic retry on failure."""
-        return await _upload_file_with_retry(self.ssh_manager, task_id, local_file, remote_file, max_retries)
+        return await _upload_file_with_retry(
+            self.ssh_manager, task_id, local_file, remote_file, max_retries
+        )
 
-    async def upload_file_with_resume(self, task_id: str, local_file: str, remote_file: str, resume_position: int = 0) -> bool:
+    async def upload_file_with_resume(
+        self, task_id: str, local_file: str, remote_file: str, resume_position: int = 0
+    ) -> bool:
         """Upload file with resume capability."""
-        return await _upload_file_with_resume(self.ssh_manager, task_id, local_file, remote_file, resume_position)
+        return await _upload_file_with_resume(
+            self.ssh_manager, task_id, local_file, remote_file, resume_position
+        )
 
     async def get_remote_file_position(self, task_id: str, remote_file: str) -> int:
         """Get current position of partial file on remote system."""

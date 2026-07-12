@@ -94,9 +94,7 @@ class TestSubmitExtraction:
     async def test_submit_returns_202_with_job_id(
         self, v4_client: AsyncClient, submit_payload: dict
     ):
-        response = await v4_client.post(
-            "/api/v4/extraction/submit", json=submit_payload
-        )
+        response = await v4_client.post("/api/v4/extraction/submit", json=submit_payload)
         assert response.status_code == 202
         body = response.json()
         assert body["success"] is True
@@ -109,68 +107,50 @@ class TestSubmitExtraction:
         assert data["created_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_submit_returns_400_for_invalid_source_type(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_returns_400_for_invalid_source_type(self, v4_client: AsyncClient):
         payload = {
             "source_reference": "some-ref",
             "source_type": "invalid_type",
         }
-        response = await v4_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await v4_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 400
         body = response.json()
         assert body["success"] is False
         assert "Invalid source_type" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_submit_returns_422_for_empty_source_reference(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_returns_422_for_empty_source_reference(self, v4_client: AsyncClient):
         payload = {
             "source_reference": "",
             "source_type": "doi",
         }
-        response = await v4_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await v4_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_submit_returns_422_for_too_many_element_systems(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_returns_422_for_too_many_element_systems(self, v4_client: AsyncClient):
         elements = [f"E{i}" for i in range(21)]
         payload = {
             "source_reference": "10.1016/test",
             "source_type": "doi",
             "element_systems": elements,
         }
-        response = await v4_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await v4_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_submit_accepts_minimal_payload(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_accepts_minimal_payload(self, v4_client: AsyncClient):
         payload = {
             "source_reference": "10.1016/test",
             "source_type": "url",
         }
-        response = await v4_client.post(
-            "/api/v4/extraction/submit", json=payload
-        )
+        response = await v4_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 202
         data = response.json()["data"]
         assert data["job_id"]
 
     @pytest.mark.asyncio
-    async def test_submit_accepts_all_valid_source_types(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_accepts_all_valid_source_types(self, v4_client: AsyncClient):
         # Map each source_type to a representative valid source_reference.
         # DOI must match the regex guard added in NFM-632.
         refs = {
@@ -184,12 +164,8 @@ class TestSubmitExtraction:
                 "source_reference": refs[source_type],
                 "source_type": source_type,
             }
-            response = await v4_client.post(
-                "/api/v4/extraction/submit", json=payload
-            )
-            assert response.status_code == 202, (
-                f"source_type={source_type} should return 202"
-            )
+            response = await v4_client.post("/api/v4/extraction/submit", json=payload)
+            assert response.status_code == 202, f"source_type={source_type} should return 202"
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +180,7 @@ class TestExtractionStatus:
     async def test_status_returns_200_for_known_job(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        status_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/status"
-        )
+        status_resp = await v4_client.get(f"/api/v4/extraction/{submitted_job_id}/status")
         assert status_resp.status_code == 200
         body = status_resp.json()
         assert body["success"] is True
@@ -219,9 +193,7 @@ class TestExtractionStatus:
         assert "created_at" in data
 
     @pytest.mark.asyncio
-    async def test_status_returns_404_for_unknown_job(
-        self, v4_client: AsyncClient
-    ):
+    async def test_status_returns_404_for_unknown_job(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/extraction/00000000-0000-0000-0000-000000000000/status"
         )
@@ -234,9 +206,7 @@ class TestExtractionStatus:
     async def test_status_includes_progress_object(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        status_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/status"
-        )
+        status_resp = await v4_client.get(f"/api/v4/extraction/{submitted_job_id}/status")
         data = status_resp.json()["data"]
         progress = data["progress"]
         assert isinstance(progress["steps_completed"], list)
@@ -247,9 +217,7 @@ class TestExtractionStatus:
     async def test_status_shows_extracted_count(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        status_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/status"
-        )
+        status_resp = await v4_client.get(f"/api/v4/extraction/{submitted_job_id}/status")
         data = status_resp.json()["data"]
         assert "extracted_count" in data
         assert isinstance(data["extracted_count"], int)
@@ -264,9 +232,7 @@ class TestExtractionResult:
     """Tests for the extraction result endpoint."""
 
     @pytest.mark.asyncio
-    async def test_result_returns_404_for_unknown_job(
-        self, v4_client: AsyncClient
-    ):
+    async def test_result_returns_404_for_unknown_job(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/extraction/00000000-0000-0000-0000-000000000000/result"
         )
@@ -276,9 +242,7 @@ class TestExtractionResult:
         assert "not found" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_result_returns_409_for_non_completed_job(
-        self, v4_client: AsyncClient
-    ):
+    async def test_result_returns_409_for_non_completed_job(self, v4_client: AsyncClient):
         """Accessing results on a running job must return 409 Conflict."""
         from nfm_db.services.extraction_pipeline import (
             ExtractionJob,
@@ -294,9 +258,7 @@ class TestExtractionResult:
             status=JobStatus.RUNNING,
         )
         try:
-            response = await v4_client.get(
-                f"/api/v4/extraction/{job_id}/result"
-            )
+            response = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 409
             body = response.json()
             assert body["success"] is False
@@ -308,9 +270,7 @@ class TestExtractionResult:
     async def test_result_returns_200_for_completed_job(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
-        result_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/result"
-        )
+        result_resp = await v4_client.get(f"/api/v4/extraction/{submitted_job_id}/result")
         assert result_resp.status_code == 200
         body = result_resp.json()
         assert body["success"] is True
@@ -355,9 +315,7 @@ class TestBrowseProperties:
     """Tests for the browse properties endpoint."""
 
     @pytest.mark.asyncio
-    async def test_browse_returns_200_for_known_material(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_returns_200_for_known_material(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/properties/UO2")
         assert response.status_code == 200
         body = response.json()
@@ -368,9 +326,7 @@ class TestBrowseProperties:
         assert "properties" in data
 
     @pytest.mark.asyncio
-    async def test_browse_supports_filter_params(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_supports_filter_params(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/properties/UO2",
             params={
@@ -389,17 +345,13 @@ class TestBrowseProperties:
         assert "meta" in body
 
     @pytest.mark.asyncio
-    async def test_browse_returns_properties_list(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_returns_properties_list(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/properties/UO2")
         data = response.json()["data"]
         assert isinstance(data["properties"], list)
 
     @pytest.mark.asyncio
-    async def test_browse_supports_temperature_filter(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_supports_temperature_filter(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/properties/UO2",
             params={"temperature_min": 500.0, "temperature_max": 1500.0},
@@ -407,17 +359,13 @@ class TestBrowseProperties:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_browse_url_decoded_material_system(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_url_decoded_material_system(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/properties/Zr-Nb")
         assert response.status_code == 200
         assert response.json()["data"]["material_system"] == "Zr-Nb"
 
     @pytest.mark.asyncio
-    async def test_browse_returns_400_for_invalid_sort_by(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_returns_400_for_invalid_sort_by(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/properties/UO2",
             params={"sort_by": "invalid_field"},
@@ -426,9 +374,7 @@ class TestBrowseProperties:
         assert response.json()["success"] is False
 
     @pytest.mark.asyncio
-    async def test_browse_returns_400_for_invalid_sort_order(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_returns_400_for_invalid_sort_order(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/properties/UO2",
             params={"sort_order": "invalid"},
@@ -437,9 +383,7 @@ class TestBrowseProperties:
         assert response.json()["success"] is False
 
     @pytest.mark.asyncio
-    async def test_browse_meta_includes_filters(
-        self, v4_client: AsyncClient
-    ):
+    async def test_browse_meta_includes_filters(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/properties/UO2",
             params={"confidence": "high", "phase": "alpha"},
@@ -575,9 +519,7 @@ class TestMaterialSystems:
             assert "confidence_summary" in system
 
     @pytest.mark.asyncio
-    async def test_list_supports_has_pending_review_filter(
-        self, v4_client: AsyncClient
-    ):
+    async def test_list_supports_has_pending_review_filter(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/material-systems",
             params={"has_pending_review": True},
@@ -585,9 +527,7 @@ class TestMaterialSystems:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_list_supports_category_filter(
-        self, v4_client: AsyncClient
-    ):
+    async def test_list_supports_category_filter(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/material-systems",
             params={"category": "thermal_conductivity"},
@@ -595,9 +535,7 @@ class TestMaterialSystems:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_list_confidence_summary_structure(
-        self, v4_client: AsyncClient
-    ):
+    async def test_list_confidence_summary_structure(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/material-systems")
         systems = response.json()["data"]["material_systems"]
         for system in systems:
@@ -608,9 +546,7 @@ class TestMaterialSystems:
             assert isinstance(cs["high"], int)
 
     @pytest.mark.asyncio
-    async def test_list_material_system_has_required_fields(
-        self, v4_client: AsyncClient
-    ):
+    async def test_list_material_system_has_required_fields(self, v4_client: AsyncClient):
         response = await v4_client.get("/api/v4/material-systems")
         systems = response.json()["data"]["material_systems"]
         for system in systems:
@@ -671,9 +607,7 @@ class TestMultimodalSubmitWiring:
     """Tests that multimodal extraction options are passed through submit."""
 
     @pytest.mark.asyncio
-    async def test_submit_passes_all_multimodal_options(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_passes_all_multimodal_options(self, v4_client: AsyncClient):
         """POST submit with all 5 multimodal fields stores them on the job."""
         payload = {
             "source_reference": "10.1016/j.nucmat.2024.01.001",
@@ -700,9 +634,7 @@ class TestMultimodalSubmitWiring:
         assert job.conflict_strategy == "merge"
 
     @pytest.mark.asyncio
-    async def test_submit_defaults_multimodal_fields(
-        self, v4_client: AsyncClient
-    ):
+    async def test_submit_defaults_multimodal_fields(self, v4_client: AsyncClient):
         """Omitting multimodal fields uses correct defaults."""
         payload = {
             "source_reference": "10.1016/j.test.2024.01.001",
@@ -727,9 +659,7 @@ class TestMultimodalResultWiring:
     """Tests that figures and tables are returned in result endpoint."""
 
     @pytest.mark.asyncio
-    async def test_result_includes_figures_and_tables(
-        self, v4_client: AsyncClient
-    ):
+    async def test_result_includes_figures_and_tables(self, v4_client: AsyncClient):
         """GET result returns populated figures[] and tables[] from job data."""
         from nfm_db.services.extraction_pipeline import (
             ExtractionJob,
@@ -810,9 +740,7 @@ class TestMultimodalResultWiring:
             _job_store.pop(job_id, None)
 
     @pytest.mark.asyncio
-    async def test_result_returns_empty_figures_tables_when_absent(
-        self, v4_client: AsyncClient
-    ):
+    async def test_result_returns_empty_figures_tables_when_absent(self, v4_client: AsyncClient):
         """GET result returns empty arrays when job has no figures/tables (backward compat)."""
         from nfm_db.services.extraction_pipeline import (
             ExtractionJob,
@@ -853,7 +781,11 @@ class TestV4Helpers:
         assert progress.current_step == "queued"
         assert progress.steps_completed == []
         assert progress.steps_remaining == [
-            "running", "extracting", "mapping", "quality_gate", "completed",
+            "running",
+            "extracting",
+            "mapping",
+            "quality_gate",
+            "completed",
         ]
 
     def test_build_progress_for_completed(self):

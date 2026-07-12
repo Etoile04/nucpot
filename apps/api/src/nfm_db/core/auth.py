@@ -127,9 +127,7 @@ class RequirePermission:
             ForbiddenError: If user lacks the required permission
         """
         if not current_user.has_permission(self.permission):
-            raise ForbiddenError(
-                f"User lacks required permission: {self.permission.value}"
-            )
+            raise ForbiddenError(f"User lacks required permission: {self.permission.value}")
 
         return current_user
 
