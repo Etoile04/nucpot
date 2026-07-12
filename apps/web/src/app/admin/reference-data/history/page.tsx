@@ -8,7 +8,7 @@ Read-only view for audit trail.
 
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useState, useEffect } from "react"
 import { Card, Space, Alert, message, Button } from "antd"
 import { ReloadOutlined } from "@ant-design/icons"
 import { FillHistoryTable } from "@/components/admin/reference-data/fill-history-table"
@@ -31,7 +31,7 @@ export default function FillHistoryPage() {
     status: "all", // Default to showing all records
   })
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -49,11 +49,11 @@ export default function FillHistoryPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters, pagination.page, pagination.perPage])
 
   useEffect(() => {
     loadData()
-  }, [pagination.page, pagination.perPage])
+  }, [loadData])
 
   const handleFilterChange = (newFilters: Partial<PendingReviewQuery>) => {
     setFilters(newFilters)

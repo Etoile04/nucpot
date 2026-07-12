@@ -28,5 +28,13 @@ docker/.env.*
 *~
 docker/postgres-data/
 .worktrees/
+.claude/
+CLAUDE.md
+AGENTS.md
+.gitnexus/
+.hermes/
 *.tsbuildinfo
 test-results/
+
+# Auto-generated blog content (not source material)
+apps/api/content/blog/

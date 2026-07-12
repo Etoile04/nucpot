@@ -45,6 +45,7 @@ class BlogPostMetadata(TimestampMixin, Base):
         default=uuid.uuid4,
     )
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

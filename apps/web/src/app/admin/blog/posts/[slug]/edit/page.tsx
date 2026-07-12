@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import ImageUpload from "@/components/admin/ImageUpload"
+import { blogApi } from "@/lib/api-client"
 
 export default function EditBlogPostPage() {
   const router = useRouter()
@@ -31,7 +32,6 @@ export default function EditBlogPostPage() {
       const end = textarea.selectionEnd
       const newText = prev.substring(0, start) + "\n" + markdown + "\n" + prev.substring(end)
 
-      // Restore focus after state update
       setTimeout(() => {
         textarea.focus()
         const newPosition = start + markdown.length + 2
@@ -48,19 +48,17 @@ export default function EditBlogPostPage() {
 
   const loadPost = async () => {
     try {
-      const response = await fetch(`/api/admin/blog/posts/${slug}`)
-      const result = await response.json()
+      const post = await blogApi.get(slug)
 
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || "加载文章失败")
-      }
-
-      const post = result.data
       setTitle(post.title)
-      setAuthor(post.author)
-      setTags(Array.isArray(post.tags) ? post.tags.join(", ") : post.tags)
-      setSummary(post.summary)
-      setContent(post.content)
+      setAuthor(post.author_name ?? "")
+      setTags(
+        Array.isArray(post.tags)
+          ? post.tags.join(", ")
+          : String(post.tags ?? ""),
+      )
+      setSummary(post.summary ?? "")
+      setContent(post.content ?? "")
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载文章失败")
     } finally {
@@ -74,29 +72,16 @@ export default function EditBlogPostPage() {
     setError(null)
 
     try {
-      const response = await fetch(`/api/admin/blog/posts/${slug}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title,
-          author,
-          tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-          summary,
-          content,
-        }),
+      await blogApi.update(slug, {
+        title,
+        content,
+        summary,
+        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        author_name: author,
       })
-
-      const result = await response.json()
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || "更新文章失败")
-      }
 
       setSuccess(true)
 
-      // Redirect to posts list after 2 seconds
       setTimeout(() => {
         router.push("/admin/blog/posts")
       }, 2000)

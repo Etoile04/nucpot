@@ -19,6 +19,7 @@ import {
   Tag,
   Typography,
 } from "antd"
+import ErrorEmptyState from "@/components/v4-extraction/error-empty-state"
 import { ReloadOutlined, SendOutlined } from "@ant-design/icons"
 import dayjs from "dayjs"
 import { getExtractionStatus } from "@/lib/v4-extraction/api"
@@ -84,13 +85,13 @@ export default function ExtractionStatusPage() {
 
       <Spin spinning={isLoading}>
         {isError && (
-          <Alert
-            type="error"
-            message="加载失败"
-            description="无法获取任务状态，请检查 Job ID 是否正确。"
-            showIcon
-            style={{ marginBottom: 24 }}
-          />
+          <div style={{ marginBottom: 24 }}>
+            <ErrorEmptyState
+              title="加载失败 / Load Failed"
+              description="无法获取任务状态，请检查网络连接。"
+              onRetry={refetch}
+            />
+          </div>
         )}
 
         {status && (
@@ -148,6 +149,7 @@ export default function ExtractionStatusPage() {
                 message="提取失败 / Extraction Failed"
                 description={status.error_message ?? "未知错误"}
                 showIcon
+                closable={false}
                 action={
                   <Button
                     size="small"

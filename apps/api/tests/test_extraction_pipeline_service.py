@@ -172,30 +172,31 @@ class TestExtractionJob:
     """Tests for the ExtractionJob dataclass."""
 
     def test_default_status_is_queued(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.status == JobStatus.QUEUED
 
     def test_counts_default_to_zero(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.extracted_count == 0
         assert job.staged_count == 0
         assert job.rejected_count == 0
+        assert job.duplicate_count == 0
 
     def test_error_message_default_none(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.error_message is None
 
     def test_timestamps_default_none(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.started_at is None
         assert job.completed_at is None
 
     def test_created_at_auto_set(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.created_at is not None
 
     def test_optional_fields_nullable(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.fill_batch_id is None
         assert job.element_systems is None
         assert job.cache_level is None
@@ -211,12 +212,12 @@ class TestUpdateJob:
     """Tests for immutable-style job update."""
 
     def test_update_status(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         _update_job(job, status=JobStatus.RUNNING)
         assert job.status == JobStatus.RUNNING
 
     def test_update_multiple_fields(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         _update_job(
             job,
             status=JobStatus.COMPLETED,
@@ -230,20 +231,20 @@ class TestUpdateJob:
         assert job.rejected_count == 2
 
     def test_update_ignores_unknown_field(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         _update_job(job, nonexistent_field="value")  # Should not raise
         assert job.status == JobStatus.QUEUED
 
     def test_update_started_at(self) -> None:
         from datetime import UTC, datetime
 
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         now = datetime.now(UTC)
         _update_job(job, started_at=now)
         assert job.started_at == now
 
     def test_update_error_message(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="doi")
+        job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         _update_job(job, error_message="Connection timeout")
         assert job.error_message == "Connection timeout"
 
@@ -312,7 +313,7 @@ class TestOntoFuelExtractLLMFallback:
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=False),
         ):
-            results = await ontofuel_extract("test_source", "doi")
+            results = await ontofuel_extract("test_source", "file")
             # Should fall back to stub
             assert len(results) == 3
             assert results[0]["element_system"] == "UO2"
@@ -323,7 +324,7 @@ class TestOntoFuelExtractLLMFallback:
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
         ):
-            results = await ontofuel_extract("test_source", "doi")
+            results = await ontofuel_extract("test_source", "file")
             assert len(results) == 3
 
     @pytest.mark.asyncio
@@ -529,7 +530,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 mock_session,
                 source_reference="test_source",
-                source_type="doi",
+                source_type="file",
             )
             assert job.status == JobStatus.COMPLETED
             assert job.extracted_count == 0
@@ -555,7 +556,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 mock_session,
                 source_reference="fail_source",
-                source_type="doi",
+                source_type="file",
             )
             assert job.status == JobStatus.FAILED
             assert "extraction failed" in job.error_message
@@ -634,7 +635,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 mock_session,
                 source_reference="good_source",
-                source_type="doi",
+                source_type="file",
             )
             assert job.staged_count == 1
             assert job.rejected_count == 0
@@ -680,7 +681,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 mock_session,
                 source_reference="gap_fail_source",
-                source_type="doi",
+                source_type="file",
             )
             # Should still complete (gap scan failure is non-fatal)
             assert job.status == JobStatus.COMPLETED
@@ -726,7 +727,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 mock_session,
                 source_reference="partial_source",
-                source_type="doi",
+                source_type="file",
             )
             assert job.status == JobStatus.PARTIAL
             assert job.staged_count == 1
@@ -745,7 +746,147 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 mock_session,
                 source_reference="store_test",
-                source_type="doi",
+                source_type="file",
             )
             assert job.job_id in _job_store
             assert _job_store[job.job_id] is job
+
+    @pytest.mark.asyncio
+    async def test_duplicates_tracked_separately_from_rejected(self) -> None:
+        """Duplicates inflate duplicate_count, NOT rejected_count (NFM-637)."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(
+            return_value=MagicMock(
+                accepted=[MagicMock(dedup_hash="h1")],
+                rejected=[MagicMock()],
+                duplicates=[MagicMock(), MagicMock()],
+            )
+        )
+        mock_gate.stage_record = AsyncMock()
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock()
+
+        extracted = [
+            {
+                "property_name": "density",
+                "value": 10.0,
+                "source": "test",
+                "confidence": "high",
+                "property": "density",
+                "element_system": "UO2",
+            },
+        ]
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
+        ):
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="dedup_test",
+                source_type="file",
+            )
+            assert job.staged_count == 1
+            assert job.rejected_count == 1
+            assert job.duplicate_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_duplicates_yields_zero_duplicate_count(self) -> None:
+        """When quality gate returns no duplicates, duplicate_count is 0."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        accepted_result = MagicMock(dedup_hash="h1")
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(
+            return_value=MagicMock(
+                accepted=[accepted_result],
+                rejected=[],
+                duplicates=[],
+            )
+        )
+        mock_gate.stage_record = AsyncMock()
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock()
+
+        extracted = [
+            {
+                "property_name": "density",
+                "value": 10.0,
+                "source": "test",
+                "confidence": "high",
+                "property": "density",
+                "element_system": "UO2",
+            },
+        ]
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
+        ):
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="no_dup_test",
+                source_type="file",
+            )
+            assert job.staged_count == 1
+            assert job.rejected_count == 0
+            assert job.duplicate_count == 0
+
+    @pytest.mark.asyncio
+    async def test_total_accounts_for_staged_rejected_and_duplicates(self) -> None:
+        """Total = staged + rejected + duplicates (no records lost)."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(
+            return_value=MagicMock(
+                accepted=[MagicMock(dedup_hash="h1")],
+                rejected=[MagicMock()],
+                duplicates=[MagicMock()],
+            )
+        )
+        mock_gate.stage_record = AsyncMock()
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock()
+
+        extracted = [
+            {
+                "property_name": f"prop{i}",
+                "value": i,
+                "source": "test",
+                "confidence": "high",
+                "property": f"prop{i}",
+                "element_system": "UO2",
+            }
+            for i in range(3)
+        ]
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
+        ):
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="total_test",
+                source_type="file",
+            )
+            total = job.staged_count + job.rejected_count + job.duplicate_count
+            assert total == job.extracted_count
+            assert total == 3

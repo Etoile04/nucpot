@@ -20,13 +20,11 @@ jobs:
         working-directory: apps/web
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "pnpm"
@@ -37,9 +35,9 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run E2E tests
+      - name: Run E2E periodic tests
         id: e2e
-        run: pnpm exec playwright test --project=chromium
+        run: pnpm exec playwright test --project=chromium --grep "@periodic"
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org

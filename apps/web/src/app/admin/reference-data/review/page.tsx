@@ -7,7 +7,7 @@ Batch operations: approve/reject multiple records.
 
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useState, useEffect } from "react"
 import { Card, Space, Alert, message, Button } from "antd"
 import { ReloadOutlined } from "@ant-design/icons"
 import { ReviewQueueTable } from "@/components/admin/reference-data/review-queue-table"
@@ -34,7 +34,7 @@ export default function ReviewQueuePage() {
   })
   const [filters, setFilters] = useState<Partial<PendingReviewQuery>>({})
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -52,11 +52,11 @@ export default function ReviewQueuePage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters, pagination.page, pagination.perPage])
 
   useEffect(() => {
     loadData()
-  }, [pagination.page, pagination.perPage])
+  }, [loadData])
 
   const handleFilterChange = (newFilters: Partial<PendingReviewQuery>) => {
     setFilters(newFilters)

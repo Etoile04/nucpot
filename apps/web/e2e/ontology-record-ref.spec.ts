@@ -51,7 +51,7 @@ function fulfillGraph(route: import("@playwright/test").Route, body: unknown) {
   })
 }
 
-test.describe("Ontology page — record_ref deep link (Phase 1)", () => {
+test.describe("Ontology page — record_ref deep link (Phase 1)", { tag: "@unit" }, () => {
   test("renders the material-records link for ?node=mat:UO2 with a backend graph", async ({
     page,
   }) => {

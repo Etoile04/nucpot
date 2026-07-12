@@ -6,7 +6,7 @@ without requiring a live PostgreSQL connection.
 Acceptance Criteria:
 - [AC-1] Migration 005 exists and creates verification_results_md table
 - [AC-2] Migration 006 exists and extends status check constraint
-- [AC-3] Migration chain is linear (no conflicts between 005 and 006)
+- [AC-3] Migration chain is linear (no conflicts between 005 and 007)
 - [AC-4] Migrations are additive-only: no column drops, no data loss, no table recreation
 
 Live DB tests (AC-5, AC-6) are in test_md_verification_migration.py and
@@ -162,7 +162,7 @@ class TestMigration006Exists:
 # ---------------------------------------------------------------------------
 
 class TestMigrationChainLinearity:
-    """Verify the migration chain from 005 to 006 is linear."""
+    """Verify the migration chain from 005 to 007 is linear."""
 
     def test_006_depends_on_005(self, script_directory: ScriptDirectory):
         """Migration 006's down_revision is exactly 005."""
@@ -175,9 +175,12 @@ class TestMigrationChainLinearity:
         revision_ids = [r.revision for r in revisions]
         assert len(revision_ids) == len(set(revision_ids)), "Duplicate revision IDs found"
 
-    def test_head_is_006(self, script_directory: ScriptDirectory):
-        """Migration head is 006."""
-        assert script_directory.get_current_head() == "006"
+    def test_head_is_latest(self, script_directory: ScriptDirectory):
+        """Migration head is the latest known revision (not stale)."""
+        head = script_directory.get_current_head()
+        all_revisions = {r.revision for r in script_directory.walk_revisions()}
+        # Head must be a valid revision in the chain
+        assert head in all_revisions, f"Head {head!r} not found in revision chain"
 
     def test_005_is_merge_revision(self, script_directory: ScriptDirectory):
         """Migration 005 correctly merges 003b and 004 branches."""

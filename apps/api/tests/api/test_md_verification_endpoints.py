@@ -190,12 +190,12 @@ def _make_fitting_result(**overrides: object) -> MagicMock:
 class TestSubmitMDVerificationJob:
     """Tests for POST /api/v1/md-verification/jobs."""
 
-    @patch("nfm_db.api.v1.md_verification.run_md_verification_task")
+    @patch("nfm_db.api.v1.md_verification.celery_app")
     @patch("nfm_db.api.v1.md_verification.MDVerificationService")
     async def test_submit_job_success(
         self,
         mock_service_cls: MagicMock,
-        mock_celery_task: MagicMock,
+        mock_celery_app: MagicMock,
         client_with_auth: AsyncClient,
     ) -> None:
         """Successful job submission returns 201 with job details."""
@@ -215,7 +215,7 @@ class TestSubmitMDVerificationJob:
         mock_instance.get_job = AsyncMock(return_value=submitted_job)
         mock_service_cls.return_value = mock_instance
 
-        mock_celery_task.delay = MagicMock(
+        mock_celery_app.send_task = MagicMock(
             return_value=MagicMock(id=MOCK_CELERY_TASK_ID)
         )
 
@@ -236,7 +236,7 @@ class TestSubmitMDVerificationJob:
         mock_instance.create_job.assert_awaited_once()
         mock_instance.update_job.assert_awaited_once()
         mock_instance.get_job.assert_awaited_once()
-        mock_celery_task.delay.assert_called_once()
+        mock_celery_app.send_task.assert_called_once()
 
     @patch("nfm_db.api.v1.md_verification.CELERY_AVAILABLE", False)
     async def test_submit_job_celery_unavailable_returns_503(
@@ -290,7 +290,7 @@ class TestListMDVerificationJobs:
         data = response.json()
         assert data["jobs"] == []
         assert data["total"] == 0
-        assert data["limit"] == 100
+        assert data["limit"] == 20  # PaginationParams default per_page=20
         assert data["offset"] == 0
 
     @patch("nfm_db.api.v1.md_verification.MDVerificationService")

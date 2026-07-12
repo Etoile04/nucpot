@@ -63,10 +63,10 @@ async def test_md_job_submission_rate_limit_returns_429(
                 "nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True,
             ),
             patch(
-                "nfm_db.api.v1.md_verification.run_md_verification_task",
-            ) as mock_task,
+                "nfm_db.api.v1.md_verification.celery_app.send_task",
+            ) as mock_send_task,
         ):
-            mock_task.delay.return_value = MagicMock(id="test-task-id")
+            mock_send_task.return_value = MagicMock(id="test-task-id")
 
             first = await async_client.post(
                 _SUBMIT_URL, json=_JOB_PAYLOAD,
@@ -111,10 +111,10 @@ async def test_md_job_submission_under_limit_succeeds(
                 "nfm_db.api.v1.md_verification.CELERY_AVAILABLE", True,
             ),
             patch(
-                "nfm_db.api.v1.md_verification.run_md_verification_task",
-            ) as mock_task,
+                "nfm_db.api.v1.md_verification.celery_app.send_task",
+            ) as mock_send_task,
         ):
-            mock_task.delay.return_value = MagicMock(id="test-task-id")
+            mock_send_task.return_value = MagicMock(id="test-task-id")
 
             response = await async_client.post(
                 _SUBMIT_URL, json=_JOB_PAYLOAD,

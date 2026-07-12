@@ -60,7 +60,6 @@ export function DefectBarChart({
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         formatter: (params: any) => {
           const item = Array.isArray(params) ? params[0] : params
           if (!item) return ""
@@ -111,7 +110,6 @@ export function DefectBarChart({
           label: {
             show: true,
             position: "top" as const,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             formatter: (params: any) => (params.value as number).toExponential(2),
             fontSize: 11,
           },

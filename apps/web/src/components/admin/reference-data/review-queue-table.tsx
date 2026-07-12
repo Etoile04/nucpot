@@ -189,7 +189,7 @@ export function ReviewQueueTable({
     try {
       await onBatchApprove(selectedRowKeys as string[])
       setSelectedRowKeys([])
-    } catch (error) {
+    } catch {
       // Error already handled in parent
     }
   }
@@ -212,7 +212,7 @@ export function ReviewQueueTable({
       setBatchRejectModalVisible(false)
       setBatchRejectReason("")
       setSelectedRowKeys([])
-    } catch (error) {
+    } catch {
       // Error already handled in parent
     }
   }

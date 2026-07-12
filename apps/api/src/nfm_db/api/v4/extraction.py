@@ -12,11 +12,13 @@ Provides the dedicated /api/v4/ namespace for the extraction lifecycle:
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
@@ -52,6 +54,9 @@ VALID_CONFIDENCE = {"high", "medium", "low"}
 VALID_STAGING_STATUS = {"pending", "approved", "rejected", "promoted"}
 VALID_SORT_FIELDS = {"property", "temperature", "confidence", "created_at"}
 VALID_SORT_ORDERS = {"asc", "desc"}
+
+# DOI format regex per CTO ADR (NFM-632)
+DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 
 # Ordered job lifecycle steps for progress tracking
 _ORDERED_STEPS = [
@@ -144,14 +149,53 @@ def _to_v4_property(
 # ---------------------------------------------------------------------------
 
 
-def _get_job_properties(job_id: str) -> list[dict[str, Any]]:
-    """Retrieve properties stored for a job.
+async def _get_job_properties(
+    job_id: str,
+    session: AsyncSession,
+) -> list[dict[str, Any]]:
+    """Retrieve properties from ref_gap_fill_staging for a job.
 
-    Extension point: query from extraction_jobs / extracted_properties tables.
-    Currently returns empty list as the in-memory store does not
-    persist extracted property dicts.
+    Looks up the ExtractionJob in _job_store to get fill_batch_id,
+    then queries the staging table for matching records.
+    Returns empty list if job not found or fill_batch_id is None.
     """
-    return []
+    from nfm_db.models.ref_gap_fill import RefGapFillStaging
+
+    job = get_job(job_id)
+    if job is None or job.fill_batch_id is None:
+        return []
+
+    batch_uuid = uuid.UUID(job.fill_batch_id)
+    result = await session.execute(
+        select(RefGapFillStaging).where(
+            RefGapFillStaging.fill_batch_id == batch_uuid
+        )
+    )
+    rows = result.scalars().all()
+
+    return [
+        {
+            "element_system": row.element_system,
+            "phase": row.phase,
+            "property_name": row.property_name,
+            "value": row.value,
+            "unit": row.unit,
+            "method": row.method,
+            "source": row.source,
+            "source_doi": row.source_doi,
+            "uncertainty": row.uncertainty,
+            "temperature": row.temperature,
+            "source_file": row.source_file,
+            "composition": row.composition,
+            "element": row.element,
+            "property_category": row.property_category,
+            "context": row.context,
+            "confidence": row.confidence.value,
+            "staging_status": row.status.value,
+            "cache_level": row.cache_level.value if row.cache_level else None,
+        }
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +241,16 @@ async def submit_extraction(
     if not payload.source_reference.strip():
         return _error_response(400, "source_reference must not be empty.")
 
+    if payload.source_type == "doi":
+        # Strip optional 'doi:' prefix (case-insensitive) before validation (NFM-636)
+        clean_ref = payload.source_reference.strip().lower().removeprefix("doi:")
+        if not DOI_PATTERN.match(clean_ref):
+            return _error_response(
+                400,
+                "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
+                "(e.g., 10.1016/j.nucengdes.2020.110756)",
+            )
+    # Pass original reference to pipeline (preserve user input in job record)
     job = await trigger_extraction(
         session=session,
         source_reference=payload.source_reference,
@@ -274,6 +328,7 @@ async def get_extraction_result(
     property_category: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Retrieve extraction results for a completed job with pagination."""
     job = get_job(job_id)
@@ -298,7 +353,7 @@ async def get_extraction_result(
             f"Must be one of: {', '.join(sorted(VALID_CONFIDENCE))}",
         )
 
-    raw_properties = _get_job_properties(job_id)
+    raw_properties = await _get_job_properties(job_id, session)
 
     if confidence is not None:
         raw_properties = [
@@ -460,6 +515,7 @@ async def browse_properties(
 async def validate_extraction(
     job_id: str,
     payload: V4ValidateRequest | None = None,
+    session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Trigger a validation workflow for extracted properties."""
     job = get_job(job_id)
@@ -479,7 +535,7 @@ async def validate_extraction(
 
     auto_approve = payload.auto_approve if payload else True
 
-    raw_properties = _get_job_properties(job_id)
+    raw_properties = await _get_job_properties(job_id, session)
     total_properties = len(raw_properties)
 
     high_count = sum(1 for p in raw_properties if p.get("confidence") == "high")

@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test"
  */
 const isLive = process.env.E2E_TARGET === "live"
 
-test.describe("Blog", () => {
+test.describe("Blog", { tag: "@integration" }, () => {
   test.beforeEach(async () => {
     test.skip(isLive, "Blog module not deployed to live site")
   })

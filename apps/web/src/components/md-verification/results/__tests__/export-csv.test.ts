@@ -77,7 +77,8 @@ describe("triggerDownload", () => {
     const originalRevokeObjectURL = URL.revokeObjectURL
     const createdUrls: string[] = []
 
-    URL.createObjectURL = (_blob: Blob) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    URL.createObjectURL = (_: Blob) => {
       const url = `blob:test-${createdUrls.length}`
       createdUrls.push(url)
       return url
