@@ -61,6 +61,33 @@ class PotentialListResponse(BaseModel):
     total_pages: int
 
 
+class PotentialCreateRequest(BaseModel):
+    """Metadata payload for creating a potential (NFM-299 write path).
+
+    Validation rules ported verbatim from legacy Supabase prior-art.
+    """
+
+    name: str
+    display_name: str | None = None
+    type: str
+    subtype: str | None = None
+    format: str | None = None
+    elements: list[str]
+    system_name: str
+    description: str
+    system_tags: list[str] = []
+    applicability: dict = {}
+    references: list[dict] = []
+    developers: list[dict] = []
+    lammps_config: dict = {}
+    tags: list[str] = []
+    extra: dict = {}
+    license_type: str
+    license_detail: str | None = None
+    auth_file_path: str | None = None
+    uploaded_by: str | None = None
+
+
 # Verification lifecycle values the data model can hold.
 VerificationStatus = Literal["unverified", "pending", "verified", "failed"]
 
