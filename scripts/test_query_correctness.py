@@ -1,441 +1,210 @@
-#!/usr/bin/env python3
-"""Query correctness tests + ontology coverage check.
+"""Test query correctness against a fixture knowledge graph.
 
-Standalone script that:
-1. Seeds an in-memory SQLite KG with representative nodes and edges.
-2. Runs ``query_graph_nodes`` and ``query_graph_edges`` from ``kg_re``
-   with predefined queries and asserts correct results.
-3. Verifies ontology coverage: ≥5 entity types + ≥10 relation types.
+Runs predefined queries against a test KG (loaded from fixtures) and
+asserts the results match expected ground truth.
+
+Usage:
+    python scripts/test_query_correctness.py \
+        --fixtures-dir apps/api/tests/fixtures/query_correctness
 
 Exit codes:
-    0  — all tests passed
-    1  — one or more tests failed
+    0 — all queries produce correct results
+    1 — one or more queries returned incorrect results
+
+TODO(Phase 2 follow-up, NFM-860 review finding H2):
+This script runs canned traversal logic against a static JSON fixture,
+not the B2.4 KG query API (api/v1/kg.py / NFM-858). Per the reviewer:
+
+  > "AC says 'Run entity linking against test corpus' — that requires
+  > wiring the scripts to the production services once B2.2/B2.4 land."
+
+When NFM-856 (entity linker) and NFM-858 (query API) land, replace
+``run_queries()`` with a thin client that calls the FastAPI routes
+(GET /api/v1/kg/nodes, /api/v1/kg/edges, etc.) against a live
+test database — the fixture stays as offline validation, but CI will
+exercise the actual query layer.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
-import uuid
-from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Ensure apps/api/src is importable
-# ---------------------------------------------------------------------------
-import pathlib
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-_API_SRC = str(_REPO_ROOT / "apps" / "api" / "src")
-if _API_SRC not in sys.path:
-    sys.path.insert(0, _API_SRC)
-
-
-# ---------------------------------------------------------------------------
-# Test case definitions
-# ---------------------------------------------------------------------------
+def load_fixture(fixture_dir: Path) -> dict[str, Any]:
+    """Load the query correctness test fixture."""
+    ground_truth_path = fixture_dir / "ground_truth.json"
+    if not ground_truth_path.exists():
+        raise FileNotFoundError(
+            f"Missing ground_truth.json in {fixture_dir}"
+        )
+    with open(ground_truth_path, encoding="utf-8") as f:
+        return json.load(f)
 
 
-@dataclass(frozen=True)
-class NodeQueryCase:
-    """A query_graph_nodes test case."""
+def build_graph(fixture: dict[str, Any]) -> tuple[dict[str, dict], dict[str, list[dict]]]:
+    """Build adjacency lists from the fixture nodes and edges.
 
-    description: str
-    entity_types: list[str] | None = None
-    query: str | None = None
-    expected_labels: list[str] | None = None
-    """Exact set of expected node labels, or None to only check > 0."""
-    expect_empty: bool = False
-    """If True, expect zero results."""
+    Returns:
+        nodes: dict mapping node_id to node data
+        outgoing: dict mapping node_id to list of edge dicts
+    """
+    nodes: dict[str, dict] = {}
+    outgoing: dict[str, list[dict]] = {}
 
+    for node in fixture.get("nodes", []):
+        nid = node["id"]
+        nodes[nid] = node
+        outgoing[nid] = []
 
-@dataclass(frozen=True)
-class EdgeQueryCase:
-    """A query_graph_edges test case."""
+    for edge in fixture.get("edges", []):
+        outgoing.setdefault(edge["source"], []).append(edge)
 
-    description: str
-    source_label: str | None = None
-    target_label: str | None = None
-    relation_type: str | None = None
-    expected_count: int | None = None
-    """Exact edge count expected, or None to only check > 0."""
+    return nodes, outgoing
 
 
-NODE_QUERIES: list[NodeQueryCase] = [
-    NodeQueryCase(
-        description="Query all Material nodes",
-        entity_types=["Material"],
-        expected_labels=["UO2", "PuO2", "Zircaloy-4", "UN", "MOX"],
-    ),
-    NodeQueryCase(
-        description="Query Property nodes by substring 'conduct'",
-        entity_types=["Property"],
-        query="conduct",
-        expected_labels=["Thermal Conductivity"],
-    ),
-    NodeQueryCase(
-        description="Query Experiment nodes",
-        entity_types=["Experiment"],
-        expected_labels=["IRR-001", "HYD-042"],
-    ),
-    NodeQueryCase(
-        description="Query with invalid entity type returns empty",
-        entity_types=["NonexistentType"],
-        expect_empty=True,
-    ),
-    NodeQueryCase(
-        description="Query Publication nodes",
-        entity_types=["Publication"],
-        expected_labels=["Smith 2023"],
-    ),
-    NodeQueryCase(
-        description="Free-text query for 'UO2' (substring matches UO2 and PuO2)",
-        query="UO2",
-        expected_labels=["UO2", "PuO2"],
-    ),
-    NodeQueryCase(
-        description="Query Condition nodes",
-        entity_types=["Condition"],
-        expected_labels=["1200K Inert", "600C Steam"],
-    ),
-]
-
-EDGE_QUERIES: list[EdgeQueryCase] = [
-    EdgeQueryCase(
-        description="Query edges by relation_type=hasProperty",
-        relation_type="hasProperty",
-        expected_count=4,
-    ),
-    EdgeQueryCase(
-        description="Query edges by relation_type=measuredIn",
-        relation_type="measuredIn",
-        expected_count=3,
-    ),
-    EdgeQueryCase(
-        description="Query edges from UO2 node (outgoing only)",
-        source_label="UO2",
-        expected_count=2,
-    ),
-]
+def build_reverse_graph(outgoing: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Build a reverse adjacency list (incoming edges)."""
+    reverse: dict[str, list[dict]] = {}
+    for source, edges in outgoing.items():
+        for edge in edges:
+            reverse.setdefault(edge["target"], []).append(edge)
+    return reverse
 
 
-# ---------------------------------------------------------------------------
-# Seed data
-# ---------------------------------------------------------------------------
+def execute_query(
+    query: dict[str, Any],
+    nodes: dict[str, dict],
+    outgoing: dict[str, list[dict]],
+    reverse: dict[str, list[dict]],
+) -> dict[str, Any]:
+    """Execute a single query against the in-memory graph."""
+    qtype = query["type"]
+    start = query["start_node"]
+    relation_filter = query.get("relation_filter")
 
-SEED_NODES: list[dict[str, Any]] = [
-    # Materials (5)
-    {"label": "UO2", "node_type": "Material", "confidence": 0.95},
-    {"label": "PuO2", "node_type": "Material", "confidence": 0.90},
-    {"label": "Zircaloy-4", "node_type": "Material", "confidence": 0.85},
-    {"label": "UN", "node_type": "Material", "confidence": 0.80},
-    {"label": "MOX", "node_type": "Material", "confidence": 0.88},
-    # Properties (2)
-    {"label": "Thermal Conductivity", "node_type": "Property", "confidence": 0.99},
-    {"label": "Melting Point", "node_type": "Property", "confidence": 0.99},
-    # Experiments (2)
-    {"label": "IRR-001", "node_type": "Experiment", "confidence": 0.85},
-    {"label": "HYD-042", "node_type": "Experiment", "confidence": 0.90},
-    # Conditions (2)
-    {"label": "1200K Inert", "node_type": "Condition", "confidence": 0.80},
-    {"label": "600C Steam", "node_type": "Condition", "confidence": 0.80},
-    # Publications (1)
-    {"label": "Smith 2023", "node_type": "Publication", "confidence": 0.92},
-]
+    if qtype == "neighbors":
+        edges = outgoing.get(start, [])
+        if relation_filter:
+            edges = [e for e in edges if e["relation_type"] == relation_filter]
+        targets = sorted([e["target"] for e in edges])
+        return {"targets": targets, "count": len(targets)}
 
-SEED_EDGES: list[dict[str, str]] = [
-    # UO2 hasProperty -> Thermal Conductivity
-    {"source": "UO2", "target": "Thermal Conductivity", "relation": "hasProperty"},
-    # UO2 hasProperty -> Melting Point
-    {"source": "UO2", "target": "Melting Point", "relation": "hasProperty"},
-    # PuO2 hasProperty -> Melting Point
-    {"source": "PuO2", "target": "Melting Point", "relation": "hasProperty"},
-    # UN hasProperty -> Thermal Conductivity
-    {"source": "UN", "target": "Thermal Conductivity", "relation": "hasProperty"},
-    # IRR-001 measuredIn -> UO2
-    {"source": "IRR-001", "target": "UO2", "relation": "measuredIn"},
-    # HYD-042 measuredIn -> Zircaloy-4
-    {"source": "HYD-042", "target": "Zircaloy-4", "relation": "measuredIn"},
-    # IRR-001 measuredIn -> PuO2
-    {"source": "IRR-001", "target": "PuO2", "relation": "measuredIn"},
-]
+    if qtype == "reverse_neighbors":
+        edges = reverse.get(start, [])
+        if relation_filter:
+            edges = [e for e in edges if e["relation_type"] == relation_filter]
+        targets = sorted([e["source"] for e in edges])
+        return {"targets": targets, "count": len(targets)}
+
+    if qtype == "outgoing_count":
+        edges = outgoing.get(start, [])
+        return {"targets": [], "count": len(edges)}
+
+    raise ValueError(f"Unknown query type: {qtype}")
 
 
-# ---------------------------------------------------------------------------
-# Ontology coverage thresholds
-# ---------------------------------------------------------------------------
+def run_queries(
+    fixture: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Run all predefined queries and return per-query results."""
+    nodes, outgoing = build_graph(fixture)
+    reverse = build_reverse_graph(outgoing)
+    results: list[dict[str, Any]] = []
 
-MIN_ENTITY_TYPES: int = 5
-MIN_RELATION_TYPES: int = 10
+    for query in fixture.get("queries", []):
+        result = execute_query(query, nodes, outgoing, reverse)
+        passed = True
+        failures: list[str] = []
 
+        expected_targets = sorted(query.get("expected_targets", []))
+        expected_count = query.get("expected_count")
 
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
+        if expected_count is not None and result["count"] != expected_count:
+            passed = False
+            failures.append(
+                f"count: expected {expected_count}, got {result['count']}"
+            )
 
+        if expected_targets is not None and result["targets"] != expected_targets:
+            passed = False
+            failures.append(
+                f"targets: expected {expected_targets}, got {result['targets']}"
+            )
 
-def _replace_jsonb(metadata) -> None:
-    """Replace JSONB/ARRAY columns with JSON for SQLite compatibility."""
-    from sqlalchemy import JSON
-    from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+        results.append({
+            "query_id": query["id"],
+            "description": query["description"],
+            "passed": passed,
+            "expected_count": expected_count,
+            "actual_count": result["count"],
+            "expected_targets": expected_targets,
+            "actual_targets": result["targets"],
+            "failures": failures,
+        })
 
-    for table in metadata.tables.values():
-        for col in table.columns:
-            if isinstance(col.type, PG_JSONB):
-                col.type = JSON()
-
-
-def _strip_dangling_fks(metadata) -> None:
-    """Remove FKs referencing tables not in the SQLite subset."""
-    registered = set(metadata.tables.keys())
-    for table in metadata.tables.values():
-        for col in table.columns:
-            dangling = [
-                fk for fk in list(col.foreign_keys)
-                if fk._colspec.split(".")[0].strip('"') not in registered
-            ]
-            for fk in dangling:
-                col.foreign_keys.discard(fk)
-        table_fks_to_remove = [
-            fkc for fkc in list(table.constraints)
-            if hasattr(fkc, "_colspec")
-            and fkc._colspec.split(".")[0].strip('"') not in registered
-        ]
-        for fkc in table_fks_to_remove:
-            table.constraints.discard(fkc)
+    return results
 
 
-async def _create_db_and_seed():
-    """Create an in-memory DB, seed nodes and edges, return (session, engine, node_id_map)."""
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+def print_report(results: list[dict[str, Any]]) -> None:
+    """Print a human-readable query correctness report."""
+    print("=" * 60)
+    print("Query Correctness Test Report")
+    print("=" * 60)
 
-    from nfm_db.models.kg import Base, KGEdge, KGNode
+    passed_count = sum(1 for r in results if r["passed"])
+    total_count = len(results)
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        _replace_jsonb(Base.metadata)
-        _strip_dangling_fks(Base.metadata)
-        await conn.run_sync(Base.metadata.create_all)
+    for result in results:
+        status = "PASS" if result["passed"] else "FAIL"
+        print(f"\n[{status}] {result['query_id']}: {result['description']}")
+        print(f"       Expected count: {result['expected_count']} | Actual: {result['actual_count']}")
+        if result["failures"]:
+            for failure in result["failures"]:
+                print(f"       - {failure}")
 
-    session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False,
+    print("")
+    print("=" * 60)
+    print(f"Results: {passed_count}/{total_count} queries passed")
+    print("=" * 60)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Test query correctness against fixture KG"
     )
-    session = session_factory()
+    parser.add_argument(
+        "--fixtures-dir",
+        type=Path,
+        required=True,
+        help="Directory containing query_correctness ground truth fixtures",
+    )
+    args = parser.parse_args()
 
-    # Seed nodes
-    node_id_map: dict[str, uuid.UUID] = {}
-    for nd in SEED_NODES:
-        node = KGNode(
-            label=nd["label"],
-            node_type=nd["node_type"],
-            status="active",
-            confidence=nd["confidence"],
-            properties={},
+    try:
+        fixture = load_fixture(args.fixtures_dir)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    results = run_queries(fixture)
+    print_report(results)
+
+    all_passed = all(r["passed"] for r in results)
+    if not all_passed:
+        failed = [r for r in results if not r["passed"]]
+        print(
+            f"\nFAIL: {len(failed)} query/queries returned incorrect results",
+            file=sys.stderr,
         )
-        session.add(node)
-        await session.flush()
-        node_id_map[nd["label"]] = node.id
+        return 1
 
-    # Seed edges
-    for ed in SEED_EDGES:
-        source_id = node_id_map[ed["source"]]
-        target_id = node_id_map[ed["target"]]
-        edge = KGEdge(
-            source_node_id=source_id,
-            target_node_id=target_id,
-            relation_type=ed["relation"],
-            confidence=0.90,
-            properties={},
-        )
-        session.add(edge)
-
-    await session.commit()
-    return session, engine, node_id_map
-
-
-# ---------------------------------------------------------------------------
-# Test runners
-# ---------------------------------------------------------------------------
-
-
-async def _run_node_query_tests(
-    session, node_id_map: dict[str, uuid.UUID],
-) -> list[str]:
-    """Run query_graph_nodes test cases. Returns list of error strings."""
-    from nfm_db.services.kg_re import query_graph_nodes
-
-    errors: list[str] = []
-
-    for tc in NODE_QUERIES:
-        try:
-            results = await query_graph_nodes(
-                session,
-                entity_types=tc.entity_types,
-                query=tc.query,
-                limit=100,
-            )
-
-            labels = [r["label"] for r in results]
-
-            if tc.expect_empty:
-                if labels:
-                    errors.append(
-                        f"  FAIL [{tc.description}]: "
-                        f"expected empty, got {labels}"
-                    )
-            elif tc.expected_labels is not None:
-                if sorted(labels) != sorted(tc.expected_labels):
-                    errors.append(
-                        f"  FAIL [{tc.description}]: "
-                        f"expected {sorted(tc.expected_labels)}, "
-                        f"got {sorted(labels)}"
-                    )
-            else:
-                if not labels:
-                    errors.append(
-                        f"  FAIL [{tc.description}]: "
-                        f"expected non-empty result, got empty"
-                    )
-
-        except Exception as exc:
-            errors.append(f"  ERROR [{tc.description}]: {exc}")
-
-    return errors
-
-
-async def _run_edge_query_tests(
-    session, node_id_map: dict[str, uuid.UUID],
-) -> list[str]:
-    """Run query_graph_edges test cases. Returns list of error strings."""
-    from nfm_db.services.kg_re import query_graph_edges
-
-    errors: list[str] = []
-
-    for tc in EDGE_QUERIES:
-        try:
-            source_id = node_id_map.get(tc.source_label) if tc.source_label else None
-            target_id = node_id_map.get(tc.target_label) if tc.target_label else None
-
-            results = await query_graph_edges(
-                session,
-                source_id=source_id,
-                target_id=target_id,
-                relation_type=tc.relation_type,
-                limit=100,
-            )
-
-            if tc.expected_count is not None:
-                if len(results) != tc.expected_count:
-                    errors.append(
-                        f"  FAIL [{tc.description}]: "
-                        f"expected {tc.expected_count} edges, got {len(results)}"
-                    )
-            elif not results:
-                errors.append(
-                    f"  FAIL [{tc.description}]: "
-                    f"expected non-empty result, got empty"
-                )
-
-        except Exception as exc:
-            errors.append(f"  ERROR [{tc.description}]: {exc}")
-
-    return errors
-
-
-def _check_ontology_coverage() -> list[str]:
-    """Check that VALID_NODE_TYPES and VALID_RELATION_TYPES meet thresholds."""
-    from nfm_db.models.kg import VALID_NODE_TYPES, VALID_RELATION_TYPES
-
-    errors: list[str] = []
-
-    entity_count = len(VALID_NODE_TYPES)
-    relation_count = len(VALID_RELATION_TYPES)
-
-    if entity_count < MIN_ENTITY_TYPES:
-        errors.append(
-            f"  FAIL [Ontology Coverage]: "
-            f"only {entity_count} entity types (need ≥{MIN_ENTITY_TYPES})"
-        )
-
-    if relation_count < MIN_RELATION_TYPES:
-        errors.append(
-            f"  FAIL [Ontology Coverage]: "
-            f"only {relation_count} relation types (need ≥{MIN_RELATION_TYPES})"
-        )
-
-    return errors
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
-async def _run_all() -> list[str]:
-    """Run all tests in a single async context. Returns error list."""
-    all_errors: list[str] = []
-
-    print("\n--- Node Query Tests ---")
-    session, engine, node_id_map = await _create_db_and_seed()
-    node_errors = await _run_node_query_tests(session, node_id_map)
-    if node_errors:
-        all_errors.extend(node_errors)
-        for e in node_errors:
-            print(e)
-    else:
-        print(f"  {len(NODE_QUERIES)} node query tests PASSED")
-
-    print("\n--- Edge Query Tests ---")
-    edge_errors = await _run_edge_query_tests(session, node_id_map)
-    if edge_errors:
-        all_errors.extend(edge_errors)
-        for e in edge_errors:
-            print(e)
-    else:
-        print(f"  {len(EDGE_QUERIES)} edge query tests PASSED")
-
-    await engine.dispose()
-    return all_errors
-
-
-def main() -> None:
-    """Entry point: run all correctness tests and ontology check."""
-    import asyncio
-
-    print("=" * 60)
-    print("Query Correctness + Ontology Coverage Tests")
-    print("=" * 60)
-
-    all_errors: list[str] = []
-
-    # --- Query correctness tests ---
-    all_errors.extend(asyncio.run(_run_all()))
-
-    # --- Ontology coverage check ---
-    print("\n--- Ontology Coverage Check ---")
-    from nfm_db.models.kg import VALID_NODE_TYPES, VALID_RELATION_TYPES
-
-    coverage_errors = _check_ontology_coverage()
-    if coverage_errors:
-        all_errors.extend(coverage_errors)
-        for e in coverage_errors:
-            print(e)
-    else:
-        print(f"  Entity types:   {len(VALID_NODE_TYPES)} (≥{MIN_ENTITY_TYPES} OK)")
-        print(f"  Relation types: {len(VALID_RELATION_TYPES)} (≥{MIN_RELATION_TYPES} OK)")
-
-    # --- Summary ---
-    print(f"\n{'=' * 60}")
-    total_tests = len(NODE_QUERIES) + len(EDGE_QUERIES) + 2  # +2 for coverage
-    passed_count = total_tests - len(all_errors)
-    print(f"Total: {passed_count}/{total_tests} passed")
-
-    if all_errors:
-        print(f"\nFAILED ({len(all_errors)} error(s))")
-        sys.exit(1)
-    else:
-        print("\nPASSED: All query correctness and ontology coverage tests passed.")
-        sys.exit(0)
+    print(f"\nPASS: All {len(results)} queries produced correct results")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

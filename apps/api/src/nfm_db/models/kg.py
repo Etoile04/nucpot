@@ -36,6 +36,7 @@ class KGNode(TimestampMixin, Base):
     """A knowledge graph node representing an entity.
 
     Entity types: Material, Property, Experiment, Condition, Publication, Measurement.
+    See VALID_NODE_TYPES for the canonical list.
     """
 
     __tablename__ = "kg_nodes"
@@ -125,7 +126,8 @@ class KGEdge(TimestampMixin, Base):
 
     Relation types: hasProperty, measuredIn, relatedTo, cites, hasCondition,
     publishedIn, containsData, synthesizedBy, alloyOf, irradiatedIn,
-    testedAt, references, derivedFrom.
+    testedAt, references, derivedFrom. See VALID_RELATION_TYPES for the
+    canonical list.
     """
 
     __tablename__ = "kg_edges"
