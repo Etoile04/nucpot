@@ -1,14 +1,17 @@
-"""Literature source search tools."""
+"""Literature source search tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import SOURCES
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class SearchSourcesInput(BaseModel):
@@ -37,18 +40,6 @@ class SearchSourcesInput(BaseModel):
         description="Pagination offset",
         ge=0,
     )
-
-
-def _matches_query(source: dict[str, object], query: str) -> bool:
-    """Check if a source matches a free-text query (case-insensitive)."""
-    query_lower = query.lower()
-    searchable_fields = (
-        str(source.get("authors", "")),
-        str(source.get("title", "")),
-        str(source.get("journal", "")),
-        str(source.get("doi", "")),
-    )
-    return any(query_lower in field.lower() for field in searchable_fields)
 
 
 def register_source_tools(mcp: FastMCP) -> None:
@@ -80,17 +71,43 @@ def register_source_tools(mcp: FastMCP) -> None:
             JSON array of source records with id, authors, title, year,
             and citation count.
         """
-        results = list(SOURCES)
+        try:
+            from nfm_db.services.source_service import list_sources
 
-        if source_type is not None:
-            type_lower = source_type.lower()
-            results = [
-                s for s in results
-                if str(s.get("source_type", "")).lower() == type_lower
-            ]
+            page = max(1, (offset // max(1, limit)) + 1)
 
-        if query:
-            results = [s for s in results if _matches_query(s, query)]
+            async for db in get_db_session():
+                result = await list_sources(
+                    db,
+                    source_type=source_type,
+                    page=page,
+                    per_page=limit,
+                    sort="title",
+                )
 
-        paginated = results[offset : offset + limit]
-        return json.dumps(paginated, default=str)
+                # Post-filter by query text on title/journal fields
+                # (service layer does not support full-text search yet)
+                items = result.items
+                if query:
+                    query_lower = query.lower()
+                    items = [
+                        item
+                        for item in items
+                        if query_lower in (item.title or "").lower()
+                        or query_lower in (item.journal or "").lower()
+                        or query_lower in (item.doi or "").lower()
+                    ]
+
+                filtered_result = {
+                    "items": [
+                        item.model_dump(mode="json") for item in items
+                    ],
+                    "total": len(items),
+                    "page": page,
+                    "limit": limit,
+                }
+                return json.dumps(filtered_result, default=str)
+
+        except Exception as exc:
+            logger.exception("search_sources failed")
+            return json.dumps({"error": f"Source search failed: {exc}"})

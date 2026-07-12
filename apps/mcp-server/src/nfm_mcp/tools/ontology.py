@@ -1,14 +1,17 @@
-"""Ontology browsing tools."""
+"""Ontology browsing tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import ONTOLOGY
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class BrowseOntologyInput(BaseModel):
@@ -34,17 +37,6 @@ class BrowseOntologyInput(BaseModel):
         ge=1,
         le=200,
     )
-
-
-def _matches_query(node: dict[str, object], query: str) -> bool:
-    """Check if an ontology node matches a search query."""
-    query_lower = query.lower()
-    searchable_fields = (
-        str(node.get("label", "")),
-        str(node.get("description", "")),
-        node.get("id", ""),
-    )
-    return any(query_lower in field.lower() for field in searchable_fields)
 
 
 def register_ontology_tools(mcp: FastMCP) -> None:
@@ -79,23 +71,53 @@ def register_ontology_tools(mcp: FastMCP) -> None:
             children count. If query is provided, returns matching
             nodes; otherwise returns top-level nodes.
         """
-        results = list(ONTOLOGY)
+        try:
+            from nfm_db.services.ontology_service import (
+                derive_ontology_graph,
+            )
 
-        if parent_id is not None:
-            results = [
-                n for n in results
-                if n.get("parent_id") == parent_id
-            ]
+            # Map the MCP 'query' param to the service's corpus_id/source param
+            corpus_id = query if query else "nfmd/ref-gap-fill"
 
-        if entity_type is not None:
-            type_lower = entity_type.lower()
-            results = [
-                n for n in results
-                if str(n.get("entity_type", "")).lower() == type_lower
-            ]
+            async for db in get_db_session():
+                result = await derive_ontology_graph(
+                    db,
+                    corpus_id=corpus_id,
+                    limit=limit,
+                )
 
-        if query is not None:
-            results = [n for n in results if _matches_query(n, query)]
+                # Post-filter by entity_type if requested
+                if entity_type:
+                    type_lower = entity_type.lower()
+                    nodes = [
+                        n for n in result.nodes
+                        if type_lower in (n.type or "").lower()
+                    ]
+                    node_ids = {n.id for n in nodes}
+                    relationships = [
+                        r for r in result.relationships
+                        if r.from_ in node_ids or r.to in node_ids
+                    ]
+                else:
+                    nodes = result.nodes
+                    relationships = result.relationships
 
-        paginated = results[: limit]
-        return json.dumps(paginated, default=str)
+                # Post-filter by parent_id if requested
+                if parent_id:
+                    nodes = [
+                        n for n in nodes
+                        if n.id == parent_id
+                    ]
+
+                response = {
+                    "nodes": [n.model_dump(mode="json") for n in nodes[:limit]],
+                    "relationships": [
+                        r.model_dump(mode="json") for r in relationships
+                    ],
+                    "stats": result.stats.model_dump(mode="json"),
+                }
+                return json.dumps(response, default=str)
+
+        except Exception as exc:
+            logger.exception("browse_ontology failed")
+            return json.dumps({"error": f"Ontology browse failed: {exc}"})

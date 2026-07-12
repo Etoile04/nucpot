@@ -21,6 +21,8 @@ dependencies = [
     "httpx>=0.28.0",
     "python-frontmatter>=1.1.0",
     "slowapi>=0.1.9",
+    "PyMuPDF>=1.24.0",
+    "Pillow>=10.4.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +33,13 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
     "aiosqlite>=0.20.0",
+]
+lightrag = [
+    # Version must match docker/lightrag.Dockerfile ARG LIGHTRAG_VERSION
+    # and nfm_db.config.LIGHTRAG_VERSION. Only needed for local dev
+    # against a live LightRAG sidecar (not required in production,
+    # where the sidecar runs independently).
+    "lightrag-hku==1.5.4",
 ]
 
 [tool.ruff]
@@ -183,6 +192,17 @@ module = [
     "nfm_db.api.v1.conflict",
     "nfm_db.api.v1.health",
     "nfm_db.api.v1.materials",
+]
+ignore_errors = true
+
+# LightRAG/RAG provider services (NFM-1222 stack) — strict typing deferred.
+# httpx.AsyncClient.json() returns Any (no-any-return on dict[str, Any] returns)
+# and AsyncResult.mappings() await typing varies across sqlalchemy versions.
+# Track restoration in a dedicated cleanup issue alongside NFM-1072.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.services.lightrag_client",
+    "nfm_db.services.rag_provider",
 ]
 ignore_errors = true
 
