@@ -23,6 +23,30 @@ import type { CreatedPotential, FileInfo } from "@/lib/upload-api"
 
 const { TextArea } = Input
 
+/**
+ * Render trusted HTML into a freshly-opened preview window via a sandboxed
+ * iframe `srcdoc`.
+ *
+ * Security review (NFM-1344, CTO Decision 4): the previous implementation wrote
+ * `data.html` straight into a popup document, executing arbitrary HTML/JS in the
+ * parent window's own origin — a full XSS surface. We now inject the markup
+ * through an iframe whose `sandbox` is limited to `allow-same-origin`
+ * (deliberately WITHOUT `allow-scripts`), so the letter renders visually intact
+ * while any embedded script is neutralised. `html` is assumed to originate only
+ * from the trusted internal `/api/auth/template` endpoint.
+ */
+export function renderTrustedHtmlPreview(win: Window, html: string): void {
+  const doc = win.document
+  doc.body.style.margin = "0"
+  const iframe = doc.createElement("iframe")
+  iframe.setAttribute("sandbox", "allow-same-origin")
+  iframe.srcdoc = html
+  iframe.style.border = "none"
+  iframe.style.width = "100%"
+  iframe.style.height = "100vh"
+  doc.body.appendChild(iframe)
+}
+
 const POTENTIAL_TYPES = [
   { label: "EAM", value: "EAM" },
   { label: "MEAM", value: "MEAM" },
@@ -75,8 +99,7 @@ export default function UploadForm() {
       if (data.html) {
         const w = window.open('', '_blank')
         if (w) {
-          w.document.write(data.html)
-          w.document.close()
+          renderTrustedHtmlPreview(w, data.html as string)
         }
       }
     } catch {
