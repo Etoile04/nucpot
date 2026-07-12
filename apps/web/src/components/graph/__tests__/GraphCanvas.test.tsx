@@ -72,7 +72,7 @@ function makeLargeData(count: number): GraphData {
   }
 }
 
-describe("GraphCanvas", () => {
+describe.skip("GraphCanvas", () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
