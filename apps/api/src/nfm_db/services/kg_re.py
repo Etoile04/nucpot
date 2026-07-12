@@ -12,11 +12,10 @@ Architecture:
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -29,30 +28,19 @@ from nfm_db.models.kg import (
     KGNode,
     KGReviewQueue,
 )
+from nfm_db.services.entity_linker import (
+    REVIEW_CONFIDENCE_THRESHOLD,
+    EntityLinker,
+    ExtractedEntity,
+    LinkOutcome,
+    dedup_entities,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Confidence threshold for review queue
-# ---------------------------------------------------------------------------
-
-REVIEW_CONFIDENCE_THRESHOLD: float = 0.6
-
-# ---------------------------------------------------------------------------
 # Data transfer objects (frozen / immutable)
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ExtractedEntity:
-    """An entity extracted from a paper or data source."""
-
-    label: str
-    entity_type: str
-    confidence: float = 1.0
-    properties: dict[str, Any] = field(default_factory=dict)
-    source_id: uuid.UUID | None = None
-    aliases: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -126,11 +114,12 @@ class RelationExtractor:
         relations: list[ExtractedRelation] = []
 
         for i, source in enumerate(entities):
-            for target in entities[i + 1:]:
+            for target in entities[i + 1 :]:
                 candidates = self._find_candidate_relations(source, target)
                 for relation_type in candidates:
                     confidence = self._compute_relation_confidence(
-                        source.confidence, target.confidence,
+                        source.confidence,
+                        target.confidence,
                     )
                     relations.append(
                         ExtractedRelation(
@@ -175,9 +164,7 @@ class RelationExtractor:
             candidates.extend(self._TYPE_PAIR_RULES[reverse])
 
         # Validate against known relation types
-        return [
-            rt for rt in candidates if rt in VALID_RELATION_TYPES
-        ]
+        return [rt for rt in candidates if rt in VALID_RELATION_TYPES]
 
     @staticmethod
     def _compute_relation_confidence(
@@ -205,118 +192,11 @@ class RelationExtractor:
 # ---------------------------------------------------------------------------
 # Entity linking
 # ---------------------------------------------------------------------------
-
-
-class EntityLinker:
-    """Links extracted entities to existing KG nodes.
-
-    Matching strategy:
-    1. Exact label + node_type match
-    2. Fuzzy alias match (case-insensitive substring)
-    3. No match -> schedule new node creation
-    """
-
-    async def find_matching_node(
-        self,
-        session: AsyncSession,
-        entity: ExtractedEntity,
-        corpus_id: str | None = None,
-    ) -> KGNode | None:
-        """Find an existing KG node matching the given entity.
-
-        Args:
-            session: Async database session.
-            entity: Extracted entity to match.
-            corpus_id: Optional corpus filter.
-
-        Returns:
-            Matching KGNode or None if no match found.
-        """
-        # Strategy 1: Exact label + type match
-        exact_match = await self._exact_label_match(
-            session, entity.label, entity.entity_type, corpus_id,
-        )
-        if exact_match is not None:
-            logger.debug(
-                "Exact match for entity '%s' (%s) -> node %s",
-                entity.label,
-                entity.entity_type,
-                exact_match.id,
-            )
-            return exact_match
-
-        # Strategy 2: Fuzzy alias match
-        alias_match = await self._fuzzy_alias_match(
-            session, entity.label, corpus_id,
-        )
-        if alias_match is not None:
-            logger.debug(
-                "Alias match for entity '%s' -> node %s (label='%s')",
-                entity.label,
-                alias_match.id,
-                alias_match.label,
-            )
-            return alias_match
-
-        logger.debug("No match found for entity '%s' (%s)", entity.label, entity.entity_type)
-        return None
-
-    async def _exact_label_match(
-        self,
-        session: AsyncSession,
-        label: str,
-        node_type: str,
-        corpus_id: str | None,
-    ) -> KGNode | None:
-        """Query for exact label + node_type match."""
-        query = select(KGNode).where(
-            KGNode.label == label,
-            KGNode.node_type == node_type,
-            KGNode.status == "active",
-        )
-        if corpus_id is not None:
-            query = query.where(KGNode.corpus_id == corpus_id)
-
-        result = await session.execute(query)
-        return result.scalar_one_or_none()
-
-    async def _fuzzy_alias_match(
-        self,
-        session: AsyncSession,
-        label: str,
-        corpus_id: str | None,
-    ) -> KGNode | None:
-        """Query for active nodes whose aliases contain the label (case-insensitive)."""
-        query = select(KGNode).where(
-            KGNode.aliases.is_not(None),
-            KGNode.status == "active",
-        )
-        if corpus_id is not None:
-            query = query.where(KGNode.corpus_id == corpus_id)
-
-        result = await session.execute(query)
-        nodes = result.scalars().all()
-
-        label_lower = label.lower().strip()
-        for node in nodes:
-            node_aliases = _parse_aliases(node.aliases)
-            if any(label_lower in alias.lower() for alias in node_aliases):
-                return node
-
-        return None
-
-
-def _parse_aliases(aliases_field: str | None) -> list[str]:
-    """Parse the JSON-encoded aliases field into a list of strings."""
-    if aliases_field is None:
-        return []
-    try:
-        parsed = json.loads(aliases_field)
-        if isinstance(parsed, list):
-            return [str(a) for a in parsed]
-        return []
-    except (json.JSONDecodeError, TypeError):
-        return []
+#
+# The EntityLinker implementation moved to ``nfm_db.services.entity_linker``
+# (NFM-856 [B2.2]). This module re-uses the new module-level
+# EntityLinker, ExtractedEntity, REVIEW_CONFIDENCE_THRESHOLD, and the
+# dedup_entities helper imported at the top of the file.
 
 
 # ---------------------------------------------------------------------------
@@ -367,32 +247,52 @@ class GraphBuilder:
             logger.info("No entities to build graph from")
             return BuildResult()
 
-        # Phase 2: Entity linking
+        # Phase 1.5: Within-batch deduplication (merges same-label+type
+        # duplicates, keeping the highest confidence and collecting
+        # every source_id into provenance_sources).
+        entities = dedup_entities(entities)
+
+        # Phase 2: Entity linking — delegated to EntityLinker.find_or_link
+        # which handles match / create / update / review-queue routing.
         node_map: dict[str, KGNode] = {}
         nodes_created = 0
         nodes_matched = 0
         review_count = 0
 
         for entity in entities:
-            existing = await self._linker.find_matching_node(
-                self._session, entity, self._corpus_id,
+            link_result = await self._linker.find_or_link(
+                self._session,
+                entity,
+                corpus_id=self._corpus_id,
             )
 
-            if existing is not None:
-                node_map[entity.label] = existing
-                nodes_matched += 1
-            else:
-                new_node = await self._create_node(entity)
-                node_map[entity.label] = new_node
-                nodes_created += 1
+            canonical = link_result.node
+            if canonical is None:
+                # Defensive: find_or_link always returns a node, but
+                # guard against future implementation changes.
+                logger.warning(
+                    "EntityLinker returned no node for label=%s; skipping",
+                    entity.label,
+                )
+                continue
 
-                if entity.confidence < REVIEW_CONFIDENCE_THRESHOLD:
-                    await self._queue_for_review(
-                        new_node.id, "entity",
-                        f"Low confidence entity: {entity.label} "
-                        f"(confidence={entity.confidence:.2f})",
-                    )
-                    review_count += 1
+            node_map[entity.label] = canonical
+
+            if link_result.outcome is LinkOutcome.CREATED:
+                nodes_created += 1
+                if self._sync_to_age:
+                    await self._sync_new_node_to_age(canonical)
+            elif link_result.outcome is LinkOutcome.MATCHED:
+                nodes_matched += 1
+            elif link_result.outcome is LinkOutcome.NEEDS_REVIEW:
+                # Review-queue row was already created by EntityLinker.
+                review_count += 1
+                if link_result.matched_node is not None:
+                    nodes_matched += 1
+                else:
+                    nodes_created += 1
+                    if self._sync_to_age:
+                        await self._sync_new_node_to_age(canonical)
 
         # Phase 3: Relation extraction and edge creation
         relations = self._extractor.extract_relations(entities)
@@ -415,7 +315,8 @@ class GraphBuilder:
 
             if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
                 await self._queue_for_review(
-                    edge.id, "relation",
+                    edge.id,
+                    "relation",
                     f"Low confidence relation: "
                     f"{relation.source_label} -[{relation.relation_type}]-> "
                     f"{relation.target_label} (confidence={relation.confidence:.2f})",
@@ -440,6 +341,19 @@ class GraphBuilder:
         )
         return result
 
+    async def _sync_new_node_to_age(self, node: KGNode) -> None:
+        """Best-effort sync of a newly created node to the AGE graph."""
+        try:
+            from nfm_db.services.ontology_sync import sync_node
+
+            await sync_node(self._session, node.id)
+        except Exception:
+            logger.warning(
+                "AGE sync failed for node %s (non-fatal)",
+                node.label,
+                exc_info=True,
+            )
+
     def _convert_to_entities(
         self,
         properties: list[dict[str, Any]],
@@ -454,7 +368,9 @@ class GraphBuilder:
 
         for prop in properties:
             # Material entity
-            material_name = prop.get("material_name") or prop.get("composition") or prop.get("element_system")
+            material_name = (
+                prop.get("material_name") or prop.get("composition") or prop.get("element_system")
+            )
             if material_name and material_name not in seen_labels:
                 seen_labels.add(material_name)
                 entities.append(
@@ -496,7 +412,10 @@ class GraphBuilder:
                                 label=cond_label,
                                 entity_type="Condition",
                                 confidence=_confidence_to_float(prop.get("confidence")) * 0.8,
-                                properties={"condition_key": cond_key, "condition_value": str(cond_value)},
+                                properties={
+                                    "condition_key": cond_key,
+                                    "condition_value": str(cond_value),
+                                },
                                 source_id=source_id,
                             )
                         )
@@ -516,34 +435,6 @@ class GraphBuilder:
                 )
 
         return entities
-
-    async def _create_node(self, entity: ExtractedEntity) -> KGNode:
-        """Create a new KGNode from an extracted entity."""
-        node = KGNode(
-            node_type=entity.entity_type,
-            label=entity.label,
-            aliases=json.dumps(entity.aliases) if entity.aliases else None,
-            properties=dict(entity.properties),
-            confidence=entity.confidence,
-            source_id=entity.source_id,
-            corpus_id=self._corpus_id,
-            status="active" if entity.confidence >= REVIEW_CONFIDENCE_THRESHOLD else "pending_review",
-        )
-        self._session.add(node)
-
-        if self._sync_to_age:
-            try:
-                from nfm_db.services.ontology_sync import sync_node
-
-                await sync_node(self._session, node.id)
-            except Exception:
-                logger.warning(
-                    "AGE sync failed for node %s (non-fatal)",
-                    node.label,
-                    exc_info=True,
-                )
-
-        return node
 
     async def _create_edge(
         self,
@@ -588,7 +479,7 @@ class GraphBuilder:
             item_id=item_id,
             review_reason=review_reason,
             status="pending",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
         )
         self._session.add(queue_entry)
 
