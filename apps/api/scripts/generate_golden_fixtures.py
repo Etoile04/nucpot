@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -390,7 +391,7 @@ def _sic_thermal_expansion_fixture() -> dict[str, Any]:
                 "property_category": "热膨胀",
                 "property": "热膨胀系数",
                 "value": "4.0",
-                "unit": "×10⁻⁶/K",  # noqa: RUF001 — scientific notation
+                "unit": "×10⁻⁶/K",
                 "conditions": {"temp_C": 800, "condition_type": "experimental"},
                 "context": "CVD SiC axial direction",
                 "reference": "Katoh et al., JNM 2014",
@@ -407,7 +408,7 @@ def _sic_thermal_expansion_fixture() -> dict[str, Any]:
                 "property_category": "热膨胀",
                 "property": "热膨胀系数",
                 "value": "4.5 ± 0.2",
-                "unit": "×10⁻⁶/K",  # noqa: RUF001 — scientific notation
+                "unit": "×10⁻⁶/K",
                 "conditions": {"temp_C": 1000, "condition_type": "experimental"},
                 "context": "composite at high temperature",
                 "reference": "Katoh et al., JNM 2014",
@@ -606,7 +607,7 @@ def _zr_irradiation_creep_fixture() -> dict[str, Any]:
                 "conditions": {
                     "temp_C": 300,
                     "stress_MPa": 120,
-                    "flux_n_m2_s": "3×10^17",  # noqa: RUF001 — scientific notation
+                    "flux_n_m2_s": "3×10^17",
                     "condition_type": "irradiation",
                 },
                 "context": "in-reactor pressure tube creep",
@@ -626,7 +627,7 @@ def _zr_irradiation_creep_fixture() -> dict[str, Any]:
                 "unit": "%",
                 "conditions": {
                     "temp_C": 300,
-                    "fluence_n_m2": "5×10^25",  # noqa: RUF001 — scientific notation
+                    "fluence_n_m2": "5×10^25",
                     "condition_type": "irradiation",
                 },
                 "context": "axial strain after full bundle irradiation",
