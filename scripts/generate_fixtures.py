@@ -261,6 +261,14 @@ BUILDERS = {
     "diagram": _build_diagram,
 }
 
+# Deterministic per-type seed offsets (replaces non-deterministic hash(fig_type)).
+_FIG_TYPE_SEED_OFFSET: dict[str, int] = {
+    "plot": 0x3A7B,
+    "table": 0x5C1F,
+    "microstructure": 0x8E4D,
+    "diagram": 0xA296,
+}
+
 
 def _paper_id(figure_type: str, idx: int) -> str:
     return f"{figure_type}-{idx:03d}"
@@ -287,7 +295,7 @@ def generate(
             fixture_dir.mkdir(parents=True, exist_ok=True)
 
             if write_images:
-                img_seed = (seed + idx * 7919 + hash(fig_type)) & 0xFFFFFFFF
+                img_seed = (seed + idx * 7919 + _FIG_TYPE_SEED_OFFSET.get(fig_type, 0)) & 0xFFFFFFFF
                 (fixture_dir / "image.png").write_bytes(
                     _synthetic_png(IMAGE_WIDTH, IMAGE_HEIGHT, img_seed, fig_type)
                 )
