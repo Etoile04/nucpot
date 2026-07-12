@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse
@@ -71,7 +72,7 @@ reference_values_router = APIRouter(tags=["参考值管理"])
 # ── Helpers ─────────────────────────────────────────────────────────
 
 
-def _parse_rows(content: bytes, filename: str) -> list[dict]:
+def _parse_rows(content: bytes, filename: str) -> list[dict[str, Any]]:
     """Parse CSV or JSON content based on file extension."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext == "json":
@@ -81,7 +82,7 @@ def _parse_rows(content: bytes, filename: str) -> list[dict]:
     raise ValueError(f"Unsupported file type: .{ext}. Use .csv or .json")
 
 
-def _measurement_to_dict(m: PropertyMeasurement) -> dict:
+def _measurement_to_dict(m: PropertyMeasurement) -> dict[str, Any]:
     """Convert a PropertyMeasurement ORM object to a flat dict for export."""
     return {
         "id": str(m.id),
@@ -99,7 +100,7 @@ def _measurement_to_dict(m: PropertyMeasurement) -> dict:
     }
 
 
-def _ref_value_to_dict(rv: RefGapFillStaging) -> dict:
+def _ref_value_to_dict(rv: RefGapFillStaging) -> dict[str, Any]:
     """Convert a RefGapFillStaging ORM object to a flat dict for export."""
     return {
         "element_system": rv.element_system,
