@@ -168,21 +168,21 @@ jobs:
 
       - name: Verify ontology coverage
         run: |
-          echo "Checking ontology coverage from KG model class attributes..."
+          echo "Checking ontology coverage from KG model frozensets..."
           python -c "
-          from nfm_db.models.kg import KGNode, KGEdge
+          from nfm_db.models.kg import VALID_NODE_TYPES, VALID_RELATION_TYPES
 
-          # Class attributes are the canonical source — robust to docstring
-          # reformat and CheckConstraint split across lines.
-          entity_count = len(KGNode.ENTITY_TYPES)
-          relation_count = len(KGEdge.RELATION_TYPES)
-          print(f'Entity types ({entity_count}): {list(KGNode.ENTITY_TYPES)}')
-          print(f'Relation types ({relation_count}): {list(KGEdge.RELATION_TYPES)}')
-          assert entity_count >= 5, f'Only {entity_count} entity types (need >=5)'
+          # Module-level frozensets are the canonical source — service-layer
+          # enforced. Robust to docstring reformat and CheckConstraint edits.
+          entity_count = len(VALID_NODE_TYPES)
+          relation_count = len(VALID_RELATION_TYPES)
+          print(f'Node types ({entity_count}): {sorted(VALID_NODE_TYPES)}')
+          print(f'Relation types ({relation_count}): {sorted(VALID_RELATION_TYPES)}')
+          assert entity_count >= 5, f'Only {entity_count} node types (need >=5)'
           assert relation_count >= 10, f'Only {relation_count} relation types (need >=10)'
 
           print('')
           print('PASS: Ontology coverage meets minimum thresholds')
-          print(f'  Entity types: {entity_count} (>= 5 required)')
+          print(f'  Node types: {entity_count} (>= 5 required)')
           print(f'  Relation types: {relation_count} (>= 10 required)')
           "
