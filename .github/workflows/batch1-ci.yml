@@ -26,6 +26,7 @@ on:
       - "apps/api/src/nfm_db/api/v1/extraction.py"
       # Golden fixtures and scripts that produce / consume them
       - "apps/api/tests/fixtures/extraction/**"
+      - "scripts/build_ci_candidates.py"
       - "scripts/generate_fixtures.py"
       - "scripts/eval_extraction_accuracy.py"
       - "scripts/check_schema_compat.py"
@@ -109,35 +110,28 @@ assert sum(counts.values()) >= 50, f'total {sum(counts.values())} < 50'
       - name: Unit tests (pytest)
         run: |
           cd "$GITHUB_WORKSPACE"
-          uv run pytest apps/api/tests/test_extraction_pipeline_multimodal.py \
+          uv run pytest \
+            apps/api/tests/test_extraction_pipeline_multimodal.py \
             apps/api/tests/test_plot_extractor.py \
             apps/api/tests/test_table_extractor.py \
-            apps/api/tests/scripts/ \
+            scripts/tests/ \
             -m 'not e2e and not integration and not rate_limit' \
             --tb=short -q
 
       # -----------------------------------------------------------------
       # Step 3: Extraction accuracy evaluation (B1.6)
       # -----------------------------------------------------------------
-      - name: Build a synthetic candidate set for golden fixtures
-        # The Batch 1 contract is: candidate extraction output is identical
-        # to ground truth for known fixtures. CI uses a copy of the
-        # ground-truth files as the candidate set, which must yield >= 60%
-        # accuracy. New contributors that improve extraction can swap the
-        # candidate source for a real run; the script behavior is unchanged.
+      - name: Build perturbed candidate set for accuracy gate
+        # Uses build_ci_candidates.py to create realistically perturbed
+        # candidate files (2% numeric jitter, small bbox shifts). This
+        # exercises the eval script's tolerance logic instead of trivially
+        # copying ground truth (which would yield 100% and defeat the gate).
         run: |
           cd "$GITHUB_WORKSPACE"
-          mkdir -p /tmp/batch1-candidates
-          python - <<'PY'
-import json, shutil
-from pathlib import Path
-src_root = Path("apps/api/tests/fixtures/extraction")
-dst_root = Path("/tmp/batch1-candidates")
-for gt_path in src_root.rglob("ground_truth.json"):
-                paper_id = gt_path.parent.name
-                (dst_root / f"{paper_id}.json").write_text(gt_path.read_text())
-print("candidate JSON files:", len(list(dst_root.glob('*.json'))))
-PY
+          python scripts/build_ci_candidates.py \
+            --fixtures apps/api/tests/fixtures/extraction \
+            --output /tmp/batch1-candidates \
+            --seed 20260101
 
       - name: Run extraction accuracy evaluation (assert >= 60%)
         run: |
