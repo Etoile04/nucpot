@@ -19,3 +19,17 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
     dispatchEvent: () => false,
   })
 }
+
+/**
+ * jsdom doesn't implement getComputedStyle with pseudoElt (used by
+ * d3-selection / resize observers). Provide a stub.
+ */
+if (typeof window !== "undefined" && !window.getComputedStyle.toString().includes("pseudoElt")) {
+  const origGetComputedStyle = window.getComputedStyle.bind(window)
+  window.getComputedStyle = (elt: Element, pseudoElt?: string | null) => {
+    if (pseudoElt) {
+      return {} as CSSStyleDeclaration
+    }
+    return origGetComputedStyle(elt)
+  }
+}
