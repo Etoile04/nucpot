@@ -110,6 +110,10 @@ module = "celery.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "yaml.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "paramiko.*"
 ignore_missing_imports = true
 
@@ -137,10 +141,6 @@ ignore_missing_imports = true
 module = "nfm_md_runner.*"
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = "nfm_ref_gapfill.*"
-ignore_missing_imports = true
-
 # Pre-existing modules with unresolved mypy errors (existed on main before this branch).
 # Strict typing deferred to a dedicated cleanup issue.
 [[tool.mypy.overrides]]
@@ -161,6 +161,7 @@ module = [
     "nfm_db.services.upload_service",
     "nfm_db.services.potential_service",
     "nfm_db.schemas.domain_expert",
+    "nfm_db.services.blog_post",
 ]
 ignore_errors = true
 
