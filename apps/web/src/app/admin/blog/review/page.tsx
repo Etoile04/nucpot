@@ -3,26 +3,17 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { formatDate } from "@/lib/blog/format-date"
-
-interface ReviewPost {
-  id: string
-  slug: string
-  title: string
-  date: string
-  author: string
-  summary: string
-  tags: string[]
-  status: string
-}
+import { blogApi, type BlogPostResponse } from "@/lib/api-client"
 
 export default function ReviewQueuePage() {
-  const [posts, setPosts] = useState<ReviewPost[]>([])
+  const [posts, setPosts] = useState<readonly BlogPostResponse[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [actionInProgress, setActionInProgress] = useState<string | null>(null)
   const [showRejectDialog, setShowRejectDialog] = useState<string | null>(null)
   const [rejectionReason, setRejectionReason] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
-  const [filteredPosts, setFilteredPosts] = useState<ReviewPost[]>([])
+  const [filteredPosts, setFilteredPosts] = useState<readonly BlogPostResponse[]>([])
 
   useEffect(() => {
     loadPendingReviews()
@@ -36,8 +27,8 @@ export default function ReviewQueuePage() {
       const filtered = posts.filter(
         (post) =>
           post.title.toLowerCase().includes(query) ||
-          post.author.toLowerCase().includes(query) ||
-          post.tags.some((tag) => tag.toLowerCase().includes(query))
+          (post.author_name ?? "").toLowerCase().includes(query) ||
+          (post.tags ?? []).some((tag) => tag.toLowerCase().includes(query)),
       )
       setFilteredPosts(filtered)
     }
@@ -45,19 +36,11 @@ export default function ReviewQueuePage() {
 
   const loadPendingReviews = async () => {
     try {
-      // TODO: Update API endpoint to filter by status
-      const response = await fetch("/api/admin/blog/posts")
-      const result = await response.json()
-
-      if (result.success) {
-        // Filter for under_review status
-        const pendingPosts = result.data.filter(
-          (post: ReviewPost) => post.status === "under_review"
-        )
-        setPosts(pendingPosts)
-      }
-    } catch (error) {
-      console.error("Failed to load pending reviews:", error)
+      const pendingPosts = await blogApi.list({ status: "under_review" })
+      setPosts(pendingPosts)
+      setLoadError(null)
+    } catch {
+      setLoadError("加载审核列表失败")
     } finally {
       setLoading(false)
     }
@@ -66,22 +49,12 @@ export default function ReviewQueuePage() {
   const handleApprove = async (slug: string) => {
     setActionInProgress(slug)
     try {
-      const response = await fetch(`/api/admin/blog/posts/${slug}/workflow`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "approve" }),
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        // Remove from list
-        setPosts(posts.filter((p) => p.slug !== slug))
-      } else {
-        alert(result.error || "审批失败")
-      }
+      await blogApi.workflow(slug, "approve")
+      setPosts(posts.filter((p) => p.slug !== slug))
     } catch (error) {
-      alert("审批失败")
+      alert(
+        error instanceof Error ? error.message : "审批失败",
+      )
     } finally {
       setActionInProgress(null)
     }
@@ -100,27 +73,14 @@ export default function ReviewQueuePage() {
 
     setActionInProgress(slug)
     try {
-      const response = await fetch(`/api/admin/blog/posts/${slug}/workflow`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "reject",
-          rejection_reason: rejectionReason,
-        }),
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        // Remove from list
-        setPosts(posts.filter((p) => p.slug !== slug))
-        setShowRejectDialog(null)
-        setRejectionReason("")
-      } else {
-        alert(result.error || "拒绝失败")
-      }
+      await blogApi.workflow(slug, "reject", rejectionReason)
+      setPosts(posts.filter((p) => p.slug !== slug))
+      setShowRejectDialog(null)
+      setRejectionReason("")
     } catch (error) {
-      alert("拒绝失败")
+      alert(
+        error instanceof Error ? error.message : "拒绝失败",
+      )
     } finally {
       setActionInProgress(null)
     }
@@ -136,6 +96,21 @@ export default function ReviewQueuePage() {
 
   return (
     <div style={{ padding: "2rem" }}>
+      {loadError && (
+        <div
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem 1rem",
+            background: "#fff2f0",
+            border: "1px solid #ffccc7",
+            borderRadius: 4,
+            color: "#ff4d4f",
+            fontSize: "0.875rem",
+          }}
+        >
+          {loadError}
+        </div>
+      )}
       <h1
         style={{
           fontSize: "1.75rem",
@@ -213,9 +188,9 @@ export default function ReviewQueuePage() {
                     gap: "1rem",
                   }}
                 >
-                  <span>{formatDate(post.date)}</span>
-                  <span>作者：{post.author}</span>
-                  <span>标签：{post.tags.join(", ")}</span>
+                  <span>{formatDate(post.created_at.split("T")[0] ?? "")}</span>
+                  <span>作者：{post.author_name ?? "未知"}</span>
+                  <span>标签：{(post.tags ?? []).join(", ")}</span>
                 </div>
               </div>
               <Link
@@ -243,7 +218,7 @@ export default function ReviewQueuePage() {
                 lineHeight: "1.5",
               }}
             >
-              {post.summary}
+              {post.summary ?? ""}
             </p>
 
             {showRejectDialog === post.slug ? (
@@ -378,3 +353,4 @@ export default function ReviewQueuePage() {
     </div>
   )
 }
+

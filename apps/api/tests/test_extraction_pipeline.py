@@ -113,7 +113,7 @@ class TestJobTracking:
         job = ExtractionJob(
             job_id="test-123",
             source_reference="test_source",
-            source_type="doi",
+            source_type="file",
         )
 
         _job_store["test-123"] = job
@@ -142,7 +142,7 @@ class TestOntoFuelExtract:
         """Stub returns exactly 3 demo properties (UO2, FCC)."""
         results = await ontofuel_extract(
             source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_type="file",
         )
 
         assert len(results) == 3
@@ -162,7 +162,7 @@ class TestOntoFuelExtract:
         """Demo properties include all expected fields."""
         results = await ontofuel_extract(
             source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_type="file",
         )
 
         expected_fields = {
@@ -190,7 +190,7 @@ class TestOntoFuelExtract:
         """Demo properties cover all three confidence levels."""
         results = await ontofuel_extract(
             source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_type="file",
         )
 
         confidences = {prop["confidence"] for prop in results}
@@ -202,7 +202,7 @@ class TestOntoFuelExtract:
         source_ref = "doi:10.9999/custom-paper"
         results = await ontofuel_extract(
             source_reference=source_ref,
-            source_type="doi",
+            source_type="file",
         )
 
         for prop in results:
@@ -225,7 +225,7 @@ class TestOntoFuelExtract:
         """Stub returns a list of dicts, not other types."""
         results = await ontofuel_extract(
             source_reference="test",
-            source_type="doi",
+            source_type="file",
         )
 
         assert isinstance(results, list)
@@ -478,7 +478,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 session=db_session,
                 source_reference="doi:10.1234/test",
-                source_type="doi",
+                source_type="file",
             )
 
         # Verify final state
@@ -501,7 +501,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 session=db_session,
                 source_reference="empty_source",
-                source_type="doi",
+                source_type="file",
             )
 
         assert job.status == JobStatus.COMPLETED
@@ -520,7 +520,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 session=db_session,
                 source_reference="failing_source",
-                source_type="doi",
+                source_type="file",
             )
 
         assert job.status == JobStatus.FAILED
@@ -582,7 +582,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 session=db_session,
                 source_reference="partial_source",
-                source_type="doi",
+                source_type="file",
             )
 
         assert job.status == JobStatus.PARTIAL
@@ -614,7 +614,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 session=db_session,
                 source_reference="trackable_source",
-                source_type="doi",
+                source_type="file",
             )
 
         # Job should be retrievable from the store
@@ -673,7 +673,7 @@ class TestTriggerExtraction:
             job = await trigger_extraction(
                 session=db_session,
                 source_reference="all_accepted_source",
-                source_type="doi",
+                source_type="file",
             )
 
         assert job.status == JobStatus.COMPLETED

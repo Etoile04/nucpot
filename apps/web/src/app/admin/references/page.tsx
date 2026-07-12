@@ -158,7 +158,7 @@ export default function AdminReferencesPage() {
     setLoadingRefs(true)
     setRefsError(null)
     try {
-      const r = await fetch(`/api/ref-values`)
+      const r = await fetch(`/api/admin/ref-values`)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
       setRefs(Array.isArray(data) ? data : [])
@@ -284,14 +284,14 @@ export default function AdminReferencesPage() {
       }
 
       if (editingRef) {
-        const r = await fetch(`/api/ref-values/${editingRef.id}`, {
+        const r = await fetch(`/api/admin/ref-values/${editingRef.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         })
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
       } else {
-        const r = await fetch(`/api/ref-values`, {
+        const r = await fetch(`/api/admin/ref-values`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -311,7 +311,7 @@ export default function AdminReferencesPage() {
   const handleDelete = async () => {
     if (!deleteTarget) return
     try {
-      const r = await fetch(`/api/ref-values/${deleteTarget.id}`, { method: 'DELETE' })
+      const r = await fetch(`/api/admin/ref-values/${deleteTarget.id}`, { method: 'DELETE' })
       if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`)
       setDeleteTarget(null)
       await fetchRefs()
@@ -326,7 +326,7 @@ export default function AdminReferencesPage() {
     setSubmittingReview(true)
     try {
       const body: Record<string, unknown> = action === 'approve'
-        ? { confidence: 'A', review_notes: notes }
+        ? { review_notes: notes }
         : { reason: notes }
       const r = await fetch(`/api/admin/ref-values/${id}/${action}`, {
         method: 'POST',
@@ -352,7 +352,6 @@ export default function AdminReferencesPage() {
         ids,
         action: reviewAction.type,
       }
-      if (reviewAction.type === 'approve') (body as Record<string, unknown>).confidence = 'A'
       if (reviewAction.notes) body[reviewAction.type === 'approve' ? 'review_notes' : 'reason'] = reviewAction.notes
 
       const r = await fetch(`/api/admin/ref-values/batch`, {

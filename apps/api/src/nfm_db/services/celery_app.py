@@ -1,8 +1,8 @@
 """Celery Beat tasks for HPC orchestration monitoring."""
 
-import os
-import logging
 import asyncio
+import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +71,36 @@ def _validate_hpc_environment():
 
     logger.info("HPC environment variables validated successfully")
 
-from celery import Celery
+from celery import Celery  # noqa: E402
 
 celery_app = Celery('nfm_tasks')
+
+
+@celery_app.task(
+    bind=True,
+    name="nfm_db.services.md_tasks.run_md_verification",
+    max_retries=3,
+    default_retry_delay=60,
+    autoretry_for=(ConnectionError, IOError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+)
+def _run_md_verification_dispatch(self, job_id, potential_file, structure_file, config):
+    """Celery task entry point — lazily imports and delegates to the plain impl.
+
+    The import is deferred to avoid circular imports at module load time.
+    The plain function in md_tasks.py is kept unchanged so unit tests can
+    call it directly without Celery's bind/self wrapping.
+    """
+    from nfm_db.services.md_tasks import run_md_verification_task as _impl
+    return _impl(self, job_id, potential_file, structure_file, config)
+
 
 @celery_app.task(name='hpc.monitor_primary_cluster_health')
 def monitor_primary_cluster_health() -> dict:
     """Periodic health check for primary HPC cluster."""
-    import asyncio
-    
+
     async def _monitor():
         from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
 
@@ -171,7 +192,7 @@ def monitor_primary_cluster_health() -> dict:
 
     # Handle both Celery (sync) and pytest (async) contexts
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # Already in event loop (pytest async context) - run in thread with own loop
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as pool:

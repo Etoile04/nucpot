@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from nfm_db.schemas.viz import NvlResponse, VizStatsResponse
 from nfm_db.services.ontology_service import get_nvl_data, get_viz_stats
 
-router = APIRouter()
+router = APIRouter(tags=["可视化"])
 
 
 @router.get("/viz/nvl", response_model=NvlResponse)
@@ -14,7 +14,7 @@ async def get_nvl(
     search: str | None = Query(None, description="Filter by search term"),
     max_nodes: int | None = Query(None, ge=1, description="Maximum number of nodes"),
 ) -> NvlResponse:
-    """Get NVL visualization data with optional filtering.
+    """获取NVL可视化数据，支持类别和搜索过滤。
 
     Args:
         class_filter: Filter nodes to those containing this class
@@ -33,7 +33,7 @@ async def get_nvl(
 
 @router.get("/viz/stats", response_model=VizStatsResponse)
 async def get_stats() -> VizStatsResponse:
-    """Get ontology statistics.
+    """获取本体统计信息（节点数、关系数、类别分布）。
 
     Returns:
         VizStatsResponse with node/relationship counts and class distribution

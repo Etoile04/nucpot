@@ -26,7 +26,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from nfm_db.models.md_verification import (
     DefectAnalysisResult,
@@ -35,8 +34,8 @@ from nfm_db.models.md_verification import (
     HpcJob,
     HpcJobStatus,
     JobStatus,
-    MDVerificationJob,
     MDSimulationResult,
+    MDVerificationJob,
     PotentialFittingResult,
 )
 
@@ -57,6 +56,7 @@ class MDVerificationJobCreate(BaseModel):
     config: dict[str, Any]
     priority: int = 5
     status: JobStatus = JobStatus.PENDING
+    owner_id: uuid.UUID | None = None
 
 
 class MDVerificationJobUpdate(BaseModel):
@@ -77,6 +77,7 @@ class MDVerificationJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    owner_id: uuid.UUID | None
     potential_id: str
     element_system: str
     phase: str | None
@@ -313,6 +314,7 @@ class MDVerificationService:
             config=data.config,
             priority=data.priority,
             status=data.status,
+            owner_id=data.owner_id,
         )
 
         self._session.add(job)
@@ -325,18 +327,23 @@ class MDVerificationService:
     async def get_job(
         self,
         job_id: uuid.UUID,
+        owner_id: uuid.UUID | None = None,
     ) -> MDVerificationJobResponse | None:
         """Get a single MD verification job by ID.
 
         Args:
             job_id: Job UUID
+            owner_id: If provided, only return job if owned by this user
 
         Returns:
             Job as response schema, or None if not found
         """
-        result = await self._session.execute(
-            select(MDVerificationJob).where(MDVerificationJob.id == job_id),
-        )
+        query = select(MDVerificationJob).where(MDVerificationJob.id == job_id)
+
+        if owner_id is not None:
+            query = query.where(MDVerificationJob.owner_id == owner_id)
+
+        result = await self._session.execute(query)
         job = result.scalar_one_or_none()
 
         if job is None:
@@ -351,6 +358,7 @@ class MDVerificationService:
         element_system: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        owner_id: uuid.UUID | None = None,
     ) -> list[MDVerificationJobResponse]:
         """List MD verification jobs with optional filters.
 
@@ -360,11 +368,15 @@ class MDVerificationService:
             element_system: Filter by element system
             limit: Maximum number of results
             offset: Query offset for pagination
+            owner_id: If provided, only return jobs owned by this user
 
         Returns:
             List of jobs as response schemas
         """
         query = select(MDVerificationJob)
+
+        if owner_id is not None:
+            query = query.where(MDVerificationJob.owner_id == owner_id)
 
         if potential_id is not None:
             query = query.where(MDVerificationJob.potential_id == potential_id)
@@ -1052,9 +1064,6 @@ class MDVerificationService:
         """
         result = await self._session.execute(
             select(MDVerificationJob)
-            .options(
-                selectinload(MDVerificationJob._sa_instance_state),
-            )
             .where(MDVerificationJob.id == job_id),
         )
         job = result.scalar_one_or_none()

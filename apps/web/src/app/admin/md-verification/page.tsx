@@ -1,6 +1,6 @@
 "use client"
 
-import { TaskSubmissionForm } from "@/components/md-verification/task-submission-form"
+import { TaskSubmissionWizard } from "@/components/md-verification/task-submission-wizard"
 import { TaskList } from "@/components/md-verification/task-list"
 import { Tabs } from "antd"
 import { useState } from "react"
@@ -9,7 +9,8 @@ export default function MDVerificationPage() {
   const [activeTab, setActiveTab] = useState("submit")
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const handleSubmissionSuccess = (_jobId: string) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleSubmissionSuccess = (_: string) => {
     // Switch to list view and refresh
     setActiveTab("list")
     setRefreshKey((prev) => prev + 1)
@@ -24,7 +25,7 @@ export default function MDVerificationPage() {
           {
             key: "submit",
             label: "提交任务",
-            children: <TaskSubmissionForm onSuccess={handleSubmissionSuccess} />,
+            children: <TaskSubmissionWizard onSuccess={handleSubmissionSuccess} />,
           },
           {
             key: "list",

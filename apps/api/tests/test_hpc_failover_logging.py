@@ -6,9 +6,9 @@ Tests follow TDD principles:
 - REFACTOR: Clean up while keeping tests green
 """
 
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.services.hpc_orchestration import HPCOrchestrator, SSHConnectionConfig
@@ -33,10 +33,10 @@ class TestFailoverEventLogging:
     def orchestrator(self):
         """Create HPC orchestrator with backup cluster configured."""
         config = SSHConnectionConfig(
-            hosts=["guangzhou.example.com"],  # Use guangzhou for consistency
+            hosts=("guangzhou.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["tianjin.example.com"],  # Use tianjin for consistency
+            backup_hosts=("tianjin.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             skip_key_validation=True
@@ -145,7 +145,7 @@ class TestFailoverEventLogging:
         WHEN: Failover is triggered
         THEN: Failover event is logged to database
         """
-        with patch.object(orchestrator.backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(orchestrator.failover_manager._backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
@@ -161,7 +161,7 @@ class TestFailoverEventLogging:
                 # Check for guangzhou (or the test cluster name)
                 source = call_kwargs.get('source_cluster')
                 assert source == 'guangzhou.example.com' or source == orchestrator.hpc_cluster
-                assert call_kwargs['success'] == True
+                assert call_kwargs['success']
 
     @pytest.mark.asyncio
     async def test_try_recover_primary_logs_recovery_event(self, orchestrator, db_session):
@@ -171,7 +171,7 @@ class TestFailoverEventLogging:
         WHEN: Recovery is detected
         THEN: Recovery event is logged to database
         """
-        with patch.object(orchestrator, 'check_primary_health', return_value=True):
+        with patch.object(orchestrator.failover_manager, 'check_primary_health', return_value=True):
             with patch.object(orchestrator, '_log_failover_event') as mock_log:
                 await orchestrator.try_recover_primary()
 
@@ -180,7 +180,7 @@ class TestFailoverEventLogging:
 
                 call_kwargs = mock_log.call_args[1]
                 assert call_kwargs['event_type'] in ['primary_recovered', 'recovery_attempted']
-                assert call_kwargs['success'] == True
+                assert call_kwargs['success']
 
 
 class TestHPCFailoverEventModel:

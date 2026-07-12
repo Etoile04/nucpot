@@ -5,10 +5,6 @@ Implements async task execution with retry logic and database persistence.
 
 Usage:
     from nfm_db.services.md_tasks import run_md_verification_task
-    from celery import Celery
-
-    app = Celery('nfm_tasks')
-    app.register_task(run_md_verification_task)
 
     # Trigger task
     task_result = run_md_verification_task.delay(
@@ -21,9 +17,9 @@ Usage:
 
 from __future__ import annotations
 
-import logging
+import asyncio
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +37,6 @@ except ImportError:
     AnalysisManager = None  # type: ignore
 
 from nfm_db.models.md_verification import (
-    DefectType,
-    FittingMethod,
-    HpcJobStatus,
     JobStatus,
 )
 from nfm_db.services.md_verification import MDVerificationService
@@ -79,11 +72,11 @@ class DatabaseTask(Task):
 
 
 # =============================================================================
-# MD Verification Celery Task
+# MD Verification Celery Task Implementation
 # =============================================================================
 
 
-def run_md_verification_task(
+def _run_md_verification_task_impl(
     self: DatabaseTask,
     job_id: str,
     potential_file: str,
@@ -92,7 +85,8 @@ def run_md_verification_task(
 ) -> dict[str, Any]:
     """Run MD verification pipeline using nfm-md-runner.
 
-    This Celery task orchestrates the complete MD verification process:
+    This is the implementation function that the Celery task delegates to.
+    Contains all business logic for the MD verification process:
     1. Validates inputs and checks nfm-md-runner availability
     2. Updates job status to SUBMITTED
     3. Executes verification pipeline via AnalysisManager
@@ -113,23 +107,6 @@ def run_md_verification_task(
         Retry: For transient errors (HPC connection, file I/O)
         ValueError: For permanent errors (invalid parameters, missing files)
         ImportError: If nfm-md-runner is not installed
-
-    Retry Behavior:
-        - Max retries: 3
-        - Exponential backoff: 2^retry_count minutes
-        - Retry on: ConnectionError, IOError, HPC errors
-
-    Example:
-        task_result = run_md_verification_task.delay(
-            job_id="123e4567-e89b-12d3-a456-426614174000",
-            potential_file="/data/potentials/U_U.empirical",
-            structure_file="/data/structures/BCC_U.cif",
-            config={
-                "temperature": 300,
-                "pressure": 0,
-                "simulation_time": 100,  # picoseconds
-            }
-        )
     """
     task_start_time = datetime.now()
 
@@ -188,10 +165,6 @@ def run_md_verification_task(
         # -------------------------------------------------------------------------
         logger.info(f"Updating job {job_id} status to SUBMITTED")
 
-        # Note: Database operations require async session
-        # This is a synchronous Celery task, so we'll use sync/await patterns
-        # In production, use a proper async task runner or separate worker process
-
         # -------------------------------------------------------------------------
         # Step 3: Initialize AnalysisManager and run verification pipeline
         # -------------------------------------------------------------------------
@@ -225,19 +198,17 @@ def run_md_verification_task(
         except FileNotFoundError as e:
             # Retry: File might be temporarily unavailable due to network/storage
             logger.warning(f"File access error (retryable): {e}")
-            exc = Retry(f"File access error: {e}", countdown=60)
-            exc.retry_count = getattr(self.request, "retries", 0) + 1
-            raise exc
+            raise self.retry(exc=e, countdown=60)
 
         except ConnectionError as e:
             # Retry: HPC connection issues
+            retry_count = getattr(self.request, "retries", 0)
+            backoff = 120 * (2 ** retry_count)
             logger.warning(f"HPC connection error (retryable): {e}")
-            exc = Retry(f"HPC connection error: {e}", countdown=120 * (2 ** getattr(self.request, "retries", 0)))
-            exc.retry_count = getattr(self.request, "retries", 0) + 1
-            raise exc
+            raise self.retry(exc=e, countdown=backoff)
 
         except Exception as e:
-            error_msg = f"Verification pipeline failed: {str(e)}"
+            error_msg = f"Verification pipeline failed: {e!s}"
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
@@ -246,9 +217,97 @@ def run_md_verification_task(
         # -------------------------------------------------------------------------
         logger.info("Storing verification results in database")
 
-        # Note: In production, this would use the MDVerificationService
-        # to persist results to the database. For now, we return the results
-        # in the task result for the API layer to handle persistence.
+        async def _persist_results() -> None:
+            """Persist verification results to the database."""
+            from nfm_db.database import async_session_factory
+
+            async with async_session_factory() as session:
+                try:
+                    service = MDVerificationService(session)
+
+                    # Update job status to COMPLETED
+                    await service.update_job(
+                        job_uuid,
+                        {
+                            "status": JobStatus.COMPLETED,
+                            "completed_at": datetime.now(UTC),
+                        },
+                    )
+
+                    # Extract and store simulation result
+                    sim_data = verification_results.get("simulation")
+                    if sim_data:
+                        await service.create_simulation_result(
+                            {
+                                "verification_job_id": job_uuid,
+                                "trajectory_file_path": sim_data.get(
+                                    "trajectory_file_path", ""
+                                ),
+                                "thermodynamic_data": sim_data.get(
+                                    "thermodynamic_data", {}
+                                ),
+                                "simulation_time_ps": sim_data.get(
+                                    "simulation_time_ps", 0
+                                ),
+                                "steps_completed": sim_data.get("steps_completed", 0),
+                                "final_energy": sim_data.get("final_energy", 0.0),
+                                "final_temperature": sim_data.get(
+                                    "final_temperature", 0.0
+                                ),
+                                "final_pressure": sim_data.get("final_pressure", 0.0),
+                            }
+                        )
+
+                    # Extract and store defect analysis results
+                    defect_data_list = verification_results.get("defects", [])
+                    for defect_data in defect_data_list:
+                        await service.create_defect_result(
+                            {
+                                "verification_job_id": job_uuid,
+                                "defect_type": defect_data.get("defect_type", "other"),
+                                "concentration": defect_data.get("concentration", 0.0),
+                                "formation_energy": defect_data.get(
+                                    "formation_energy", 0.0
+                                ),
+                                "metadata": defect_data.get("metadata", {}),
+                            }
+                        )
+
+                    # Extract and store fitting results
+                    fitting_data_list = verification_results.get("fitting", [])
+                    for fit_data in fitting_data_list:
+                        await service.create_fitting_result(
+                            {
+                                "verification_job_id": job_uuid,
+                                "fitting_method": fit_data.get(
+                                    "fitting_method", "other"
+                                ),
+                                "parameters": fit_data.get("parameters", {}),
+                                "quality_metrics": fit_data.get(
+                                    "quality_metrics", {}
+                                ),
+                            }
+                        )
+
+                    await session.commit()
+                    logger.info(
+                        f"Persisted results for job {job_id} to database"
+                    )
+
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        try:
+            asyncio.run(_persist_results())
+        except Exception as e:
+            logger.error(
+                f"Failed to persist results for job {job_id}: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Database persistence failed for job {job_id}: {e}"
+            ) from e
 
         # -------------------------------------------------------------------------
         # Step 5: Return task result
@@ -282,19 +341,44 @@ def run_md_verification_task(
     except Exception as e:
         # Unexpected errors - log and don't retry
         logger.error(f"Unexpected error in MD verification task: {e}", exc_info=True)
-        raise RuntimeError(f"MD verification task failed: {str(e)}") from e
+        raise RuntimeError(f"MD verification task failed: {e!s}") from e
 
 
 # =============================================================================
-# Task Configuration
+# Celery Task Registration
 # =============================================================================
 
+# Import here to avoid circular import: celery_app is already defined
+# by the time md_tasks.py is imported via celery_app.py's import.
+from nfm_db.services.celery_app import celery_app  # noqa: E402
 
-# Task metadata for Celery registration
-run_md_verification_task.name = "nfm_db.services.md_tasks.run_md_verification"
-run_md_verification_task.max_retries = 3
-run_md_verification_task.default_retry_delay = 60  # seconds
-run_md_verification_task.autoretry_for = (ConnectionError, IOError)
-run_md_verification_task.retry_backoff = True
-run_md_verification_task.retry_backoff_max = 600  # 10 minutes
-run_md_verification_task.retry_jitter = True  # Add jitter to retry delays
+
+@celery_app.task(
+    name="nfm_db.services.md_tasks.run_md_verification",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    autoretry_for=(ConnectionError, IOError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+)
+def run_md_verification_task(
+    self: DatabaseTask,
+    job_id: str,
+    potential_file: str,
+    structure_file: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Celery task entry point for MD verification pipeline.
+
+    Wraps _run_md_verification_task_impl as a properly registered Celery task.
+    """
+    return _run_md_verification_task_impl(
+        self=self,
+        job_id=job_id,
+        potential_file=potential_file,
+        structure_file=structure_file,
+        config=config,
+    )

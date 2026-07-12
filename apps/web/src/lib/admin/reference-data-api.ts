@@ -14,12 +14,11 @@ import type {
   ReviewResponse,
 } from "./reference-data-types"
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+// Relative paths — next.config.ts rewrite proxy handles backend routing.
 
 /**
  * Build query string from params object.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildQueryString(params: Record<string, string | number | boolean | null | undefined>): string {
   const searchParams = new URLSearchParams()
 
@@ -49,7 +48,7 @@ export async function getPendingReview(
   })
 
   const response = await fetch(
-    `${API_BASE}/api/v1/reference-values/pending-review${queryString}`,
+    `/api/v1/reference-values/pending-review${queryString}`,
   )
 
   if (!response.ok) {
@@ -83,7 +82,7 @@ export async function getStagingHistory(
   })
 
   const response = await fetch(
-    `${API_BASE}/api/v1/reference-values/pending-review${queryString}`,
+    `/api/v1/reference-values/pending-review${queryString}`,
   )
 
   if (!response.ok) {
@@ -109,7 +108,7 @@ export async function approveRecord(
   const payload: ReviewRequest = reviewNote ? { review_note: reviewNote } : {}
 
   const response = await fetch(
-    `${API_BASE}/api/v1/reference-values/${stagingId}/approve`,
+    `/api/v1/reference-values/${stagingId}/approve`,
     {
       method: "POST",
       headers: {
@@ -142,7 +141,7 @@ export async function rejectRecord(
   const payload: ReviewRequest = reviewNote ? { review_note: reviewNote } : {}
 
   const response = await fetch(
-    `${API_BASE}/api/v1/reference-values/${stagingId}/reject`,
+    `/api/v1/reference-values/${stagingId}/reject`,
     {
       method: "POST",
       headers: {

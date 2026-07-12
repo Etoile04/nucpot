@@ -1,25 +1,22 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
   Card,
   Descriptions,
-  Tag,
   Button,
   Space,
   Alert,
   Spin,
   Tabs,
+  Tag,
   message,
 } from "antd"
 import {
   ArrowLeftOutlined,
   ReloadOutlined,
   DownloadOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  LoadingOutlined,
 } from "@ant-design/icons"
 import {
   getMDVerificationJob,
@@ -34,6 +31,11 @@ import {
   type PotentialFittingResultResponse,
   JobStatus,
 } from "@/lib/md-verification-api"
+import { StatusBadge } from "./status-badge"
+import {
+  ErrorStateDisplay,
+  detectErrorScenario,
+} from "./error-state-display"
 
 export function TaskDetailPage() {
   const params = useParams()
@@ -53,7 +55,9 @@ export function TaskDetailPage() {
     PotentialFittingResultResponse[]
   >([])
 
-  const fetchData = async (showRefreshLoading = false) => {
+  const isPollableRef = useRef(false)
+
+  const fetchData = useCallback(async (showRefreshLoading = false) => {
     if (showRefreshLoading) {
       setRefreshing(true)
     } else {
@@ -99,54 +103,28 @@ export function TaskDetailPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [jobId])
 
+  // Update pollable ref when job status changes (avoids stale closure in interval)
+  useEffect(() => {
+    isPollableRef.current = !!(
+      job &&
+      (job.status === JobStatus.RUNNING || job.status === JobStatus.SUBMITTED)
+    )
+  }, [job])
+
+  // Initial fetch + polling for running jobs
   useEffect(() => {
     fetchData()
 
-    // Set up polling for running jobs
     const interval = setInterval(() => {
-      if (job && (job.status === JobStatus.RUNNING || job.status === JobStatus.SUBMITTED)) {
+      if (isPollableRef.current) {
         fetchData(true)
       }
     }, 5000) // Poll every 5 seconds
 
     return () => clearInterval(interval)
-  }, [jobId, job?.status])
-
-  const getStatusColor = (status: JobStatus): string => {
-    switch (status) {
-      case JobStatus.PENDING:
-        return "default"
-      case JobStatus.SUBMITTED:
-        return "blue"
-      case JobStatus.RUNNING:
-        return "processing"
-      case JobStatus.COMPLETED:
-        return "success"
-      case JobStatus.FAILED:
-        return "error"
-      default:
-        return "default"
-    }
-  }
-
-  const getStatusText = (status: JobStatus): string => {
-    switch (status) {
-      case JobStatus.PENDING:
-        return "等待中"
-      case JobStatus.SUBMITTED:
-        return "已提交"
-      case JobStatus.RUNNING:
-        return "运行中"
-      case JobStatus.COMPLETED:
-        return "已完成"
-      case JobStatus.FAILED:
-        return "失败"
-      default:
-        return status
-    }
-  }
+  }, [jobId, fetchData])
 
   const renderSimulationTab = () => {
     if (!simulationResults) {
@@ -368,13 +346,7 @@ export function TaskDetailPage() {
                 {job.phase || "-"}
               </Descriptions.Item>
               <Descriptions.Item label="状态">
-                <Tag color={getStatusColor(job.status)} icon={
-                  job.status === JobStatus.COMPLETED ? <CheckCircleOutlined /> :
-                  job.status === JobStatus.FAILED ? <CloseCircleOutlined /> :
-                  job.status === JobStatus.RUNNING ? <LoadingOutlined /> : undefined
-                }>
-                  {getStatusText(job.status)}
-                </Tag>
+                <StatusBadge status={job.status} />
               </Descriptions.Item>
               <Descriptions.Item label="优先级">
                 <Tag color={job.priority >= 8 ? "red" : job.priority >= 5 ? "orange" : "green"}>
@@ -400,12 +372,15 @@ export function TaskDetailPage() {
           </Card>
 
           {job.error_message && (
-            <Alert
-              message="任务错误"
-              description={job.error_message}
-              type="error"
-              showIcon
-              closable
+            <ErrorStateDisplay
+              scenario={detectErrorScenario(job.error_message)}
+              errorMessage={job.error_message}
+              jobId={job.id}
+              onResubmit={() =>
+                router.push(
+                  `/md-verification/submit?potential_id=${job.potential_id}`,
+                )
+              }
             />
           )}
 
@@ -416,9 +391,9 @@ export function TaskDetailPage() {
                   {jobStatus.hpc_cluster}
                 </Descriptions.Item>
                 <Descriptions.Item label="HPC 任务状态">
-                  <Tag color={jobStatus.hpc_job_status === "running" ? "processing" : "default"}>
-                    {jobStatus.hpc_job_status}
-                  </Tag>
+                  <StatusBadge
+                    status={String(jobStatus.hpc_job_status ?? "pending") as JobStatus}
+                  />
                 </Descriptions.Item>
               </Descriptions>
             </Card>

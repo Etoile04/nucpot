@@ -21,9 +21,9 @@ import pytest
 from celery.exceptions import Retry
 from celery.schedules import crontab
 
+from nfm_db.services import md_tasks as _md_mod
 from nfm_db.services.celery_app import celery_app
 from nfm_db.services.md_tasks import run_md_verification_task
-
 
 # =============================================================================
 # Test Fixtures
@@ -116,7 +116,7 @@ def mock_analysis_manager() -> Mock:
 # =============================================================================
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestHappyPath:
     """Test successful task execution."""
 
@@ -149,7 +149,7 @@ class TestHappyPath:
             task_instance.request = mock_task_request
 
             # Execute task
-            result = run_md_verification_task(
+            result = _md_mod._run_md_verification_task_impl(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -201,7 +201,7 @@ class TestHappyPath:
             task_instance = MagicMock()
             task_instance.request = mock_task_request
 
-            result = run_md_verification_task(
+            _md_mod._run_md_verification_task_impl(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -219,7 +219,7 @@ class TestHappyPath:
 # =============================================================================
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestErrorHandling:
     """Test error handling and validation."""
 
@@ -238,7 +238,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(ImportError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -262,7 +262,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(ValueError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     "invalid-uuid",
                     str(mock_potential_file),
@@ -286,7 +286,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(FileNotFoundError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     "/nonexistent/potential.txt",
@@ -310,7 +310,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(FileNotFoundError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -334,7 +334,7 @@ class TestErrorHandling:
             task_instance.request = mock_task_request
 
             with pytest.raises(ValueError) as exc_info:
-                run_md_verification_task(
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -376,9 +376,10 @@ class TestRetryLogic:
 
             task_instance = MagicMock()
             task_instance.request = mock_task_request
+            task_instance.retry.side_effect = Retry("Temporary NFS timeout")
 
-            with pytest.raises(Retry) as exc_info:
-                run_md_verification_task(
+            with pytest.raises(Retry):
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -386,9 +387,10 @@ class TestRetryLogic:
                     mock_config,
                 )
 
-            # Verify retry exception
-            assert "File access error" in str(exc_info.value)
-            assert exc_info.value.retry_count == 1
+            # Verify retry was called with the FileNotFoundError exc
+            task_instance.retry.assert_called_once()
+            call_kwargs = task_instance.retry.call_args.kwargs
+            assert "countdown" in call_kwargs
 
     @pytest.mark.asyncio
     async def test_hpc_connection_retry(
@@ -412,9 +414,10 @@ class TestRetryLogic:
 
             task_instance = MagicMock()
             task_instance.request = mock_task_request
+            task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
-            with pytest.raises(Retry) as exc_info:
-                run_md_verification_task(
+            with pytest.raises(Retry):
+                _md_mod._run_md_verification_task_impl(
                     task_instance,
                     mock_job_id,
                     str(mock_potential_file),
@@ -422,8 +425,11 @@ class TestRetryLogic:
                     mock_config,
                 )
 
-            # Verify retry with exponential backoff
-            assert "HPC connection error" in str(exc_info.value)
+            # Verify retry was called with exponential backoff countdown
+            task_instance.retry.assert_called_once()
+            call_kwargs = task_instance.retry.call_args.kwargs
+            assert "countdown" in call_kwargs
+            assert call_kwargs["countdown"] == 120  # 120 * 2^0
 
     @pytest.mark.asyncio
     async def test_exponential_backoff(
@@ -450,9 +456,10 @@ class TestRetryLogic:
 
                 task_instance = MagicMock()
                 task_instance.request = mock_task_request
+                task_instance.retry.side_effect = Retry("HPC cluster unreachable")
 
-                with pytest.raises(Retry) as exc_info:
-                    run_md_verification_task(
+                with pytest.raises(Retry):
+                    _md_mod._run_md_verification_task_impl(
                         task_instance,
                         mock_job_id,
                         str(mock_potential_file),
@@ -462,8 +469,8 @@ class TestRetryLogic:
 
                 # Verify exponential backoff: 120 * 2^retry_count
                 expected_countdown = 120 * (2 ** retry_count)
-                # The countdown should be set (implementation detail)
-                assert exc_info.value.retry_count == retry_count + 1
+                call_kwargs = task_instance.retry.call_args.kwargs
+                assert call_kwargs["countdown"] == expected_countdown
 
 
 # =============================================================================
@@ -510,7 +517,7 @@ class TestTaskConfiguration:
 # =============================================================================
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 class TestCeleryAppConfiguration:
     """Test Celery application configuration."""
 

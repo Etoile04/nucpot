@@ -12,9 +12,11 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from nfm_db.core.auth import get_current_user
+from nfm_db.models import User
 from nfm_db.services.domain_expert import (
     AdjudicationRequest as DomainAdjudicationRequest,
 )
@@ -33,7 +35,7 @@ from nfm_db.services.domain_expert.reference_validation import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["数据验证"])
 
 
 # ---------------------------------------------------------------------------
@@ -185,14 +187,15 @@ class QuarterlyAuditResponse(BaseModel):
     "/check-gap",
     response_model=ReferenceValidationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Validate a reference candidate",
+    summary="验证参考候选值",
     description="Runs reference-validation-workflow: literature search, source validation, "
                 "uncertainty estimation, confidence scoring. Escalates if confidence < 80%.",
 )
 async def check_reference_gap(
     request: ReferenceCandidateRequest,
+    current_user: User = Depends(get_current_user),
 ) -> ReferenceValidationResponse:
-    """Validate a new reference candidate.
+    """验证新的参考候选值。
 
     This endpoint runs the reference-validation-workflow:
     1. Literature search (if skill available)
@@ -256,14 +259,15 @@ async def check_reference_gap(
     "/adjudicate-grade",
     response_model=AdjudicationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Adjudicate an F-grade LAMMPS failure",
+    summary="F级LAMMPS失败裁决",
     description="Runs f-grade-adjudication-workflow: analyzes LAMMPS error logs, "
                 "pattern matches known failures, suggests fixes. Escalates if confidence < 70%.",
 )
 async def adjudicate_f_grade_endpoint(
     request: AdjudicationRequest,
+    current_user: User = Depends(get_current_user),
 ) -> AdjudicationResponse:
-    """Adjudicate an F-grade verification failure.
+    """对F级验证失败进行裁决。
 
     This endpoint runs the f-grade-adjudication-workflow:
     1. Parse LAMMPS error log
@@ -318,14 +322,15 @@ async def adjudicate_f_grade_endpoint(
     "/quarterly-audit",
     response_model=QuarterlyAuditResponse,
     status_code=status.HTTP_200_OK,
-    summary="Run quarterly P0 audit",
+    summary="运行P0季度审计",
     description="Runs quarterly-audit-workflow: checks all P0 systems for uncertainty coverage, "
                 "verification freshness, and conflicts. Generates audit report with findings.",
 )
 async def run_quarterly_audit_endpoint(
     request: QuarterlyAuditRequest,
+    current_user: User = Depends(get_current_user),
 ) -> QuarterlyAuditResponse:
-    """Run quarterly audit on P0 safety-critical systems.
+    """对P0安全关键系统执行季度审计。
 
     This endpoint runs the quarterly-audit-workflow:
     1. Uncertainty coverage check (target: 90%)
@@ -389,10 +394,10 @@ async def run_quarterly_audit_endpoint(
 @router.get(
     "/health",
     status_code=status.HTTP_200_OK,
-    summary="Verification module health check",
+    summary="验证模块健康检查",
 )
 async def verification_health() -> dict[str, str]:
-    """Health check for the verification module."""
+    """验证模块健康检查。"""
     return {
         "status": "healthy",
         "module": "verification",

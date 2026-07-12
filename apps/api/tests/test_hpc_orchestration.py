@@ -1,12 +1,15 @@
 """Tests for HPC Orchestration System - Phase 4.1-4.5."""
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+import asyncio
 from datetime import datetime, timedelta
-from nfm_db.services.hpc_orchestration import (
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from nfm_db.services.hpc_orchestration import HPCOrchestrator
+from nfm_db.services.hpc_ssh import (
+    SSHConnectionConfig,
     SSHConnectionManager,
-    HPCOrchestrator,
-    SSHConnectionConfig
 )
 
 
@@ -58,7 +61,7 @@ class TestSSHConnectionManager:
         )
 
         # Acquire the only connection
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch('paramiko.SSHClient'):
             manager.acquire_connection()
 
             # Try to acquire another - should fail
@@ -75,7 +78,7 @@ class TestSSHConnectionManager:
             skip_key_validation=True
         )
 
-        with patch('paramiko.SSHClient') as mock_ssh:
+        with patch('paramiko.SSHClient'):
             conn = manager.acquire_connection()
             assert manager.available_connections == 1
 
@@ -196,10 +199,10 @@ class TestPhase45Failover:
     def test_backup_cluster_configuration(self):
         """Test orchestrator accepts backup cluster configuration."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="primary_user",
             ssh_key_path="/path/to/primary_key",
-            backup_hosts=["backup.example.com"],
+            backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             failover_threshold_seconds=300
@@ -207,27 +210,27 @@ class TestPhase45Failover:
 
         orchestrator = HPCOrchestrator(config)
 
-        assert orchestrator.backup_ssh_manager is not None
-        assert orchestrator.current_cluster == "primary"
-        assert orchestrator.primary_healthy is True
+        assert orchestrator.failover_manager.has_backup is True
+        assert orchestrator.failover_manager.current_cluster == "primary"
+        assert orchestrator.failover_manager.primary_healthy is True
 
     def test_no_backup_cluster_configured(self):
         """Test orchestrator works without backup cluster."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="primary_user",
             ssh_key_path="/path/to/primary_key"
         )
 
         orchestrator = HPCOrchestrator(config)
 
-        assert orchestrator.backup_ssh_manager is None
-        assert orchestrator.current_cluster == "primary"
+        assert orchestrator.failover_manager.has_backup is False
+        assert orchestrator.failover_manager.current_cluster == "primary"
 
     def test_check_primary_health_success(self):
         """Test primary health check returns True for healthy cluster."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
             skip_key_validation=True
@@ -242,12 +245,12 @@ class TestPhase45Failover:
             is_healthy = orchestrator.check_primary_health()
 
             assert is_healthy is True
-            assert orchestrator.last_health_check is not None
+            assert orchestrator.failover_manager.last_health_check is not None
 
     def test_check_primary_health_failure(self):
         """Test primary health check returns False for unhealthy cluster."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
             skip_key_validation=True
@@ -265,7 +268,7 @@ class TestPhase45Failover:
     def test_should_trigger_failover_no_backup(self):
         """Test failover not triggered when no backup configured."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
             skip_key_validation=True
@@ -274,7 +277,7 @@ class TestPhase45Failover:
         orchestrator = HPCOrchestrator(config)
 
         # Mark primary as unhealthy
-        orchestrator.primary_healthy = False
+        orchestrator.failover_manager.primary_healthy = False
 
         # Should not trigger failover (no backup)
         should_failover = orchestrator.should_trigger_failover()
@@ -284,10 +287,10 @@ class TestPhase45Failover:
     def test_should_trigger_failover_after_threshold(self):
         """Test failover triggered after 5-minute threshold exceeded."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["backup.example.com"],
+            backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             failover_threshold_seconds=300,
@@ -297,7 +300,7 @@ class TestPhase45Failover:
         orchestrator = HPCOrchestrator(config)
 
         # Set last health check to 6 minutes ago
-        orchestrator.last_health_check = datetime.now() - timedelta(seconds=360)
+        orchestrator.failover_manager.last_health_check = datetime.now() - timedelta(seconds=360)
 
         should_failover = orchestrator.should_trigger_failover()
 
@@ -306,10 +309,10 @@ class TestPhase45Failover:
     def test_trigger_failover_success(self):
         """Test successful failover to backup cluster."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["backup.example.com"],
+            backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             skip_key_validation=True
@@ -317,47 +320,48 @@ class TestPhase45Failover:
 
         orchestrator = HPCOrchestrator(config)
 
-        with patch.object(orchestrator.backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
+        with patch.object(orchestrator.failover_manager._backup_ssh_manager, 'acquire_connection_with_retry') as mock_acquire:
             mock_client = MagicMock()
             mock_acquire.return_value = mock_client
 
-            result = orchestrator.trigger_failover()
+            result = asyncio.run(orchestrator.trigger_failover())
 
             assert result is True
-            assert orchestrator.current_cluster == "backup"
-            assert orchestrator.failover_count == 1
+            assert orchestrator.failover_manager.current_cluster == "backup"
+            assert orchestrator.failover_manager.failover_count == 1
 
     def test_trigger_failover_no_backup(self):
         """Test failover fails when no backup configured."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key"
         )
 
         orchestrator = HPCOrchestrator(config)
 
-        result = orchestrator.trigger_failover()
+        result = asyncio.run(orchestrator.trigger_failover())
 
         assert result is False
 
     def test_try_recover_primary_success(self):
         """Test primary cluster recovery detection."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
             skip_key_validation=True
         )
 
         orchestrator = HPCOrchestrator(config)
-        orchestrator.primary_healthy = False
+        orchestrator.failover_manager.primary_healthy = False
 
-        with patch.object(orchestrator, 'check_primary_health', return_value=True):
-            recovered = orchestrator.try_recover_primary()
+        with patch.object(orchestrator.failover_manager, 'check_primary_health', return_value=True):
+            with patch.object(orchestrator.failover_manager, 'log_failover_event'):
+                recovered = asyncio.run(orchestrator.try_recover_primary())
 
             assert recovered is True
-            assert orchestrator.primary_healthy is True
+            assert orchestrator.failover_manager.primary_healthy is True
 
 
 class TestThreadSafety:
@@ -365,7 +369,6 @@ class TestThreadSafety:
 
     def test_connection_lock_is_threading_lock(self):
         """Test connection manager uses threading.Lock for thread safety."""
-        import threading
 
         manager = SSHConnectionManager(
             host="test.example.com",
@@ -387,7 +390,7 @@ class TestCleanup:
     def test_cleanup_closes_primary_connections(self):
         """Test cleanup method closes primary connections."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
             skip_key_validation=True
@@ -395,18 +398,18 @@ class TestCleanup:
 
         orchestrator = HPCOrchestrator(config)
 
-        # Mock cleanup method
-        with patch.object(orchestrator.ssh_manager, 'cleanup') as mock_cleanup:
+        # cleanup() delegates to failover_manager.cleanup()
+        with patch.object(orchestrator.failover_manager, 'cleanup') as mock_cleanup:
             orchestrator.cleanup()
             mock_cleanup.assert_called_once()
 
     def test_cleanup_closes_all_connections_with_backup(self):
         """Test cleanup method closes both primary and backup connections."""
         config = SSHConnectionConfig(
-            hosts=["primary.example.com"],
+            hosts=("primary.example.com",),
             username="testuser",
             ssh_key_path="/path/to/key",
-            backup_hosts=["backup.example.com"],
+            backup_hosts=("backup.example.com",),
             backup_username="backup_user",
             backup_ssh_key_path="/path/to/backup_key",
             skip_key_validation=True
@@ -414,11 +417,7 @@ class TestCleanup:
 
         orchestrator = HPCOrchestrator(config)
 
-        # Mock cleanup methods
-        with patch.object(orchestrator.ssh_manager, 'cleanup') as mock_primary_cleanup:
-            with patch.object(orchestrator.backup_ssh_manager, 'cleanup') as mock_backup_cleanup:
-                orchestrator.cleanup()
-
-                # Verify both managers were cleaned up
-                mock_primary_cleanup.assert_called_once()
-                mock_backup_cleanup.assert_called_once()
+        # Cleanup delegates to failover_manager which handles both primary and backup
+        with patch.object(orchestrator.failover_manager, 'cleanup') as mock_failover_cleanup:
+            orchestrator.cleanup()
+            mock_failover_cleanup.assert_called_once()

@@ -35,7 +35,7 @@ export function ReviewActions({ record, onApprove, onReject }: ReviewActionsProp
       await onApprove(record.id, approveNote || undefined)
       setApproveModalVisible(false)
       setApproveNote("")
-    } catch (error) {
+    } catch {
       // Error already handled in parent
     } finally {
       setActionLoading(false)
@@ -57,7 +57,7 @@ export function ReviewActions({ record, onApprove, onReject }: ReviewActionsProp
       await onReject(record.id, rejectReason)
       setRejectModalVisible(false)
       setRejectReason("")
-    } catch (error) {
+    } catch {
       // Error already handled in parent
     } finally {
       setActionLoading(false)
@@ -83,7 +83,7 @@ export function ReviewActions({ record, onApprove, onReject }: ReviewActionsProp
           setActionLoading(true)
           try {
             await onApprove(record.id)
-          } catch (error) {
+          } catch {
             // Error already handled in parent
           } finally {
             setActionLoading(false)

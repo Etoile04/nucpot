@@ -21,42 +21,33 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.md_verification import (
-    DefectAnalysisResult,
     DefectType,
     FittingMethod,
-    HpcJob,
     HpcJobStatus,
     JobStatus,
-    MDVerificationJob,
-    MDSimulationResult,
-    PotentialFittingResult,
 )
 from nfm_db.services.md_verification import (
     DefectAnalysisResultCreate,
     DefectAnalysisResultResponse,
-    DefectAnalysisResultUpdate,
     HpcJobCreate,
     HpcJobResponse,
     HpcJobUpdate,
-    MDVerificationService,
+    MDSimulationResultCreate,
+    MDSimulationResultResponse,
     MDVerificationJobCreate,
     MDVerificationJobResponse,
     MDVerificationJobUpdate,
-    MDSimulationResultCreate,
-    MDSimulationResultResponse,
-    MDSimulationResultUpdate,
+    MDVerificationService,
     PotentialFittingResultCreate,
     PotentialFittingResultResponse,
-    PotentialFittingResultUpdate,
 )
 
 # ===========================================================================
@@ -69,8 +60,18 @@ def mock_session() -> AsyncMock:
     """Create a mock AsyncSession."""
     session = AsyncMock(spec=AsyncSession)
     session.add = MagicMock()
+
+    async def _refresh(obj: Any) -> None:
+        """Simulate DB refresh by setting generated fields."""
+        if getattr(obj, "id", None) is None:
+            obj.id = uuid.uuid4()
+        if getattr(obj, "created_at", None) is None:
+            obj.created_at = datetime.now()
+        if getattr(obj, "updated_at", None) is None:
+            obj.updated_at = datetime.now()
+
     session.flush = AsyncMock()
-    session.refresh = AsyncMock()
+    session.refresh = AsyncMock(side_effect=_refresh)
     session.execute = AsyncMock()
     return session
 
@@ -300,8 +301,7 @@ class TestMDVerificationJobCrud:
         sample_job_data: dict[str, Any],
     ) -> None:
         """Job creation returns response schema."""
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
+        # mock_session.flush and refresh already configured in fixture
 
         svc = MDVerificationService(mock_session)
         result = await svc.create_job(sample_job_data)
@@ -317,8 +317,7 @@ class TestMDVerificationJobCrud:
         sample_job_data: dict[str, Any],
     ) -> None:
         """Job creation accepts dict input."""
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
+        # mock_session.flush and refresh already configured in fixture
 
         svc = MDVerificationService(mock_session)
         result = await svc.create_job(sample_job_data)
@@ -349,6 +348,7 @@ class TestMDVerificationJobCrud:
         """List jobs without filters returns all jobs."""
         mock_job = MagicMock()
         mock_job.id = uuid.uuid4()
+        mock_job.owner_id = None
         mock_job.potential_id = "EAM_alloy_U"
         mock_job.element_system = "U"
         mock_job.phase = "BCC"
@@ -396,7 +396,7 @@ class TestMDVerificationJobCrud:
     ) -> None:
         """Update job status."""
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
@@ -453,8 +453,7 @@ class TestHpcJobCrud:
         sample_hpc_job_data: dict[str, Any],
     ) -> None:
         """HPC job creation returns response schema."""
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
+        # mock_session.flush and refresh already configured in fixture
 
         svc = MDVerificationService(mock_session)
         result = await svc.create_hpc_job(sample_hpc_job_data)
@@ -486,7 +485,7 @@ class TestHpcJobCrud:
     ) -> None:
         """Update HPC job status."""
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
@@ -513,8 +512,7 @@ class TestMDSimulationResultCrud:
         sample_simulation_data: dict[str, Any],
     ) -> None:
         """Simulation result creation returns response schema."""
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
+        # mock_session.flush and refresh already configured in fixture
 
         svc = MDVerificationService(mock_session)
         result = await svc.create_simulation_result(sample_simulation_data)
@@ -530,7 +528,7 @@ class TestMDSimulationResultCrud:
     ) -> None:
         """Update simulation result."""
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
@@ -557,8 +555,7 @@ class TestDefectAnalysisResultCrud:
         sample_defect_data: dict[str, Any],
     ) -> None:
         """Defect result creation returns response schema."""
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
+        # mock_session.flush and refresh already configured in fixture
 
         svc = MDVerificationService(mock_session)
         result = await svc.create_defect_result(sample_defect_data)
@@ -590,7 +587,7 @@ class TestDefectAnalysisResultCrud:
     ) -> None:
         """Update defect result."""
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
@@ -617,8 +614,7 @@ class TestPotentialFittingResultCrud:
         sample_fitting_data: dict[str, Any],
     ) -> None:
         """Fitting result creation returns response schema."""
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
+        # mock_session.flush and refresh already configured in fixture
 
         svc = MDVerificationService(mock_session)
         result = await svc.create_fitting_result(sample_fitting_data)
@@ -635,7 +631,7 @@ class TestPotentialFittingResultCrud:
     ) -> None:
         """Update fitting result."""
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
@@ -665,6 +661,7 @@ class TestCompositeQueries:
         # Mock job query
         mock_job = MagicMock()
         mock_job.id = job_id
+        mock_job.owner_id = None
         mock_job.potential_id = "EAM_alloy_U"
         mock_job.element_system = "U"
         mock_job.phase = "BCC"
@@ -715,7 +712,7 @@ class TestCompositeQueries:
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         svc = MDVerificationService(mock_session)
-        result = await svc.get_simulation_result_by_job(job_id)
+        await svc.get_simulation_result_by_job(job_id)
 
         # Verify query was constructed
         mock_session.execute.assert_called()

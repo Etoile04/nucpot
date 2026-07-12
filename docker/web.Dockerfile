@@ -1,5 +1,12 @@
 FROM node:22-slim AS builder
 
+# API_SERVER_URL is read at build time by next.config.ts for the rewrite proxy.
+# It is NOT a NEXT_PUBLIC_ var — it stays server-side only.
+# In Docker production, nginx already proxies /api/* so this is optional.
+# ⚠️ Do NOT set to the public domain — that creates an infinite loop.
+ARG API_SERVER_URL=http://nucpot-prod-api:8000
+ENV API_SERVER_URL=$API_SERVER_URL
+
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
@@ -22,7 +29,9 @@ ENV PORT=3000
 
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
-COPY --from=builder /app/apps/web/public ./apps/web/public
+
+# Note: standalone output already includes public/ content;
+# do not COPY public separately (fails when public is empty or cleaned).
 COPY --from=builder /app/apps/web/content ./content
 
 EXPOSE 3000
