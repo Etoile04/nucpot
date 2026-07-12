@@ -1,0 +1,84 @@
+{
+  "figure_type": "microstructure",
+  "title": "Micrograph 4: Li2O-Al2O3-SiO2 grain distribution",
+  "bounding_box": {
+    "x": 58.0,
+    "y": 79.0,
+    "width": 536.1,
+    "height": 323.8
+  },
+  "plot_data": {
+    "title": "grain size distribution",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Grain size",
+      "unit": "um",
+      "values": [
+        0.1,
+        2.3636,
+        4.6273,
+        6.8909,
+        9.1545,
+        11.4182,
+        13.6818,
+        15.9455,
+        18.2091,
+        20.4727,
+        22.7364,
+        25.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Frequency",
+      "unit": "%",
+      "values": [
+        0.0,
+        2.7273,
+        5.4545,
+        8.1818,
+        10.9091,
+        13.6364,
+        16.3636,
+        19.0909,
+        21.8182,
+        24.5455,
+        27.2727,
+        30.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "frequency",
+        "values": [
+          22.8003,
+          6.4886,
+          14.4277,
+          23.1112,
+          27.1195,
+          3.3589,
+          28.9586,
+          25.1579,
+          6.1461,
+          27.592,
+          20.4946,
+          5.7421
+        ],
+        "color": "red",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "frequency"
+    ],
+    "annotations": [],
+    "confidence": 0.88
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/microstructure/microstructure-003/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 154.0,
+  "fallback_used": false,
+  "paper_id": "microstructure-003"
+}

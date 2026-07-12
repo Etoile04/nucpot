@@ -1,0 +1,78 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 11: F82H response vs temperature",
+  "bounding_box": {
+    "x": 105.7,
+    "y": 62.2,
+    "width": 503.5,
+    "height": 329.1
+  },
+  "plot_data": {
+    "title": "SiC-SiC tensile response",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        47.9796,
+        182.4101,
+        316.8406,
+        451.2711,
+        585.7016,
+        720.1321,
+        854.5625,
+        988.993,
+        1123.4235,
+        1257.854
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        55.5693,
+        105.6091,
+        155.6488,
+        205.6886,
+        255.7284,
+        305.7682,
+        355.8079,
+        405.8477,
+        455.8875,
+        505.9272
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          336.0678,
+          104.2754,
+          558.3178,
+          505.1881,
+          570.1562,
+          418.0521,
+          597.4437,
+          435.6087,
+          104.2945,
+          66.4105
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0"
+    ],
+    "annotations": [],
+    "confidence": 0.83
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-010/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 178.5,
+  "fallback_used": false,
+  "paper_id": "plot-010"
+}

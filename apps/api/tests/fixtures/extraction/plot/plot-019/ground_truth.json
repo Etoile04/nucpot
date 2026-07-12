@@ -1,0 +1,104 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 20: Li2O-Al2O3-SiO2 response vs temperature",
+  "bounding_box": {
+    "x": 88.2,
+    "y": 52.2,
+    "width": 466.2,
+    "height": 289.9
+  },
+  "plot_data": {
+    "title": "Inconel-718 tensile response",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        163.4361,
+        256.4382,
+        349.4402,
+        442.4422,
+        535.4443,
+        628.4463,
+        721.4483,
+        814.4503,
+        907.4524,
+        1000.4544,
+        1093.4564,
+        1186.4585
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        81.5237,
+        134.7273,
+        187.9309,
+        241.1346,
+        294.3382,
+        347.5418,
+        400.7454,
+        453.949,
+        507.1526,
+        560.3562,
+        613.5598,
+        666.7635
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          76.194,
+          722.0425,
+          215.9317,
+          130.8527,
+          761.4461,
+          763.7885,
+          105.8634,
+          159.0387,
+          483.3264,
+          718.2245,
+          692.9521,
+          486.3068
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          213.6556,
+          184.8973,
+          402.4716,
+          756.8899,
+          664.1885,
+          720.6327,
+          477.9295,
+          593.986,
+          614.0133,
+          742.2935,
+          342.6838,
+          298.609
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1"
+    ],
+    "annotations": [],
+    "confidence": 0.94
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-019/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 316.3,
+  "fallback_used": false,
+  "paper_id": "plot-019"
+}

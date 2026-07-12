@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "properties": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "list[schemas.extraction.ExtractedProperty]"
+    },
+    "source_reference": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "total_extracted": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'int'>"
+    }
+  },
+  "literals": {}
+}

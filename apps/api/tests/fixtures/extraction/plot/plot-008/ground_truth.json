@@ -1,0 +1,104 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 9: Inconel-718 response vs temperature",
+  "bounding_box": {
+    "x": 95.1,
+    "y": 47.3,
+    "width": 519.7,
+    "height": 295.8
+  },
+  "plot_data": {
+    "title": "F82H tensile response",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        394.7257,
+        542.1048,
+        689.4838,
+        836.8629,
+        984.2419,
+        1131.621,
+        1279.0,
+        1426.379
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        93.1082,
+        284.6006,
+        476.093,
+        667.5854,
+        859.0778,
+        1050.5702,
+        1242.0625,
+        1433.5549
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          260.8026,
+          1711.0688,
+          610.3659,
+          1094.799,
+          420.1797,
+          930.2847,
+          474.645,
+          1423.7206
+        ],
+        "color": "black",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          1069.8842,
+          1234.268,
+          239.886,
+          1470.4837,
+          980.3516,
+          1568.4774,
+          814.4668,
+          895.3185
+        ],
+        "color": "blue",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          172.1897,
+          248.0491,
+          940.7112,
+          870.3484,
+          960.1711,
+          505.9545,
+          290.7594,
+          1003.7825
+        ],
+        "color": "blue",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.948
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-008/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 131.4,
+  "fallback_used": false,
+  "paper_id": "plot-008"
+}

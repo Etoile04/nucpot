@@ -1,0 +1,72 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 1: SiC-SiC response vs temperature",
+  "bounding_box": {
+    "x": 97.4,
+    "y": 40.9,
+    "width": 527.4,
+    "height": 292.3
+  },
+  "plot_data": {
+    "title": "HT9 tensile response",
+    "plot_type": "scatter",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        5.5933,
+        214.7915,
+        423.9897,
+        633.1879,
+        842.3861,
+        1051.5842,
+        1260.7824,
+        1469.9806
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        10.4081,
+        216.5799,
+        422.7516,
+        628.9233,
+        835.095,
+        1041.2667,
+        1247.4384,
+        1453.6101
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          900.547,
+          1419.6278,
+          649.7914,
+          1477.6012,
+          589.6808,
+          474.9793,
+          1090.4467,
+          583.7933
+        ],
+        "color": "red",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0"
+    ],
+    "annotations": [],
+    "confidence": 0.944
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-000/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 166.5,
+  "fallback_used": false,
+  "paper_id": "plot-000"
+}

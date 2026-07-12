@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "material_system": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "properties": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[schemas.extraction.V4PropertyResponse]"
+    },
+    "total_count": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'int'>"
+    }
+  },
+  "literals": {}
+}

@@ -1,0 +1,81 @@
+{
+  "figure_type": "microstructure",
+  "title": "Micrograph 10: F82H grain distribution",
+  "bounding_box": {
+    "x": 97.1,
+    "y": 63.1,
+    "width": 472.1,
+    "height": 321.6
+  },
+  "plot_data": {
+    "title": "grain size distribution",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Grain size",
+      "unit": "um",
+      "values": [
+        0.1,
+        2.59,
+        5.08,
+        7.57,
+        10.06,
+        12.55,
+        15.04,
+        17.53,
+        20.02,
+        22.51,
+        25.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Frequency",
+      "unit": "%",
+      "values": [
+        0.0,
+        3.0,
+        6.0,
+        9.0,
+        12.0,
+        15.0,
+        18.0,
+        21.0,
+        24.0,
+        27.0,
+        30.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "frequency",
+        "values": [
+          2.7311,
+          19.1681,
+          15.179,
+          9.0648,
+          26.8024,
+          9.0396,
+          0.7075,
+          22.5591,
+          16.7797,
+          16.7561,
+          24.1488
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "frequency"
+    ],
+    "annotations": [],
+    "confidence": 0.849
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/microstructure/microstructure-009/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 161.1,
+  "fallback_used": false,
+  "paper_id": "microstructure-009"
+}

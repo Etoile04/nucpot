@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "current_step": {
+      "default": "'queued'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "steps_completed": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    },
+    "steps_remaining": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    }
+  },
+  "literals": {}
+}
