@@ -32,6 +32,8 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 
 # Note: standalone output already includes public/ content;
 # do not COPY public separately (fails when public is empty or cleaned).
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/content ./content
 
 EXPOSE 3000
