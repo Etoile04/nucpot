@@ -31,6 +31,11 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
+from nfm_db.api.v1.batch import (
+    materials_router as batch_materials_router,
+    properties_router as batch_properties_router,
+    reference_values_router as batch_reference_values_router,
+)
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.middleware.rate_limit import (
     NFMRateLimitMiddleware,
