@@ -15,10 +15,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.kg import KGEdge, KGNode, KGReviewQueue
+from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.schemas.nucmat_ontology import (
-    EntityType,
     LOW_CONFIDENCE_THRESHOLD,
+    EntityType,
     RelationType,
     build_node_properties,
     map_extraction_entity,
@@ -32,7 +32,6 @@ from nfm_db.services.review_queue_service import (
     reject_review_item,
     should_route_to_review,
 )
-
 
 # ============================================================
 # Ontology type count tests (acceptance criteria)
