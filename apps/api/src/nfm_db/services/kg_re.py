@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import (
+    VALID_NODE_TYPES,
     VALID_RELATION_TYPES,
     KGEdge,
     KGNode,
@@ -632,3 +633,140 @@ def _confidence_to_float(raw_confidence: Any) -> float:
         return mapping.get(raw_confidence.lower(), 0.6)
 
     return 0.6
+
+
+# ---------------------------------------------------------------------------
+# Query functions (read-only — used by MCP tools and external services)
+# ---------------------------------------------------------------------------
+
+
+# Default limits and ceilings for query functions.
+_QUERY_DEFAULT_LIMIT: int = 50
+_QUERY_MAX_LIMIT: int = 500
+
+
+async def query_graph_nodes(
+    session: AsyncSession,
+    *,
+    entity_types: list[str] | None = None,
+    query: str | None = None,
+    limit: int = _QUERY_DEFAULT_LIMIT,
+    corpus_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query KG nodes with optional filters.
+
+    Filters (all AND-combined):
+      - ``entity_types``: only include nodes whose ``node_type`` is in
+        the given list (PascalCase: Material, Property, Experiment,
+        Condition, Publication). Unknown values are silently dropped.
+      - ``query``: case-insensitive substring match against ``label``.
+      - ``corpus_id``: filter to a specific corpus; ``None`` returns all.
+
+    Args:
+        session: Async database session.
+        entity_types: Optional whitelist of node types.
+        query: Optional free-text search term.
+        limit: Maximum number of rows to return (default 50, max 500).
+        corpus_id: Optional corpus filter.
+
+    Returns:
+        List of dicts with keys: id, node_type, label, confidence,
+        status, properties.  Empty list when no matches.
+    """
+    safe_limit = max(1, min(int(limit), _QUERY_MAX_LIMIT))
+
+    stmt = select(KGNode).where(KGNode.status != "deprecated")
+
+    if entity_types:
+        valid_types = [t for t in entity_types if t in VALID_NODE_TYPES]
+        if valid_types:
+            stmt = stmt.where(KGNode.node_type.in_(valid_types))
+        else:
+            # All requested types are invalid -> return empty result
+            return []
+
+    if corpus_id is not None:
+        stmt = stmt.where(KGNode.corpus_id == corpus_id)
+
+    if query:
+        pattern = f"%{query.lower()}%"
+        # Match against label (case-insensitive substring).
+        stmt = stmt.where(KGNode.label.ilike(pattern))
+
+    stmt = stmt.order_by(KGNode.confidence.desc()).limit(safe_limit)
+
+    result = await session.execute(stmt)
+    nodes = result.scalars().all()
+
+    return [
+        {
+            "id": str(node.id),
+            "node_type": node.node_type,
+            "label": node.label,
+            "confidence": float(node.confidence),
+            "status": node.status,
+            "properties": dict(node.properties or {}),
+        }
+        for node in nodes
+    ]
+
+
+async def query_graph_edges(
+    session: AsyncSession,
+    *,
+    source_id: uuid.UUID | None = None,
+    target_id: uuid.UUID | None = None,
+    relation_type: str | None = None,
+    limit: int = _QUERY_DEFAULT_LIMIT,
+    corpus_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query KG edges with optional filters.
+
+    Filters (all AND-combined):
+      - ``source_id``: only edges originating from this node id.
+      - ``target_id``: only edges pointing at this node id.
+      - ``relation_type``: only edges of this type (e.g. ``hasProperty``).
+      - ``corpus_id``: filter to a specific corpus; ``None`` returns all.
+
+    Args:
+        session: Async database session.
+        source_id: Optional source node UUID.
+        target_id: Optional target node UUID.
+        relation_type: Optional relation type whitelist entry.
+        limit: Maximum number of rows to return (default 50, max 500).
+        corpus_id: Optional corpus filter.
+
+    Returns:
+        List of dicts with keys: id, source_node_id, target_node_id,
+        relation_type, confidence, properties.  Empty list when no
+        matches.
+    """
+    safe_limit = max(1, min(int(limit), _QUERY_MAX_LIMIT))
+
+    stmt = select(KGEdge)
+
+    if source_id is not None:
+        stmt = stmt.where(KGEdge.source_node_id == source_id)
+    if target_id is not None:
+        stmt = stmt.where(KGEdge.target_node_id == target_id)
+    if relation_type is not None:
+        stmt = stmt.where(KGEdge.relation_type == relation_type)
+    if corpus_id is not None:
+        stmt = stmt.where(KGEdge.corpus_id == corpus_id)
+
+    stmt = stmt.order_by(KGEdge.confidence.desc()).limit(safe_limit)
+
+    result = await session.execute(stmt)
+    edges = result.scalars().all()
+
+    return [
+        {
+            "id": str(edge.id),
+            "source_node_id": str(edge.source_node_id),
+            "target_node_id": str(edge.target_node_id),
+            "relation_type": edge.relation_type,
+            "confidence": float(edge.confidence),
+            "properties": dict(edge.properties or {}),
+        }
+        for edge in edges
+    ]

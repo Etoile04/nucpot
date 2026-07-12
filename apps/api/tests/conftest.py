@@ -6,7 +6,8 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import Text, event
+from sqlalchemy import JSON, event
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nfm_db.database import get_db
@@ -22,44 +23,83 @@ _SEED_OTHER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000003")
 
 
 # ---------------------------------------------------------------------------
-# SQLite compatibility: JSONB is PG-only — fall back to TEXT for test DDL.
-# This must run before the first ``create_all`` in any fixture.
+# SQLite compatibility helpers
 # ---------------------------------------------------------------------------
-@event.listens_for(Base.metadata, "before_create")
-def _map_jsonb_to_text_for_sqlite(
-    target,
-    connection,
-    **_kw,
-) -> None:
-    """Replace JSONB/ARRAY columns with TEXT so ``create_all`` succeeds on SQLite.
 
-    Runs on every ``before_create`` event (not once-only) because each test
-    re-creates the database from scratch.
+
+def _strip_dangling_fks(metadata) -> None:
+    """Remove FKs whose target table is absent from the metadata.
+
+    ``extraction_figures.job_id`` references ``extraction_jobs`` which is
+    not registered — SQLAlchemy's ``sort_tables_and_constraints`` raises
+    ``NoReferencedTableError``.  We strip these before ``create_all``.
+    Valid FKs (whose target *is* in the metadata) are kept so that ORM
+    relationships can resolve their join conditions.
     """
+    registered = set(metadata.tables.keys())
+    for table in metadata.tables.values():
+        for col in table.columns:
+            dangling = [
+                fk for fk in list(col.foreign_keys)
+                if fk._colspec.split(".")[0].strip('"') not in registered
+            ]
+            for fk in dangling:
+                col.foreign_keys.discard(fk)
+        table_fks_to_remove = [
+            fkc for fkc in list(table.constraints)
+            if hasattr(fkc, "_colspec")
+            and fkc._colspec.split(".")[0].strip('"') not in registered
+        ]
+        for fkc in table_fks_to_remove:
+            table.constraints.discard(fkc)
+
+
+def _replace_jsonb(metadata) -> None:
+    """Replace JSONB/ARRAY columns with TEXT/JSON for SQLite compat."""
     from sqlalchemy import ARRAY as SA_ARRAY
     from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
-    from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
-    from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 
-    if not isinstance(connection.dialect, SQLiteDialect):
-        return
-
-    for table in target.sorted_tables:
+    for table in metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, PG_JSONB):
-                col.type = Text()
+                col.type = JSON()
             if isinstance(col.type, (PG_ARRAY, SA_ARRAY)):
-                col.type = Text()
+                col.type = JSON()
 
 
-@pytest.fixture(autouse=True)
-def _reset_rate_limiters() -> None:
-    """Isolate all in-process rate limiters between tests (no cross-test 429)."""
+def _safe_create_all(sync_conn, metadata) -> None:
+    """Create all tables, stripping dangling FKs first.
+
+    ``conn.run_sync`` passes ``(sync_connection, *args)`` as the callable's
+    positional arguments.
+    """
+    _replace_jsonb(metadata)
+    _strip_dangling_fks(metadata)
+    metadata.create_all(sync_conn)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _disable_global_rate_limiting() -> None:
+    """Strip global slowapi rate-limit middleware from the test app.
+
+    The ``20/second`` burst limit causes cascading 429 failures when the
+    full suite runs.  ``limiter.reset()`` alone is insufficient because
+    the burst counter accumulates mid-test.  Removing the middleware
+    entirely is the only reliable isolation.
+
+    Per-endpoint ``InProcessRateLimiter`` dependency checks are unaffected
+    because they raise ``HTTPException`` directly in the route layer, not
+    through the middleware.
+    """
+    from nfm_db.middleware.rate_limit import NFMRateLimitMiddleware
     from nfm_db.services.rate_limit import md_verification_limiter, ontology_limiter
 
-    ontology_limiter.reset()
-    md_verification_limiter.reset()
-    yield
+    app.user_middleware = [
+        mw for mw in app.user_middleware
+        if mw.cls is not NFMRateLimitMiddleware
+    ]
+
+    # Reset per-endpoint in-memory limiters.
     ontology_limiter.reset()
     md_verification_limiter.reset()
 
@@ -76,7 +116,7 @@ async def db_session() -> AsyncSession:
         cursor.close()
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_safe_create_all, Base.metadata)
 
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False,

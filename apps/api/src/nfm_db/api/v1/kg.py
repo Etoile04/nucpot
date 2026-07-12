@@ -17,16 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
+from nfm_db.schemas.common import PaginationParams
+from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse, SemanticQueryResponse
 from nfm_db.services.kg_utils import parse_aliases
-from nfm_db.schemas.kg import (
-    KGSearchItem,
-    KGSearchResponse,
-    SemanticQueryResponse,
-)
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["知识图谱"])
 
 
 @router.get(
@@ -41,8 +38,9 @@ async def search_kg_nodes(
         default=None,
         description="Query mode: omit or 'structured' for ILIKE search, 'lightrag' for semantic query",
     ),
-    limit: int = Query(default=20, ge=1, le=100, description="Page size (max 100)"),
-    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    pagination: PaginationParams = Depends(PaginationParams),
+    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     session: AsyncSession = Depends(get_db),
 ) -> Union[KGSearchResponse, SemanticQueryResponse]:
     """Search Knowledge Graph nodes with optional filters.
@@ -54,13 +52,25 @@ async def search_kg_nodes(
     Returns paginated results matching the given criteria.
     Defaults to active nodes only.
     """
+    # Resolve effective pagination (supports new page/per_page + deprecated limit/offset aliases)
+    if _limit is not None:
+        effective_page = ((_offset or 0) // _limit) + 1
+        pagination = PaginationParams(page=effective_page, per_page=_limit)
+    effective_limit = _limit if _limit is not None else pagination.per_page
+    effective_offset = _offset if _offset is not None else pagination.offset
+
     # Semantic query bridge (NFM-1222)
     if mode == "lightrag" and q is not None:
-        return await _semantic_query(q=q, limit=limit, session=session)
+        return await _semantic_query(q=q, limit=effective_limit, session=session)
 
-    # Standard structured search (existing logic)
+    # Standard structured search (existing logic + merged pagination)
     return await _structured_search(
-        q=q, type=type, status=status, limit=limit, offset=offset, session=session,
+        q=q,
+        type=type,
+        status=status,
+        limit=effective_limit,
+        offset=effective_offset,
+        session=session,
     )
 
 
