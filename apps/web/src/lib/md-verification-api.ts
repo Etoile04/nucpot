@@ -1,6 +1,6 @@
 /** MD verification API client for Phase 3 frontend integration. */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
+// Relative paths — next.config.ts rewrite proxy handles backend routing.
 
 // =============================================================================
 // Type Definitions
@@ -163,7 +163,7 @@ function getHeaders(): HeadersInit {
 export async function submitMDVerificationJob(
   payload: MDVerificationJobSubmitRequest,
 ): Promise<MDVerificationJobResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/md-verification/jobs`, {
+  const response = await fetch(`/api/v1/md-verification/jobs`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(payload),
@@ -208,7 +208,7 @@ export async function listMDVerificationJobs(
   if (params.offset) queryParams.append("offset", params.offset.toString())
 
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs?${queryParams.toString()}`,
+    `/api/v1/md-verification/jobs?${queryParams.toString()}`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -229,7 +229,7 @@ export async function getMDVerificationJob(
   jobId: string,
 ): Promise<MDVerificationJobResponse> {
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs/${jobId}`,
+    `/api/v1/md-verification/jobs/${jobId}`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -250,7 +250,7 @@ export async function getMDVerificationJobStatus(
   jobId: string,
 ): Promise<JobStatusResponse> {
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs/${jobId}/status`,
+    `/api/v1/md-verification/jobs/${jobId}/status`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -271,7 +271,7 @@ export async function cancelMDVerificationJob(
   jobId: string,
 ): Promise<{ job_id: string; previous_status: JobStatus; new_status: JobStatus }> {
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs/${jobId}`,
+    `/api/v1/md-verification/jobs/${jobId}`,
     {
       method: "DELETE",
       headers: getHeaders(),
@@ -294,7 +294,7 @@ export async function getSimulationResults(
   jobId: string,
 ): Promise<MDSimulationResultResponse> {
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs/${jobId}/simulation`,
+    `/api/v1/md-verification/jobs/${jobId}/simulation`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -318,7 +318,7 @@ export async function getDefectAnalysisResults(
   const queryParams = defectType ? `?defect_type=${defectType}` : ""
 
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs/${jobId}/defects${queryParams}`,
+    `/api/v1/md-verification/jobs/${jobId}/defects${queryParams}`,
     {
       method: "GET",
       headers: getHeaders(),
@@ -342,7 +342,7 @@ export async function getFittingResults(
   const queryParams = fittingMethod ? `?fitting_method=${fittingMethod}` : ""
 
   const response = await fetch(
-    `${API_BASE}/api/v1/md-verification/jobs/${jobId}/fitting${queryParams}`,
+    `/api/v1/md-verification/jobs/${jobId}/fitting${queryParams}`,
     {
       method: "GET",
       headers: getHeaders(),

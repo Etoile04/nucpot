@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Data Models
@@ -57,10 +57,7 @@ class Conditions(BaseModel):
         default=None, description="Processing state: heat treatment, cold work"
     )
 
-    class Config:
-        """Pydantic config."""
-
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 @dataclass

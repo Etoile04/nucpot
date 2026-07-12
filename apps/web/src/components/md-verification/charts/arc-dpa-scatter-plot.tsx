@@ -119,7 +119,6 @@ export function ArcDpaScatterPlot({
     return {
       tooltip: {
         trigger: "item",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         formatter: (params: any) => {
           const [arc, dpa] = params?.value ?? []
           return [

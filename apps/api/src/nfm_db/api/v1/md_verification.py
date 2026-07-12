@@ -17,7 +17,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ from nfm_db.models.md_verification import (
     HpcJobStatus,
     JobStatus,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.services.md_verification import (
     DefectAnalysisResultResponse,
     MDSimulationResultResponse,
@@ -42,17 +43,17 @@ from nfm_db.services.md_verification import (
 )
 from nfm_db.services.rate_limit import md_verification_rate_limit
 
-# Try to import Celery task (may not be available in all environments)
+# Try to import Celery app (may not be available in all environments)
 try:
-    from nfm_db.services.md_tasks import run_md_verification_task
+    from nfm_db.services.celery_app import celery_app
     CELERY_AVAILABLE = True
 except ImportError:
+    celery_app = None
     CELERY_AVAILABLE = False
-    run_md_verification_task = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["MD验证"])
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +139,7 @@ class CancelJobResponse(BaseModel):
     "/jobs",
     response_model=MDVerificationJobResponse,
     status_code=http_status.HTTP_201_CREATED,
-    summary="Submit MD verification job",
+    summary="提交MD验证任务",
     description="Creates a new MD verification job and submits it to Celery for async execution.",
 )
 async def submit_md_verification_job(
@@ -147,7 +148,7 @@ async def submit_md_verification_job(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobResponse:
-    """Submit a new MD verification job.
+    """提交新的MD验证任务.
 
     This endpoint:
     1. Validates request parameters
@@ -202,11 +203,14 @@ async def submit_md_verification_job(
 
         # Submit Celery task for async execution
         try:
-            task_result = run_md_verification_task.delay(  # type: ignore
-                job_id=str(job.id),
-                potential_file=request.potential_file,
-                structure_file=request.structure_file,
-                config=request.config,
+            task_result = celery_app.send_task(
+                "nfm_db.services.md_tasks.run_md_verification",
+                args=[
+                    str(job.id),
+                    request.potential_file,
+                    request.structure_file,
+                    request.config,
+                ],
             )
 
             # Update job status to SUBMITTED
@@ -250,48 +254,57 @@ async def submit_md_verification_job(
     "/jobs",
     response_model=MDVerificationJobListResponse,
     status_code=http_status.HTTP_200_OK,
-    summary="List MD verification jobs",
+    summary="获取MD验证任务列表",
     description="List MD verification jobs with optional filters for status, potential ID, and element system.",
 )
 async def list_md_verification_jobs(
     potential_id: str | None = None,
     status: JobStatus | None = None,
     element_system: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    pagination: PaginationParams = Depends(PaginationParams),
+    _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
+    _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobListResponse:
-    """List MD verification jobs with optional filters.
+    """获取MD验证任务列表，支持状态、势函数ID和元素系统筛选.
+
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
 
     Args:
         potential_id: Filter by potential ID
         status: Filter by job status
         element_system: Filter by element system
-        limit: Maximum number of results
-        offset: Query offset for pagination
         session: Database session
         current_user: Authenticated user
 
     Returns:
         Paginated list of jobs
     """
+    # Backward compat: when legacy limit/offset are provided, use them directly
+    # for the DB query and response, but still populate pagination for new params.
+    effective_limit = _limit if _limit is not None else pagination.per_page
+    effective_offset = _offset if _offset is not None else pagination.offset
+    if _limit is not None:
+        pagination = PaginationParams(
+            page=((_offset or 0) // _limit) + 1, per_page=_limit
+        )
     try:
         service = MDVerificationService(session)
         jobs = await service.list_jobs(
             potential_id=potential_id,
             status=status,
             element_system=element_system,
-            limit=limit,
-            offset=offset,
+            limit=effective_limit,
+            offset=effective_offset,
             owner_id=current_user.id,
         )
 
         return MDVerificationJobListResponse(
             jobs=jobs,
             total=len(jobs),
-            limit=limit,
-            offset=offset,
+            limit=effective_limit,
+            offset=effective_offset,
         )
 
     except Exception as e:
@@ -306,7 +319,7 @@ async def list_md_verification_jobs(
     "/jobs/{job_id}",
     response_model=MDVerificationJobResponse,
     status_code=http_status.HTTP_200_OK,
-    summary="Get MD verification job details",
+    summary="获取MD验证任务详情",
     description="Get detailed information about a specific MD verification job.",
 )
 async def get_md_verification_job(
@@ -314,7 +327,7 @@ async def get_md_verification_job(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDVerificationJobResponse:
-    """Get a single MD verification job by ID.
+    """按ID获取单个MD验证任务详情.
 
     Args:
         job_id: Job UUID
@@ -353,7 +366,7 @@ async def get_md_verification_job(
     "/jobs/{job_id}/status",
     response_model=JobStatusResponse,
     status_code=http_status.HTTP_200_OK,
-    summary="Get MD verification job status",
+    summary="获取MD验证任务状态",
     description="Get current status and execution details for a specific job.",
 )
 async def get_md_verification_job_status(
@@ -361,7 +374,7 @@ async def get_md_verification_job_status(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> JobStatusResponse:
-    """Get the status of an MD verification job.
+    """获取MD验证任务当前状态和执行详情.
 
     Args:
         job_id: Job UUID
@@ -413,7 +426,7 @@ async def get_md_verification_job_status(
     "/jobs/{job_id}",
     response_model=CancelJobResponse,
     status_code=http_status.HTTP_200_OK,
-    summary="Cancel MD verification job",
+    summary="取消MD验证任务",
     description="Cancel a pending or running MD verification job. Cannot cancel completed jobs.",
 )
 async def cancel_md_verification_job(
@@ -421,7 +434,7 @@ async def cancel_md_verification_job(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CancelJobResponse:
-    """Cancel an MD verification job.
+    """取消待处理或运行中的MD验证任务.
 
     Args:
         job_id: Job UUID
@@ -498,7 +511,7 @@ async def cancel_md_verification_job(
     "/jobs/{job_id}/simulation",
     response_model=MDSimulationResultResponse,
     status_code=http_status.HTTP_200_OK,
-    summary="Get MD simulation results",
+    summary="获取MD模拟结果",
     description="Get simulation results (thermodynamic data, trajectory) for a completed job.",
 )
 async def get_simulation_results(
@@ -506,7 +519,7 @@ async def get_simulation_results(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MDSimulationResultResponse:
-    """Get MD simulation results for a job.
+    """获取已完成任务的MD模拟结果.
 
     Args:
         job_id: Job UUID
@@ -553,7 +566,7 @@ async def get_simulation_results(
     "/jobs/{job_id}/defects",
     response_model=list[DefectAnalysisResultResponse],
     status_code=http_status.HTTP_200_OK,
-    summary="Get defect analysis results",
+    summary="获取缺陷分析结果",
     description="Get defect analysis results (defect types, concentrations, formation energies) for a completed job.",
 )
 async def get_defect_analysis_results(
@@ -562,7 +575,7 @@ async def get_defect_analysis_results(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[DefectAnalysisResultResponse]:
-    """Get defect analysis results for a job.
+    """获取已完成任务的缺陷分析结果.
 
     Args:
         job_id: Job UUID
@@ -607,7 +620,7 @@ async def get_defect_analysis_results(
     "/jobs/{job_id}/fitting",
     response_model=list[PotentialFittingResultResponse],
     status_code=http_status.HTTP_200_OK,
-    summary="Get potential fitting results",
+    summary="获取势函数拟合结果",
     description="Get potential fitting results (parameters, quality metrics) for a completed job.",
 )
 async def get_fitting_results(
@@ -616,7 +629,7 @@ async def get_fitting_results(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[PotentialFittingResultResponse]:
-    """Get potential fitting results for a job.
+    """获取已完成任务的势函数拟合结果.
 
     Args:
         job_id: Job UUID
@@ -676,7 +689,7 @@ class CompositeJobResultsResponse(BaseModel):
     "/jobs/{job_id}/results",
     response_model=CompositeJobResultsResponse,
     status_code=http_status.HTTP_200_OK,
-    summary="Get composite job results",
+    summary="获取任务综合结果",
     description="Get job details together with simulation, defect, and fitting results in a single call.",
 )
 async def get_composite_job_results(
@@ -684,7 +697,7 @@ async def get_composite_job_results(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CompositeJobResultsResponse:
-    """Get composite results for a job in a single API call.
+    """在单次调用中获取任务详情及模拟、缺陷和拟合结果.
 
     Args:
         job_id: Job UUID
@@ -734,10 +747,10 @@ async def get_composite_job_results(
 @router.get(
     "/health",
     status_code=http_status.HTTP_200_OK,
-    summary="MD verification module health check",
+    summary="MD验证模块健康检查",
 )
 async def md_verification_health() -> dict[str, str]:
-    """Health check for the MD verification module."""
+    """MD验证模块健康检查."""
     return {
         "status": "healthy",
         "module": "md-verification",

@@ -3,7 +3,6 @@ import type { FileInfo, PotentialMetadata } from "./upload-api"
 
 describe("upload-api", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE", "")
     global.fetch = vi.fn()
   })
 

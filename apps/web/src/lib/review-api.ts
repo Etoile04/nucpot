@@ -1,85 +1,79 @@
-import type { Session } from '@supabase/supabase-js'
-
 /**
- * Client-side helper for the /api/admin/review unified RPC proxy.
- * All admin operations go through this API route with JWT auth.
+ * Review API client for KG review queue and conflict resolution.
  *
- * Usage:
- *   const api = reviewApi(session)
- *   const { data } = await api.stats()
- *   const { data } = await api.queueParams({ status: 'needs_review', limit: 30, offset: 0 })
+ * Uses the shared `request()` helper from api-client for JWT auth.
+ * Types are shared with review components.
+ *
+ * Spec: NFM-1004
  */
 
-interface ApiParams {
-  status?: string
-  value_type?: string
-  material?: string
-  source_file?: string
-  limit?: number
-  offset?: number
-  [key: string]: unknown
+import { request } from "@/lib/api-client"
+
+// ── Types ──────────────────────────────────────────────────────────────
+
+export interface ReviewItem {
+  readonly id: string
+  readonly title: string
+  readonly type: string
+  readonly source: string
+  readonly confidence: number
+  readonly status: "pending" | "approved" | "rejected"
+  readonly createdAt: string
 }
 
-class ReviewApiClient {
-  private token: string | undefined
+export interface ReviewListResponse {
+  readonly items: ReadonlyArray<ReviewItem>
+  readonly total: number
+  readonly page: number
+  readonly pageSize: number
+}
 
-  constructor(session: Session | null) {
-    this.token = session?.access_token
-  }
+export interface BatchActionRequest {
+  readonly action: "approve" | "reject"
+  readonly ids: ReadonlyArray<string>
+}
 
-  private async post(action: string, params: Record<string, unknown> = {}) {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-    if (this.token) headers['Authorization'] = `Bearer ${this.token}`
+// ── API functions ─────────────────────────────────────────────────────
 
-    const res = await fetch('/api/admin/review', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ action, params }),
-    })
-
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || `API error: ${res.status}`)
-    return { data, status: res.status }
-  }
-
-  stats() {
-    return this.post('stats')
-  }
-
-  queueParams(params: ApiParams) {
-    return this.post('queue_params_with_lit', params)
-  }
-
-  queueLiterature(params: ApiParams) {
-    return this.post('queue_literature', params)
-  }
-
-  literatureForSource(sourceFile: string) {
-    return this.post('literature_for_source', { source_file: sourceFile })
-  }
-
-  batchUpdate(ids: string[], status: string, reviewer?: string) {
-    return this.post('batch_update', { ids, status, reviewer })
-  }
-
-  updateParam(params: Record<string, unknown>) {
-    return this.post('update_param', params)
-  }
-
-  fixLitCount(id: string, actualCount: number, oldCount: number) {
-    return this.post('fix_lit_count', { id, actual_count: actualCount, old_count: oldCount })
-  }
-
-  countParamsForLit(litId: string) {
-    return this.post('count_params_for_lit', { id: litId })
-  }
+/**
+ * Fetch paginated KG review queue.
+ */
+export async function getKgReviewQueue(
+  status: string = "pending",
+  page: number = 1,
+  limit: number = 20,
+): Promise<ReviewListResponse> {
+  const params = new URLSearchParams({
+    status,
+    page: String(page),
+    limit: String(limit),
+  })
+  return request<ReviewListResponse>(
+    `/api/v1/review/kg?${params.toString()}`,
+  )
 }
 
 /**
- * Create a ReviewApiClient instance. Call once and reuse within a component.
+ * Batch approve or reject KG review items.
  */
-export function reviewApi(session: Session | null): ReviewApiClient {
-  return new ReviewApiClient(session)
+export async function batchKgAction(
+  action: BatchActionRequest["action"],
+  ids: ReadonlyArray<string>,
+): Promise<void> {
+  return request<void>("/api/v1/review/kg/batch", {
+    method: "POST",
+    body: JSON.stringify({ action, ids }),
+  })
+}
+
+/**
+ * Fetch conflict review queue filtered by status.
+ */
+export async function getConflictQueue(
+  status: string = "pending",
+): Promise<ReadonlyArray<ReviewItem>> {
+  const params = new URLSearchParams({ status })
+  return request<ReadonlyArray<ReviewItem>>(
+    `/api/v1/review/conflicts?${params.toString()}`,
+  )
 }

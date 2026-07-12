@@ -5,10 +5,6 @@ Implements async task execution with retry logic and database persistence.
 
 Usage:
     from nfm_db.services.md_tasks import run_md_verification_task
-    from celery import Celery
-
-    app = Celery('nfm_tasks')
-    app.register_task(run_md_verification_task)
 
     # Trigger task
     task_result = run_md_verification_task.delay(
@@ -76,11 +72,11 @@ class DatabaseTask(Task):
 
 
 # =============================================================================
-# MD Verification Celery Task
+# MD Verification Celery Task Implementation
 # =============================================================================
 
 
-def run_md_verification_task(
+def _run_md_verification_task_impl(
     self: DatabaseTask,
     job_id: str,
     potential_file: str,
@@ -89,7 +85,8 @@ def run_md_verification_task(
 ) -> dict[str, Any]:
     """Run MD verification pipeline using nfm-md-runner.
 
-    This Celery task orchestrates the complete MD verification process:
+    This is the implementation function that the Celery task delegates to.
+    Contains all business logic for the MD verification process:
     1. Validates inputs and checks nfm-md-runner availability
     2. Updates job status to SUBMITTED
     3. Executes verification pipeline via AnalysisManager
@@ -110,23 +107,6 @@ def run_md_verification_task(
         Retry: For transient errors (HPC connection, file I/O)
         ValueError: For permanent errors (invalid parameters, missing files)
         ImportError: If nfm-md-runner is not installed
-
-    Retry Behavior:
-        - Max retries: 3
-        - Exponential backoff: 2^retry_count minutes
-        - Retry on: ConnectionError, IOError, HPC errors
-
-    Example:
-        task_result = run_md_verification_task.delay(
-            job_id="123e4567-e89b-12d3-a456-426614174000",
-            potential_file="/data/potentials/U_U.empirical",
-            structure_file="/data/structures/BCC_U.cif",
-            config={
-                "temperature": 300,
-                "pressure": 0,
-                "simulation_time": 100,  # picoseconds
-            }
-        )
     """
     task_start_time = datetime.now()
 
@@ -184,10 +164,6 @@ def run_md_verification_task(
         # Step 2: Update job status to SUBMITTED
         # -------------------------------------------------------------------------
         logger.info(f"Updating job {job_id} status to SUBMITTED")
-
-        # Note: Database operations require async session
-        # This is a synchronous Celery task, so we'll use sync/await patterns
-        # In production, use a proper async task runner or separate worker process
 
         # -------------------------------------------------------------------------
         # Step 3: Initialize AnalysisManager and run verification pipeline
@@ -369,15 +345,40 @@ def run_md_verification_task(
 
 
 # =============================================================================
-# Task Configuration
+# Celery Task Registration
 # =============================================================================
 
+# Import here to avoid circular import: celery_app is already defined
+# by the time md_tasks.py is imported via celery_app.py's import.
+from nfm_db.services.celery_app import celery_app  # noqa: E402
 
-# Task metadata for Celery registration
-run_md_verification_task.name = "nfm_db.services.md_tasks.run_md_verification"
-run_md_verification_task.max_retries = 3
-run_md_verification_task.default_retry_delay = 60  # seconds
-run_md_verification_task.autoretry_for = (ConnectionError, IOError)
-run_md_verification_task.retry_backoff = True
-run_md_verification_task.retry_backoff_max = 600  # 10 minutes
-run_md_verification_task.retry_jitter = True  # Add jitter to retry delays
+
+@celery_app.task(
+    name="nfm_db.services.md_tasks.run_md_verification",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    autoretry_for=(ConnectionError, IOError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+)
+def run_md_verification_task(
+    self: DatabaseTask,
+    job_id: str,
+    potential_file: str,
+    structure_file: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Celery task entry point for MD verification pipeline.
+
+    Wraps _run_md_verification_task_impl as a properly registered Celery task.
+    """
+    return _run_md_verification_task_impl(
+        self=self,
+        job_id=job_id,
+        potential_file=potential_file,
+        structure_file=structure_file,
+        config=config,
+    )

@@ -115,7 +115,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Configure SSH + deploy on staging host
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: 127.0.0.1
           port: 22
@@ -150,7 +150,7 @@ jobs:
 
       - name: Run staging smoke test
         if: ${{ inputs.skip_smoke != true }}
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: 127.0.0.1
           port: 22
@@ -166,7 +166,7 @@ jobs:
 
       - name: Report status
         if: always()
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: 127.0.0.1
           port: 22

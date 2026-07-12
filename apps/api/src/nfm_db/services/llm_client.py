@@ -391,7 +391,7 @@ async def call_llm(
     cleaned = _strip_code_fences(content)
 
     try:
-        result = json.loads(cleaned)
+        result: dict[str, Any] | list[dict[str, Any]] = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         logger.error("LLM response content is not valid JSON: %s", cleaned[:500])
         raise RuntimeError(f"LLM response content is not valid JSON: {exc}") from exc

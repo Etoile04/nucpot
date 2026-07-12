@@ -1,7 +1,7 @@
 """Tests for HPC Orchestration System - Phase 4.2: SLURM Job Submission."""
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -98,6 +98,7 @@ class TestJobSubmissionInterface:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
+                    mock_db.add = MagicMock()
                     yield mock_db
 
                 mock_get_db.return_value = mock_db_gen()
@@ -198,6 +199,7 @@ class TestHPCJobsTablePopulation:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
+                    mock_db.add = MagicMock()
                     yield mock_db
 
                 mock_get_db.return_value = mock_db_gen()
@@ -231,6 +233,7 @@ class TestHPCJobsTablePopulation:
                 # Create a proper async generator mock
                 async def mock_db_gen():
                     mock_db = AsyncMock()
+                    mock_db.add = MagicMock()
                     yield mock_db
 
                 mock_get_db.return_value = mock_db_gen()
@@ -275,6 +278,7 @@ class TestJobSubmissionSuccessRate:
                 with patch('nfm_db.database.get_db') as mock_get_db:
                     async def mock_db_gen():
                         mock_db = AsyncMock()
+                        mock_db.add = MagicMock()
                         yield mock_db
 
                     mock_get_db.return_value = mock_db_gen()

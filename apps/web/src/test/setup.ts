@@ -19,7 +19,8 @@ if (typeof window !== "undefined") {
   }
   if (!window.ResizeObserver) {
     window.ResizeObserver = class ResizeObserver {
-      constructor(_callback: ResizeObserverCallback) {}
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      constructor(_: ResizeObserverCallback) {}
       observe() {}
       unobserve() {}
       disconnect() {}
@@ -30,7 +31,8 @@ if (typeof window !== "undefined") {
       readonly root: Element | null = null
       readonly rootMargin = ""
       readonly thresholds: ReadonlyArray<number> = [0]
-      constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {}
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      constructor(_: IntersectionObserverCallback, __?: IntersectionObserverInit) {}
       observe() {}
       unobserve() {}
       disconnect() {}

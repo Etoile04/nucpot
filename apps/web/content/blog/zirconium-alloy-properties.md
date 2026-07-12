@@ -6,6 +6,7 @@ tags:
   - 锆合金
   - 包壳材料
   - 燃料组件
+  - technical
 author: 王建国
 ---
 

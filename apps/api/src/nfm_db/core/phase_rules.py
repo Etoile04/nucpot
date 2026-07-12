@@ -260,21 +260,18 @@ class PhaseMapper:
             result = re.sub(literal_pattern, rule.replacement, result)
 
         # Unicode subscript digits → ASCII
-        result = result.translate(
-            str.maketrans(
-                {
-                    "₀": "0",
-                    "₁": "1",
-                    "₂": "2",
-                    "₃": "3",
-                    "₄": "4",
-                    "₅": "5",
-                    "₆": "6",
-                    "₇": "7",
-                    "₈": "8",
-                    "₉": "9",
-                }
-            )
-        )
+        _sub_map: dict[str, str] = {
+            "₀": "0",
+            "₁": "1",
+            "₂": "2",
+            "₃": "3",
+            "₄": "4",
+            "₅": "5",
+            "₆": "6",
+            "₇": "7",
+            "₈": "8",
+            "₉": "9",
+        }
+        result = result.translate(str.maketrans(_sub_map))  # type: ignore[arg-type]
 
         return result

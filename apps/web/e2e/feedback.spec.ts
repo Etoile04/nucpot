@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test"
  */
 const isLive = process.env.E2E_TARGET === "live"
 
-test.describe("Feedback", () => {
+test.describe("Feedback", { tag: "@integration" }, () => {
   test("feedback page loads successfully", async ({ page }) => {
     await page.goto("/feedback")
     await page.waitForLoadState("networkidle")

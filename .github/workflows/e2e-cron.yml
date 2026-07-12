@@ -20,13 +20,11 @@ jobs:
         working-directory: apps/web
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "pnpm"
@@ -37,9 +35,9 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run E2E tests
+      - name: Run E2E periodic tests
         id: e2e
-        run: pnpm exec playwright test --project=chromium
+        run: pnpm exec playwright test --project=chromium --grep "@periodic"
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org
@@ -47,7 +45,7 @@ jobs:
           CI: true
         continue-on-error: true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-cron-report
@@ -56,7 +54,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && steps.e2e.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const now = new Date().toISOString();

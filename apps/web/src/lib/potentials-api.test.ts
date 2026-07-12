@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 
 describe("potentials-api", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE", "")
     global.fetch = vi.fn()
   })
 

@@ -23,16 +23,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nfm_db.services.extraction_pipeline import (
-    ExtractionJob,
-    JobStatus,
     _is_stub_mode,
     _job_store,
     _load_source_content,
     _post_process_extracted,
-    _stub_extraction_results,
     ontofuel_extract,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -498,7 +494,7 @@ class TestOntoFuelExtractStub:
         with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
             results = await ontofuel_extract(
                 source_reference="test_source",
-                source_type="doi",
+                source_type="file",
             )
 
         assert len(results) == 3
@@ -509,7 +505,7 @@ class TestOntoFuelExtractStub:
         with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
             results = await ontofuel_extract(
                 source_reference="test_source",
-                source_type="doi",
+                source_type="file",
             )
 
         confidences = {prop["confidence"] for prop in results}
@@ -521,7 +517,7 @@ class TestOntoFuelExtractStub:
         with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
             results = await ontofuel_extract(
                 source_reference="custom_doi",
-                source_type="doi",
+                source_type="file",
             )
 
         for prop in results:

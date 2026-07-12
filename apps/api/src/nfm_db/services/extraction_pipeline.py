@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -33,6 +34,9 @@ from nfm_db.services.llm_client import call_llm, is_llm_configured
 from nfm_db.services.quality_gate import QualityGateService
 
 logger = logging.getLogger(__name__)
+
+# DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
+_DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 
 # ---------------------------------------------------------------------------
 # In-memory job store
@@ -219,6 +223,14 @@ async def ontofuel_extract(
     Expected return format: list of dicts with keys matching
     schemas.extraction.ExtractedProperty fields.
     """
+    # Stub mode + DOI: return empty (DOI content not available in stub) (NFM-636)
+    if _is_stub_mode() and source_type == "doi":
+        logger.info(
+            "OntoFuel stub mode: DOI content not available for %s — returning empty",
+            source_reference,
+        )
+        return []
+
     # Stub mode: return demo data for CI/testing
     if _is_stub_mode():
         logger.info(
@@ -229,6 +241,13 @@ async def ontofuel_extract(
 
     # Real LLM extraction
     if not is_llm_configured():
+        # DOI without LLM: same as stub DOI behavior (NFM-636)
+        if source_type == "doi":
+            logger.warning(
+                "LLM not configured — DOI content not available for %s",
+                source_reference,
+            )
+            return []
         logger.warning(
             "LLM not configured (LLM_API_KEY not set) — falling back to stub mode for %s",
             source_reference,
@@ -379,6 +398,18 @@ async def trigger_extraction(
     _job_store[job_id] = job
 
     try:
+        # Defense-in-depth: validate DOI format at pipeline entry (NFM-636)
+        if source_type == "doi":
+            clean_ref = source_reference.strip().lower().removeprefix("doi:")
+            if not _DOI_PATTERN.match(clean_ref):
+                _update_job(
+                    job,
+                    status=JobStatus.FAILED,
+                    error_message="Invalid DOI format (rejected by pipeline guard)",
+                    completed_at=datetime.now(UTC),
+                )
+                await session.commit()
+                return job
         # Stage 1: Extraction
         _update_job(job, status=JobStatus.RUNNING, started_at=datetime.now(UTC))
         _update_job(job, status=JobStatus.EXTRACTING)
@@ -398,11 +429,20 @@ async def trigger_extraction(
         )
 
         if not raw_properties:
-            _update_job(
-                job,
-                status=JobStatus.COMPLETED,
-                completed_at=datetime.now(UTC),
-            )
+            # DOI in stub/no-LLM mode → FAILED (NFM-636)
+            if source_type == "doi":
+                _update_job(
+                    job,
+                    status=JobStatus.FAILED,
+                    error_message="DOI content not available in stub mode",
+                    completed_at=datetime.now(UTC),
+                )
+            else:
+                _update_job(
+                    job,
+                    status=JobStatus.COMPLETED,
+                    completed_at=datetime.now(UTC),
+                )
             return job
 
         # Stage 2: Property mapping (normalize names)

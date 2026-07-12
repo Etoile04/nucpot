@@ -151,7 +151,6 @@ export function EnergyConvergenceChart({
     return {
       tooltip: {
         trigger: "axis",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         formatter: (params: any) => {
           const step = params[0]?.axisValue ?? ""
           const lines = [`<strong>步数: ${step}</strong>`]

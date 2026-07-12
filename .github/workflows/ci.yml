@@ -14,11 +14,11 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "pnpm"
@@ -38,20 +38,19 @@ jobs:
       - name: Build
         run: pnpm run build
 
-  e2e:
-    name: E2E Tests (Live)
+  e2e-smoke:
+    name: E2E Tests (Smoke)
     runs-on: ubuntu-latest
     needs: frontend
-    if: github.event_name == 'push'
     defaults:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "pnpm"
@@ -62,18 +61,57 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run E2E tests against live site
-        run: pnpm exec playwright test --project=chromium
+      - name: Run @smoke E2E tests against live site
+        run: pnpm exec playwright test --project=chromium --grep "@smoke"
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org
           API_BASE_URL: https://verify.nucpot.dpdns.org
           CI: true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: playwright-report
+          name: playwright-report-smoke
+          path: apps/web/playwright-report/
+          retention-days: 30
+
+  e2e-core:
+    name: E2E Tests (Core)
+    runs-on: ubuntu-latest
+    needs: frontend
+    if: github.event_name == 'push'
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run @unit + @integration E2E tests against live site
+        run: pnpm exec playwright test --project=chromium --grep "@unit|@integration"
+        env:
+          E2E_TARGET: live
+          BASE_URL: https://nucpot.dpdns.org
+          API_BASE_URL: https://verify.nucpot.dpdns.org
+          CI: true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-core
           path: apps/web/playwright-report/
           retention-days: 30
 
@@ -84,14 +122,14 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 

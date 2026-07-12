@@ -8,7 +8,7 @@ import contextlib
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from nfm_db.services.hpc_metrics import PROMETHEUS_AVAILABLE, hpc_job_submissions
@@ -276,7 +276,7 @@ async def create_hpc_job_record(
             partition=params.get("partition", "compute"),
             nodes=params.get("nodes", 1),
             walltime_requested=parse_walltime(params.get("walltime", "02:00:00")),
-            submitted_at=datetime.utcnow(),
+            submitted_at=datetime.now(UTC),
         )
 
         db.add(hpc_job)

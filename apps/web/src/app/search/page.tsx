@@ -1,11 +1,19 @@
-import type { Metadata } from "next"
-import { SearchView } from "./SearchView"
+"use client"
 
-export const metadata: Metadata = {
-  title: "高级检索 - NFMD",
-  description: "按类型、元素或关键字检索核材料势函数",
-}
+import { Suspense } from "react"
+import { Spin } from "antd"
+import { SearchPageContent } from "./SearchPageContent"
 
 export default function SearchPage() {
-  return <SearchView />
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center items-center min-h-[400px]">
+          <Spin tip="加载中..." />
+        </div>
+      }
+    >
+      <SearchPageContent />
+    </Suspense>
+  )
 }

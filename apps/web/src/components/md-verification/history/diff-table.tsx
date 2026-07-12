@@ -30,7 +30,6 @@ function formatPercent(value: number | null): string {
 
 function getDiffStyle(
   diff: number | null,
-  _diffPercent: number | null,
 ): React.CSSProperties {
   if (diff === null || diff === 0) {
     return { color: "#6b7280" } // gray — neutral
@@ -82,7 +81,7 @@ export function DiffTable({ rows, className }: DiffTableProps) {
       key: "diff",
       width: 120,
       render: (value: number | null) => (
-        <span style={getDiffStyle(value, null)}>
+        <span style={getDiffStyle(value)}>
           {formatDiff(value)}
         </span>
       ),
@@ -93,7 +92,7 @@ export function DiffTable({ rows, className }: DiffTableProps) {
       key: "diffPercent",
       width: 120,
       render: (value: number | null, record: DiffRow) => (
-        <span style={getDiffStyle(record.diff, value)}>
+        <span style={getDiffStyle(record.diff)}>
           {formatPercent(value)}
         </span>
       ),

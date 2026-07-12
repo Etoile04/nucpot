@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
   Card,
@@ -57,29 +57,7 @@ export default function JobDetailPage() {
   const [statusLoading, setStatusLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Initial data fetch
-  useEffect(() => {
-    fetchJobData()
-  }, [jobId])
-
-  // Status polling for active jobs
-  useEffect(() => {
-    if (
-      !job ||
-      job.status === JobStatus.COMPLETED ||
-      job.status === JobStatus.FAILED
-    ) {
-      return
-    }
-
-    const interval = setInterval(async () => {
-      await fetchJobStatus()
-    }, 5000) // Poll every 5 seconds
-
-    return () => clearInterval(interval)
-  }, [job])
-
-  const fetchJobData = async () => {
+  const fetchJobData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -105,9 +83,9 @@ export default function JobDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [jobId])
 
-  const fetchJobStatus = async () => {
+  const fetchJobStatus = useCallback(async () => {
     setStatusLoading(true)
     try {
       const statusData = await getMDVerificationJobStatus(jobId)
@@ -144,7 +122,29 @@ export default function JobDetailPage() {
     } finally {
       setStatusLoading(false)
     }
-  }
+  }, [job, jobId])
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchJobData()
+  }, [fetchJobData])
+
+  // Status polling for active jobs
+  useEffect(() => {
+    if (
+      !job ||
+      job.status === JobStatus.COMPLETED ||
+      job.status === JobStatus.FAILED
+    ) {
+      return
+    }
+
+    const interval = setInterval(async () => {
+      await fetchJobStatus()
+    }, 5000) // Poll every 5 seconds
+
+    return () => clearInterval(interval)
+  }, [job, fetchJobStatus])
 
   const handleCancel = async () => {
     if (!job) return

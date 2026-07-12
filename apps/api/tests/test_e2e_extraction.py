@@ -32,7 +32,6 @@ from nfm_db.models.ref_gap_fill import (
     StagingStatus,
 )
 from nfm_db.services.extraction_pipeline import (
-    ExtractionJob,
     JobStatus,
     _apply_property_mapping,
     _job_store,
@@ -43,9 +42,7 @@ from nfm_db.services.quality_gate import (
     GateDecision,
     QualityGateService,
     compute_dedup_hash,
-    validate_range,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -214,8 +211,8 @@ class TestStubExtractionThroughQualityGate:
     ) -> None:
         """Stub extraction results (3 properties) all pass quality gate."""
         extracted = await ontofuel_extract(
-            source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_reference="test_paper.md",
+            source_type="file",
         )
 
         assert len(extracted) == 3
@@ -236,8 +233,8 @@ class TestStubExtractionThroughQualityGate:
     ) -> None:
         """Stub extraction results get correct confidence routing."""
         extracted = await ontofuel_extract(
-            source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_reference="test_paper.md",
+            source_type="file",
         )
 
         gate = QualityGateService(db_session)
@@ -259,8 +256,8 @@ class TestStubExtractionThroughQualityGate:
     ) -> None:
         """Stub extraction results produce correctly staged records."""
         extracted = await ontofuel_extract(
-            source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_reference="test_paper.md",
+            source_type="file",
         )
 
         gate = QualityGateService(db_session)
@@ -274,7 +271,7 @@ class TestStubExtractionThroughQualityGate:
             assert record.value == prop["value"]
             assert record.unit == prop["unit"]
             assert record.method == prop["method"]
-            assert record.source == "doi:10.1234/test"
+            assert record.source == "test_paper.md"
             assert record.dedup_hash == result.dedup_hash
 
     @pytest.mark.asyncio
@@ -284,8 +281,8 @@ class TestStubExtractionThroughQualityGate:
     ) -> None:
         """Full stub output can be bulk-processed through quality gate."""
         extracted = await ontofuel_extract(
-            source_reference="doi:10.1234/test",
-            source_type="doi",
+            source_reference="test_paper.md",
+            source_type="file",
         )
 
         # Apply property mapping (as pipeline does)
@@ -325,8 +322,8 @@ class TestFullPipelineWithStubMode:
         ):
             job = await trigger_extraction(
                 session=db_session,
-                source_reference="doi:10.1234/pipeline-test",
-                source_type="doi",
+                source_reference="test_paper.md",
+                source_type="file",
             )
 
         assert job.status in (JobStatus.COMPLETED, JobStatus.PARTIAL)
@@ -341,7 +338,7 @@ class TestFullPipelineWithStubMode:
         mock_gap_scan,
     ) -> None:
         """trigger_extraction inserts rows into the staging table."""
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
 
         with (
             patch(
@@ -351,8 +348,8 @@ class TestFullPipelineWithStubMode:
         ):
             job = await trigger_extraction(
                 session=db_session,
-                source_reference="doi:10.1234/staging-rows-test",
-                source_type="doi",
+                source_reference="test_paper.md",
+                source_type="file",
             )
 
         # Query staging table for records from this job
@@ -379,8 +376,8 @@ class TestFullPipelineWithStubMode:
         ):
             job = await trigger_extraction(
                 session=db_session,
-                source_reference="doi:10.1234/batch-id-test",
-                source_type="doi",
+                source_reference="test_paper.md",
+                source_type="file",
             )
 
         assert job.fill_batch_id is not None
@@ -410,8 +407,8 @@ class TestFullPipelineWithStubMode:
         ):
             job = await trigger_extraction(
                 session=db_session,
-                source_reference="doi:10.1234/element-filter",
-                source_type="doi",
+                source_reference="test_paper.md",
+                source_type="file",
                 element_systems=["UO2"],
             )
 
@@ -433,8 +430,8 @@ class TestFullPipelineWithStubMode:
         ):
             job = await trigger_extraction(
                 session=db_session,
-                source_reference="doi:10.1234/cache-test",
-                source_type="doi",
+                source_reference="test_paper.md",
+                source_type="file",
                 cache_level="L3A",
             )
 

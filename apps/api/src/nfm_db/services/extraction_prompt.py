@@ -14,8 +14,7 @@ from __future__ import annotations
 
 __all__ = ["build_extraction_system_prompt"]
 
-from nfm_db.core.property_catalog import PropertyCategory, STANDARD_PROPERTIES
-
+from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory
 
 # ---------------------------------------------------------------------------
 # Phase 2A dynamic injection helpers

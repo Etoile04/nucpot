@@ -9,7 +9,8 @@ export default function MDVerificationPage() {
   const [activeTab, setActiveTab] = useState("submit")
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const handleSubmissionSuccess = (_jobId: string) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleSubmissionSuccess = (_: string) => {
     // Switch to list view and refresh
     setActiveTab("list")
     setRefreshKey((prev) => prev + 1)
