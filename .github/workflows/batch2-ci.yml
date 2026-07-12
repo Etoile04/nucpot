@@ -1,5 +1,8 @@
 name: Batch 2 CI — Knowledge Graph Pipeline
 
+# NOTE: services/kg*.py and api/v1/kg*.py paths are intentionally omitted until
+# those modules land (NFM-858/NFM-861). Re-add when those files exist on main.
+
 on:
   push:
     branches: [main]
@@ -7,8 +10,6 @@ on:
       - "apps/api/src/nfm_db/models/kg.py"
       - "apps/api/src/nfm_db/schemas/kg.py"
       - "apps/api/tests/test_kg_models.py"
-      - "apps/api/src/nfm_db/services/kg*.py"
-      - "apps/api/src/nfm_db/api/v1/kg*.py"
       - "apps/api/migrations/versions/*kg*"
       - "scripts/eval_entity_linking.py"
       - "scripts/test_query_correctness.py"
@@ -19,8 +20,6 @@ on:
       - "apps/api/src/nfm_db/models/kg.py"
       - "apps/api/src/nfm_db/schemas/kg.py"
       - "apps/api/tests/test_kg_models.py"
-      - "apps/api/src/nfm_db/services/kg*.py"
-      - "apps/api/src/nfm_db/api/v1/kg*.py"
       - "apps/api/migrations/versions/*kg*"
       - "scripts/eval_entity_linking.py"
       - "scripts/test_query_correctness.py"
@@ -56,20 +55,16 @@ jobs:
           uv run ruff check \
             src/nfm_db/models/kg.py \
             src/nfm_db/schemas/kg.py \
-            tests/test_kg_models.py \
-            src/nfm_db/services/kg*.py \
-            src/nfm_db/api/v1/kg*.py \
-            || true
-          echo "Lint completed with above warnings"
+            tests/test_kg_models.py
+          echo "Lint completed"
 
       - name: Type-check KG paths (mypy)
         run: |
           uv run mypy \
             src/nfm_db/models/kg.py \
             src/nfm_db/schemas/kg.py \
-            --ignore-missing-imports \
-            || true
-          echo "Type-check completed with above warnings"
+            --ignore-missing-imports
+          echo "Type-check completed"
 
   unit-tests:
     name: KG Unit Tests
@@ -173,34 +168,18 @@ jobs:
 
       - name: Verify ontology coverage
         run: |
-          echo "Checking ontology coverage from KG model definitions..."
+          echo "Checking ontology coverage from KG model class attributes..."
           python -c "
           from nfm_db.models.kg import KGNode, KGEdge
-          import re
 
-          # Extract entity types from CHECK constraint
-          node_src = open('src/nfm_db/models/kg.py').read()
-          entity_match = re.search(
-              r\"entity_type IN \((.*?)\)\",
-              node_src, re.DOTALL
-          )
-          if entity_match:
-              types = [t.strip().strip(\"'\") for t in entity_match.group(1).split(',')]
-              entity_count = len(types)
-              print(f'Entity types ({entity_count}): {types}')
-              assert entity_count >= 5, f'Only {entity_count} entity types (need >=5)'
-
-          # Count relation types from model docstring
-          edge_src = node_src
-          relation_match = re.search(
-              r'Relation types include: (.*?)\.',
-              edge_src
-          )
-          if relation_match:
-              relations = [r.strip() for r in relation_match.group(1).split(',')]
-              relation_count = len(relations)
-              print(f'Relation types ({relation_count}): {relations}')
-              assert relation_count >= 10, f'Only {relation_count} relation types (need >=10)'
+          # Class attributes are the canonical source — robust to docstring
+          # reformat and CheckConstraint split across lines.
+          entity_count = len(KGNode.ENTITY_TYPES)
+          relation_count = len(KGEdge.RELATION_TYPES)
+          print(f'Entity types ({entity_count}): {list(KGNode.ENTITY_TYPES)}')
+          print(f'Relation types ({relation_count}): {list(KGEdge.RELATION_TYPES)}')
+          assert entity_count >= 5, f'Only {entity_count} entity types (need >=5)'
+          assert relation_count >= 10, f'Only {relation_count} relation types (need >=10)'
 
           print('')
           print('PASS: Ontology coverage meets minimum thresholds')

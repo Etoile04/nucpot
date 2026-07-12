@@ -17,6 +17,18 @@ Usage:
 Exit codes:
     0 — all checks pass
     1 — dedup rate below threshold or structural errors
+
+TODO(Phase 2 follow-up, NFM-860 review finding H2):
+This script currently exercises the dedup simulation against fixtures only —
+it does NOT invoke the production entity linker service from B2.2
+(services/kg_re.py / NFM-856). Per the reviewer:
+
+  > "AC says 'Run entity linking against test corpus' — that requires
+  > wiring the scripts to the production services once B2.2/B2.4 land."
+
+When NFM-856 (entity linker) and NFM-858 (query API) land, extend
+``simulate_entity_linking()`` to invoke those services on the real KG
+and replace ENTITY_LINKING_EVAL_MODE gate with a live integration test.
 """
 
 from __future__ import annotations

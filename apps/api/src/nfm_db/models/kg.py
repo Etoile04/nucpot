@@ -38,6 +38,20 @@ class KGNode(TimestampMixin, Base):
     Entity types: Material, Property, Experiment, Condition, Publication, Measurement.
     """
 
+    ENTITY_TYPES: tuple[str, ...] = (
+        "material",
+        "property",
+        "value",
+        "crystal_structure",
+        "dataset",
+        "publication",
+        "author",
+        "experiment",
+        "composition",
+        "defect_mechanism",
+        "other",
+    )
+
     __tablename__ = "kg_nodes"
     __table_args__ = (
         CheckConstraint(
@@ -127,6 +141,20 @@ class KGEdge(TimestampMixin, Base):
     publishedIn, containsData, synthesizedBy, alloyOf, irradiatedIn,
     testedAt, references, derivedFrom.
     """
+
+    RELATION_TYPES: tuple[str, ...] = (
+        "has_property",
+        "has_value",
+        "has_structure",
+        "cited_by",
+        "composed_of",
+        "measured_by",
+        "authored_by",
+        "related_to",
+        "contains",
+        "exhibits",
+        "derives_from",
+    )
 
     __tablename__ = "kg_edges"
     __table_args__ = (

@@ -1,62 +1,818 @@
 {
   "corpus_id": "entity_linking_test_corpus",
   "description": "Golden fixture for entity linking deduplication tests (NFM-860 B2.7). Simulates a scientific corpus where key NFMD entities appear repeatedly under variant names.",
-  "total_entities": 50,
+  "total_entities": 75,
   "unique_canonical": 5,
   "entries": [
-    {"raw_text": "UO2", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "UO₂", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "uranium dioxide", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "urania", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "UO2", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "uranium dioxide", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "UO₂", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "UO2", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "urania", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-    {"raw_text": "uranium dioxide", "canonical_name": "Uranium Dioxide", "entity_type": "material", "aliases": ["UO2", "uranium dioxide", "UO₂", "urania"]},
-
-    {"raw_text": "Zircaloy-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zry-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zircaloy 4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zr-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zircaloy-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zry-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zircaloy 4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zr-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zircaloy-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-    {"raw_text": "Zry-4", "canonical_name": "Zircaloy-4", "entity_type": "material", "aliases": ["Zircaloy-4", "Zry-4", "Zircaloy 4", "Zr-4"]},
-
-    {"raw_text": "thermal conductivity", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "TC", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "kappa", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "thermal conductivity", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "TC", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "lambda", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "thermal conductivity", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "TC", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "kappa", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-    {"raw_text": "thermal conductivity", "canonical_name": "Thermal Conductivity", "entity_type": "property", "aliases": ["thermal conductivity", "TC", "kappa", "lambda"]},
-
-    {"raw_text": "Inconel 718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "IN718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "Alloy 718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "IN-718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "Inconel 718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "IN718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "Alloy 718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "IN-718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "Inconel 718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-    {"raw_text": "IN718", "canonical_name": "Inconel-718", "entity_type": "material", "aliases": ["Inconel 718", "IN718", "Alloy 718", "IN-718"]},
-
-    {"raw_text": "swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "volumetric swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "irradiation swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "volumetric swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "irradiation swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "volumetric swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "irradiation swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]},
-    {"raw_text": "swelling", "canonical_name": "Irradiation Swelling", "entity_type": "property", "aliases": ["swelling", "volumetric swelling", "irradiation swelling"]}
+    {
+      "raw_text": "UO2",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "UO₂",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "uranium dioxide",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "urania",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "UO2",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "uranium dioxide",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "UO₂",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "UO2",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "urania",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "uranium dioxide",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zry-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy 4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zr-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zry-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy 4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zr-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zry-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "thermal conductivity",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "TC",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "kappa",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "thermal conductivity",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "TC",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "lambda",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "thermal conductivity",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "TC",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "kappa",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "thermal conductivity",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "Inconel 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "Alloy 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN-718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "Inconel 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "Alloy 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN-718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "Inconel 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "volumetric swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "irradiation swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "volumetric swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "irradiation swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "volumetric swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "irradiation swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "UO2",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "uranium dioxide",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "UO₂",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "urania",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "UO2",
+      "canonical_name": "Uranium Dioxide",
+      "entity_type": "material",
+      "aliases": [
+        "UO2",
+        "uranium dioxide",
+        "UO₂",
+        "urania"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zry-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy 4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zr-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "Zircaloy-4",
+      "canonical_name": "Zircaloy-4",
+      "entity_type": "material",
+      "aliases": [
+        "Zircaloy-4",
+        "Zry-4",
+        "Zircaloy 4",
+        "Zr-4"
+      ]
+    },
+    {
+      "raw_text": "thermal conductivity",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "TC",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "kappa",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "lambda",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "thermal conductivity",
+      "canonical_name": "Thermal Conductivity",
+      "entity_type": "property",
+      "aliases": [
+        "thermal conductivity",
+        "TC",
+        "kappa",
+        "lambda"
+      ]
+    },
+    {
+      "raw_text": "Inconel 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "Alloy 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "IN-718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "Inconel 718",
+      "canonical_name": "Inconel-718",
+      "entity_type": "material",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "Alloy 718",
+        "IN-718"
+      ]
+    },
+    {
+      "raw_text": "swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "volumetric swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "irradiation swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    },
+    {
+      "raw_text": "volumetric swelling",
+      "canonical_name": "Irradiation Swelling",
+      "entity_type": "property",
+      "aliases": [
+        "swelling",
+        "volumetric swelling",
+        "irradiation swelling"
+      ]
+    }
   ]
 }

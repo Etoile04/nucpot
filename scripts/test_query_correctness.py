@@ -10,6 +10,19 @@ Usage:
 Exit codes:
     0 — all queries produce correct results
     1 — one or more queries returned incorrect results
+
+TODO(Phase 2 follow-up, NFM-860 review finding H2):
+This script runs canned traversal logic against a static JSON fixture,
+not the B2.4 KG query API (api/v1/kg.py / NFM-858). Per the reviewer:
+
+  > "AC says 'Run entity linking against test corpus' — that requires
+  > wiring the scripts to the production services once B2.2/B2.4 land."
+
+When NFM-856 (entity linker) and NFM-858 (query API) land, replace
+``run_queries()`` with a thin client that calls the FastAPI routes
+(GET /api/v1/kg/nodes, /api/v1/kg/edges, etc.) against a live
+test database — the fixture stays as offline validation, but CI will
+exercise the actual query layer.
 """
 
 from __future__ import annotations
