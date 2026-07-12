@@ -96,6 +96,17 @@ class TestServerCreation:
                 f"Tool {name!r} not registered. Got: {registered}"
             )
 
+    def test_instructions_contain_keywords(self) -> None:
+        """Server instructions should mention key domain concepts."""
+        mcp = create_mcp_server()
+        instructions = mcp._mcp_server.instructions
+        assert instructions is not None, "Server should have instructions"
+        keywords = ["nuclear", "materials", "ontology", "knowledge graph", "extraction"]
+        for kw in keywords:
+            assert kw.lower() in instructions.lower(), (
+                f"Instructions should mention {kw!r}. Got: {instructions}"
+            )
+
     def test_tool_count_matches(self) -> None:
         mcp = create_mcp_server()
         registered = list(mcp._tool_manager._tools.keys())

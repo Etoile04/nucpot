@@ -1,6 +1,10 @@
 """Pydantic schemas package."""
 
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse  # noqa: F401
+from nfm_db.schemas.common import (  # noqa: F401
+    ApiResponse,
+    PaginatedResponse,
+    PaginationParams,
+)
 from nfm_db.schemas.extraction import (  # noqa: F401
     ExtractionStatusResponse,
     ExtractionTriggerRequest,

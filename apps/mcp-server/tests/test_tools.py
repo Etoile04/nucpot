@@ -13,7 +13,6 @@ import pytest
 from nfm_mcp.server import create_mcp_server
 from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
 
-
 # ── Fixture: create server once and expose tool callables ────────
 
 
@@ -89,28 +88,74 @@ class TestExtractionTools:
 
 
 class TestKnowledgeGraphTools:
-    """Tests for query_knowledge_graph tool."""
+    """Tests for query_knowledge_graph tool (wired to real services).
+
+    These tests mock the DB session and service layer to isolate
+    the MCP tool logic — the tool now calls real kg_re functions
+    instead of returning static mock data.
+    """
 
     @pytest.mark.asyncio
-    async def test_query_kg_returns_nodes(self, tool_map: dict) -> None:
-        handler = tool_map["query_knowledge_graph"]
-        result = json.loads(await handler(query="UO2"))
+    async def test_query_kg_returns_nodes_and_edges(self) -> None:
+        """Tool returns JSON with nodes/edges from the service layer."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from nfm_mcp.server import create_mcp_server
+
+        mock_node = MagicMock()
+        mock_node.id = uuid.uuid4()
+        mock_node.node_type = "Material"
+        mock_node.label = "UO2"
+        mock_node.aliases = None
+        mock_node.properties = {}
+        mock_node.confidence = 0.95
+        mock_node.status = "active"
+        mock_node.source_id = None
+        mock_node.corpus_id = None
+
+        async def _session_gen():
+            yield MagicMock()
+
+        with (
+            patch("nfm_mcp.tools.knowledge_graph.get_db_session", _session_gen),
+            patch(
+                "nfm_db.services.kg_re.query_graph_nodes",
+                new_callable=AsyncMock,
+                return_value=[mock_node],
+            ),
+            patch(
+                "nfm_db.services.kg_re.query_graph_edges",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            mcp = create_mcp_server()
+            tool_fn = mcp._tool_manager._tools["query_knowledge_graph"].fn
+            result = json.loads(await tool_fn(query="UO2"))
         assert "nodes" in result
         assert "edges" in result
-        assert len(result["nodes"]) > 0
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["label"] == "UO2"
 
     @pytest.mark.asyncio
-    async def test_query_kg_entity_type_filter(self, tool_map: dict) -> None:
-        handler = tool_map["query_knowledge_graph"]
-        result = json.loads(await handler(query="material", entity_types=["material"]))
-        for node in result["nodes"]:
-            assert str(node.get("entity_type", "")).lower() == "material"
+    async def test_query_kg_error_on_db_failure(self) -> None:
+        """Tool returns JSON error when DB session fails."""
+        from unittest.mock import patch
 
-    @pytest.mark.asyncio
-    async def test_query_kg_limit(self, tool_map: dict) -> None:
-        handler = tool_map["query_knowledge_graph"]
-        result = json.loads(await handler(query="material", limit=1))
-        assert len(result["nodes"]) <= 1
+        from nfm_mcp.server import create_mcp_server
+
+        async def _failing_gen():
+            raise RuntimeError("DB down")
+
+        with patch(
+            "nfm_mcp.tools.knowledge_graph.get_db_session",
+            _failing_gen,
+        ):
+            mcp = create_mcp_server()
+            tool_fn = mcp._tool_manager._tools["query_knowledge_graph"].fn
+            result = json.loads(await tool_fn(query="UO2"))
+        assert "error" in result
 
 
 # ── Ontology tools ──────────────────────────────────────────────
@@ -267,25 +312,28 @@ class TestPotentialHelpers:
 class TestKGHelpers:
     """Tests for pure helper functions in knowledge_graph module."""
 
-    def test_query_matches_label(self) -> None:
-        from nfm_mcp.tools.knowledge_graph import _query_matches
+    def test_normalize_entity_types_lowercase(self) -> None:
+        from nfm_mcp.tools.knowledge_graph import _normalize_entity_types
 
-        node = {"id": "kg-UO2", "label": "UO2", "entity_type": "material"}
-        assert _query_matches(node, "uo2") is True
-        assert _query_matches(node, "SiC") is False
+        assert _normalize_entity_types(["material"]) == ["Material"]
+        assert _normalize_entity_types(["property"]) == ["Property"]
 
-    def test_query_matches_entity_type(self) -> None:
-        from nfm_mcp.tools.knowledge_graph import _query_matches
+    def test_normalize_entity_types_already_canonical(self) -> None:
+        from nfm_mcp.tools.knowledge_graph import _normalize_entity_types
 
-        node = {"id": "kg-UO2", "label": "UO2", "entity_type": "material"}
-        assert _query_matches(node, "material") is True
+        assert _normalize_entity_types(["Material"]) == ["Material"]
 
-    def test_query_matches_case_insensitive(self) -> None:
-        from nfm_mcp.tools.knowledge_graph import _query_matches
+    def test_normalize_entity_types_none_and_empty(self) -> None:
+        from nfm_mcp.tools.knowledge_graph import _normalize_entity_types
 
-        node = {"id": "kg-UO2", "label": "UO2", "entity_type": "material"}
-        assert _query_matches(node, "UO2") is True
-        assert _query_matches(node, "uo2") is True
+        assert _normalize_entity_types(None) is None
+        assert _normalize_entity_types([]) is None
+
+    def test_normalize_entity_types_unknown(self) -> None:
+        from nfm_mcp.tools.knowledge_graph import _normalize_entity_types
+
+        result = _normalize_entity_types(["fuel"])
+        assert result == ["Fuel"]
 
 
 # ── Ontology helper functions ───────────────────────────────────

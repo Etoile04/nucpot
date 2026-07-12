@@ -1,14 +1,38 @@
-"""Knowledge graph query tools."""
+"""Knowledge graph query tools (NFM-1135 — Phase B: real service layer).
+
+Wraps :mod:`nfm_db.services.kg_re` for read-only KG queries.
+The tool receives a free-text ``query`` and optional ``entity_types``
+filter, normalizes entity types to the PascalCase values used by
+the ORM (``Material``, ``Property``, ``Experiment``, ``Condition``,
+``Publication``), and returns the matching subgraph as ``nodes`` and
+``edges`` arrays.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import KG_EDGES, KG_NODES
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
+
+
+# Mapping from friendly (lowercase, mock-data-style) entity_type strings
+# to the PascalCase node_type values enforced by the KG ORM.  Unknown
+# values are passed through unchanged so the service layer can decide.
+_ENTITY_TYPE_ALIASES: dict[str, str] = {
+    "material": "Material",
+    "property": "Property",
+    "properties": "Property",
+    "experiment": "Experiment",
+    "condition": "Condition",
+    "publication": "Publication",
+}
 
 
 class QueryKnowledgeGraphInput(BaseModel):
@@ -18,13 +42,19 @@ class QueryKnowledgeGraphInput(BaseModel):
 
     query: str = Field(
         ...,
-        description="Natural-language or Cypher-like query (e.g., 'materials with thermal conductivity > 10 W/mK')",
+        description=(
+            "Free-text search term matched against node labels "
+            "(e.g., 'UO2', 'thermal conductivity')"
+        ),
         min_length=1,
         max_length=1000,
     )
     entity_types: Optional[list[str]] = Field(
         default=None,
-        description="Filter by entity types (e.g., ['material', 'property', 'source'])",
+        description=(
+            "Filter by entity types "
+            "(e.g., ['material', 'property', 'source'])"
+        ),
     )
     limit: int = Field(
         default=20,
@@ -34,12 +64,19 @@ class QueryKnowledgeGraphInput(BaseModel):
     )
 
 
-def _query_matches(node: dict[str, object], query: str) -> bool:
-    """Check if a KG node label matches a query term."""
-    query_lower = query.lower()
-    label = str(node.get("label", "")).lower()
-    entity_type = str(node.get("entity_type", "")).lower()
-    return query_lower in label or query_lower in entity_type
+def _normalize_entity_types(
+    entity_types: list[str] | None,
+) -> list[str] | None:
+    """Map friendly entity_type names to ORM PascalCase node_types.
+
+    Unknown values are passed through unchanged so they can be filtered
+    out by the service layer (which validates against VALID_NODE_TYPES).
+    """
+    if entity_types is None:
+        return None
+    return [
+        _ENTITY_TYPE_ALIASES.get(t.lower(), t) for t in entity_types
+    ]
 
 
 def register_kg_tools(mcp: FastMCP) -> None:
@@ -68,32 +105,29 @@ def register_kg_tools(mcp: FastMCP) -> None:
         tool for complex cross-referencing queries.
 
         Returns:
-            JSON object with nodes and edges representing the
-            matching subgraph.
+            JSON object with ``nodes`` and ``edges`` arrays representing
+            the matching subgraph.  On failure returns
+            ``{"error": "..."}``.
         """
-        matching_node_ids: set[str] = set()
+        normalized_types = _normalize_entity_types(entity_types)
+        try:
+            from nfm_db.services.kg_re import (
+                query_graph_edges,
+                query_graph_nodes,
+            )
 
-        filtered_nodes = list(KG_NODES)
-
-        if entity_types is not None:
-            allowed = {t.lower() for t in entity_types}
-            filtered_nodes = [
-                n for n in filtered_nodes
-                if str(n.get("entity_type", "")).lower() in allowed
-            ]
-
-        for node in filtered_nodes:
-            if _query_matches(node, query):
-                matching_node_ids.add(str(node.get("id", "")))
-
-        edges = [
-            e for e in KG_EDGES
-            if str(e.get("source", "")) in matching_node_ids
-            or str(e.get("target", "")) in matching_node_ids
-        ]
-
-        result_nodes = filtered_nodes[: limit]
-        return json.dumps(
-            {"nodes": result_nodes, "edges": edges},
-            default=str,
-        )
+            async for db in get_db_session():
+                nodes = await query_graph_nodes(
+                    db,
+                    entity_types=normalized_types,
+                    query=query,
+                    limit=limit,
+                )
+                edges = await query_graph_edges(db, limit=limit)
+                return json.dumps(
+                    {"nodes": nodes, "edges": edges},
+                    default=str,
+                )
+        except Exception as exc:
+            logger.exception("query_knowledge_graph failed")
+            return json.dumps({"error": f"Query failed: {exc}"})
