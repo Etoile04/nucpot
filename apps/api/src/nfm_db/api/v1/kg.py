@@ -1,24 +1,38 @@
-"""Knowledge Graph search endpoint (NFM-1166, NFM-1222).
+"""Knowledge Graph search, semantic query, and review queue endpoints.
 
-``GET /api/v1/kg/search`` provides paginated, filterable search over KG nodes.
-When ``mode=lightrag`` is specified, the query is routed through the LightRAG
-semantic query bridge instead of the standard ILIKE search.
-Public read-only endpoint (no auth required).
+Search (NFM-1166, NFM-1222):
+  ``GET /api/v1/kg/search`` provides paginated, filterable search over KG nodes.
+  When ``mode=lightrag`` is specified, the query is routed through the LightRAG
+  semantic query bridge instead of the standard ILIKE search.
+  Public read-only endpoint (no auth required).
+
+Review queue (NFM-859):
+  - GET  /kg/review/queue          — list pending review items
+  - POST /kg/review/{id}/approve   — approve and add to KG
+  - POST /kg/review/{id}/reject    — reject with reason
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
-from nfm_db.schemas.common import PaginationParams
+from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse, SemanticQueryResponse
 from nfm_db.services.kg_utils import parse_aliases
+from nfm_db.services.review_queue_service import (
+    approve_review_item,
+    list_pending_reviews,
+    reject_review_item,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -199,3 +213,103 @@ async def _structured_search(
         limit=limit,
         offset=offset,
     )
+
+
+# ===========================================================================
+# Review Queue endpoints (NFM-859 B2.6)
+# ===========================================================================
+
+
+class ApproveRequest(BaseModel):
+    """Request body for approving a review item."""
+
+    reviewer_notes: str | None = Field(
+        None,
+        description="Optional notes from the reviewer",
+    )
+
+
+class RejectRequest(BaseModel):
+    """Request body for rejecting a review item."""
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        description="Reason for rejection",
+    )
+
+
+class ReviewQueueResponse(BaseModel):
+    """Response envelope for the review queue listing."""
+
+    items: list[dict] = Field(default_factory=list)
+    total: int = 0
+
+
+@router.get(
+    "/kg/review/queue",
+    response_model=ApiResponse[ReviewQueueResponse],
+)
+async def list_review_queue(
+    item_type: str | None = Query(None, description="Filter by item type (entity/relation)"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReviewQueueResponse]:
+    """List pending items in the KG review queue."""
+    items, total = await list_pending_reviews(
+        db,
+        item_type=item_type,
+        limit=limit,
+        offset=offset,
+    )
+    return ApiResponse(
+        success=True,
+        data=ReviewQueueResponse(items=items, total=total),
+    )
+
+
+@router.post(
+    "/kg/review/{review_id}/approve",
+    response_model=ApiResponse[dict],
+)
+async def approve_review(
+    review_id: UUID,
+    body: ApproveRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict]:
+    """Approve a pending review item and promote it to the live KG."""
+    result = await approve_review_item(
+        db,
+        review_id=review_id,
+        reviewer_notes=body.reviewer_notes if body else None,
+    )
+    if "error" in result:
+        raise HTTPException(
+            status_code=result.get("status_code", 400),
+            detail=result["error"],
+        )
+    return ApiResponse(success=True, data=result)
+
+
+@router.post(
+    "/kg/review/{review_id}/reject",
+    response_model=ApiResponse[dict],
+)
+async def reject_review(
+    review_id: UUID,
+    body: RejectRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict]:
+    """Reject a pending review item with a reason."""
+    result = await reject_review_item(
+        db,
+        review_id=review_id,
+        reason=body.reason,
+    )
+    if "error" in result:
+        raise HTTPException(
+            status_code=result.get("status_code", 400),
+            detail=result["error"],
+        )
+    return ApiResponse(success=True, data=result)
