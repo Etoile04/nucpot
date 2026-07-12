@@ -30,6 +30,8 @@ docker/postgres-data/
 .worktrees/
 .claude/
 CLAUDE.md
+.mcp.json
+AGENTS.md
 .gitnexus/
 .hermes/
 *.tsbuildinfo

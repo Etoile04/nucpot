@@ -290,7 +290,7 @@ class TestListMDVerificationJobs:
         data = response.json()
         assert data["jobs"] == []
         assert data["total"] == 0
-        assert data["limit"] == 100
+        assert data["limit"] == 20  # PaginationParams default per_page=20
         assert data["offset"] == 0
 
     @patch("nfm_db.api.v1.md_verification.MDVerificationService")

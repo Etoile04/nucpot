@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -35,6 +36,9 @@ from nfm_db.services.quality_gate import QualityGateService
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
+_DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
+
 # In-memory job store
 # ---------------------------------------------------------------------------
 
@@ -68,6 +72,7 @@ class ExtractionJob:
     extracted_count: int = 0
     staged_count: int = 0
     rejected_count: int = 0
+    duplicate_count: int = 0
     error_message: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
@@ -75,6 +80,14 @@ class ExtractionJob:
     element_systems: list[str] | None = None
     cache_level: str | None = None
     max_confidence: str | None = None
+    # Multimodal extraction fields (NFM-979)
+    extract_figures: bool = False
+    extract_tables: bool = False
+    figure_types: list[str] | None = None
+    confidence_threshold: float = 0.5
+    conflict_strategy: str = "prefer_vlm"
+    figures: list[dict[str, Any]] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Thread-safe in-memory store (access via async session in prod)
@@ -219,6 +232,15 @@ async def ontofuel_extract(
     Expected return format: list of dicts with keys matching
     schemas.extraction.ExtractedProperty fields.
     """
+    # Stub mode + DOI: return empty (DOI content not available in stub) (NFM-636)
+    if _is_stub_mode() and source_type == "doi":
+        logger.info(
+            "OntoFuel stub mode: DOI content not available for %s — returning empty",
+            source_reference,
+        )
+        return []
+
+
     # Stub mode: return demo data for CI/testing
     if _is_stub_mode():
         logger.info(
@@ -352,6 +374,11 @@ async def trigger_extraction(
     element_systems: list[str] | None = None,
     cache_level: str | None = None,
     max_confidence: str | None = None,
+    extract_figures: bool = False,
+    extract_tables: bool = False,
+    figure_types: list[str] | None = None,
+    confidence_threshold: float = 0.5,
+    conflict_strategy: str = "prefer_vlm",
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -361,6 +388,7 @@ async def trigger_extraction(
     3. Quality gate: dedup, range validate, confidence route
     4. Stage passing values to _ref_gap_fill_staging
     5. Optional: gap re-scan to close the loop
+    6. Optional: multimodal extraction (figures/tables via VLM)
 
     Returns the job tracker with current status.
     """
@@ -375,6 +403,11 @@ async def trigger_extraction(
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
+        extract_figures=extract_figures,
+        extract_tables=extract_tables,
+        figure_types=figure_types,
+        confidence_threshold=confidence_threshold,
+        conflict_strategy=conflict_strategy,
     )
     _job_store[job_id] = job
 
@@ -398,11 +431,20 @@ async def trigger_extraction(
         )
 
         if not raw_properties:
-            _update_job(
-                job,
-                status=JobStatus.COMPLETED,
-                completed_at=datetime.now(UTC),
-            )
+            # DOI in stub/no-LLM mode → FAILED (NFM-636)
+            if source_type == "doi":
+                _update_job(
+                    job,
+                    status=JobStatus.FAILED,
+                    error_message="DOI content not available in stub mode",
+                    completed_at=datetime.now(UTC),
+                )
+            else:
+                _update_job(
+                    job,
+                    status=JobStatus.COMPLETED,
+                    completed_at=datetime.now(UTC),
+                )
             return job
 
         # Stage 2: Property mapping (normalize names)
@@ -431,10 +473,11 @@ async def trigger_extraction(
         for _ in bulk_result.rejected:
             rejected += 1
 
+        duplicate_count = 0
         for _ in bulk_result.duplicates:
-            rejected += 1
+            duplicate_count += 1
 
-        _update_job(job, staged_count=staged, rejected_count=rejected)
+        _update_job(job, staged_count=staged, rejected_count=rejected, duplicate_count=duplicate_count)
 
         logger.info(
             "Job %s: staged=%d rejected=%d (of %d extracted)",
@@ -452,6 +495,25 @@ async def trigger_extraction(
                 logger.info("Job %s: gap re-scan completed after %d staged", job_id, staged)
             except Exception:
                 logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
+
+        # Stage 5: Multimodal extraction (figures/tables via VLM)
+        if job.extract_figures or job.extract_tables:
+            try:
+                from nfm_db.services.multimodal_extraction import run_multimodal_extraction
+
+                await run_multimodal_extraction(job, mapped)
+                logger.info(
+                    "Job %s: multimodal extraction completed (figures=%d, tables=%d)",
+                    job_id,
+                    len(job.figures),
+                    len(job.tables),
+                )
+            except Exception as mm_exc:
+                logger.warning(
+                    "Job %s: multimodal extraction failed (non-fatal): %s",
+                    job_id,
+                    mm_exc,
+                )
 
         final_status = JobStatus.PARTIAL if rejected > 0 else JobStatus.COMPLETED
         _update_job(

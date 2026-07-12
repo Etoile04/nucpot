@@ -74,6 +74,8 @@ services:
       REDIS_PORT: "6379"
       CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
       CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
       # HPC SSH key (mount as secret in production)
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
@@ -91,6 +93,50 @@ services:
       timeout: 5s
       retries: 15
       start_period: 40s
+    networks: [prod]
+
+  # ---- LightRAG sidecar (knowledge-graph RAG, NFM-1221) -----------------------
+  lightrag:
+    build:
+      context: .
+      dockerfile: docker/lightrag.Dockerfile
+    image: nucpot-prod-lightrag:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-lightrag
+    restart: unless-stopped
+    ports:
+      - "${PROD_LIGHTRAG_HOST_PORT:-9621}:9621"
+    volumes:
+      - prod-lightrag-data:/app/data
+    environment:
+      LLM_BINDING: ${PROD_LIGHTRAG_LLM_BINDING:-openai}
+      LLM_MODEL: ${PROD_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
+      LLM_BINDING_HOST: ${PROD_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
+      LLM_BINDING_API_KEY: ${PROD_LIGHTRAG_LLM_API_KEY:?Set PROD_LIGHTRAG_LLM_API_KEY}
+      EMBEDDING_BINDING: ${PROD_LIGHTRAG_EMBEDDING_BINDING:-openai}
+      EMBEDDING_MODEL: ${PROD_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_BINDING_HOST: ${PROD_LIGHTRAG_EMBEDDING_HOST:-https://api.openai.com/v1}
+      EMBEDDING_BINDING_API_KEY: ${PROD_LIGHTRAG_EMBEDDING_API_KEY:-${PROD_LIGHTRAG_LLM_API_KEY}}
+      WORKSPACE: /app/data
+    depends_on:
+      db: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     networks: [prod]
 
   # ---- Celery worker (MD verification tasks) ---------------------------------
@@ -158,6 +204,8 @@ services:
 volumes:
   prod-db-data:
   prod-redis-data:
+  prod-lightrag-data:
+    name: nucpot-prod-lightrag-data
 
 networks:
   prod:

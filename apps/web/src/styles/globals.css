@@ -36,6 +36,31 @@
   --btn-primary-hover: #1d4ed8;
   --btn-secondary-bg: #374151;
 
+  /* Confidence Scale (NFM-848 §1) */
+  --confidence-high: #10b981;
+  --confidence-medium: #f59e0b;
+  --confidence-low: #ef4444;
+
+  /* Graph Canvas (NFM-848 §1) */
+  --graph-node-default: #60a5fa;
+  --graph-node-material: #34d399;
+  --graph-node-property: #fbbf24;
+  --graph-node-entity: #a78bfa;
+  --graph-edge-default: #4b5563;
+  --graph-edge-highlight: #3b82f6;
+  --graph-canvas-bg: #111827;
+
+  /* RAG Chat (NFM-848 §1) */
+  --chat-user-bg: #2563eb;
+  --chat-assistant-bg: #1f2937;
+  --chat-citation-bg: #1e3a5f;
+  --chat-typing-color: #9ca3af;
+
+  /* Review (NFM-848 §1) */
+  --review-approve: #10b981;
+  --review-reject: #ef4444;
+  --review-pending: #f59e0b;
+
   /* Spacing */
   --wizard-padding-lg: 1.5rem;
   --wizard-padding-md: 1rem;

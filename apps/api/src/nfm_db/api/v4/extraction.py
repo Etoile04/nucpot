@@ -226,8 +226,9 @@ async def submit_extraction(
     payload: V4ExtractionSubmitRequest,
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Submit a v4 extraction job.
+    """提交V4提取任务。
 
+    Submit a v4 extraction job.
     Validates source_type, triggers the extraction pipeline, and returns
     a job_id for status polling.
     """
@@ -241,14 +242,15 @@ async def submit_extraction(
     if not payload.source_reference.strip():
         return _error_response(400, "source_reference must not be empty.")
 
-    if payload.source_type == "doi" and not DOI_PATTERN.match(
-        payload.source_reference.strip()
-    ):
-        return _error_response(
-            400,
-            "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
-            "(e.g., 10.1016/j.nucengdes.2020.110756)",
-        )
+    if payload.source_type == "doi":
+        # Strip optional 'doi:' prefix (case-insensitive) before validation (NFM-636)
+        clean_ref = payload.source_reference.strip().lower().removeprefix("doi:")
+        if not DOI_PATTERN.match(clean_ref):
+            return _error_response(
+                400,
+                "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
+                "(e.g., 10.1016/j.nucengdes.2020.110756)",
+            )
 
     job = await trigger_extraction(
         session=session,
@@ -257,6 +259,11 @@ async def submit_extraction(
         element_systems=payload.element_systems,
         cache_level=payload.cache_level,
         max_confidence=payload.max_confidence,
+        extract_figures=payload.extract_figures,
+        extract_tables=payload.extract_tables,
+        figure_types=payload.figure_types,
+        confidence_threshold=payload.confidence_threshold,
+        conflict_strategy=payload.conflict_strategy,
     )
 
     return JSONResponse(
@@ -285,7 +292,10 @@ async def submit_extraction(
 
 @router.get("/extraction/{job_id}/status")
 async def get_extraction_status(job_id: str) -> JSONResponse:
-    """Poll extraction job progress with detailed step tracking."""
+    """轮询提取任务进度（含步骤跟踪）。
+
+    Poll extraction job progress with detailed step tracking.
+    """
     job = get_job(job_id)
 
     if job is None:
@@ -306,6 +316,7 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
                 extracted_count=job.extracted_count,
                 staged_count=job.staged_count,
                 rejected_count=job.rejected_count,
+                duplicate_count=job.duplicate_count,
                 error_message=job.error_message,
                 created_at=job.created_at,
                 started_at=job.started_at,
@@ -329,7 +340,10 @@ async def get_extraction_result(
     limit: int = Query(default=50, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Retrieve extraction results for a completed job with pagination."""
+    """获取已完成任务的提取结果（分页）。
+
+    Retrieve extraction results for a completed job with pagination.
+    """
     job = get_job(job_id)
 
     if job is None:
@@ -374,6 +388,9 @@ async def get_extraction_result(
         _to_v4_property(p, job_id=job_id) for p in page_properties
     ]
 
+    figures = list(job.figures or [])
+    tables = list(job.tables or [])
+
     return JSONResponse(
         content={
             "success": True,
@@ -382,6 +399,8 @@ async def get_extraction_result(
                 job_status=job.status.value,
                 total_extracted=job.extracted_count,
                 properties=[p.model_dump(mode="json") for p in properties],
+                figures=figures,
+                tables=tables,
             ).model_dump(mode="json"),
             "meta": {
                 "total": total,
@@ -413,7 +432,10 @@ async def browse_properties(
     sort_by: str = Query(default="property"),
     sort_order: str = Query(default="asc"),
 ) -> JSONResponse:
-    """Browse extracted properties for a material system with filtering."""
+    """按材料系统浏览已提取属性，支持多维筛选。
+
+    Browse extracted properties for a material system with filtering.
+    """
     if sort_by not in VALID_SORT_FIELDS:
         return _error_response(
             400,
@@ -516,7 +538,10 @@ async def validate_extraction(
     payload: V4ValidateRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Trigger a validation workflow for extracted properties."""
+    """触发提取属性的验证工作流。
+
+    Trigger a validation workflow for extracted properties.
+    """
     job = get_job(job_id)
 
     if job is None:
@@ -578,7 +603,10 @@ async def list_material_systems(
     has_pending_review: bool = Query(default=False),
     category: str | None = Query(default=None),
 ) -> JSONResponse:
-    """List all material systems with extracted property data."""
+    """获取所有材料系统及其已提取属性数据。
+
+    List all material systems with extracted property data.
+    """
     systems = _build_material_systems_index()
 
     if has_pending_review:

@@ -1,0 +1,13 @@
+{
+  "corpora": [
+    {
+      "id": "default",
+      "name": "OntoFuel Nuclear Materials (Default)",
+      "description": "构建时内置的静态本体数据",
+      "asset_url": "./nvl_ontology_data.json",
+      "source_digest": "static",
+      "schema_version": "1.0"
+    }
+  ],
+  "default_corpus": "default"
+}

@@ -49,10 +49,12 @@ from nfm_db.services.blog_post import (
     update_markdown_status,
 )
 
-AUTHOR_ID = uuid.uuid4()
-REVIEWER_ID = uuid.uuid4()
 EDITOR_PERMS = {"submit_for_review", "edit_post"}
 REVIEWER_PERMS = {"review_post"}
+
+# Deterministic IDs matching conftest seed users.
+AUTHOR_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
+REVIEWER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000002")
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +243,7 @@ class TestGetBlogPostBySlug:
     @pytest.mark.asyncio
     async def test_returns_post_when_found(self, db_session: AsyncSession) -> None:
         post = BlogPostMetadata(
-        title="Test Post",
+            title="Test Post",
             slug="existing-post",
             status=PostStatus.DRAFT.value,
             author_id=AUTHOR_ID,

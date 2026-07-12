@@ -26,7 +26,7 @@ from nfm_db.services.extraction_pipeline import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["提取管理"])
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ async def trigger_extraction_job(
     payload: ExtractionTriggerRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Trigger an extraction job for a literature source.
+    """触发文献数据提取任务。
 
     The pipeline runs: source → OntoFuel extraction → property mapping
     → quality gate → staging. Returns a job_id for status polling.
@@ -90,7 +90,7 @@ async def trigger_extraction_job(
 async def get_extraction_status(
     job_id: UUID,
 ) -> dict:
-    """Check the status of an extraction job.
+    """查询提取任务执行状态。
 
     Returns current status, counts of extracted/staged/rejected properties,
     timestamps, and error message (if failed).

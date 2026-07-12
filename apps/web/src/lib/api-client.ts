@@ -45,7 +45,7 @@ function buildHeaders(custom?: Record<string, string>): HeadersInit {
  * Generic request wrapper.
  * Throws on non-OK responses with a descriptive error message.
  */
-async function request<T>(
+export async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
