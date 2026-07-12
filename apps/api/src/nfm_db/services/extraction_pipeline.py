@@ -84,6 +84,9 @@ class ExtractionJob:
     # Multimodal extraction results
     figures: list[dict[str, Any]] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
+    # Text-extracted properties (stored before multimodal stage so conflict
+    # resolution can merge them with VLM-extracted figures/tables).
+    text_props: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Thread-safe in-memory store (access via async session in prod)
@@ -428,6 +431,10 @@ async def trigger_extraction(
         # Stage 2: Property mapping (normalize names)
         _update_job(job, status=JobStatus.MAPPING)
         mapped = _apply_property_mapping(raw_properties, cache_level)
+
+        # Store text-extracted properties on the job so the multimodal stage
+        # can run conflict resolution against VLM-extracted figures/tables.
+        _update_job(job, text_props=list(mapped))
 
         # Stage 3: Quality gate + staging
         _update_job(job, status=JobStatus.QUALITY_GATE)
@@ -979,20 +986,31 @@ async def _run_multimodal_extraction(
                 len(tables),
             )
 
-        # Apply conflict resolution if both figures and tables were extracted
-        # alongside text properties (stored in the job's extraction results)
-        if job.figures or job.tables:
-            vlm_props: list[dict[str, Any]] = []
-            for fig in job.figures:
-                vlm_props.append(fig)
-            for tbl in job.tables:
-                vlm_props.append(tbl)
+        # Apply conflict resolution if text_props were collected alongside
+        # VLM-extracted figures/tables (NFM-923 AC).
+        if job.text_props and (job.figures or job.tables):
+            if job.figures:
+                resolved_text, resolved_figs = _apply_conflict_resolution(
+                    job.text_props,
+                    list(job.figures),
+                    job.conflict_strategy,
+                )
+                _update_job(job, text_props=resolved_text, figures=resolved_figs)
+
+            if job.tables:
+                resolved_text, resolved_tbls = _apply_conflict_resolution(
+                    job.text_props,
+                    list(job.tables),
+                    job.conflict_strategy,
+                )
+                _update_job(job, text_props=resolved_text, tables=resolved_tbls)
 
             logger.info(
-                "Job %s: conflict resolution (strategy=%s) on %d VLM items",
+                "Job %s: conflict resolution (strategy=%s) on %d figures, %d tables",
                 job.job_id,
                 job.conflict_strategy,
-                len(vlm_props),
+                len(job.figures),
+                len(job.tables),
             )
 
     except Exception as exc:

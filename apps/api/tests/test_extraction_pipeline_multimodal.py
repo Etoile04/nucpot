@@ -137,6 +137,21 @@ class TestExtractionJobMultimodalFields:
         assert job.figures == [{"type": "plot"}]
         assert job.tables == [{"type": "table"}]
 
+    def test_text_props_defaults_to_empty_list(self):
+        """ExtractionJob exposes a text_props field defaulting to [] (NFM-923 AC).
+
+        Stores text-extracted properties so conflict resolution can merge
+        with VLM-extracted properties when multimodal stage runs.
+        """
+        job = ExtractionJob(
+            job_id="j1",
+            source_reference="test.pdf",
+            source_type="pdf",
+        )
+        assert hasattr(job, "text_props")
+        assert job.text_props == []
+        assert isinstance(job.text_props, list)
+
 
 # ---------------------------------------------------------------------------
 # _extract_figures_from_source
@@ -641,6 +656,139 @@ class TestRunMultimodalExtraction:
         assert len(job.figures) == 0
         assert len(job.tables) == 0
 
+    @pytest.mark.asyncio
+    async def test_applies_conflict_resolution_when_text_props_present(self):
+        """When text_props conflict with VLM figures, conflict_strategy is applied.
+
+        NFm-923 AC: 'Conflict resolution applies the specified strategy'.
+        With prefer_vlm, text_props containing the same property_name as
+        a figure must be removed from the job's text_props after the run.
+        """
+        job = ExtractionJob(
+            job_id="j1",
+            source_reference="test.pdf",
+            source_type="pdf",
+            extract_figures=True,
+            extract_tables=False,
+            conflict_strategy="prefer_vlm",
+        )
+        job.text_props = [
+            {"property_name": "lattice_constant", "value": 5.47, "source": "text"},
+            {"property_name": "density", "value": 10.0, "source": "text"},
+        ]
+
+        figure_with_conflict = [
+            {"property_name": "lattice_constant", "value": 5.48, "source": "vlm"},
+        ]
+
+        with patch(
+            "nfm_db.services.extraction_pipeline._is_stub_mode",
+            return_value=False,
+        ), patch(
+            "nfm_db.services.vision_client.is_vlm_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.extraction_pipeline._extract_figures_from_source",
+            new_callable=AsyncMock,
+            return_value=figure_with_conflict,
+        ):
+            await _run_multimodal_extraction(job, AsyncMock())
+
+        # After prefer_vlm conflict resolution, the conflicting text prop
+        # ("lattice_constant") should be removed from text_props while
+        # non-conflicting text props pass through.
+        assert not any(
+            p["property_name"] == "lattice_constant" for p in job.text_props
+        ), f"prefer_vlm should drop conflicting text prop, got: {job.text_props}"
+        assert any(
+            p["property_name"] == "density" for p in job.text_props
+        ), "Non-conflicting text props must pass through unchanged"
+
+    @pytest.mark.asyncio
+    async def test_applies_prefer_text_strategy(self):
+        """With prefer_text strategy, conflicting VLM figure is removed from figures.
+
+        The strategy 'prefer_text' tells conflict resolution that when both
+        text and VLM extract the same property_name, the text value wins
+        and the VLM version is excluded.
+        """
+        job = ExtractionJob(
+            job_id="j1",
+            source_reference="test.pdf",
+            source_type="pdf",
+            extract_figures=True,
+            extract_tables=False,
+            conflict_strategy="prefer_text",
+        )
+        job.text_props = [
+            {"property_name": "lattice_constant", "value": 5.47, "source": "text"},
+        ]
+
+        figure_with_conflict = [
+            {"property_name": "lattice_constant", "value": 5.48, "source": "vlm"},
+        ]
+
+        with patch(
+            "nfm_db.services.extraction_pipeline._is_stub_mode",
+            return_value=False,
+        ), patch(
+            "nfm_db.services.vision_client.is_vlm_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.extraction_pipeline._extract_figures_from_source",
+            new_callable=AsyncMock,
+            return_value=figure_with_conflict,
+        ):
+            await _run_multimodal_extraction(job, AsyncMock())
+
+        # With prefer_text, the conflicting VLM figure must be removed.
+        assert not any(
+            p["property_name"] == "lattice_constant" for p in job.figures
+        ), f"prefer_text should drop conflicting VLM figure, got: {job.figures}"
+        # The text prop should still be present on the job.
+        assert any(
+            p["property_name"] == "lattice_constant" for p in job.text_props
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_conflict_resolution_when_text_props_empty(self):
+        """No conflict resolution applied when text_props is empty.
+
+        Sanity check: if no text-extracted properties were stored on the
+        job, conflict resolution has nothing to merge against, so figures
+        and tables pass through unchanged.
+        """
+        job = ExtractionJob(
+            job_id="j1",
+            source_reference="test.pdf",
+            source_type="pdf",
+            extract_figures=True,
+            extract_tables=False,
+            conflict_strategy="prefer_vlm",
+        )
+        # text_props default is []
+
+        figure = [{"property_name": "lattice_constant", "value": 5.48, "source": "vlm"}]
+
+        with patch(
+            "nfm_db.services.extraction_pipeline._is_stub_mode",
+            return_value=False,
+        ), patch(
+            "nfm_db.services.vision_client.is_vlm_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.extraction_pipeline._extract_figures_from_source",
+            new_callable=AsyncMock,
+            return_value=figure,
+        ):
+            await _run_multimodal_extraction(job, AsyncMock())
+
+        # Figure should pass through unchanged.
+        assert any(
+            p["property_name"] == "lattice_constant" for p in job.figures
+        )
+        assert job.text_props == []
+
 
 # ---------------------------------------------------------------------------
 # trigger_extraction multimodal integration
@@ -797,3 +945,60 @@ class TestTriggerExtractionMultimodal:
         assert job.extract_tables is False
         assert job.figures == []
         assert job.tables == []
+
+    @pytest.mark.asyncio
+    async def test_text_props_stored_on_job_after_mapping(self, db_session: AsyncSession):
+        """After trigger_extraction, mapped text-extracted props are stored on job.text_props.
+
+        NFM-923 AC: text-extracted properties must be available on the job
+        so that downstream conflict resolution can merge with VLM properties
+        from figures/tables. Without this, _run_multimodal_extraction has
+        nothing to merge against and conflict resolution is effectively dead.
+        """
+        raw_props = [
+            {"property_name": "lattice_constant", "value": 5.47, "source": "text"},
+            {"property_name": "density", "value": 10.0, "source": "text"},
+        ]
+        mapped_props = list(raw_props)  # identity-mapping for the test
+
+        mock_bulk_result = MagicMock()
+        mock_bulk_result.accepted = []
+        mock_bulk_result.rejected = []
+        mock_bulk_result.duplicates = []
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(return_value=mock_bulk_result)
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock(return_value=None)
+
+        with patch(
+            "nfm_db.services.extraction_pipeline.ontofuel_extract",
+            new_callable=AsyncMock,
+            return_value=raw_props,
+        ), patch(
+            "nfm_db.services.extraction_pipeline._apply_property_mapping",
+            return_value=mapped_props,
+        ), patch(
+            "nfm_db.services.extraction_pipeline.QualityGateService",
+            return_value=mock_gate,
+        ), patch(
+            "nfm_db.services.extraction_pipeline.GapScanService",
+            return_value=mock_scanner,
+        ):
+            job = await trigger_extraction(
+                session=db_session,
+                source_reference="doi:10.1234/test",
+                source_type="doi",
+            )
+
+        assert job.text_props == mapped_props, (
+            f"job.text_props should hold the mapped text-extracted props, "
+            f"got: {job.text_props}"
+        )
+        assert any(
+            p["property_name"] == "lattice_constant" for p in job.text_props
+        )
+        assert any(
+            p["property_name"] == "density" for p in job.text_props
+        )
