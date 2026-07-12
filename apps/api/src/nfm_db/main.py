@@ -1,6 +1,8 @@
 """NFM-DB API application entry point."""
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +31,11 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
+from nfm_db.api.v1.batch import (
+    materials_router as batch_materials_router,
+    properties_router as batch_properties_router,
+    reference_values_router as batch_reference_values_router,
+)
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.middleware.rate_limit import (
     NFMRateLimitMiddleware,
@@ -39,7 +46,23 @@ from nfm_db.schemas.errors import (
     ErrorCode,
     register_http_exception_handler,
 )
+from nfm_db.services.lightrag_lifecycle import close_lightrag_client
 from nfm_db.services.upload_service import PotentialUploadError
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Manage shared-resource lifecycle (NFM-1245 / NFM-1222 HIGH-2).
+
+    The shared ``httpx.AsyncClient`` used by all LightRAG consumers
+    (API endpoints, fire-and-forget tasks, RAG provider) is created
+    lazily on first use and closed on shutdown via
+    ``close_lightrag_client()``. The close helper swallows any close
+    errors so this await is always safe.
+    """
+    yield
+    await close_lightrag_client()
+
 
 app = FastAPI(
     title="核燃料与材料物性数据库 API",
@@ -96,6 +119,7 @@ app = FastAPI(
         {"name": "健康检查", "description": "服务与各模块的健康状态。"},
         {"name": "V4 信息抽取", "description": "NFM v4 版本的信息抽取接口(实验性)。"},
     ],
+    lifespan=lifespan,
 )
 
 # CORS origins: env var (comma-separated) or sensible defaults.

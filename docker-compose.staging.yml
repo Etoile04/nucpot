@@ -55,6 +55,8 @@ services:
       NFM_CORS_ORIGINS: ${STAGING_CORS_ORIGINS:-["http://localhost:3000"]}
       NFM_DEBUG: ${STAGING_DEBUG:-false}
       NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${STAGING_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
     depends_on:
       db: { condition: service_healthy }
     healthcheck:
@@ -94,6 +96,50 @@ services:
       start_period: 30s
     networks: [staging]
 
+  # ---- LightRAG sidecar (knowledge-graph RAG, NFM-1221) -----------------------
+  lightrag:
+    build:
+      context: .
+      dockerfile: docker/lightrag.Dockerfile
+    image: nucpot-staging-lightrag:${STAGING_IMAGE_TAG:-latest}
+    container_name: nucpot-staging-lightrag
+    restart: unless-stopped
+    ports:
+      - "${STAGING_LIGHTRAG_HOST_PORT:-9621}:9621"
+    volumes:
+      - staging-lightrag-data:/app/data
+    environment:
+      LLM_BINDING: ${STAGING_LIGHTRAG_LLM_BINDING:-openai}
+      LLM_MODEL: ${STAGING_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
+      LLM_BINDING_HOST: ${STAGING_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
+      LLM_BINDING_API_KEY: ${STAGING_LIGHTRAG_LLM_API_KEY:?Set STAGING_LIGHTRAG_LLM_API_KEY}
+      EMBEDDING_BINDING: ${STAGING_LIGHTRAG_EMBEDDING_BINDING:-openai}
+      EMBEDDING_MODEL: ${STAGING_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_BINDING_HOST: ${STAGING_LIGHTRAG_EMBEDDING_HOST:-https://api.openai.com/v1}
+      EMBEDDING_BINDING_API_KEY: ${STAGING_LIGHTRAG_EMBEDDING_API_KEY:-${STAGING_LIGHTRAG_LLM_API_KEY}}
+      WORKSPACE: /app/data
+    depends_on:
+      db: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks: [staging]
+
   # ---- Cloudflare Tunnel connector (public ingress) --------------------------
   # Runs the remotely-managed staging tunnel so the whole stack — including
   # public ingress — is reproducible from the repo (NFM-120, gap 1, option a).
@@ -131,3 +177,5 @@ networks:
 volumes:
   staging-db-data:
     name: nucpot-staging-db-data
+  staging-lightrag-data:
+    name: nucpot-staging-lightrag-data

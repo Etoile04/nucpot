@@ -1,14 +1,17 @@
-"""Document extraction trigger and status tools."""
+"""Document extraction trigger and status tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class TriggerExtractionInput(BaseModel):
@@ -69,31 +72,35 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             JSON object with job_id, status='submitted', and
             estimated_duration.
         """
-        job_id = generate_job_id()
-        now = datetime.now(timezone.utc).isoformat()
+        try:
+            from nfm_db.services.extraction_pipeline import (
+                trigger_extraction as svc_trigger,
+            )
 
-        new_job: dict[str, object] = {
-            "job_id": job_id,
-            "source_id": file_url,
-            "material_id": material_id,
-            "status": "submitted",
-            "progress": 0,
-            "stage": "queued",
-            "started_at": now,
-            "completed_at": None,
-            "entities_extracted": 0,
-            "properties_extracted": 0,
-            "error": None,
-        }
+            async for db in get_db_session():
+                job = await svc_trigger(
+                    db,
+                    source_reference=file_url,
+                    source_type="mcp_upload",
+                )
 
-        EXTRACTION_JOBS[job_id] = new_job
+                return json.dumps({
+                    "job_id": job.job_id,
+                    "status": job.status.value,
+                    "source_reference": job.source_reference,
+                    "source_type": job.source_type,
+                    "estimated_duration_seconds": 30,
+                    "message": "Document queued for extraction",
+                })
 
-        return json.dumps({
-            "job_id": job_id,
-            "status": "submitted",
-            "estimated_duration_seconds": 30,
-            "message": "Document queued for extraction",
-        })
+        except FileNotFoundError as exc:
+            logger.warning("trigger_extraction: source not found: %s", exc)
+            return json.dumps({
+                "error": f"Source file not found: {exc}",
+            })
+        except Exception as exc:
+            logger.exception("trigger_extraction failed")
+            return json.dumps({"error": f"Extraction trigger failed: {exc}"})
 
     @mcp.tool(
         name="get_extraction_status",
@@ -115,10 +122,31 @@ def register_extraction_tools(mcp: FastMCP) -> None:
             JSON object with job_id, status, progress, stage,
             and error (if any).
         """
-        job = EXTRACTION_JOBS.get(job_id)
-        if job is None:
-            return json.dumps({
-                "error": f"Job '{job_id}' not found",
-            })
+        try:
+            from nfm_db.services.extraction_pipeline import get_job
 
-        return json.dumps(job, default=str)
+            job = get_job(job_id)
+            if job is None:
+                return json.dumps({
+                    "error": f"Job '{job_id}' not found",
+                })
+
+            return json.dumps({
+                "job_id": job.job_id,
+                "source_reference": job.source_reference,
+                "source_type": job.source_type,
+                "status": job.status.value,
+                "progress": getattr(job, "progress", 0),
+                "stage": getattr(job, "stage", None),
+                "started_at": (
+                    job.started_at.isoformat() if job.started_at else None
+                ),
+                "completed_at": (
+                    job.completed_at.isoformat() if job.completed_at else None
+                ),
+                "error": getattr(job, "error", None),
+            }, default=str)
+
+        except Exception as exc:
+            logger.exception("get_extraction_status failed")
+            return json.dumps({"error": f"Status lookup failed: {exc}"})
