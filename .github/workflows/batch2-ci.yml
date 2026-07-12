@@ -1,0 +1,142 @@
+name: Batch 2 CI — KG Tests + Entity Linking Eval
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/src/nfm_db/models/kg.py"
+      - "apps/api/src/nfm_db/models/ontology.py"
+      - "apps/api/src/nfm_db/services/kg_*.py"
+      - "apps/api/src/nfm_db/services/ontology_*.py"
+      - "apps/api/src/nfm_db/schemas/kg.py"
+      - "apps/api/src/nfm_db/schemas/ontology*.py"
+      - "apps/api/src/nfm_db/api/v1/kg.py"
+      - "apps/api/src/nfm_db/api/v1/ontology.py"
+      - "apps/api/tests/test_kg_*.py"
+      - "apps/api/tests/test_ontology*.py"
+      - "scripts/eval_entity_linking.py"
+      - "scripts/test_query_correctness.py"
+      - ".github/workflows/batch2-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/api/src/nfm_db/models/kg.py"
+      - "apps/api/src/nfm_db/models/ontology.py"
+      - "apps/api/src/nfm_db/services/kg_*.py"
+      - "apps/api/src/nfm_db/services/ontology_*.py"
+      - "apps/api/src/nfm_db/schemas/kg.py"
+      - "apps/api/src/nfm_db/schemas/ontology*.py"
+      - "apps/api/src/nfm_db/api/v1/kg.py"
+      - "apps/api/src/nfm_db/api/v1/ontology.py"
+      - "apps/api/tests/test_kg_*.py"
+      - "apps/api/tests/test_ontology*.py"
+      - "scripts/eval_entity_linking.py"
+      - "scripts/test_query_correctness.py"
+      - ".github/workflows/batch2-ci.yml"
+
+concurrency:
+  group: batch2-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    name: Lint + Type Check (KG paths)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Ruff lint (KG + ontology)
+        run: uv run ruff check src/nfm_db/models/kg.py src/nfm_db/models/ontology.py src/nfm_db/services/kg_*.py src/nfm_db/services/ontology_*.py src/nfm_db/schemas/kg.py src/nfm_db/schemas/ontology*.py src/nfm_db/api/v1/kg.py src/nfm_db/api/v1/ontology.py
+
+      - name: Ruff format check (KG + ontology)
+        run: uv run ruff format --check src/nfm_db/models/kg.py src/nfm_db/models/ontology.py src/nfm_db/services/kg_*.py src/nfm_db/services/ontology_*.py src/nfm_db/schemas/kg.py src/nfm_db/schemas/ontology*.py src/nfm_db/api/v1/kg.py src/nfm_db/api/v1/ontology.py
+
+      - name: Mypy type check (KG + ontology)
+        run: uv run mypy src/nfm_db/models/kg.py src/nfm_db/models/ontology.py src/nfm_db/services/kg_*.py src/nfm_db/services/ontology_*.py src/nfm_db/schemas/kg.py src/nfm_db/schemas/ontology*.py --ignore-missing-imports
+
+  kg-unit-tests:
+    name: KG Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run KG model tests
+        run: uv run pytest tests/test_kg_models.py tests/test_kg_utils.py -v --tb=short
+
+      - name: Run KG service tests
+        run: uv run pytest tests/test_kg_re.py tests/test_kg_lightrag_sync.py -v --tb=short
+
+      - name: Run KG API tests
+        run: uv run pytest tests/test_kg_search_api.py -v --tb=short
+
+      - name: Run ontology tests
+        run: uv run pytest tests/test_ontology_*.py -v --tb=short
+
+  entity-linking-eval:
+    name: Entity Linking Eval (≥90%)
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run entity linking evaluation
+        run: uv run python ../scripts/eval_entity_linking.py
+
+  query-correctness:
+    name: Query Correctness + Ontology Coverage
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run query correctness tests
+        run: uv run python ../scripts/test_query_correctness.py
