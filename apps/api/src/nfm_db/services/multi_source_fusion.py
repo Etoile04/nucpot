@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -27,7 +27,7 @@ from nfm_db.models.conflict_record import (
     ConflictRecord,
     ConflictStatus,
 )
-from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.kg import KGEdge
 from nfm_db.models.property import PropertyType
 from nfm_db.schemas.conflict import FusionResult
 from nfm_db.services.conflict_resolver import (
@@ -185,7 +185,7 @@ async def resolve_single_conflict(
     record.strategy = strategy
     record.status = ConflictStatus.RESOLVED
     record.resolved_by = resolved_by
-    record.resolved_at = datetime.utcnow()
+    record.resolved_at = datetime.now(timezone.utc)  # noqa: UP017
     record.resolution_notes = notes
     await session.flush()
 

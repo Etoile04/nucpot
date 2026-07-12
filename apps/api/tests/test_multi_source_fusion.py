@@ -163,9 +163,6 @@ class TestDetectConflicts:
         specific_mat = uuid.uuid4()
         await detect_conflicts(session, material_id=specific_mat)
         session.execute.assert_called_once()
-        call_stmt = session.execute.call_args[0][0]
-        # Verify the session was called (material_id used in WHERE clause)
-        assert session.execute.called
 
     @pytest.mark.asyncio
     async def test_with_property_type_id_and_strategy_override(self) -> None:
