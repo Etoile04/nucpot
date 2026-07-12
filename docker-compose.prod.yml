@@ -100,6 +100,8 @@ services:
     build:
       context: .
       dockerfile: docker/lightrag.Dockerfile
+      args:
+        LIGHTRAG_VERSION: "1.5.4"
     image: nucpot-prod-lightrag:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-lightrag
     restart: unless-stopped
