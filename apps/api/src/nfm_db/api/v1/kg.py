@@ -1,7 +1,18 @@
-"""Knowledge Graph search endpoint (NFM-1166).
+"""Knowledge Graph endpoints (NFM-1166 / NFM-858).
 
-``GET /api/v1/kg/search`` provides paginated, filterable search over KG nodes.
-Public read-only endpoint (no auth required).
+Currently exposed:
+
+* ``GET  /api/v1/kg/search``        — paginated, filterable search over KG nodes.
+* ``GET  /api/v1/kg/query/property``  — find nodes by property value.
+* ``GET  /api/v1/kg/query/relations`` — find edges by relation type and direction.
+* ``POST /api/v1/kg/query/path``      — bounded BFS traversal between two nodes.
+
+The three ``/query/*`` endpoints wire their request via Pydantic models
+(``Depends(...)`` for query-param-backed endpoints, request body for the
+POST path query) so the validators (``Literal[...]``, ``ge=...``,
+``le=...``) declared on the schemas actually run — see NFM-858 review L2.
+
+All endpoints are public read-only; no auth required.
 """
 
 from __future__ import annotations
@@ -16,6 +27,23 @@ from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
 from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse
+from nfm_db.schemas.kg_query import (
+    PathQueryRequest,
+    PathQueryResponse,
+    PropertyQueryRequest,
+    PropertyQueryResponse,
+    RelationQueryRequest,
+    RelationQueryResponse,
+)
+from nfm_db.services.kg_query_service import (
+    path_query as run_path_query,
+)
+from nfm_db.services.kg_query_service import (
+    property_query as run_property_query,
+)
+from nfm_db.services.kg_query_service import (
+    relation_query as run_relation_query,
+)
 
 router = APIRouter(tags=["知识图谱"])
 
@@ -122,3 +150,97 @@ def _build_search_item(node: KGNode) -> KGSearchItem:
         status=node.status,
         source_id=str(node.source_id) if node.source_id else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# NFM-858: Three KG query modes
+#
+# These endpoints intentionally consume their request as Pydantic
+# ``BaseModel`` instances (either as ``Depends(...)`` for query-param
+# endpoints or as a request body for the POST path query).  That way the
+# ``Literal[...]``, ``ge=``, and ``le=`` validators declared on the
+# schemas run automatically — see NFM-858 review L2.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/kg/query/property",
+    response_model=PropertyQueryResponse,
+    summary="Find KG nodes by property value",
+)
+async def property_query_endpoint(
+    request: PropertyQueryRequest = Depends(),
+    session: AsyncSession = Depends(get_db),
+) -> PropertyQueryResponse:
+    """Find KG nodes by node_type, label, and/or JSON-property key/value.
+
+    All filters are optional; combining ``property_key`` and
+    ``property_value`` matches nodes whose JSON properties contain an
+    entry equal to ``property_value``.  ``label`` is an exact match
+    unless ``fuzzy=true``, in which case ``ILIKE`` substring matching is
+    used.
+    """
+    return await run_property_query(
+        session,
+        node_type=request.node_type,
+        label=request.label,
+        property_key=request.property_key,
+        property_value=request.property_value,
+        fuzzy=request.fuzzy,
+        limit=request.limit,
+        offset=request.offset,
+    )
+
+
+@router.get(
+    "/kg/query/relations",
+    response_model=RelationQueryResponse,
+    summary="Find KG edges by relation type and direction",
+)
+async def relation_query_endpoint(
+    request: RelationQueryRequest = Depends(),
+    session: AsyncSession = Depends(get_db),
+) -> RelationQueryResponse:
+    """Find KG edges filtered by relation type and/or endpoint nodes.
+
+    ``direction`` is constrained by the schema to one of
+    ``{"outgoing", "incoming", "both"}``; invalid values are rejected
+    with HTTP 422 by Pydantic before this handler runs.
+    """
+    return await run_relation_query(
+        session,
+        source_node_id=request.source_node_id,
+        target_node_id=request.target_node_id,
+        relation_type=request.relation_type,
+        direction=request.direction,
+        limit=request.limit,
+        offset=request.offset,
+    )
+
+
+@router.post(
+    "/kg/query/path",
+    response_model=PathQueryResponse,
+    summary="Find bounded paths between two KG nodes",
+)
+async def path_query_endpoint(
+    request: PathQueryRequest,
+    session: AsyncSession = Depends(get_db),
+) -> PathQueryResponse:
+    """Find bounded paths between two KG nodes via Apache AGE / BFS.
+
+    ``max_depth`` is hard-capped at 3 by the schema.  Service-layer
+    ``ValueError`` (e.g. unknown ``relation_types``) is mapped to
+    HTTP 400.
+    """
+    try:
+        return await run_path_query(
+            session,
+            source_node_id=request.source_node_id,
+            target_node_id=request.target_node_id,
+            max_depth=request.max_depth,
+            relation_types=request.relation_types,
+            limit=request.limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
