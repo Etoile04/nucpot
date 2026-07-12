@@ -23,11 +23,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import (
+    VALID_NODE_TYPES,
     VALID_RELATION_TYPES,
     KGEdge,
     KGNode,
     KGReviewQueue,
 )
+from nfm_db.services.kg_utils import parse_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -285,35 +287,24 @@ class EntityLinker:
         label: str,
         corpus_id: str | None,
     ) -> KGNode | None:
-        """Query for active nodes whose aliases contain the label (case-insensitive).
-
-        Uses SQL ILIKE against the JSON-encoded aliases text column so the
-        DB engine filters rows instead of loading every node into Python.
-        """
+        """Query for active nodes whose aliases contain the label (case-insensitive)."""
         query = select(KGNode).where(
             KGNode.aliases.is_not(None),
             KGNode.status == "active",
-            KGNode.aliases.ilike(f"%{label}%"),
         )
         if corpus_id is not None:
             query = query.where(KGNode.corpus_id == corpus_id)
 
-        query = query.limit(1)
         result = await session.execute(query)
-        return result.scalar_one_or_none()
+        nodes = result.scalars().all()
 
+        label_lower = label.lower().strip()
+        for node in nodes:
+            node_aliases = parse_aliases(node.aliases)
+            if any(label_lower in alias.lower() for alias in node_aliases):
+                return node
 
-def _parse_aliases(aliases_field: str | None) -> list[str]:
-    """Parse the JSON-encoded aliases field into a list of strings."""
-    if aliases_field is None:
-        return []
-    try:
-        parsed = json.loads(aliases_field)
-        if isinstance(parsed, list):
-            return [str(a) for a in parsed]
-        return []
-    except (json.JSONDecodeError, TypeError):
-        return []
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +357,8 @@ class GraphBuilder:
 
         # Phase 2: Entity linking
         node_map: dict[str, KGNode] = {}
+        new_nodes: list[KGNode] = []
+        new_edges: list[KGEdge] = []
         nodes_created = 0
         nodes_matched = 0
         review_count = 0
@@ -381,6 +374,7 @@ class GraphBuilder:
             else:
                 new_node = await self._create_node(entity)
                 node_map[entity.label] = new_node
+                new_nodes.append(new_node)
                 nodes_created += 1
 
                 if entity.confidence < REVIEW_CONFIDENCE_THRESHOLD:
@@ -408,6 +402,7 @@ class GraphBuilder:
                 continue
 
             edge = await self._create_edge(relation, source_node.id, target_node.id)
+            new_edges.append(edge)
             edges_created += 1
 
             if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
@@ -435,6 +430,11 @@ class GraphBuilder:
             result.edges_created,
             result.review_queue_items,
         )
+
+        # Post-processing: fire-and-forget LightRAG auto-ingest (NFM-1222)
+        if nodes_created > 0 or edges_created > 0:
+            self._fire_lightrag_ingest(new_nodes, new_edges)
+
         return result
 
     def _convert_to_entities(
@@ -589,6 +589,30 @@ class GraphBuilder:
         )
         self._session.add(queue_entry)
 
+    def _fire_lightrag_ingest(
+        self,
+        nodes: list[KGNode],
+        edges: list[KGEdge],
+    ) -> None:
+        """Fire-and-forget: serialize and ingest new KG data to LightRAG.
+
+        Non-blocking — failures are logged but never propagate.
+        """
+        try:
+            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
+
+            node_labels = {n.id: n.label for n in nodes}
+            fire_ingest_to_lightrag(
+                nodes=nodes,
+                edges=edges,
+                node_labels=node_labels,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to schedule LightRAG ingest (non-fatal)",
+                exc_info=True,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Utility functions
@@ -612,8 +636,13 @@ def _confidence_to_float(raw_confidence: Any) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Graph query functions (read-only, for MCP tool layer)
+# Query functions (read-only — used by MCP tools and external services)
 # ---------------------------------------------------------------------------
+
+
+# Default limits and ceilings for query functions.
+_QUERY_DEFAULT_LIMIT: int = 50
+_QUERY_MAX_LIMIT: int = 500
 
 
 async def query_graph_nodes(
@@ -621,71 +650,123 @@ async def query_graph_nodes(
     *,
     entity_types: list[str] | None = None,
     query: str | None = None,
-    limit: int = 50,
-) -> list[KGNode]:
-    """Query knowledge graph nodes with optional filters.
+    limit: int = _QUERY_DEFAULT_LIMIT,
+    corpus_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query KG nodes with optional filters.
+
+    Filters (all AND-combined):
+      - ``entity_types``: only include nodes whose ``node_type`` is in
+        the given list (PascalCase: Material, Property, Experiment,
+        Condition, Publication). Unknown values are silently dropped.
+      - ``query``: case-insensitive substring match against ``label``.
+      - ``corpus_id``: filter to a specific corpus; ``None`` returns all.
 
     Args:
         session: Async database session.
-        entity_types: Optional list of node types to filter by
-            (e.g., ['Material', 'Property']).
-        query: Optional text to search in node labels (case-insensitive).
-        limit: Maximum number of nodes to return (1-100).
+        entity_types: Optional whitelist of node types.
+        query: Optional free-text search term.
+        limit: Maximum number of rows to return (default 50, max 500).
+        corpus_id: Optional corpus filter.
 
     Returns:
-        List of active KGNode objects matching the filters.
+        List of dicts with keys: id, node_type, label, confidence,
+        status, properties.  Empty list when no matches.
     """
-    stmt = select(KGNode).where(KGNode.status == "active")
+    safe_limit = max(1, min(int(limit), _QUERY_MAX_LIMIT))
+
+    stmt = select(KGNode).where(KGNode.status != "deprecated")
 
     if entity_types:
-        normalized = {t.strip() for t in entity_types if t.strip()}
-        if normalized:
-            stmt = stmt.where(KGNode.node_type.in_(normalized))
+        valid_types = [t for t in entity_types if t in VALID_NODE_TYPES]
+        if valid_types:
+            stmt = stmt.where(KGNode.node_type.in_(valid_types))
+        else:
+            # All requested types are invalid -> return empty result
+            return []
+
+    if corpus_id is not None:
+        stmt = stmt.where(KGNode.corpus_id == corpus_id)
 
     if query:
-        stmt = stmt.where(KGNode.label.ilike(f"%{query}%"))
+        pattern = f"%{query.lower()}%"
+        # Match against label (case-insensitive substring).
+        stmt = stmt.where(KGNode.label.ilike(pattern))
 
-    stmt = stmt.order_by(KGNode.created_at.desc()).limit(min(limit, 100))
+    stmt = stmt.order_by(KGNode.confidence.desc()).limit(safe_limit)
 
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    nodes = result.scalars().all()
+
+    return [
+        {
+            "id": str(node.id),
+            "node_type": node.node_type,
+            "label": node.label,
+            "confidence": float(node.confidence),
+            "status": node.status,
+            "properties": dict(node.properties or {}),
+        }
+        for node in nodes
+    ]
 
 
 async def query_graph_edges(
     session: AsyncSession,
     *,
-    node_ids: set[uuid.UUID] | None = None,
+    source_id: uuid.UUID | None = None,
+    target_id: uuid.UUID | None = None,
     relation_type: str | None = None,
-    limit: int = 50,
-) -> list[KGEdge]:
-    """Query knowledge graph edges connected to given nodes.
+    limit: int = _QUERY_DEFAULT_LIMIT,
+    corpus_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query KG edges with optional filters.
+
+    Filters (all AND-combined):
+      - ``source_id``: only edges originating from this node id.
+      - ``target_id``: only edges pointing at this node id.
+      - ``relation_type``: only edges of this type (e.g. ``hasProperty``).
+      - ``corpus_id``: filter to a specific corpus; ``None`` returns all.
 
     Args:
         session: Async database session.
-        node_ids: Set of node UUIDs to find edges for.
-            Returns edges where source OR target matches.
-        relation_type: Optional relation type filter (e.g., 'hasProperty').
-        limit: Maximum number of edges to return (1-100).
+        source_id: Optional source node UUID.
+        target_id: Optional target node UUID.
+        relation_type: Optional relation type whitelist entry.
+        limit: Maximum number of rows to return (default 50, max 500).
+        corpus_id: Optional corpus filter.
 
     Returns:
-        List of KGEdge objects matching the filters.
+        List of dicts with keys: id, source_node_id, target_node_id,
+        relation_type, confidence, properties.  Empty list when no
+        matches.
     """
-    if not node_ids:
-        return []
+    safe_limit = max(1, min(int(limit), _QUERY_MAX_LIMIT))
 
-    from sqlalchemy import or_
+    stmt = select(KGEdge)
 
-    stmt = select(KGEdge).where(
-        or_(
-            KGEdge.source_node_id.in_(node_ids),
-            KGEdge.target_node_id.in_(node_ids),
-        )
-    )
+    if source_id is not None:
+        stmt = stmt.where(KGEdge.source_node_id == source_id)
+    if target_id is not None:
+        stmt = stmt.where(KGEdge.target_node_id == target_id)
+    if relation_type is not None:
+        stmt = stmt.where(KGEdge.relation_type == relation_type)
+    if corpus_id is not None:
+        stmt = stmt.where(KGEdge.corpus_id == corpus_id)
 
-    if relation_type:
-        stmt = stmt.where(KGEdge.relation_type == relation_type.strip())
-
-    stmt = stmt.order_by(KGEdge.created_at.desc()).limit(min(limit, 100))
+    stmt = stmt.order_by(KGEdge.confidence.desc()).limit(safe_limit)
 
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    edges = result.scalars().all()
+
+    return [
+        {
+            "id": str(edge.id),
+            "source_node_id": str(edge.source_node_id),
+            "target_node_id": str(edge.target_node_id),
+            "relation_type": edge.relation_type,
+            "confidence": float(edge.confidence),
+            "properties": dict(edge.properties or {}),
+        }
+        for edge in edges
+    ]

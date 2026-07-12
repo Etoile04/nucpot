@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -35,6 +36,9 @@ from nfm_db.services.quality_gate import QualityGateService
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
+_DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
+
 # In-memory job store
 # ---------------------------------------------------------------------------
 
@@ -68,6 +72,7 @@ class ExtractionJob:
     extracted_count: int = 0
     staged_count: int = 0
     rejected_count: int = 0
+    duplicate_count: int = 0
     error_message: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
@@ -227,6 +232,15 @@ async def ontofuel_extract(
     Expected return format: list of dicts with keys matching
     schemas.extraction.ExtractedProperty fields.
     """
+    # Stub mode + DOI: return empty (DOI content not available in stub) (NFM-636)
+    if _is_stub_mode() and source_type == "doi":
+        logger.info(
+            "OntoFuel stub mode: DOI content not available for %s — returning empty",
+            source_reference,
+        )
+        return []
+
+
     # Stub mode: return demo data for CI/testing
     if _is_stub_mode():
         logger.info(
@@ -417,11 +431,20 @@ async def trigger_extraction(
         )
 
         if not raw_properties:
-            _update_job(
-                job,
-                status=JobStatus.COMPLETED,
-                completed_at=datetime.now(UTC),
-            )
+            # DOI in stub/no-LLM mode → FAILED (NFM-636)
+            if source_type == "doi":
+                _update_job(
+                    job,
+                    status=JobStatus.FAILED,
+                    error_message="DOI content not available in stub mode",
+                    completed_at=datetime.now(UTC),
+                )
+            else:
+                _update_job(
+                    job,
+                    status=JobStatus.COMPLETED,
+                    completed_at=datetime.now(UTC),
+                )
             return job
 
         # Stage 2: Property mapping (normalize names)
@@ -450,10 +473,11 @@ async def trigger_extraction(
         for _ in bulk_result.rejected:
             rejected += 1
 
+        duplicate_count = 0
         for _ in bulk_result.duplicates:
-            rejected += 1
+            duplicate_count += 1
 
-        _update_job(job, staged_count=staged, rejected_count=rejected)
+        _update_job(job, staged_count=staged, rejected_count=rejected, duplicate_count=duplicate_count)
 
         logger.info(
             "Job %s: staged=%d rejected=%d (of %d extracted)",

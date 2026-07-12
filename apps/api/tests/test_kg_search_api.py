@@ -1,4 +1,4 @@
-"""Tests for KG Search API endpoint (NFM-1166).
+"""Tests for KG Search API endpoint (NFM-1166, NFM-1222).
 
 Tests for GET /api/v1/kg/search covering:
 - Basic search with query term
@@ -6,12 +6,13 @@ Tests for GET /api/v1/kg/search covering:
 - Type filter validation rejects invalid types (400)
 - Response schema matches contract
 - Pagination works correctly
+- Semantic query bridge (mode=lightrag) with graceful fallback
 """
 
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -233,3 +234,124 @@ class TestKGSearchPagination:
 
         assert resp.status_code == 200
         assert resp.json()["items"][0]["aliases"] == []
+
+
+# ---------------------------------------------------------------------------
+# Semantic query bridge (NFM-1222)
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticQueryBridge:
+    """Tests for the mode=lightrag semantic query bridge."""
+
+    @pytest.mark.asyncio
+    async def test_lightrag_mode_returns_semantic_response(self) -> None:
+        """mode=lightrag should return SemanticQueryResponse when LightRAG is healthy."""
+        mock_result = MagicMock()
+        mock_result.response = "UO2 is uranium dioxide fuel."
+        mock_result.references = [{"source": "doc1.pdf"}]
+        mock_result.entities = [{"name": "UO2"}]
+        mock_result.relationships = []
+        mock_result.provider = "lightrag"
+        mock_result.fallback = False
+
+        mock_selector = AsyncMock()
+        mock_selector.query = AsyncMock(return_value=mock_result)
+
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        with patch(
+            "nfm_db.services.lightrag_client.is_lightrag_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.rag_provider.RAGProviderSelector",
+            return_value=mock_selector,
+        ):
+            client = _make_client(lambda: mock_session)
+            resp = client.get("/kg/search", params={"q": "What is UO2?", "mode": "lightrag"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["response"] == "UO2 is uranium dioxide fuel."
+        assert body["provider"] == "lightrag"
+        assert body["fallback"] is False
+        assert len(body["references"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_lightrag_mode_falls_back_when_not_configured(self) -> None:
+        """mode=lightrag should fall back to structured search when not configured."""
+        node = _make_node(label="UO2")
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute = AsyncMock(
+            side_effect=_mock_session_side_effect(1, [node])
+        )
+
+        with patch(
+            "nfm_db.services.lightrag_client.is_lightrag_configured",
+            return_value=False,
+        ):
+            client = _make_client(lambda: mock_session)
+            resp = client.get("/kg/search", params={"q": "UO2", "mode": "lightrag"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Falls back to KGSearchResponse format
+        assert "items" in body
+        assert body["total"] == 1
+
+    @pytest.mark.asyncio
+    async def test_lightrag_mode_falls_back_on_exception(self) -> None:
+        """mode=lightrag should fall back when LightRAG raises an exception."""
+        node = _make_node(label="UO2")
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute = AsyncMock(
+            side_effect=_mock_session_side_effect(1, [node])
+        )
+
+        with patch(
+            "nfm_db.services.lightrag_client.is_lightrag_configured",
+            return_value=True,
+        ), patch(
+            "nfm_db.services.rag_provider.RAGProviderSelector",
+            side_effect=RuntimeError("connection refused"),
+        ):
+            client = _make_client(lambda: mock_session)
+            resp = client.get("/kg/search", params={"q": "UO2", "mode": "lightrag"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Falls back to KGSearchResponse format
+        assert "items" in body
+        assert body["total"] == 1
+
+    @pytest.mark.asyncio
+    async def test_lightrag_mode_without_query_uses_structured(self) -> None:
+        """mode=lightrag without q parameter should use structured search."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute = AsyncMock(
+            side_effect=_mock_session_side_effect(0, [])
+        )
+
+        client = _make_client(lambda: mock_session)
+        resp = client.get("/kg/search", params={"mode": "lightrag"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Should use structured search (no query to route)
+        assert "items" in body
+
+    @pytest.mark.asyncio
+    async def test_structured_mode_unchanged(self) -> None:
+        """mode=structured should behave exactly like the original endpoint."""
+        node = _make_node(label="ZrO2")
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute = AsyncMock(
+            side_effect=_mock_session_side_effect(1, [node])
+        )
+
+        client = _make_client(lambda: mock_session)
+        resp = client.get("/kg/search", params={"q": "ZrO2", "mode": "structured"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["items"][0]["label"] == "ZrO2"

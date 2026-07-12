@@ -114,9 +114,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove quality-gate and v4 workflow columns."""
-    op.execute(f"DROP INDEX IF EXISTS idx_staging_fill_batch")
-    op.execute(f"DROP INDEX IF EXISTS idx_staging_dedup")
-    op.execute(f"DROP INDEX IF EXISTS idx_staging_element_phase_prop")
+    op.execute("DROP INDEX IF EXISTS idx_staging_fill_batch")
+    op.execute("DROP INDEX IF EXISTS idx_staging_dedup")
+    op.execute("DROP INDEX IF EXISTS idx_staging_element_phase_prop")
 
     op.execute(f"ALTER TABLE {TABLE} DROP COLUMN IF EXISTS promoted_at")
     op.execute(f"ALTER TABLE {TABLE} DROP COLUMN IF EXISTS promoted_to_pm_id")

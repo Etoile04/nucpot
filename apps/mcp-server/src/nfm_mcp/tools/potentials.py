@@ -1,14 +1,17 @@
-"""Thermodynamic potential query tools."""
+"""Thermodynamic potential query tools (Phase B — real service layer)."""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_mcp.tools.mock_data import POTENTIALS
+from nfm_mcp.deps import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class QueryPotentialsInput(BaseModel):
@@ -34,31 +37,6 @@ class QueryPotentialsInput(BaseModel):
         default=None,
         description="Temperature range filter (e.g., '300-3000 K')",
     )
-
-
-def _parse_temperature_range(temp_range_str: str) -> tuple[float, float] | None:
-    """Parse a temperature range string like '300-3000 K' into (low, high)."""
-    cleaned = temp_range_str.replace("K", "").replace("k", "").strip()
-    parts = cleaned.split("-")
-    if len(parts) != 2:
-        return None
-    try:
-        return float(parts[0].strip()), float(parts[1].strip())
-    except ValueError:
-        return None
-
-
-def _ranges_overlap(
-    valid_range: list[object],
-    filter_range: tuple[float, float],
-) -> bool:
-    """Check if two temperature ranges overlap."""
-    if len(valid_range) < 2:
-        return False
-    valid_low = float(valid_range[0])
-    valid_high = float(valid_range[1])
-    filter_low, filter_high = filter_range
-    return valid_low <= filter_high and valid_high >= filter_low
 
 
 def register_potential_tools(mcp: FastMCP) -> None:
@@ -91,32 +69,33 @@ def register_potential_tools(mcp: FastMCP) -> None:
             JSON array of potential model records with model name,
             expression type, coefficients, and valid range.
         """
-        results = [
-            p for p in POTENTIALS
-            if p.get("material_id") == material_id
-        ]
+        try:
+            from nfm_db.services.potential_service import list_potentials
 
-        if potential_type is not None:
-            type_lower = potential_type.lower()
-            results = [
-                p for p in results
-                if type_lower in str(p.get("potential_type", "")).lower()
-            ]
+            # Use material_id as text query; model_name refines if both given
+            search_query = model_name if model_name else material_id
 
-        if model_name is not None:
-            name_lower = model_name.lower()
-            results = [
-                p for p in results
-                if name_lower in str(p.get("model_name", "")).lower()
-            ]
+            async for db in get_db_session():
+                result = await list_potentials(
+                    db,
+                    page=1,
+                    limit=100,
+                    type_filter=potential_type,
+                    query=search_query,
+                )
 
-        if temperature_range is not None:
-            parsed = _parse_temperature_range(temperature_range)
-            if parsed is not None:
-                results = [
-                    p for p in results
-                    if isinstance(p.get("valid_range_k"), list)
-                    and _ranges_overlap(list(p["valid_range_k"]), parsed)
-                ]
+                # Post-filter by model_name if both material_id and model_name provided
+                items = result.potentials
+                if model_name and material_id:
+                    name_lower = model_name.lower()
+                    items = [
+                        p for p in items
+                        if name_lower in (p.name or "").lower()
+                        or name_lower in (p.display_name or "").lower()
+                    ]
 
-        return json.dumps(results, default=str)
+                return result.model_dump_json(indent=2)
+
+        except Exception as exc:
+            logger.exception("query_potentials failed")
+            return json.dumps({"error": f"Potential query failed: {exc}"})

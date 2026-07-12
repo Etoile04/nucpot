@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import OntologyViewerFrame from "./OntologyViewerFrame";
 import { extractRecordRef, type OntologyGraph } from "@/lib/ontology/record-ref";
 
-// Relative paths — next.config.ts rewrite proxy handles backend routing.
+type FetchStatus = "idle" | "loading" | "done";
 
 export interface OntologyRecordRefProps {
   /** Node id from the ?node= deep link (e.g. "mat:UO2"). */
@@ -32,28 +32,45 @@ export default function OntologyRecordRef({
   corpus,
 }: OntologyRecordRefProps) {
   const [recordRef, setRecordRef] = useState<string | null>(null);
+  const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
 
   useEffect(() => {
-    // No fetch without a concrete node + corpus — Phase 0 static browse path.
+    // Phase 0 static browse path — no graph fetch without both params.
     if (!node || !corpus) return;
-    let cancelled = false;
+
+    const controller = new AbortController();
+    setFetchStatus("loading");
 
     fetch(
       `/api/v1/ontology/corpora/${encodeURIComponent(corpus)}/graph`,
+      { signal: controller.signal },
     )
       .then((response) => (response.ok ? response.json() : null))
       .then((graph: OntologyGraph | null) => {
-        if (cancelled || !graph) return;
+        if (controller.signal.aborted || !graph) return;
         setRecordRef(extractRecordRef(graph, node));
       })
-      .catch(() => {
-        /* graceful: leave the viewer link-free on fetch error */
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("[OntologyRecordRef] graph fetch failed:", err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setFetchStatus("done");
+        }
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [node, corpus]);
 
-  return <OntologyViewerFrame node={node} recordRef={recordRef ?? undefined} />;
+  return (
+    <OntologyViewerFrame
+      node={node}
+      corpus={corpus}
+      recordRef={recordRef ?? undefined}
+      loading={fetchStatus === "loading"}
+    />
+  );
 }

@@ -203,3 +203,26 @@ class MaterialDetailResponse(MaterialResponse):
 
     aliases: list[MaterialAliasResponse] = Field(default_factory=list)
     composition: list[MaterialCompositionResponse] = Field(default_factory=list)
+
+
+# ── Batch import schemas (NFM-1141) ──────────────────────────────────
+
+
+class BatchRowError(BaseModel):
+    """Error detail for a single failed row in a batch import."""
+
+    row: int
+    field: str
+    message: str
+
+
+class BatchImportResult(BaseModel):
+    """Result of a batch CSV/JSON import operation.
+
+    ``imported`` counts rows successfully upserted. ``failed`` counts rows
+    that had validation errors (details in ``errors``).
+    """
+
+    imported: int
+    failed: int
+    errors: list[BatchRowError] = Field(default_factory=list)

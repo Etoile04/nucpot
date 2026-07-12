@@ -104,10 +104,19 @@ from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
 )
-from nfm_db.models.conflict import (  # noqa: E402
+from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
     ConflictRecord,
     ConflictStatus,
     ResolutionStrategy,
+)
+from nfm_db.models.extraction_figure import (  # noqa: E402
+    ExtractionFigure,
+)
+from nfm_db.models.extraction_job import (  # noqa: E402
+    ExtractionJob,
+)
+from nfm_db.models.extraction_result import (  # noqa: E402
+    ExtractionResult,
 )
 from nfm_db.models.feedback import (  # noqa: E402
     Feedback,
@@ -164,6 +173,10 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.models.review import (  # noqa: E402
+    ReviewMixin,
+    ReviewStatus,
+)
 from nfm_db.models.source import (  # noqa: E402
     Author,
     DataSource,
@@ -197,6 +210,9 @@ __all__ = [
     "DefectAnalysisResult",
     "DefectType",
     "ExecutionStatus",
+    "ExtractionFigure",
+    "ExtractionJob",
+    "ExtractionResult",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
@@ -230,6 +246,8 @@ __all__ = [
     "PropertyType",
     "RefGapFillStaging",
     "ResolutionStrategy",
+    "ReviewMixin",
+    "ReviewStatus",
     "StagingStatus",
     "TimestampMixin",
     "Unit",

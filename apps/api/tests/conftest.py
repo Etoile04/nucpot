@@ -6,7 +6,8 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import Text, event
+from sqlalchemy import JSON, event
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nfm_db.database import get_db
@@ -22,46 +23,117 @@ _SEED_OTHER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000003")
 
 
 # ---------------------------------------------------------------------------
-# SQLite compatibility: JSONB is PG-only — fall back to TEXT for test DDL.
-# This must run before the first ``create_all`` in any fixture.
+# SQLite compatibility helpers
 # ---------------------------------------------------------------------------
-@event.listens_for(Base.metadata, "before_create")
-def _map_jsonb_to_text_for_sqlite(
-    target,
-    connection,
-    **_kw,
-) -> None:
-    """Replace JSONB/ARRAY columns with TEXT so ``create_all`` succeeds on SQLite.
 
-    Runs on every ``before_create`` event (not once-only) because each test
-    re-creates the database from scratch.
+
+def _strip_dangling_fks(metadata) -> None:
+    """Remove FKs whose target table is absent from the metadata.
+
+    ``extraction_figures.job_id`` references ``extraction_jobs`` which is
+    not registered — SQLAlchemy's ``sort_tables_and_constraints`` raises
+    ``NoReferencedTableError``.  We strip these before ``create_all``.
+    Valid FKs (whose target *is* in the metadata) are kept so that ORM
+    relationships can resolve their join conditions.
     """
+    registered = set(metadata.tables.keys())
+    for table in metadata.tables.values():
+        for col in table.columns:
+            dangling = [
+                fk for fk in list(col.foreign_keys)
+                if fk._colspec.split(".")[0].strip('"') not in registered
+            ]
+            for fk in dangling:
+                col.foreign_keys.discard(fk)
+        table_fks_to_remove = [
+            fkc for fkc in list(table.constraints)
+            if hasattr(fkc, "_colspec")
+            and fkc._colspec.split(".")[0].strip('"') not in registered
+        ]
+        for fkc in table_fks_to_remove:
+            table.constraints.discard(fkc)
+
+
+def _replace_jsonb(metadata) -> None:
+    """Replace JSONB/ARRAY columns with TEXT/JSON for SQLite compat."""
     from sqlalchemy import ARRAY as SA_ARRAY
     from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
-    from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
-    from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 
-    if not isinstance(connection.dialect, SQLiteDialect):
-        return
-
-    for table in target.sorted_tables:
+    for table in metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, PG_JSONB):
-                col.type = Text()
+                col.type = JSON()
             if isinstance(col.type, (PG_ARRAY, SA_ARRAY)):
-                col.type = Text()
+                col.type = JSON()
+
+
+def _safe_create_all(sync_conn, metadata) -> None:
+    """Create all tables, stripping dangling FKs first.
+
+    ``conn.run_sync`` passes ``(sync_connection, *args)`` as the callable's
+    positional arguments.
+    """
+    _replace_jsonb(metadata)
+    _strip_dangling_fks(metadata)
+    metadata.create_all(sync_conn)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _disable_global_rate_limiting() -> None:
+    """Strip all rate-limiting from the test app.
+
+    Two layers exist:
+    1. **Middleware** — a global ``slowapi`` burst limiter (20/second).  Removed
+       from ``app.user_middleware`` entirely; ``limiter.reset()`` alone is
+       insufficient because the counter accumulates mid-test.
+    2. **Per-endpoint dependencies** — ``InProcessRateLimiter`` instances bound
+       via ``Depends()`` in ontology and md-verification routes.  Overridden
+       with no-ops so the 429 gate never fires during the test suite.
+    """
+    from nfm_db.middleware.rate_limit import NFMRateLimitMiddleware
+    from nfm_db.services.rate_limit import (
+        md_verification_rate_limit,
+        ontology_rate_limit,
+    )
+
+    # 1. Remove global middleware.
+    app.user_middleware = [
+        mw for mw in app.user_middleware
+        if mw.cls is not NFMRateLimitMiddleware
+    ]
+
+    # 2. Override per-endpoint rate-limit dependencies with no-ops.
+    async def _noop() -> None:  # pragma: no cover
+        pass
+
+    app.dependency_overrides[ontology_rate_limit] = _noop
+    app.dependency_overrides[md_verification_rate_limit] = _noop
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limiters() -> None:
-    """Isolate all in-process rate limiters between tests (no cross-test 429)."""
-    from nfm_db.services.rate_limit import md_verification_limiter, ontology_limiter
+def _reenable_rate_limit_overrides() -> None:
+    """Re-apply rate-limit no-op overrides before each test function.
 
-    ontology_limiter.reset()
-    md_verification_limiter.reset()
+    Many existing test files on main call ``dependency_overrides.clear()``
+    in their teardown, which wipes the session-scoped overrides above.
+    This function-scoped guard re-applies the no-ops before every test
+    so that stray 429s never leak into unrelated tests.
+
+    Rate-limit-specific tests (e.g. ``test_ontology_rate_limit_headers``)
+    deliberately set tighter overrides in their test bodies *after* this
+    fixture runs, so their assertions are unaffected.
+    """
+    from nfm_db.services.rate_limit import (
+        md_verification_rate_limit,
+        ontology_rate_limit,
+    )
+
+    async def _noop() -> None:  # pragma: no cover
+        pass
+
+    app.dependency_overrides[ontology_rate_limit] = _noop
+    app.dependency_overrides[md_verification_rate_limit] = _noop
     yield
-    ontology_limiter.reset()
-    md_verification_limiter.reset()
 
 
 @pytest.fixture
@@ -76,7 +148,7 @@ async def db_session() -> AsyncSession:
         cursor.close()
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_safe_create_all, Base.metadata)
 
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False,
@@ -117,8 +189,8 @@ async def async_client(db_session: AsyncSession):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
-    # Clean up override
-    app.dependency_overrides.clear()
+    # Clean up only the DB override — not the session-scoped rate-limit overrides.
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
@@ -204,4 +276,4 @@ async def authenticated_client(db_session: AsyncSession, admin_user: User):
     async with AsyncClient(transport=transport, base_url="http://test", headers=headers) as client:
         yield client
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)

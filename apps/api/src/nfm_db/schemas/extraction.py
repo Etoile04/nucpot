@@ -284,6 +284,7 @@ class V4StatusResponse(BaseModel):
     extracted_count: int = 0
     staged_count: int = 0
     rejected_count: int = 0
+    duplicate_count: int | None = None
     error_message: str | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
