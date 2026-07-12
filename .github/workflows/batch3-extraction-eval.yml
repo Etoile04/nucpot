@@ -1,0 +1,73 @@
+name: Batch 3 — Extraction Accuracy Eval
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      eval_mode:
+        description: "Eval mode (fixture_only, held_out, full)"
+        required: false
+        default: "fixture_only"
+      min_accuracy:
+        description: "Minimum accuracy threshold (percent)"
+        required: false
+        default: "60"
+
+jobs:
+  extraction-accuracy:
+    name: Extraction Accuracy Benchmark
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run accuracy benchmark tests
+        run: uv run pytest tests/eval/test_accuracy_benchmark.py -v --tb=short
+
+      - name: Run extraction eval (fixture_only)
+        env:
+          EXTRACTION_EVAL_MODE: fixture_only
+        run: |
+          python scripts/eval_extraction_accuracy.py \
+            --fixtures-dir apps/api/tests/fixtures/extraction \
+            --min-accuracy ${{ github.event.inputs.min_accuracy || '60' }} \
+            --output-json /tmp/extraction_eval_fixture_only.json
+
+      - name: Run extraction eval (held_out structure validation)
+        env:
+          EXTRACTION_EVAL_MODE: fixture_only
+        run: |
+          # Held-out mode requires extraction pipeline output to compute
+          # value-based accuracy. Until that pipeline is integrated, we
+          # validate held-out fixture structure by running fixture_only mode
+          # against the held-out subset directly.
+          python scripts/eval_extraction_accuracy.py \
+            --fixtures-dir apps/api/tests/fixtures/extraction/held_out \
+            --min-accuracy ${{ github.event.inputs.min_accuracy || '60' }} \
+            --output-json /tmp/extraction_eval_held_out.json
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: extraction-eval-results
+          path: |
+            /tmp/extraction_eval_fixture_only.json
+            /tmp/extraction_eval_held_out.json
+          retention-days: 30
