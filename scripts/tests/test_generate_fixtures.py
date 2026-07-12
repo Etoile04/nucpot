@@ -11,7 +11,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import generate_fixtures as gf  # noqa: E402
 
-
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
@@ -64,7 +63,7 @@ def test_generate_deterministic_seed(tmp_path: Path) -> None:
     out_b = tmp_path / "b"
     fa = gf.generate(out_a, {"plot": 2}, seed=20260101, write_images=True)
     fb = gf.generate(out_b, {"plot": 2}, seed=20260101, write_images=True)
-    for x, y in zip(fa, fb):
+    for x, y in zip(fa, fb, strict=False):
         a_bytes = (x.fixture_dir / "image.png").read_bytes()
         b_bytes = (y.fixture_dir / "image.png").read_bytes()
         assert a_bytes == b_bytes

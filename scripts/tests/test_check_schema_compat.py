@@ -5,8 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = SCRIPT_DIR / "check_schema_compat.py"
 

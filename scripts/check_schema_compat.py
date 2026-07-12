@@ -28,9 +28,10 @@ import argparse
 import importlib.util
 import json
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 
 def _configure_sys_path(extra_paths: Iterable[Path]) -> None:
@@ -118,17 +119,17 @@ def model_signature(model: type) -> dict[str, Any]:
     required/optional, and any Literal value lists we can find.
     """
     out: dict[str, Any] = {"fields": {}, "literals": {}}
-    for fname, field in model.model_fields.items():
+    for fname, finfo in model.model_fields.items():
         out["fields"][fname] = {
-            "required": field.is_required(),
-            "type": _normalize_type(field.annotation),
+            "required": finfo.is_required(),
+            "type": _normalize_type(finfo.annotation),
             "default": (
                 None
-                if field.default is None or field.default is ...
-                else repr(field.default)
+                if finfo.default is None or finfo.default is ...
+                else repr(finfo.default)
             ),
         }
-        annotation = field.annotation
+        annotation = finfo.annotation
         annotation_repr = repr(annotation)
         if "Literal" in annotation_repr or "Enum" in annotation_repr:
             out["literals"][fname] = annotation_repr

@@ -162,7 +162,7 @@ def _build_table(paper_id: str, idx: int, rng: random.Random) -> dict:
     n_rows = rng.randint(6, 12)
     headers = ["temperature_K", "stress_MPa", "strain_pct", "youngs_modulus_GPa", "density_gcc"][:n_cols]
     rows = []
-    for r in range(n_rows):
+    for _r in range(n_rows):
         temp = round(rng.uniform(300, 1200), 1)
         rows.append([
             {"value": str(temp), "row_span": 1, "col_span": 1, "is_header": False, "confidence": 1.0},

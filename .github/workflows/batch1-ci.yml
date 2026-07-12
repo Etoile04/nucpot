@@ -30,6 +30,7 @@ on:
       - "scripts/generate_fixtures.py"
       - "scripts/eval_extraction_accuracy.py"
       - "scripts/check_schema_compat.py"
+      - "scripts/verify_fixture_coverage.py"
       - "scripts/tests/**"
       # Schema baseline is a frozen snapshot; any change to it is itself
       # the B1.7 baseline-bump signal.
@@ -90,20 +91,8 @@ jobs:
       - name: Verify fixture coverage targets
         run: |
           cd "$GITHUB_WORKSPACE"
-          python -c "
-import sys
-from pathlib import Path
-from scripts.eval_extraction_accuracy import discover_fixtures, EXPECTED_COUNTS
-fix = discover_fixtures(Path('apps/api/tests/fixtures/extraction'))
-counts = {}
-for f in fix:
-                counts[f.figure_type] = counts.get(f.figure_type, 0) + 1
-print('fixtures per type:', counts)
-for t, expected in EXPECTED_COUNTS.items():
-                actual = counts.get(t, 0)
-                assert actual >= expected, f'{t}: {actual} < {expected}'
-assert sum(counts.values()) >= 50, f'total {sum(counts.values())} < 50'
-            "
+          python scripts/verify_fixture_coverage.py \
+            --fixtures apps/api/tests/fixtures/extraction
 
       - name: Unit tests (pytest)
         run: |

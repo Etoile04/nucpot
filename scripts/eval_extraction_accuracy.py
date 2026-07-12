@@ -178,7 +178,7 @@ def _match_list(
     ):
         scores = [
             _match_dict(t, c, numeric_tol, iou_thr)
-            for t, c in zip(truth, candidate)
+            for t, c in zip(truth, candidate, strict=False)
         ]
         return sum(scores) / len(scores)
     return 1.0 if [str(x) for x in truth] == [str(x) for x in candidate] else 0.0
