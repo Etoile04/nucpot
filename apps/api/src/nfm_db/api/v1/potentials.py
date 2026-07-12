@@ -70,7 +70,7 @@ async def create_potential_endpoint(
         potential = await create_potential(db, payload)
         await db.commit()
         await db.refresh(potential)
-        return ApiResponse(success=True, data={"id": str(potential.id), "name": potential.name, "type": potential.type, "elements": potential.elements})
+        return ApiResponse(success=True, data={"id": str(potential.id), "name": potential.name, "display_name": potential.display_name, "type": potential.type, "elements": potential.elements, "format": potential.format, "description": potential.description, "version": potential.version, "tags": potential.tags})
     except PotentialNameConflictError:
         raise HTTPException(status_code=409, detail="Potential name already exists")
     except PotentialUploadError as e:
