@@ -14,11 +14,11 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "pnpm"
@@ -38,46 +38,8 @@ jobs:
       - name: Build
         run: pnpm run build
 
-  e2e-smoke:
-    name: E2E Tests (Smoke)
-    runs-on: ubuntu-latest
-    needs: frontend
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run @smoke E2E tests against live site
-        run: pnpm exec playwright test --project=chromium --grep "@smoke"
-        env:
-          E2E_TARGET: live
-          BASE_URL: https://nucpot.dpdns.org
-          API_BASE_URL: https://verify.nucpot.dpdns.org
-          CI: true
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: playwright-report-smoke
-          path: apps/web/playwright-report/
-          retention-days: 30
-
-  e2e-core:
-    name: E2E Tests (Core)
+  e2e:
+    name: E2E Tests (Live)
     runs-on: ubuntu-latest
     needs: frontend
     if: github.event_name == 'push'
@@ -85,11 +47,11 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "pnpm"
@@ -100,18 +62,18 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run @unit + @integration E2E tests against live site
-        run: pnpm exec playwright test --project=chromium --grep "@unit|@integration"
+      - name: Run E2E tests against live site
+        run: pnpm exec playwright test --project=chromium
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org
           API_BASE_URL: https://verify.nucpot.dpdns.org
           CI: true
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: playwright-report-core
+          name: playwright-report
           path: apps/web/playwright-report/
           retention-days: 30
 
@@ -122,14 +84,14 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
 
@@ -148,24 +110,7 @@ jobs:
       - name: File size guard (≤800 lines)
         run: |
           echo "Checking file sizes..."
-          # Known legacy files exceeding 800 lines — tracked for refactoring (NFM-412)
-          # New or modified files MUST stay under 800 lines
-          EXCLUDE=(
-            src/nfm_db/services/md_verification.py
-            tests/test_hpc_ssh.py
-            tests/test_hpc_slurm.py
-            tests/test_reference_values_api.py
-            tests/test_hpc_orchestrator_unit.py
-            tests/test_hpc_orchestrator_methods.py
-            tests/test_hpc_file_transfer.py
-            tests/test_hpc_failover.py
-            tests/test_hpc_job_monitor.py
-          )
-          exclude_args=""
-          for f in "${EXCLUDE[@]}"; do
-            exclude_args="$exclude_args -not -path './$f'"
-          done
-          eval "oversized=$(find src tests -name '*.py' $exclude_args -exec wc -l {} + | awk '\$1 > 800 {print \$1, \$2}')"
+          oversized=$(find src tests -name '*.py' -exec wc -l {} + | awk '$1 > 800 {print $1, $2}')
           if [ -n "$oversized" ]; then
             echo "::error::Files exceeding 800-line limit detected:"
             echo "$oversized"
