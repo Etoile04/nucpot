@@ -36,7 +36,11 @@ from nfm_db.services.md_verification import (
     PotentialFittingResultUpdate,
 )
 
-JOB_ID = uuid.uuid4()
+JOB_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
+
+# Deterministic IDs matching conftest seed users.
+_OWNER_ID_A = uuid.UUID("a0000000-0000-0000-0000-000000000001")
+_OWNER_ID_B = uuid.UUID("a0000000-0000-0000-0000-000000000003")
 
 
 # ---------------------------------------------------------------------------
@@ -129,28 +133,26 @@ class TestGetJobOwnerFilter:
     async def test_get_job_with_wrong_owner_returns_none(self, db_session: AsyncSession) -> None:
         svc = MDVerificationService(db_session)
         job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}, owner_id=uuid.uuid4()
+            potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
         ))
-        result = await svc.get_job(job.id, owner_id=uuid.uuid4())
+        result = await svc.get_job(job.id, owner_id=_OWNER_ID_B)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_get_job_with_correct_owner_returns_job(self, db_session: AsyncSession) -> None:
-        owner = uuid.uuid4()
         svc = MDVerificationService(db_session)
         job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}, owner_id=owner
+            potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
         ))
-        result = await svc.get_job(job.id, owner_id=owner)
+        result = await svc.get_job(job.id, owner_id=_OWNER_ID_A)
         assert result is not None
-        assert result.owner_id == owner
+        assert result.owner_id == _OWNER_ID_A
 
     @pytest.mark.asyncio
     async def test_get_job_without_owner_returns_any(self, db_session: AsyncSession) -> None:
-        owner = uuid.uuid4()
         svc = MDVerificationService(db_session)
         job = await svc.create_job(MDVerificationJobCreate(
-            potential_id="UO2", element_system="UO2", config={}, owner_id=owner
+            potential_id="UO2", element_system="UO2", config={}, owner_id=_OWNER_ID_A
         ))
         result = await svc.get_job(job.id)
         assert result is not None
@@ -166,15 +168,14 @@ class TestListJobsOwnerFilter:
 
     @pytest.mark.asyncio
     async def test_list_jobs_by_owner(self, db_session: AsyncSession) -> None:
-        owner = uuid.uuid4()
         svc = MDVerificationService(db_session)
         await svc.create_job(MDVerificationJobCreate(
-            potential_id="A", element_system="A", config={}, owner_id=owner
+            potential_id="A", element_system="A", config={}, owner_id=_OWNER_ID_A
         ))
         await svc.create_job(MDVerificationJobCreate(
-            potential_id="B", element_system="B", config={}, owner_id=uuid.uuid4()
+            potential_id="B", element_system="B", config={}, owner_id=_OWNER_ID_B
         ))
-        results = await svc.list_jobs(owner_id=owner)
+        results = await svc.list_jobs(owner_id=_OWNER_ID_A)
         assert len(results) == 1
         assert results[0].potential_id == "A"
 

@@ -663,6 +663,181 @@ class TestV4Schemas:
 
 
 # ---------------------------------------------------------------------------
+# Multimodal field wiring tests (NFM-1197)
+# ---------------------------------------------------------------------------
+
+
+class TestMultimodalSubmitWiring:
+    """Tests that multimodal extraction options are passed through submit."""
+
+    @pytest.mark.asyncio
+    async def test_submit_passes_all_multimodal_options(
+        self, v4_client: AsyncClient
+    ):
+        """POST submit with all 5 multimodal fields stores them on the job."""
+        payload = {
+            "source_reference": "10.1016/j.nucmat.2024.01.001",
+            "source_type": "doi",
+            "extract_figures": True,
+            "extract_tables": True,
+            "figure_types": ["line", "scatter"],
+            "confidence_threshold": 0.8,
+            "conflict_strategy": "merge",
+        }
+        resp = await v4_client.post("/api/v4/extraction/submit", json=payload)
+        assert resp.status_code == 202
+        job_id = resp.json()["data"]["job_id"]
+
+        # Verify the job was created with multimodal options stored
+        from nfm_db.services.extraction_pipeline import get_job
+
+        job = get_job(job_id)
+        assert job is not None
+        assert job.extract_figures is True
+        assert job.extract_tables is True
+        assert job.figure_types == ["line", "scatter"]
+        assert job.confidence_threshold == 0.8
+        assert job.conflict_strategy == "merge"
+
+    @pytest.mark.asyncio
+    async def test_submit_defaults_multimodal_fields(
+        self, v4_client: AsyncClient
+    ):
+        """Omitting multimodal fields uses correct defaults."""
+        payload = {
+            "source_reference": "10.1016/j.test.2024.01.001",
+            "source_type": "doi",
+        }
+        resp = await v4_client.post("/api/v4/extraction/submit", json=payload)
+        assert resp.status_code == 202
+        job_id = resp.json()["data"]["job_id"]
+
+        from nfm_db.services.extraction_pipeline import get_job
+
+        job = get_job(job_id)
+        assert job is not None
+        assert job.extract_figures is False
+        assert job.extract_tables is False
+        assert job.figure_types is None
+        assert job.confidence_threshold == 0.5
+        assert job.conflict_strategy == "prefer_vlm"
+
+
+class TestMultimodalResultWiring:
+    """Tests that figures and tables are returned in result endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_result_includes_figures_and_tables(
+        self, v4_client: AsyncClient
+    ):
+        """GET result returns populated figures[] and tables[] from job data."""
+        from nfm_db.services.extraction_pipeline import (
+            ExtractionJob,
+            JobStatus,
+            _job_store,
+        )
+
+        job_id = "test-multimodal-result-populated"
+        _job_store[job_id] = ExtractionJob(
+            job_id=job_id,
+            source_reference="test://multimodal",
+            source_type="url",
+            status=JobStatus.COMPLETED,
+            figures=[
+                {
+                    "page_number": 3,
+                    "source_file": "paper.pdf",
+                    "extraction": {
+                        "figure_type": "plot",
+                        "plot_data": {
+                            "title": "Thermal Conductivity vs Temperature",
+                            "plot_type": "line",
+                            "x_axis": {
+                                "label": "Temperature",
+                                "unit": "K",
+                                "values": [300, 600, 900, 1200],
+                            },
+                            "y_axis": {
+                                "label": "Thermal Conductivity",
+                                "unit": "W/(m·K)",
+                                "values": [8.5, 4.2, 3.1, 2.5],
+                            },
+                            "series": [
+                                {
+                                    "name": "UO2",
+                                    "values": [8.5, 4.2, 3.1, 2.5],
+                                },
+                            ],
+                            "confidence": 0.92,
+                        },
+                        "provider": "openai",
+                        "model": "gpt-4o",
+                        "extraction_time_ms": 1250.0,
+                    },
+                },
+            ],
+            tables=[
+                {
+                    "page_number": 5,
+                    "source_file": "paper.pdf",
+                    "table_data": {
+                        "title": "Property Summary",
+                        "headers": {
+                            "columns": ["Property", "Value", "Unit"],
+                        },
+                        "rows": [
+                            [
+                                {"value": "Density"},
+                                {"value": "10.5"},
+                                {"value": "g/cm³"},
+                            ]
+                        ],
+                    },
+                },
+            ],
+        )
+        try:
+            resp = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert "figures" in data
+            assert "tables" in data
+            assert len(data["figures"]) == 1
+            assert data["figures"][0]["page_number"] == 3
+            assert len(data["tables"]) == 1
+            assert data["tables"][0]["page_number"] == 5
+        finally:
+            _job_store.pop(job_id, None)
+
+    @pytest.mark.asyncio
+    async def test_result_returns_empty_figures_tables_when_absent(
+        self, v4_client: AsyncClient
+    ):
+        """GET result returns empty arrays when job has no figures/tables (backward compat)."""
+        from nfm_db.services.extraction_pipeline import (
+            ExtractionJob,
+            JobStatus,
+            _job_store,
+        )
+
+        job_id = "test-multimodal-result-empty"
+        _job_store[job_id] = ExtractionJob(
+            job_id=job_id,
+            source_reference="test://no-multimodal",
+            source_type="url",
+            status=JobStatus.COMPLETED,
+        )
+        try:
+            resp = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert data["figures"] == []
+            assert data["tables"] == []
+        finally:
+            _job_store.pop(job_id, None)
+
+
+# ---------------------------------------------------------------------------
 # Helper function tests
 # ---------------------------------------------------------------------------
 

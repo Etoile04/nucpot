@@ -180,6 +180,7 @@ class TestExtractionJob:
         assert job.extracted_count == 0
         assert job.staged_count == 0
         assert job.rejected_count == 0
+        assert job.duplicate_count == 0
 
     def test_error_message_default_none(self) -> None:
         job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
@@ -749,3 +750,143 @@ class TestTriggerExtraction:
             )
             assert job.job_id in _job_store
             assert _job_store[job.job_id] is job
+
+    @pytest.mark.asyncio
+    async def test_duplicates_tracked_separately_from_rejected(self) -> None:
+        """Duplicates inflate duplicate_count, NOT rejected_count (NFM-637)."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(
+            return_value=MagicMock(
+                accepted=[MagicMock(dedup_hash="h1")],
+                rejected=[MagicMock()],
+                duplicates=[MagicMock(), MagicMock()],
+            )
+        )
+        mock_gate.stage_record = AsyncMock()
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock()
+
+        extracted = [
+            {
+                "property_name": "density",
+                "value": 10.0,
+                "source": "test",
+                "confidence": "high",
+                "property": "density",
+                "element_system": "UO2",
+            },
+        ]
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
+        ):
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="dedup_test",
+                source_type="file",
+            )
+            assert job.staged_count == 1
+            assert job.rejected_count == 1
+            assert job.duplicate_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_duplicates_yields_zero_duplicate_count(self) -> None:
+        """When quality gate returns no duplicates, duplicate_count is 0."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        accepted_result = MagicMock(dedup_hash="h1")
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(
+            return_value=MagicMock(
+                accepted=[accepted_result],
+                rejected=[],
+                duplicates=[],
+            )
+        )
+        mock_gate.stage_record = AsyncMock()
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock()
+
+        extracted = [
+            {
+                "property_name": "density",
+                "value": 10.0,
+                "source": "test",
+                "confidence": "high",
+                "property": "density",
+                "element_system": "UO2",
+            },
+        ]
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
+        ):
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="no_dup_test",
+                source_type="file",
+            )
+            assert job.staged_count == 1
+            assert job.rejected_count == 0
+            assert job.duplicate_count == 0
+
+    @pytest.mark.asyncio
+    async def test_total_accounts_for_staged_rejected_and_duplicates(self) -> None:
+        """Total = staged + rejected + duplicates (no records lost)."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(
+            return_value=MagicMock(
+                accepted=[MagicMock(dedup_hash="h1")],
+                rejected=[MagicMock()],
+                duplicates=[MagicMock()],
+            )
+        )
+        mock_gate.stage_record = AsyncMock()
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock()
+
+        extracted = [
+            {
+                "property_name": f"prop{i}",
+                "value": i,
+                "source": "test",
+                "confidence": "high",
+                "property": f"prop{i}",
+                "element_system": "UO2",
+            }
+            for i in range(3)
+        ]
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock, return_value=extracted),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService", return_value=mock_gate),
+            patch("nfm_db.services.extraction_pipeline.GapScanService", return_value=mock_scanner),
+            patch("nfm_db.services.quality_gate.compute_dedup_hash", return_value="h1"),
+        ):
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="total_test",
+                source_type="file",
+            )
+            total = job.staged_count + job.rejected_count + job.duplicate_count
+            assert total == job.extracted_count
+            assert total == 3

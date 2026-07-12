@@ -217,7 +217,7 @@ async def update_blog_post(
         existing_raw = file_path.read_text(encoding="utf-8")
         if existing_raw.startswith("---"):
             end = existing_raw.index("---", 3)
-            import yaml  # type: ignore[import-untyped]
+            import yaml
 
             existing_metadata = yaml.safe_load(existing_raw[3:end]) or {}
 

@@ -15,5 +15,43 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---- LightRAG sidecar (knowledge-graph RAG, NFM-1221) -----------------------
+  lightrag:
+    build:
+      context: .
+      dockerfile: docker/lightrag.Dockerfile
+    container_name: nucpot-dev-lightrag
+    ports:
+      - "9621:9621"
+    volumes:
+      - lightrag-data:/app/data
+    environment:
+      # LLM backend — uses OpenAI API by default
+      LLM_BINDING: openai
+      LLM_MODEL: gpt-4o-mini
+      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-https://api.openai.com/v1}
+      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
+      # Embedding backend — requires an embedding provider
+      EMBEDDING_BINDING: ${EMBEDDING_BINDING:-openai}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_BINDING_HOST: ${EMBEDDING_BINDING_HOST:-https://api.openai.com/v1}
+      EMBEDDING_BINDING_API_KEY: ${EMBEDDING_BINDING_API_KEY:-${LLM_BINDING_API_KEY:-}}
+      # KG workspace
+      WORKSPACE: /app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
 volumes:
   postgres-data:
+  lightrag-data:

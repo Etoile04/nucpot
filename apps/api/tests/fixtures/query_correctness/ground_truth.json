@@ -1,0 +1,215 @@
+{
+  "corpus_id": "query_correctness_test_corpus",
+  "description": "Test KG graph and predefined queries for correctness validation (NFM-860 B2.7)",
+  "nodes": [
+    {
+      "id": "n-001",
+      "entity_type": "material",
+      "name": "UO2",
+      "label": "Uranium Dioxide"
+    },
+    {
+      "id": "n-002",
+      "entity_type": "material",
+      "name": "Zircaloy-4",
+      "label": "Zircaloy-4"
+    },
+    {
+      "id": "n-003",
+      "entity_type": "property",
+      "name": "thermal_conductivity",
+      "label": "Thermal Conductivity"
+    },
+    {
+      "id": "n-004",
+      "entity_type": "property",
+      "name": "Youngs_modulus",
+      "label": "Young's Modulus"
+    },
+    {
+      "id": "n-005",
+      "entity_type": "property",
+      "name": "swelling",
+      "label": "Irradiation Swelling"
+    },
+    {
+      "id": "n-006",
+      "entity_type": "value",
+      "name": "UO2_TC_1000K",
+      "label": "4.0 W/(m·K)"
+    },
+    {
+      "id": "n-007",
+      "entity_type": "value",
+      "name": "Zry4_TC_600K",
+      "label": "16.0 W/(m·K)"
+    },
+    {
+      "id": "n-008",
+      "entity_type": "crystal_structure",
+      "name": "FCC",
+      "label": "Face-Centered Cubic"
+    },
+    {
+      "id": "n-009",
+      "entity_type": "crystal_structure",
+      "name": "HCP",
+      "label": "Hexagonal Close-Packed"
+    },
+    {
+      "id": "n-010",
+      "entity_type": "publication",
+      "name": "Finkelstein_2001",
+      "label": "Finkelstein et al. 2001"
+    },
+    {
+      "id": "n-011",
+      "entity_type": "experiment",
+      "name": "thermal_diffusion_test",
+      "label": "Thermal Diffusion Test"
+    },
+    {
+      "id": "n-012",
+      "entity_type": "dataset",
+      "name": "HPC_swelling_data",
+      "label": "HPC Swelling Dataset"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-001",
+      "source": "n-001",
+      "target": "n-003",
+      "relation_type": "has_property"
+    },
+    {
+      "id": "e-002",
+      "source": "n-001",
+      "target": "n-005",
+      "relation_type": "has_property"
+    },
+    {
+      "id": "e-003",
+      "source": "n-001",
+      "target": "n-006",
+      "relation_type": "has_value"
+    },
+    {
+      "id": "e-004",
+      "source": "n-003",
+      "target": "n-006",
+      "relation_type": "has_value"
+    },
+    {
+      "id": "e-005",
+      "source": "n-001",
+      "target": "n-008",
+      "relation_type": "has_structure"
+    },
+    {
+      "id": "e-006",
+      "source": "n-002",
+      "target": "n-009",
+      "relation_type": "has_structure"
+    },
+    {
+      "id": "e-007",
+      "source": "n-002",
+      "target": "n-003",
+      "relation_type": "has_property"
+    },
+    {
+      "id": "e-008",
+      "source": "n-002",
+      "target": "n-007",
+      "relation_type": "has_value"
+    },
+    {
+      "id": "e-009",
+      "source": "n-010",
+      "target": "n-001",
+      "relation_type": "cited_by"
+    },
+    {
+      "id": "e-010",
+      "source": "n-011",
+      "target": "n-003",
+      "relation_type": "measured_by"
+    },
+    {
+      "id": "e-011",
+      "source": "n-012",
+      "target": "n-001",
+      "relation_type": "contains"
+    },
+    {
+      "id": "e-012",
+      "source": "n-001",
+      "target": "n-004",
+      "relation_type": "has_property"
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-001",
+      "description": "Find all properties of UO2",
+      "type": "neighbors",
+      "start_node": "n-001",
+      "relation_filter": "has_property",
+      "expected_targets": ["n-003", "n-005", "n-004"],
+      "expected_count": 3
+    },
+    {
+      "id": "q-002",
+      "description": "Find materials with FCC structure",
+      "type": "reverse_neighbors",
+      "start_node": "n-008",
+      "relation_filter": "has_structure",
+      "expected_targets": ["n-001"],
+      "expected_count": 1
+    },
+    {
+      "id": "q-003",
+      "description": "Find publications citing UO2",
+      "type": "reverse_neighbors",
+      "start_node": "n-001",
+      "relation_filter": "cited_by",
+      "expected_targets": ["n-010"],
+      "expected_count": 1
+    },
+    {
+      "id": "q-004",
+      "description": "Find all values associated with thermal conductivity",
+      "type": "neighbors",
+      "start_node": "n-003",
+      "relation_filter": "has_value",
+      "expected_targets": ["n-006"],
+      "expected_count": 1
+    },
+    {
+      "id": "q-005",
+      "description": "Count all outgoing edges from UO2",
+      "type": "outgoing_count",
+      "start_node": "n-001",
+      "expected_count": 5
+    },
+    {
+      "id": "q-006",
+      "description": "Find crystal structures of Zircaloy-4",
+      "type": "neighbors",
+      "start_node": "n-002",
+      "relation_filter": "has_structure",
+      "expected_targets": ["n-009"],
+      "expected_count": 1
+    },
+    {
+      "id": "q-007",
+      "description": "Find materials that have thermal conductivity",
+      "type": "reverse_neighbors",
+      "start_node": "n-003",
+      "relation_filter": "has_property",
+      "expected_targets": ["n-001", "n-002"],
+      "expected_count": 2
+    }
+  ]
+}

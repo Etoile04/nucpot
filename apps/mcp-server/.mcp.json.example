@@ -1,0 +1,37 @@
+{
+  // Claude Code MCP config for the NFM database server.
+  // Copy to .mcp.json and adjust env vars for your local setup.
+  //
+  // Launches: `uv run --directory apps/mcp-server nfm-mcp-server`
+  //   (entry-point from pyproject.toml [project.scripts]).
+  // All NFM_MCP_* env vars are defined in src/nfm_mcp/deps.py → Settings.
+  // If your JSON loader does NOT support // comments, strip them before save.
+
+  "mcpServers": {
+    "nfm": {
+      "command": "uv",
+      "args": ["run", "--directory", "apps/mcp-server", "nfm-mcp-server"],
+      "env": {
+        // Async PostgreSQL DSN (asyncpg driver).
+        "NFM_MCP_DATABASE_URL": "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm",
+        // SQLAlchemy pool sizing (int, float seconds).
+        "NFM_MCP_DATABASE_POOL_SIZE": "5",
+        "NFM_MCP_DATABASE_POOL_TIMEOUT": "30.0",
+        // Fallback NFM REST API base URL + request timeout (seconds).
+        "NFM_MCP_API_BASE_URL": "http://localhost:8000/v1",
+        "NFM_MCP_API_TIMEOUT": "30.0",
+        // Knowledge-graph micro-service base URL.
+        "NFM_MCP_KG_SERVICE_URL": "http://localhost:8001",
+        // LLM extraction pipeline base URL (Phase 2 multi-modal).
+        "NFM_MCP_LLM_SERVICE_URL": "http://localhost:8003",
+        // MCP transport: stdio | streamable_http | sse.
+        "NFM_MCP_TRANSPORT": "stdio",
+        // Bind host/port when transport != stdio.
+        "NFM_MCP_HOST": "127.0.0.1",
+        "NFM_MCP_PORT": "8002",
+        // Application log level: DEBUG | INFO | WARNING | ERROR.
+        "NFM_MCP_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}

@@ -29,7 +29,7 @@ from nfm_db.services.blog_post import (
     delete_blog_post,
 )
 
-AUTHOR_ID = uuid.uuid4()
+AUTHOR_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
 EDITOR_PERMS = {"submit_for_review", "edit_post"}
 REVIEWER_PERMS = {"review_post"}
 

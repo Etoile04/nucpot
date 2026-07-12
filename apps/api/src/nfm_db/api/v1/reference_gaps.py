@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.reference_gaps import (
     FillRequest,
     FillResponse,
@@ -23,7 +24,7 @@ from nfm_db.schemas.reference_gaps import (
 from nfm_db.services.gap_fill_service import GapFillService
 from nfm_db.services.gap_scan_service import GapScanService
 
-router = APIRouter()
+router = APIRouter(tags=["参考缺口管理"])
 
 
 @router.get("/reference-gaps", response_model=ReferenceGapsApiResponse)
@@ -32,19 +33,21 @@ async def list_reference_gaps(
     phase: str | None = Query(default=None, max_length=50),
     property_name: str | None = Query(default=None, alias="property", max_length=100),
     sort_by: str = Query(default="priority", pattern=r"^(priority|element_system)$"),
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """List reference data gaps with filtering and pagination."""
+    """List reference data gaps with filtering and pagination.
+
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    """
     svc = GapScanService(session)
     gaps, total = await svc.list_gaps(
         element_system=element_system,
         phase=phase,
         property_name=property_name,
         sort_by=sort_by,
-        page=page,
-        per_page=per_page,
+        page=pagination.page,
+        per_page=pagination.per_page,
     )
 
     gap_items = [
@@ -62,8 +65,8 @@ async def list_reference_gaps(
         data=ReferenceGapsListResponse(
             gaps=gap_items,
             total=total,
-            page=page,
-            per_page=per_page,
+            page=pagination.page,
+            per_page=pagination.per_page,
         ),
     )
 
@@ -72,7 +75,9 @@ async def list_reference_gaps(
 async def get_reference_gaps_summary(
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Get coverage statistics for reference data gaps."""
+    """获取参考数据覆盖率统计。
+
+    Get coverage statistics for reference data gaps."""
     svc = GapScanService(session)
     scan = await svc.scan_gaps()
     staging_counts = await svc._get_staging_counts()
@@ -107,7 +112,9 @@ async def fill_reference_gaps(
     payload: FillRequest,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Trigger a fill operation for a specific gap tuple.
+    """触发特定缺口的填补操作。
+
+    Trigger a fill operation for a specific gap tuple.
 
     Discovers reference values from cache, runs quality gate, and stages
     accepted values into the staging table.
@@ -151,7 +158,9 @@ async def scan_reference_gaps(
     payload: ScanRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
-    """Trigger a manual gap scan against the NFMD database.
+    """手动触发NFMD数据库缺口扫描。
+
+    Trigger a manual gap scan against the NFMD database.
 
     Identifies all missing property tuples for the specified (or all)
     element systems.
