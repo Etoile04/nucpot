@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+VALID_LICENSE_TYPES = ("own_work", "author_permission", "open_license")
+
 
 class PotentialSummary(BaseModel):
     """Lightweight potential representation for list views."""
