@@ -42,13 +42,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any
 
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_utils import parse_aliases
 from nfm_db.services.lightrag_client import is_lightrag_configured
 
 logger = logging.getLogger(__name__)
+
+# Strong-reference set for fire-and-forget ingest tasks. Without this,
+# asyncio.Task objects scheduled via loop.create_task() can be garbage
+# collected before they complete (RUF006). Completed tasks are evicted
+# lazily on the next schedule call to bound memory.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 # ---------------------------------------------------------------------------
 # Entity serialization
@@ -242,7 +247,7 @@ def fire_ingest_to_lightrag(
 
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             ingest_kg_to_lightrag(
                 nodes=nodes,
                 edges=edges,
@@ -250,6 +255,10 @@ def fire_ingest_to_lightrag(
             ),
             name="kg-lightrag-ingest",
         )
+        # Retain a strong reference so the task isn't garbage-collected
+        # mid-execution (RUF006). Evict completed tasks to bound memory.
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except RuntimeError:
         # No running loop (e.g. in tests) — skip fire-and-forget
         logger.debug("No event loop — skipping fire-and-forget LightRAG ingest")

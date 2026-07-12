@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from nfm_db.services.kg_utils import parse_aliases
-
 
 # ---------------------------------------------------------------------------
 # Happy path

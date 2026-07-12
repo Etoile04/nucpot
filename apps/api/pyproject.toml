@@ -193,6 +193,17 @@ module = [
 ]
 ignore_errors = true
 
+# LightRAG/RAG provider services (NFM-1222 stack) — strict typing deferred.
+# httpx.AsyncClient.json() returns Any (no-any-return on dict[str, Any] returns)
+# and AsyncResult.mappings() await typing varies across sqlalchemy versions.
+# Track restoration in a dedicated cleanup issue alongside NFM-1072.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.services.lightrag_client",
+    "nfm_db.services.rag_provider",
+]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

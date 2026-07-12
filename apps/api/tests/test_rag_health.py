@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Version constant
 # ---------------------------------------------------------------------------
@@ -38,6 +37,7 @@ class TestLightragVersion:
         """LIGHTRAG_VERSION should be overridable via env var."""
         with patch.dict("os.environ", {"LIGHTRAG_VERSION": "2.0.0"}, clear=False):
             import importlib
+
             import nfm_db.config as cfg_mod  # type: ignore[import-untyped]
 
             importlib.reload(cfg_mod)
@@ -63,6 +63,7 @@ class TestSettingsLightragVersion:
         env = {"LIGHTRAG_VERSION": env_val} if env_val else {}
         with patch.dict("os.environ", env, clear=False):
             import importlib
+
             import nfm_db.config as cfg_mod  # type: ignore[import-untyped]
 
             importlib.reload(cfg_mod)

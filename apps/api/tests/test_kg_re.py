@@ -17,9 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.kg import KGNode
 from nfm_db.services.kg_re import GraphBuilder
-
 
 # ---------------------------------------------------------------------------
 # Helpers

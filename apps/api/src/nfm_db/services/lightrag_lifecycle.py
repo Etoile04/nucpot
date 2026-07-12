@@ -40,7 +40,7 @@ from nfm_db.services.lightrag_client import (
 )
 
 if TYPE_CHECKING:
-    from nfm_db.config import Settings
+    pass
 
 logger = logging.getLogger(__name__)
 

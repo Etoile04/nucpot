@@ -46,7 +46,7 @@ def _get_client() -> LightRAGClient:
 
 
 @router.get(
-    "/lightrag/health",
+    "/health",
     response_model=ApiResponse[HealthResponse],
 )
 async def health_check() -> ApiResponse[HealthResponse]:
@@ -98,7 +98,7 @@ async def health_check() -> ApiResponse[HealthResponse]:
 
 
 @router.post(
-    "/lightrag/ingest",
+    "/ingest",
     response_model=ApiResponse[IngestResponse],
 )
 async def ingest_document(
@@ -143,7 +143,7 @@ async def ingest_document(
 
 
 @router.post(
-    "/lightrag/query",
+    "/query",
     response_model=ApiResponse[QueryResponse],
 )
 async def query_knowledge_graph(

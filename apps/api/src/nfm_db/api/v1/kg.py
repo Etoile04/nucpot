@@ -9,7 +9,6 @@ Public read-only endpoint (no auth required).
 from __future__ import annotations
 
 import logging
-from typing import Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -42,7 +41,7 @@ async def search_kg_nodes(
     _offset: int | None = Query(default=None, ge=0, alias="offset", deprecated=True, description="已弃用: 请使用 page 参数"),
     _limit: int | None = Query(default=None, ge=1, le=100, alias="limit", deprecated=True, description="已弃用: 请使用 per_page 参数"),
     session: AsyncSession = Depends(get_db),
-) -> Union[KGSearchResponse, SemanticQueryResponse]:
+) -> KGSearchResponse | SemanticQueryResponse:
     """Search Knowledge Graph nodes with optional filters.
 
     When ``mode=lightrag``, the query is routed through the LightRAG
@@ -98,7 +97,7 @@ async def _semantic_query(
     q: str,
     limit: int,
     session: AsyncSession,
-) -> Union[KGSearchResponse, SemanticQueryResponse]:
+) -> KGSearchResponse | SemanticQueryResponse:
     """Route a search query through LightRAG with automatic fallback.
 
     When LightRAG is healthy, returns a ``SemanticQueryResponse``.

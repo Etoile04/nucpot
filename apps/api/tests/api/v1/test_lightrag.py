@@ -13,12 +13,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import httpx
+import pytest
 from httpx import AsyncClient
 
 from nfm_db.services.lightrag_client import LightRAGClientError
-
 
 # ===========================================================================
 # Health — GET /api/v1/lightrag/health
