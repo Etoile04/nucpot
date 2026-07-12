@@ -12,6 +12,20 @@ const TYPE_COLOR: Record<string, string> = {
   ACE: "orange",
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  unverified: "未验证",
+  pending: "验证中",
+  verified: "已验证",
+  failed: "验证失败",
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  unverified: "default",
+  pending: "processing",
+  verified: "success",
+  failed: "error",
+}
+
 interface PotentialOverviewProps {
   readonly detail: PotentialDetail
 }
@@ -44,6 +58,7 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
     version,
     tags,
     references,
+    verification_status,
   } = detail
 
   const doi = source_doi ?? asString(references?.[0]?.doi)
@@ -58,6 +73,11 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
       <Descriptions.Item label="名称">{name}</Descriptions.Item>
       <Descriptions.Item label="类型">
         <Tag color={typeColor(type)}>{type}</Tag>
+      </Descriptions.Item>
+      <Descriptions.Item label="验证状态" span={2}>
+        <Tag color={STATUS_COLORS[verification_status] ?? "default"}>
+          {STATUS_LABELS[verification_status] ?? verification_status}
+        </Tag>
       </Descriptions.Item>
       <Descriptions.Item label="格式">{format || "-"}</Descriptions.Item>
       <Descriptions.Item label="版本">{version || "-"}</Descriptions.Item>

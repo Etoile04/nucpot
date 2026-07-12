@@ -6,6 +6,9 @@
  * serverless deployments (Vercel).
  */
 
+/** Verification lifecycle written by nucpot-autovc (see docs/verification-contract.md). */
+export type VerificationStatus = "unverified" | "pending" | "verified" | "failed"
+
 export interface PotentialSummary {
   id: string
   name: string
@@ -35,6 +38,7 @@ export interface PotentialDetail extends PotentialSummary {
   source_doi?: string
   license?: string
   extra: Record<string, unknown>
+  verification_status: VerificationStatus
 }
 
 export interface PotentialListResult {

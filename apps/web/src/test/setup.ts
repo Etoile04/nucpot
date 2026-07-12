@@ -1,44 +1,21 @@
 import "@testing-library/jest-dom/vitest"
 
-// jsdom lacks several browser APIs that Ant Design v5 relies on at render time.
-// Provide minimal stubs so component tests render.  These are additive — they
-// do not alter existing test behavior.
-if (typeof window !== "undefined") {
-  if (!window.matchMedia) {
-    window.matchMedia = (query: string) =>
-      ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: () => {},
-        removeListener: () => {},
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        dispatchEvent: () => false,
-      }) as unknown as MediaQueryList
-  }
-  if (!window.ResizeObserver) {
-    window.ResizeObserver = class ResizeObserver {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      constructor(_: ResizeObserverCallback) {}
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    } as unknown as typeof ResizeObserver
-  }
-  if (!window.IntersectionObserver) {
-    window.IntersectionObserver = class IntersectionObserver {
-      readonly root: Element | null = null
-      readonly rootMargin = ""
-      readonly thresholds: ReadonlyArray<number> = [0]
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      constructor(_: IntersectionObserverCallback, __?: IntersectionObserverInit) {}
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-      takeRecords(): IntersectionObserverEntry[] {
-        return []
-      }
-    } as unknown as typeof IntersectionObserver
-  }
+/**
+ * AntD v5 components that observe the viewport (Descriptions responsive
+ * column, Grid Row/Col) call window.matchMedia during render. jsdom does not
+ * implement matchMedia, so a missing mock throws inside rc-util's
+ * useLayoutEffect and aborts the render. Provide a noop polyfill so those
+ * components mount in tests.
+ */
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  window.matchMedia = (query: string): MediaQueryList => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  })
 }

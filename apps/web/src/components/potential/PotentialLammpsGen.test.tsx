@@ -24,6 +24,7 @@ const baseDetail: PotentialDetail = {
   },
   file_url: undefined,
   extra: {},
+  verification_status: "unverified",
 }
 
 describe("PotentialLammpsGen", () => {

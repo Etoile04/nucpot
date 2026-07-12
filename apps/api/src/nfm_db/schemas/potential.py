@@ -1,13 +1,10 @@
 """Pydantic schemas for potential endpoints."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
-
-# Authorization: which license categories a submitter may choose.
-# Ported verbatim from legacy Supabase prior-art (upload/route.ts).
-VALID_LICENSE_TYPES = ("own_work", "author_permission", "open_license")
 
 
 class PotentialSummary(BaseModel):
@@ -47,6 +44,7 @@ class PotentialDetail(PotentialSummary):
     source_doi: str | None = None
     license: str | None = None
     extra: dict = {}
+    verification_status: str = "unverified"
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -61,39 +59,18 @@ class PotentialListResponse(BaseModel):
     total_pages: int
 
 
-class PotentialCreateRequest(BaseModel):
-    """Metadata payload for creating a potential (NFM-299 write path).
+# Verification lifecycle values the data model can hold.
+VerificationStatus = Literal["unverified", "pending", "verified", "failed"]
 
-    Validation rules ported verbatim from legacy Supabase prior-art.
+
+class VerificationUpdate(BaseModel):
+    """Request body for PATCH /potentials/{id}/verification (autovc seam).
+
+    Only terminal states ``pending | verified | failed`` are accepted here:
+    ``unverified`` is the insert default (set by the column), never a PATCH
+    target. nucpot-autovc calls this after async verification completes.
     """
 
-    name: str
-    display_name: str | None = None
-    type: str
-    subtype: str | None = None
-    format: str | None = None
-    elements: list[str]
-    system_name: str
-    description: str
-    system_tags: list[str] = []
-    applicability: dict = {}
-    references: list[dict] = []
-    developers: list[dict] = []
-    lammps_config: dict = {}
-    tags: list[str] = []
-    extra: dict = {}
-    # Authorization (ported verbatim)
-    license_type: str
-    license_detail: str | None = None
-    auth_file_path: str | None = None
-    # Submitter identity (MVP: trusted-submitter, no auth gate yet)
-    uploaded_by: str | None = None
-
-
-class FileUploadResponse(BaseModel):
-    """Response after a successful file attach (NFM-299 write path)."""
-
-    file_name: str
-    file_url: str
-    file_hash: str
-    file_size: int
+    verification_status: Literal["pending", "verified", "failed"]
+    message: str | None = None
+    evidence_url: str | None = None

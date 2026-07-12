@@ -90,3 +90,34 @@ async def get_potential_by_id(db: AsyncSession, potential_id: uuid.UUID) -> Pote
     if row is None:
         return None
     return PotentialDetail.model_validate(row)
+
+
+async def update_potential_verification(
+    db: AsyncSession,
+    potential_id: uuid.UUID,
+    status: str,
+    *,
+    message: str | None = None,
+    evidence_url: str | None = None,
+) -> Potential | None:
+    """Update a potential's verification status (autovc PATCH seam helper).
+
+    Sets ``verification_status`` and, when provided, folds the ``message`` /
+    ``evidence_url`` audit fields into the existing ``extra`` JSON blob without
+    clobbering unrelated keys. Returns the refreshed row, or ``None`` if the
+    potential does not exist.
+    """
+    stmt = select(Potential).where(Potential.id == potential_id)
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        return None
+    row.verification_status = status
+    if message or evidence_url:
+        row.extra = {
+            **(row.extra or {}),
+            "verification_message": message,
+            "verification_evidence_url": evidence_url,
+        }
+    await db.commit()
+    await db.refresh(row)
+    return row
