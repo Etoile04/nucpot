@@ -1,12 +1,15 @@
 import type { Metadata } from "next"
 import { AntdProvider } from "@/components/antd-provider"
+import { QueryProvider } from "@/components/query-provider"
 import { FeedbackFloatButton } from "@/components/feedback"
-import { SiteHeader } from "@/components/blog"
+import Nav from "@/components/Nav"
+import AuthProvider from "@/components/AuthProvider"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
-  title: "核燃料与材料物性数据库",
-  description: "可持续共享的核燃料与材料物性数据库平台",
+  title: "NucPot — 核材料势函数库",
+  description:
+    "面向核燃料、包壳和结构材料的原子间势函数开放平台。覆盖 EAM、MEAM、机器学习势等多种形式，支持 LAMMPS 等主流模拟软件。",
 }
 
 export default function RootLayout({
@@ -15,33 +18,28 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN">
-      <body>
+    <html lang="zh-CN" className="h-full antialiased">
+      <body className="min-h-full flex flex-col bg-gray-900 text-white">
         <AntdProvider>
-          <SiteHeader />
-          {children}
-          <footer
-            style={{
-              borderTop: "1px solid var(--color-border)",
-              padding: "2rem 1.5rem",
-              textAlign: "center",
-              color: "#999",
-              fontSize: "0.875rem",
-              marginTop: "4rem",
-            }}
-          >
-            <p>
-              反馈与建议：
-              <a
-                href="mailto:feedback@nucpot.org"
-                style={{ color: "var(--color-accent)" }}
-              >
-                feedback@nucpot.org
-              </a>
-            </p>
-            <p>© {new Date().getFullYear()} 核燃料与材料物性数据库</p>
-          </footer>
-          <FeedbackFloatButton />
+          <QueryProvider>
+            <AuthProvider>
+            <Nav />
+            <main className="flex-1">{children}</main>
+            <footer className="border-t border-gray-700 py-8 text-center text-gray-400 text-sm">
+              <p>
+                反馈与建议：
+                <a
+                  href="mailto:feedback@nucpot.org"
+                  className="text-blue-400 hover:text-blue-300"
+                >
+                  feedback@nucpot.org
+                </a>
+              </p>
+              <p>© {new Date().getFullYear()} 核燃料与材料物性数据库</p>
+            </footer>
+            <FeedbackFloatButton />
+            </AuthProvider>
+          </QueryProvider>
         </AntdProvider>
       </body>
     </html>

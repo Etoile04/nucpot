@@ -4,6 +4,7 @@ import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import ImageUpload from "@/components/admin/ImageUpload"
+import { blogApi } from "@/lib/api-client"
 
 export default function NewBlogPostPage() {
   const router = useRouter()
@@ -27,7 +28,6 @@ export default function NewBlogPostPage() {
       const end = textarea.selectionEnd
       const newText = prev.substring(0, start) + "\n" + markdown + "\n" + prev.substring(end)
 
-      // Restore focus after state update
       setTimeout(() => {
         textarea.focus()
         const newPosition = start + markdown.length + 2
@@ -44,36 +44,21 @@ export default function NewBlogPostPage() {
     setError(null)
 
     try {
-      const response = await fetch("/api/admin/blog/posts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title,
-          author,
-          tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-          summary,
-          content,
-        }),
+      await blogApi.create({
+        title,
+        content,
+        summary,
+        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        author_name: author,
       })
 
-      const result = await response.json()
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || "创建文章失败")
-      }
-
       setSuccess(true)
-
-      // Reset form
       setTitle("")
       setAuthor("")
       setTags("")
       setSummary("")
       setContent("")
 
-      // Redirect to posts list after 2 seconds
       setTimeout(() => {
         router.push("/admin/blog/posts")
       }, 2000)

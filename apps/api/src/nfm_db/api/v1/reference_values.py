@@ -26,6 +26,7 @@ from nfm_db.models.ref_gap_fill import (
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.reference_values import (
     BulkStagingItemResult,
     BulkStagingRequest,
@@ -57,7 +58,7 @@ from nfm_db.services.verification_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["参考值管理"])
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +75,9 @@ async def bulk_stage_reference_values(
     payload: BulkStagingRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Bulk write reference values to staging.
+    """批量写入参考值到暂存区。
+
+    Bulk write reference values to staging.
 
     Accepts an array of reference_value dicts, runs quality gate on each
     (dedup, range check, confidence routing), and stages accepted values.
@@ -154,17 +157,20 @@ async def list_pending_review(
         default=None,
         description="Filter by status: pending, approved, rejected, promoted, all",
     ),
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=100),
+    pagination: PaginationParams = Depends(PaginationParams),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Paginated list of staging records pending review.
+    """获取待审核暂存记录分页列表。
+
+    Paginated list of staging records pending review.
 
     Filters: element_system, phase, property_name, confidence, status.
     When status is None or 'pending': returns PENDING records only (default).
     When status is 'approved', 'rejected', 'promoted': returns records with that status.
     When status is 'all': returns all records regardless of status.
     Standard {success, data} envelope with pagination metadata.
+
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
     # Validate status parameter if provided
     if status is not None:
@@ -208,13 +214,12 @@ async def list_pending_review(
     total = (await session.execute(count_stmt)).scalar_one()
 
     # Data query with pagination
-    offset = (page - 1) * per_page
     data_stmt = (
         select(RefGapFillStaging)
         .where(*base_filter)
         .order_by(RefGapFillStaging.created_at.desc())
-        .limit(per_page)
-        .offset(offset)
+        .limit(pagination.per_page)
+        .offset(pagination.offset)
     )
     result = await session.execute(data_stmt)
     records = result.scalars().all()
@@ -224,8 +229,8 @@ async def list_pending_review(
         "data": PendingReviewResponse(
             records=[StagingRecordResponse.model_validate(r) for r in records],
             total=total,
-            page=page,
-            per_page=per_page,
+            page=pagination.page,
+            per_page=pagination.per_page,
         ).model_dump(),
     }
 
@@ -241,7 +246,9 @@ async def approve_reference_value(
     payload: ReviewRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Approve and promote a staging record.
+    """审核通过并推广暂存记录。
+
+    Approve and promote a staging record.
 
     Accepts an optional review_note. Runs the promotion pipeline:
     updates staging status to PROMOTED with review metadata and timestamp.
@@ -284,7 +291,9 @@ async def reject_reference_value(
     payload: ReviewRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Reject a staging record.
+    """驳回暂存记录。
+
+    Reject a staging record.
 
     Accepts an optional review_note. Updates staging status to REJECTED
     with review metadata and timestamp.
@@ -323,7 +332,9 @@ async def export_reference_values(
     payload: ExportRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Bulk export reference values for verification consumption.
+    """批量导出参考值供验证服务使用。
+
+    Bulk export reference values for verification consumption.
 
     Exports staged values with optional filters (status, element_system,
     date range). The output format is compatible with verify-service
@@ -372,7 +383,9 @@ async def verify_callback(
     payload: VerificationCallbackRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Receive verification results from the verify-service.
+    """接收验证服务回调结果。
+
+    Receive verification results from the verify-service.
 
     The verify-service sends A-F grades for each staging record.
     F-grade records are auto-rejected. All verified records have

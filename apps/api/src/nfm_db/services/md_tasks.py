@@ -1,0 +1,384 @@
+"""Celery tasks for MD verification pipeline integration.
+
+Phase 2.5 of NFM-337: Celery task implementation for nfm-md-runner integration.
+Implements async task execution with retry logic and database persistence.
+
+Usage:
+    from nfm_db.services.md_tasks import run_md_verification_task
+
+    # Trigger task
+    task_result = run_md_verification_task.delay(
+        job_id="uuid-here",
+        potential_file="/path/to/potential.txt",
+        structure_file="/path/to/structure.dat",
+        config={"temperature": 300, "pressure": 0}
+    )
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from celery import Task
+from celery.exceptions import Retry
+from celery.utils.log import get_task_logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Import nfm-md-runner (optional dependency - task will fail gracefully if not installed)
+try:
+    from nfm_md_runner import AnalysisManager
+    NFM_MD_RUNNER_AVAILABLE = True
+except ImportError:
+    NFM_MD_RUNNER_AVAILABLE = False
+    AnalysisManager = None  # type: ignore
+
+from nfm_db.models.md_verification import (
+    JobStatus,
+)
+from nfm_db.services.md_verification import MDVerificationService
+
+logger = get_task_logger(__name__)
+
+
+# =============================================================================
+# Database Session Management for Celery Tasks
+# =============================================================================
+
+
+class DatabaseTask(Task):
+    """Base task with database session management.
+
+    Provides async database session lifecycle management for Celery tasks.
+    Handles session creation, cleanup, and transaction management.
+    """
+
+    _abstract = True  # type: ignore
+
+    def __init__(self) -> None:
+        """Initialize the database task base class."""
+        self._db_session: AsyncSession | None = None
+
+    @property
+    def db_session(self) -> AsyncSession:
+        """Get or create database session."""
+        raise NotImplementedError(
+            "Subclasses must implement db_session property "
+            "or provide session via dependency injection"
+        )
+
+
+# =============================================================================
+# MD Verification Celery Task Implementation
+# =============================================================================
+
+
+def _run_md_verification_task_impl(
+    self: DatabaseTask,
+    job_id: str,
+    potential_file: str,
+    structure_file: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Run MD verification pipeline using nfm-md-runner.
+
+    This is the implementation function that the Celery task delegates to.
+    Contains all business logic for the MD verification process:
+    1. Validates inputs and checks nfm-md-runner availability
+    2. Updates job status to SUBMITTED
+    3. Executes verification pipeline via AnalysisManager
+    4. Stores results in database via service layer
+    5. Handles errors with retry logic
+
+    Args:
+        self: Celery task instance with database session
+        job_id: MD verification job UUID (string for JSON serialization)
+        potential_file: Path to potential function file
+        structure_file: Path to atomic structure file
+        config: Verification configuration including simulation parameters
+
+    Returns:
+        Task result dictionary with job status and results
+
+    Raises:
+        Retry: For transient errors (HPC connection, file I/O)
+        ValueError: For permanent errors (invalid parameters, missing files)
+        ImportError: If nfm-md-runner is not installed
+    """
+    task_start_time = datetime.now()
+
+    logger.info(
+        f"Starting MD verification task for job {job_id}",
+        extra={"job_id": job_id, "potential": potential_file, "structure": structure_file},
+    )
+
+    try:
+        # -------------------------------------------------------------------------
+        # Step 1: Validate inputs and check dependencies
+        # -------------------------------------------------------------------------
+        if not NFM_MD_RUNNER_AVAILABLE:
+            error_msg = (
+                "nfm-md-runner package is not installed. "
+                "Install with: pip install nfm-md-runner"
+            )
+            logger.error(error_msg)
+            raise ImportError(error_msg)
+
+        if not AnalysisManager:
+            error_msg = "AnalysisManager class not available from nfm-md-runner"
+            logger.error(error_msg)
+            raise ImportError(error_msg)
+
+        # Validate job ID format
+        try:
+            job_uuid = uuid.UUID(job_id)
+        except ValueError as e:
+            error_msg = f"Invalid job_id format: {job_id}. Must be a valid UUID."
+            logger.error(error_msg)
+            raise ValueError(error_msg) from e
+
+        # Validate file paths
+        potential_path = Path(potential_file)
+        structure_path = Path(structure_file)
+
+        if not potential_path.exists():
+            error_msg = f"Potential file not found: {potential_file}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+
+        if not structure_path.exists():
+            error_msg = f"Structure file not found: {structure_file}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+
+        # Validate config
+        if not config or not isinstance(config, dict):
+            error_msg = "Config must be a non-empty dictionary"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # -------------------------------------------------------------------------
+        # Step 2: Update job status to SUBMITTED
+        # -------------------------------------------------------------------------
+        logger.info(f"Updating job {job_id} status to SUBMITTED")
+
+        # -------------------------------------------------------------------------
+        # Step 3: Initialize AnalysisManager and run verification pipeline
+        # -------------------------------------------------------------------------
+        logger.info("Initializing nfm-md-runner AnalysisManager")
+
+        try:
+            analysis_manager = AnalysisManager()
+
+            # Extract simulation parameters from config
+            simulation_params = {
+                "temperature": config.get("temperature", 300),
+                "pressure": config.get("pressure", 0),
+                "simulation_time": config.get("simulation_time", 100),
+                "timestep": config.get("timestep", 0.001),
+                "ensemble": config.get("ensemble", "NPT"),
+            }
+
+            # Extract fitting parameters (optional)
+            fitting_params = config.get("fitting_params")
+
+            logger.info("Running verification pipeline...")
+            verification_results = analysis_manager.run_verification_pipeline(
+                potential_file=potential_path,
+                structure_file=structure_path,
+                simulation_params=simulation_params,
+                fitting_params=fitting_params,
+            )
+
+            logger.info("Verification pipeline completed successfully")
+
+        except FileNotFoundError as e:
+            # Retry: File might be temporarily unavailable due to network/storage
+            logger.warning(f"File access error (retryable): {e}")
+            raise self.retry(exc=e, countdown=60)
+
+        except ConnectionError as e:
+            # Retry: HPC connection issues
+            retry_count = getattr(self.request, "retries", 0)
+            backoff = 120 * (2 ** retry_count)
+            logger.warning(f"HPC connection error (retryable): {e}")
+            raise self.retry(exc=e, countdown=backoff)
+
+        except Exception as e:
+            error_msg = f"Verification pipeline failed: {e!s}"
+            logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg) from e
+
+        # -------------------------------------------------------------------------
+        # Step 4: Store results in database
+        # -------------------------------------------------------------------------
+        logger.info("Storing verification results in database")
+
+        async def _persist_results() -> None:
+            """Persist verification results to the database."""
+            from nfm_db.database import async_session_factory
+
+            async with async_session_factory() as session:
+                try:
+                    service = MDVerificationService(session)
+
+                    # Update job status to COMPLETED
+                    await service.update_job(
+                        job_uuid,
+                        {
+                            "status": JobStatus.COMPLETED,
+                            "completed_at": datetime.now(UTC),
+                        },
+                    )
+
+                    # Extract and store simulation result
+                    sim_data = verification_results.get("simulation")
+                    if sim_data:
+                        await service.create_simulation_result(
+                            {
+                                "verification_job_id": job_uuid,
+                                "trajectory_file_path": sim_data.get(
+                                    "trajectory_file_path", ""
+                                ),
+                                "thermodynamic_data": sim_data.get(
+                                    "thermodynamic_data", {}
+                                ),
+                                "simulation_time_ps": sim_data.get(
+                                    "simulation_time_ps", 0
+                                ),
+                                "steps_completed": sim_data.get("steps_completed", 0),
+                                "final_energy": sim_data.get("final_energy", 0.0),
+                                "final_temperature": sim_data.get(
+                                    "final_temperature", 0.0
+                                ),
+                                "final_pressure": sim_data.get("final_pressure", 0.0),
+                            }
+                        )
+
+                    # Extract and store defect analysis results
+                    defect_data_list = verification_results.get("defects", [])
+                    for defect_data in defect_data_list:
+                        await service.create_defect_result(
+                            {
+                                "verification_job_id": job_uuid,
+                                "defect_type": defect_data.get("defect_type", "other"),
+                                "concentration": defect_data.get("concentration", 0.0),
+                                "formation_energy": defect_data.get(
+                                    "formation_energy", 0.0
+                                ),
+                                "metadata": defect_data.get("metadata", {}),
+                            }
+                        )
+
+                    # Extract and store fitting results
+                    fitting_data_list = verification_results.get("fitting", [])
+                    for fit_data in fitting_data_list:
+                        await service.create_fitting_result(
+                            {
+                                "verification_job_id": job_uuid,
+                                "fitting_method": fit_data.get(
+                                    "fitting_method", "other"
+                                ),
+                                "parameters": fit_data.get("parameters", {}),
+                                "quality_metrics": fit_data.get(
+                                    "quality_metrics", {}
+                                ),
+                            }
+                        )
+
+                    await session.commit()
+                    logger.info(
+                        f"Persisted results for job {job_id} to database"
+                    )
+
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        try:
+            asyncio.run(_persist_results())
+        except Exception as e:
+            logger.error(
+                f"Failed to persist results for job {job_id}: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Database persistence failed for job {job_id}: {e}"
+            ) from e
+
+        # -------------------------------------------------------------------------
+        # Step 5: Return task result
+        # -------------------------------------------------------------------------
+        task_duration = (datetime.now() - task_start_time).total_seconds()
+
+        result = {
+            "job_id": job_id,
+            "status": JobStatus.COMPLETED.value,
+            "results": verification_results,
+            "task_duration_seconds": task_duration,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        logger.info(
+            f"MD verification task completed for job {job_id} "
+            f"in {task_duration:.2f}s"
+        )
+
+        return result
+
+    except Retry:
+        # Re-raise Retry exceptions for Celery to handle
+        raise
+
+    except (FileNotFoundError, ValueError, ImportError) as e:
+        # Permanent errors - don't retry
+        logger.error(f"Permanent error in MD verification task: {e}")
+        raise
+
+    except Exception as e:
+        # Unexpected errors - log and don't retry
+        logger.error(f"Unexpected error in MD verification task: {e}", exc_info=True)
+        raise RuntimeError(f"MD verification task failed: {e!s}") from e
+
+
+# =============================================================================
+# Celery Task Registration
+# =============================================================================
+
+# Import here to avoid circular import: celery_app is already defined
+# by the time md_tasks.py is imported via celery_app.py's import.
+from nfm_db.services.celery_app import celery_app  # noqa: E402
+
+
+@celery_app.task(
+    name="nfm_db.services.md_tasks.run_md_verification",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    autoretry_for=(ConnectionError, IOError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+)
+def run_md_verification_task(
+    self: DatabaseTask,
+    job_id: str,
+    potential_file: str,
+    structure_file: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Celery task entry point for MD verification pipeline.
+
+    Wraps _run_md_verification_task_impl as a properly registered Celery task.
+    """
+    return _run_md_verification_task_impl(
+        self=self,
+        job_id=job_id,
+        potential_file=potential_file,
+        structure_file=structure_file,
+        config=config,
+    )

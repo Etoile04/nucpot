@@ -189,3 +189,27 @@ class TestNextActions:
         actions = get_next_actions(PostStatus.REJECTED)
         assert len(actions) == 1
         assert actions[0]["action"] == "draft"
+
+
+class TestEdgeCases:
+    """Edge cases for full coverage of blog_state module."""
+
+    def test_get_auto_fields_invalid_transition_returns_empty(self):
+        """Invalid transition returns empty dict (not an error)."""
+        fields = get_auto_fields(PostStatus.DRAFT, PostStatus.PUBLISHED)
+        assert fields == {}
+
+    def test_get_auto_fields_published_terminal_returns_empty(self):
+        """Published terminal state has no outgoing auto fields."""
+        fields = get_auto_fields(PostStatus.PUBLISHED, PostStatus.DRAFT)
+        assert fields == {}
+
+    def test_approved_to_draft_no_auto_fields(self):
+        """Approved back to draft has no auto fields."""
+        fields = get_auto_fields(PostStatus.APPROVED, PostStatus.DRAFT)
+        assert fields == {}
+
+    def test_rejected_to_draft_no_auto_fields(self):
+        """Rejected to draft has no auto fields."""
+        fields = get_auto_fields(PostStatus.REJECTED, PostStatus.DRAFT)
+        assert fields == {}

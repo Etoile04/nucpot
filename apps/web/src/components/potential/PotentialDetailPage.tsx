@@ -52,9 +52,9 @@ export function PotentialDetailPage({ id }: PotentialDetailPageProps) {
 
   if (state.loading) {
     return (
-      <main style={{ padding: "4rem 1.5rem", textAlign: "center" }}>
+      <main className="py-16 px-6 text-center">
         <Spin size="large" tip="加载中...">
-          <div style={{ minHeight: 200 }} />
+          <div className="min-h-[200px]" />
         </Spin>
       </main>
     )
@@ -62,7 +62,7 @@ export function PotentialDetailPage({ id }: PotentialDetailPageProps) {
 
   if (state.error || !state.detail) {
     return (
-      <main style={{ padding: "4rem 1.5rem" }}>
+      <main className="py-16 px-6">
         <Empty description={state.error ?? "未找到势函数"} />
       </main>
     )
@@ -95,13 +95,13 @@ export function PotentialDetailPage({ id }: PotentialDetailPageProps) {
   ]
 
   return (
-    <main style={{ maxWidth: 1000, margin: "0 auto", padding: "2rem 1.5rem" }}>
-      <Space direction="vertical" size="small" style={{ width: "100%", marginBottom: 16 }}>
+    <main className="max-w-[1000px] mx-auto px-6 py-8">
+      <Space direction="vertical" size="small" style={{ width: "100%" }} className="mb-4">
         <Link href="/browse">← 返回列表</Link>
         <Title level={2} style={{ margin: 0 }}>
           {title}
           {detail.version && detail.version !== "1.0" && (
-            <Text type="secondary" style={{ fontSize: "0.7em", marginLeft: 8 }}>
+            <Text type="secondary" className="text-xs ml-2">
               v{detail.version}
             </Text>
           )}

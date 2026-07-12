@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from tests.ontology_seed import seed_corpus
 
 from nfm_db.main import app
 from nfm_db.services.rate_limit import (
@@ -12,6 +11,7 @@ from nfm_db.services.rate_limit import (
     make_rate_limit_dependency,
     ontology_rate_limit,
 )
+from tests.ontology_seed import seed_corpus
 
 _CORPUS = "smirnov2014"
 

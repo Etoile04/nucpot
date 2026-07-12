@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BlogPostCreate(BaseModel):
@@ -16,8 +16,25 @@ class BlogPostCreate(BaseModel):
     author_name: str = Field(..., min_length=1, max_length=100)
 
 
+class BlogPostUpdate(BaseModel):
+    """Schema for updating an existing blog post.
+
+    All fields are optional — only provided fields are updated.
+    """
+
+    title: str | None = Field(None, min_length=1, max_length=255)
+    content: str | None = Field(None, min_length=1)
+    summary: str | None = Field(None, min_length=1, max_length=500)
+    tags: list[str] | None = Field(None, max_length=10)
+    author_name: str | None = Field(None, min_length=1, max_length=100)
+
+
 class BlogPostResponse(BaseModel):
-    """Schema for blog post response."""
+    """Schema for blog post response.
+
+    Includes both DB metadata and content fields populated from the
+    markdown file frontmatter so the frontend has everything it needs.
+    """
 
     id: uuid.UUID
     slug: str
@@ -30,9 +47,13 @@ class BlogPostResponse(BaseModel):
     rejection_reason: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Content fields (populated from markdown file frontmatter)
+    content: str | None = None
+    summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    author_name: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BlogPostListQuery(BaseModel):

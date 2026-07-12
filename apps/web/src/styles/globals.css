@@ -1,38 +1,94 @@
+@import "tailwindcss";
+
+/* Dark theme tokens (used by blog-prose and legacy components) */
 :root {
-  --color-surface: #ffffff;
-  --color-text: #1a1a1a;
-  --color-accent: #1677ff;
-  --color-text-secondary: #666666;
-  --color-border: #f0f0f0;
-  --color-surface-elevated: #fafafa;
+  --color-surface: #1f2937;          /* gray-800 */
+  --color-text: #f9fafb;             /* gray-50 */
+  --color-accent: #60a5fa;           /* blue-400 */
+  --color-text-secondary: #9ca3af;   /* gray-400 */
+  --color-border: #374151;           /* gray-700 */
+  --color-surface-elevated: #374151; /* gray-700 */
   --max-width: 960px;
   --space-section: 3rem;
+
+  /* Wizard Design Tokens (NFM-378) */
+  --wizard-modal-bg: #1f2937;
+  --wizard-border-color: #374151;
+
+  /* Step indicator colors */
+  --step-todo-color: #6b7280;
+  --step-process-color: #3b82f6;
+  --step-finish-color: #10b981;
+
+  /* Form area */
+  --form-label-color: #e5e7eb;
+  --form-input-bg: #111827;
+  --form-input-border: #374151;
+  --form-input-focus-border: #3b82f6;
+
+  /* Warning / Alert */
+  --warning-bg: #92400e;
+  --warning-border: #b45309;
+  --warning-text: #fef3c7;
+
+  /* Buttons */
+  --btn-primary-bg: #2563eb;
+  --btn-primary-hover: #1d4ed8;
+  --btn-secondary-bg: #374151;
+
+  /* Confidence Scale (NFM-848 §1) */
+  --confidence-high: #10b981;
+  --confidence-medium: #f59e0b;
+  --confidence-low: #ef4444;
+
+  /* Graph Canvas (NFM-848 §1) */
+  --graph-node-default: #60a5fa;
+  --graph-node-material: #34d399;
+  --graph-node-property: #fbbf24;
+  --graph-node-entity: #a78bfa;
+  --graph-edge-default: #4b5563;
+  --graph-edge-highlight: #3b82f6;
+  --graph-canvas-bg: #111827;
+
+  /* RAG Chat (NFM-848 §1) */
+  --chat-user-bg: #2563eb;
+  --chat-assistant-bg: #1f2937;
+  --chat-citation-bg: #1e3a5f;
+  --chat-typing-color: #9ca3af;
+
+  /* Review (NFM-848 §1) */
+  --review-approve: #10b981;
+  --review-reject: #ef4444;
+  --review-pending: #f59e0b;
+
+  /* Spacing */
+  --wizard-padding-lg: 1.5rem;
+  --wizard-padding-md: 1rem;
+  --wizard-padding-sm: 0.75rem;
+  --step-gap: 2rem;
+  --form-item-gap: 1rem;
+
+  /* Typography */
+  --wizard-title-size: 1.25rem;
+  --step-label-size: 0.875rem;
+  --form-label-size: 1rem;
+  --hint-text-size: 0.75rem;
 }
 
-*,
-*::before,
-*::after {
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
   font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    "PingFang SC",
-    "Microsoft YaHei",
-    "Hiragino Sans GB",
-    sans-serif;
-  color: var(--color-text);
-  background: var(--color-surface);
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Blog prose typography */
+/* Blog prose typography — dark theme */
 .blog-prose {
   line-height: 1.8;
   font-size: 1rem;
@@ -83,11 +139,7 @@ body {
 }
 
 .blog-prose code {
-  font-family:
-    "JetBrains Mono",
-    "Fira Code",
-    "Consolas",
-    monospace;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
   font-size: 0.875rem;
   padding: 0.125rem 0.375rem;
   background: var(--color-surface-elevated);
@@ -147,4 +199,36 @@ body {
   border: none;
   border-top: 1px solid var(--color-border);
   margin: 2rem 0;
+}
+
+/* Task status pulse animation */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-badge-running {
+  animation: status-pulse 1.5s ease-in-out infinite;
+}
+
+/* Wizard responsive breakpoints (NFM-378) */
+@media (max-width: 767px) {
+  .wizard-modal .ant-modal {
+    max-width: 95vw !important;
+  }
+  .wizard-modal .ant-steps {
+    font-size: 12px;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .wizard-modal .ant-modal {
+    max-width: 800px !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .wizard-modal .ant-modal {
+    max-width: 900px !important;
+  }
 }

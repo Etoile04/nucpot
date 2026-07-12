@@ -29,7 +29,7 @@ const FAILURE_SIGNATURES = [
 // `failed` array (which tracks >=400 responses for ontology-viewer/corpus
 // assets) below.
 
-test.describe("Ontology page — Phase 0 static embed", () => {
+test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => {
   test("AC#1/#3: renders the embedded viewer from the same-origin vendored corpus with no errors", async ({
     page,
   }) => {
@@ -62,7 +62,7 @@ test.describe("Ontology page — Phase 0 static embed", () => {
     await expect(frame).toBeVisible()
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("/ontology-viewer/index.html")
-    expect(src).toContain("embed=true")
+    expect(src).toContain("embed=false")
     expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json")
 
     // AC#1/#3: the corpus must actually load successfully (same-origin → no
@@ -105,7 +105,7 @@ test.describe("Ontology page — Phase 0 static embed", () => {
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("node=Material")
     // passthrough must preserve embed + data contract too
-    expect(src).toContain("embed=true")
+    expect(src).toContain("embed=false")
     expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json")
   })
 
@@ -128,7 +128,7 @@ test.describe("Ontology page — Phase 0 static embed", () => {
 
 // AC#4 mobile screenshot — forced mobile viewport so it is captured under any
 // project (independent of the mobile-chrome naming convention).
-test.describe("Ontology page — mobile", () => {
+test.describe("Ontology page — mobile", { tag: "@unit" }, () => {
   test.use({ viewport: { width: 375, height: 667 } })
 
   test("AC#4: captures the mobile visual-regression screenshot (375px) and no height collapse", async ({

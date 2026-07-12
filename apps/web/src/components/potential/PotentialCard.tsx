@@ -15,23 +15,25 @@ const TYPE_COLOR: Record<string, string> = {
 
 interface PotentialCardProps {
   readonly potential: PotentialSummary
+  readonly compareSelected?: boolean
+  readonly onCompareToggle?: (id: string) => void
 }
 
-export function PotentialCard({ potential }: PotentialCardProps) {
+export function PotentialCard({ potential, compareSelected, onCompareToggle }: PotentialCardProps) {
   const { id, name, type, elements, description } = potential
   const tagColor = TYPE_COLOR[type] ?? "default"
 
   return (
     <Card
-      style={{ height: "100%" }}
+      className="h-full !bg-gray-800 !border-gray-700"
       styles={{ body: { display: "flex", flexDirection: "column", gap: 8 } }}
     >
       <Space wrap size={[0, 4]}>
         <Tag color={tagColor}>{type}</Tag>
       </Space>
 
-      <Link href={`/potential/${id}`} style={{ textDecoration: "none" }}>
-        <Typography.Title level={5} style={{ margin: 0 }}>
+      <Link href={`/potential/${id}`} className="no-underline">
+        <Typography.Title level={5} className="!m-0 text-white">
           {name}
         </Typography.Title>
       </Link>
@@ -48,14 +50,25 @@ export function PotentialCard({ potential }: PotentialCardProps) {
         <Paragraph
           type="secondary"
           ellipsis={{ rows: 2 }}
-          style={{ marginBottom: 0 }}
+          className="!mb-0"
         >
           {description}
         </Paragraph>
       )}
 
-      <div style={{ marginTop: "auto", paddingTop: 4 }}>
-        <Link href={`/potential/${id}`}>查看详情</Link>
+      <div className="mt-auto pt-1 flex items-center justify-between">
+        <Link href={`/potential/${id}`} className="text-blue-400 hover:text-blue-300">查看详情</Link>
+        {onCompareToggle && (
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-white transition">
+            <input
+              type="checkbox"
+              checked={compareSelected ?? false}
+              onChange={() => onCompareToggle(id)}
+              className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
+            />
+            对比
+          </label>
+        )}
       </div>
     </Card>
   )

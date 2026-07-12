@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from nfm_db.config import get_settings
-from nfm_db.models import Base  # noqa: F401 — ensures all models are registered
+from nfm_db.models import Base
 
 config = context.config
 

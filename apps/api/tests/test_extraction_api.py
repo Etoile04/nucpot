@@ -41,8 +41,8 @@ def _override_get_db(session: AsyncSession):
 async def test_trigger_extraction_success(db_session: AsyncSession) -> None:
     """Extraction trigger endpoint accepts a valid request and returns job_id."""
     payload = {
-        "source_reference": "doi:10.1234/test",
-        "source_type": "doi",
+        "source_reference": "test_paper.md",
+        "source_type": "file",
     }
 
     app.dependency_overrides[get_db] = _override_get_db(db_session)
@@ -61,7 +61,7 @@ async def test_trigger_extraction_success(db_session: AsyncSession) -> None:
     data = body["data"]
     assert "job_id" in data
     assert data["status"] in ("completed", "partial", "queued")
-    assert data["source_reference"] == "doi:10.1234/test"
+    assert data["source_reference"] == "test_paper.md"
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_get_extraction_status_success(db_session: AsyncSession) -> None:
     job = ExtractionJob(
         job_id=job_id,
         source_reference="test_source",
-        source_type="doi",
+        source_type="file",
         status=JobStatus.QUEUED,
         extracted_count=0,
         staged_count=0,

@@ -1,0 +1,15 @@
+{
+  "description": "Held-out test set for extraction accuracy evaluation (NFM-863, B3.4)",
+  "total_records": 30,
+  "held_out_count": 6,
+  "held_out_ratio": 0.2,
+  "seed": 42,
+  "held_out_ids": [
+    "uo2-porosity",
+    "unknown-steel-yield",
+    "eurofer97-dbtt",
+    "zr-creep-strain",
+    "uo2-tc-sci-e",
+    "steel-corrosion-plain"
+  ]
+}

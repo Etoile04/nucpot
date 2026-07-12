@@ -6,6 +6,7 @@ tags:
   - 核燃料
   - 循环
   - 概述
+  - technical
 author: 张明远
 ---
 
