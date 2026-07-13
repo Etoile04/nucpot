@@ -217,7 +217,7 @@ export function KgSearchContent() {
       {/* Loading */}
       {state.loading && (
         <div className="flex justify-center items-center min-h-[200px]">
-          <Spin tip="Searching…" />
+          <Spin tip="Searching…"><div /></Spin>
         </div>
       )}
 

@@ -8,14 +8,15 @@ import type { GraphData } from "../types"
 /* ------------------------------------------------------------------ */
 
 class MockResizeObserver {
+  constructor(_callback: ResizeObserverCallback) {}
   readonly observe = vi.fn()
   readonly unobserve = vi.fn()
   readonly disconnect = vi.fn()
 }
 
 if (typeof window !== "undefined" && !("ResizeObserver" in window)) {
-  ;(window as Window & { ResizeObserver?: typeof MockResizeObserver }).ResizeObserver =
-    MockResizeObserver as unknown as typeof ResizeObserver
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).ResizeObserver = MockResizeObserver
 }
 
 /* ------------------------------------------------------------------ */

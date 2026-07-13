@@ -76,7 +76,7 @@ export function SemanticSearchResults({
   if (loading) {
     return (
       <div className="flex justify-center py-12">
-        <Spin tip="正在检索..." />
+        <Spin tip="正在检索..."><div /></Spin>
       </div>
     )
   }

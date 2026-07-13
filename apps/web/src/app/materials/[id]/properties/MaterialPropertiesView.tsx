@@ -101,7 +101,7 @@ export function MaterialPropertiesView({
       {/* Loading state */}
       {state.loading && !state.properties.length && (
         <div className="flex items-center justify-center py-20">
-          <Spin tip="加载中..." />
+          <Spin tip="加载中..."><div /></Spin>
         </div>
       )}
 
