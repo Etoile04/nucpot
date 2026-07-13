@@ -14,8 +14,8 @@ class MockResizeObserver {
 }
 
 if (typeof window !== "undefined" && !("ResizeObserver" in window)) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any).ResizeObserver = MockResizeObserver
+  ;(window as Window & { ResizeObserver?: typeof MockResizeObserver }).ResizeObserver =
+    MockResizeObserver as unknown as typeof ResizeObserver
 }
 
 /* ------------------------------------------------------------------ */
