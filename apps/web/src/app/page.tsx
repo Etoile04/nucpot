@@ -30,7 +30,7 @@ export default function HomePage() {
         </p>
         <Link
           href="/blog"
-          className="inline-block px-6 py-3 text-base font-medium text-white bg-blue-500 hover:bg-blue-400 rounded transition-colors duration-150"
+          className="inline-block px-6 py-3 text-base font-medium text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors duration-150"
         >
           查看技术博客 →
         </Link>
@@ -51,11 +51,11 @@ export default function HomePage() {
                 </h3>
                 <time
                   dateTime={post.date}
-                  className="block text-sm text-gray-400 mb-2"
+                  className="block text-sm text-gray-300 mb-2"
                 >
                   {formatDate(post.date)}
                 </time>
-                <p className="text-sm text-gray-400 leading-relaxed line-clamp-3 mb-3">
+                <p className="text-sm text-gray-300 leading-relaxed line-clamp-3 mb-3">
                   {post.summary}
                 </p>
                 {post.tags.length > 0 && (
