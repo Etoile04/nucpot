@@ -1,12 +1,17 @@
-"""NFM-409: Offline verification of Alembic migrations 005 and 006.
+"""NFM-409: Offline verification of Alembic migrations 005b, 005c, and 006.
 
 Validates migration structure, chain linearity, and additive-only properties
 without requiring a live PostgreSQL connection.
 
+After the branch-merge rename (fb5f8a2), the revision chain is:
+  003b → 005a → 005c (merge)
+  003b → 004 → 005b → 005c (merge)
+  005c → 006 → ...
+
 Acceptance Criteria:
-- [AC-1] Migration 005 exists and creates verification_results_md table
+- [AC-1] Migration 005b exists and creates verification_results_md table
 - [AC-2] Migration 006 exists and extends status check constraint
-- [AC-3] Migration chain is linear (no conflicts between 005 and 007)
+- [AC-3] Migration chain is linear (no conflicts between 005b, 005c, and 007)
 - [AC-4] Migrations are additive-only: no column drops, no data loss, no table recreation
 
 Live DB tests (AC-5, AC-6) are in test_md_verification_migration.py and
@@ -28,9 +33,16 @@ def script_directory() -> ScriptDirectory:
 
 
 @pytest.fixture(scope="module")
-def migration_005_source() -> str:
-    """Read migration 005 source code."""
+def migration_005b_source() -> str:
+    """Read migration 005b source code."""
     with open("migrations/versions/005_add_verification_results_md_and_extend_jobs.py") as f:
+        return f.read()
+
+
+@pytest.fixture(scope="module")
+def migration_005a_source() -> str:
+    """Read migration 005a source code."""
+    with open("migrations/versions/005_add_verification_status.py") as f:
         return f.read()
 
 
@@ -42,29 +54,29 @@ def migration_006_source() -> str:
 
 
 # ---------------------------------------------------------------------------
-# AC-1: Migration 005 exists and creates verification_results_md table
+# AC-1: Migration 005b exists and creates verification_results_md table
 # ---------------------------------------------------------------------------
 
 
-class TestMigration005Exists:
-    """Verify migration 005 creates verification_results_md table."""
+class TestMigration005bExists:
+    """Verify migration 005b creates verification_results_md table."""
 
-    def test_revision_005_loadable(self, script_directory: ScriptDirectory):
-        """Migration 005 is discoverable by Alembic."""
-        rev = script_directory.get_revision("005")
+    def test_revision_005b_loadable(self, script_directory: ScriptDirectory):
+        """Migration 005b is discoverable by Alembic."""
+        rev = script_directory.get_revision("005b")
         assert rev is not None
-        assert rev.revision == "005"
+        assert rev.revision == "005b"
         assert rev.down_revision == ("003b", "004")
 
-    def test_creates_verification_results_md_table(self, migration_005_source: str):
-        """Migration 005 contains CREATE TABLE for verification_results_md."""
-        src = migration_005_source
+    def test_creates_verification_results_md_table(self, migration_005b_source: str):
+        """Migration 005b contains CREATE TABLE for verification_results_md."""
+        src = migration_005b_source
         assert "verification_results_md" in src
         assert "create_table" in src
 
-    def test_verification_results_md_columns(self, migration_005_source: str):
+    def test_verification_results_md_columns(self, migration_005b_source: str):
         """verification_results_md has all required columns."""
-        src = migration_005_source
+        src = migration_005b_source
         required_columns = [
             "vacancies",
             "interstitials",
@@ -80,35 +92,35 @@ class TestMigration005Exists:
         for col in required_columns:
             assert col in src, f"Missing column: {col}"
 
-    def test_fk_to_md_simulation_results(self, migration_005_source: str):
+    def test_fk_to_md_simulation_results(self, migration_005b_source: str):
         """verification_results_md FK to md_simulation_results with CASCADE."""
-        src = migration_005_source
+        src = migration_005b_source
         assert 'ForeignKey("md_simulation_results.id"' in src
         assert 'ondelete="CASCADE"' in src
 
-    def test_has_primary_key_with_uuid(self, migration_005_source: str):
+    def test_has_primary_key_with_uuid(self, migration_005b_source: str):
         """verification_results_md has UUID primary key with gen_random_uuid."""
-        src = migration_005_source
+        src = migration_005b_source
         assert "primary_key=True" in src
         assert "gen_random_uuid()" in src
 
-    def test_creates_indexes(self, migration_005_source: str):
-        """Migration 005 creates expected indexes."""
-        src = migration_005_source
+    def test_creates_indexes(self, migration_005b_source: str):
+        """Migration 005b creates expected indexes."""
+        src = migration_005b_source
         assert "idx_vrmd_simulation_result_id" in src
         assert "idx_md_jobs_job_type" in src
         assert "idx_md_jobs_execution_status" in src
 
-    def test_extends_md_verification_jobs(self, migration_005_source: str):
-        """Migration 005 adds columns to md_verification_jobs."""
-        src = migration_005_source
+    def test_extends_md_verification_jobs(self, migration_005b_source: str):
+        """Migration 005b adds columns to md_verification_jobs."""
+        src = migration_005b_source
         added_columns = ["job_type", "hpc_job_id", "hpc_backend", "execution_status"]
         for col in added_columns:
             assert f'"{col}"' in src, f"Missing extended column: {col}"
 
-    def test_has_downgrade(self, migration_005_source: str):
-        """Migration 005 has a downgrade function."""
-        assert "def downgrade()" in migration_005_source
+    def test_has_downgrade(self, migration_005b_source: str):
+        """Migration 005b has a downgrade function."""
+        assert "def downgrade()" in migration_005b_source
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +136,7 @@ class TestMigration006Exists:
         rev = script_directory.get_revision("006")
         assert rev is not None
         assert rev.revision == "006"
-        assert rev.down_revision == "005"
+        assert rev.down_revision == "005c"
 
     def test_extends_check_constraint(self, migration_006_source: str):
         """Migration 006 references check_md_job_status constraint."""
@@ -160,17 +172,17 @@ class TestMigration006Exists:
 
 
 # ---------------------------------------------------------------------------
-# AC-3: Migration chain is linear (no conflicts between 005 and 006)
+# AC-3: Migration chain is linear (no conflicts between 005b, 005c, and 006)
 # ---------------------------------------------------------------------------
 
 
 class TestMigrationChainLinearity:
-    """Verify the migration chain from 005 to 007 is linear."""
+    """Verify the migration chain from 005b/005c to 007 is linear."""
 
-    def test_006_depends_on_005(self, script_directory: ScriptDirectory):
-        """Migration 006's down_revision is exactly 005."""
+    def test_006_depends_on_005c(self, script_directory: ScriptDirectory):
+        """Migration 006's down_revision is exactly 005c."""
         rev_006 = script_directory.get_revision("006")
-        assert rev_006.down_revision == "005"
+        assert rev_006.down_revision == "005c"
 
     def test_no_revision_conflicts(self, script_directory: ScriptDirectory):
         """No duplicate revision IDs in the chain."""
@@ -185,11 +197,11 @@ class TestMigrationChainLinearity:
         # Head must be a valid revision in the chain
         assert head in all_revisions, f"Head {head!r} not found in revision chain"
 
-    def test_005_is_merge_revision(self, script_directory: ScriptDirectory):
-        """Migration 005 correctly merges 003b and 004 branches."""
-        rev_005 = script_directory.get_revision("005")
-        assert isinstance(rev_005.down_revision, tuple)
-        assert set(rev_005.down_revision) == {"003b", "004"}
+    def test_005c_is_merge_revision(self, script_directory: ScriptDirectory):
+        """Migration 005c correctly merges 005a and 005b branches."""
+        rev_005c = script_directory.get_revision("005c")
+        assert isinstance(rev_005c.down_revision, tuple)
+        assert set(rev_005c.down_revision) == {"005a", "005b"}
 
     def test_full_chain_walkable(self, script_directory: ScriptDirectory):
         """All revisions are walkable without errors."""
@@ -223,13 +235,13 @@ class TestAdditiveOnlyUpgrades:
         re.DOTALL,
     )
 
-    def test_005_upgrade_only_additive(self, migration_005_source: str):
-        """Migration 005 upgrade uses only additive operations."""
-        upgrade_section = migration_005_source.split("def downgrade")[0].split("def upgrade")[1]
+    def test_005b_upgrade_only_additive(self, migration_005b_source: str):
+        """Migration 005b upgrade uses only additive operations."""
+        upgrade_section = migration_005b_source.split("def downgrade")[0].split("def upgrade")[1]
         upgrade_ops = re.findall(r"op\.(\w+)\(", upgrade_section)
 
         for op in upgrade_ops:
-            assert op in self.ADDITIVE_OPS, f"Non-additive operation in 005 upgrade: op.{op}()"
+            assert op in self.ADDITIVE_OPS, f"Non-additive operation in 005b upgrade: op.{op}()"
 
     def test_006_upgrade_constraint_replace_only(self, migration_006_source: str):
         """Migration 006 upgrade only replaces a constraint (no data loss)."""
@@ -240,19 +252,19 @@ class TestAdditiveOnlyUpgrades:
             f"Unexpected ops in 006 upgrade: {ops}"
         )
 
-    def test_005_no_table_recreation(self, migration_005_source: str):
-        """Migration 005 does not use op.replace_table or batch_alter."""
-        assert "replace_table" not in migration_005_source
-        assert "batch_alter_table" not in migration_005_source
+    def test_005b_no_table_recreation(self, migration_005b_source: str):
+        """Migration 005b does not use op.replace_table or batch_alter."""
+        assert "replace_table" not in migration_005b_source
+        assert "batch_alter_table" not in migration_005b_source
 
     def test_006_no_table_recreation(self, migration_006_source: str):
         """Migration 006 does not use op.replace_table or batch_alter."""
         assert "replace_table" not in migration_006_source
         assert "batch_alter_table" not in migration_006_source
 
-    def test_005_no_drop_column_in_upgrade(self, migration_005_source: str):
-        """Migration 005 upgrade does not drop any columns."""
-        upgrade_section = migration_005_source.split("def downgrade")[0].split("def upgrade")[1]
+    def test_005b_no_drop_column_in_upgrade(self, migration_005b_source: str):
+        """Migration 005b upgrade does not drop any columns."""
+        upgrade_section = migration_005b_source.split("def downgrade")[0].split("def upgrade")[1]
         assert "drop_column" not in upgrade_section
         assert "drop_table" not in upgrade_section
 
