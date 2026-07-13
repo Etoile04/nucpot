@@ -11,8 +11,8 @@ Extends:
 - md_verification_jobs: Adds job_type, hpc_job_id, hpc_backend,
   execution_status columns for MD runner integration
 
-Revision ID: 005
-Revises: 003b, 004
+Revision ID: 005m
+Revises: 003b, 005
 Create Date: 2026-06-23
 
 """
@@ -24,8 +24,8 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 # revision identifiers, used by Alembic.
-revision: str = "005"
-down_revision: str | Sequence[str] | None = ("003b", "004")
+revision: str = "005m"
+down_revision: str | Sequence[str] | None = ("003b", "005")
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
