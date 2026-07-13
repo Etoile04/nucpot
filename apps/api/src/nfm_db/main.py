@@ -26,11 +26,21 @@ from nfm_db.api.v1 import (
     reference_gaps,
     reference_values,
     review,
+    seed,
     sources,
     verification,
     viz,
 )
 from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
+from nfm_db.api.v1.batch import (
+    materials_router as batch_materials_router,
+)
+from nfm_db.api.v1.batch import (
+    properties_router as batch_properties_router,
+)
+from nfm_db.api.v1.batch import (
+    reference_values_router as batch_reference_values_router,
+)
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.middleware.rate_limit import (
     NFMRateLimitMiddleware,
@@ -202,9 +212,13 @@ app.include_router(potentials.router, prefix="/api/v1", tags=["势函数"])
 app.include_router(materials.router, prefix="/api/v1", tags=["材料管理"])
 app.include_router(properties.router, prefix="/api/v1", tags=["物性数据"])
 app.include_router(sources.router, prefix="/api/v1", tags=["数据源"])
+app.include_router(seed.router, prefix="/api/v1/seed", tags=["种子数据"])
 app.include_router(kg.router, prefix="/api/v1", tags=["知识图谱"])
 app.include_router(review.router, prefix="/api/v1/review", tags=["审核流程"])
 app.include_router(conflict.router, prefix="/api/v1/conflicts", tags=["冲突解决"])
 app.include_router(literature.router, prefix="/api/v1/literature", tags=["文献管理"])
 app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
+app.include_router(batch_materials_router, prefix="/api/v1", tags=["批量材料"])
+app.include_router(batch_properties_router, prefix="/api/v1", tags=["批量物性"])
+app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])
