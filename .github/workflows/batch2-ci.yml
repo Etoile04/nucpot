@@ -117,7 +117,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run entity linking evaluation
-        run: uv run python ${{ github.workspace }}/scripts/eval_entity_linking.py
+        run: uv run python ${{ github.workspace }}/scripts/eval_entity_linking.py --fixtures-dir ${{ github.workspace }}/apps/api/tests/fixtures/entity_linking
 
   query-correctness:
     name: Query Correctness + Ontology Coverage
@@ -139,4 +139,4 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run query correctness tests
-        run: uv run python ${{ github.workspace }}/scripts/test_query_correctness.py
+        run: uv run python ${{ github.workspace }}/scripts/test_query_correctness.py --fixtures-dir ${{ github.workspace }}/apps/api/tests/fixtures/query_correctness
