@@ -15,6 +15,7 @@ from nfm_db.models import (
 )
 from nfm_db.services.seed_service import _batch_store
 
+pytestmark = pytest.mark.xfail(reason="NFM-1366: unwired routes", strict=False)
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

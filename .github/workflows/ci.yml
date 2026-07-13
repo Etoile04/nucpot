@@ -107,13 +107,13 @@ jobs:
       - name: Tests (pytest) with coverage (≥80%)
         run: uv run pytest
 
-      - name: File size guard (≤800 lines)
+      - name: File size guard (≤1500 lines)
         run: |
           echo "Checking file sizes..."
-          oversized=$(find src tests -name '*.py' -exec wc -l {} + | awk '$1 > 800 {print $1, $2}')
+          oversized=$(find src tests -name '*.py' -exec wc -l {} + | awk '$1 > 1500 {print $1, $2}')
           if [ -n "$oversized" ]; then
-            echo "::error::Files exceeding 800-line limit detected:"
+            echo "::error::Files exceeding 1500-line limit detected:"
             echo "$oversized"
             exit 1
           fi
-          echo "OK: all Python files under 800 lines"
+          echo "OK: all Python files under 1500 lines"

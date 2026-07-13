@@ -7,7 +7,7 @@ so the cancel_md_verification_job endpoint can set status to
 'cancelled' without violating the DB constraint.
 
 Revision ID: 006
-Revises: 005
+Revises: 005c
 Create Date: 2026-06-23
 
 """
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "006"
-down_revision: str | Sequence[str] | None = "005"
+down_revision: str | Sequence[str] | None = "005c"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
