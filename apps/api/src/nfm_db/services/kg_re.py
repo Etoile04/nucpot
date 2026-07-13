@@ -734,6 +734,9 @@ async def query_graph_edges(
     relation_type: str | None = None,
     limit: int = _QUERY_DEFAULT_LIMIT,
     corpus_id: str | None = None,
+    extract_figures: bool = False,
+    extract_tables: bool = False,
+    node_ids: list[uuid.UUID] | None = None,
 ) -> list[dict[str, Any]]:
     """Query KG edges with optional filters.
 

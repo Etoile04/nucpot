@@ -12,7 +12,7 @@ import uuid
 
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nfm_db.models import Base, TimestampMixin
+from nfm_db.models import JSONArray, Base, TimestampMixin
 
 
 class ExtractionJob(TimestampMixin, Base):
@@ -23,4 +23,11 @@ class ExtractionJob(TimestampMixin, Base):
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
         default=uuid.uuid4,
+    )
+    # Multimodal extraction fields (NFM-979 cherry-pick)
+    extract_figures: Mapped[bool] = mapped_column(default=False)
+    extract_tables: Mapped[bool] = mapped_column(default=False)
+    confidence_threshold: Mapped[float] = mapped_column(default=0.5)
+    figure_types: Mapped[list[str] | None] = mapped_column(
+        JSONArray, default=None, nullable=True,
     )

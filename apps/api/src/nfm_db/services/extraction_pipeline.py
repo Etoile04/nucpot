@@ -381,6 +381,8 @@ async def trigger_extraction(
     element_systems: list[str] | None = None,
     cache_level: str | None = None,
     max_confidence: str | None = None,
+    extract_figures: bool = False,
+    extract_tables: bool = False,
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -404,6 +406,8 @@ async def trigger_extraction(
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
+        extract_figures=extract_figures,
+        extract_tables=extract_tables,
     )
     _job_store[job_id] = job
 
