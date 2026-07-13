@@ -332,7 +332,7 @@ function formatValue(value: unknown): string {
     return String(value)
   }
   try {
-    return JSON.stringify(value)
+    return JSON.stringify(value, null, 2)
   } catch {
     return String(value)
   }

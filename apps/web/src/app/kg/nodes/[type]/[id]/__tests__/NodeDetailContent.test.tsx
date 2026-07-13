@@ -75,6 +75,25 @@ const NODE_DETAIL_NO_PROPS = {
   },
 }
 
+/** Node with nested object and array properties to test formatValue rendering. */
+const NODE_DETAIL_NESTED = {
+  success: true,
+  data: {
+    ...NODE_DETAIL.data,
+    label: 'UO2-nested',
+    properties: {
+      density: '10.97 g/cm³',
+      composition: {
+        uranium: 0.88,
+        oxygen: 0.12,
+        isotopes: ['U-235', 'U-238'],
+      },
+      enrichment_levels: [0.02, 0.035, 0.045],
+      metadata: null,
+    },
+  },
+}
+
 const RELATIONS_RESPONSE = {
   success: true,
   data: {
@@ -325,5 +344,89 @@ describe('NodeDetailContent', () => {
     expect(screen.getByText('Material')).toBeInTheDocument()
     // 3 calls: initial node (500) → retry node (success) → relations
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('15. renders nested object properties with indented JSON', async () => {
+    fetchMock.mockReset()
+    queueResponses([
+      { body: NODE_DETAIL_NESTED },
+      {
+        body: {
+          success: true,
+          data: { items: [], total: 0, limit: 50, offset: 0 },
+        },
+      },
+    ])
+
+    render(<NodeDetailContent />)
+
+    await screen.findByText('UO2-nested')
+
+    // The composition value should contain formatted JSON, not a flat string.
+    // It must include newline/indentation — proof of structured rendering.
+    const compositionLabel = screen.getByText('composition')
+    const dd = compositionLabel.nextElementSibling
+    expect(dd?.textContent).toContain('uranium')
+    expect(dd?.textContent).toContain('0.88')
+    // Indented format means whitespace/newlines, not a single-line string
+    expect(dd?.textContent).toMatch(/\n/)
+  })
+
+  it('16. renders array properties as readable structured output', async () => {
+    fetchMock.mockReset()
+    queueResponses([
+      { body: NODE_DETAIL_NESTED },
+      {
+        body: {
+          success: true,
+          data: { items: [], total: 0, limit: 50, offset: 0 },
+        },
+      },
+    ])
+
+    render(<NodeDetailContent />)
+
+    await screen.findByText('UO2-nested')
+
+    const enrichmentLabel = screen.getByText('enrichment_levels')
+    const dd = enrichmentLabel.nextElementSibling
+    expect(dd?.textContent).toContain('0.02')
+    expect(dd?.textContent).toContain('0.045')
+    // Array should also be formatted with newlines/indentation
+    expect(dd?.textContent).toMatch(/\n/)
+  })
+
+  it('17. renders null properties as em-dash', async () => {
+    fetchMock.mockReset()
+    queueResponses([
+      { body: NODE_DETAIL_NESTED },
+      {
+        body: {
+          success: true,
+          data: { items: [], total: 0, limit: 50, offset: 0 },
+        },
+      },
+    ])
+
+    render(<NodeDetailContent />)
+
+    await screen.findByText('UO2-nested')
+
+    const metaLabel = screen.getByText('metadata')
+    const dd = metaLabel.nextElementSibling
+    expect(dd?.textContent).toBe('—')
+  })
+
+  it('18. primitive string/number/boolean values render as plain text', async () => {
+    render(<NodeDetailContent />)
+
+    await screen.findByText('UO2')
+
+    // Primitives from the default fixture: string values should have no JSON formatting
+    const densityLabel = screen.getByText('density')
+    const dd = densityLabel.nextElementSibling
+    expect(dd?.textContent).toBe('10.97 g/cm³')
+    // Plain strings should NOT contain newline formatting
+    expect(dd?.textContent).not.toMatch(/\n/)
   })
 })
