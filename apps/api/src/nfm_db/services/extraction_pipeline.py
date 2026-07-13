@@ -79,6 +79,14 @@ class ExtractionJob:
     element_systems: list[str] | None = None
     cache_level: str | None = None
     max_confidence: str | None = None
+    # Multimodal extraction fields (NFM-700)
+    extract_figures: bool = False
+    extract_tables: bool = False
+    confidence_threshold: float = 0.5
+    figure_types: list[str] | None = None
+    conflict_strategy: str = "prefer_vlm"
+    figures: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
+    tables: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
 
 
 # Thread-safe in-memory store (access via async session in prod)
