@@ -292,9 +292,7 @@ async def get_kg_node_relations(
     summaries for navigation without an N+1 query pattern.
     """
     # Verify the node exists before listing edges (clear 404 vs ambiguous empty).
-    node_check = await session.execute(
-        select(KGNode.id).where(KGNode.id == node_id)
-    )
+    node_check = await session.execute(select(KGNode.id).where(KGNode.id == node_id))
     if node_check.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Node not found")
 
@@ -309,9 +307,7 @@ async def get_kg_node_relations(
         base_filter.append(KGEdge.relation_type == relation_type)
 
     # Count for pagination metadata.
-    count_stmt = (
-        select(func.count()).select_from(KGEdge).where(*base_filter)
-    )
+    count_stmt = select(func.count()).select_from(KGEdge).where(*base_filter)
     total: int = (await session.execute(count_stmt)).scalar_one()
 
     # Data query with eager-loaded endpoints.
