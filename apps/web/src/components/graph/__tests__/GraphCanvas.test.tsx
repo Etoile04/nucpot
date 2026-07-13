@@ -4,6 +4,21 @@ import { GraphCanvas } from "../GraphCanvas"
 import type { GraphData } from "../types"
 
 /* ------------------------------------------------------------------ */
+/*  Polyfill ResizeObserver for jsdom                                   */
+/* ------------------------------------------------------------------ */
+
+class MockResizeObserver {
+  readonly observe = vi.fn()
+  readonly unobserve = vi.fn()
+  readonly disconnect = vi.fn()
+}
+
+if (typeof window !== "undefined" && !("ResizeObserver" in window)) {
+  ;(window as Window & { ResizeObserver?: typeof MockResizeObserver }).ResizeObserver =
+    MockResizeObserver as unknown as typeof ResizeObserver
+}
+
+/* ------------------------------------------------------------------ */
 /*  Mock d3-force so the hook initializes synchronously                */
 /* ------------------------------------------------------------------ */
 
@@ -72,7 +87,7 @@ function makeLargeData(count: number): GraphData {
   }
 }
 
-describe.skip("GraphCanvas", () => {
+describe("GraphCanvas", () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
