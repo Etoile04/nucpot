@@ -155,8 +155,16 @@ fi
 echo ""
 echo -e "${YELLOW}Checking for SQL injection vulnerabilities...${NC}"
 
-# Look for unsafe SQL patterns
-unsafe_sql=$(grep -rE "SELECT.*FROM.*WHERE.*['\"]|['\"]\s*\+\s*['\"]" apps/api/src 2>/dev/null || true)
+# Look for potentially unsafe SQL patterns
+unsafe_sql=$(grep -rnE "SELECT.*FROM.*WHERE.*['\"]|['\"]\s*\+\s*['\"]" apps/api/src 2>/dev/null || true)
+
+# Filter out false positives:
+#   1. Parameterized queries using :param, %s, $1, ? placeholders
+#   2. String concatenation not in SQL context (no SQL keywords on the line)
+if [ -n "$unsafe_sql" ]; then
+  unsafe_sql=$(echo "$unsafe_sql" | grep -vE ':\w+["\s\)]|%[s\(]|\$\d|\?' || true)
+  unsafe_sql=$(echo "$unsafe_sql" | grep -iE "SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP" || true)
+fi
 
 if [ -n "$unsafe_sql" ]; then
   echo -e "${RED}!! Potential unsafe SQL construction:${NC}"
