@@ -42,7 +42,7 @@ export async function GET(request: Request) {
   if (query) {
     // ILIKE search across name, description, and display_name
     // (replaces broken textSearch on non-existent search_vector column — NFM-1367)
-    const safeQuery = query.replace(/[,()]/g, "");
+    const safeQuery = query.replace(/[,().]/g, "");
     const pattern = `%${safeQuery}%`;
     dbQuery = dbQuery.or(
       `name.ilike.${pattern},description.ilike.${pattern},display_name.ilike.${pattern}`

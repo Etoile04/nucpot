@@ -206,6 +206,29 @@ describe("GET /api/potentials", () => {
     expect(body.error).toBeDefined()
   })
 
+  it("sanitizes dots from queries to prevent PostgREST .or() filter breakage", async () => {
+    const mock = createMockSupabaseQueryBuilder()
+    vi.doMock("@/lib/supabase", () => ({
+      supabase: {
+        from: vi.fn(() => mock.builder),
+      },
+    }))
+
+    // "0.5" contains dots that break PostgREST column.operator.value parsing
+    const url = new URL("http://localhost/api/potentials?q=0.5&page=1&limit=20")
+    const { GET } = await import("./route")
+    const response = await GET({ url } as Request)
+
+    expect(response.status).toBe(200)
+
+    const orCall = mock.getChain().find((c: string) => c.startsWith("or:"))
+    expect(orCall).toBeDefined()
+    // Dots must be stripped — "0.5" should become "05" in the pattern
+    expect(orCall).toContain("%05%")
+    // Must NOT contain the unstripped dot inside filter values
+    expect(orCall).not.toContain("%0.5%")
+  })
+
   it("searches name, description, and display_name with ILIKE", async () => {
     const mock = createMockSupabaseQueryBuilder()
     vi.doMock("@/lib/supabase", () => ({
