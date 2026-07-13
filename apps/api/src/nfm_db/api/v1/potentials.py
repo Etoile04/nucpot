@@ -97,7 +97,7 @@ async def upload_potential_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     upload_dir: Path = Depends(get_upload_dir),
-) -> ApiResponse:
+) -> ApiResponse[dict[str, Any]]:
     """Upload a potential file (NFM-299 write path)."""
     from sqlalchemy import select as sa_select
 
