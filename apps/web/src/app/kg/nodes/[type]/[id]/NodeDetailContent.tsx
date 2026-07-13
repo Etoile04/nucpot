@@ -51,6 +51,7 @@ export function NodeDetailContent() {
   const nodeId = params?.id ?? ''
 
   const [state, setState] = useState<NodeState>(INITIAL_STATE)
+  const [retryCount, setRetryCount] = useState(0)
 
   // ── Fetch node detail ────────────────────────────────────────────
   useEffect(() => {
@@ -88,7 +89,7 @@ export function NodeDetailContent() {
     return () => {
       cancelled = true
     }
-  }, [nodeType, nodeId])
+  }, [nodeType, nodeId, retryCount])
 
   // ── Fetch relations once the node detail loaded ─────────────────
   useEffect(() => {
@@ -138,6 +139,7 @@ export function NodeDetailContent() {
 
   const handleRetry = useCallback(() => {
     setState({ ...INITIAL_STATE })
+    setRetryCount((prev) => prev + 1)
   }, [])
 
   // ── Render ───────────────────────────────────────────────────────

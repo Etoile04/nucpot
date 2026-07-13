@@ -299,4 +299,31 @@ describe('NodeDetailContent', () => {
     // First 8 chars of node.id + "…"
     expect(idEl).toHaveTextContent(/aaaaaaaa…/)
   })
+
+  it('14. clicking Retry re-fetches the node and renders success', async () => {
+    // First request fails with 500
+    fetchMock.mockReset()
+    queueResponses([{ body: { detail: 'Internal server error' }, status: 500 }])
+
+    render(<NodeDetailContent />)
+
+    // Confirm error state
+    expect(await screen.findByText('Failed to load node')).toBeInTheDocument()
+
+    // Queue a successful response for the retry
+    queueResponses([
+      { body: NODE_DETAIL },
+      { body: RELATIONS_RESPONSE },
+    ])
+
+    // Click Retry
+    const retryBtn = screen.getByRole('button', { name: /retry/i })
+    fireEvent.click(retryBtn)
+
+    // The retry should trigger a new fetch and render the node
+    expect(await screen.findByText('UO2')).toBeInTheDocument()
+    expect(screen.getByText('Material')).toBeInTheDocument()
+    // 3 calls: initial node (500) → retry node (success) → relations
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })
