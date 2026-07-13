@@ -13,6 +13,8 @@ ARG LIGHTRAG_VERSION=1.5.4
 
 FROM python:3.12-slim
 
+ARG LIGHTRAG_VERSION=1.5.4
+
 # Metadata
 LABEL maintainer="nucpot-team"
 LABEL description="LightRAG sidecar for NFM-DB knowledge graph"

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -64,7 +65,7 @@ async def list_potentials_endpoint(
 async def create_potential_endpoint(
     payload: PotentialCreateRequest,
     db: AsyncSession = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[dict[str, Any]]:
     """Create a new potential (NFM-299 write path)."""
     try:
         potential = await create_potential(db, payload)
