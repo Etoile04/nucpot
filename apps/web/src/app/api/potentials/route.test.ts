@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { GET } from "./route"
 
 /**
  * NFM-1367: Text search must not return 500 for valid queries like "Zr".
@@ -119,7 +118,7 @@ describe("GET /api/potentials", () => {
 
     const url = new URL("http://localhost/api/potentials?q=Zr&page=1&limit=20&sort=updated")
     const { GET } = await import("./route")
-    const response = await GET({ url } as Request)
+    const response = await GET(new Request(url.toString()))
 
     expect(response.status).toBe(200)
     const body = await response.json()
@@ -145,7 +144,7 @@ describe("GET /api/potentials", () => {
 
     const url = new URL("http://localhost/api/potentials?q=ZZZZNONEXISTENT&page=1&limit=20")
     const { GET } = await import("./route")
-    const response = await GET({ url } as Request)
+    const response = await GET(new Request(url.toString()))
 
     expect(response.status).toBe(200)
     const body = await response.json()
@@ -163,7 +162,7 @@ describe("GET /api/potentials", () => {
 
     const url = new URL("http://localhost/api/potentials?page=1&limit=20")
     const { GET } = await import("./route")
-    const response = await GET({ url } as Request)
+    const response = await GET(new Request(url.toString()))
 
     expect(response.status).toBe(200)
     // Should not apply any text filter when no query
@@ -181,7 +180,7 @@ describe("GET /api/potentials", () => {
 
     const url = new URL("http://localhost/api/potentials?q=&page=1&limit=20")
     const { GET } = await import("./route")
-    const response = await GET({ url } as Request)
+    const response = await GET(new Request(url.toString()))
 
     expect(response.status).toBe(200)
     const body = await response.json()
@@ -199,14 +198,75 @@ describe("GET /api/potentials", () => {
 
     const url = new URL("http://localhost/api/potentials?q=Zr&page=1&limit=20")
     const { GET } = await import("./route")
-    const response = await GET({ url } as Request)
+    const response = await GET(new Request(url.toString()))
 
     expect(response.status).toBe(500)
     const body = await response.json()
     expect(body.error).toBeDefined()
   })
 
-  it("sanitizes dots from queries to prevent PostgREST .or() filter breakage", async () => {
+  it("strips ILIKE wildcards (%) and (_) to prevent full-table-scan DoS", async () => {
+    const mock = createMockSupabaseQueryBuilder()
+    vi.doMock("@/lib/supabase", () => ({
+      supabase: {
+        from: vi.fn(() => mock.builder),
+      },
+    }))
+
+    // Query "%25" is URL-decoded to "%", then stripped entirely → empty guard skips ILIKE
+    const url = new URL("http://localhost/api/potentials?q=%25&page=1&limit=20")
+    const { GET } = await import("./route")
+    const response = await GET(new Request(url.toString()))
+
+    expect(response.status).toBe(200)
+    // ILIKE filter must be skipped entirely (no or: call) — prevents full-table-scan
+    const hasIlike = mock.getChain().some((c: string) => c.startsWith("or:"))
+    expect(hasIlike).toBe(false)
+  })
+
+  it("strips _ wildcard but preserves remaining query characters", async () => {
+    const mock = createMockSupabaseQueryBuilder()
+    vi.doMock("@/lib/supabase", () => ({
+      supabase: {
+        from: vi.fn(() => mock.builder),
+      },
+    }))
+
+    // "Zr_" → strip underscore → "Zr" remains → ILIKE applied
+    const url = new URL("http://localhost/api/potentials?q=Zr_&page=1&limit=20")
+    const { GET } = await import("./route")
+    const response = await GET(new Request(url.toString()))
+
+    expect(response.status).toBe(200)
+    const orCall = mock.getChain().find((c: string) => c.startsWith("or:"))
+    expect(orCall).toBeDefined()
+    // Underscore stripped, "Zr" preserved
+    expect(orCall).toContain("%Zr%")
+    // The ILIKE pattern values must not contain raw underscores
+    expect(orCall).toMatch(/ilike\.%Zr%/)
+  })
+
+  it("preserves commas and parens in search queries (M2 fix)", async () => {
+    const mock = createMockSupabaseQueryBuilder()
+    vi.doMock("@/lib/supabase", () => ({
+      supabase: {
+        from: vi.fn(() => mock.builder),
+      },
+    }))
+
+    // "Cu,Zr" should keep the comma — no longer stripped
+    const url = new URL("http://localhost/api/potentials?q=Cu,Zr&page=1&limit=20")
+    const { GET } = await import("./route")
+    const response = await GET(new Request(url.toString()))
+
+    expect(response.status).toBe(200)
+    const orCall = mock.getChain().find((c: string) => c.startsWith("or:"))
+    expect(orCall).toBeDefined()
+    // Comma must be preserved in the pattern
+    expect(orCall).toContain("%Cu,Zr%")
+  })
+
+  it("strips dots from queries to prevent PostgREST .or() filter breakage", async () => {
     const mock = createMockSupabaseQueryBuilder()
     vi.doMock("@/lib/supabase", () => ({
       supabase: {
@@ -217,7 +277,7 @@ describe("GET /api/potentials", () => {
     // "0.5" contains dots that break PostgREST column.operator.value parsing
     const url = new URL("http://localhost/api/potentials?q=0.5&page=1&limit=20")
     const { GET } = await import("./route")
-    const response = await GET({ url } as Request)
+    const response = await GET(new Request(url.toString()))
 
     expect(response.status).toBe(200)
 
@@ -239,7 +299,7 @@ describe("GET /api/potentials", () => {
 
     const url = new URL("http://localhost/api/potentials?q=Zr&page=1&limit=20")
     const { GET } = await import("./route")
-    await GET({ url } as Request)
+    await GET(new Request(url.toString()))
 
     const orCall = mock.getChain().find((c: string) => c.startsWith("or:"))
     expect(orCall).toBeDefined()
