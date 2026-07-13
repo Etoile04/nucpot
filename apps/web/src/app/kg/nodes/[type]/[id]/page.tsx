@@ -21,7 +21,7 @@ export default function NodeDetailPage() {
     <Suspense
       fallback={
         <div className="flex justify-center items-center min-h-[400px]">
-          <Spin tip="Loading…" />
+          <Spin tip="Loading…"><div /></Spin>
         </div>
       }
     >

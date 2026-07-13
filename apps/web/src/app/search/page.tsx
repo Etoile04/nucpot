@@ -9,7 +9,7 @@ export default function SearchPage() {
     <Suspense
       fallback={
         <div className="flex justify-center items-center min-h-[400px]">
-          <Spin tip="加载中..." />
+          <Spin tip="加载中..."><div /></Spin>
         </div>
       }
     >

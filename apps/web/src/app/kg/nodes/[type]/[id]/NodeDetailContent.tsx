@@ -150,7 +150,7 @@ export function NodeDetailContent() {
           className="flex justify-center items-center min-h-[400px]"
           data-testid="node-loading"
         >
-          <Spin tip="Loading node..." />
+          <Spin tip="Loading node..."><div /></Spin>
         </div>
       </main>
     )

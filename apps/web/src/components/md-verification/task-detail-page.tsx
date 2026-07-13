@@ -302,7 +302,7 @@ export function TaskDetailPage() {
   if (loading) {
     return (
       <div style={{ padding: "2rem", textAlign: "center" }}>
-        <Spin size="large" tip="加载任务详情中..." />
+        <Spin size="large" tip="加载任务详情中..."><div /></Spin>
       </div>
     )
   }
