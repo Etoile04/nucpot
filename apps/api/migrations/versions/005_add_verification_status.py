@@ -1,6 +1,6 @@
 """add verification_status column to potentials
 
-Revision ID: 005
+Revision ID: 005a
 Revises: 004
 Create Date: 2026-06-19
 
@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "005"
+revision: str = "005a"
 down_revision: str | Sequence[str] | None = "004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
