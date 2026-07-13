@@ -17,8 +17,9 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Empty, Spin, Typography } from "antd"
+import { Empty, Skeleton, Typography } from "antd"
 import { ArrowLeftOutlined } from "@ant-design/icons"
 import { ConfidenceBadge } from "@/components/shared/ConfidenceBadge"
 import {
@@ -26,18 +27,9 @@ import {
   type KgNodeDetail,
   type KgRelationItem,
 } from "@/lib/kg-node-api"
+import { kgNodeTypeClass } from "@/lib/kg-node-theme"
 
 const { Title, Text } = Typography
-
-// Color palette per node type — mirrors KgSearchContent for visual consistency.
-const TYPE_COLORS: Record<string, string> = {
-  Material: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-  Property: "bg-green-500/20 text-green-300 border-green-500/30",
-  Experiment: "bg-purple-500/20 text-purple-300 border-purple-500/30",
-  Condition: "bg-amber-500/20 text-amber-300 border-amber-500/30",
-  Publication: "bg-rose-500/20 text-rose-300 border-rose-500/30",
-  Measurement: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
-}
 
 interface KgNodeDetailContentProps {
   readonly type: string
@@ -65,27 +57,18 @@ function formatValue(value: unknown): string {
   }
 }
 
-function RelationRow({
-  item,
-  onSelect,
-}: {
-  readonly item: KgRelationItem
-  readonly onSelect: (neighbourType: string, neighbourId: string) => void
-}) {
+function RelationRow({ item }: { readonly item: KgRelationItem }) {
   const arrow = item.direction === "outgoing" ? "→" : "←"
+  const href = `/kg/nodes/${item.neighbour.node_type}/${item.neighbour.id}`
   return (
     <li className="border-b border-[var(--border-color,#2d2d44)] last:border-b-0">
-      <button
-        type="button"
-        onClick={() => onSelect(item.neighbour.node_type, item.neighbour.id)}
-        className="w-full text-left p-3 hover:bg-[var(--bg-elevated-hover,#22223a)] rounded transition-colors duration-150 group focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+      <Link
+        href={href}
+        className="block w-full text-left p-3 hover:bg-[var(--bg-elevated-hover,#22223a)] rounded transition-colors duration-150 group focus:outline-none focus:ring-2 focus:ring-blue-500/50"
       >
         <div className="flex items-center gap-2 mb-1">
           <span
-            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${
-              TYPE_COLORS[item.neighbour.node_type] ??
-              "bg-gray-500/20 text-gray-300 border-gray-500/30"
-            }`}
+            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${kgNodeTypeClass(item.neighbour.node_type)}`}
           >
             {item.neighbour.node_type}
           </span>
@@ -97,7 +80,7 @@ function RelationRow({
         <div className="text-white text-sm font-medium group-hover:text-blue-300 transition-colors truncate">
           {item.neighbour.label}
         </div>
-      </button>
+      </Link>
     </li>
   )
 }
@@ -128,25 +111,113 @@ export function KgNodeDetailContent({ type, id }: KgNodeDetailContentProps) {
     load()
   }, [load])
 
-  const handleSelectNeighbour = useCallback(
-    (neighbourType: string, neighbourId: string) => {
-      router.push(`/kg/nodes/${neighbourType}/${neighbourId}`)
-    },
-    [router],
-  )
-
   const handleBack = useCallback(() => router.back(), [router])
 
   // ── Loading ────────────────────────────────────────────────────────
   if (state.status === "loading") {
     return (
-      <div
+      <main
+        data-testid="kg-node-detail-loading"
         role="status"
+        aria-busy="true"
         aria-label="Loading knowledge graph node"
-        className="flex justify-center items-center min-h-[400px]"
+        className="max-w-[1200px] mx-auto px-6 py-8"
       >
-        <Spin tip="Loading node…" />
-      </div>
+        {/* Header skeleton: back link + type badge + title + subtitle */}
+        <Skeleton.Button
+          active
+          size="small"
+          className="!w-16 !h-6 !rounded mb-6"
+          aria-hidden
+        />
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <Skeleton.Input
+            active
+            size="small"
+            className="!w-20 !h-6 !rounded"
+            aria-hidden
+          />
+          <Skeleton.Input
+            active
+            size="small"
+            className="!w-24 !h-6 !rounded"
+            aria-hidden
+          />
+          <Skeleton.Input
+            active
+            size="small"
+            className="!w-16 !h-6 !rounded"
+            aria-hidden
+          />
+        </div>
+        <Skeleton.Input
+          active
+          size="large"
+          className="!w-2/3 !h-10 !rounded mb-2"
+          aria-hidden
+        />
+        <Skeleton.Input
+          active
+          size="small"
+          className="!w-1/3 !h-4 !rounded mb-10"
+          aria-hidden
+        />
+
+        {/* Body skeleton: main column + sidebar */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
+          <div className="space-y-6">
+            <Skeleton.Input
+              active
+              size="small"
+              className="!w-32 !h-6 !rounded"
+              aria-hidden
+            />
+            <Skeleton
+              active
+              paragraph={{
+                rows: 4,
+                width: ["60%", "80%", "55%", "70%"],
+              }}
+              title={false}
+            />
+            <Skeleton.Input
+              active
+              size="small"
+              className="!w-40 !h-6 !rounded !mt-8"
+              aria-hidden
+            />
+            <Skeleton
+              active
+              paragraph={{ rows: 2, width: ["90%", "75%"] }}
+              title={false}
+            />
+          </div>
+          <aside className="space-y-4">
+            <Skeleton.Input
+              active
+              size="small"
+              className="!w-28 !h-6 !rounded"
+              aria-hidden
+            />
+            <Skeleton
+              active
+              paragraph={{ rows: 3, width: ["85%", "90%", "60%"] }}
+              title={false}
+            />
+            <Skeleton.Input
+              active
+              size="small"
+              className="!w-24 !h-6 !rounded !mt-4"
+              aria-hidden
+            />
+            <Skeleton
+              active
+              paragraph={{ rows: 2, width: ["80%", "70%"] }}
+              title={false}
+            />
+          </aside>
+        </div>
+      </main>
     )
   }
 
@@ -203,10 +274,7 @@ export function KgNodeDetailContent({ type, id }: KgNodeDetailContentProps) {
       <header className="mb-8">
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <span
-            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${
-              TYPE_COLORS[node.node_type] ??
-              "bg-gray-500/20 text-gray-300 border-gray-500/30"
-            }`}
+            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${kgNodeTypeClass(node.node_type)}`}
           >
             {node.node_type}
           </span>
@@ -334,11 +402,7 @@ export function KgNodeDetailContent({ type, id }: KgNodeDetailContentProps) {
             ) : (
               <ul role="list">
                 {node.relations.outgoing.map((rel) => (
-                  <RelationRow
-                    key={rel.edge_id}
-                    item={rel}
-                    onSelect={handleSelectNeighbour}
-                  />
+                  <RelationRow key={rel.edge_id} item={rel} />
                 ))}
               </ul>
             )}
@@ -360,11 +424,7 @@ export function KgNodeDetailContent({ type, id }: KgNodeDetailContentProps) {
             ) : (
               <ul role="list">
                 {node.relations.incoming.map((rel) => (
-                  <RelationRow
-                    key={rel.edge_id}
-                    item={rel}
-                    onSelect={handleSelectNeighbour}
-                  />
+                  <RelationRow key={rel.edge_id} item={rel} />
                 ))}
               </ul>
             )}

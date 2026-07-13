@@ -9,14 +9,31 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }))
 vi.stubGlobal("fetch", fetchMock)
 
-// next/navigation: provide a stub router so we can assert navigation.
-const { pushMock, backMock } = vi.hoisted(() => ({
-  pushMock: vi.fn(),
+// next/navigation: provide a stub router so back() can be asserted.
+const { backMock } = vi.hoisted(() => ({
   backMock: vi.fn(),
 }))
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock, back: backMock, replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), back: backMock, replace: vi.fn() }),
   useParams: () => ({ type: "Material", id: "node-abc" }),
+}))
+
+// Stub next/link so we can assert the rendered href synchronously without
+// relying on Next's internal Router context in the test harness.
+vi.mock("next/link", () => ({
+  __esModule: true,
+  default: ({
+    href,
+    children,
+    ...rest
+  }: {
+    readonly href: string
+    readonly children: React.ReactNode
+  }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
 }))
 
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
@@ -82,7 +99,6 @@ const MOCK_NODE = {
 
 beforeEach(() => {
   fetchMock.mockReset()
-  pushMock.mockReset()
   backMock.mockReset()
 })
 
@@ -102,12 +118,17 @@ describe("KgNodeDetailContent", () => {
     expect(url).toBe("/api/v1/kg/nodes/Material/node-abc")
   })
 
-  it("2. shows a loading spinner before the fetch resolves", () => {
+  it("2. shows a content-shape skeleton before the fetch resolves", () => {
     fetchMock.mockReturnValueOnce(new Promise(() => {})) // never resolves
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
-    expect(screen.getByRole("status")).toBeInTheDocument()
+    const loading = screen.getByTestId("kg-node-detail-loading")
+    expect(loading).toBeInTheDocument()
+    expect(loading).toHaveAttribute("role", "status")
+    expect(loading).toHaveAttribute("aria-busy", "true")
+    // Skeleton content-shape: must be a full-bleed main (not a thin spinner)
+    expect(loading.tagName.toLowerCase()).toBe("main")
   })
 
   it("3. renders node label, type badge, and confidence badge once loaded", async () => {
@@ -123,7 +144,17 @@ describe("KgNodeDetailContent", () => {
         "UO2",
       )
     })
-    expect(screen.getByText("Material")).toBeInTheDocument()
+    // The header badge contains the literal "Material" text. There is also
+    // a second "Material" badge further down if relations reference it,
+    // so use getAllByText and pick the one in the page header.
+    const materialBadges = screen.getAllByText("Material")
+    expect(materialBadges.length).toBeGreaterThanOrEqual(1)
+    const headerBadge = materialBadges[0] as HTMLElement
+    expect(headerBadge.closest("span")).toHaveClass(
+      "bg-blue-500/20",
+      "text-blue-300",
+      "border-blue-500/30",
+    )
     expect(screen.getByLabelText(/置信度: 0\.92/)).toBeInTheDocument()
   })
 
@@ -181,7 +212,7 @@ describe("KgNodeDetailContent", () => {
     expect(screen.getByText(/Outgoing/i)).toBeInTheDocument()
   })
 
-  it("7. clicking a relation navigates to /kg/nodes/{target_type}/{target_id}", async () => {
+  it("7. renders relations as anchors with href /kg/nodes/{target_type}/{target_id} (F2: Link)", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve(MOCK_NODE),
@@ -193,9 +224,24 @@ describe("KgNodeDetailContent", () => {
       expect(screen.getByText("Melting Point")).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText("Melting Point"))
+    // Find the anchor that wraps the "Melting Point" relation. With the
+    // next/link stub, this resolves to a plain <a href="...">.
+    const meltingPointLinks = screen.getAllByRole("link", {
+      name: /Melting Point/i,
+    })
+    expect(meltingPointLinks.length).toBeGreaterThanOrEqual(1)
+    const link = meltingPointLinks.find(
+      (el) => el.getAttribute("href") === "/kg/nodes/Property/prop-1",
+    ) as HTMLAnchorElement | undefined
+    expect(link).toBeDefined()
+    expect(link!).toHaveAttribute("href", "/kg/nodes/Property/prop-1")
+    // Navigation now goes through real anchor elements — middle-click and
+    // keyboard activation are enabled for free, and router.push is no
+    // longer the click handler.
 
-    expect(pushMock).toHaveBeenCalledWith("/kg/nodes/Property/prop-1")
+    // The incoming relation should also be an anchor, not a button.
+    const incomingLink = screen.getByRole("link", { name: /Smith 2020/i })
+    expect(incomingLink).toHaveAttribute("href", "/kg/nodes/Publication/pub-1")
   })
 
   it("8. shows a retry-able error state when the API returns non-OK", async () => {
