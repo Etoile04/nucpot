@@ -21,11 +21,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from nfm_db.database import get_db
-from nfm_db.models.kg import VALID_NODE_TYPES, KGNode
+from nfm_db.models.kg import VALID_NODE_TYPES, KGEdge, KGNode
 from nfm_db.schemas.common import ApiResponse, PaginationParams
-from nfm_db.schemas.kg import KGSearchItem, KGSearchResponse, SemanticQueryResponse
+from nfm_db.schemas.kg import (
+    KGNodeDetail,
+    KGRelationsResponse,
+    KGSearchItem,
+    KGSearchResponse,
+    RelationEdgeItem,
+    SemanticQueryResponse,
+)
 from nfm_db.services.kg_utils import parse_aliases
 from nfm_db.services.review_queue_service import (
     approve_review_item,
@@ -106,6 +114,32 @@ def _build_search_item(node: KGNode) -> KGSearchItem:
         confidence=node.confidence,
         status=node.status,
         source_id=str(node.source_id) if node.source_id else None,
+    )
+
+
+def _build_node_detail(node: KGNode) -> KGNodeDetail:
+    """Map a KGNode ORM row to a KGNodeDetail Pydantic schema."""
+    return KGNodeDetail(
+        id=str(node.id),
+        node_type=node.node_type,
+        label=node.label,
+        aliases=parse_aliases(node.aliases),
+        properties=node.properties or {},
+        confidence=node.confidence,
+        status=node.status,
+        source_id=str(node.source_id) if node.source_id else None,
+    )
+
+
+def _build_relation_edge(edge: KGEdge) -> RelationEdgeItem:
+    """Map a KGEdge ORM row to a RelationEdgeItem, eager-loading both endpoints."""
+    return RelationEdgeItem(
+        id=str(edge.id),
+        relation_type=edge.relation_type,
+        confidence=edge.confidence,
+        properties=edge.properties or {},
+        source_node=_build_search_item(edge.source_node),
+        target_node=_build_search_item(edge.target_node),
     )
 
 
@@ -227,6 +261,118 @@ async def _structured_search(
         limit=limit,
         offset=offset,
     )
+
+
+# ===========================================================================
+# Node detail & relations endpoints (NFM-1099)
+#
+# IMPORTANT: /kg/nodes/{node_id}/relations MUST be declared before
+# /kg/nodes/{node_type}/{node_id}, otherwise FastAPI matches the literal
+# "relations" segment as the {node_type} path parameter.
+# ===========================================================================
+
+
+@router.get(
+    "/kg/nodes/{node_id}/relations",
+    response_model=ApiResponse[KGRelationsResponse],
+    summary="Get relations for a KG node",
+)
+async def get_kg_node_relations(
+    node_id: UUID,
+    relation_type: str | None = Query(
+        None, description="Optional filter by relation_type (e.g. contains)"
+    ),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[KGRelationsResponse]:
+    """Return all edges where the given node participates as either source or target.
+
+    Eager-loads both endpoints so the response can include lightweight node
+    summaries for navigation without an N+1 query pattern.
+    """
+    # Verify the node exists before listing edges (clear 404 vs ambiguous empty).
+    node_check = await session.execute(
+        select(KGNode.id).where(KGNode.id == node_id)
+    )
+    if node_check.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    # Query both outgoing and incoming edges in a single statement.
+    base_filter = [
+        or_(
+            KGEdge.source_node_id == node_id,
+            KGEdge.target_node_id == node_id,
+        )
+    ]
+    if relation_type is not None:
+        base_filter.append(KGEdge.relation_type == relation_type)
+
+    # Count for pagination metadata.
+    count_stmt = (
+        select(func.count()).select_from(KGEdge).where(*base_filter)
+    )
+    total: int = (await session.execute(count_stmt)).scalar_one()
+
+    # Data query with eager-loaded endpoints.
+    data_stmt = (
+        select(KGEdge)
+        .options(
+            selectinload(KGEdge.source_node),
+            selectinload(KGEdge.target_node),
+        )
+        .where(*base_filter)
+        .order_by(KGEdge.relation_type.asc(), KGEdge.id.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await session.execute(data_stmt)).scalars().all()
+
+    items = [_build_relation_edge(row) for row in rows]
+
+    return ApiResponse(
+        success=True,
+        data=KGRelationsResponse(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
+@router.get(
+    "/kg/nodes/{node_type}/{node_id}",
+    response_model=ApiResponse[KGNodeDetail],
+    summary="Get Knowledge Graph node by type and ID",
+)
+async def get_kg_node(
+    node_type: str,
+    node_id: UUID,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[KGNodeDetail]:
+    """Return a single KG node scoped by both type and ID.
+
+    The node_type segment validates the type classification before the
+    database query so callers receive a 400 for clearly invalid types.
+    A mismatch (valid type but node has a different type) yields 404.
+    """
+    if node_type not in VALID_NODE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid node_type: '{node_type}'. "
+                f"Must be one of: {', '.join(sorted(VALID_NODE_TYPES))}"
+            ),
+        )
+
+    stmt = select(KGNode).where(KGNode.id == node_id)
+    node = (await session.execute(stmt)).scalar_one_or_none()
+
+    if node is None or node.node_type != node_type:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    return ApiResponse(success=True, data=_build_node_detail(node))
 
 
 # ===========================================================================

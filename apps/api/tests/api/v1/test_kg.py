@@ -103,7 +103,6 @@ async def _seed_review_item(
 # ---------------------------------------------------------------------------
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_node_success(async_client, db_session) -> None:
     """GET /kg/nodes/Material/{id} returns the seeded node."""
@@ -124,7 +123,6 @@ async def test_get_node_success(async_client, db_session) -> None:
     assert data["status"] == "active"
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_node_invalid_type(async_client, db_session) -> None:
     """GET /kg/nodes/InvalidType/{id} returns 400."""
@@ -137,20 +135,18 @@ async def test_get_node_invalid_type(async_client, db_session) -> None:
     assert "Invalid node_type" in response.json()["detail"]
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_node_type_mismatch(async_client, db_session) -> None:
-    """GET /kg/nodes/Element/{material_id} returns 404 (type mismatch)."""
+    """GET /kg/nodes/Property/{material_id} returns 404 (type mismatch)."""
     node = await _seed_node(db_session, node_type="Material")
 
     response = await async_client.get(
-        f"/api/v1/kg/nodes/Element/{node.id}",
+        f"/api/v1/kg/nodes/Property/{node.id}",
     )
     assert response.status_code == 404
     assert "Node not found" in response.json()["detail"]
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_node_not_found(async_client) -> None:
     """GET /kg/nodes/Material/{nonexistent} returns 404."""
@@ -166,7 +162,6 @@ async def test_get_node_not_found(async_client) -> None:
 # ---------------------------------------------------------------------------
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_relations_outgoing(async_client, db_session) -> None:
     """GET /kg/nodes/{id}/relations returns outgoing edges."""
@@ -189,7 +184,6 @@ async def test_get_relations_outgoing(async_client, db_session) -> None:
     assert edge["target_node"]["id"] == str(node_b.id)
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_relations_node_not_found(async_client) -> None:
     """GET /kg/nodes/{nonexistent}/relations returns 404."""
@@ -200,7 +194,6 @@ async def test_get_relations_node_not_found(async_client) -> None:
     assert response.status_code == 404
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_relations_empty(async_client, db_session) -> None:
     """GET /kg/nodes/{id}/relations returns empty for node with no edges."""
@@ -215,7 +208,6 @@ async def test_get_relations_empty(async_client, db_session) -> None:
     assert data["items"] == []
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_relations_with_relation_type_filter(
     async_client,
@@ -236,7 +228,6 @@ async def test_get_relations_with_relation_type_filter(
     assert all(e["relation_type"] == "contains" for e in items)
 
 
-@_SKIP_UNIMPLEMENTED
 @pytest.mark.asyncio
 async def test_get_relations_pagination(async_client, db_session) -> None:
     """GET /kg/nodes/{id}/relations?limit=1&offset=0 respects pagination."""
