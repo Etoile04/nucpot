@@ -63,7 +63,8 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("/ontology-viewer/index.html")
     expect(src).toContain("embed=false")
-    expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json")
+    // Browser URL-encodes the data param value (%2F = "/")
+    expect(src).toContain("data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json")
 
     // AC#1/#3: the corpus must actually load successfully (same-origin → no
     // CORS). Wait positively for its response status, not merely the absence
@@ -106,7 +107,8 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
     expect(src).toContain("node=Material")
     // passthrough must preserve embed + data contract too
     expect(src).toContain("embed=false")
-    expect(src).toContain("data=/ontology-viewer/data/nvl_ontology_data.json")
+    // Browser URL-encodes the data param value (%2F = "/")
+    expect(src).toContain("data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json")
   })
 
   test("AC#4: captures the desktop visual-regression screenshot (1440px)", async ({

@@ -86,16 +86,16 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run KG model tests
-        run: uv run pytest tests/test_kg_models.py tests/test_kg_utils.py -v --tb=short
+        run: uv run pytest tests/test_kg_models.py tests/test_kg_utils.py -v --tb=short --cov=src/nfm_db/models/kg.py --cov=src/nfm_db/schemas/kg.py --cov-fail-under=0 --cov-report=term-missing:skip-covered
 
       - name: Run KG service tests
-        run: uv run pytest tests/test_kg_re.py tests/test_kg_lightrag_sync.py -v --tb=short
+        run: uv run pytest tests/test_kg_re.py tests/test_kg_lightrag_sync.py -v --tb=short --cov=src/nfm_db/services/kg_re.py --cov=src/nfm_db/services/kg_lightrag_sync.py --cov-fail-under=0 --cov-report=term-missing:skip-covered
 
       - name: Run KG API tests
-        run: uv run pytest tests/test_kg_search_api.py -v --tb=short
+        run: uv run pytest tests/test_kg_search_api.py -v --tb=short --cov=src/nfm_db/api/v1/kg.py --cov-fail-under=0 --cov-report=term-missing:skip-covered
 
       - name: Run ontology tests
-        run: uv run pytest tests/test_ontology_*.py -v --tb=short
+        run: uv run pytest tests/test_ontology_*.py -v --tb=short --cov=src/nfm_db/models/ontology.py --cov=src/nfm_db/services/ontology_service.py --cov=src/nfm_db/services/ontology_sync.py --cov-fail-under=0 --cov-report=term-missing:skip-covered
 
   entity-linking-eval:
     name: Entity Linking Eval (≥90%)
@@ -117,7 +117,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run entity linking evaluation
-        run: uv run python ../scripts/eval_entity_linking.py
+        run: uv run python ${{ github.workspace }}/scripts/eval_entity_linking.py --fixtures-dir ${{ github.workspace }}/apps/api/tests/fixtures/entity_linking
 
   query-correctness:
     name: Query Correctness + Ontology Coverage
@@ -139,4 +139,4 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run query correctness tests
-        run: uv run python ../scripts/test_query_correctness.py
+        run: uv run python ${{ github.workspace }}/scripts/test_query_correctness.py --fixtures-dir ${{ github.workspace }}/apps/api/tests/fixtures/query_correctness
