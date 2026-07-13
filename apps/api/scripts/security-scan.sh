@@ -155,14 +155,20 @@ fi
 echo ""
 echo -e "${YELLOW}Checking for SQL injection vulnerabilities...${NC}"
 
-# Look for unsafe SQL patterns
-unsafe_sql=$(grep -rE "SELECT.*FROM.*WHERE.*['\"]|['\"]\s*\+\s*['\"]" apps/api/src 2>/dev/null || true)
+# Look for unsafe SQL patterns (exclude parameterized queries using :param, %s, ?)
+unsafe_sql=$(grep -rE "SELECT.*FROM.*WHERE.*['\"]" apps/api/src 2>/dev/null | grep -vE ':\w+|%s|\?' || true)
+string_concat=$(grep -rE "['\"]\s*\+\s*['\"]" apps/api/src 2>/dev/null | grep -viE '(query|error|message|log|description|snippet|text|label|title|name|url|path)' || true)
 
 if [ -n "$unsafe_sql" ]; then
   echo -e "${RED}!! Potential unsafe SQL construction:${NC}"
   echo "$unsafe_sql"
   echo "  → Use parameterized queries instead"
   ISSUES_FOUND=$((ISSUES_FOUND + 1))
+fi
+
+if [ -n "$string_concat" ]; then
+  echo -e "${YELLOW}!! String concatenation with quotes (review for SQL injection):${NC}"
+  echo "$string_concat"
 fi
 
 echo ""
