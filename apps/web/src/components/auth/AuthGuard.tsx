@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { Spin } from 'antd'
-import { getToken, clearToken } from '@/lib/api-client'
+import { getToken, authApi } from '@/lib/api-client'
 
 interface AuthGuardProps {
   readonly children: React.ReactNode
@@ -28,23 +28,16 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     }
 
     try {
-      const response = await fetch('/api/v1/auth/me', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      })
-
-      if (!response.ok) {
-        clearToken()
-        setState('unauthenticated')
+      await authApi.getMe()
+      setState('authenticated')
+    } catch (error: unknown) {
+      // Network error — don't clear token, keep user on page
+      if (error instanceof TypeError) {
+        setState('authenticated')
         return
       }
-
-      setState('authenticated')
-    } catch {
-      // Network error — don't clear token, keep user on page
-      setState('authenticated')
+      // Auth error (401/403 etc.) — request() already clears token
+      setState('unauthenticated')
     }
   }, [])
 
