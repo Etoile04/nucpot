@@ -1,10 +1,11 @@
 """Authentication and user management API endpoints."""
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from nfm_db.api.v1.auth import (
 )
 from nfm_db.config import get_settings
 from nfm_db.database import get_db
+from nfm_db.middleware.rate_limit import limiter
 from nfm_db.models.user import User
 from nfm_db.schemas.auth import (
     ApiResponse,
@@ -37,13 +39,29 @@ from nfm_db.services.auth_service import (
 router = APIRouter(prefix="/auth", tags=["认证管理"])
 settings = get_settings()
 
+COOKIE_NAME = "access_token"
+COOKIE_MAX_AGE = 1800  # 30 minutes
+
+
+def _validate_password_strength(password: str) -> None:
+    """Enforce password policy: ≥8 chars, must contain digits and letters."""
+    if len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    if not re.search(r"[A-Za-z]", password):
+        raise HTTPException(400, "Password must contain at least one letter")
+    if not re.search(r"\d", password):
+        raise HTTPException(400, "Password must contain at least one digit")
+
 
 @router.post("/login", response_model=Token)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,  # noqa: ARG001 — required by slowapi
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
 ) -> Token:
-    """用户登录，获取访问令牌。"""
+    """用户登录，获取访问令牌。Sets HttpOnly cookie for browser clients."""
     result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalar_one_or_none()
 
@@ -63,15 +81,36 @@ async def login(
         expires_delta=access_token_expires,
     )
 
+    # Set HttpOnly cookie for browser security (XSS-proof)
+    response.set_cookie(
+        COOKIE_NAME,
+        access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=COOKIE_MAX_AGE,
+    )
+
     return Token(access_token=access_token)
 
 
+@router.post("/logout")
+async def logout(response: Response) -> ApiResponse:
+    """用户登出，清除认证 cookie。"""
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return ApiResponse(success=True, data={"message": "Logged out"})
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3/minute")
 async def register(
+    request: Request,  # noqa: ARG001
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """注册新用户（初始化阶段可用）。"""
+    """注册新用户。Password must be ≥8 chars with letters and digits."""
+    _validate_password_strength(user_data.password)
     # Check if username exists
     result = await db.execute(select(User).where(User.username == user_data.username))
     if result.scalar_one_or_none():

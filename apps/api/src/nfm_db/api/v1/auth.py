@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,15 +12,30 @@ from nfm_db.database import get_db
 from nfm_db.models.user import BlogRole, Permission, User
 from nfm_db.services.auth_service import decode_access_token
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """Get the current authenticated user from JWT token."""
-    token = credentials.credentials
+    """Get the current authenticated user from JWT token.
+
+    Tries HttpOnly cookie first, then falls back to Authorization header.
+    """
+    # Try cookie first (browser clients)
+    token = request.cookies.get("access_token")
+
+    # Fall back to Authorization header (API clients)
+    if not token and credentials:
+        token = credentials.credentials
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
     payload = decode_access_token(token)
 
     if payload is None:

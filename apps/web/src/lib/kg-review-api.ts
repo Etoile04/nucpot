@@ -8,7 +8,6 @@
  *   POST /api/v1/review/conflicts/:id/resolve  { action }
  */
 
-import { getToken } from '@/lib/api-client'
 
 // ── Shared Types ──────────────────────────────────────────────────────
 
@@ -56,18 +55,13 @@ export type ConflictResolutionAction = 'keep_a' | 'keep_b' | 'not_conflict' | 's
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
+  return {
     'Content-Type': 'application/json',
   }
-  const token = getToken()
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  return headers
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const res = await fetch(url, { ...init, credentials: "include" })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.detail ?? body.message ?? `API error: ${res.status}`)

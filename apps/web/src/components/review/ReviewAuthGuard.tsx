@@ -15,7 +15,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { authApi, clearToken, getToken, type UserProfile } from "@/lib/api-client"
+import { authApi, type UserProfile } from "@/lib/api-client"
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -53,25 +53,17 @@ export default function ReviewAuthGuard({
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = getToken()
-
-    if (!token) {
-      router.replace("/login")
-      return
-    }
-
+    // Cookie-based auth: cookie sent automatically via credentials:"include"
     authApi
       .getMe()
       .then((user) => {
         if (!user.is_active) {
-          clearToken()
           router.replace("/login")
           return
         }
         setProfile(user)
       })
       .catch(() => {
-        clearToken()
         router.replace("/login")
       })
       .finally(() => {

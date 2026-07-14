@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { authApi, setToken } from "@/lib/api-client"
+import { authApi } from "@/lib/api-client"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,8 +17,7 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      const tokenResponse = await authApi.login(username, password)
-      setToken(tokenResponse.access_token)
+      await authApi.login(username, password)
       router.push("/admin/blog")
       router.refresh()
     } catch (err) {
