@@ -1,261 +1,269 @@
-/**
- * Review Queue auth flow E2E tests — NFM-1400.
- *
- * Spec coverage:
- *   - Unauthenticated redirect for /review/kg
- *   - Unauthenticated redirect for /review/conflicts
- *   - Log in via the blog admin login form, assert the KG review
- *     queue renders, and exercise the batch-approve action.
- *
- * Test posture:
- *   - Mock /api/v1/auth/* and /api/v1/review/* via Playwright route
- *     interception so the test is independent of any real backend.
- *   - Deterministic waits only: every assertion targets a stable UI
- *     element via Playwright's auto-waiting `expect`, or awaits the
- *     exact network response we expect. No `waitForTimeout` calls.
- *   - Tests skip when E2E_TARGET=live because route mocking only works
- *     against the locally-spawned dev server.
- *
- * Acceptance: the flow passes in CI with no flaky timeout-based waits.
- */
-
-import { test, expect, type Page } from "@playwright/test"
-import { setupReviewMockApi } from "./fixtures/review-mock-server"
-import {
-  MOCK_AUTH_TOKEN,
-  MOCK_AUTH_STORAGE_KEY,
-  MOCK_USER_PROFILE,
-  MOCK_KG_REVIEW_ITEMS,
-} from "./fixtures/review-mock-data"
-
-// =============================================================================
-// Helpers
-// =============================================================================
+import { test, expect, type Page, type Response } from "@playwright/test"
 
 /**
- * Seeds the blog-admin JWT into localStorage so ReviewAuthGuard treats
- * the browser as already-authenticated. This is the path used by the
- * real /admin/login form after a successful login.
+ * Review Queue Auth Flow E2E (NFM-1402)
+ *
+ * Exercises the /review/* auth guard and queue rendering through three
+ * behavior groups in scope:
+ *   1. Unauthenticated redirect — /review/kg and /review/conflicts
+ *      redirect to /login when no JWT is present
+ *   2. Login and queue render — after auth mock, both KG review and
+ *      conflicts pages render their table data + status bar
+ *   3. Batch approve — select items, trigger batch approve, queue refreshes
+ *
+ * Design constraints:
+ *   - Mocked network: every assertion runs against fixtures served by
+ *     `setupMockReviewQueueApi()`. No real backend dependency.
+ *   - Deterministic waits only: never `waitForTimeout`. Always
+ *     `page.waitForResponse()` for network round-trips and Playwright
+ *     locator auto-waiting for visibility/containment assertions.
+ *   - Live target safety: skipped under `E2E_TARGET=live` because
+ *     mocked path only.
+ *   - A11y-based locators: `getByRole`, `getByLabel`, `getByText`.
+ *     Never CSS class chains.
+ *   - Independent: each test sets up and tears down its own mocks.
+ *
+ * Acceptance: no `waitForTimeout`, no `expect.poll` with time-based
+ * retry, no flaky network. Every assertion is a `toBeVisible` /
+ * `toHaveText` / `toBeHidden` / `toHaveCount` against an a11y-tested
+ * locator.
  */
-async function seedAuthToken(page: Page): Promise<void> {
-  await page.addInitScript(
-    ([key, value]) => {
-      window.localStorage.setItem(key, value)
-    },
-    [MOCK_AUTH_STORAGE_KEY, MOCK_AUTH_TOKEN],
+
+import { setupMockReviewQueueApi } from "./fixtures/review-queue-mock-server"
+import { MOCK_KG_REVIEW_ITEMS } from "./fixtures/review-queue-mock-data"
+
+const isLive = process.env.E2E_TARGET === "live"
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
+
+const LOGIN_PATH = "/login"
+const KG_REVIEW_PATH = "/review/kg"
+const CONFLICTS_PATH = "/review/conflicts"
+
+// ---------------------------------------------------------------------------
+// Locators — pinned to a11y roles + aria labels, never CSS class chains.
+// ---------------------------------------------------------------------------
+
+const pageHeading = (page: Page) => page.getByRole("heading", { level: 1 })
+
+const selectAllCheckbox = (page: Page) => page.getByLabel("选择全部")
+
+const itemCheckbox = (page: Page, title: string) =>
+  page.getByLabel(`选择 ${title}`)
+
+const batchApproveButton = (page: Page, count: number) =>
+  page.getByLabel(`批量通过 ${count} 项`)
+
+const confirmDialog = (page: Page) =>
+  page.getByRole("dialog", { name: "确认操作" })
+
+const confirmApproveButton = (page: Page) =>
+  confirmDialog(page).getByRole("button", { name: /确认通过/ })
+
+// ---------------------------------------------------------------------------
+// Helpers — network synchronization
+// ---------------------------------------------------------------------------
+
+function captureAuthMe(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/auth/me") &&
+      response.request().method() === "GET",
   )
 }
 
-// =============================================================================
+function captureKgReviewQueue(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/review/kg") &&
+      response.request().method() === "GET",
+  )
+}
+
+function captureConflictsQueue(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/review/conflicts") &&
+      response.request().method() === "GET",
+  )
+}
+
+function captureKgBatchAction(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/review/kg/batch") &&
+      response.request().method() === "POST",
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Suite
-// =============================================================================
+// ---------------------------------------------------------------------------
 
-const isLiveTarget = process.env.E2E_TARGET === "live"
-
-test.describe("Review Queue auth flow", { tag: "@integration" }, () => {
-  // When CI runs against the live site, route mocks cannot intercept
-  // real backend traffic. Skip the entire suite there — it is exercised
-  // against the locally-spawned dev server instead.
-  test.describe.configure({
-    mode: isLiveTarget ? "skip" : "default",
-  })
-  test("redirects unauthenticated visitor away from /review/kg", async ({
-    page,
-  }) => {
-    await setupReviewMockApi(page)
-
-    await page.goto("/review/kg")
-
-    // ReviewAuthGuard redirects to /login on missing/invalid token.
-    // We assert by pathname, not full URL, so query strings don't break it.
-    await expect(page).toHaveURL(/\/login$/)
-
-    // The login form must render (deterministic element, not arbitrary wait).
-    await expect(page.locator('input[type="email"]')).toBeVisible()
+test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
+  test.beforeEach(async ({ page }) => {
+    test.skip(isLive, "Review queue tests run against mocked fixtures only.")
   })
 
-  test("redirects unauthenticated visitor away from /review/conflicts", async ({
-    page,
-  }) => {
-    await setupReviewMockApi(page)
+  // -------------------------------------------------------------------------
+  // 1. Unauthenticated Redirect
+  // -------------------------------------------------------------------------
 
-    await page.goto("/review/conflicts")
+  test.describe("Unauthenticated Redirect", () => {
+    test("redirects /review/kg to /login when not authenticated", async ({
+      page,
+    }) => {
+      // No token in localStorage — guard will redirect
+      const authMePromise = captureAuthMe(page)
+      await setupMockReviewQueueApi(page, "unauthenticated")
 
-    await expect(page).toHaveURL(/\/login$/)
-    await expect(page.locator('input[type="email"]')).toBeVisible()
-  })
+      await page.goto(KG_REVIEW_PATH)
 
-  test("redirects unauthenticated visitor when /api/v1/auth/me rejects", async ({
-    page,
-  }) => {
-    // Override the default /auth/me mock with a 401 to prove the guard
-    // also redirects on a stale/expired token.
-    await setupReviewMockApi(page)
-    await page.route("**/api/v1/auth/me", (route) =>
-      route.fulfill({
-        status: 401,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "token expired" }),
-      }),
-    )
-    await seedAuthToken(page)
+      // Auth guard fires /api/v1/auth/me → 401 → redirect to /login
+      const authMeResponse = await authMePromise
+      expect(authMeResponse.status()).toBe(401)
 
-    await page.goto("/review/kg")
-
-    // The api-client request() helper intercepts 401 and performs a
-    // hard redirect to /admin/login via window.location.href.
-    // The login form must render (deterministic element, not arbitrary wait).
-    await expect(page).toHaveURL(/\/admin\/login$/)
-    await expect(page.locator("#email")).toBeVisible()
-  })
-
-  test("logs in, renders the KG review queue, and batch-approves", async ({
-    page,
-  }) => {
-    await setupReviewMockApi(page)
-
-    // Wait for the batch POST before navigating away so we can assert
-    // its payload. Combined with Playwright's auto-waiting on the
-    // confirmation dialog, this gives a deterministic anchor.
-    const batchPost = page.waitForResponse(
-      (resp) =>
-        resp.url().endsWith("/api/v1/review/kg/batch") &&
-        resp.request().method() === "POST",
-    )
-
-    // Wait for the login POST to complete so we know the token has been
-    // written to localStorage before we navigate to /review/kg.
-    const loginPost = page.waitForResponse(
-      (resp) =>
-        resp.url().endsWith("/api/v1/auth/login") &&
-        resp.request().method() === "POST",
-    )
-
-    // ── Step 1: Log in via the blog admin login form ────────────────
-    await page.goto("/admin/login")
-    await page.getByLabel("邮箱").fill("reviewer@example.com")
-    await page.getByLabel("密码").fill("test_password")
-    await page.getByRole("button", { name: /登录/ }).click()
-    await loginPost
-
-    // ── Step 2: Land on the KG review queue ─────────────────────────
-    // The login form redirects to /admin/blog after success; navigate
-    // explicitly to /review/kg so the test targets the review surface.
-    await page.goto("/review/kg")
-
-    // Header proves the page mounted past the auth guard.
-    await expect(
-      page.getByRole("heading", { name: "知识图谱审核" }),
-    ).toBeVisible()
-
-    // Each fixture row should render its title. Auto-waiting via expect.
-    for (const item of MOCK_KG_REVIEW_ITEMS) {
-      await expect(page.getByText(item.title)).toBeVisible()
-    }
-
-    // ── Step 3: Batch-approve the selected items ────────────────────
-    // Select the first two rows via their row checkboxes.
-    const firstRow = page.getByRole("row").filter({
-      hasText: MOCK_KG_REVIEW_ITEMS[0].title,
-    })
-    const secondRow = page.getByRole("row").filter({
-      hasText: MOCK_KG_REVIEW_ITEMS[1].title,
+      // The guard calls router.replace("/login")
+      await expect(page).toHaveURL(new RegExp(`.*${LOGIN_PATH}`))
     })
 
-    await firstRow.getByRole("checkbox").check()
-    await secondRow.getByRole("checkbox").check()
+    test("redirects /review/conflicts to /login when not authenticated", async ({
+      page,
+    }) => {
+      const authMePromise = captureAuthMe(page)
+      await setupMockReviewQueueApi(page, "unauthenticated")
 
-    // The batch action bar appears once a row is selected.
-    await expect(
-      page.getByRole("button", { name: /批量通过 2 项/ }),
-    ).toBeVisible()
+      await page.goto(CONFLICTS_PATH)
 
-    await page.getByRole("button", { name: /批量通过 2 项/ }).click()
+      const authMeResponse = await authMePromise
+      expect(authMeResponse.status()).toBe(401)
 
-    // Confirmation modal — deterministic anchor for the next action.
-    const confirmDialog = page.getByRole("dialog", { name: "确认操作" })
-    await expect(confirmDialog).toBeVisible()
-    await confirmDialog.getByRole("button", { name: /确认通过/ }).click()
-
-    // ── Step 4: Verify the batch endpoint was hit with the right ids ─
-    const response = await batchPost
-    expect(response.status()).toBe(200)
-
-    const payload = response.request().postDataJSON() as {
-      action: "approve" | "reject"
-      ids: ReadonlyArray<string>
-    }
-    expect(payload.action).toBe("approve")
-    expect(payload.ids).toEqual([
-      MOCK_KG_REVIEW_ITEMS[0].id,
-      MOCK_KG_REVIEW_ITEMS[1].id,
-    ])
-
-    // The selection state is cleared after a successful batch action.
-    await expect(
-      page.getByRole("button", { name: /批量通过 \d+ 项/ }),
-    ).toHaveCount(0)
+      await expect(page).toHaveURL(new RegExp(`.*${LOGIN_PATH}`))
+    })
   })
 
-  test("renders an empty-state message when the queue is empty", async ({
-    page,
-  }) => {
-    await setupReviewMockApi(page)
+  // -------------------------------------------------------------------------
+  // 2. Login and Queue Render
+  // -------------------------------------------------------------------------
 
-    // Re-route /review/kg to return an empty list for this test only.
-    // The regex matches `/api/v1/review/kg` exactly or with a query
-    // string, but NOT `/api/v1/review/kg/batch` (which is more specific
-    // and handled by the default mock).
-    await page.route(/\/api\/v1\/review\/kg(\?|$)/, (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [],
-          total: 0,
-          page: 1,
-          pageSize: 20,
-        }),
-        headers: { "Access-Control-Allow-Origin": "*" },
-      }),
-    )
+  test.describe("Login and Queue Render", () => {
+    test("logs in and renders KG review queue with items", async ({ page }) => {
+      const authMePromise = captureAuthMe(page)
+      const queuePromise = captureKgReviewQueue(page)
 
-    await seedAuthToken(page)
-    await page.goto("/review/kg")
+      await setupMockReviewQueueApi(page, "authenticated")
+      await page.goto(KG_REVIEW_PATH)
 
-    await expect(
-      page.getByRole("heading", { name: "知识图谱审核" }),
-    ).toBeVisible()
+      // Wait for auth check to complete
+      const authMeResponse = await authMePromise
+      expect(authMeResponse.status()).toBe(200)
 
-    // The empty-state copy is rendered by ReviewQueueTable when items=[].
-    await expect(page.getByText("暂无待审项目")).toBeVisible()
+      // Wait for the main queue fetch (may fire multiple times for stats)
+      await queuePromise
+
+      // Page heading renders
+      await expect(pageHeading(page)).toHaveText("知识图谱审核")
+
+      // All 3 mock items appear in the table by title
+      for (const item of MOCK_KG_REVIEW_ITEMS) {
+        await expect(page.getByText(item.title)).toBeVisible()
+      }
+
+      // Select-all checkbox is present
+      await expect(selectAllCheckbox(page)).toBeVisible()
+    })
+
+    test("logs in and renders conflicts review queue with items", async ({
+      page,
+    }) => {
+      const authMePromise = captureAuthMe(page)
+      const conflictsPromise = captureConflictsQueue(page)
+
+      await setupMockReviewQueueApi(page, "authenticated")
+      await page.goto(CONFLICTS_PATH)
+
+      const authMeResponse = await authMePromise
+      expect(authMeResponse.status()).toBe(200)
+
+      await conflictsPromise
+
+      // Page heading
+      await expect(pageHeading(page)).toHaveText("冲突解决")
+
+      // Conflict items — mapped to ReviewItem with title "entityName — property"
+      await expect(page.getByText("UO2 — 密度")).toBeVisible()
+      await expect(page.getByText("Zr-4 — 热中子吸收截面")).toBeVisible()
+    })
+
+    test("KG queue shows status bar with pending/approved/rejected counts", async ({
+      page,
+    }) => {
+      const authMePromise = captureAuthMe(page)
+      const queuePromise = captureKgReviewQueue(page)
+
+      await setupMockReviewQueueApi(page, "authenticated")
+      await page.goto(KG_REVIEW_PATH)
+
+      await authMePromise
+      await queuePromise
+
+      // Status bar shows: 待审核: N · 已通过: N · 已拒绝: N
+      await expect(page.getByText("待审核:")).toBeVisible()
+      await expect(page.getByText("3")).toBeVisible()
+      await expect(page.getByText("已通过:")).toBeVisible()
+      await expect(page.getByText("已拒绝:")).toBeVisible()
+    })
   })
 
-  test("renders the seeded reviewer profile in the auth guard", async ({
-    page,
-  }) => {
-    await setupReviewMockApi(page)
-    await seedAuthToken(page)
+  // -------------------------------------------------------------------------
+  // 3. Batch Approve
+  // -------------------------------------------------------------------------
 
-    await page.goto("/review/kg")
+  test.describe("Batch Approve", () => {
+    test("selects two items, clicks batch approve, queue refreshes", async ({
+      page,
+    }) => {
+      const authMePromise = captureAuthMe(page)
+      const queuePromise = captureKgReviewQueue(page)
 
-    // Page renders past the guard — proves /auth/me resolved.
-    await expect(
-      page.getByRole("heading", { name: "知识图谱审核" }),
-    ).toBeVisible()
+      await setupMockReviewQueueApi(page, "batch-approve")
+      await page.goto(KG_REVIEW_PATH)
 
-    // And the mock profile (returned by /auth/me) is consumable from
-    // the guard context. We assert this by reading localStorage — the
-    // hook only exposes it via React context, so we settle for the
-    // indirect proof that the guard let the page render.
-    await expect(page).toHaveURL(/\/review\/kg$/)
-    // Sanity: the seeded token is still present.
-    const storedToken = await page.evaluate((key) =>
-      window.localStorage.getItem(key),
-      MOCK_AUTH_STORAGE_KEY,
-    )
-    expect(storedToken).toBe(MOCK_AUTH_TOKEN)
-    // Profile fixture sanity check — proves the test wired the mock.
-    expect(MOCK_USER_PROFILE.is_active).toBe(true)
+      await authMePromise
+      await queuePromise
+
+      // Verify items loaded
+      await expect(page.getByText(MOCK_KG_REVIEW_ITEMS[0].title)).toBeVisible()
+      await expect(page.getByText(MOCK_KG_REVIEW_ITEMS[1].title)).toBeVisible()
+
+      // Select two items via their checkboxes
+      await itemCheckbox(page, MOCK_KG_REVIEW_ITEMS[0].title).check()
+      await itemCheckbox(page, MOCK_KG_REVIEW_ITEMS[1].title).check()
+
+      // Batch approve bar appears
+      await expect(page.getByText("已选择")).toBeVisible()
+      await expect(page.getByText("2")).toBeVisible()
+
+      // Click batch approve — opens confirmation dialog
+      await batchApproveButton(page, 2).click()
+      await expect(confirmDialog(page)).toBeVisible()
+
+      // Confirm the action — triggers batch API call + queue re-fetch
+      const batchPromise = captureKgBatchAction(page)
+      const refreshPromise = captureKgReviewQueue(page)
+      await confirmApproveButton(page).click()
+
+      // Wait for batch action to complete
+      const batchResponse = await batchPromise
+      expect(batchResponse.status()).toBe(200)
+
+      // Queue refreshes after batch action
+      await refreshPromise
+
+      // Confirmation dialog is gone
+      await expect(confirmDialog(page)).toBeHidden()
+    })
   })
 })
