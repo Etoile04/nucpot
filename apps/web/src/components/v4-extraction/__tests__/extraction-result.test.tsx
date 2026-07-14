@@ -1,66 +1,6 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeAll } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
-
-// ─── Inline type references (avoid import issues with test setup) ─
-
-interface V4FigureResult {
-  readonly page_number: number
-  readonly source_file: string
-  readonly extraction: {
-    readonly figure_type: string
-    readonly plot_data: {
-      readonly title: string
-      readonly plot_type: string
-      readonly x_axis: {
-        readonly label: string
-        readonly unit: string
-        readonly values: readonly number[]
-        readonly scale: string
-      }
-      readonly y_axis: {
-        readonly label: string
-        readonly unit: string
-        readonly values: readonly number[]
-        readonly scale: string
-      }
-      readonly series: readonly {
-        readonly name: string
-        readonly values: readonly number[]
-      }[]
-      readonly confidence: number
-    } | null
-    readonly table_data: unknown
-    readonly source_image_path: string | null
-    readonly provider: string
-    readonly model: string
-    readonly extraction_time_ms: number
-    readonly fallback_used: boolean
-  }
-}
-
-interface V4TableResult {
-  readonly page_number: number
-  readonly source_file: string
-  readonly table_data: {
-    readonly title: string
-    readonly headers: {
-      readonly columns: readonly string[]
-      readonly sub_headers?: readonly string[] | null
-    }
-    readonly rows: readonly {
-      readonly value: string
-      readonly row_span: number
-      readonly col_span: number
-      readonly is_header: boolean
-      readonly confidence: number
-    }[][]
-    readonly num_columns: number
-    readonly num_rows: number
-    readonly has_merged_cells: boolean
-    readonly notes: readonly string[]
-    readonly confidence: number
-  }
-}
+import type { V4FigureResult, V4TableResult } from "@/lib/v4-extraction/types"
 
 // ─── Factory helpers ──────────────────────────────────────────────
 

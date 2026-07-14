@@ -229,6 +229,17 @@ export const blogApi = {
 
 export type ExtractionSourceType = "doi" | "url" | "file" | "internal_id"
 
+/** V1 extraction job lifecycle statuses (mirrors backend JobStatus StrEnum). */
+export type V1JobStatus =
+  | "queued"
+  | "running"
+  | "extracting"
+  | "mapping"
+  | "quality_gate"
+  | "completed"
+  | "partial"
+  | "failed"
+
 export interface ExtractionTriggerRequest {
   readonly source_reference: string
   readonly source_type: ExtractionSourceType
@@ -240,16 +251,16 @@ export interface ExtractionTriggerRequest {
 export interface ExtractionTriggerResponse {
   readonly job_id: string
   readonly source_reference: string
-  readonly source_type: string
-  readonly status: string
+  readonly source_type: ExtractionSourceType
+  readonly status: V1JobStatus
   readonly message: string
 }
 
 export interface ExtractionStatusResponse {
   readonly job_id: string
   readonly source_reference: string
-  readonly source_type: string
-  readonly status: string
+  readonly source_type: ExtractionSourceType
+  readonly status: V1JobStatus
   readonly extracted_count: number
   readonly staged_count: number
   readonly rejected_count: number
