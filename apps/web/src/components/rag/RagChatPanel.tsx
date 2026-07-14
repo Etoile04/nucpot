@@ -131,7 +131,7 @@ export function RagChatPanel({
               />
             ))}
             {loading && (
-              <li role="status" aria-label="正在回复">
+              <li role="article" aria-label="正在回复">
                 <TypingIndicator />
               </li>
             )}
