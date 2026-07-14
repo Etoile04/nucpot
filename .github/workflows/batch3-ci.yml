@@ -80,7 +80,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run E2E integration tests
-        run: EXTRACTION_STUB_MODE=1 uv run pytest tests/test_e2e_integration.py -v --tb=short -m e2e --cov=src/nfm_db --cov-report=term-missing:skip-covered
+        run: EXTRACTION_STUB_MODE=1 uv run pytest tests/test_e2e_integration.py -v --tb=short -m e2e
 
   phase-gate-validation:
     name: Phase Gate Validation
