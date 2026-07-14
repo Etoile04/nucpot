@@ -46,7 +46,7 @@ const NULL_UNIT_PROP = makeProperty({
 
 describe("MaterialPropertyTable", () => {
   it("renders property rows with names, values, and units", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     expect(screen.getByText("密度")).toBeInTheDocument()
     expect(screen.getByText("10.5")).toBeInTheDocument()
@@ -54,14 +54,14 @@ describe("MaterialPropertyTable", () => {
   })
 
   it("renders source citations", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     expect(screen.getByText("文献A")).toBeInTheDocument()
     expect(screen.getByText("文献B")).toBeInTheDocument()
   })
 
   it("renders confidence badges for each row", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     const badges = screen.getAllByTestId("confidence-badge")
     expect(badges).toHaveLength(3)
@@ -71,13 +71,13 @@ describe("MaterialPropertyTable", () => {
   })
 
   it("displays total count in header", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={42} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={42} error={null} />)
 
     expect(screen.getByText(/共 42 条属性/)).toBeInTheDocument()
   })
 
   it("filters rows by search text across name and value", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     const searchInput = screen.getByPlaceholderText("筛选属性...")
     fireEvent.change(searchInput, { target: { value: "密度" } })
@@ -88,7 +88,7 @@ describe("MaterialPropertyTable", () => {
   })
 
   it("filters rows by source text", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     const searchInput = screen.getByPlaceholderText("筛选属性...")
     fireEvent.change(searchInput, { target: { value: "文献C" } })
@@ -98,13 +98,13 @@ describe("MaterialPropertyTable", () => {
   })
 
   it("renders empty state when no data", () => {
-    render(<MaterialPropertyTable data={[]} total={0} />)
+    render(<MaterialPropertyTable data={[]} total={0} error={null} />)
 
     expect(screen.getByText("暂无属性数据")).toBeInTheDocument()
   })
 
   it("renders empty state when filter has no matches", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     const searchInput = screen.getByPlaceholderText("筛选属性...")
     fireEvent.change(searchInput, { target: { value: "nonexistent" } })
@@ -120,27 +120,27 @@ describe("MaterialPropertyTable", () => {
 
   it("renders loading spinner when loading is true", () => {
     const { container } = render(
-      <MaterialPropertyTable data={[]} total={0} loading />,
+      <MaterialPropertyTable data={[]} total={0} loading error={null} />,
     )
 
     expect(container.querySelector(".ant-spin")).toBeTruthy()
   })
 
   it("renders '—' for null unit", () => {
-    render(<MaterialPropertyTable data={[NULL_UNIT_PROP]} total={1} />)
+    render(<MaterialPropertyTable data={[NULL_UNIT_PROP]} total={1} error={null} />)
 
     const dashes = screen.getAllByText("—")
     expect(dashes.length).toBeGreaterThanOrEqual(1)
   })
 
   it("does not show filter count when no filter is active", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     expect(screen.queryByText(/筛选结果/)).not.toBeInTheDocument()
   })
 
   it("clears filter when search input is cleared", () => {
-    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} />)
+    render(<MaterialPropertyTable data={SAMPLE_DATA} total={3} error={null} />)
 
     const searchInput = screen.getByPlaceholderText("筛选属性...") as HTMLInputElement
     fireEvent.change(searchInput, { target: { value: "密度" } })
