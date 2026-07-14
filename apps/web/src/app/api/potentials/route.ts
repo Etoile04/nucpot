@@ -40,7 +40,18 @@ export async function GET(request: Request) {
   }
 
   if (query) {
-    dbQuery = dbQuery.textSearch("search_vector", query);
+    // ILIKE search across name, description, and display_name
+    // (replaces broken textSearch on non-existent search_vector column — NFM-1367)
+    // Strip dots (break PostgREST .or() column.operator.value syntax)
+    // and ILIKE wildcards % and _ (prevent full-table-scan injection).
+    // Commas and parens are harmless in ILIKE — preserve them.
+    const safeQuery = query.replace(/[.%_]/g, "");
+    if (safeQuery.length > 0) {
+      const pattern = `%${safeQuery}%`;
+      dbQuery = dbQuery.or(
+        `name.ilike.${pattern},description.ilike.${pattern},display_name.ilike.${pattern}`
+      );
+    }
   }
 
   // Advanced filters
