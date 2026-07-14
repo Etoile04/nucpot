@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Extraction accuracy evaluation suite (NFM-863, B3.4).
+"""Extraction accuracy scoring infrastructure (NFM-863, B3.4).
 
-Benchmarks figure/table/plot extraction against held-out test sets
-using three comparison metrics:
+Validates the correctness of the scoring functions (IoU, tolerance, cell-match)
+used to evaluate extraction quality. Uses synthetic test cases with known
+expected outcomes — this tests the *scoring infrastructure*, not the
+extraction pipeline itself.
 
-  1. **Figure detection** — IoU ≥0.5 with ground truth (target ≥80%)
-  2. **Plot data extraction** — value match within 10% tolerance (target ≥60%)
-  3. **Table extraction** — cell-level match (target ≥60%)
-  4. **Value parsing** — golden fixture value parsing accuracy (target ≥60%)
+The real extraction pipeline is validated by the E2E integration tests
+in test_e2e_integration.py (PDF upload -> extraction -> KG population).
 
-Overall accuracy must be ≥60%.
+Metrics validated:
+  1. **Figure detection** — IoU >=0.5 with ground truth (target >=80%)
+  2. **Plot data extraction** — value match within 10% tolerance (target >=60%)
+  3. **Table extraction** — cell-level match (target >=60%)
+  4. **Value parsing** — golden fixture value parsing accuracy (target >=60%)
+
+Overall scoring accuracy must be >=60%.
 
 Exit codes:
     0 — evaluation passed (all thresholds met)

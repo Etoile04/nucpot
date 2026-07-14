@@ -14,7 +14,6 @@ Tests use real ORM models and API endpoints via AsyncClient.
 from __future__ import annotations
 
 import sys
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -272,14 +271,11 @@ class TestDocumentExtractionPipeline:
                 source_reference=doc["source_reference"],
                 source_type=doc["source_type"],
             )
-            assert len(extracted) > 0, (
-                f"No properties extracted from {doc['source_reference']}"
-            )
+            assert len(extracted) > 0, f"No properties extracted from {doc['source_reference']}"
             all_extracted.extend(extracted)
 
         assert len(all_extracted) >= NUM_DOCUMENTS * 2, (
-            f"Expected >= {NUM_DOCUMENTS * 2} extractions, "
-            f"got {len(all_extracted)}"
+            f"Expected >= {NUM_DOCUMENTS * 2} extractions, got {len(all_extracted)}"
         )
 
     @pytest.mark.asyncio
@@ -302,8 +298,7 @@ class TestDocumentExtractionPipeline:
                     element_systems.add(es)
 
         assert len(element_systems) >= 1, (
-            f"Expected >= 1 element system, got {len(element_systems)}: "
-            f"{sorted(element_systems)}"
+            f"Expected >= 1 element system, got {len(element_systems)}: {sorted(element_systems)}"
         )
 
 
@@ -333,9 +328,7 @@ class TestKGPopulation:
             db_session.add(node)
         await db_session.flush()
 
-        result = await db_session.execute(
-            select(KGNode.node_type).distinct()
-        )
+        result = await db_session.execute(select(KGNode.node_type).distinct())
         types = {row[0] for row in result.fetchall()}
 
         assert len(types) >= MIN_ENTITY_TYPES, (
@@ -377,9 +370,7 @@ class TestKGPopulation:
             db_session.add(edge)
         await db_session.flush()
 
-        result = await db_session.execute(
-            select(KGEdge.relation_type).distinct()
-        )
+        result = await db_session.execute(select(KGEdge.relation_type).distinct())
         relations = {row[0] for row in result.fetchall()}
 
         assert len(relations) >= MIN_RELATION_TYPES, (
@@ -405,16 +396,12 @@ class TestKGPopulation:
         await db_session.flush()
 
         # Query Material nodes
-        result = await db_session.execute(
-            select(KGNode).where(KGNode.node_type == "Material")
-        )
+        result = await db_session.execute(select(KGNode).where(KGNode.node_type == "Material"))
         materials = result.scalars().all()
         assert len(materials) >= 2
 
         # Query Publication nodes
-        result = await db_session.execute(
-            select(KGNode).where(KGNode.node_type == "Publication")
-        )
+        result = await db_session.execute(select(KGNode).where(KGNode.node_type == "Publication"))
         pubs = result.scalars().all()
         assert len(pubs) >= 2
 
@@ -476,9 +463,7 @@ class TestKGQueryAPI:
         transport = ASGITransport(app=app)
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get(
-                f"/api/v1/kg/nodes/Material/{node.id}"
-            )
+            response = await client.get(f"/api/v1/kg/nodes/Material/{node.id}")
             assert response.status_code == 200
             data = response.json()
             assert data.get("success") is True
@@ -526,9 +511,7 @@ class TestKGQueryAPI:
         transport = ASGITransport(app=app)
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get(
-                f"/api/v1/kg/nodes/{uo2_id}/relations"
-            )
+            response = await client.get(f"/api/v1/kg/nodes/{uo2_id}/relations")
             assert response.status_code == 200
             data = response.json()
             assert data.get("success") is True
@@ -579,14 +562,12 @@ class TestKGQueryAPI:
 class TestConflictResolution:
     """E2E: Multi-source fusion with configurable conflict resolution."""
 
-    @pytest.mark.asyncio
-    async def test_conflict_status_enum_values(self) -> None:
+    def test_conflict_status_enum_values(self) -> None:
         """ConflictStatus enum has expected values."""
         values = {s.value for s in ConflictStatus}
         assert "pending" in values
 
-    @pytest.mark.asyncio
-    async def test_resolution_strategies_are_configurable(self) -> None:
+    def test_resolution_strategies_are_configurable(self) -> None:
         """All 4 resolution strategies are available."""
         strategies = [s.value for s in ResolutionStrategy]
         required = {"newest", "confidence", "consensus", "manual"}
@@ -633,7 +614,9 @@ class TestFullPipelineValidation:
     async def test_pipeline_query_mode_count(self) -> None:
         """KG API supports at least 3 distinct query endpoints."""
         routes = [
-            "search", "nodes/{node_id}", "nodes/{node_id}/relations",
+            "search",
+            "nodes/{node_id}",
+            "nodes/{node_id}/relations",
             "review/queue",
         ]
         assert len(routes) >= MIN_QUERY_MODES

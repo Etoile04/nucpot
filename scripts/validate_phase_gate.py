@@ -2,8 +2,8 @@
 """Phase Gate Validation Script (NFM-864, B3.7).
 
 Checks all 6 Phase 2 gate criteria:
-  1. All Batch CI pipelines green
-  2. Figure/table extraction accuracy >= 60%
+  1. All Batch CI workflows present and structurally valid
+  2. Extraction scoring infrastructure correct (>= 60%)
   3. KG coverage: >= 5 entity types, >= 10 relation types
   4. KG query API supports >= 3 query modes
   5. Multi-source fusion conflict resolution configurable
@@ -119,28 +119,38 @@ class PhaseGateReport:
 
 
 def _check_ci_pipelines() -> GateResult:
-    """Check that all batch CI workflow files exist and are valid YAML."""
+    """Check that all batch CI workflow files exist and are structurally valid."""
+    import yaml
+
     workflow_dir = _REPO_ROOT / ".github" / "workflows"
     required_workflows = ["ci.yml", "batch2-ci.yml", "batch3-ci.yml"]
 
     existing: list[str] = []
+    parse_errors: list[str] = []
     for wf in required_workflows:
         path = workflow_dir / wf
         if path.exists():
             try:
                 content = path.read_text(encoding="utf-8")
-                if "jobs:" in content and "name:" in content:
+                parsed = yaml.safe_load(content)
+                if parsed and isinstance(parsed, dict) and "jobs" in parsed:
                     existing.append(wf)
+                else:
+                    parse_errors.append(f"{wf}: valid YAML but missing top-level 'jobs' key")
+            except yaml.YAMLError as exc:
+                parse_errors.append(f"{wf}: YAML parse error — {exc}")
             except OSError:
-                pass
+                parse_errors.append(f"{wf}: read error")
 
-    passed = len(existing) >= 3
-    detail = f"{len(existing)}/3 batch CI workflows present and valid"
+    passed = len(existing) >= 3 and not parse_errors
+    detail = f"{len(existing)}/3 batch CI workflows present and structurally valid"
     evidence = f"Found: {', '.join(existing)}"
+    if parse_errors:
+        evidence += f"; Errors: {'; '.join(parse_errors)}"
 
     return GateResult(
         gate_id="G1",
-        name="All Batch CI pipelines green",
+        name="All Batch CI workflows present and structurally valid",
         passed=passed,
         detail=detail,
         evidence=evidence,
@@ -153,7 +163,12 @@ def _check_ci_pipelines() -> GateResult:
 
 
 def _check_extraction_accuracy() -> GateResult:
-    """Check extraction accuracy using the eval_extraction_accuracy benchmark."""
+    """Check extraction scoring infrastructure using the eval_extraction_accuracy benchmark.
+
+    NOTE: This validates the scoring functions (IoU, tolerance, cell-match),
+    not the actual extraction pipeline. Real extraction is tested in E2E
+    integration tests (test_e2e_integration.py).
+    """
     try:
         from eval_extraction_accuracy import (
             run_figure_detection_benchmark,
@@ -176,7 +191,7 @@ def _check_extraction_accuracy() -> GateResult:
         passed = overall >= _EXTRACTION_ACCURACY_TARGET
 
         detail = (
-            f"Overall extraction accuracy: {overall:.1%} "
+            f"Scoring infrastructure accuracy: {overall:.1%} "
             f"(target >= {_EXTRACTION_ACCURACY_TARGET:.0%})"
         )
         evidence = (
@@ -189,7 +204,7 @@ def _check_extraction_accuracy() -> GateResult:
 
     return GateResult(
         gate_id="G2",
-        name=f"Extraction accuracy >= {_EXTRACTION_ACCURACY_TARGET:.0%}",
+        name=f"Extraction scoring infrastructure >= {_EXTRACTION_ACCURACY_TARGET:.0%}",
         passed=passed,
         detail=detail,
         evidence=evidence,

@@ -10,15 +10,13 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # G1: CI pipeline check
 # ---------------------------------------------------------------------------
 
 
 class TestGateCI:
-    """Gate 1: All batch CI pipelines present and valid."""
+    """Gate 1: All batch CI workflows present and structurally valid."""
 
     def test_all_workflows_present(self) -> None:
         """All 3 required workflow files exist."""
@@ -42,18 +40,25 @@ class TestGateCI:
 
 
 class TestGateExtractionAccuracy:
-    """Gate 2: Extraction accuracy >= 60%."""
+    """Gate 2: Extraction scoring infrastructure >= 60%."""
 
     def test_passes_when_accuracy_above_threshold(self) -> None:
         """Gate passes when all benchmarks exceed 60%."""
-        from unittest.mock import MagicMock, patch
-
-        mock_bench = MagicMock(accuracy=0.70, total=10, threshold_met=True)
+        from unittest.mock import MagicMock
 
         with (
-            patch("eval_extraction_accuracy.run_figure_detection_benchmark", return_value=MagicMock(accuracy=0.70, total=10, threshold_met=True)),
-            patch("eval_extraction_accuracy.run_plot_extraction_benchmark", return_value=MagicMock(accuracy=0.65, total=10, threshold_met=True)),
-            patch("eval_extraction_accuracy.run_table_extraction_benchmark", return_value=MagicMock(accuracy=0.80, total=10, threshold_met=True)),
+            patch(
+                "eval_extraction_accuracy.run_figure_detection_benchmark",
+                return_value=MagicMock(accuracy=0.70, total=10, threshold_met=True),
+            ),
+            patch(
+                "eval_extraction_accuracy.run_plot_extraction_benchmark",
+                return_value=MagicMock(accuracy=0.65, total=10, threshold_met=True),
+            ),
+            patch(
+                "eval_extraction_accuracy.run_table_extraction_benchmark",
+                return_value=MagicMock(accuracy=0.80, total=10, threshold_met=True),
+            ),
         ):
             from validate_phase_gate import _check_extraction_accuracy
 
@@ -63,12 +68,21 @@ class TestGateExtractionAccuracy:
 
     def test_fails_when_accuracy_below_threshold(self) -> None:
         """Gate fails when weighted accuracy drops below 60%."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         with (
-            patch("eval_extraction_accuracy.run_figure_detection_benchmark", return_value=MagicMock(accuracy=0.30, total=10, threshold_met=False)),
-            patch("eval_extraction_accuracy.run_plot_extraction_benchmark", return_value=MagicMock(accuracy=0.40, total=10, threshold_met=False)),
-            patch("eval_extraction_accuracy.run_table_extraction_benchmark", return_value=MagicMock(accuracy=0.50, total=10, threshold_met=False)),
+            patch(
+                "eval_extraction_accuracy.run_figure_detection_benchmark",
+                return_value=MagicMock(accuracy=0.30, total=10, threshold_met=False),
+            ),
+            patch(
+                "eval_extraction_accuracy.run_plot_extraction_benchmark",
+                return_value=MagicMock(accuracy=0.40, total=10, threshold_met=False),
+            ),
+            patch(
+                "eval_extraction_accuracy.run_table_extraction_benchmark",
+                return_value=MagicMock(accuracy=0.50, total=10, threshold_met=False),
+            ),
         ):
             from validate_phase_gate import _check_extraction_accuracy
 
@@ -113,9 +127,8 @@ class TestGateKGQueryModes:
 
     def test_fails_when_router_missing(self, tmp_path: Path) -> None:
         """Gate fails when kg.py router file is absent."""
-        from validate_phase_gate import _check_kg_query_modes
-
         import validate_phase_gate as vg
+        from validate_phase_gate import _check_kg_query_modes
 
         original = vg._REPO_ROOT
         try:
@@ -158,12 +171,15 @@ class TestGateCoverage:
     ) -> None:
         """Gate passes when pytest --cov reports >= 80%."""
         import subprocess as sp
-        from unittest.mock import patch
 
-        with patch.object(sp, "run", return_value=MagicMock(
-            stdout="TOTAL Coverage: 85.5%",
-            stderr="",
-        )):
+        with patch.object(
+            sp,
+            "run",
+            return_value=MagicMock(
+                stdout="TOTAL Coverage: 85.5%",
+                stderr="",
+            ),
+        ):
             from validate_phase_gate import _check_test_coverage
 
             result = _check_test_coverage()
@@ -176,12 +192,15 @@ class TestGateCoverage:
     ) -> None:
         """Gate fails when coverage is below 80%."""
         import subprocess as sp
-        from unittest.mock import patch
 
-        with patch.object(sp, "run", return_value=MagicMock(
-            stdout="TOTAL Coverage: 72.3%",
-            stderr="",
-        )):
+        with patch.object(
+            sp,
+            "run",
+            return_value=MagicMock(
+                stdout="TOTAL Coverage: 72.3%",
+                stderr="",
+            ),
+        ):
             from validate_phase_gate import _check_test_coverage
 
             result = _check_test_coverage()
@@ -192,7 +211,6 @@ class TestGateCoverage:
     ) -> None:
         """Falls back to file-count proxy when subprocess fails."""
         import subprocess as sp
-        from unittest.mock import patch
 
         with patch.object(sp, "run", side_effect=FileNotFoundError):
             from validate_phase_gate import _check_test_coverage
