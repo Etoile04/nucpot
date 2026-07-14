@@ -54,6 +54,36 @@ export const KG_SEARCH_RESPONSE = {
   },
 }
 
+export const KG_SEARCH_EMPTY_RESPONSE = {
+  success: true,
+  data: { items: [], total: 0, limit: 20, offset: 0 },
+}
+
+export const KG_TYPE_FILTER_RESPONSE = {
+  success: true,
+  data: {
+    items: [
+      {
+        id: "mat-uo2-001",
+        node_type: "Material",
+        label: "UO2",
+        aliases: ["Uranium dioxide", "urania"],
+        properties: {
+          formula: "UO2",
+          crystal_structure: "fluorite",
+          density_g_cm3: 10.97,
+        },
+        confidence: 0.98,
+        status: "active",
+        source_id: "src-001",
+      },
+    ],
+    total: 1,
+    limit: 20,
+    offset: 0,
+  },
+}
+
 export const KG_NODE_DETAIL_RESPONSE = {
   success: true,
   data: {
