@@ -41,6 +41,9 @@ jobs:
           fi
           echo "OK: exactly one alembic head"
 
+      - name: Check schema backward compatibility (NFM-869)
+        run: uv run python ../../scripts/check_schema_compat.py --schema src/nfm_db/schemas/ontology.py --baseline ../../.schema-baseline.json
+
       - name: Run tests with coverage
         run: uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=80
 

@@ -190,6 +190,12 @@ services:
       - "${PROD_WEB_HOST_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
+      # NFM-1407: nginx already routes /api/* on the host, so the Next.js
+      # rewrite proxy would either hang or loop when /api/* requests hit
+      # the web container directly (e.g. host-port health probes).
+      # Force-disable the rewrite here. The web container only serves the
+      # Next.js UI; all /api/* traffic is handled by nginx upstream.
+      DISABLE_API_REWRITE: "true"
     depends_on:
       api: { condition: service_healthy }
     healthcheck:

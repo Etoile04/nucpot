@@ -18,7 +18,10 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: [
+      "src/**/*.test.{ts,tsx}",
+      "__tests__/**/*.test.{ts,tsx}",
+    ],
     env: {
       BLOG_CONTENT_DIR: path.join(__dirname, "content", "blog", "__test__"),
     },

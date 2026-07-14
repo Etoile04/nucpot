@@ -1,0 +1,17 @@
+{
+  "project": "nfm-834-frontend-compliance",
+  "scale": "M",
+  "current_phase": 2,
+  "current_step": 2,
+  "step_status": {"1": "done", "2": "in_progress", "3": "pending", "4": "pending", "5": "pending", "6": "pending", "7": "pending"},
+  "active_subagents": [],
+  "last_checkpoint": "2026-07-14T12:00:00+08:00",
+  "drift_score": 0.0,
+  "decisions_count": 0,
+  "updated_at": "2026-07-14T12:00:00+08:00",
+  "batches": {
+    "P0": ["materials-detail-page", "docker-rebuild"],
+    "P1": ["dashboard-route-group", "middleware-jwt", "admin-kg-page"],
+    "P2": ["extraction-status-badge", "semantic-search-input", "node-detail-sidebar", "doc-deviations"]
+  }
+}
