@@ -55,11 +55,27 @@ function authHeaders(): Record<string, string> {
   return headers
 }
 
+function extractDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (typeof d === 'string' ? d : JSON.stringify(d)))
+      .join('; ')
+  }
+  if (detail != null && typeof detail === 'object') return JSON.stringify(detail)
+  return ''
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.detail ?? body.message ?? `API error: ${res.status}`)
+    const detailMsg = extractDetail(body.detail)
+    throw new Error(
+      detailMsg ||
+        (typeof body.message === 'string' ? body.message : '') ||
+        `API error: ${res.status}`,
+    )
   }
   return res.json() as Promise<T>
 }

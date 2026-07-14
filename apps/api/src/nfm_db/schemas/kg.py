@@ -79,3 +79,44 @@ class KGRelationsResponse(BaseModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
+
+
+# ---------------------------------------------------------------------------
+# Graph visualization schemas (NFM-1093)
+# ---------------------------------------------------------------------------
+
+
+class GraphNodeItem(BaseModel):
+    """A node formatted for force-directed graph visualization.
+
+    Maps KGNode fields to GraphCanvas GraphNode type expectations.
+    """
+
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    type: str = Field(
+        default="default",
+        description="Mapped GraphNodeType: material, property, entity, default",
+    )
+    size: float = Field(default=1.0)
+    color: str = Field(default="")
+    child_count: int = Field(default=0)
+
+
+class GraphEdgeItem(BaseModel):
+    """An edge formatted for force-directed graph visualization."""
+
+    id: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    label: str = Field(default="")
+    type: str = Field(default="")
+
+
+class KGGraphResponse(BaseModel):
+    """Response for GET /api/v1/kg/graph — nodes + edges for visualization."""
+
+    nodes: list[GraphNodeItem] = Field(default_factory=list)
+    edges: list[GraphEdgeItem] = Field(default_factory=list)
+    total_nodes: int = Field(ge=0)
+    total_edges: int = Field(ge=0)
