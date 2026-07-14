@@ -1,4 +1,4 @@
-"""Knowledge Graph subgraph endpoint (NFM-1280).
+"""Knowledge Graph subgraph endpoint (NFM-1274).
 
 ``GET /api/v1/kg/graph`` returns the depth-*n* neighbourhood subgraph of a
 Knowledge Graph node.  Public read-only endpoint (no auth required).
@@ -34,7 +34,10 @@ router = APIRouter()
     "/kg/graph",
     response_model=KGGraphResponse,
     summary="Get depth-n neighbourhood subgraph for a KG node",
-    responses={404: {"description": "Focal node not found"}},
+    responses={
+        404: {"description": "Focal node not found"},
+        422: {"description": "nodeId missing/empty after trim, or depth out of [1..3]"},
+    },
 )
 async def get_kg_graph(
     nodeId: str = Query(  # noqa: N803
@@ -49,8 +52,19 @@ async def get_kg_graph(
     The *nodeId* parameter accepts a UUID, a ``type:label`` pair, or a bare
     label (with case-insensitive fallback).  The *depth* parameter (1–3)
     controls how many BFS hops are included.
+
+    ``nodeId`` is whitespace-trimmed at the validation layer; an empty
+    result after trim returns ``422 nodeId must not be empty`` rather than
+    falling through to a misleading 404.
     """
-    focal = await resolve_focal_node(session, nodeId, status)
+    trimmed_id = nodeId.strip()
+    if not trimmed_id:
+        raise HTTPException(
+            status_code=422,
+            detail="nodeId must not be empty",
+        )
+
+    focal = await resolve_focal_node(session, trimmed_id, status)
     if focal is None:
         raise HTTPException(
             status_code=404,
@@ -71,31 +85,25 @@ def _to_response(
 ) -> KGGraphResponse:
     """Project a ``KGSubgraph`` into the API response schema.
 
-    Uses the service's BFS depth_map directly (keyed by UUID) rather
-    than recomputing depths from the edge list.
+    ``properties.__depth`` is already injected by the service (locked
+    contract #3), so this is a direct field mapping.  Nodes come back
+    pre-sorted from the service; edges are sorted here for determinism.
     """
-    node_items: list[KGGraphNode] = []
-    for node in subgraph.nodes:
-        node_depth = subgraph.depth_map.get(node.id, 0)
-        props = dict(node.properties or {})
-        props["__depth"] = node_depth
-        node_items.append(
-            KGGraphNode(
-                id=str(node.id),
-                label=node.label,
-                type=node.node_type,
-                properties=props,
-                status=node.status,
-                confidence=node.confidence,
-                source_id=str(node.source_id) if node.source_id else None,
-            )
+    node_items: list[KGGraphNode] = [
+        KGGraphNode(
+            id=str(node.id),
+            label=node.label,
+            type=node.node_type,
+            properties=dict(node.properties),
+            status=node.status,
+            confidence=node.confidence,
+            source_id=str(node.source_id) if node.source_id else None,
         )
+        for node in subgraph.nodes
+    ]
 
-    node_items.sort(key=lambda n: (n.properties["__depth"], n.label))
-
-    edge_items: list[KGGraphEdge] = []
-    for edge in subgraph.edges:
-        edge_items.append(
+    edge_items: list[KGGraphEdge] = sorted(
+        (
             KGGraphEdge(
                 source=str(edge.source_node_id),
                 target=str(edge.target_node_id),
@@ -103,8 +111,10 @@ def _to_response(
                 properties=dict(edge.properties or {}),
                 confidence=edge.confidence,
             )
-        )
-    edge_items.sort(key=lambda e: (e.source, e.target, e.type))
+            for edge in subgraph.edges
+        ),
+        key=lambda e: (e.source, e.target, e.type),
+    )
 
     return KGGraphResponse(
         focal={"id": str(focal.id), "depth": 0},

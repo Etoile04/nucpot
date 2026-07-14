@@ -24,6 +24,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.api.v1.kg_graph import router
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.services.kg_graph import (
+    KGSubgraphNode,
+    build_neighborhood_subgraph,
+    resolve_focal_node,
+)
+from nfm_db.services.kg_graph import (
+    KGSubgraphNode,
+    build_neighborhood_subgraph,
+    resolve_focal_node,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -201,6 +211,13 @@ class TestFocalResolution:
         resp = client.get("/kg/graph", params={"nodeId": "  ZrO2  ", "depth": 1})
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_returns_422(self, db_session: AsyncSession) -> None:
+        client = _make_client(lambda: db_session)
+        resp = client.get("/kg/graph", params={"nodeId": "   ", "depth": 1})
+        assert resp.status_code == 422
+        assert "nodeId must not be empty" in resp.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_malformed_uuid_treated_as_label(self, db_session: AsyncSession) -> None:
@@ -460,3 +477,38 @@ class TestHardCaps:
             resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 3})
             assert resp.status_code == 200
             assert mock_logger.warning.called
+
+
+class TestServiceContract:
+    """Locked contract #3: ``properties.__depth`` is injected by the service."""
+
+    @pytest.mark.asyncio
+    async def test_service_node_carries_depth_in_properties(
+        self, db_session: AsyncSession
+    ) -> None:
+        await _seed_linear_chain(db_session)
+        focal = await resolve_focal_node(db_session, str(_A_UUID))
+        assert focal is not None
+        subgraph = await build_neighborhood_subgraph(db_session, focal, 2)
+
+        assert len(subgraph.nodes) > 0
+        for node in subgraph.nodes:
+            assert isinstance(node, KGSubgraphNode)
+            assert "__depth" in node.properties
+            assert isinstance(node.properties["__depth"], int)
+            assert node.properties["__depth"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_service_nodes_sorted_by_depth_then_label(
+        self, db_session: AsyncSession
+    ) -> None:
+        await _seed_linear_chain(db_session)
+        focal = await resolve_focal_node(db_session, str(_A_UUID))
+        assert focal is not None
+        subgraph = await build_neighborhood_subgraph(db_session, focal, 2)
+
+        for i in range(len(subgraph.nodes) - 1):
+            a, b = subgraph.nodes[i], subgraph.nodes[i + 1]
+            a_key = (a.properties["__depth"], a.label)
+            b_key = (b.properties["__depth"], b.label)
+            assert a_key <= b_key

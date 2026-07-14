@@ -1,4 +1,4 @@
-"""Knowledge Graph neighbourhood subgraph service (NFM-1280).
+"""Knowledge Graph neighbourhood subgraph service (NFM-1274).
 
 Provides BFS-based neighbourhood traversal for the ``GET /api/v1/kg/graph``
 endpoint.  Returns a depth-limited subgraph around a focal node.
@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,12 +26,35 @@ MAX_EDGES: int = 1500
 
 
 @dataclass(frozen=True)
-class KGSubgraph:
-    """Immutable result of a neighbourhood subgraph query."""
+class KGSubgraphNode:
+    """A node enriched with its BFS depth for response serialization.
 
-    nodes: tuple[KGNode, ...]
+    ``properties`` is a copy of the underlying ``KGNode.properties`` with
+    ``__depth`` injected by the service (locked contract #3) so any
+    downstream consumer can render depths without recomputing from the
+    edge list.
+    """
+
+    id: uuid.UUID
+    label: str
+    node_type: str
+    status: str
+    confidence: float
+    source_id: uuid.UUID | None
+    properties: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class KGSubgraph:
+    """Immutable result of a neighbourhood subgraph query.
+
+    Every node already carries ``properties["__depth"]`` injected by the
+    service (locked contract #3).  Nodes are pre-sorted by
+    ``(depth, label)`` for deterministic serialization.
+    """
+
+    nodes: tuple[KGSubgraphNode, ...]
     edges: tuple[KGEdge, ...]
-    depth_map: dict[uuid.UUID, int]
 
 
 async def resolve_focal_node(
@@ -109,6 +133,10 @@ async def build_neighborhood_subgraph(
 
     The BFS explores both directions (undirected neighbourhood).
     Edges are deduplicated by (source, target, relation_type).
+
+    The returned ``KGSubgraph.nodes`` carry ``properties["__depth"]``
+    injected by the service (locked contract #3) so any downstream
+    consumer can render depths without recomputing from the edge list.
     """
     visited: set[uuid.UUID] = {focal.id}
     depth_map: dict[uuid.UUID, int] = {focal.id: 0}
@@ -180,17 +208,33 @@ async def build_neighborhood_subgraph(
 
     # Post-hoc status filter (defensive)
     if status_filter == "active":
-        filtered_nodes = tuple(n for n in node_map.values() if n.status == "active")
-        valid_ids = {n.id for n in filtered_nodes}
+        filtered_node_models = [n for n in node_map.values() if n.status == "active"]
+        valid_ids = {n.id for n in filtered_node_models}
         filtered_edges = tuple(
             e for e in edges_out if e.source_node_id in valid_ids and e.target_node_id in valid_ids
         )
     else:
-        filtered_nodes = tuple(node_map.values())
+        filtered_node_models = list(node_map.values())
         filtered_edges = tuple(edges_out)
 
+    # Build KGSubgraphNode with __depth already injected (contract #3)
+    enriched_nodes = [
+        KGSubgraphNode(
+            id=node.id,
+            label=node.label,
+            node_type=node.node_type,
+            status=node.status,
+            confidence=node.confidence,
+            source_id=node.source_id,
+            properties={**(node.properties or {}), "__depth": depth_map[node.id]},
+        )
+        for node in filtered_node_models
+    ]
+
+    # Deterministic ordering: by (depth, label asc)
+    enriched_nodes.sort(key=lambda n: (n.properties["__depth"], n.label))
+
     return KGSubgraph(
-        nodes=filtered_nodes,
+        nodes=tuple(enriched_nodes),
         edges=filtered_edges,
-        depth_map=dict(depth_map),
     )
