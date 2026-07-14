@@ -103,7 +103,7 @@ function captureKgBatchAction(page: Page): Promise<Response> {
 // ---------------------------------------------------------------------------
 
 test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(() => {
     test.skip(isLive, "Review queue tests run against mocked fixtures only.")
   })
 
