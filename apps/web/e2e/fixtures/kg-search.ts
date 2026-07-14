@@ -7,81 +7,77 @@
  * so they can be served verbatim via Playwright's `page.route()` without
  * re-shaping the payload on the client side.
  *
- * The search endpoint wraps the response in `{ success, data }`:
+ * The search endpoint returns KgSearchResponse directly (no envelope):
  *   fetchKgSearch     -> /api/v1/kg/search?q=...&status=active&limit=20&offset=0
- *   fetchKgNode       -> /api/v1/kg/nodes/{type}/{id}
- *   fetchKgRelations  -> /api/v1/kg/nodes/{id}/relations
+ *   fetchKgNode       -> /api/v1/kg/nodes/{type}/{id}  (ApiResponse envelope)
+ *   fetchKgRelations  -> /api/v1/kg/nodes/{id}/relations (ApiResponse envelope)
  */
 
 export const KG_SEARCH_QUERY = "UO2"
 
 export const KG_SEARCH_RESPONSE = {
-  success: true,
-  data: {
-    items: [
-      {
-        id: "mat-uo2-001",
-        node_type: "Material",
-        label: "UO2",
-        aliases: ["Uranium dioxide", "urania"],
-        properties: {
-          formula: "UO2",
-          crystal_structure: "fluorite",
-          density_g_cm3: 10.97,
-        },
-        confidence: 0.98,
-        status: "active",
-        source_id: "src-001",
+  items: [
+    {
+      id: "mat-uo2-001",
+      node_type: "Material",
+      label: "UO2",
+      aliases: ["Uranium dioxide", "urania"],
+      properties: {
+        formula: "UO2",
+        crystal_structure: "fluorite",
+        density_g_cm3: 10.97,
       },
-      {
-        id: "prop-bandgap-002",
-        node_type: "Property",
-        label: "Band gap (UO2)",
-        aliases: ["Eg"],
-        properties: {
-          unit: "eV",
-          value: 2.1,
-          measurement_temperature_K: 300,
-        },
-        confidence: 0.87,
-        status: "active",
-        source_id: "src-002",
+      confidence: 0.98,
+      status: "active",
+      source_id: "src-001",
+    },
+    {
+      id: "prop-bandgap-002",
+      node_type: "Property",
+      label: "Band gap (UO2)",
+      aliases: ["Eg"],
+      properties: {
+        unit: "eV",
+        value: 2.1,
+        measurement_temperature_K: 300,
       },
-    ],
-    total: 2,
-    limit: 20,
-    offset: 0,
-  },
+      confidence: 0.87,
+      status: "active",
+      source_id: "src-002",
+    },
+  ],
+  total: 2,
+  limit: 20,
+  offset: 0,
 }
 
 export const KG_SEARCH_EMPTY_RESPONSE = {
-  success: true,
-  data: { items: [], total: 0, limit: 20, offset: 0 },
+  items: [],
+  total: 0,
+  limit: 20,
+  offset: 0,
 }
 
 export const KG_TYPE_FILTER_RESPONSE = {
-  success: true,
-  data: {
-    items: [
-      {
-        id: "mat-uo2-001",
-        node_type: "Material",
-        label: "UO2",
-        aliases: ["Uranium dioxide", "urania"],
-        properties: {
-          formula: "UO2",
-          crystal_structure: "fluorite",
-          density_g_cm3: 10.97,
-        },
-        confidence: 0.98,
-        status: "active",
-        source_id: "src-001",
+  items: [
+    {
+      id: "mat-uo2-001",
+      node_type: "Material",
+      label: "UO2",
+      aliases: ["Uranium dioxide", "urania"],
+      properties: {
+        formula: "UO2",
+        crystal_structure: "fluorite",
+        density_g_cm3: 10.97,
       },
-    ],
-    total: 1,
-    limit: 20,
-    offset: 0,
-  },
+      confidence: 0.98,
+      status: "active",
+      source_id: "src-001",
+    },
+  ],
+  total: 1,
+  limit: 20,
+  offset: 0,
 }
 
 export const KG_NODE_DETAIL_RESPONSE = {
