@@ -126,21 +126,38 @@ export async function setupReviewMocks(
   })
 }
 
+const TOKEN_KEY = "blog_admin_token"
+const MOCK_TOKEN = "eyJhbGciOiJIUzI1NiJ9.mock-review-token-nfm1400"
+
 /**
- * Inject a mock JWT token into localStorage before page loads.
- * This simulates an already-authenticated session.
+ * Inject a mock JWT token into both cookies and localStorage.
+ *
+ * Two mechanisms are needed:
+ *  1. Browser cookie — bypasses Edge middleware (src/middleware.ts) which
+ *     checks request.cookies.get("blog_admin_token") before rendering any
+ *     page under /review/*. Without this cookie, the middleware returns a 307
+ *     redirect to /admin/login and the page never loads.
+ *  2. localStorage via addInitScript — so that getToken() in api-client.ts
+ *     returns a truthy value for client-side API calls.
  */
 export async function injectAuth(page: Page): Promise<void> {
+  await page.context().addCookies([
+    { name: TOKEN_KEY, value: MOCK_TOKEN, domain: "localhost", path: "/" },
+  ])
   await page.context().addInitScript(() => {
-    localStorage.setItem("blog_admin_token", "eyJhbGciOiJIUzI1NiJ9.mock-review-token-nfm1400")
+    localStorage.setItem(TOKEN_KEY, MOCK_TOKEN)
   })
 }
 
 /**
- * Clear auth token from localStorage.
+ * Clear auth token from both cookies and localStorage.
+ *
+ * Clears cookies so Edge middleware does not see a stale token from a
+ * previous test context. Also removes localStorage entry.
  */
 export async function clearAuth(page: Page): Promise<void> {
+  await page.context().clearCookies()
   await page.context().addInitScript(() => {
-    localStorage.removeItem("blog_admin_token")
+    localStorage.removeItem(TOKEN_KEY)
   })
 }
