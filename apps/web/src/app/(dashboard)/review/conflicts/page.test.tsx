@@ -68,7 +68,7 @@ vi.mock('@/lib/kg-review-api', () => ({
 
 // Import after mock setup
 import { fetchConflicts, resolveConflict } from '@/lib/kg-review-api'
-import ConflictsReviewPage from '@/app/review/conflicts/page'
+import ConflictsReviewPage from '@/app/(dashboard)/review/conflicts/page'
 
 const mockedFetchConflicts = vi.mocked(fetchConflicts)
 const mockedResolveConflict = vi.mocked(resolveConflict)

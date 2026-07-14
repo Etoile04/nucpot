@@ -52,7 +52,7 @@ vi.mock('@/lib/review-api', () => ({
 }))
 
 import { getKgReviewQueue, batchKgAction } from '@/lib/review-api'
-import KgReviewPage from '@/app/review/kg/page'
+import KgReviewPage from '@/app/(dashboard)/review/kg/page'
 
 const mockedGetKgReviewQueue = vi.mocked(getKgReviewQueue)
 const mockedBatchKgAction = vi.mocked(batchKgAction)

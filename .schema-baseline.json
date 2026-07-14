@@ -1,0 +1,299 @@
+{
+  "$defs": {
+    "OntologyNode": {
+      "description": "NVL node \u2014 element shape unchanged from the legacy viewer artifact.\n\nPhase 2 reserves ``record_ref`` as an optional deep-link slot (NFM-267).",
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "comment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "record_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Ref"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "type": {
+          "enum": [
+            "class",
+            "individual"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "OntologyNode",
+      "type": "object"
+    },
+    "OntologyPagination": {
+      "description": "Cursor pagination metadata \u2014 only present when a corpus is chunked.",
+      "properties": {
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
+        },
+        "total": {
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total"
+      ],
+      "title": "OntologyPagination",
+      "type": "object"
+    },
+    "OntologyRelationship": {
+      "description": "NVL relationship \u2014 ``from`` is a Python keyword, aliased on the wire.",
+      "properties": {
+        "comment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment"
+        },
+        "from": {
+          "minLength": 1,
+          "title": "From",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "record_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Ref"
+        },
+        "to": {
+          "minLength": 1,
+          "title": "To",
+          "type": "string"
+        },
+        "type": {
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "type"
+      ],
+      "title": "OntologyRelationship",
+      "type": "object"
+    },
+    "OntologyStats": {
+      "description": "NVL-derived counts (NFM-227).",
+      "properties": {
+        "classes": {
+          "default": 0,
+          "title": "Classes",
+          "type": "integer"
+        },
+        "individuals": {
+          "default": 0,
+          "title": "Individuals",
+          "type": "integer"
+        },
+        "nodes": {
+          "default": 0,
+          "title": "Nodes",
+          "type": "integer"
+        },
+        "relationships": {
+          "default": 0,
+          "title": "Relationships",
+          "type": "integer"
+        }
+      },
+      "title": "OntologyStats",
+      "type": "object"
+    }
+  },
+  "description": "Versioned NFM-227 NVL graph envelope emitted by the ontology endpoint.",
+  "properties": {
+    "corpus_id": {
+      "title": "Corpus Id",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/OntologyNode"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "pagination": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OntologyPagination"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "relationships": {
+      "items": {
+        "$ref": "#/$defs/OntologyRelationship"
+      },
+      "title": "Relationships",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "1.1",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_digest": {
+      "pattern": "^[a-f0-9]{16}$",
+      "title": "Source Digest",
+      "type": "string"
+    },
+    "source_ontology": {
+      "minLength": 1,
+      "title": "Source Ontology",
+      "type": "string"
+    },
+    "stats": {
+      "$ref": "#/$defs/OntologyStats"
+    }
+  },
+  "required": [
+    "corpus_id",
+    "generated_at",
+    "source_ontology",
+    "source_digest",
+    "stats"
+  ],
+  "title": "OntologyGraphResponse",
+  "type": "object"
+}
