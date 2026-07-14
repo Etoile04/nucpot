@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from nfm_db.api.v1 import (
+    batch,
     blog,
     conflict,
     extraction,
@@ -32,15 +33,6 @@ from nfm_db.api.v1 import (
     viz,
 )
 from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
-from nfm_db.api.v1.batch import (
-    materials_router as batch_materials_router,
-)
-from nfm_db.api.v1.batch import (
-    properties_router as batch_properties_router,
-)
-from nfm_db.api.v1.batch import (
-    reference_values_router as batch_reference_values_router,
-)
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.middleware.rate_limit import (
     NFMRateLimitMiddleware,
@@ -209,6 +201,14 @@ app.include_router(md_verification.router, prefix="/api/v1/md-verification", tag
 app.include_router(auth_endpoints, prefix="/api/v1", tags=["认证"])
 app.include_router(blog.router, prefix="/api/v1", tags=["博客"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["势函数"])
+# Batch import/export routers must register BEFORE entity routers so the
+# static /materials/import, /properties/import, /properties/export,
+# /reference-values/import, /reference-values/export paths are matched first
+# and are not captured by the path-parameter routes
+# /properties/{measurement_id} or /reference-values/{staging_id}.
+app.include_router(batch.materials_router, prefix="/api/v1", tags=["材料批量导入导出"])
+app.include_router(batch.properties_router, prefix="/api/v1", tags=["属性批量导入导出"])
+app.include_router(batch.reference_values_router, prefix="/api/v1", tags=["参考值批量导入导出"])
 app.include_router(materials.router, prefix="/api/v1", tags=["材料管理"])
 app.include_router(properties.router, prefix="/api/v1", tags=["物性数据"])
 app.include_router(sources.router, prefix="/api/v1", tags=["数据源"])
@@ -219,6 +219,3 @@ app.include_router(conflict.router, prefix="/api/v1/conflicts", tags=["冲突解
 app.include_router(literature.router, prefix="/api/v1/literature", tags=["文献管理"])
 app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
-app.include_router(batch_materials_router, prefix="/api/v1", tags=["批量材料"])
-app.include_router(batch_properties_router, prefix="/api/v1", tags=["批量物性"])
-app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])

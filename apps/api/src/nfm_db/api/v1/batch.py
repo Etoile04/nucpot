@@ -3,9 +3,9 @@
 Unified batch operations for materials, properties, and reference_values.
 
 Import (POST):
-  /api/v1/materials/import        — CSV or JSON body
-  /api/v1/properties/import       — CSV or JSON body
-  /api/v1/reference-values/import  — CSV or JSON body
+  /api/v1/materials/import        — CSV or JSON file
+  /api/v1/properties/import       — CSV or JSON file
+  /api/v1/reference-values/import  — CSV or JSON file
 
 Export (GET):
   /api/v1/materials/export?format=csv|json
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse
@@ -25,10 +25,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import get_current_active_user
 from nfm_db.database import get_db
 from nfm_db.models.material import Material
 from nfm_db.models.property import PropertyMeasurement
 from nfm_db.models.ref_gap_fill import RefGapFillStaging
+from nfm_db.models.user import User
 from nfm_db.schemas.batch import (
     BatchImportResult,
     BatchRowError,
@@ -63,7 +65,7 @@ def _generate_dedup_hash(row: ReferenceValueRow) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-# Separate routers for each entity (different prefixes in main.py)
+# Batch routers (mounted at /api/v1 in main.py alongside entity routers)
 materials_router = APIRouter(tags=["材料管理"])
 properties_router = APIRouter(tags=["属性管理"])
 reference_values_router = APIRouter(tags=["参考值管理"])
@@ -131,6 +133,20 @@ def _build_export_response(
     )
 
 
+async def _flush_row(db: AsyncSession, row_index: int) -> bool:
+    """Flush the current pending row; roll back on IntegrityError.
+
+    Returns True if the row was persisted, False if skipped due to a
+    database integrity error (e.g. duplicate).
+    """
+    try:
+        await db.flush()
+        return True
+    except IntegrityError:
+        await db.rollback()
+        return False
+
+
 # ── Material Import ───────────────────────────────────────────────
 
 
@@ -139,10 +155,12 @@ async def import_materials(
     request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
     db: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(get_current_active_user)] = ...,
 ) -> BatchImportResult:
     """Bulk-import materials from a CSV or JSON file.
 
     Valid rows are created; invalid rows are reported in ``errors``.
+    Individual DB integrity errors (e.g. duplicates) are skipped per-row.
     """
     filename = file.filename or "unknown.csv"
     content = await file.read()
@@ -176,19 +194,18 @@ async def import_materials(
 
         mat = Material(**validated.model_dump())
         db.add(mat)
-        imported += 1
+        if await _flush_row(db, i):
+            imported += 1
+        else:
+            errors.append(
+                BatchRowError(
+                    row=i,
+                    field="db",
+                    message="Database integrity error (possible duplicate)",
+                )
+            )
 
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Database integrity error: {exc}",
-        )
-    except Exception:
-        await db.rollback()
-        raise
+    await db.commit()
 
     return BatchImportResult(imported=imported, failed=len(errors), errors=errors)
 
@@ -202,6 +219,7 @@ async def export_materials(
     page: int = Query(1, ge=1),
     per_page: int = Query(1000, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(get_current_active_user)] = ...,
 ) -> PlainTextResponse:
     """Export materials as CSV or JSON with Content-Disposition."""
     offset = (page - 1) * per_page
@@ -238,8 +256,12 @@ async def import_properties(
     request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
     db: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(get_current_active_user)] = ...,
 ) -> BatchImportResult:
-    """Bulk-import property measurements from a CSV or JSON file."""
+    """Bulk-import property measurements from a CSV or JSON file.
+
+    Individual DB integrity errors are skipped per-row.
+    """
     filename = file.filename or "unknown.csv"
     content = await file.read()
     max_bytes = BATCH_IMPORT_MAX_SIZE_MB * 1024 * 1024
@@ -272,19 +294,18 @@ async def import_properties(
 
         pm = PropertyMeasurement(**validated.model_dump(exclude_unset=True))
         db.add(pm)
-        imported += 1
+        if await _flush_row(db, i):
+            imported += 1
+        else:
+            errors.append(
+                BatchRowError(
+                    row=i,
+                    field="db",
+                    message="Database integrity error (possible duplicate)",
+                )
+            )
 
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Database integrity error: {exc}",
-        )
-    except Exception:
-        await db.rollback()
-        raise
+    await db.commit()
 
     return BatchImportResult(imported=imported, failed=len(errors), errors=errors)
 
@@ -298,6 +319,7 @@ async def export_properties(
     page: int = Query(1, ge=1),
     per_page: int = Query(1000, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(get_current_active_user)] = ...,
 ) -> PlainTextResponse:
     """Export property measurements as CSV or JSON with Content-Disposition."""
     offset = (page - 1) * per_page
@@ -318,13 +340,19 @@ async def export_properties(
 # ── Reference Value Import ───────────────────────────────────────
 
 
-@reference_values_router.post("/reference-values/import", response_model=BatchImportResult)
+@reference_values_router.post(
+    "/reference-values/import", response_model=BatchImportResult
+)
 async def import_reference_values(
     request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
     db: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(get_current_active_user)] = ...,
 ) -> BatchImportResult:
-    """Bulk-import reference values from a CSV or JSON file into staging."""
+    """Bulk-import reference values from a CSV or JSON file into staging.
+
+    Individual DB integrity errors are skipped per-row.
+    """
     filename = file.filename or "unknown.csv"
     content = await file.read()
     max_bytes = BATCH_IMPORT_MAX_SIZE_MB * 1024 * 1024
@@ -359,19 +387,18 @@ async def import_reference_values(
         rv_data["dedup_hash"] = _generate_dedup_hash(validated)
         rv = RefGapFillStaging(**rv_data)
         db.add(rv)
-        imported += 1
+        if await _flush_row(db, i):
+            imported += 1
+        else:
+            errors.append(
+                BatchRowError(
+                    row=i,
+                    field="db",
+                    message="Database integrity error (possible duplicate)",
+                )
+            )
 
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Database integrity error: {exc}",
-        )
-    except Exception:
-        await db.rollback()
-        raise
+    await db.commit()
 
     return BatchImportResult(imported=imported, failed=len(errors), errors=errors)
 
@@ -385,6 +412,7 @@ async def export_reference_values(
     page: int = Query(1, ge=1),
     per_page: int = Query(1000, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(get_current_active_user)] = ...,
 ) -> PlainTextResponse:
     """Export reference values as CSV or JSON with Content-Disposition."""
     offset = (page - 1) * per_page
