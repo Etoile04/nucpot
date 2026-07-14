@@ -116,8 +116,9 @@ test.describe("KG Search flow", () => {
     const searchResponse = await searchResponsePromise
     expect(searchResponse.status()).toBe(200)
     const searchBody = await searchResponse.json()
-    expect(searchBody.success).toBe(true)
-    expect(searchBody.data.items).toHaveLength(2)
+    // Search endpoint returns KgSearchResponse directly (no envelope)
+    expect(searchBody.items).toHaveLength(2)
+    expect(searchBody.total).toBe(2)
 
     // Click the first result
     const detailResponsePromise = page.waitForResponse((res) =>
@@ -178,8 +179,8 @@ test.describe("KG Search flow", () => {
     // Ant Empty component renders the no-results message.
     await expect(page.getByText(noResultsText)).toBeVisible()
 
-    // Zero result count should not appear.
-    await expect(page.getByText(/results found/)).not.toBeVisible()
+    // Count text ("N results found") should not appear when empty.
+    await expect(page.getByText(/^\d+ results? found$/)).not.toBeVisible()
   })
 
   // -------------------------------------------------------------------------
