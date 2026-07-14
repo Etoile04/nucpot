@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
+from pathlib import Path
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import JSON, event
-from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+# Ensure repo-root scripts/ is importable for phase gate and eval scripts.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent.parent / "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
-from nfm_db.database import get_db
-from nfm_db.main import app
-from nfm_db.models import Base, BlogRole, User
-from nfm_db.services.auth_service import create_access_token
+import pytest  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy import JSON, event  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from nfm_db.database import get_db  # noqa: E402
+from nfm_db.main import app  # noqa: E402
+from nfm_db.models import Base, BlogRole, User  # noqa: E402
+from nfm_db.services.auth_service import create_access_token  # noqa: E402
 
 # Deterministic user IDs for FK seed data (matched by test_blog_post_service,
 # test_blog_auth, test_md_verification_service_edge_cases).

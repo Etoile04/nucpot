@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Extraction accuracy evaluation suite (NFM-863, B3.4).
+"""Extraction accuracy scoring infrastructure (NFM-863, B3.4).
 
-Benchmarks figure/table/plot extraction against held-out test sets
-using three comparison metrics:
+Validates the correctness of the scoring functions (IoU, tolerance, cell-match)
+used to evaluate extraction quality. Uses synthetic test cases with known
+expected outcomes — this tests the *scoring infrastructure*, not the
+extraction pipeline itself.
 
-  1. **Figure detection** — IoU ≥0.5 with ground truth (target ≥80%)
-  2. **Plot data extraction** — value match within 10% tolerance (target ≥60%)
-  3. **Table extraction** — cell-level match (target ≥60%)
-  4. **Value parsing** — golden fixture value parsing accuracy (target ≥60%)
+The real extraction pipeline is validated by the E2E integration tests
+in test_e2e_integration.py (PDF upload -> extraction -> KG population).
 
-Overall accuracy must be ≥60%.
+Metrics validated:
+  1. **Figure detection** — IoU >=0.5 with ground truth (target >=80%)
+  2. **Plot data extraction** — value match within 10% tolerance (target >=60%)
+  3. **Table extraction** — cell-level match (target >=60%)
+  4. **Value parsing** — golden fixture value parsing accuracy (target >=60%)
+
+Overall scoring accuracy must be >=60%.
 
 Exit codes:
     0 — evaluation passed (all thresholds met)
@@ -19,7 +25,6 @@ Exit codes:
 from __future__ import annotations
 
 import json
-import math
 import random
 import sys
 from dataclasses import dataclass, field
@@ -29,8 +34,6 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Ensure apps/api/src is importable
 # ---------------------------------------------------------------------------
-import os
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _API_SRC = str(_REPO_ROOT / "apps" / "api" / "src")
 if _API_SRC not in sys.path:
@@ -52,18 +55,9 @@ _TABLE_EXTRACTION_TARGET = 0.60
 _VALUE_PARSING_TARGET = 0.60
 _OVERALL_TARGET = 0.60
 
-_GOLDEN_FIXTURES_DIR = (
-    _REPO_ROOT / "apps" / "api" / "tests" / "fixtures" / "golden"
-)
+_GOLDEN_FIXTURES_DIR = _REPO_ROOT / "apps" / "api" / "tests" / "fixtures" / "golden"
 _HELD_OUT_MANIFEST_PATH = (
-    _REPO_ROOT
-    / "apps"
-    / "api"
-    / "tests"
-    / "fixtures"
-    / "extraction"
-    / "held_out"
-    / "manifest.json"
+    _REPO_ROOT / "apps" / "api" / "tests" / "fixtures" / "extraction" / "held_out" / "manifest.json"
 )
 
 # ---------------------------------------------------------------------------
@@ -134,8 +128,8 @@ def cells_match(
     Compares cell-by-cell. Extra rows/columns in actual count as misses.
 
     Args:
-        actual: Extracted table cells (rows × columns).
-        expected: Ground truth table cells (rows × columns).
+        actual: Extracted table cells (rows x columns).
+        expected: Ground truth table cells (rows x columns).
 
     Returns:
         Tuple of (number of matching cells, total expected cells).
@@ -489,9 +483,7 @@ def load_held_out_ids() -> set[str]:
         return set()
 
     try:
-        manifest = json.loads(
-            _HELD_OUT_MANIFEST_PATH.read_text(encoding="utf-8")
-        )
+        manifest = json.loads(_HELD_OUT_MANIFEST_PATH.read_text(encoding="utf-8"))
         return set(manifest.get("held_out_ids", []))
     except (json.JSONDecodeError, OSError):
         return set()
@@ -555,9 +547,7 @@ def build_value_parsing_cases(
             ValueParsingTestCase(
                 record_id=record_id,
                 raw_value=raw_value,
-                expected_parsed=(
-                    float(main_value) if main_value is not None else None
-                ),
+                expected_parsed=(float(main_value) if main_value is not None else None),
                 expected_range=expected_range,
             )
         )
@@ -594,13 +584,13 @@ def _parse_raw_value(raw: str) -> float | None:
     # Strip qualifier prefixes
     for prefix in ("approximately ", "approx ", "~", "about "):
         if cleaned.lower().startswith(prefix):
-            cleaned = cleaned[len(prefix):]
+            cleaned = cleaned[len(prefix) :]
             break
 
-    # LaTeX ×10^ notation
-    if "\\times" in cleaned or "×" in cleaned:
+    # LaTeX x10^ notation
+    if "\\times" in cleaned or "\u00d7" in cleaned:
         cleaned = cleaned.replace("\\times", "*")
-        cleaned = cleaned.replace("×", "*")
+        cleaned = cleaned.replace("\u00d7", "*")
         cleaned = cleaned.replace("^", "**")
         cleaned = cleaned.replace("{", "").replace("}", "")
         cleaned = cleaned.replace("$", "")
@@ -662,9 +652,7 @@ def run_figure_detection_benchmark() -> BenchmarkResult:
 
     for tc in FIGURE_DETECTION_CASES:
         if tc.predicted_bbox is None:
-            errors.append(
-                f"  MISS: {tc.case_id} — no prediction"
-            )
+            errors.append(f"  MISS: {tc.case_id} — no prediction")
             continue
 
         iou = compute_iou(tc.ground_truth_bbox, tc.predicted_bbox)
@@ -703,8 +691,7 @@ def run_plot_extraction_benchmark() -> BenchmarkResult:
         if tc.actual_values is None:
             total_values += len(tc.expected_values)
             errors.append(
-                f"  MISS: {tc.case_id} — no extraction "
-                f"({len(tc.expected_values)} values lost)"
+                f"  MISS: {tc.case_id} — no extraction ({len(tc.expected_values)} values lost)"
             )
             continue
 
@@ -712,6 +699,7 @@ def run_plot_extraction_benchmark() -> BenchmarkResult:
         for actual, expected in zip(
             tc.actual_values,
             tc.expected_values,
+            strict=False,
         ):
             total_values += 1
             if values_within_tolerance(actual, expected):
@@ -722,8 +710,7 @@ def run_plot_extraction_benchmark() -> BenchmarkResult:
             passed += 1
         else:
             errors.append(
-                f"  PARTIAL: {tc.case_id} — "
-                f"{case_matched}/{len(tc.expected_values)} values matched"
+                f"  PARTIAL: {tc.case_id} — {case_matched}/{len(tc.expected_values)} values matched"
             )
 
     accuracy = matched_values / total_values if total_values > 0 else 0.0
@@ -762,10 +749,7 @@ def run_table_extraction_benchmark() -> BenchmarkResult:
         total_cells += total
 
         if matched < total:
-            errors.append(
-                f"  PARTIAL: {tc.case_id} — "
-                f"{matched}/{total} cells matched"
-            )
+            errors.append(f"  PARTIAL: {tc.case_id} — {matched}/{total} cells matched")
 
     accuracy = matched_cells / total_cells if total_cells > 0 else 0.0
     return BenchmarkResult(
@@ -821,9 +805,7 @@ def run_value_parsing_benchmark(
                     f"from '{tc.raw_value}'"
                 )
         except (ValueError, TypeError):
-            errors.append(
-                f"  ERROR: {tc.record_id} — failed to parse '{tc.raw_value}'"
-            )
+            errors.append(f"  ERROR: {tc.record_id} — failed to parse '{tc.raw_value}'")
 
     accuracy = passed / len(cases) if cases else 0.0
     return BenchmarkResult(
@@ -871,10 +853,7 @@ def generate_report(results: list[BenchmarkResult]) -> str:
 
         lines.append("")
         lines.append(f"  [{status}] {result.category}")
-        lines.append(
-            f"       Accuracy: {result.accuracy:.1%} "
-            f"(target ≥{result.target:.0%})"
-        )
+        lines.append(f"       Accuracy: {result.accuracy:.1%} (target ≥{result.target:.0%})")
         lines.append(f"       Details:  {result.passed}/{result.total}")
 
         if result.errors:
@@ -888,10 +867,7 @@ def generate_report(results: list[BenchmarkResult]) -> str:
 
     lines.append("")
     lines.append("-" * 60)
-    lines.append(
-        f"  Overall weighted accuracy: {overall:.1%} "
-        f"(target ≥{_OVERALL_TARGET:.0%})"
-    )
+    lines.append(f"  Overall weighted accuracy: {overall:.1%} (target ≥{_OVERALL_TARGET:.0%})")
     lines.append(f"  Overall: [{'PASS' if overall_pass else 'FAIL'}]")
 
     lines.append("")
@@ -920,9 +896,9 @@ def main() -> None:
 
     if held_out_ids:
         held_out = [r for r in all_records if r.get("id") in held_out_ids]
-        train = [r for r in all_records if r.get("id") not in held_out_ids]
+        _train = [r for r in all_records if r.get("id") not in held_out_ids]
     else:
-        train, held_out, held_out_ids = create_held_out_split(all_records)
+        _train, held_out, held_out_ids = create_held_out_split(all_records)
 
     # Run benchmarks
     results: list[BenchmarkResult] = [
@@ -939,8 +915,7 @@ def main() -> None:
     # Determine exit code
     all_passed = all(r.threshold_met for r in results)
     overall_accuracy = (
-        sum(r.accuracy * max(r.total, 1) for r in results)
-        / sum(max(r.total, 1) for r in results)
+        sum(r.accuracy * max(r.total, 1) for r in results) / sum(max(r.total, 1) for r in results)
         if results
         else 0.0
     )
