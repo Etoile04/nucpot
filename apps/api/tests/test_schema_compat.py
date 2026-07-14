@@ -21,16 +21,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import pytest
-
 from scripts.check_schema_compat import (
     ChangeSeverity,
     CompatReport,
     SchemaChange,
-    compare_schemas,
     _collect_field_paths,
     _get_enum_values,
     _get_required_paths,
     _get_type_name,
+    compare_schemas,
 )
 
 # ---------------------------------------------------------------------------
