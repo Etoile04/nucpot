@@ -158,16 +158,30 @@ export async function setupMockReviewQueueApi(
   page: Page,
   scenario: MockReviewQueueScenario = "authenticated",
 ): Promise<void> {
-  // Inject token for authenticated scenarios so getToken() returns truthy.
+  // Inject token for authenticated scenarios.
+  // Two mechanisms are needed:
+  //  1. Browser cookie — bypasses Edge middleware (src/middleware.ts) which
+  //     checks request.cookies.get("blog_admin_token") before rendering any
+  //     page. Without this cookie, the middleware returns a 307 redirect to
+  //     /admin/login and the page never loads.
+  //  2. localStorage via addInitScript — so that getToken() in api-client.ts
+  //     returns a truthy value for client-side API calls.
   // addInitScript is preferred over page.evaluate on about:blank because
   // the latter raises SecurityError (null origin).
   if (scenario !== "unauthenticated") {
+    await page.context().addCookies([
+      { name: TOKEN_KEY, value: MOCK_TOKEN, domain: "localhost" },
+    ])
     await page.addInitScript(
       ([key, token]) => {
         localStorage.setItem(key, token)
       },
       [TOKEN_KEY, MOCK_TOKEN] as const,
     )
+  } else {
+    // Clear cookies for unauthenticated scenarios so Edge middleware
+    // does not see a stale token from a previous test context.
+    await page.context().clearCookies()
   }
 
   // ── Auth ──
