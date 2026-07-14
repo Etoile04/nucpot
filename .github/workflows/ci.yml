@@ -77,6 +77,50 @@ jobs:
           path: apps/web/playwright-report/
           retention-days: 30
 
+  e2e-mocked:
+    # Mirrors the live e2e job but runs against the locally-spun dev server
+    # so mocked flows (such as the RAG chat spec, NFM-1399) actually
+    # exercise in CI. The live job sets `E2E_TARGET=live`, which causes
+    # the spec's `test.skip(isLive, ...)` guard to skip every test —
+    # without this job the mocked flow would never run on PRs or pushes.
+    # E2E_TARGET is intentionally NOT set here so playwright.config.ts
+    # keeps its webServer block enabled (`pnpm dev` on :3000).
+    name: E2E Tests (Mocked Flows)
+    runs-on: ubuntu-latest
+    needs: frontend
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run RAG chat mocked flow
+        # Default baseURL = http://localhost:3000 from playwright.config.ts.
+        # webServer auto-spawns `pnpm dev` because E2E_TARGET is unset.
+        run: pnpm exec playwright test e2e/rag-chat.spec.ts --project=chromium
+        env:
+          CI: true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-mocked
+          path: apps/web/playwright-report/
+          retention-days: 30
+
   backend:
     name: Backend — Lint, Type-check, Test
     runs-on: ubuntu-latest
