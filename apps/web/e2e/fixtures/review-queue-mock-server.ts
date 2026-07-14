@@ -140,17 +140,29 @@ const MOCK_TOKEN = "mock-jwt-reviewer-001"
 /**
  * Install mock route handlers for the review queue E2E flow.
  *
- * For authenticated scenarios, also injects a JWT into localStorage
- * so that the ReviewAuthGuard's `getToken()` check passes and the
- * guard proceeds to call `/api/v1/auth/me`.
+ * For authenticated scenarios, registers an init script that injects a
+ * JWT into localStorage on every page navigation. Using `addInitScript`
+ * (rather than `page.evaluate` before any navigation) avoids the
+ * `SecurityError` thrown by `localStorage.setItem` when the current
+ * document is `about:blank` and has a null origin. The script runs in
+ * every real-origin document the page reaches, so when the test performs
+ * `page.goto(KG_REVIEW_PATH)`, `getToken()` in `api-client.ts` already
+ * sees the mocked token and the ReviewAuthGuard proceeds to call
+ * `/api/v1/auth/me`.
+ *
+ * For the unauthenticated scenario the init script is skipped entirely,
+ * so `getToken()` returns null and the guard redirects to `/login`
+ * without ever calling `/api/v1/auth/me`.
  */
 export async function setupMockReviewQueueApi(
   page: Page,
   scenario: MockReviewQueueScenario = "authenticated",
 ): Promise<void> {
-  // Inject token for authenticated scenarios so getToken() returns truthy
+  // Inject token for authenticated scenarios so getToken() returns truthy.
+  // addInitScript is preferred over page.evaluate on about:blank because
+  // the latter raises SecurityError (null origin).
   if (scenario !== "unauthenticated") {
-    await page.evaluate(
+    await page.addInitScript(
       ([key, token]) => {
         localStorage.setItem(key, token)
       },

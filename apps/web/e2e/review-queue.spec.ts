@@ -115,15 +115,12 @@ test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
     test("redirects /review/kg to /login when not authenticated", async ({
       page,
     }) => {
-      // No token in localStorage — guard will redirect
-      const authMePromise = captureAuthMe(page)
+      // No token in localStorage — `getToken()` returns null and the
+      // ReviewAuthGuard's early-return path calls `router.replace("/login")`
+      // without invoking /api/v1/auth/me (see ReviewAuthGuard.tsx:55-61).
       await setupMockReviewQueueApi(page, "unauthenticated")
 
       await page.goto(KG_REVIEW_PATH)
-
-      // Auth guard fires /api/v1/auth/me → 401 → redirect to /login
-      const authMeResponse = await authMePromise
-      expect(authMeResponse.status()).toBe(401)
 
       // The guard calls router.replace("/login")
       await expect(page).toHaveURL(new RegExp(`.*${LOGIN_PATH}`))
@@ -132,13 +129,11 @@ test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
     test("redirects /review/conflicts to /login when not authenticated", async ({
       page,
     }) => {
-      const authMePromise = captureAuthMe(page)
+      // See the /review/kg test above — the guard short-circuits on
+      // missing token and the auth endpoint is never called.
       await setupMockReviewQueueApi(page, "unauthenticated")
 
       await page.goto(CONFLICTS_PATH)
-
-      const authMeResponse = await authMePromise
-      expect(authMeResponse.status()).toBe(401)
 
       await expect(page).toHaveURL(new RegExp(`.*${LOGIN_PATH}`))
     })
@@ -166,9 +161,13 @@ test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
       // Page heading renders
       await expect(pageHeading(page)).toHaveText("知识图谱审核")
 
-      // All 3 mock items appear in the table by title
+      // All 3 mock items appear in the table by title. Use `exact: true`
+      // so the title cell ("UO2 晶体结构") does not also match the source
+      // cell ("UO2 晶体结构分析报告") via substring.
       for (const item of MOCK_KG_REVIEW_ITEMS) {
-        await expect(page.getByText(item.title)).toBeVisible()
+        await expect(
+          page.getByText(item.title, { exact: true }),
+        ).toBeVisible()
       }
 
       // Select-all checkbox is present
@@ -209,9 +208,11 @@ test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
       await authMePromise
       await queuePromise
 
-      // Status bar shows: 待审核: N · 已通过: N · 已拒绝: N
+      // Status bar shows: 待审核: N · 已通过: N · 已拒绝: N.
+      // `getByText("3", { exact: true })` distinguishes the pending-count
+      // `<strong>3</strong>` from the page footer "共 3 条" string.
       await expect(page.getByText("待审核:")).toBeVisible()
-      await expect(page.getByText("3")).toBeVisible()
+      await expect(page.getByText("3", { exact: true })).toBeVisible()
       await expect(page.getByText("已通过:")).toBeVisible()
       await expect(page.getByText("已拒绝:")).toBeVisible()
     })
@@ -234,17 +235,25 @@ test.describe("Review Queue Auth Flow", { tag: "@integration" }, () => {
       await authMePromise
       await queuePromise
 
-      // Verify items loaded
-      await expect(page.getByText(MOCK_KG_REVIEW_ITEMS[0].title)).toBeVisible()
-      await expect(page.getByText(MOCK_KG_REVIEW_ITEMS[1].title)).toBeVisible()
+      // Verify items loaded. Use `exact: true` to keep the title cell
+      // (e.g. "UO2 晶体结构") distinct from the source cell whose text
+      // begins with the same prefix (e.g. "UO2 晶体结构分析报告").
+      await expect(
+        page.getByText(MOCK_KG_REVIEW_ITEMS[0].title, { exact: true }),
+      ).toBeVisible()
+      await expect(
+        page.getByText(MOCK_KG_REVIEW_ITEMS[1].title, { exact: true }),
+      ).toBeVisible()
 
       // Select two items via their checkboxes
       await itemCheckbox(page, MOCK_KG_REVIEW_ITEMS[0].title).check()
       await itemCheckbox(page, MOCK_KG_REVIEW_ITEMS[1].title).check()
 
-      // Batch approve bar appears
+      // Batch approve bar appears. Use `exact: true` so "2" only matches
+      // the selection-count badge, not confidence values (`0.92`) or the
+      // copyright footer ("© 2026 ...") which both substring-match.
       await expect(page.getByText("已选择")).toBeVisible()
-      await expect(page.getByText("2")).toBeVisible()
+      await expect(page.getByText("2", { exact: true })).toBeVisible()
 
       // Click batch approve — opens confirmation dialog
       await batchApproveButton(page, 2).click()
