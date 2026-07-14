@@ -109,6 +109,10 @@ from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
     ConflictStatus,
     ResolutionStrategy,
 )
+from nfm_db.models.entity_merge import (  # noqa: E402
+    EntityMergeLog,
+    MatchMethod,
+)
 from nfm_db.models.extraction_figure import (  # noqa: E402
     ExtractionFigure,
 )
@@ -209,6 +213,7 @@ __all__ = [
     "Dataset",
     "DefectAnalysisResult",
     "DefectType",
+    "EntityMergeLog",
     "ExecutionStatus",
     "ExtractionFigure",
     "ExtractionJob",
@@ -230,6 +235,7 @@ __all__ = [
     "KRelationType",
     "MDSimulationResult",
     "MDVerificationJob",
+    "MatchMethod",
     "Material",
     "MaterialAlias",
     "MaterialCategory",
