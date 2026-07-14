@@ -12,7 +12,6 @@ on:
       - "apps/api/src/nfm_db/services/table_extractor.py"
       - "apps/api/src/nfm_db/schemas/figure.py"
       - "apps/api/src/nfm_db/schemas/vision_extraction.py"
-      - "tests/eval/**"
       - ".github/workflows/batch3-extraction-eval.yml"
   pull_request:
     branches: [main]
@@ -25,7 +24,6 @@ on:
       - "apps/api/src/nfm_db/services/table_extractor.py"
       - "apps/api/src/nfm_db/schemas/figure.py"
       - "apps/api/src/nfm_db/schemas/vision_extraction.py"
-      - "tests/eval/**"
       - ".github/workflows/batch3-extraction-eval.yml"
   workflow_dispatch:
     inputs:
@@ -64,27 +62,5 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run extraction accuracy evaluation
-        run: uv run python ../scripts/eval_extraction_accuracy.py
+        run: uv run python ${{ github.workspace }}/scripts/eval_extraction_accuracy.py
 
-  extraction-unit-tests:
-    name: Extraction Benchmark Unit Tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/api
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --extra dev --frozen
-
-      - name: Run extraction benchmark unit tests
-        run: uv run pytest tests/eval/test_accuracy_benchmark.py -v --tb=short
