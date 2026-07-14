@@ -141,8 +141,9 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
 
   test.describe("Login then navigate to review", () => {
     test("login page submits credentials and navigates to review", async ({ page }) => {
-      // Start on admin login page without auth
-      await clearAuth(page)
+      // Clear auth state without addInitScript (which persists across navigations
+      // and would remove the token after the login form sets it).
+      await page.context().clearCookies()
       await setupReviewMocks(page, true)
 
       // Mock the login endpoint to return a token
@@ -159,21 +160,26 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
 
       await page.goto("/admin/login")
 
-      // Fill credentials
-      await page.fill('input[name="username"]', "test_user")
-      await page.fill('input[name="password"]', "test_password")
+      // Fill credentials (use placeholder selectors matching rendered form)
+      await page.getByPlaceholder("请输入用户名").fill("test_user")
+      await page.getByPlaceholder("请输入密码").fill("test_password")
 
       // Submit
-      await page.click('button:has-text("登录")')
+      await page.getByRole("button", { name: "登录" }).click()
 
       // Wait for navigation away from login page
       await page.waitForURL((url) => !url.pathname.includes("login"), { timeout: 10_000 })
 
-      // Token should now be in localStorage
+      // Token should now be in localStorage (set by login form's setToken())
       const token = await page.evaluate(() =>
         localStorage.getItem("blog_admin_token"),
       )
       expect(token).toBeTruthy()
+
+      // Edge middleware requires a cookie — set it so /review/* passes
+      await page.context().addCookies([
+        { name: "blog_admin_token", value: token!, domain: "localhost", path: "/" },
+      ])
 
       // Now navigate to review queue
       await page.goto("/review/kg")

@@ -115,13 +115,14 @@ export async function setupReviewMocks(
     handleAuthRoute(route, authenticated)
   })
 
-  // Intercept /api/v1/review/kg/**
-  await page.route("**/api/v1/review/kg/**", (route: Route) => {
+  // Intercept /api/v1/review/kg** (list + batch — no trailing slash needed
+  // because the list endpoint is /api/v1/review/kg?status=pending&page=1&limit=20)
+  await page.route("**/api/v1/review/kg**", (route: Route) => {
     handleKgReviewRoute(route, route.request().url())
   })
 
-  // Intercept /api/v1/review/conflicts/**
-  await page.route("**/api/v1/review/conflicts/**", (route: Route) => {
+  // Intercept /api/v1/review/conflicts** (list + resolve)
+  await page.route("**/api/v1/review/conflicts**", (route: Route) => {
     handleConflictRoute(route, route.request().url())
   })
 }
@@ -144,9 +145,16 @@ export async function injectAuth(page: Page): Promise<void> {
   await page.context().addCookies([
     { name: TOKEN_KEY, value: MOCK_TOKEN, domain: "localhost", path: "/" },
   ])
-  await page.context().addInitScript(() => {
-    localStorage.setItem(TOKEN_KEY, MOCK_TOKEN)
-  })
+  // Pass token values as args — Playwright serializes the fn but does NOT
+  // capture outer-scope Node.js variables, so TOKEN_KEY/MOCK_TOKEN would
+  // be undefined inside the browser context without explicit argument passing.
+  await page.context().addInitScript(
+    (key: string, value: string) => {
+      localStorage.setItem(key, value)
+    },
+    TOKEN_KEY,
+    MOCK_TOKEN,
+  )
 }
 
 /**
@@ -157,7 +165,7 @@ export async function injectAuth(page: Page): Promise<void> {
  */
 export async function clearAuth(page: Page): Promise<void> {
   await page.context().clearCookies()
-  await page.context().addInitScript(() => {
-    localStorage.removeItem(TOKEN_KEY)
-  })
+  await page.context().addInitScript((key: string) => {
+    localStorage.removeItem(key)
+  }, TOKEN_KEY)
 }
