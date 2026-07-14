@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from tests.seed_entity_pairs import (
@@ -17,7 +19,7 @@ class TestEntityPairDataclass:
 
     def test_entity_pair_is_frozen(self) -> None:
         pair = EntityPair(name_a="UO2", name_b="Uranium Dioxide", expected_match=True)
-        with pytest.raises((AttributeError, Exception)):
+        with pytest.raises(FrozenInstanceError):
             pair.name_a = "changed"  # type: ignore[misc]
 
     def test_entity_pair_has_expected_match(self) -> None:

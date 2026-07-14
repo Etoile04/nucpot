@@ -352,8 +352,8 @@ ALL_PAIRS: list[EntityPair] = POSITIVE_PAIRS + NEGATIVE_PAIRS
 
 
 __all__ = [
-    "EntityPair",
-    "POSITIVE_PAIRS",
-    "NEGATIVE_PAIRS",
     "ALL_PAIRS",
+    "NEGATIVE_PAIRS",
+    "POSITIVE_PAIRS",
+    "EntityPair",
 ]
