@@ -180,9 +180,7 @@ def _check_extraction_accuracy() -> GateResult:
             f"(target >= {_EXTRACTION_ACCURACY_TARGET:.0%})"
         )
         evidence = (
-            f"Figure: {fig.accuracy:.1%}, "
-            f"Plot: {plot.accuracy:.1%}, "
-            f"Table: {table.accuracy:.1%}"
+            f"Figure: {fig.accuracy:.1%}, Plot: {plot.accuracy:.1%}, Table: {table.accuracy:.1%}"
         )
     except ImportError:
         passed = False
@@ -220,8 +218,7 @@ def _check_kg_coverage() -> GateResult:
             f"Relation types: {relation_count} (need >= {_MIN_RELATION_TYPES})"
         )
         evidence = (
-            f"Entities: {sorted(VALID_NODE_TYPES)}, "
-            f"Relations: {sorted(VALID_RELATION_TYPES)}"
+            f"Entities: {sorted(VALID_NODE_TYPES)}, Relations: {sorted(VALID_RELATION_TYPES)}"
         )
     except ImportError:
         passed = False
@@ -256,23 +253,32 @@ def _check_kg_query_modes() -> GateResult:
 
     content = kg_router_path.read_text(encoding="utf-8")
 
-    # Detect query modes by looking for Query enum with mode parameter
-    search_endpoints = re.findall(r'@router\.(get|post)\(', content)
-    has_mode_param = 'mode' in content and 'Query(' in content
-
-    # Look for route decorators with distinct query paths
+    # Count distinct route paths as a proxy for query modes
     route_matches = re.findall(
-        r'@router\.(get|post)\(\s*["\']([^"\']+)', content,
+        r'@router\.(get|post)\(\s*["\']([^"\']+)',
+        content,
     )
-    unique_routes = [path for _method, path in route_matches]
+    unique_routes = sorted({path for _method, path in route_matches})
 
-    mode_count = len(unique_routes) if unique_routes else len(search_endpoints)
-    if has_mode_param:
-        mode_count = max(mode_count, _MIN_QUERY_MODES)
+    # Additionally count distinct mode values accepted in Query parameters
+    mode_enum_matches = re.findall(
+        r"class\s+\w*[Mm]ode\w*\s*\([^)]*\):",
+        content,
+    )
+    enum_values: list[str] = []
+    for match in mode_enum_matches:
+        block_start = content.index(match)
+        block_end = content.find("\n\n", block_start)
+        if block_end == -1:
+            block_end = len(content)
+        block = content[block_start:block_end]
+        enum_values.extend(re.findall(r"^\s+(\w+)\s*=", block, re.MULTILINE))
+
+    mode_count = max(len(unique_routes), len(enum_values))
 
     passed = mode_count >= _MIN_QUERY_MODES
     detail = f"Query capabilities detected: {mode_count} (need >= {_MIN_QUERY_MODES})"
-    evidence = f"Routes: {', '.join(unique_routes[:5]) if unique_routes else f'{len(search_endpoints)} endpoints'}"
+    evidence = f"Routes: {', '.join(unique_routes[:5])}; Enum values: {', '.join(enum_values[:5])}"
 
     return GateResult(
         gate_id="G4",
@@ -307,13 +313,7 @@ def _check_fusion_configurable() -> GateResult:
     except ImportError:
         # Fallback: check conflict_resolution.py for strategy references
         cr_path = (
-            _REPO_ROOT
-            / "apps"
-            / "api"
-            / "src"
-            / "nfm_db"
-            / "services"
-            / "conflict_resolution.py"
+            _REPO_ROOT / "apps" / "api" / "src" / "nfm_db" / "services" / "conflict_resolution.py"
         )
         if cr_path.exists():
             content = cr_path.read_text(encoding="utf-8")
@@ -351,16 +351,17 @@ def _check_test_coverage() -> GateResult:
     try:
         result = subprocess.run(
             [
-                sys.executable, "-m", "pytest",
+                sys.executable,
+                "-m",
+                "pytest",
                 "--cov=src",
                 "--cov-report=term-missing:skip-covered",
-                "--co",
                 "-q",
             ],
             cwd=str(_REPO_ROOT / "apps" / "api"),
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,
         )
 
         output = result.stdout + result.stderr
@@ -391,10 +392,7 @@ def _coverage_proxy() -> tuple[bool, str, str]:
     test_files = list(test_dir.rglob("test_*.py")) if test_dir.exists() else []
 
     passed = len(test_files) >= 50
-    detail = (
-        f"Coverage parse failed; "
-        f"proxy: {len(test_files)} test files found"
-    )
+    detail = f"Coverage parse failed; proxy: {len(test_files)} test files found"
     evidence = "Subprocess failed; used file-count proxy"
     return passed, detail, evidence
 
