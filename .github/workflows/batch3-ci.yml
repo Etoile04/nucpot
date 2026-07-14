@@ -80,7 +80,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run E2E integration tests
-        run: EXTRACTION_STUB_MODE=1 uv run pytest tests/test_e2e_integration.py -v --tb=short -m e2e
+        run: EXTRACTION_STUB_MODE=1 uv run pytest tests/test_e2e_integration.py -v --tb=short -m e2e -o "addopts="
 
   phase-gate-validation:
     name: Phase Gate Validation
@@ -102,7 +102,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run phase gate validation tests
-        run: uv run pytest tests/test_phase_gate.py -v --tb=short
+        run: uv run pytest tests/test_phase_gate.py -v --tb=short -o "addopts="
 
       - name: Run phase gate validation script
         run: uv run python ${{ github.workspace }}/scripts/validate_phase_gate.py
