@@ -107,7 +107,7 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run mocked E2E flows (RAG + KG + Material Properties + Material Graph)
+      - name: Run mocked E2E flows (RAG + KG + Material Properties + Material Graph + Review Queue)
         # Default baseURL = http://localhost:3000 from playwright.config.ts.
         # webServer auto-spawns `pnpm dev` because E2E_TARGET is unset.
         run: >
@@ -117,6 +117,7 @@ jobs:
           e2e/kg-exploration.spec.ts
           e2e/material-properties.spec.ts
           e2e/material-graph-subgraph.spec.ts
+          e2e/review-queue.spec.ts
           --project=chromium
         env:
           CI: true
