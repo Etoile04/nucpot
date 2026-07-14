@@ -224,3 +224,102 @@ export const blogApi = {
       },
     ),
 } as const
+
+// ─── V1 Extraction API types ──────────────────────────────────────
+
+export type ExtractionSourceType = "doi" | "url" | "file" | "internal_id"
+
+export interface ExtractionTriggerRequest {
+  readonly source_reference: string
+  readonly source_type: ExtractionSourceType
+  readonly element_systems?: readonly string[]
+  readonly cache_level?: string
+  readonly max_confidence?: string
+}
+
+export interface ExtractionTriggerResponse {
+  readonly job_id: string
+  readonly source_reference: string
+  readonly source_type: string
+  readonly status: string
+  readonly message: string
+}
+
+export interface ExtractionStatusResponse {
+  readonly job_id: string
+  readonly source_reference: string
+  readonly source_type: string
+  readonly status: string
+  readonly extracted_count: number
+  readonly staged_count: number
+  readonly rejected_count: number
+  readonly error_message?: string | null
+  readonly created_at?: string | null
+  readonly started_at?: string | null
+  readonly completed_at?: string | null
+}
+
+// ─── V1 Extraction API ───────────────────────────────────────────
+
+/** Internal envelope for v1 extraction endpoints. */
+interface ExtractionEnvelope<T> {
+  readonly success: boolean
+  readonly data: T
+}
+
+export const extractionApi = {
+  /** POST /api/v1/extraction/trigger — Trigger extraction for a literature source */
+  trigger: async (
+    payload: ExtractionTriggerRequest,
+  ): Promise<ExtractionTriggerResponse> => {
+    const envelope = await request<ExtractionEnvelope<ExtractionTriggerResponse>>(
+      "/api/v1/extraction/trigger",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    )
+    return envelope.data
+  },
+
+  /** GET /api/v1/extraction/status/{jobId} — Check extraction job status */
+  getStatus: async (
+    jobId: string,
+  ): Promise<ExtractionStatusResponse> => {
+    const envelope = await request<ExtractionEnvelope<ExtractionStatusResponse>>(
+      `/api/v1/extraction/status/${jobId}`,
+    )
+    return envelope.data
+  },
+} as const
+
+// ─── V4 Extraction API re-exports ───────────────────────────────
+
+export {
+  submitExtractionJob,
+  getExtractionStatus,
+  getExtractionResults,
+  browseProperties,
+  validateExtractionResults,
+  getMaterialSystems,
+} from "./v4-extraction/api"
+
+export type {
+  V4ExtractionSubmitRequest,
+  V4SubmitResponse,
+  V4StatusResponse,
+  V4ResultResponse,
+  V4ResultParams,
+  V4BrowseResponse,
+  V4BrowseParams,
+  V4ValidateRequest,
+  V4ValidateResponse,
+  V4MaterialSystemSummary,
+  V4MaterialSystemsParams,
+  V4FigureResult,
+  V4TableResult,
+  V4PropertyResponse,
+  SourceType as V4SourceType,
+  JobStatus,
+  Confidence as V4Confidence,
+} from "./v4-extraction/types"
