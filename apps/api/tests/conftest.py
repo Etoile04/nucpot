@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
+from pathlib import Path
+
+# Ensure repo-root scripts/ is importable for phase gate and eval scripts.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent.parent / "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 import pytest
 from httpx import ASGITransport, AsyncClient
