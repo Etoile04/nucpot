@@ -52,12 +52,12 @@ test.describe("Search Page", { tag: "@smoke" }, () => {
     // Default is text search mode
     await expect(page.locator("h2").first()).toContainText("高级检索")
 
-    // Click the semantic mode toggle option (Ant Design Segmented — the
-    // hidden radio input is not clickable; click the visible label div)
-    const semanticLabel = page.locator(
-      '.ant-segmented-item-label[title="语义 (RAG) 检索"]',
-    )
-    await semanticLabel.click()
+    // Click the semantic mode toggle option inside the Ant Design Segmented.
+    // Ant Design Segmented renders each option's label as <span>text</span>
+    // inside an .ant-segmented-item div — no title attribute is rendered,
+    // so we locate by visible text content within the segmented container.
+    const segmented = page.locator(".ant-segmented")
+    await segmented.getByText("语义 (RAG) 检索").click()
 
     // Heading should switch to semantic mode title
     await expect(page.locator("h2").first()).toContainText("语义检索")
