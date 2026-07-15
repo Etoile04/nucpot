@@ -29,8 +29,6 @@ function mockOkNoContent() {
 describe("review-api", () => {
   beforeEach(() => {
     global.fetch = vi.fn()
-    localStorage.clear()
-    localStorage.setItem("blog_admin_token", "test-jwt")
   })
 
   describe("getKgReviewQueue", () => {
@@ -50,8 +48,8 @@ describe("review-api", () => {
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/v1/review/kg?status=pending&page=1&limit=20",
         expect.objectContaining({
+          credentials: "include",
           headers: expect.objectContaining({
-            Authorization: "Bearer test-jwt",
             "Content-Type": "application/json",
           }),
         }),
@@ -127,9 +125,7 @@ describe("review-api", () => {
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/v1/review/conflicts?status=pending",
         expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer test-jwt",
-          }),
+          credentials: "include",
         }),
       )
       expect(result).toHaveLength(1)

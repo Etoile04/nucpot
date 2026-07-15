@@ -234,10 +234,8 @@ def upgrade() -> None:
         );
     """)
 
-    # =========================================================================
-    # Update alembic_version
-    # =========================================================================
-    op.execute("UPDATE alembic_version SET version_num = '013'")
+    # NOTE: Do not manually UPDATE alembic_version — Alembic manages
+    # the version table automatically after upgrade()/downgrade() returns.
 
 
 def downgrade() -> None:
@@ -285,4 +283,4 @@ def downgrade() -> None:
         END $$;
     """)
 
-    op.execute("UPDATE alembic_version SET version_num = '012'")
+    # NOTE: Alembic manages version table automatically.

@@ -53,17 +53,13 @@ def _validate_password_strength(password: str) -> None:
         raise HTTPException(400, "Password must contain at least one digit")
 
 
-<<<<<<< HEAD
 @router.post(
     "/login",
     response_model=Token,
     summary="用户登录",
     description="用户登录并获取访问令牌。\n\nLogin with username/password and receive an access token.",
 )
-=======
-@router.post("/login", response_model=Token)
 @limiter.limit("5/minute")
->>>>>>> feat/auth-unification
 async def login(
     request: Request,  # noqa: ARG001 — required by slowapi
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -104,15 +100,6 @@ async def login(
     return Token(access_token=access_token)
 
 
-<<<<<<< HEAD
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="注册新用户",
-    description="注册新用户（初始化阶段可用）。\n\nRegister a new user (available during initialization phase).",
-)
-=======
 @router.post("/logout")
 async def logout(response: Response) -> ApiResponse:
     """用户登出，清除认证 cookie。"""
@@ -120,9 +107,14 @@ async def logout(response: Response) -> ApiResponse:
     return ApiResponse(success=True, data={"message": "Logged out"})
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="注册新用户",
+    description="注册新用户（初始化阶段可用）。\n\nRegister a new user (available during initialization phase).",
+)
 @limiter.limit("3/minute")
->>>>>>> feat/auth-unification
 async def register(
     request: Request,  # noqa: ARG001
     user_data: UserCreate,
