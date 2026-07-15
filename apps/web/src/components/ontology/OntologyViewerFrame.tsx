@@ -28,6 +28,7 @@ const DEFAULT_DATA_URL = "/ontology-viewer/data/nvl_ontology_data.json";
 /** Reusable host container styles — full-width wrapper with height contract. */
 const HOST_CONTAINER_STYLE = {
   width: "100%",
+  height: "100%",
   minHeight: `${IFRAME_MIN_HEIGHT}px`,
 } as const;
 

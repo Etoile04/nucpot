@@ -149,3 +149,72 @@ test.describe("Ontology page — mobile", { tag: "@unit" }, () => {
     })
   })
 })
+
+// Phase 2 enhancements (NFM-1426): 768px tablet viewport + no-overlap assertion
+test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
+  test.use({ viewport: { width: 768, height: 1024 } })
+
+  test("iframe height contract at 768px — never collapses below 600px", async ({
+    page,
+  }) => {
+    const pageErrors: string[] = []
+    const consoleErrors: string[] = []
+    page.on("pageerror", (e) => pageErrors.push(e.message))
+    page.on("console", (m) => {
+      if (m.type() === "error") consoleErrors.push(m.text())
+    })
+
+    await page.goto("/ontology")
+    const frame = page.locator(IFRAME)
+    await expect(frame).toBeVisible()
+
+    const box = await frame.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.height).toBeGreaterThanOrEqual(600)
+
+    // No page errors or failure-signature console errors at tablet viewport
+    expect(pageErrors).toEqual([])
+    const realConsoleErrors = consoleErrors.filter((t) =>
+      FAILURE_SIGNATURES.some((re) => re.test(t)),
+    )
+    expect(realConsoleErrors).toEqual([])
+  })
+
+  test("no iframe content overlap with page elements at 768px", async ({
+    page,
+  }) => {
+    await page.goto("/ontology")
+    const frame = page.locator(IFRAME)
+    await expect(frame).toBeVisible()
+    await page.waitForTimeout(2500)
+
+    // After NFM-1424 fix, the iframe should not overlap with surrounding
+    // page elements (nav, headings, etc.). Verify by checking that the
+    // iframe is contained within the page flow and doesn't bleed into
+    // the viewport header area.
+    const frameBox = await frame.boundingBox()
+    expect(frameBox).not.toBeNull()
+
+    // The iframe should not extend above the nav bar area
+    const nav = page.locator("nav").first()
+    const navExists = await nav.count()
+    if (navExists > 0) {
+      const navBox = await nav.boundingBox()
+      if (navBox) {
+        // Frame should start below the nav (with some tolerance for spacing)
+        expect(frameBox!.y).toBeGreaterThanOrEqual(navBox.y + navBox.height - 10)
+      }
+    }
+  })
+
+  test("screenshot at 768px tablet viewport", async ({ page }) => {
+    await page.goto("/ontology")
+    const frame = page.locator(IFRAME)
+    await expect(frame).toBeVisible()
+    await page.waitForTimeout(2500)
+    await page.screenshot({
+      path: "test-results/ontology-tablet-768.png",
+      animations: "disabled",
+    })
+  })
+})

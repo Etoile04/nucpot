@@ -19,12 +19,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN" className="h-full antialiased">
-      <body className="min-h-full flex flex-col bg-gray-900 text-white">
+      <body className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white">
         <AntdProvider>
           <QueryProvider>
             <AuthProvider>
             <Nav />
-            <main className="flex-1">{children}</main>
+            <main className="flex-1 overflow-y-auto">{children}</main>
             <footer className="border-t border-gray-700 py-8 text-center text-gray-400 text-sm">
               <p>
                 反馈与建议：

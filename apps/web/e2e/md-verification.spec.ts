@@ -12,11 +12,36 @@ import { test, expect } from "@playwright/test"
  *   - Submit tab: "创建验证任务" button → opens wizard Modal
  *   - List tab: table with columns (任务ID, 势函数, 元素体系, 状态, 操作...)
  *     + filter/select controls + "刷新" button
+ *
+ * Phase 2 enhancements (NFM-1426):
+ *  - 768px tablet viewport check
+ *  - Console error tracking
  */
+
+const FAILURE_SIGNATURES = [
+  /failed to fetch/i,
+  /\bcors\b/i,
+  /\bnetworkerror\b/i,
+  /could not load/i,
+  /refused to (execute|connect|apply)/i,
+]
+
+function collectConsoleErrors(page: import("@playwright/test").Page): string[] {
+  const consoleErrors: string[] = []
+  page.on("console", (m) => {
+    if (m.type() === "error") consoleErrors.push(m.text())
+  })
+  return consoleErrors
+}
+
+function filterRealErrors(errors: string[]): string[] {
+  return errors.filter((t) => FAILURE_SIGNATURES.some((re) => re.test(t)))
+}
 
 test.describe("MD Verification", { tag: "@integration" }, () => {
   test.describe("Main Dashboard", () => {
     test("loads the MD verification dashboard", async ({ page }) => {
+      const consoleErrors = collectConsoleErrors(page)
       await page.goto("/admin/md-verification")
 
       // Tabs are rendered by Ant Design with role="tab"
@@ -25,16 +50,20 @@ test.describe("MD Verification", { tag: "@integration" }, () => {
 
       await expect(submitTab).toBeVisible()
       await expect(listTab).toBeVisible()
+      expect(filterRealErrors(consoleErrors)).toEqual([])
     })
 
     test("submit tab shows create button", async ({ page }) => {
+      const consoleErrors = collectConsoleErrors(page)
       await page.goto("/admin/md-verification")
 
       // The submit tab shows a "创建验证任务" button (not a form)
       await expect(page.getByRole("button", { name: "创建验证任务" })).toBeVisible()
+      expect(filterRealErrors(consoleErrors)).toEqual([])
     })
 
     test("switches between tabs", async ({ page }) => {
+      const consoleErrors = collectConsoleErrors(page)
       await page.goto("/admin/md-verification")
 
       // Switch to list tab via Ant Design tab class (avoids sidebar link)
@@ -45,11 +74,13 @@ test.describe("MD Verification", { tag: "@integration" }, () => {
       // Check for task list elements
       await expect(page.getByText("MD 验证任务列表").first()).toBeVisible()
       await expect(page.getByRole("button", { name: "刷新" })).toBeVisible()
+      expect(filterRealErrors(consoleErrors)).toEqual([])
     })
   })
 
   test.describe("Task Submission Wizard", () => {
     test("opens wizard modal", async ({ page }) => {
+      const consoleErrors = collectConsoleErrors(page)
       await page.goto("/admin/md-verification")
 
       // Click the create button
@@ -63,9 +94,11 @@ test.describe("MD Verification", { tag: "@integration" }, () => {
       await expect(page.getByText("选择势函数")).toBeVisible()
       await expect(page.getByText("配置模拟参数")).toBeVisible()
       await expect(page.getByText("确认并提交")).toBeVisible()
+      expect(filterRealErrors(consoleErrors)).toEqual([])
     })
 
     test("wizard has search input for potentials", async ({ page }) => {
+      const consoleErrors = collectConsoleErrors(page)
       await page.goto("/admin/md-verification")
       await page.getByRole("button", { name: "创建验证任务" }).click()
       await expect(page.getByRole("dialog")).toBeVisible()
@@ -74,6 +107,7 @@ test.describe("MD Verification", { tag: "@integration" }, () => {
       await expect(
         page.getByPlaceholder("搜索势函数名称/元素...")
       ).toBeVisible()
+      expect(filterRealErrors(consoleErrors)).toEqual([])
     })
 
     test("shows validation on empty submit", async ({ page }) => {
@@ -193,12 +227,14 @@ test.describe("MD Verification", { tag: "@integration" }, () => {
 
   test.describe("Error Handling", () => {
     test("handles API errors gracefully", async ({ page }) => {
+      const consoleErrors = collectConsoleErrors(page)
       await page.goto("/admin/md-verification")
       await page.getByRole("button", { name: "创建验证任务" }).click()
       await expect(page.getByRole("dialog")).toBeVisible()
 
       // Just verify the wizard loads without crash
       await expect(page.getByText("选择势函数")).toBeVisible()
+      expect(filterRealErrors(consoleErrors)).toEqual([])
     })
 
     test.skip(true, "Job detail error handling not available on live site")
@@ -241,5 +277,57 @@ test.describe("MD Verification Accessibility", { tag: "@integration" }, () => {
     await listTab.waitFor({ state: "visible", timeout: 10000 })
     await listTab.click()
     await expect(page.getByRole("button", { name: "刷新" })).toBeVisible()
+  })
+})
+
+// ── Phase 2 enhancements: 768px tablet viewport ─────────────────────────
+
+test.describe("MD Verification — tablet viewport", { tag: "@integration" }, () => {
+  test("layout at 768px viewport", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await page.goto("/admin/md-verification")
+    await page.waitForLoadState("networkidle")
+
+    // Tabs should be visible at tablet width
+    const submitTab = page.getByRole("tab", { name: "提交任务" })
+    const listTab = page.getByRole("tab", { name: "任务列表" })
+
+    await expect(submitTab).toBeVisible({ timeout: 15_000 })
+    await expect(listTab).toBeVisible({ timeout: 15_000 })
+
+    // Create button should be accessible
+    await expect(
+      page.getByRole("button", { name: "创建验证任务" })
+    ).toBeVisible()
+
+    // No console errors
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("task list table at 768px viewport", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await page.goto("/admin/md-verification")
+
+    // Switch to list tab
+    const listTab = page.locator('.ant-tabs-tab >> text="任务列表"')
+    await listTab.waitFor({ state: "visible", timeout: 10_000 })
+    await listTab.click()
+
+    // Table should render (may scroll horizontally at tablet)
+    const table = page.locator("table, .ant-table")
+    const tableExists = await table.count()
+
+    if (tableExists > 0) {
+      await expect(table.first()).toBeVisible()
+    }
+
+    // Refresh button should be present
+    await expect(page.getByRole("button", { name: "刷新" })).toBeVisible()
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
   })
 })

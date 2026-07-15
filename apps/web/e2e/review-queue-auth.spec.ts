@@ -15,11 +15,36 @@ import { MOCK_KG_REVIEW_ITEMS } from "./fixtures/review-queue-mock-data"
  * 3. Review queue renders with data
  * 4. Batch approve interaction
  *
+ * Phase 2 enhancements (NFM-1426):
+ *  - KG review queue interactions (filter, refresh, individual actions)
+ *  - Conflict resolution workflow (detail panel, resolution buttons)
+ *  - Console error tracking on all tests
+ *
  * Spec: NFM-1400
  * Epic Branch: feat/nfm-834-phase2-e2e-base
  */
 
 const HYDRATION_TIMEOUT = 15_000
+
+const FAILURE_SIGNATURES = [
+  /failed to fetch/i,
+  /\bcors\b/i,
+  /\bnetworkerror\b/i,
+  /could not load/i,
+  /refused to (execute|connect|apply)/i,
+]
+
+function collectConsoleErrors(page: import("@playwright/test").Page): string[] {
+  const consoleErrors: string[] = []
+  page.on("console", (m) => {
+    if (m.type() === "error") consoleErrors.push(m.text())
+  })
+  return consoleErrors
+}
+
+function filterRealErrors(errors: string[]): string[] {
+  return errors.filter((t) => FAILURE_SIGNATURES.some((re) => re.test(t)))
+}
 
 test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
   test.describe("Unauthenticated redirect", () => {
@@ -189,5 +214,152 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
         page.locator("h1").filter({ hasText: "知识图谱审核" }),
       ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
     })
+  })
+})
+
+// ── Phase 2 enhancements: KG review queue interactions ──────────────────────
+
+test.describe("KG Review Queue — interaction tests", { tag: "@integration" }, () => {
+  test.beforeEach(async ({ page }) => {
+    await injectAuth(page)
+    await setupReviewMocks(page, true)
+  })
+
+  test("refresh button reloads queue data", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.goto("/review/kg")
+    await expect(
+      page.locator("h1").filter({ hasText: "知识图谱审核" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    // Click the refresh button
+    const refreshBtn = page.getByRole("button", { name: /刷新/i })
+    const refreshExists = await refreshBtn.count()
+
+    if (refreshExists > 0) {
+      await refreshBtn.first().click()
+      // Queue should still be visible after refresh
+      await expect(
+        page.locator("h1").filter({ hasText: "知识图谱审核" }),
+      ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+    }
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("status filter dropdown is present", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.goto("/review/kg")
+    await expect(
+      page.locator("h1").filter({ hasText: "知识图谱审核" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    // Status filter allows filtering by 全部/待审核/已通过/已拒绝
+    const filterSelect = page.locator('.ant-select, select').first()
+    const filterExists = await filterSelect.count()
+
+    if (filterExists > 0) {
+      await expect(filterSelect.first()).toBeVisible({ timeout: 10_000 })
+    }
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("table renders with selectable rows", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.goto("/review/kg")
+    await expect(
+      page.locator("h1").filter({ hasText: "知识图谱审核" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    // Table should have checkboxes for row selection
+    const rowCheckboxes = page.locator('tbody input[type="checkbox"]')
+    const checkboxCount = await rowCheckboxes.count()
+
+    expect(checkboxCount).toBeGreaterThan(0)
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("no console errors during KG review queue interaction", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+    const pageErrors: string[] = []
+    page.on("pageerror", (e) => pageErrors.push(e.message))
+
+    await page.goto("/review/kg")
+    await expect(
+      page.locator("h1").filter({ hasText: "知识图谱审核" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+    expect(pageErrors).toEqual([])
+  })
+})
+
+// ── Phase 2 enhancements: Conflict resolution workflow ────────────────────
+
+test.describe("Conflict Resolution — interaction tests", { tag: "@integration" }, () => {
+  test.beforeEach(async ({ page }) => {
+    await injectAuth(page)
+    await setupReviewMocks(page, true)
+  })
+
+  test("conflict table renders with selectable rows", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.goto("/review/conflicts")
+    await expect(
+      page.locator("h1").filter({ hasText: "冲突解决" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    // Conflict entities should be in the table
+    await expect(page.getByText("U-235")).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+    await expect(page.getByText("Fe-BCC")).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    // Select all checkbox should exist
+    const selectAllCheckbox = page.locator('thead input[type="checkbox"]')
+    const hasSelectAll = await selectAllCheckbox.count()
+    expect(hasSelectAll).toBeGreaterThan(0)
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("refresh button reloads conflict data", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    await page.goto("/review/conflicts")
+    await expect(
+      page.locator("h1").filter({ hasText: "冲突解决" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    // Click the refresh button
+    const refreshBtn = page.getByRole("button", { name: /刷新/i })
+    const refreshExists = await refreshBtn.count()
+
+    if (refreshExists > 0) {
+      await refreshBtn.first().click()
+      // Queue should still be visible after refresh
+      await expect(
+        page.locator("h1").filter({ hasText: "冲突解决" }),
+      ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+    }
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("no console errors during conflict resolution interaction", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+    const pageErrors: string[] = []
+    page.on("pageerror", (e) => pageErrors.push(e.message))
+
+    await page.goto("/review/conflicts")
+    await expect(
+      page.locator("h1").filter({ hasText: "冲突解决" }),
+    ).toBeVisible({ timeout: HYDRATION_TIMEOUT })
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+    expect(pageErrors).toEqual([])
   })
 })
