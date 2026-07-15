@@ -118,20 +118,59 @@ def _disable_global_rate_limiting() -> None:
     app.dependency_overrides[ontology_rate_limit] = _noop
     app.dependency_overrides[md_verification_rate_limit] = _noop
 
+    # 3. Auto-authenticate as admin for all tests.
+    #    Sprint 3 added ``require_editor`` / ``require_reviewer`` dependencies
+    #    to many endpoints.  Overriding ``get_current_user`` at the FastAPI
+    #    level lets legacy tests (that never set Authorization headers) pass
+    #    without modification.  Auth-specific tests in ``test_auth.py`` test
+    #    login/register which are public and unaffected.
+    from typing import Annotated
+
+    from fastapi import Depends, Request
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+    from nfm_db.api.v1.auth import get_current_user as _api_get_current_user
+
+    _test_bearer = HTTPBearer(auto_error=False)
+
+    _auto_user = User(
+        id=_SEED_AUTHOR_ID,
+        username="auto_admin",
+        email="auto_admin@test.com",
+        hashed_password="hashed",
+        blog_role=BlogRole.ADMIN,
+        is_active=True,
+    )
+
+    async def _auto_auth(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_test_bearer)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> User:
+        return _auto_user
+
+    app.dependency_overrides[_api_get_current_user] = _auto_auth
+
 
 @pytest.fixture(autouse=True)
 def _reenable_rate_limit_overrides() -> None:
-    """Re-apply rate-limit no-op overrides before each test function.
+    """Re-apply rate-limit no-op and auto-auth overrides before each test.
 
     Many existing test files on main call ``dependency_overrides.clear()``
     in their teardown, which wipes the session-scoped overrides above.
     This function-scoped guard re-applies the no-ops before every test
-    so that stray 429s never leak into unrelated tests.
+    so that stray 429s or 401s never leak into unrelated tests.
 
     Rate-limit-specific tests (e.g. ``test_ontology_rate_limit_headers``)
     deliberately set tighter overrides in their test bodies *after* this
     fixture runs, so their assertions are unaffected.
     """
+    from typing import Annotated
+
+    from fastapi import Depends, Request
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+    from nfm_db.api.v1.auth import get_current_user as _api_get_current_user
     from nfm_db.services.rate_limit import (
         md_verification_rate_limit,
         ontology_rate_limit,
@@ -142,6 +181,27 @@ def _reenable_rate_limit_overrides() -> None:
 
     app.dependency_overrides[ontology_rate_limit] = _noop
     app.dependency_overrides[md_verification_rate_limit] = _noop
+
+    # Re-apply auto-auth override (survives dependency_overrides.clear()).
+    _test_bearer = HTTPBearer(auto_error=False)
+
+    _auto_user = User(
+        id=_SEED_AUTHOR_ID,
+        username="auto_admin",
+        email="auto_admin@test.com",
+        hashed_password="hashed",
+        blog_role=BlogRole.ADMIN,
+        is_active=True,
+    )
+
+    async def _auto_auth(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_test_bearer)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> User:
+        return _auto_user
+
+    app.dependency_overrides[_api_get_current_user] = _auto_auth
     yield
 
 

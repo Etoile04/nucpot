@@ -32,11 +32,6 @@ from nfm_db.api.v1 import (
     viz,
 )
 from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
-from nfm_db.api.v1.profile import (
-    contributions_router,
-    profile_router,
-    stats_router,
-)
 from nfm_db.api.v1.batch import (
     materials_router as batch_materials_router,
 )
@@ -45,6 +40,11 @@ from nfm_db.api.v1.batch import (
 )
 from nfm_db.api.v1.batch import (
     reference_values_router as batch_reference_values_router,
+)
+from nfm_db.api.v1.profile import (
+    contributions_router,
+    profile_router,
+    stats_router,
 )
 from nfm_db.api.v4 import extraction as v4_extraction
 from nfm_db.middleware.rate_limit import (
