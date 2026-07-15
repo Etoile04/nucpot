@@ -101,7 +101,7 @@ async def login(
 
 
 @router.post("/logout")
-async def logout(response: Response) -> ApiResponse:
+async def logout(response: Response) -> ApiResponse[dict[str, str]]:
     """用户登出，清除认证 cookie。"""
     response.delete_cookie(COOKIE_NAME, path="/")
     return ApiResponse(success=True, data={"message": "Logged out"})

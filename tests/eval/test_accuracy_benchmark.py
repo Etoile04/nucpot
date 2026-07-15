@@ -9,8 +9,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Ensure the eval script is importable
 # ---------------------------------------------------------------------------
@@ -33,7 +31,6 @@ from eval_extraction_accuracy import (
     run_table_extraction_benchmark,
     values_within_tolerance,
 )
-
 
 # ===========================================================================
 # compute_iou tests

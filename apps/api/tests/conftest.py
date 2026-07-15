@@ -120,18 +120,12 @@ def _disable_global_rate_limiting() -> None:
 
     # 3. Auto-authenticate as admin for all tests.
     #    Sprint 3 added ``require_editor`` / ``require_reviewer`` dependencies
-    #    to many endpoints.  Overriding ``get_current_user`` at the FastAPI
-    #    level lets legacy tests (that never set Authorization headers) pass
-    #    without modification.  Auth-specific tests in ``test_auth.py`` test
-    #    login/register which are public and unaffected.
-    from typing import Annotated
-
-    from fastapi import Depends, Request
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
-    from nfm_db.api.v1.auth import get_current_user as _api_get_current_user
-
-    _test_bearer = HTTPBearer(auto_error=False)
+    #    to many endpoints.  Overriding ``get_current_active_user`` at the
+    #    FastAPI level lets legacy tests (that never set Authorization
+    #    headers) pass without modification.  We override the *active-user*
+    #    gate (not ``get_current_user``) because every role-check flows
+    #    through it, and it needs no DB / token / request deps.
+    from nfm_db.api.v1.auth import get_current_active_user as _api_get_active_user
 
     _auto_user = User(
         id=_SEED_AUTHOR_ID,
@@ -142,14 +136,10 @@ def _disable_global_rate_limiting() -> None:
         is_active=True,
     )
 
-    async def _auto_auth(
-        request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_test_bearer)],
-        db: Annotated[AsyncSession, Depends(get_db)],
-    ) -> User:
+    async def _auto_active_user() -> User:
         return _auto_user
 
-    app.dependency_overrides[_api_get_current_user] = _auto_auth
+    app.dependency_overrides[_api_get_active_user] = _auto_active_user
 
 
 @pytest.fixture(autouse=True)
@@ -165,12 +155,7 @@ def _reenable_rate_limit_overrides() -> None:
     deliberately set tighter overrides in their test bodies *after* this
     fixture runs, so their assertions are unaffected.
     """
-    from typing import Annotated
-
-    from fastapi import Depends, Request
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
-    from nfm_db.api.v1.auth import get_current_user as _api_get_current_user
+    from nfm_db.api.v1.auth import get_current_active_user as _api_get_active_user
     from nfm_db.services.rate_limit import (
         md_verification_rate_limit,
         ontology_rate_limit,
@@ -183,8 +168,6 @@ def _reenable_rate_limit_overrides() -> None:
     app.dependency_overrides[md_verification_rate_limit] = _noop
 
     # Re-apply auto-auth override (survives dependency_overrides.clear()).
-    _test_bearer = HTTPBearer(auto_error=False)
-
     _auto_user = User(
         id=_SEED_AUTHOR_ID,
         username="auto_admin",
@@ -194,14 +177,10 @@ def _reenable_rate_limit_overrides() -> None:
         is_active=True,
     )
 
-    async def _auto_auth(
-        request: Request,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_test_bearer)],
-        db: Annotated[AsyncSession, Depends(get_db)],
-    ) -> User:
+    async def _auto_active_user() -> User:
         return _auto_user
 
-    app.dependency_overrides[_api_get_current_user] = _auto_auth
+    app.dependency_overrides[_api_get_active_user] = _auto_active_user
     yield
 
 
