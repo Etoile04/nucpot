@@ -43,7 +43,7 @@ type Tab = 'stats' | 'contributions'
 
 export default function AdminPage() {
   const router = useRouter()
-  const { profile, session, loading } = useAuth()
+  const { user, loading } = useAuth()
 
   const [tab, setTab] = useState<Tab>('stats')
   const [stats, setStats] = useState<AdminStats | null>(null)
@@ -57,21 +57,20 @@ export default function AdminPage() {
   // Auth guard — redirect if not admin
   useEffect(() => {
     if (!loading) {
-      if (!profile) {
+      if (!user) {
         router.push('/login')
-      } else if (profile.role !== 'admin') {
+      } else if (user.blog_role !== "admin") {
         router.push('/')
       }
     }
-  }, [loading, profile, router])
+  }, [loading, user, router])
 
   const fetchStats = useCallback(async () => {
-    if (!session?.access_token) return
+    if (!user) return
     setStatsLoading(true)
     setError(null)
     try {
       const res = await fetch('/api/admin/stats', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to load stats')
@@ -81,17 +80,16 @@ export default function AdminPage() {
     } finally {
       setStatsLoading(false)
     }
-  }, [session?.access_token])
+  }, [user])
 
   const fetchContributions = useCallback(async (statusFilter?: string) => {
-    if (!session?.access_token) return
+    if (!user) return
     setContribLoading(true)
     setError(null)
     try {
       const params = new URLSearchParams({ limit: '50' })
       if (statusFilter) params.set('status', statusFilter)
       const res = await fetch(`/api/admin/contributions?${params}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to load contributions')
@@ -102,17 +100,17 @@ export default function AdminPage() {
     } finally {
       setContribLoading(false)
     }
-  }, [session?.access_token])
+  }, [user])
 
   useEffect(() => {
-    if (profile?.role === 'admin' && session?.access_token) {
+    if (user?.blog_role === "admin" && user) {
       fetchStats()
       fetchContributions('pending')
     }
-  }, [profile, session?.access_token, fetchStats, fetchContributions])
+  },  [user, fetchStats, fetchContributions])
 
   async function handleAction(contributionId: string, action: 'approve' | 'reject') {
-    if (!session?.access_token) return
+    if (!user) return
     setActionInProgress(contributionId)
     setError(null)
     try {
@@ -120,7 +118,6 @@ export default function AdminPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ contributionId, action }),
       })
@@ -138,7 +135,7 @@ export default function AdminPage() {
     }
   }
 
-  if (loading || !profile) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-gray-400">加载中...</div>
@@ -146,7 +143,7 @@ export default function AdminPage() {
     )
   }
 
-  if (profile.role !== 'admin') {
+  if (user.blog_role !== "admin") {
     return null
   }
 

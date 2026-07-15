@@ -94,7 +94,7 @@ function gradeColor(grade: string): string {
 
 export default function AdminVerifyPage() {
   const router = useRouter()
-  const { profile, loading } = useAuth()
+  const { user, loading } = useAuth()
 
   const [potentials, setPotentials] = useState<Potential[]>([])
   const [loadingPotentials, setLoadingPotentials] = useState(true)
@@ -242,13 +242,13 @@ export default function AdminVerifyPage() {
   // Auth guard
   useEffect(() => {
     if (!loading) {
-      if (!profile) {
+      if (!user) {
         router.push('/login')
-      } else if (profile.role !== 'admin') {
+      } else if (user.blog_role !== "admin") {
         router.push('/')
       }
     }
-  }, [loading, profile, router])
+  }, [loading, user, router])
 
   // Load potentials list
   useEffect(() => {
@@ -376,7 +376,7 @@ export default function AdminVerifyPage() {
     }
   }
 
-  if (loading || !profile) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-gray-400">加载中...</div>
@@ -384,7 +384,7 @@ export default function AdminVerifyPage() {
     )
   }
 
-  if (profile.role !== 'admin') return null
+  if (user.blog_role !== "admin") return null
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">

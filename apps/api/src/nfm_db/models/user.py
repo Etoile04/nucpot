@@ -64,6 +64,10 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # Profile fields (migrated from Supabase profiles table)
+    affiliation: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     @property
     def blog_role(self) -> BlogRole | None:

@@ -1,92 +1,102 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { Profile } from '@/lib/types'
-import type { User, Session } from '@supabase/supabase-js'
+import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+
+export interface AppUser {
+  id: string
+  username: string
+  email: string
+  full_name: string | null
+  affiliation?: string | null
+  title?: string | null
+  phone?: string | null
+  blog_role: string | null
+  is_active: boolean
+  created_at?: string
+}
 
 interface AuthContextType {
-  user: User | null
-  profile: Profile | null
-  session: Session | null
+  user: AppUser | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>
+  signIn: (username: string, password: string) => Promise<{ error: string | null }>
   signUp: (email: string, password: string, username: string, fullName: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
+  refresh: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType>({
-  user: null, profile: null, session: null, loading: true,
+  user: null, loading: true,
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signOut: async () => {},
+  refresh: async () => {},
 })
 
 export const useAuth = () => useContext(AuthContext)
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<AppUser | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user.id)
-      } else {
-        setLoading(false)
-      }
-    })
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user.id)
-      } else {
-        setProfile(null)
-        setLoading(false)
-      }
-    })
-
-    return () => subscription.unsubscribe()
+  const fetchProfile = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/auth/me', {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) { setUser(null); return }
+      const data = await res.json()
+      setUser(data.data ?? data)
+    } catch { setUser(null) }
+    finally { setLoading(false) }
   }, [])
 
-  async function fetchProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    setProfile(data)
-    setLoading(false)
-  }
+  useEffect(() => { fetchProfile() }, [fetchProfile])
 
-  async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    return { error: error?.message ?? null }
+  async function signIn(username: string, password: string) {
+    try {
+      const body = new URLSearchParams()
+      body.append('username', username)
+      body.append('password', password)
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body, credentials: 'include',
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        return { error: err.detail ?? '登录失败' }
+      }
+      await fetchProfile()
+      return { error: null }
+    } catch { return { error: '网络错误' } }
   }
 
   async function signUp(email: string, password: string, username: string, fullName: string) {
-    // Use the API endpoint which creates user + profile atomically
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, username, fullName }),
-    })
-    const data = await res.json()
-    if (!res.ok) return { error: data.error || 'Registration failed' }
-    // Auto sign in after registration
-    return signIn(email, password)
+    try {
+      const res = await fetch('/api/v1/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, username, full_name: fullName }),
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        return { error: err.detail ?? '注册失败' }
+      }
+      return signIn(username, password)
+    } catch { return { error: '网络错误' } }
   }
 
   async function signOut() {
-    await supabase.auth.signOut()
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' })
+    } catch {}
+    setUser(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, refresh: fetchProfile }}>
       {children}
     </AuthContext.Provider>
   )
