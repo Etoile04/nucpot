@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import get_current_active_user, require_editor
 from nfm_db.database import get_db
 from nfm_db.middleware.rate_limit import limiter
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.material import (
     BatchImportResult,
@@ -105,6 +107,7 @@ async def get_material_endpoint(
 @router.post("/materials", response_model=ApiResponse[MaterialResponse], status_code=201)
 async def create_material_endpoint(
     payload: MaterialCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialResponse]:
     """创建新材料.
@@ -118,6 +121,7 @@ async def create_material_endpoint(
 async def update_material_endpoint(
     material_id: UUID,
     payload: MaterialUpdate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MaterialResponse]:
     """更新已有材料信息.
@@ -137,6 +141,7 @@ async def update_material_endpoint(
 @limiter.exempt
 async def batch_import_endpoint(
     request: Request,
+    current_user: Annotated[User, Depends(require_editor)],
     file: UploadFile = File(..., description="CSV or JSON file"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[BatchImportResult]:

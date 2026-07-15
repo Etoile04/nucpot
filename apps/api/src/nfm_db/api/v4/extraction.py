@@ -14,14 +14,16 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     V4BrowseResponse,
     V4ConfidenceSummary,
@@ -214,6 +216,7 @@ def _build_material_systems_index() -> list[dict[str, Any]]:
 )
 async def submit_extraction(
     payload: V4ExtractionSubmitRequest,
+    _current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Submit a v4 extraction job.
@@ -490,6 +493,7 @@ async def browse_properties(
     status_code=202,
 )
 async def validate_extraction(
+    _current_user: Annotated[User, Depends(require_editor)],
     job_id: str,
     payload: V4ValidateRequest | None = None,
     session: AsyncSession = Depends(get_db),

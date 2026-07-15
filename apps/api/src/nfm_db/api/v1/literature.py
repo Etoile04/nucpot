@@ -22,15 +22,18 @@ from __future__ import annotations
 import logging
 import math
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
 from nfm_db.models.extraction_figure import ExtractionFigure
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.source import DataSource
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.literature import (
     LiteratureDetailResponse,
@@ -104,6 +107,7 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
     summary="上传PDF文件用于提取",
 )
 async def upload_literature(
+    current_user: Annotated[User, Depends(require_editor)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureUploadResponse]:
     """上传PDF文件进行解析和提取。
@@ -329,6 +333,7 @@ async def list_literature(
 )
 async def reextract_literature(
     literature_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_editor)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureReextractResponse]:
     """触发文献项的重新提取流程。
@@ -354,6 +359,7 @@ async def reextract_literature(
 )
 async def delete_literature(
     literature_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_editor)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, str]]:
     """删除文献项及其所有关联的提取数据。

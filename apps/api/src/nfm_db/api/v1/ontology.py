@@ -17,13 +17,16 @@ from __future__ import annotations
 import uuid
 from datetime import UTC
 from email.utils import format_datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.user import User
 from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.ontology import OntologyGraphResponse
 from nfm_db.schemas.ontology_query import (
@@ -358,6 +361,7 @@ async def get_shortest_path(
     summary="Rebuild AGE graph for a corpus",
 )
 async def sync_corpus_graph(
+    _current_user: Annotated[User, Depends(require_editor)],
     corpus_id: str = Query(..., description="Corpus to rebuild", pattern=CORPUS_ID_PATTERN),
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),

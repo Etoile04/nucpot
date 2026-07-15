@@ -1,10 +1,14 @@
 """Feedback API endpoints: public submit and admin list."""
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import get_current_active_user
 from nfm_db.database import get_db
 from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.feedback import (
     FeedbackCreate,
@@ -20,6 +24,7 @@ router = APIRouter(tags=["反馈管理"])
 @router.post("/feedback", response_model=ApiResponse, status_code=201)
 async def submit_feedback(
     payload: FeedbackCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
     """提交用户反馈（公开端点）.

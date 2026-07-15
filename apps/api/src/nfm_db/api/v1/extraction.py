@@ -8,12 +8,15 @@ Trigger and monitor OntoFuel extraction jobs:
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
     ExtractionTriggerRequest,
@@ -41,6 +44,7 @@ router = APIRouter(tags=["提取管理"])
 )
 async def trigger_extraction_job(
     payload: ExtractionTriggerRequest,
+    _current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """触发文献数据提取任务。

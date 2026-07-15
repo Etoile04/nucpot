@@ -12,17 +12,19 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_reviewer
 from nfm_db.database import get_db
 from nfm_db.models.conflict_record import ConflictRecord
 from nfm_db.models.material import Material
 from nfm_db.models.property import PropertyType
 from nfm_db.models.source import DataSource
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.conflict import (
     ConflictRecordResponse,
@@ -162,6 +164,7 @@ async def list_conflicts(
 async def resolve_conflict(
     conflict_id: uuid.UUID,
     body: ConflictResolveRequest,
+    _current_user: Annotated[User, Depends(require_reviewer)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ConflictRecordResponse]:
     """使用指定策略解决数据冲突。

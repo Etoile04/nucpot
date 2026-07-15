@@ -10,13 +10,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.property import (
     PropertyMeasurementCreate,
@@ -96,6 +98,7 @@ async def get_property_endpoint(
     "/properties", response_model=ApiResponse[PropertyMeasurementResponse], status_code=201
 )
 async def create_property_endpoint(
+    _current_user: Annotated[User, Depends(require_editor)],
     payload: PropertyMeasurementCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyMeasurementResponse]:
@@ -110,6 +113,7 @@ async def create_property_endpoint(
     "/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementResponse]
 )
 async def update_property_endpoint(
+    _current_user: Annotated[User, Depends(require_editor)],
     measurement_id: UUID,
     payload: PropertyMeasurementUpdate,
     db: AsyncSession = Depends(get_db),

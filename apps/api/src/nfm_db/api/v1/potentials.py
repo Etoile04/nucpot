@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import get_current_active_user
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.potential import (
     PotentialCreateRequest,
@@ -66,6 +68,7 @@ async def list_potentials_endpoint(
 @router.post("/potentials", response_model=ApiResponse, status_code=201)
 async def create_potential_endpoint(
     payload: PotentialCreateRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, Any]]:
     """Create a new potential (NFM-299 write path)."""
@@ -94,6 +97,7 @@ async def get_potential_endpoint(
 @router.post("/potentials/{potential_id}/file", response_model=ApiResponse)
 async def upload_potential_file(
     potential_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     upload_dir: Path = Depends(get_upload_dir),
@@ -129,6 +133,7 @@ async def upload_potential_file(
 async def patch_verification_endpoint(
     potential_id: UUID,
     body: VerificationUpdate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialDetail]:
     """Update a potential's verification status — defensive autovc callback seam.

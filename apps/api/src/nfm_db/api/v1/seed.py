@@ -9,12 +9,15 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.seed import (
     BatchRequest,
@@ -33,6 +36,7 @@ router = APIRouter()
 @router.post("/seed/batch", response_model=ApiResponse[BatchResponse], status_code=201)
 async def create_batch_endpoint(
     payload: BatchRequest,
+    current_user: Annotated[User, Depends(require_editor)],
 ) -> ApiResponse[BatchResponse]:
     """Trigger a batch seed import for the given DOIs."""
     batch_id = await seed_service.start_batch(payload.dois)
@@ -84,6 +88,7 @@ async def get_quality_endpoint(
 async def review_measurement_endpoint(
     measurement_id: UUID,
     payload: ReviewRequest,
+    current_user: Annotated[User, Depends(require_editor)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewResponse]:
     """Update the review status of a property measurement."""

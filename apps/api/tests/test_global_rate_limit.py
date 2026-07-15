@@ -74,6 +74,24 @@ def _build_app(limiter_instance: Limiter) -> FastAPI:
             response = await call_next(request)
             if should_inject:
                 response = inner_limiter._inject_headers(response, request.state.view_rate_limit)
+            # Inject global application_limits headers when per-endpoint
+            # @limiter.limit is absent (should_inject is True but
+            # view_rate_limit is None, so _inject_headers is a no-op).
+            if "X-RateLimit-Limit" not in response.headers:
+                try:
+                    app_limit_groups = getattr(inner_limiter, "_application_limits", None)
+                    if app_limit_groups:
+                        limit_group = app_limit_groups[0].with_request(request)
+                        limit_objects = list(limit_group)
+                        if limit_objects:
+                            first = limit_objects[0]
+                            stats = inner_limiter.limiter.get_window_stats(first.limit, first.key_func(request))
+                            reset = 1 + stats[0]
+                            response.headers["X-RateLimit-Limit"] = str(first.limit.amount)
+                            response.headers["X-RateLimit-Remaining"] = str(stats[1])
+                            response.headers["X-RateLimit-Reset"] = str(reset)
+                except Exception:
+                    pass
             return response
 
     app.add_middleware(APIOnlyRateLimitMiddleware)
@@ -242,7 +260,7 @@ async def test_rate_limit_headers_on_429_response(_tight_app: FastAPI) -> None:
 
 @pytest.mark.asyncio
 async def test_openapi_docs_not_rate_limited(_tight_app: FastAPI) -> None:
-    """/docs should not be rate-limited."""
+    """(/docs) should not be rate-limited."""
     transport = ASGITransport(app=_tight_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         for _ in range(3):
@@ -250,3 +268,38 @@ async def test_openapi_docs_not_rate_limited(_tight_app: FastAPI) -> None:
 
         resp = await client.get("/docs")
         assert resp.status_code == 200, "/docs should not be rate-limited"
+
+
+# ---------------------------------------------------------------------------
+# AC6: Global rate-limit headers injected on per-endpoint-limit-free routes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_global_rate_limit_headers_on_unlimited_route(_tight_app: FastAPI) -> None:
+    """Routes without @limiter.limit() should still carry X-RateLimit-*
+    headers from the global application_limits."""
+    transport = ASGITransport(app=_tight_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/v1/feedback")
+        assert resp.status_code == 200
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+        assert "x-ratelimit-limit" in headers, (
+            "X-RateLimit-Limit should be present even without per-endpoint limit"
+        )
+        assert "x-ratelimit-remaining" in headers
+        assert "x-ratelimit-reset" in headers
+        assert headers["x-ratelimit-limit"] == "3", "should reflect global 3/minute"
+
+
+@pytest.mark.asyncio
+async def test_global_headers_not_injected_on_non_api_route(_tight_app: FastAPI) -> None:
+    """Non-API routes must never receive rate-limit headers."""
+    transport = ASGITransport(app=_tight_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/docs")
+        assert resp.status_code == 200
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+        assert "x-ratelimit-limit" not in headers, (
+            "Non-API routes should not have rate-limit headers"
+        )

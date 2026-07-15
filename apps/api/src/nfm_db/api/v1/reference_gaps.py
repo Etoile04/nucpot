@@ -3,10 +3,14 @@
 Per NFM-54 design Sections 2.1-2.3.
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.common import PaginationParams
 from nfm_db.schemas.reference_gaps import (
     FillRequest,
@@ -110,6 +114,7 @@ async def get_reference_gaps_summary(
 @router.post("/reference-gaps/fill", response_model=ReferenceGapsApiResponse, status_code=202)
 async def fill_reference_gaps(
     payload: FillRequest,
+    current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
     """触发特定缺口的填补操作。
@@ -155,6 +160,7 @@ async def fill_reference_gaps(
 
 @router.post("/reference-gaps/scan", response_model=ReferenceGapsApiResponse)
 async def scan_reference_gaps(
+    current_user: Annotated[User, Depends(require_editor)],
     payload: ScanRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:

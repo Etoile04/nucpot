@@ -19,18 +19,20 @@ import logging
 import math
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_reviewer
 from nfm_db.database import get_db
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.property import PropertyMeasurement
 from nfm_db.models.review import ReviewStatus
 from nfm_db.models.source import DataSource
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.review import (
     ReviewBatchRequest,
@@ -249,6 +251,7 @@ async def get_review_source(
 async def update_review_status(
     item_id: uuid.UUID,
     body: ReviewStatusUpdate,
+    current_user: Annotated[User, Depends(require_reviewer)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewItemResponse]:
     """批准、驳回或要求修改审核项。
@@ -281,6 +284,7 @@ async def update_review_status(
 )
 async def batch_review(
     body: ReviewBatchRequest,
+    current_user: Annotated[User, Depends(require_reviewer)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReviewBatchResponse]:
     """在单个请求中批量更新多个审核项。
