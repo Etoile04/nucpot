@@ -14,7 +14,7 @@
  */
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { authApi, clearToken, getToken, type UserProfile } from "@/lib/api-client"
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -49,6 +49,7 @@ export default function ReviewAuthGuard({
   children,
 }: ReviewAuthGuardProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -56,7 +57,8 @@ export default function ReviewAuthGuard({
     const token = getToken()
 
     if (!token) {
-      router.replace("/login")
+      const redirect = encodeURIComponent(pathname)
+      router.replace(`/login?redirect=${redirect}`)
       return
     }
 
@@ -65,14 +67,16 @@ export default function ReviewAuthGuard({
       .then((user) => {
         if (!user.is_active) {
           clearToken()
-          router.replace("/login")
+          const redirect = encodeURIComponent(pathname)
+          router.replace(`/login?redirect=${redirect}`)
           return
         }
         setProfile(user)
       })
       .catch(() => {
         clearToken()
-        router.replace("/login")
+        const redirect = encodeURIComponent(pathname)
+        router.replace(`/login?redirect=${redirect}`)
       })
       .finally(() => {
         setLoading(false)
@@ -87,7 +91,7 @@ export default function ReviewAuthGuard({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#fff",
+          background: "#1f2937",
         }}
       >
         <p style={{ color: "#999" }}>加载中...</p>

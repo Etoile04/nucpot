@@ -10,6 +10,7 @@ const mockClearToken = vi.fn()
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace }),
+  usePathname: () => "/review/kg",
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -71,7 +72,7 @@ describe("ReviewAuthGuard", () => {
     )
 
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/login")
+      expect(mockReplace).toHaveBeenCalledWith("/login?redirect=%2Freview%2Fkg")
     })
   })
 
@@ -89,7 +90,7 @@ describe("ReviewAuthGuard", () => {
 
     await waitFor(() => {
       expect(mockClearToken).toHaveBeenCalled()
-      expect(mockReplace).toHaveBeenCalledWith("/login")
+      expect(mockReplace).toHaveBeenCalledWith("/login?redirect=%2Freview%2Fkg")
     })
   })
 
@@ -107,7 +108,7 @@ describe("ReviewAuthGuard", () => {
 
     await waitFor(() => {
       expect(mockClearToken).toHaveBeenCalled()
-      expect(mockReplace).toHaveBeenCalledWith("/login")
+      expect(mockReplace).toHaveBeenCalledWith("/login?redirect=%2Freview%2Fkg")
     })
   })
 
