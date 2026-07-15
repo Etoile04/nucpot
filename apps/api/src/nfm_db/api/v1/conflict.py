@@ -116,6 +116,7 @@ async def _auto_resolve(
     "",
     response_model=ApiResponse[list[ConflictRecordResponse]],
     summary="获取冲突记录列表",
+    description="获取冲突记录列表，支持按材料或属性类型筛选。\n\nReturn conflict records, optionally filtered by material or property type.",
 )
 async def list_conflicts(
     material_id: uuid.UUID | None = Query(None),
@@ -158,6 +159,7 @@ async def list_conflicts(
     "/{conflict_id}/resolve",
     response_model=ApiResponse[ConflictRecordResponse],
     summary="解决冲突记录",
+    description="使用指定策略解决数据冲突。\n\nResolve a conflict using the specified strategy.",
 )
 async def resolve_conflict(
     conflict_id: uuid.UUID,
