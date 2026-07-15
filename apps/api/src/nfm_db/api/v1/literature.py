@@ -102,6 +102,7 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
     "/upload",
     response_model=ApiResponse[LiteratureUploadResponse],
     summary="上传PDF文件用于提取",
+    description="上传PDF文件进行解析和提取。\n\nUpload a PDF file for parsing and extraction.",
 )
 async def upload_literature(
     db: AsyncSession = Depends(get_db),
@@ -134,6 +135,7 @@ async def upload_literature(
     "/search",
     response_model=ApiResponse[PaginatedResponse[LiteratureListItem]],
     summary="文献全文搜索",
+    description="在标题、摘要和DOI字段中全文搜索。\n\nSearch across title, abstract, and DOI fields.",
 )
 async def search_literature(
     q: str = Query(..., min_length=1, description="Search query"),
@@ -185,6 +187,7 @@ async def search_literature(
     "/{literature_id}/status",
     response_model=ApiResponse[LiteratureStatusResponse],
     summary="获取文献处理状态",
+    description="返回当前处理状态和进度。\n\nReturn the current processing status and progress.",
 )
 async def get_literature_status(
     literature_id: uuid.UUID,
@@ -212,6 +215,7 @@ async def get_literature_status(
     "/{literature_id}",
     response_model=ApiResponse[LiteratureDetailResponse],
     summary="获取文献完整详情",
+    description="返回文献完整详情，包括已提取的实体。\n\nReturn the full literature detail including extracted entities.",
 )
 async def get_literature_detail(
     literature_id: uuid.UUID,
@@ -257,6 +261,7 @@ async def get_literature_detail(
     "",
     response_model=ApiResponse[PaginatedResponse[LiteratureListItem]],
     summary="获取文献列表（分页）",
+    description="返回分页文献列表，支持年份和搜索筛选。\n\nReturn paginated literature list with optional filters.",
 )
 async def list_literature(
     page: int = Query(1, ge=1),
@@ -326,6 +331,7 @@ async def list_literature(
     "/{literature_id}/reextract",
     response_model=ApiResponse[LiteratureReextractResponse],
     summary="触发文献重新提取",
+    description="触发文献项的重新提取流程。\n\nTrigger a re-extraction of the literature item.",
 )
 async def reextract_literature(
     literature_id: uuid.UUID,
@@ -351,6 +357,7 @@ async def reextract_literature(
     "/{literature_id}",
     response_model=ApiResponse[dict[str, str]],
     summary="删除文献项及关联数据",
+    description="删除文献项及其所有关联的提取数据。\n\nDelete a literature item and all associated extraction data.",
 )
 async def delete_literature(
     literature_id: uuid.UUID,

@@ -141,7 +141,7 @@ class CancelJobResponse(BaseModel):
     response_model=MDVerificationJobResponse,
     status_code=http_status.HTTP_201_CREATED,
     summary="提交MD验证任务",
-    description="Creates a new MD verification job and submits it to Celery for async execution.",
+    description="创建新的分子动力学验证任务，验证参数后提交至Celery异步执行。\n\nCreates a new MD verification job and submits it to Celery for async execution.",
 )
 async def submit_md_verification_job(
     request: MDVerificationJobSubmitRequest,
@@ -253,7 +253,7 @@ async def submit_md_verification_job(
     response_model=MDVerificationJobListResponse,
     status_code=http_status.HTTP_200_OK,
     summary="获取MD验证任务列表",
-    description="List MD verification jobs with optional filters for status, potential ID, and element system.",
+    description="查询MD验证任务列表，支持按状态、势函数ID和元素系统筛选。\n\nList MD verification jobs with optional filters for status, potential ID, and element system.",
 )
 async def list_md_verification_jobs(
     potential_id: str | None = None,
@@ -325,7 +325,7 @@ async def list_md_verification_jobs(
     response_model=MDVerificationJobResponse,
     status_code=http_status.HTTP_200_OK,
     summary="获取MD验证任务详情",
-    description="Get detailed information about a specific MD verification job.",
+    description="按ID查询单个MD验证任务的详细信息。\n\nGet detailed information about a specific MD verification job.",
 )
 async def get_md_verification_job(
     job_id: uuid.UUID,
@@ -372,7 +372,7 @@ async def get_md_verification_job(
     response_model=JobStatusResponse,
     status_code=http_status.HTTP_200_OK,
     summary="获取MD验证任务状态",
-    description="Get current status and execution details for a specific job.",
+    description="查询指定MD验证任务的当前状态和HPC执行详情。\n\nGet current status and execution details for a specific job.",
 )
 async def get_md_verification_job_status(
     job_id: uuid.UUID,

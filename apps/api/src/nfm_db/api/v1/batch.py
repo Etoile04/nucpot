@@ -134,7 +134,12 @@ def _build_export_response(
 # ── Material Import ───────────────────────────────────────────────
 
 
-@materials_router.post("/materials/import", response_model=BatchImportResult)
+@materials_router.post(
+    "/materials/import",
+    response_model=BatchImportResult,
+    summary="批量导入材料",
+    description="从CSV或JSON文件批量导入材料数据。\n\nBulk-import materials from a CSV or JSON file.",
+)
 async def import_materials(
     request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
@@ -196,7 +201,11 @@ async def import_materials(
 # ── Material Export ──────────────────────────────────────────────
 
 
-@materials_router.get("/materials/export")
+@materials_router.get(
+    "/materials/export",
+    summary="导出材料数据",
+    description="将材料数据导出为CSV或JSON格式。\n\nExport materials as CSV or JSON with Content-Disposition.",
+)
 async def export_materials(
     format: str = Query(..., pattern="^(csv|json)$"),
     page: int = Query(1, ge=1),
@@ -233,7 +242,12 @@ async def export_materials(
 # ── Property Import ───────────────────────────────────────────────
 
 
-@properties_router.post("/properties/import", response_model=BatchImportResult)
+@properties_router.post(
+    "/properties/import",
+    response_model=BatchImportResult,
+    summary="批量导入属性测量数据",
+    description="从CSV或JSON文件批量导入属性测量数据。\n\nBulk-import property measurements from a CSV or JSON file.",
+)
 async def import_properties(
     request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
@@ -292,7 +306,11 @@ async def import_properties(
 # ── Property Export ───────────────────────────────────────────────
 
 
-@properties_router.get("/properties/export")
+@properties_router.get(
+    "/properties/export",
+    summary="导出属性测量数据",
+    description="将属性测量数据导出为CSV或JSON格式。\n\nExport property measurements as CSV or JSON with Content-Disposition.",
+)
 async def export_properties(
     format: str = Query(..., pattern="^(csv|json)$"),
     page: int = Query(1, ge=1),
@@ -318,7 +336,12 @@ async def export_properties(
 # ── Reference Value Import ───────────────────────────────────────
 
 
-@reference_values_router.post("/reference-values/import", response_model=BatchImportResult)
+@reference_values_router.post(
+    "/reference-values/import",
+    response_model=BatchImportResult,
+    summary="批量导入参考值",
+    description="从CSV或JSON文件批量导入参考值到暂存表。\n\nBulk-import reference values from a CSV or JSON file into staging.",
+)
 async def import_reference_values(
     request: Request,
     file: UploadFile = File(..., description="CSV or JSON file"),
@@ -379,7 +402,11 @@ async def import_reference_values(
 # ── Reference Value Export ───────────────────────────────────────
 
 
-@reference_values_router.get("/reference-values/export")
+@reference_values_router.get(
+    "/reference-values/export",
+    summary="导出参考值数据",
+    description="将参考值数据导出为CSV或JSON格式。\n\nExport reference values as CSV or JSON with Content-Disposition.",
+)
 async def export_reference_values(
     format: str = Query(..., pattern="^(csv|json)$"),
     page: int = Query(1, ge=1),

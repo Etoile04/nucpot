@@ -27,10 +27,16 @@ from nfm_db.services import seed_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["种子数据"])
 
 
-@router.post("/seed/batch", response_model=ApiResponse[BatchResponse], status_code=201)
+@router.post(
+    "/seed/batch",
+    response_model=ApiResponse[BatchResponse],
+    status_code=201,
+    summary="触发批量种子导入",
+    description="根据DOI列表触发批量种子数据导入。\n\nTrigger a batch seed import for the given DOIs.",
+)
 async def create_batch_endpoint(
     payload: BatchRequest,
 ) -> ApiResponse[BatchResponse]:
@@ -46,6 +52,8 @@ async def create_batch_endpoint(
 
 @router.get(
     "/seed/status/{batch_id}",
+    summary="查询批量导入进度",
+    description="返回批量导入任务的实时进度。\n\nReturn real-time progress for a batch import job.",
 )
 async def get_batch_status_endpoint(
     batch_id: str,
@@ -68,7 +76,12 @@ async def get_batch_status_endpoint(
     }
 
 
-@router.get("/seed/quality", response_model=ApiResponse[QualityResponse])
+@router.get(
+    "/seed/quality",
+    response_model=ApiResponse[QualityResponse],
+    summary="获取种子数据质量指标",
+    description="返回所有已提取测量数据的聚合质量指标。\n\nReturn aggregate quality metrics across all extracted measurements.",
+)
 async def get_quality_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[QualityResponse]:
@@ -80,6 +93,8 @@ async def get_quality_endpoint(
 @router.patch(
     "/seed/review/{measurement_id}",
     response_model=ApiResponse[ReviewResponse],
+    summary="审核测量数据",
+    description="更新属性测量数据的审核状态。\n\nUpdate the review status of a property measurement.",
 )
 async def review_measurement_endpoint(
     measurement_id: UUID,

@@ -48,7 +48,8 @@ router = APIRouter(tags=["知识图谱"])
 
 @router.get(
     "/kg/search",
-    summary="Search Knowledge Graph nodes",
+    summary="搜索知识图谱节点",
+    description="支持关键词模糊搜索和LightRAG语义查询的知识图谱节点搜索接口。\n\nSearch KG nodes with ILIKE fuzzy match or LightRAG semantic query.",
 )
 async def search_kg_nodes(
     q: str | None = Query(default=None, description="Search term (ILIKE on label + aliases)"),
@@ -275,7 +276,8 @@ async def _structured_search(
 @router.get(
     "/kg/nodes/{node_id}/relations",
     response_model=ApiResponse[KGRelationsResponse],
-    summary="Get relations for a KG node",
+    summary="获取知识图谱节点的关联关系",
+    description="返回指定节点的所有入边和出边，包含关联节点的摘要信息。\n\nReturn all edges where the given node participates as source or target, with neighbor node summaries.",
 )
 async def get_kg_node_relations(
     node_id: UUID,
@@ -340,7 +342,8 @@ async def get_kg_node_relations(
 @router.get(
     "/kg/nodes/{node_type}/{node_id}",
     response_model=ApiResponse[KGNodeDetail],
-    summary="Get Knowledge Graph node by type and ID",
+    summary="按类型和ID获取知识图谱节点",
+    description="返回指定类型和ID的单个知识图谱节点详情。\n\nReturn a single KG node scoped by both type and ID.",
 )
 async def get_kg_node(
     node_type: str,
@@ -405,6 +408,8 @@ class ReviewQueueResponse(BaseModel):
 @router.get(
     "/kg/review/queue",
     response_model=ApiResponse[ReviewQueueResponse],
+    summary="获取待审核队列",
+    description="列出知识图谱中待审核的实体和关系条目。\n\nList pending items in the KG review queue.",
 )
 async def list_review_queue(
     item_type: str | None = Query(None, description="Filter by item type (entity/relation)"),
@@ -428,6 +433,8 @@ async def list_review_queue(
 @router.post(
     "/kg/review/{review_id}/approve",
     response_model=ApiResponse[dict],
+    summary="批准审核条目",
+    description="批准待审核的实体或关系，将其纳入正式知识图谱。\n\nApprove a pending review item and promote it to the live KG.",
 )
 async def approve_review(
     review_id: UUID,
@@ -451,6 +458,8 @@ async def approve_review(
 @router.post(
     "/kg/review/{review_id}/reject",
     response_model=ApiResponse[dict],
+    summary="驳回审核条目",
+    description="驳回待审核的实体或关系，需提供驳回理由。\n\nReject a pending review item with a reason.",
 )
 async def reject_review(
     review_id: UUID,

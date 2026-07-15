@@ -70,6 +70,8 @@ router = APIRouter(tags=["参考值管理"])
     "/reference-values/bulk",
     response_model=dict,
     status_code=201,
+    summary="批量写入参考值",
+    description="批量写入参考值到暂存区，执行质量门控（去重、范围检查、置信度路由）后写入暂存表。\n\nBulk write reference values to staging with quality gate (dedup, range check, confidence routing).",
 )
 async def bulk_stage_reference_values(
     payload: BulkStagingRequest,
@@ -153,7 +155,11 @@ def _find_matching_raw(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/reference-values/pending-review")
+@router.get(
+    "/reference-values/pending-review",
+    summary="获取待审核暂存记录",
+    description="获取待审核暂存记录分页列表，支持按元素体系、相态、属性名、置信度和状态筛选。\n\nPaginated list of staging records pending review.",
+)
 async def list_pending_review(
     element_system: str | None = Query(default=None, max_length=50),
     phase: str | None = Query(default=None, max_length=50),
@@ -246,7 +252,11 @@ async def list_pending_review(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/reference-values/{staging_id}/approve")
+@router.post(
+    "/reference-values/{staging_id}/approve",
+    summary="审核通过暂存记录",
+    description="审核通过并推广暂存记录，更新状态为已推广并记录审核元数据。\n\nApprove and promote a staging record to production.",
+)
 async def approve_reference_value(
     staging_id: UUID,
     payload: ReviewRequest | None = None,
@@ -291,7 +301,11 @@ async def approve_reference_value(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/reference-values/{staging_id}/reject")
+@router.post(
+    "/reference-values/{staging_id}/reject",
+    summary="驳回暂存记录",
+    description="驳回暂存记录，更新状态为已驳回并记录审核元数据。\n\nReject a staging record with review metadata.",
+)
 async def reject_reference_value(
     staging_id: UUID,
     payload: ReviewRequest | None = None,
@@ -333,7 +347,11 @@ async def reject_reference_value(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/reference-values/export")
+@router.post(
+    "/reference-values/export",
+    summary="导出参考值供验证",
+    description="批量导出参考值供验证服务使用，支持按状态、元素体系、日期范围筛选。\n\nBulk export reference values for external verification.",
+)
 async def export_reference_values(
     payload: ExportRequest,
     session: AsyncSession = Depends(get_db),
@@ -384,7 +402,11 @@ async def export_reference_values(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/reference-values/verify-callback")
+@router.post(
+    "/reference-values/verify-callback",
+    summary="接收验证回调结果",
+    description="接收验证服务回调结果，F级记录自动驳回，所有记录更新审核备注。\n\nReceive verification results from the verify-service.",
+)
 async def verify_callback(
     payload: VerificationCallbackRequest,
     session: AsyncSession = Depends(get_db),

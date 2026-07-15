@@ -131,6 +131,7 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
     "/pending",
     response_model=ApiResponse[PaginatedResponse[ReviewItemResponse]],
     summary="获取跨表待审核项列表",
+    description="获取跨表待审核项，查询extraction_results、kg_nodes、kg_edges和property_measurements。\n\nReturn pending review items across all 4 tables with pagination.",
 )
 async def get_pending_reviews(
     page: int = Query(1, ge=1),
@@ -199,6 +200,7 @@ async def get_pending_reviews(
     "/{item_id}/source",
     response_model=ApiResponse[SourceProvenanceResponse],
     summary="获取审核项数据溯源",
+    description="返回审核项的源文本、页码、DOI和元数据。\n\nReturn the source text, page, DOI, and metadata for a review item.",
 )
 async def get_review_source(
     item_id: uuid.UUID,
@@ -245,6 +247,7 @@ async def get_review_source(
     "/{item_id}",
     response_model=ApiResponse[ReviewItemResponse],
     summary="更新审核项状态",
+    description="批准、驳回或要求修改审核项。\n\nApprove, reject, or request revision on a review item.",
 )
 async def update_review_status(
     item_id: uuid.UUID,
@@ -278,6 +281,7 @@ async def update_review_status(
     "/batch",
     response_model=ApiResponse[ReviewBatchResponse],
     summary="批量更新审核项状态",
+    description="在单个请求中批量更新多个审核项。\n\nUpdate multiple review items in a single request.",
 )
 async def batch_review(
     body: ReviewBatchRequest,
@@ -333,6 +337,7 @@ async def batch_review(
     "/stats",
     response_model=ApiResponse[ReviewStatsResponse],
     summary="获取跨表审核统计",
+    description="获取跨4张表的审核项状态计数统计。\n\nReturn counts of review items grouped by status across all 4 tables.",
 )
 async def get_review_stats(
     db: AsyncSession = Depends(get_db),

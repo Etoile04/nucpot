@@ -27,7 +27,12 @@ from nfm_db.services.gap_scan_service import GapScanService
 router = APIRouter(tags=["参考缺口管理"])
 
 
-@router.get("/reference-gaps", response_model=ReferenceGapsApiResponse)
+@router.get(
+    "/reference-gaps",
+    response_model=ReferenceGapsApiResponse,
+    summary="获取参考数据缺口列表",
+    description="分页查询参考数据缺口，支持按元素体系、相态、属性名筛选。\n\nList reference data gaps with filtering and pagination.",
+)
 async def list_reference_gaps(
     element_system: str | None = Query(default=None, max_length=50),
     phase: str | None = Query(default=None, max_length=50),
@@ -71,7 +76,12 @@ async def list_reference_gaps(
     )
 
 
-@router.get("/reference-gaps/summary", response_model=ReferenceGapsApiResponse)
+@router.get(
+    "/reference-gaps/summary",
+    response_model=ReferenceGapsApiResponse,
+    summary="获取参考数据覆盖率统计",
+    description="获取参考数据覆盖率统计，按元素体系分组。\n\nGet coverage statistics for reference data gaps, grouped by element system.",
+)
 async def get_reference_gaps_summary(
     session: AsyncSession = Depends(get_db),
 ) -> ReferenceGapsApiResponse:
@@ -107,7 +117,13 @@ async def get_reference_gaps_summary(
     )
 
 
-@router.post("/reference-gaps/fill", response_model=ReferenceGapsApiResponse, status_code=202)
+@router.post(
+    "/reference-gaps/fill",
+    response_model=ReferenceGapsApiResponse,
+    status_code=202,
+    summary="填补参考数据缺口",
+    description="触发特定缺口的填补操作，从缓存发现参考值并执行质量门控后写入暂存表。\n\nTrigger a fill operation for a specific gap tuple. Discovers reference values from cache, runs quality gate, and stages accepted values.",
+)
 async def fill_reference_gaps(
     payload: FillRequest,
     session: AsyncSession = Depends(get_db),
@@ -153,7 +169,12 @@ async def fill_reference_gaps(
     )
 
 
-@router.post("/reference-gaps/scan", response_model=ReferenceGapsApiResponse)
+@router.post(
+    "/reference-gaps/scan",
+    response_model=ReferenceGapsApiResponse,
+    summary="扫描参考数据缺口",
+    description="手动触发NFMD数据库缺口扫描，识别指定或全部元素体系的缺失属性元组。\n\nTrigger a manual gap scan against the NFMD database.",
+)
 async def scan_reference_gaps(
     payload: ScanRequest | None = None,
     session: AsyncSession = Depends(get_db),

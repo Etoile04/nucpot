@@ -65,6 +65,7 @@ _CACHE_CONTROL = "public, max-age=60"
     response_model=OntologyGraphResponse,
     response_model_by_alias=True,
     summary="获取语料库的版本化NVL图数据",
+    description="根据语料库ID获取版本化的NVL（Nuclear Vocabulary Language）图数据，支持分页游标。\n\nGet versioned NVL graph data for a corpus with pagination cursor support.",
 )
 async def get_corpus_graph(
     response: Response,
@@ -131,7 +132,8 @@ async def get_corpus_graph(
     "/ontology/node/{node_id}",
     response_model=NodeNeighborsResponse,
     response_model_by_alias=True,
-    summary="Get node with neighbors at depth",
+    summary="获取节点及其邻居",
+    description="返回指定节点及其在指定深度范围内的邻居节点和关联边。\n\nReturn a node with its neighbors at the requested depth.",
 )
 async def get_node_neighbors(
     node_id: uuid.UUID = Path(..., description="Target node ID"),
@@ -228,7 +230,8 @@ async def get_node_neighbors(
     "/ontology/search",
     response_model=SearchResponse,
     response_model_by_alias=True,
-    summary="Fuzzy search nodes by label or aliases",
+    summary="模糊搜索本体节点",
+    description="通过标签或别称进行模糊搜索，支持分页和语料库范围筛选。\n\nFuzzy search nodes by label or aliases with pagination and corpus filtering.",
 )
 async def search_nodes(
     q: str = Query(..., min_length=1, description="Search query"),
@@ -314,7 +317,8 @@ async def search_nodes(
     "/ontology/path",
     response_model=ShortestPathResponse,
     response_model_by_alias=True,
-    summary="Find shortest path between two nodes",
+    summary="查找两节点间最短路径",
+    description="使用AGE Cypher查询两个本体节点之间的最短路径。\n\nFind shortest path between two nodes using AGE Cypher.",
 )
 async def get_shortest_path(
     from_id: uuid.UUID = Query(..., description="Start node ID", alias="from"),
@@ -355,7 +359,8 @@ async def get_shortest_path(
     "/ontology/sync",
     response_model=SyncResponse,
     response_model_by_alias=True,
-    summary="Rebuild AGE graph for a corpus",
+    summary="重建语料库的AGE图",
+    description="从关系数据重建指定语料库的Apache AGE图结构。\n\nRebuild the AGE graph for a corpus from relational data.",
 )
 async def sync_corpus_graph(
     corpus_id: str = Query(..., description="Corpus to rebuild", pattern=CORPUS_ID_PATTERN),

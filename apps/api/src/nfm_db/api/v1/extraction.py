@@ -38,6 +38,8 @@ router = APIRouter(tags=["提取管理"])
     "/extraction/trigger",
     response_model=dict,
     status_code=202,
+    summary="触发提取任务",
+    description="触发文献数据提取任务。管道流程：数据源→OntoFuel提取→属性映射→质量门控→暂存。返回任务ID用于状态轮询。\n\nTrigger an extraction pipeline job. Flow: source → OntoFuel extraction → property mapping → quality gate → staging. Returns a job_id for polling.",
 )
 async def trigger_extraction_job(
     payload: ExtractionTriggerRequest,
@@ -86,7 +88,11 @@ async def trigger_extraction_job(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/extraction/status/{job_id}")
+@router.get(
+    "/extraction/status/{job_id}",
+    summary="查询提取任务状态",
+    description="查询提取任务执行状态，包括已提取、已暂存、已拒绝的属性计数及时间戳。\n\nCheck extraction job status including extracted/staged/rejected property counts and timestamps.",
+)
 async def get_extraction_status(
     job_id: UUID,
 ) -> dict:

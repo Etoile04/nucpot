@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["材料管理"])
 
 
-@router.get("/materials", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])
+@router.get("/materials", response_model=ApiResponse[PaginatedResponse[MaterialResponse]], summary="分页查询材料列表", description="返回分页的材料列表，支持按类别筛选和排序。\n\nReturn a paginated list of materials, optionally filtered by category.")
 async def list_materials_endpoint(
     pagination: PaginationParams = Depends(PaginationParams),
     category_id: UUID | None = Query(None, description="Filter by category"),
@@ -69,7 +69,7 @@ async def list_materials_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/materials/search", response_model=ApiResponse[PaginatedResponse[MaterialResponse]])
+@router.get("/materials/search", response_model=ApiResponse[PaginatedResponse[MaterialResponse]], summary="搜索材料", description="按材料名称、化学式或别名进行模糊搜索。\n\nSearch materials by name, formula, or alias (ILIKE).")
 async def search_materials_endpoint(
     q: str = Query("", description="Search query"),
     pagination: PaginationParams = Depends(PaginationParams),
@@ -88,7 +88,7 @@ async def search_materials_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/materials/{material_id}", response_model=ApiResponse[MaterialDetailResponse])
+@router.get("/materials/{material_id}", response_model=ApiResponse[MaterialDetailResponse], summary="获取材料详情", description="获取单个材料的详细信息，包含别名和成分数据。\n\nReturn a single material with aliases and composition.")
 async def get_material_endpoint(
     material_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -102,7 +102,7 @@ async def get_material_endpoint(
     return ApiResponse(success=True, data=detail)
 
 
-@router.post("/materials", response_model=ApiResponse[MaterialResponse], status_code=201)
+@router.post("/materials", response_model=ApiResponse[MaterialResponse], status_code=201, summary="创建材料", description="创建一条新的材料记录。\n\nCreate a new material.")
 async def create_material_endpoint(
     payload: MaterialCreate,
     db: AsyncSession = Depends(get_db),
@@ -114,7 +114,7 @@ async def create_material_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.patch("/materials/{material_id}", response_model=ApiResponse[MaterialResponse])
+@router.patch("/materials/{material_id}", response_model=ApiResponse[MaterialResponse], summary="更新材料", description="更新已有材料的信息字段。\n\nUpdate an existing material.")
 async def update_material_endpoint(
     material_id: UUID,
     payload: MaterialUpdate,
@@ -133,6 +133,8 @@ async def update_material_endpoint(
     "/materials/batch-import",
     response_model=ApiResponse[BatchImportResult],
     status_code=200,
+    summary="批量导入材料",
+    description="通过 CSV 或 JSON 文件批量导入材料数据，有效行按名称+化学式匹配进行 upsert，无效行在响应中报告错误。\n\nBulk-import materials from a CSV or JSON file. Valid rows are upserted (matched by name+formula); invalid rows are reported in the response errors list.",
 )
 @limiter.exempt
 async def batch_import_endpoint(
