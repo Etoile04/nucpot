@@ -190,7 +190,7 @@ class QuarterlyAuditResponse(BaseModel):
     response_model=ReferenceValidationResponse,
     status_code=status.HTTP_200_OK,
     summary="验证参考候选值",
-    description="Runs reference-validation-workflow: literature search, source validation, "
+    description="执行参考值验证工作流：文献搜索、来源可信度评分、不确定度估计、置信度评分。\n置信度低于80%时自动升级处理。\n\nRuns reference-validation-workflow: literature search, source validation, "
     "uncertainty estimation, confidence scoring. Escalates if confidence < 80%.",
 )
 async def check_reference_gap(
@@ -262,7 +262,7 @@ async def check_reference_gap(
     response_model=AdjudicationResponse,
     status_code=status.HTTP_200_OK,
     summary="F级LAMMPS失败裁决",
-    description="Runs f-grade-adjudication-workflow: analyzes LAMMPS error logs, "
+    description="执行F级裁决工作流：解析LAMMPS错误日志，匹配已知故障模式，生成修复建议。\n置信度低于70%时自动升级处理。\n\nRuns f-grade-adjudication-workflow: analyzes LAMMPS error logs, "
     "pattern matches known failures, suggests fixes. Escalates if confidence < 70%.",
 )
 async def adjudicate_f_grade_endpoint(
@@ -325,7 +325,7 @@ async def adjudicate_f_grade_endpoint(
     response_model=QuarterlyAuditResponse,
     status_code=status.HTTP_200_OK,
     summary="运行P0季度审计",
-    description="Runs quarterly-audit-workflow: checks all P0 systems for uncertainty coverage, "
+    description="执行季度审计工作流：检查P0安全关键系统的不确定度覆盖率、验证新鲜度和数据冲突。\n生成包含发现项和建议的审计报告。\n\nRuns quarterly-audit-workflow: checks all P0 systems for uncertainty coverage, "
     "verification freshness, and conflicts. Generates audit report with findings.",
 )
 async def run_quarterly_audit_endpoint(
@@ -397,6 +397,7 @@ async def run_quarterly_audit_endpoint(
     "/health",
     status_code=status.HTTP_200_OK,
     summary="验证模块健康检查",
+    description="返回验证模块的健康状态、版本号和时间戳。\n\nHealth check for the verification module.",
 )
 async def verification_health() -> dict[str, str]:
     """验证模块健康检查。"""

@@ -17,7 +17,13 @@ from nfm_db.services.feedback import calculate_pages, create_feedback, list_feed
 router = APIRouter(tags=["反馈管理"])
 
 
-@router.post("/feedback", response_model=ApiResponse, status_code=201)
+@router.post(
+    "/feedback",
+    response_model=ApiResponse,
+    status_code=201,
+    summary="提交用户反馈",
+    description="提交用户反馈（公开端点，无需认证）。\n\nSubmit user feedback (public endpoint, no authentication required).",
+)
 async def submit_feedback(
     payload: FeedbackCreate,
     session: AsyncSession = Depends(get_db),
@@ -33,7 +39,12 @@ async def submit_feedback(
     )
 
 
-@router.get("/feedback", response_model=ApiResponse)
+@router.get(
+    "/feedback",
+    response_model=ApiResponse,
+    summary="查询反馈列表",
+    description="分页查询反馈列表，支持按状态、优先级和类型筛选（仅管理员）。\n\nList feedback entries with filtering and pagination (admin endpoint).",
+)
 async def list_feedback_endpoint(
     status: FeedbackStatus | None = Query(default=None),
     priority: Priority | None = Query(default=None),

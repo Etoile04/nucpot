@@ -28,7 +28,7 @@ from nfm_db.services.lightrag_client import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["LightRAG"])
 
 
 def _get_client() -> LightRAGClient:
@@ -48,6 +48,8 @@ def _get_client() -> LightRAGClient:
 @router.get(
     "/health",
     response_model=ApiResponse[HealthResponse],
+    summary="LightRAG服务健康检查",
+    description="检查LightRAG sidecar服务可用性，返回版本和回退状态。\n\nCheck LightRAG sidecar service availability and fallback status.",
 )
 async def health_check() -> ApiResponse[HealthResponse]:
     """Check LightRAG sidecar service availability.
@@ -100,6 +102,8 @@ async def health_check() -> ApiResponse[HealthResponse]:
 @router.post(
     "/ingest",
     response_model=ApiResponse[IngestResponse],
+    summary="文档摄入到知识图谱",
+    description="将文本文档发送到LightRAG知识图谱进行摄入处理。\n\nIngest a text document into the LightRAG knowledge graph.",
 )
 async def ingest_document(
     request: IngestRequest,
@@ -145,6 +149,8 @@ async def ingest_document(
 @router.post(
     "/query",
     response_model=ApiResponse[QueryResponse],
+    summary="知识图谱语义查询",
+    description="接受自然语言查询，返回生成答案及可选的来源引用。\n\nAccept a natural language query and return a generated answer with optional source references.",
 )
 async def query_knowledge_graph(
     request: QueryRequest,

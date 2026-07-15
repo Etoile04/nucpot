@@ -43,7 +43,7 @@ from nfm_db.services.extraction_pipeline import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["V4信息抽取"])
 
 # ---------------------------------------------------------------------------
 # Valid enum values
@@ -211,6 +211,8 @@ def _build_material_systems_index() -> list[dict[str, Any]]:
 @router.post(
     "/extraction/submit",
     status_code=202,
+    summary="提交V4提取任务",
+    description="验证source_type，触发提取管线，返回job_id用于轮询。\n\nSubmit a v4 extraction job. Returns a job_id for status polling.",
 )
 async def submit_extraction(
     payload: V4ExtractionSubmitRequest,
@@ -274,7 +276,11 @@ async def submit_extraction(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/extraction/{job_id}/status")
+@router.get(
+    "/extraction/{job_id}/status",
+    summary="查询提取任务进度",
+    description="轮询提取任务进度，包含详细的步骤追踪。\n\nPoll extraction job progress with detailed step tracking.",
+)
 async def get_extraction_status(job_id: str) -> JSONResponse:
     """Poll extraction job progress with detailed step tracking."""
     job = get_job(job_id)
@@ -311,7 +317,11 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/extraction/{job_id}/result")
+@router.get(
+    "/extraction/{job_id}/result",
+    summary="获取提取结果",
+    description="获取已完成任务的提取结果，支持分页和筛选。\n\nRetrieve extraction results for a completed job with pagination.",
+)
 async def get_extraction_result(
     job_id: str,
     confidence: str | None = Query(default=None),
@@ -384,7 +394,11 @@ async def get_extraction_result(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/properties/{material_system}")
+@router.get(
+    "/properties/{material_system}",
+    summary="浏览材料体系属性",
+    description="按材料体系浏览已提取属性，支持多维度筛选和排序。\n\nBrowse extracted properties for a material system with filtering.",
+)
 async def browse_properties(
     material_system: str,
     property_category: str | None = Query(default=None),
@@ -488,6 +502,8 @@ async def browse_properties(
 @router.post(
     "/extraction/{job_id}/validate",
     status_code=202,
+    summary="触发提取结果验证",
+    description="对已完成任务的提取结果触发验证工作流。\n\nTrigger a validation workflow for extracted properties.",
 )
 async def validate_extraction(
     job_id: str,
@@ -549,7 +565,11 @@ async def validate_extraction(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/material-systems")
+@router.get(
+    "/material-systems",
+    summary="列出所有材料体系",
+    description="列出所有已提取属性数据的材料体系概览。\n\nList all material systems with extracted property data.",
+)
 async def list_material_systems(
     has_pending_review: bool = Query(default=False),
     category: str | None = Query(default=None),

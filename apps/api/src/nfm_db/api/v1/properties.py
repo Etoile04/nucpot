@@ -39,7 +39,10 @@ router = APIRouter(tags=["属性管理"])
 
 
 @router.get(
-    "/properties", response_model=ApiResponse[PaginatedResponse[PropertyMeasurementResponse]]
+    "/properties",
+    response_model=ApiResponse[PaginatedResponse[PropertyMeasurementResponse]],
+    summary="分页查询物性测量列表",
+    description="返回分页的物性测量记录列表，支持按材料或物性类型筛选。\n\nReturn a paginated list of measurements, optionally filtered by material or property type.",
 )
 async def list_properties_endpoint(
     pagination: PaginationParams = Depends(PaginationParams),
@@ -65,7 +68,7 @@ async def list_properties_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/properties/stats")
+@router.get("/properties/stats", summary="物性测量汇总统计", description="获取物性测量数据的汇总统计信息。\n\nReturn aggregate statistics about measurements.")
 async def get_properties_stats_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyStatsResponse]:
@@ -77,7 +80,10 @@ async def get_properties_stats_endpoint(
 
 
 @router.get(
-    "/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementDetailResponse]
+    "/properties/{measurement_id}",
+    response_model=ApiResponse[PropertyMeasurementDetailResponse],
+    summary="获取物性测量详情",
+    description="获取单条物性测量详情，包含测量条件和数据集。\n\nReturn a single measurement with conditions and dataset.",
 )
 async def get_property_endpoint(
     measurement_id: UUID,
@@ -93,7 +99,11 @@ async def get_property_endpoint(
 
 
 @router.post(
-    "/properties", response_model=ApiResponse[PropertyMeasurementResponse], status_code=201
+    "/properties",
+    response_model=ApiResponse[PropertyMeasurementResponse],
+    status_code=201,
+    summary="创建物性测量记录",
+    description="创建一条新的物性测量记录。\n\nCreate a new property measurement.",
 )
 async def create_property_endpoint(
     payload: PropertyMeasurementCreate,
@@ -107,7 +117,10 @@ async def create_property_endpoint(
 
 
 @router.patch(
-    "/properties/{measurement_id}", response_model=ApiResponse[PropertyMeasurementResponse]
+    "/properties/{measurement_id}",
+    response_model=ApiResponse[PropertyMeasurementResponse],
+    summary="更新物性测量记录",
+    description="更新已有的物性测量记录。\n\nUpdate an existing property measurement.",
 )
 async def update_property_endpoint(
     measurement_id: UUID,

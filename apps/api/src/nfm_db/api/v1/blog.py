@@ -103,7 +103,13 @@ require_admin_or_reviewer = require_blog_role(
 )
 
 
-@router.post("/admin/blog/posts", response_model=BlogPostResponse, status_code=201)
+@router.post(
+    "/admin/blog/posts",
+    response_model=BlogPostResponse,
+    status_code=201,
+    summary="创建博客文章",
+    description="创建博客文章（仅编辑/管理员）。\n\nCreate a new blog post (editor/admin only).",
+)
 async def create_post(
     payload: BlogPostCreate,
     current_user: Annotated[User, Depends(require_editor)],
@@ -125,7 +131,12 @@ async def create_post(
     return _enrich_response(metadata)
 
 
-@router.get("/admin/blog/posts", response_model=list[BlogPostResponse])
+@router.get(
+    "/admin/blog/posts",
+    response_model=list[BlogPostResponse],
+    summary="查询博客文章列表",
+    description="分页查询博客文章列表，支持按状态和作者筛选（管理员/编辑/审核员）。\n\nList blog posts with filtering (admin/editor/reviewer only).",
+)
 async def list_posts(
     _current_user: Annotated[User, Depends(require_admin_or_reviewer)],
     session: AsyncSession = Depends(get_db),
@@ -176,7 +187,12 @@ async def list_posts(
     return [_enrich_response(post) for post in posts]
 
 
-@router.get("/admin/blog/posts/{slug}", response_model=BlogPostResponse)
+@router.get(
+    "/admin/blog/posts/{slug}",
+    response_model=BlogPostResponse,
+    summary="获取博客文章详情",
+    description="按slug获取单篇博客文章（仅编辑/管理员）。\n\nGet a single blog post by slug (editor/admin only).",
+)
 async def get_post(
     slug: str,
     _current_user: Annotated[User, Depends(require_editor)],
@@ -192,7 +208,12 @@ async def get_post(
     return _enrich_response(post)
 
 
-@router.delete("/admin/blog/posts/{slug}", status_code=204)
+@router.delete(
+    "/admin/blog/posts/{slug}",
+    status_code=204,
+    summary="删除博客文章",
+    description="删除博客文章（仅作者或管理员）。\n\nDelete a blog post (author or admin only).",
+)
 async def delete_post(
     slug: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -216,7 +237,12 @@ async def delete_post(
     await delete_blog_post(session, slug, current_user.id, is_admin=is_admin)
 
 
-@router.put("/admin/blog/posts/{slug}", response_model=BlogPostResponse)
+@router.put(
+    "/admin/blog/posts/{slug}",
+    response_model=BlogPostResponse,
+    summary="更新博客文章",
+    description="更新博客文章内容（保留原slug）。\n\nUpdate an existing blog post in place (preserves slug).",
+)
 async def update_post(
     slug: str,
     payload: BlogPostUpdate,
@@ -242,7 +268,12 @@ async def update_post(
     return _enrich_response(updated)
 
 
-@router.post("/admin/blog/posts/{slug}/workflow", response_model=WorkflowActionResponse)
+@router.post(
+    "/admin/blog/posts/{slug}/workflow",
+    response_model=WorkflowActionResponse,
+    summary="执行工作流操作",
+    description="执行博客文章工作流操作（提交审核/批准/拒绝/发布）。\n\nExecute workflow action on a blog post (submit/approve/reject/publish).",
+)
 async def workflow_action(
     slug: str,
     payload: WorkflowActionRequest,

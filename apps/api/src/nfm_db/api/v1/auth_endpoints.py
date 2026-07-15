@@ -38,7 +38,12 @@ router = APIRouter(prefix="/auth", tags=["认证管理"])
 settings = get_settings()
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="用户登录",
+    description="用户登录并获取访问令牌。\n\nLogin with username/password and receive an access token.",
+)
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -66,7 +71,13 @@ async def login(
     return Token(access_token=access_token)
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="注册新用户",
+    description="注册新用户（初始化阶段可用）。\n\nRegister a new user (available during initialization phase).",
+)
 async def register(
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -103,7 +114,12 @@ async def register(
     return new_user
 
 
-@router.get("/me", response_model=ApiResponse[UserResponse])
+@router.get(
+    "/me",
+    response_model=ApiResponse[UserResponse],
+    summary="获取当前用户信息",
+    description="获取当前认证用户的详细信息。\n\nGet the currently authenticated user's profile.",
+)
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user),
 ) -> ApiResponse[UserResponse]:
@@ -114,7 +130,12 @@ async def get_current_user_info(
     )
 
 
-@router.get("/roles", response_model=ApiResponse[list[BlogRoleResponse]])
+@router.get(
+    "/roles",
+    response_model=ApiResponse[list[BlogRoleResponse]],
+    summary="获取角色列表",
+    description="获取所有博客角色列表（仅管理员）。\n\nList all blog roles (admin only).",
+)
 async def list_roles(
     current_user: User = Depends(require_admin_dep),
 ) -> ApiResponse[list[BlogRoleResponse]]:
@@ -130,6 +151,8 @@ async def list_roles(
     "/users/{user_id}/role",
     response_model=ApiResponse[RoleAssignmentResponse],
     status_code=status.HTTP_200_OK,
+    summary="分配用户角色",
+    description="分配或移除用户博客角色（仅管理员）。\n\nAssign or remove a blog role for a user (admin only).",
 )
 async def assign_user_role(
     user_id: uuid.UUID,
