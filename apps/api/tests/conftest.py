@@ -142,8 +142,18 @@ def _disable_global_rate_limiting() -> None:
     app.dependency_overrides[_api_get_active_user] = _auto_active_user
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "no_auto_auth: disable auto-auth override for tests that verify auth behavior"
+    )
+# Marker for tests that deliberately exercise the real auth chain
+# (e.g. unauthenticated -> 401, wrong role -> 403).
+no_auto_auth = pytest.mark.no_auto_auth
+
+
 @pytest.fixture(autouse=True)
-def _reenable_rate_limit_overrides() -> None:
+def _reenable_rate_limit_overrides(request) -> None:
     """Re-apply rate-limit no-op and auto-auth overrides before each test.
 
     Many existing test files on main call ``dependency_overrides.clear()``
@@ -154,6 +164,9 @@ def _reenable_rate_limit_overrides() -> None:
     Rate-limit-specific tests (e.g. ``test_ontology_rate_limit_headers``)
     deliberately set tighter overrides in their test bodies *after* this
     fixture runs, so their assertions are unaffected.
+
+    Tests marked ``@pytest.mark.no_auto_auth`` deliberately exercise
+    the real auth chain (e.g. 401 for missing credentials, 403 for wrong role).
     """
     from nfm_db.api.v1.auth import get_current_active_user as _api_get_active_user
     from nfm_db.services.rate_limit import (
@@ -167,20 +180,25 @@ def _reenable_rate_limit_overrides() -> None:
     app.dependency_overrides[ontology_rate_limit] = _noop
     app.dependency_overrides[md_verification_rate_limit] = _noop
 
-    # Re-apply auto-auth override (survives dependency_overrides.clear()).
-    _auto_user = User(
-        id=_SEED_AUTHOR_ID,
-        username="auto_admin",
-        email="auto_admin@test.com",
-        hashed_password="hashed",
-        blog_role=BlogRole.ADMIN,
-        is_active=True,
-    )
+    if "no_auto_auth" not in request.keywords:
+        # Re-apply auto-auth override (survives dependency_overrides.clear()).
+        _auto_user = User(
+            id=_SEED_AUTHOR_ID,
+            username="auto_admin",
+            email="auto_admin@test.com",
+            hashed_password="hashed",
+            blog_role=BlogRole.ADMIN,
+            is_active=True,
+        )
 
-    async def _auto_active_user() -> User:
-        return _auto_user
+        async def _auto_active_user() -> User:
+            return _auto_user
 
-    app.dependency_overrides[_api_get_active_user] = _auto_active_user
+        app.dependency_overrides[_api_get_active_user] = _auto_active_user
+    else:
+        # Clear the session-scoped auto-auth so the real auth chain runs.
+        app.dependency_overrides.pop(_api_get_active_user, None)
+
     yield
 
 

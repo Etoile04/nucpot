@@ -31,24 +31,28 @@ class TestGetCurrentUser:
         )
         token = create_access_token({"sub": str(user.id)})
 
+        mock_request = MagicMock()
+        mock_request.cookies = {}
         credentials = MagicMock(type="bearer", credentials=token)
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = user
         mock_db.execute.return_value = mock_result
 
-        result = await get_current_user(credentials, mock_db)
+        result = await get_current_user(mock_request, credentials, mock_db)
 
         assert result == user
 
     @pytest.mark.asyncio
     async def test_invalid_token_raises_401(self, db_session) -> None:
         """Test that invalid token raises HTTP 401."""
+        mock_request = MagicMock()
+        mock_request.cookies = {}
         credentials = MagicMock(type="bearer", credentials="invalid_token")
         mock_db = AsyncMock()
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(credentials, mock_db)
+            await get_current_user(mock_request, credentials, mock_db)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -60,6 +64,8 @@ class TestGetCurrentUser:
         user_id = uuid4()
         token = create_access_token({"sub": str(user_id)})
 
+        mock_request = MagicMock()
+        mock_request.cookies = {}
         credentials = MagicMock(type="bearer", credentials=token)
         mock_db = AsyncMock()
         mock_result = MagicMock()
@@ -67,7 +73,7 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(credentials, mock_db)
+            await get_current_user(mock_request, credentials, mock_db)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 

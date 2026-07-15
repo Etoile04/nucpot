@@ -248,6 +248,8 @@ class TestSubmitMDVerificationJob:
         assert response.status_code == 503
         assert "celery" in response.json()["detail"].lower()
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_submit_job_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -332,6 +334,8 @@ class TestListMDVerificationJobs:
         assert call_kwargs["offset"] == 5
         assert "owner_id" in call_kwargs
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_list_jobs_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -393,6 +397,8 @@ class TestGetMDVerificationJob:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_get_job_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -492,6 +498,8 @@ class TestGetJobStatus:
 
         assert response.status_code == 404
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_get_status_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -626,6 +634,8 @@ class TestCancelMDVerificationJob:
 
         assert response.status_code == 404
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_cancel_job_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -711,6 +721,8 @@ class TestGetSimulationResults:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_get_simulation_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -815,6 +827,8 @@ class TestGetDefectAnalysisResults:
 
         assert response.status_code == 404
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_get_defects_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -916,6 +930,8 @@ class TestGetFittingResults:
 
         assert response.status_code == 404
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_get_fitting_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
@@ -992,6 +1008,8 @@ class TestGetCompositeJobResults:
 
         assert response.status_code == 404
 
+    @pytest.mark.no_auto_auth
+    @pytest.mark.asyncio
     async def test_composite_results_unauthenticated_returns_401(
         self,
         async_client: AsyncClient,
