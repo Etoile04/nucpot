@@ -9,10 +9,13 @@ Provides:
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from nfm_db.api.v1.auth import require_editor
 from nfm_db.config import LIGHTRAG_VERSION, get_settings
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.lightrag import (
     HealthResponse,
@@ -106,6 +109,7 @@ async def health_check() -> ApiResponse[HealthResponse]:
     description="将文本文档发送到LightRAG知识图谱进行摄入处理。\n\nIngest a text document into the LightRAG knowledge graph.",
 )
 async def ingest_document(
+    _current_user: Annotated[User, Depends(require_editor)],
     request: IngestRequest,
 ) -> ApiResponse[IngestResponse]:
     """Ingest a text document into the LightRAG knowledge graph.
@@ -153,6 +157,7 @@ async def ingest_document(
     description="接受自然语言查询，返回生成答案及可选的来源引用。\n\nAccept a natural language query and return a generated answer with optional source references.",
 )
 async def query_knowledge_graph(
+    _current_user: Annotated[User, Depends(require_editor)],
     request: QueryRequest,
 ) -> ApiResponse[QueryResponse]:
     """Query the LightRAG knowledge graph.

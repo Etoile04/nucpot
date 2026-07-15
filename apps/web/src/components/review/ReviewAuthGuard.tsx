@@ -14,8 +14,8 @@
  */
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { useRouter, usePathname } from "next/navigation"
-import { authApi, clearToken, getToken, type UserProfile } from "@/lib/api-client"
+import { useRouter } from "next/navigation"
+import { authApi, type UserProfile } from "@/lib/api-client"
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -49,34 +49,22 @@ export default function ReviewAuthGuard({
   children,
 }: ReviewAuthGuardProps) {
   const router = useRouter()
-  const pathname = usePathname()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = getToken()
-
-    if (!token) {
-      const redirect = encodeURIComponent(pathname)
-      router.replace(`/login?redirect=${redirect}`)
-      return
-    }
-
+    // Cookie-based auth: cookie sent automatically via credentials:"include"
     authApi
       .getMe()
       .then((user) => {
         if (!user.is_active) {
-          clearToken()
-          const redirect = encodeURIComponent(pathname)
-          router.replace(`/login?redirect=${redirect}`)
+          router.replace("/login")
           return
         }
         setProfile(user)
       })
       .catch(() => {
-        clearToken()
-        const redirect = encodeURIComponent(pathname)
-        router.replace(`/login?redirect=${redirect}`)
+        router.replace("/login")
       })
       .finally(() => {
         setLoading(false)
@@ -91,7 +79,7 @@ export default function ReviewAuthGuard({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#1f2937",
+          background: "#fff",
         }}
       >
         <p style={{ color: "#999" }}>加载中...</p>

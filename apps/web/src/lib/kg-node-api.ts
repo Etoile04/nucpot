@@ -11,7 +11,6 @@
  * Spec: NFM-1099
  */
 
-import { getToken } from '@/lib/api-client'
 
 // ── Shared KG node shape ─────────────────────────────────────────────
 
@@ -68,18 +67,13 @@ interface ApiResponse<T> {
 }
 
 function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
+  return {
     'Content-Type': 'application/json',
   }
-  const token = getToken()
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  return headers
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const res = await fetch(url, { ...init, credentials: "include" })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(

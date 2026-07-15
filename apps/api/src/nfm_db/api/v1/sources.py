@@ -8,13 +8,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import get_current_active_user
 from nfm_db.database import get_db
+from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.source import (
     DataSourceCreate,
@@ -74,6 +76,7 @@ async def get_source_endpoint(
 @router.post("/sources", response_model=ApiResponse[DataSourceResponse], status_code=201, summary="创建数据源", description="创建一条新的文献数据源记录。\n\nCreate a new data source.")
 async def create_source_endpoint(
     payload: DataSourceCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DataSourceResponse]:
     """创建新数据源.

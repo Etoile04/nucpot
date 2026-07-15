@@ -71,7 +71,7 @@ const LICENSE_TYPES = [
 
 export default function UploadForm() {
   const [form] = Form.useForm()
-  const { profile } = useAuth()
+  const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const [licenseType, setLicenseType] = useState<string | undefined>()
@@ -90,8 +90,8 @@ export default function UploadForm() {
         elements: Array.isArray(values.elements) ? values.elements.join(', ') : (values.elements as string) || '',
         systemName: (values.system_name as string) || '',
         doiRefs: '',
-        userName: profile?.full_name || profile?.email || '',
-        userEmail: profile?.email || '',
+        userName: user?.full_name || user?.email || '',
+        userEmail: user?.email || '',
         print: '1',
       })
       const res = await fetch(`/api/auth/template?${params}`)

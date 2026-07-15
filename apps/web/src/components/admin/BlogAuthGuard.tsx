@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { authApi, clearToken, getToken, type UserProfile } from "@/lib/api-client"
+import { authApi, type UserProfile } from "@/lib/api-client"
 
 interface BlogAuthGuardProps {
   readonly children: React.ReactNode
@@ -38,25 +38,18 @@ export default function BlogAuthGuard({ children }: BlogAuthGuardProps) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = getToken()
-
-    if (!token) {
-      router.replace("/admin/login")
-      return
-    }
-
+    // HttpOnly cookie auth — no localStorage token check needed.
+    // Cookie is sent automatically via credentials:"include" in request().
     authApi
       .getMe()
       .then((user) => {
         if (!user.is_active) {
-          clearToken()
           router.replace("/admin/login")
           return
         }
         setProfile(user)
       })
       .catch(() => {
-        clearToken()
         router.replace("/admin/login")
       })
       .finally(() => {

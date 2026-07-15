@@ -1,0 +1,42 @@
+{
+  "project": "auth-unification",
+  "scale": "L",
+  "current_phase": 2,
+  "current_step": 4,
+  "step_status": {
+    "1": "done",
+    "2": "done",
+    "3": "done",
+    "4": "in_progress",
+    "5": "pending",
+    "6": "pending",
+    "7": "pending",
+    "8": "pending",
+    "9": "pending",
+    "10": "pending",
+    "11": "pending",
+    "12": "pending"
+  },
+  "active_subagents": [],
+  "last_checkpoint": "2026-07-14T21:30:00+08:00",
+  "drift_score": 0.0,
+  "decisions_count": 4,
+  "updated_at": "2026-07-14T21:30:00+08:00",
+  "sprints": {
+    "sprint1": {
+      "name": "安全升级 (Cookie + 限流 + CSRF)",
+      "status": "pending",
+      "tasks": ["T1-cookie-auth", "T2-rate-limit", "T3-csrf", "T4-password-policy"]
+    },
+    "sprint2": {
+      "name": "授权审计",
+      "status": "pending",
+      "tasks": ["T5-write-endpoint-auth", "T6-redis-user-cache", "T7-uvicorn-workers"]
+    },
+    "sprint3": {
+      "name": "Supabase 迁移 + 统一登录",
+      "status": "pending",
+      "tasks": ["T8-supabase-data-export", "T9-route-migration", "T10-unified-login", "T11-supabase-cleanup"]
+    }
+  }
+}

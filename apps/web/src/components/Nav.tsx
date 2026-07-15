@@ -18,7 +18,7 @@ const NAV_LINKS = [
 export default function Nav() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, profile, loading, signOut } = useAuth()
+  const { user, loading, signOut } = useAuth()
 
   const [mobileOpen, setMobileOpen] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -43,8 +43,8 @@ export default function Nav() {
     router.refresh()
   }
 
-  const displayName = profile?.username ?? user?.email?.split('@')[0] ?? '用户'
-  const isAdmin = profile?.role === 'admin'
+  const displayName = user?.username ?? "用户"
+  const isAdmin = user?.blog_role === "admin"
 
   return (
     <nav className="border-b border-gray-700">

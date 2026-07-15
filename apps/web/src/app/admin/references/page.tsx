@@ -109,15 +109,15 @@ const PAGE_SIZE = 20
 
 export default function AdminReferencesPage() {
   const router = useRouter()
-  const { profile, loading } = useAuth()
+  const { user, loading } = useAuth()
 
   // Auth guard
   useEffect(() => {
     if (!loading) {
-      if (!profile) router.push('/login')
-      else if (profile.role !== 'admin') router.push('/')
+      if (!user) router.push('/login')
+      else if (user.blog_role !== "admin") router.push('/')
     }
-  }, [loading, profile, router])
+  }, [loading, user, router])
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>('list')
@@ -201,8 +201,8 @@ export default function AdminReferencesPage() {
   }, [])
 
   useEffect(() => {
-    if (profile?.role === 'admin') fetchRefs()
-  }, [profile, fetchRefs])
+    if (user?.blog_role === "admin") fetchRefs()
+  },  [user, fetchRefs])
 
   useEffect(() => {
     if (activeTab === 'review') fetchReviewItems()
@@ -374,7 +374,7 @@ export default function AdminReferencesPage() {
 
   // ─── Render Helpers ──────────────────────────────────────────────────────
 
-  if (loading || !profile) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-gray-400">加载中...</div>
@@ -382,7 +382,7 @@ export default function AdminReferencesPage() {
     )
   }
 
-  if (profile.role !== 'admin') return null
+  if (user.blog_role !== "admin") return null
 
   const TABS: { id: TabId; label: string }[] = [
     { id: 'list', label: '参考值列表' },

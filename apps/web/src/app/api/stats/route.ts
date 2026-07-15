@@ -1,40 +1,13 @@
-import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { NextResponse } from 'next/server'
+
+const API_BASE = process.env.API_SERVER_URL || 'http://nucpot-prod-api:8000'
 
 export async function GET() {
-  const { count: potentialCount } = await supabase
-    .from("potentials")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "published");
-
-  const { data: typeData } = await supabase
-    .from("potentials")
-    .select("type")
-    .eq("status", "published");
-
-  const { data: elementData } = await supabase
-    .from("potentials")
-    .select("elements")
-    .eq("status", "published");
-
-  const types = [...new Set(typeData?.map((d) => d.type) || [])];
-  const elements = [...new Set(elementData?.flatMap((d) => d.elements) || [])];
-
-  const { data: recentData } = await supabase
-    .from("potentials")
-    .select(
-      "id, name, display_name, type, elements, system_name, updated_at",
-    )
-    .eq("status", "published")
-    .order("updated_at", { ascending: false })
-    .limit(5);
-
-  return NextResponse.json({
-    totalPotentials: potentialCount || 0,
-    totalTypes: types.length,
-    totalElements: elements.length,
-    types,
-    elements: elements.sort(),
-    recent: recentData || [],
-  });
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/stats`, { headers: { 'Content-Type': 'application/json' } })
+    const data = await res.json()
+    return NextResponse.json(data)
+  } catch {
+    return NextResponse.json({ totalPotentials: 0, totalTypes: 0, totalElements: 0, types: [], elements: [], recent: [] }, { status: 200 })
+  }
 }

@@ -1,44 +1,21 @@
 /**
  * Shared API client for backend communication.
  *
- * Reads JWT from localStorage and attaches Authorization header.
- * All blog admin API calls go through this client.
- *
- * Uses relative paths — next.config.ts rewrite proxy handles backend routing.
+ * Authentication uses HttpOnly cookies set by the server.
+ * All requests include credentials:"include" to send cookies automatically.
+ * No localStorage token management needed (XSS-safe).
  */
-
-const TOKEN_KEY = "blog_admin_token"
 
 export interface ApiError {
   readonly detail?: string
   readonly message?: string
 }
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
-}
-
 function buildHeaders(custom?: Record<string, string>): HeadersInit {
-  const headers: Record<string, string> = {
+  return {
     "Content-Type": "application/json",
     ...custom,
   }
-
-  const token = getToken()
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`
-  }
-
-  return headers
 }
 
 /**
@@ -49,16 +26,15 @@ export async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const url = path
-  const response = await fetch(url, {
+  const response = await fetch(path, {
     ...options,
+    credentials: "include",
     headers: buildHeaders(
       options.headers as Record<string, string> | undefined,
     ),
   })
 
   if (response.status === 401) {
-    clearToken()
     if (typeof window !== "undefined") {
       window.location.href = "/admin/login"
     }
@@ -106,29 +82,33 @@ export const authApi = {
     body.append("username", username)
     body.append("password", password)
 
-    const url = "/api/v1/auth/login"
-    const response = await fetch(url, {
+    const response = await fetch("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
+      credentials: "include",
     })
 
     if (response.status === 401) {
-      throw new Error("邮箱或密码错误")
+      throw new Error("用户名或密码错误")
     }
 
     if (!response.ok) {
       throw new Error("登录失败，请稍后重试")
     }
 
+    // Cookie is set automatically by the server (Set-Cookie header)
     return response.json() as Promise<TokenResponse>
   },
 
   getMe: (): Promise<UserProfile> =>
     request<ApiResponse<UserProfile>>("/api/v1/auth/me").then((r) => r.data),
 
-  logout: (): void => {
-    clearToken()
+  logout: async (): Promise<void> => {
+    await fetch("/api/v1/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => {})
   },
 } as const
 
@@ -146,7 +126,6 @@ export interface BlogPostResponse {
   readonly rejection_reason: string | null
   readonly created_at: string
   readonly updated_at: string
-  // Fields populated from markdown file
   readonly content?: string
   readonly summary?: string
   readonly tags?: readonly string[]

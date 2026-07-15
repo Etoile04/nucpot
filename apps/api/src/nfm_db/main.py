@@ -32,6 +32,11 @@ from nfm_db.api.v1 import (
     viz,
 )
 from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
+from nfm_db.api.v1.profile import (
+    contributions_router,
+    profile_router,
+    stats_router,
+)
 from nfm_db.api.v1.batch import (
     materials_router as batch_materials_router,
 )
@@ -207,6 +212,9 @@ app.include_router(ontology.router, prefix="/api/v1", tags=["本体管理"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["领域专家审核"])
 app.include_router(md_verification.router, prefix="/api/v1/md-verification", tags=["MD 验证"])
 app.include_router(auth_endpoints, prefix="/api/v1", tags=["认证"])
+app.include_router(profile_router, prefix="/api/v1", tags=["用户资料"])
+app.include_router(contributions_router, prefix="/api/v1", tags=["贡献"])
+app.include_router(stats_router, prefix="/api/v1", tags=["统计"])
 app.include_router(blog.router, prefix="/api/v1", tags=["博客"])
 app.include_router(potentials.router, prefix="/api/v1", tags=["势函数"])
 app.include_router(materials.router, prefix="/api/v1", tags=["材料管理"])

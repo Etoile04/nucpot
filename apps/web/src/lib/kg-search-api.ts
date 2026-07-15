@@ -8,7 +8,6 @@
  * forwarded when available for future rate-limit or personalization.
  */
 
-import { getToken } from '@/lib/api-client'
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -45,18 +44,13 @@ export type KgNodeType = (typeof KG_NODE_TYPES)[number]
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
+  return {
     'Content-Type': 'application/json',
   }
-  const token = getToken()
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  return headers
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const res = await fetch(url, { ...init, credentials: "include" })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.detail ?? body.message ?? `API error: ${res.status}`)
