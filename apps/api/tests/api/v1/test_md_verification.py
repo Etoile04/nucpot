@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nfm_db.core.auth import get_current_user
+from nfm_db.database import get_db
 from nfm_db.main import app
 from nfm_db.models import User
 from nfm_db.models.md_verification import (
@@ -68,7 +69,7 @@ async def client_with_auth(async_client, admin_user: User):
 
     app.dependency_overrides[get_current_user] = _override
     yield async_client
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
@@ -280,8 +281,9 @@ async def test_submit_job_celery_unavailable(client_with_auth) -> None:
     assert "celery" in response.json()["detail"].lower()
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_submit_job_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     response = await async_client.post(f"{BASE_URL}/jobs", json=SUBMIT_PAYLOAD)
@@ -399,8 +401,9 @@ async def test_list_jobs_pagination_defaults(mock_service_cls: MagicMock, client
     assert call_kwargs["offset"] == 0
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_list_jobs_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     response = await async_client.get(f"{BASE_URL}/jobs")
@@ -447,8 +450,9 @@ async def test_get_job_not_found(mock_service_cls: MagicMock, client_with_auth) 
     assert "not found" in response.json()["detail"].lower()
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_get_job_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()
@@ -526,8 +530,9 @@ async def test_get_status_job_not_found(mock_service_cls: MagicMock, client_with
     assert response.status_code == 404
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_get_status_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()
@@ -676,8 +681,9 @@ async def test_cancel_job_not_found_returns_404(
     assert response.status_code == 404
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_cancel_job_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()
@@ -745,8 +751,9 @@ async def test_get_simulation_job_not_found_returns_404(
     assert "not found" in response.json()["detail"].lower()
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_get_simulation_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()
@@ -842,8 +849,9 @@ async def test_get_defects_job_not_found_returns_404(
     assert response.status_code == 404
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_get_defects_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()
@@ -936,8 +944,9 @@ async def test_get_fitting_job_not_found_returns_404(
     assert response.status_code == 404
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_get_fitting_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()
@@ -1028,8 +1037,9 @@ async def test_composite_results_job_not_found_returns_404(
     assert response.status_code == 404
 
 
-@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_composite_results_unauthenticated(async_client) -> None:
     """Returns 401 when no auth token is provided."""
     job_id = uuid.uuid4()

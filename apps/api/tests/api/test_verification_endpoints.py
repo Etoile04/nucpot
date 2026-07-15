@@ -275,6 +275,7 @@ class TestCheckGapEndpoint:
         assert data["is_validated"] is False
         assert data["notes"] == "Source credibility too low"
 
+    @pytest.mark.no_auto_auth
     async def test_check_gap_returns_401_without_auth(
         self,
         async_client: AsyncClient,
@@ -407,6 +408,7 @@ class TestAdjudicateGradeEndpoint:
         assert data["primary_category"] == "unknown"
         assert data["notes"] == "Unrecognised error pattern"
 
+    @pytest.mark.no_auto_auth
     async def test_adjudicate_grade_returns_401_without_auth(
         self,
         async_client: AsyncClient,
@@ -558,6 +560,7 @@ class TestQuarterlyAuditEndpoint:
         assert data["overall_health"] == "healthy"
         assert data["findings"] == []
 
+    @pytest.mark.no_auto_auth
     async def test_quarterly_audit_returns_401_without_auth(
         self,
         async_client: AsyncClient,

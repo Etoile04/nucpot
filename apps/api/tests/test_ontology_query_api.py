@@ -34,14 +34,12 @@ def _make_client(db_override=None) -> TestClient:
         _app.dependency_overrides[get_db] = db_override
 
     # Auto-auth: ontology sync endpoint requires auth after Sprint 3.
-    import uuid as _uuid
-
     from nfm_db.api.v1.auth import get_current_active_user as _gcau
     from nfm_db.models import BlogRole
     from nfm_db.models import User as _User
 
     _auto = _User(
-        id=_uuid.UUID("a0000000-0000-0000-0000-000000000001"),
+        id=uuid.UUID("a0000000-0000-0000-0000-000000000001"),
         username="auto_admin",
         email="auto_admin@test.com",
         hashed_password="hashed",

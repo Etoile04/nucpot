@@ -89,7 +89,7 @@ async def test_bulk_stage_single_value(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 201
     body = response.json()
@@ -135,7 +135,7 @@ async def test_bulk_stage_multiple_values(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 201
     body = response.json()
@@ -156,7 +156,7 @@ async def test_bulk_stage_empty_array_rejected(db_session: AsyncSession) -> None
             json={"values": []},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 422
 
@@ -183,7 +183,7 @@ async def test_bulk_stage_duplicate_detection(db_session: AsyncSession) -> None:
         )
         assert response2.status_code == 201
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     data2 = response2.json()["data"]
     dup_results = [r for r in data2["results"] if r["status"] == "duplicate"]
@@ -206,7 +206,7 @@ async def test_pending_review_empty(db_session: AsyncSession) -> None:
             "/api/v1/reference-values/pending-review",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -233,7 +233,7 @@ async def test_pending_review_with_records(db_session: AsyncSession) -> None:
             "/api/v1/reference-values/pending-review",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -263,7 +263,7 @@ async def test_pending_review_filter_by_element_system(db_session: AsyncSession)
             params={"element_system": "UO2"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     body = response.json()
     assert body["data"]["total"] == 1
@@ -288,7 +288,7 @@ async def test_pending_review_excludes_non_pending(db_session: AsyncSession) -> 
             "/api/v1/reference-values/pending-review",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     body = response.json()
     assert body["data"]["total"] == 0
@@ -313,7 +313,7 @@ async def test_pending_review_status_filter_approved(db_session: AsyncSession) -
             params={"status": "approved"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     body = response.json()
     assert body["data"]["total"] == 1
@@ -339,7 +339,7 @@ async def test_pending_review_status_filter_rejected(db_session: AsyncSession) -
             params={"status": "rejected"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     body = response.json()
     assert body["data"]["total"] == 1
@@ -365,7 +365,7 @@ async def test_pending_review_status_filter_promoted(db_session: AsyncSession) -
             params={"status": "promoted"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     body = response.json()
     assert body["data"]["total"] == 1
@@ -403,7 +403,7 @@ async def test_pending_review_status_filter_all(db_session: AsyncSession) -> Non
             params={"status": "all"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     body = response.json()
     assert body["data"]["total"] == 4
@@ -424,7 +424,7 @@ async def test_pending_review_status_filter_invalid(db_session: AsyncSession) ->
             params={"status": "invalid_status"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 422
 
@@ -447,7 +447,7 @@ async def test_approve_pending_record(db_session: AsyncSession) -> None:
             json={"review_note": "Looks correct"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -470,7 +470,7 @@ async def test_approve_without_note(db_session: AsyncSession) -> None:
             f"/api/v1/reference-values/{record.id}/approve",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -487,7 +487,7 @@ async def test_approve_not_found(db_session: AsyncSession) -> None:
             "/api/v1/reference-values/00000000-0000-0000-0000-000000000000/approve",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 404
 
@@ -504,7 +504,7 @@ async def test_approve_already_promoted_conflict(db_session: AsyncSession) -> No
             f"/api/v1/reference-values/{record.id}/approve",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 409
 
@@ -527,7 +527,7 @@ async def test_reject_pending_record(db_session: AsyncSession) -> None:
             json={"review_note": "Uncertain source"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -547,7 +547,7 @@ async def test_reject_not_found(db_session: AsyncSession) -> None:
             "/api/v1/reference-values/00000000-0000-0000-0000-000000000000/reject",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 404
 
@@ -564,7 +564,7 @@ async def test_reject_already_rejected_conflict(db_session: AsyncSession) -> Non
             f"/api/v1/reference-values/{record.id}/reject",
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 409
 
@@ -607,7 +607,7 @@ async def test_export_defaults(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/api/v1/reference-values/export", json={})
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -653,7 +653,7 @@ async def test_export_with_filters(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/api/v1/reference-values/export", json=payload)
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -681,7 +681,7 @@ async def test_export_with_limit_and_offset(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/api/v1/reference-values/export", json=payload)
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -721,7 +721,7 @@ async def test_verify_callback(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -755,7 +755,7 @@ async def test_verify_callback_f_grade_auto_rejects(db_session: AsyncSession) ->
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -791,7 +791,7 @@ async def test_verify_callback_handles_not_found(db_session: AsyncSession) -> No
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -824,7 +824,7 @@ async def test_verify_callback_mixed_results(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()["data"]

@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.core.auth import get_current_user
+from nfm_db.database import get_db
 from nfm_db.models import User
 from nfm_db.models.md_verification import JobStatus
 from nfm_db.services.md_verification import MDVerificationService
@@ -136,7 +137,7 @@ class TestMDVerificationIDOR:
             other_jobs = await _fetch_job_ids(db_session, other_user.id)
             assert not other_jobs.intersection(job_ids)
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_get_other_users_job_returns_404(
         self,
@@ -169,7 +170,7 @@ class TestMDVerificationIDOR:
                 response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}")
             assert response.status_code == 404
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_cancel_other_users_job_returns_404(
         self,
@@ -197,7 +198,7 @@ class TestMDVerificationIDOR:
                 response = await client.delete(f"/api/v1/md-verification/jobs/{owned_job_id}")
             assert response.status_code == 404
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_status_other_users_job_returns_404(
         self,
@@ -225,7 +226,7 @@ class TestMDVerificationIDOR:
                 response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/status")
             assert response.status_code == 404
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_simulation_other_users_job_returns_404(
         self,
@@ -255,7 +256,7 @@ class TestMDVerificationIDOR:
                 )
             assert response.status_code == 404
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_defects_other_users_job_returns_404(
         self,
@@ -283,7 +284,7 @@ class TestMDVerificationIDOR:
                 response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/defects")
             assert response.status_code == 404
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_fitting_other_users_job_returns_404(
         self,
@@ -311,7 +312,7 @@ class TestMDVerificationIDOR:
                 response = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/fitting")
             assert response.status_code == 404
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
     async def test_owner_can_access_own_job(
         self,
@@ -345,7 +346,7 @@ class TestMDVerificationIDOR:
                 resp = await client.get(f"/api/v1/md-verification/jobs/{owned_job_id}/fitting")
                 assert resp.status_code == 200
         finally:
-            app.dependency_overrides.clear()
+            app.dependency_overrides.pop(get_db, None)
 
 
 async def _fetch_job_ids(

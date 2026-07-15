@@ -296,6 +296,7 @@ async def test_check_gap_minimal_payload(client_with_auth) -> None:
     assert response.json()["is_validated"] is True
 
 
+@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
 async def test_check_gap_unauthenticated(async_client) -> None:
     """Endpoint requires authentication -- 401 without token."""
@@ -307,6 +308,7 @@ async def test_check_gap_unauthenticated(async_client) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.no_auto_auth
 async def test_check_gap_service_error(client_with_auth) -> None:
     """Endpoint returns 500 when validate_reference raises an exception."""
     with patch(
@@ -450,6 +452,7 @@ async def test_adjudicate_grade_minimal_payload(client_with_auth) -> None:
     assert response.json()["resolved"] is True
 
 
+@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
 async def test_adjudicate_grade_unauthenticated(async_client) -> None:
     """Endpoint requires authentication -- 401 without token."""
@@ -461,6 +464,7 @@ async def test_adjudicate_grade_unauthenticated(async_client) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.no_auto_auth
 async def test_adjudicate_grade_service_error(client_with_auth) -> None:
     """Endpoint returns 500 when adjudicate_f_grade raises an exception."""
     with patch(
@@ -623,6 +627,7 @@ async def test_quarterly_audit_defaults(client_with_auth) -> None:
     mock_fn.assert_called_once()
 
 
+@pytest.mark.no_auto_auth
 @pytest.mark.asyncio
 async def test_quarterly_audit_unauthenticated(async_client) -> None:
     """Endpoint requires authentication -- 401 without token."""
@@ -634,6 +639,7 @@ async def test_quarterly_audit_unauthenticated(async_client) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.no_auto_auth
 async def test_quarterly_audit_service_error(client_with_auth) -> None:
     """Endpoint returns 500 when run_quarterly_audit raises an exception."""
     with patch(

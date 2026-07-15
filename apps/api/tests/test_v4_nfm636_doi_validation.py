@@ -24,14 +24,14 @@ async def doi_client(db_session):
     async def override_get_db():
         yield db_session
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
     app.dependency_overrides[get_db] = override_get_db
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
 
 class TestDoiPrefixStripping:

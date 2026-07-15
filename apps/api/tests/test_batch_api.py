@@ -31,7 +31,7 @@ class TestMaterialImport:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.xfail(reason="NFM-1366: batch endpoints not wired", strict=False)
     async def test_import_csv_creates_materials(self, client, db_session) -> None:
@@ -120,7 +120,7 @@ class TestMaterialExport:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     async def _seed_material(self, db_session, name="UO2", formula="UO2") -> None:
         from nfm_db.models.material import Material
@@ -172,7 +172,7 @@ class TestReferenceValueImport:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.xfail(reason="NFM-1366: batch endpoints not wired", strict=False)
     async def test_import_csv_creates_staging_records(self, client, db_session) -> None:
@@ -242,7 +242,7 @@ class TestPropertyImport:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.xfail(reason="NFM-1366: batch endpoints not wired", strict=False)
     async def test_import_json_properties(self, client) -> None:
@@ -286,7 +286,7 @@ class TestPropertyExport:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.xfail(reason="NFM-1366: batch endpoints not wired", strict=False)
     async def test_export_csv_empty(self, client) -> None:
@@ -323,7 +323,7 @@ class TestReferenceValueExport:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.xfail(reason="NFM-1366: batch endpoints not wired", strict=False)
     async def test_export_csv_empty(self, client) -> None:
