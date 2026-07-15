@@ -21,6 +21,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.core.auth import get_current_user
+from nfm_db.database import get_db
 from nfm_db.models.md_verification import (
     DefectType,
     FittingMethod,
@@ -153,7 +154,7 @@ async def async_client_with_auth(async_client: AsyncClient, admin_user):
 
     yield async_client
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,7 @@ async def test_trigger_extraction_success(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 202
     body = response.json()
@@ -82,7 +82,7 @@ async def test_trigger_with_optional_filters(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 202
     data = response.json()["data"]
@@ -105,7 +105,7 @@ async def test_trigger_invalid_source_type(db_session: AsyncSession) -> None:
             json=payload,
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 400
     assert "Invalid source_type" in response.text or "invalid_type" in response.text.lower()
@@ -140,7 +140,7 @@ async def test_get_extraction_status_success(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(f"/api/v1/extraction/status/{job_id}")
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -165,6 +165,6 @@ async def test_get_extraction_status_not_found() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(f"/api/v1/extraction/status/{fake_id}")
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 404

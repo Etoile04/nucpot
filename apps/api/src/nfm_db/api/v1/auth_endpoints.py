@@ -44,7 +44,7 @@ COOKIE_MAX_AGE = 1800  # 30 minutes
 
 
 def _validate_password_strength(password: str) -> None:
-    """Enforce password policy: ≥8 chars, must contain digits and letters."""
+    """Enforce password policy: >=8 chars, must contain digits and letters."""
     if len(password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     if not re.search(r"[A-Za-z]", password):
@@ -61,7 +61,7 @@ def _validate_password_strength(password: str) -> None:
 )
 @limiter.limit("5/minute")
 async def login(
-    request: Request,  # noqa: ARG001 — required by slowapi
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
@@ -101,7 +101,7 @@ async def login(
 
 
 @router.post("/logout")
-async def logout(response: Response) -> ApiResponse:
+async def logout(response: Response) -> ApiResponse[dict[str, str]]:
     """用户登出，清除认证 cookie。"""
     response.delete_cookie(COOKIE_NAME, path="/")
     return ApiResponse(success=True, data={"message": "Logged out"})
@@ -116,11 +116,11 @@ async def logout(response: Response) -> ApiResponse:
 )
 @limiter.limit("3/minute")
 async def register(
-    request: Request,  # noqa: ARG001
+    request: Request,
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """注册新用户。Password must be ≥8 chars with letters and digits."""
+    """注册新用户。Password must be >=8 chars with letters and digits."""
     _validate_password_strength(user_data.password)
     # Check if username exists
     result = await db.execute(select(User).where(User.username == user_data.username))

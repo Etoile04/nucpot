@@ -61,7 +61,7 @@ async def client():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

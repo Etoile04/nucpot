@@ -137,12 +137,16 @@ class TestDeleteAdminOverride:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.no_auto_auth
 class TestBlogAPIAuthWiring:
     """Integration tests for blog API auth dependencies."""
 
     @pytest.mark.asyncio
     async def test_create_post_requires_auth(self, db_session: AsyncSession) -> None:
         """POST /admin/blog/posts returns 401 without auth token."""
+        from nfm_db.api.v1.auth import get_current_active_user as _gcau
+        from nfm_db.main import app as _app
+        _app.dependency_overrides.pop(_gcau, None)
         from nfm_db.database import get_db
         from nfm_db.main import app
 
@@ -164,7 +168,7 @@ class TestBlogAPIAuthWiring:
             )
 
         assert resp.status_code == 401
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
     async def test_create_post_with_editor_auth(
@@ -202,7 +206,7 @@ class TestBlogAPIAuthWiring:
         data = resp.json()
         assert data["title"] == "Editor Post"
         assert data["status"] == "draft"
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
     async def test_create_post_rejected_for_reviewer(
@@ -212,6 +216,9 @@ class TestBlogAPIAuthWiring:
         reviewer_headers: dict,
     ) -> None:
         """POST /admin/blog/posts returns 403 for reviewer (not editor/admin)."""
+        from nfm_db.api.v1.auth import get_current_active_user as _gcau
+        from nfm_db.main import app as _app
+        _app.dependency_overrides.pop(_gcau, None)
         from nfm_db.database import get_db
         from nfm_db.main import app
 
@@ -235,11 +242,14 @@ class TestBlogAPIAuthWiring:
             )
 
         assert resp.status_code == 403
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
     async def test_list_posts_requires_auth(self, db_session: AsyncSession) -> None:
         """GET /admin/blog/posts returns 401 without auth."""
+        from nfm_db.api.v1.auth import get_current_active_user as _gcau
+        from nfm_db.main import app as _app
+        _app.dependency_overrides.pop(_gcau, None)
         from nfm_db.database import get_db
         from nfm_db.main import app
 
@@ -253,7 +263,7 @@ class TestBlogAPIAuthWiring:
             resp = await client.get("/api/v1/admin/blog/posts")
 
         assert resp.status_code == 401
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
     async def test_list_posts_with_admin_auth(
@@ -279,7 +289,7 @@ class TestBlogAPIAuthWiring:
 
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
     async def test_list_posts_status_validation(
@@ -304,9 +314,11 @@ class TestBlogAPIAuthWiring:
             resp = await client.get("/api/v1/admin/blog/posts", params={"status": "invalid"})
 
         assert resp.status_code == 400
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
+
+    @pytest.mark.no_auto_auth
     async def test_no_raw_author_id_param(
         self,
         db_session: AsyncSession,
@@ -342,4 +354,4 @@ class TestBlogAPIAuthWiring:
         assert resp.status_code == 201
         data = resp.json()
         assert data["author_id"] == str(editor_user.id)
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)

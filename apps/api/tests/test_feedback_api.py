@@ -38,7 +38,7 @@ async def test_submit_feedback_returns_201(db_session: AsyncSession) -> None:
             },
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 201
     data = response.json()
@@ -69,7 +69,7 @@ async def test_submit_feedback_minimal_fields(db_session: AsyncSession) -> None:
             },
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 201
     data = response.json()
@@ -92,7 +92,7 @@ async def test_submit_feedback_validates_required_fields(db_session: AsyncSessio
             json={"feedback_type": "bug_report"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 422
 
@@ -116,7 +116,7 @@ async def test_submit_feedback_validates_title_length(db_session: AsyncSession) 
             },
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 422
 
@@ -133,7 +133,7 @@ async def test_list_feedback_returns_empty(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/v1/feedback")
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -173,7 +173,7 @@ async def test_list_feedback_returns_created_items(db_session: AsyncSession) -> 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/v1/feedback")
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -214,7 +214,7 @@ async def test_list_feedback_filters_by_type(db_session: AsyncSession) -> None:
             params={"feedback_type": "bug_report"},
         )
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()

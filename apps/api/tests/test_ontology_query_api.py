@@ -26,11 +26,32 @@ from nfm_db.models.kg import KGNode
 
 def _make_client(db_override=None) -> TestClient:
     """Create a TestClient with a real FastAPI app wrapping the router."""
-    app = FastAPI()
-    app.include_router(router)
+    from nfm_db.api.v1.ontology import router as _router
+
+    _app = FastAPI()
+    _app.include_router(_router)
     if db_override is not None:
-        app.dependency_overrides[get_db] = db_override
-    return TestClient(app)
+        _app.dependency_overrides[get_db] = db_override
+
+    # Auto-auth: ontology sync endpoint requires auth after Sprint 3.
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.models import BlogRole
+    from nfm_db.models import User as _User
+
+    _auto = _User(
+        id=uuid.UUID("a0000000-0000-0000-0000-000000000001"),
+        username="auto_admin",
+        email="auto_admin@test.com",
+        hashed_password="hashed",
+        blog_role=BlogRole.ADMIN,
+        is_active=True,
+    )
+
+    async def _auto_user() -> _User:
+        return _auto
+
+    _app.dependency_overrides[_gcau] = _auto_user
+    return TestClient(_app)
 
 
 # ---------------------------------------------------------------------------

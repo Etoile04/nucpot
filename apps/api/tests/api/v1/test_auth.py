@@ -182,6 +182,8 @@ async def test_login_missing_fields(async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.auth_endpoints.get_password_hash", return_value=_HASHED_PW)
+
+@pytest.mark.no_auto_auth
 async def test_register_success(_mock_hash, async_client) -> None:
     """Registering a new user returns 201 with user data."""
     payload = {
@@ -202,6 +204,8 @@ async def test_register_success(_mock_hash, async_client) -> None:
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.auth_endpoints.get_password_hash", return_value=_HASHED_PW)
+
+@pytest.mark.no_auto_auth
 async def test_register_with_role(_mock_hash, async_client) -> None:
     """Registering with a blog_role persists the role."""
     payload = {
@@ -242,6 +246,8 @@ async def test_register_duplicate_username(_mock_hash, async_client, db_session)
 
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.auth_endpoints.get_password_hash", return_value=_HASHED_PW)
+
+@pytest.mark.no_auto_auth
 async def test_register_duplicate_email(_mock_hash, async_client, db_session) -> None:
     """Registering with an existing email returns 400."""
     user = User(
@@ -294,6 +300,8 @@ async def test_register_missing_username_rejects(_mock_hash, async_client) -> No
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_me_returns_current_user(async_client, admin_user) -> None:
     """Authenticated admin can fetch their own profile."""
     headers = _auth_headers(admin_user)
@@ -307,6 +315,8 @@ async def test_me_returns_current_user(async_client, admin_user) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_me_no_token_returns_401(async_client) -> None:
     """Request without Authorization header returns 401."""
     response = await async_client.get("/api/v1/auth/me")
@@ -314,6 +324,8 @@ async def test_me_no_token_returns_401(async_client) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_me_invalid_token_returns_401(async_client) -> None:
     """Request with malformed JWT returns 401."""
     headers = {"Authorization": "Bearer invalid.token.here"}
@@ -322,6 +334,8 @@ async def test_me_invalid_token_returns_401(async_client) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_me_token_for_nonexistent_user(async_client, db_session) -> None:
     """Token referencing a user not in DB returns 401."""
     fake_id = uuid.uuid4()
@@ -333,6 +347,8 @@ async def test_me_token_for_nonexistent_user(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_me_inactive_user_returns_403(async_client, db_session) -> None:
     """Inactive user gets 403 from get_current_active_user."""
     user, _hashed = await _seed_user(
@@ -348,6 +364,8 @@ async def test_me_inactive_user_returns_403(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_me_missing_bearer_prefix(async_client) -> None:
     """Authorization header without 'Bearer' prefix returns 401/403."""
     headers = {"Authorization": "Token sometoken"}
@@ -375,6 +393,8 @@ async def test_roles_admin_success(async_client, admin_user) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_roles_editor_forbidden(async_client, editor_user) -> None:
     """Editor gets 403 when trying to list roles."""
     headers = _auth_headers(editor_user)
@@ -383,6 +403,8 @@ async def test_roles_editor_forbidden(async_client, editor_user) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_roles_reviewer_forbidden(async_client, reviewer_user) -> None:
     """Reviewer gets 403 when trying to list roles."""
     headers = _auth_headers(reviewer_user)
@@ -391,6 +413,8 @@ async def test_roles_reviewer_forbidden(async_client, reviewer_user) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_roles_no_token_returns_401(async_client) -> None:
     """Unauthenticated request to /roles returns 401."""
     response = await async_client.get("/api/v1/auth/roles")
@@ -499,6 +523,8 @@ async def test_assign_role_nonexistent_user(async_client, admin_user) -> None:
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_assign_role_editor_forbidden(async_client, editor_user, db_session) -> None:
     """Editor cannot assign roles (403)."""
     target, _hashed = await _seed_user(
@@ -515,6 +541,8 @@ async def test_assign_role_editor_forbidden(async_client, editor_user, db_sessio
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_assign_role_no_token_returns_401(async_client, db_session) -> None:
     """Unauthenticated role assignment returns 401."""
     target, _hashed = await _seed_user(db_session, username="unauth", email="unauth@example.com")
@@ -559,6 +587,8 @@ async def test_assign_role_invalid_role_value(async_client, admin_user, db_sessi
 
 
 @pytest.mark.asyncio
+
+@pytest.mark.no_auto_auth
 async def test_login_then_me_flow(async_client, db_session) -> None:
     """Login returns token, then /me with that token returns user info."""
     await _seed_user(db_session, username="flowuser", password="flowpass")
@@ -585,6 +615,8 @@ async def test_login_then_me_flow(async_client, db_session) -> None:
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.auth_endpoints.get_password_hash", return_value=_HASHED_PW)
 @patch("nfm_db.api.v1.auth_endpoints.authenticate_user", return_value=True)
+
+@pytest.mark.no_auto_auth
 async def test_register_then_login(_mock_auth, _mock_hash, async_client, db_session) -> None:
     """Register a user, then login with the same credentials."""
     register_payload = {

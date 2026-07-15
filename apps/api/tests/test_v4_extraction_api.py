@@ -29,13 +29,17 @@ from nfm_db.schemas.extraction import (
 
 @pytest.fixture
 async def v4_client(db_session):
-    """Async test client for v4 extraction endpoints."""
+    """Async test client for v4 extraction endpoints.
+
+    Uses selective override management instead of ``dependency_overrides.clear()``
+    so that the session-scoped auto-auth override (set in conftest.py) survives.
+    Without this, v4 extraction endpoints that depend on ``require_editor`` would
+    return 401 and the ``submitted_job_id`` fixture would KeyError on ``['data']``.
+    """
+    from nfm_db.database import get_db
 
     async def override_get_db():
         yield db_session
-
-    app.dependency_overrides.clear()
-    from nfm_db.database import get_db
 
     app.dependency_overrides[get_db] = override_get_db
 
@@ -43,7 +47,7 @@ async def v4_client(db_session):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture

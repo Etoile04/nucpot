@@ -91,6 +91,9 @@ async def test_create_post_with_editor(async_client, editor_headers, tmp_path) -
 @pytest.mark.asyncio
 async def test_create_post_unauthenticated(async_client) -> None:
     """Unauthenticated requests receive 401 (HTTPBearer missing)."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     resp = await async_client.post(BASE + "/posts", json=_CREATE_PAYLOAD)
     assert resp.status_code == 401
 
@@ -98,6 +101,9 @@ async def test_create_post_unauthenticated(async_client) -> None:
 @pytest.mark.asyncio
 async def test_create_post_reviewer_forbidden(async_client, reviewer_headers) -> None:
     """A reviewer (no create_post permission) cannot create posts."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     resp = await async_client.post(
         BASE + "/posts",
         json=_CREATE_PAYLOAD,
@@ -247,6 +253,9 @@ async def test_list_posts_reviewer_allowed(
 @pytest.mark.asyncio
 async def test_list_posts_unauthenticated(async_client) -> None:
     """Unauthenticated requests receive 401 (HTTPBearer missing)."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     resp = await async_client.get(BASE + "/posts")
     assert resp.status_code == 401
 
@@ -284,6 +293,9 @@ async def test_get_post_not_found(async_client, admin_headers) -> None:
 @pytest.mark.asyncio
 async def test_get_post_unauthenticated(async_client) -> None:
     """Unauthenticated requests receive 401."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     resp = await async_client.get(f"{BASE}/posts/hidden-slug-xyz")
     assert resp.status_code == 401
 
@@ -329,6 +341,9 @@ async def test_update_post_not_found(async_client, admin_headers) -> None:
 @pytest.mark.asyncio
 async def test_update_post_unauthenticated(async_client) -> None:
     """Unauthenticated requests receive 401."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     resp = await async_client.put(
         f"{BASE}/posts/some-slug",
         json={"title": "Nope"},
@@ -379,6 +394,9 @@ async def test_delete_post_other_author_forbidden(
     async_client, editor_user, db_session, admin_user
 ) -> None:
     """A non-author, non-admin user receives 403."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     from nfm_db.services.auth_service import create_access_token
 
     slug = f"delete-other-{uuid.uuid4().hex[:8]}"
@@ -407,6 +425,9 @@ async def test_delete_post_not_found(async_client, admin_headers) -> None:
 @pytest.mark.asyncio
 async def test_delete_post_unauthenticated(async_client) -> None:
     """Unauthenticated requests receive 401."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     resp = await async_client.delete(f"{BASE}/posts/some-slug")
     assert resp.status_code == 401
 
@@ -424,6 +445,8 @@ async def test_delete_post_unauthenticated(async_client) -> None:
 @pytest.mark.asyncio
 @patch("nfm_db.services.blog_post.update_markdown_status")
 @patch("nfm_db.services.blog_post.validate_transition")
+
+@pytest.mark.no_auto_auth
 async def test_workflow_submit(
     mock_validate, mock_md, async_client, admin_headers, db_session, admin_user
 ) -> None:
@@ -569,6 +592,9 @@ async def test_workflow_invalid_action(async_client, admin_headers, db_session, 
 @pytest.mark.asyncio
 async def test_workflow_unauthenticated(async_client, db_session, admin_user) -> None:
     """Unauthenticated requests receive 401."""
+    from nfm_db.api.v1.auth import get_current_active_user as _gcau
+    from nfm_db.main import app as _app
+    _app.dependency_overrides.pop(_gcau, None)
     slug = f"wf-noauth-{uuid.uuid4().hex[:8]}"
     await _seed_post(
         db_session,
