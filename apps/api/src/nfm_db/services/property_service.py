@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Literal
+from typing import Any, Callable, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -229,7 +229,7 @@ _REVIEW_STATUS_TO_CONFIDENCE: dict[str, float] = {
 }
 
 # Allowed sort columns for the per-material property table.
-_MATERIAL_PROPERTY_SORT_COLUMNS = {
+_MATERIAL_PROPERTY_SORT_COLUMNS: dict[str, Callable[[], Any]] = {
     "name": lambda: PropertyType.name,
     "value": lambda: PropertyMeasurement.value_scalar,
     "created_at": lambda: PropertyMeasurement.created_at,
