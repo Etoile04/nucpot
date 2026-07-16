@@ -39,6 +39,16 @@ function filterRealErrors(errors: string[]): string[] {
 }
 
 test.describe("MD Verification", { tag: "@integration" }, () => {
+  // Inject auth cookies — /admin/md-verification is middleware-protected
+  test.beforeEach(async ({ page, context }) => {
+    const baseUrl = process.env.BASE_URL || "http://localhost"
+    const domain = new URL(baseUrl).hostname
+    await context.addCookies([
+      { name: "access_token", value: "e2e-mock-token", domain, path: "/" },
+      { name: "blog_admin_token", value: "e2e-mock-token", domain, path: "/" },
+    ])
+  })
+
   test.describe("Main Dashboard", () => {
     test("loads the MD verification dashboard", async ({ page }) => {
       const consoleErrors = collectConsoleErrors(page)

@@ -11,6 +11,15 @@ import { test, expect } from "@playwright/test"
  */
 
 test.describe("Results Display", { tag: "@integration" }, () => {
+  // Inject auth cookies — /admin/md-verification/* is middleware-protected
+  test.beforeEach(async ({ context }) => {
+    const baseUrl = process.env.BASE_URL || "http://localhost"
+    const domain = new URL(baseUrl).hostname
+    await context.addCookies([
+      { name: "access_token", value: "e2e-mock-token", domain, path: "/" },
+      { name: "blog_admin_token", value: "e2e-mock-token", domain, path: "/" },
+    ])
+  })
   // TODO: Re-enable when job result pages are available on live site
   test.describe.skip("Energy Curve Visualization", () => {
     test("displays energy vs volume curve", async ({ page }) => {
