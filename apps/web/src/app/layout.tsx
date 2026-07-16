@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { AntdProvider } from "@/components/antd-provider"
 import { QueryProvider } from "@/components/query-provider"
 import { FeedbackFloatButton } from "@/components/feedback"
+import Footer from "@/components/Footer"
 import Nav from "@/components/Nav"
 import AuthProvider from "@/components/AuthProvider"
 import "@/styles/globals.css"
@@ -25,18 +26,7 @@ export default function RootLayout({
             <AuthProvider>
             <Nav />
             <main className="flex-1 overflow-y-auto">{children}</main>
-            <footer className="border-t border-gray-700 py-8 text-center text-gray-400 text-sm">
-              <p>
-                反馈与建议：
-                <a
-                  href="mailto:feedback@nucpot.org"
-                  className="text-blue-400 hover:text-blue-300"
-                >
-                  feedback@nucpot.org
-                </a>
-              </p>
-              <p>© {new Date().getFullYear()} 核燃料与材料物性数据库</p>
-            </footer>
+            <Footer />
             <FeedbackFloatButton />
             </AuthProvider>
           </QueryProvider>
