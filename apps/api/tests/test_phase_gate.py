@@ -281,3 +281,4 @@ class TestPhaseGateReport:
         assert "[PASS]" in text
         assert "[FAIL]" in text
         assert "1/2" in text
+
