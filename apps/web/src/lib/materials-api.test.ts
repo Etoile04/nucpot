@@ -134,3 +134,105 @@ describe("getMaterialSubgraph fetch wrapper", () => {
     )
   })
 })
+
+// ── NFM-1067 envelope unwrap regression ────────────────────────────────
+// Backend wraps every response in ApiResponse[T] = { success, data: T, error? }.
+// The shared `request()` helper does NOT auto-unwrap, so each endpoint
+// helper in materials-api must destructure `envelope.data` itself and
+// return the inner shape — otherwise consumers read `.meta` / `.name`
+// off the envelope and crash with `undefined.total` etc.
+
+describe("getMaterialProperties envelope unwrap (NFM-1067)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("returns the inner {data, meta} shape, NOT the {success, data, error} envelope", async () => {
+    const inner = {
+      data: [
+        {
+          id: "prop-1",
+          name: "密度",
+          value: "5.68",
+          unit: "g/cm³",
+          source: "J. Nucl. Mater.",
+          confidence: 0.92,
+        },
+      ],
+      meta: { total: 1, page: 1, limit: 50 },
+    }
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: inner, error: null }),
+    }) as unknown as typeof fetch
+
+    const { getMaterialProperties } = await import("./materials-api")
+
+    const result = await getMaterialProperties("mat-1", { page: 1, limit: 50 })
+
+    // The returned object must be the inner list shape, not the envelope.
+    expect(result).toEqual(inner)
+    expect(result).not.toHaveProperty("success")
+    expect(result).not.toHaveProperty("error")
+    // Sanity: the consumer reads .meta.total and .data (array) directly.
+    expect(result.meta.total).toBe(1)
+    expect(Array.isArray(result.data)).toBe(true)
+    expect(result.data[0]?.name).toBe("密度")
+  })
+
+  it("hits /api/v1/materials/{id}/properties with query params", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { data: [], meta: { total: 0, page: 1, limit: 50 } },
+        error: null,
+      }),
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const { getMaterialProperties } = await import("./materials-api")
+
+    await getMaterialProperties("mat-1", {
+      page: 2,
+      limit: 25,
+      sort: "name",
+      order: "desc",
+      filter: "density",
+    })
+
+    const calledUrl = fetchMock.mock.calls[0]?.[0] as string
+    expect(calledUrl).toContain("/api/v1/materials/mat-1/properties")
+    expect(calledUrl).toContain("page=2")
+    expect(calledUrl).toContain("limit=25")
+    expect(calledUrl).toContain("sort=name")
+    expect(calledUrl).toContain("order=desc")
+    expect(calledUrl).toContain("filter=density")
+  })
+})
+
+describe("getMaterial envelope unwrap (NFM-1067)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("returns the inner MaterialSummary shape, NOT the envelope", async () => {
+    const inner = { id: "mat-1", name: "二氧化锆", formula: "ZrO2" }
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: inner, error: null }),
+    }) as unknown as typeof fetch
+
+    const { getMaterial } = await import("./materials-api")
+
+    const result = await getMaterial("mat-1")
+
+    expect(result).toEqual(inner)
+    expect(result).not.toHaveProperty("success")
+    expect(result.name).toBe("二氧化锆")
+    expect(result.formula).toBe("ZrO2")
+  })
+})

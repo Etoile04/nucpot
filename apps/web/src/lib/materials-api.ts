@@ -7,6 +7,7 @@
  */
 
 import { request } from "@/lib/api-client"
+import type { ApiResponse } from "@/lib/api-client"
 import type {
   GraphData,
   GraphEdge,
@@ -54,6 +55,12 @@ export interface MaterialSummary {
 
 /**
  * Fetch paginated properties for a given material.
+ *
+ * The backend wraps every response in `ApiResponse<T> = { success, data: T,
+ * error? }` and the shared `request()` helper does NOT auto-unwrap, so this
+ * function destructures `envelope.data` and returns the inner
+ * `MaterialPropertyListResponse`. Callers can therefore access
+ * `result.data` (the array) and `result.meta.total` directly.
  */
 export async function getMaterialProperties(
   materialId: string,
@@ -67,20 +74,26 @@ export async function getMaterialProperties(
   if (params.order) sp.set("order", params.order)
   if (params.filter) sp.set("filter", params.filter)
 
-  return request<MaterialPropertyListResponse>(
+  const envelope = await request<ApiResponse<MaterialPropertyListResponse>>(
     `/api/v1/materials/${materialId}/properties?${sp.toString()}`,
   )
+  return envelope.data
 }
 
 /**
  * Fetch a material summary by ID.
+ *
+ * Unwraps the standard `ApiResponse<T>` envelope (see
+ * `getMaterialProperties` for the rationale) and returns the inner
+ * `MaterialSummary` so callers can read `.name` / `.formula` directly.
  */
 export async function getMaterial(
   materialId: string,
 ): Promise<MaterialSummary> {
-  return request<MaterialSummary>(
+  const envelope = await request<ApiResponse<MaterialSummary>>(
     `/api/v1/materials/${materialId}`,
   )
+  return envelope.data
 }
 
 // ── Subgraph (NFM-1258) ───────────────────────────────────────────────

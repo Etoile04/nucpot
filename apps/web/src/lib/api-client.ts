@@ -71,7 +71,13 @@ export interface UserProfile {
   readonly is_active: boolean
 }
 
-interface ApiResponse<T> {
+/**
+ * Standard backend envelope shape `ApiResponse<T> = { success, data: T, error? }`.
+ * The shared `request()` helper returns the raw envelope (it does NOT
+ * auto-unwrap `.data`), so callers that need the inner payload should type
+ * the request as `request<ApiResponse<T>>` and read `.data` themselves.
+ */
+export interface ApiResponse<T> {
   readonly success: boolean
   readonly data: T
 }
