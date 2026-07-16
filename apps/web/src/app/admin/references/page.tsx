@@ -213,12 +213,16 @@ export default function AdminReferencesPage() {
       const systems = Array.from(systemSet).sort()
       const properties = Array.from(propSet).sort()
       const cells: Record<string, Record<string, unknown>> = {}
-      systems.forEach((s) => {
-        cells[s] = {}
-        properties.forEach((p) => { cells[s]?.[p] = null })
-      })
+      for (const s of systems) {
+        const row: Record<string, unknown> = {}
+        for (const p of properties) {
+          row[p] = null
+        }
+        cells[s] = row
+      }
       items.forEach((r: any) => {
-        if (cells[r.element_system]) cells[r.element_system]?.[r.property_name] = r.value
+        const sys = cells[r.element_system]
+        if (sys) sys[r.property_name] = r.value
       })
       setMatrixData({ systems, properties, cells })
     } catch {
