@@ -162,12 +162,35 @@ export default function AdminReferencesPage() {
     setRefsError(null)
     try {
       // Use backend export endpoint (requires credentials for auth)
-      const r = await fetch(`/api/v1/reference-values/export`, {
+      const r = await fetch(`/api/v1/reference-values/export?format=json`, {
         credentials: 'include',
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
-      setRefs(Array.isArray(data) ? data : data?.data ?? [])
+      const raw = Array.isArray(data) ? data : data?.data ?? []
+      // Map backend field names to frontend ReferenceValue shape
+      const mapped = raw.map((item: any) => ({
+        id: item.staging_id || item.id || '',
+        element_system: item.element_system || '',
+        phase: item.phase || null,
+        property: item.property_name || item.property || '',
+        value: typeof item.value === 'number' ? item.value : parseFloat(item.value) || 0,
+        unit: item.unit || null,
+        uncertainty: item.uncertainty ?? null,
+        temperature: item.temperature ?? null,
+        pressure: item.pressure ?? 0,
+        source: item.source || item.source_doi || null,
+        source_doi: item.source_doi || null,
+        method: item.method || null,
+        created_at: item.created_at || null,
+        updated_at: item.updated_at || null,
+        confidence: item.confidence || null,
+        needs_review: item.needs_review ?? null,
+        status: item.status || 'approved',
+        has_reference: item.has_reference ?? true,
+        review_notes: item.review_notes || null,
+      }))
+      setRefs(mapped)
     } catch (e: any) {
       setRefsError(e.message || '加载参考值失败')
     } finally {
@@ -197,7 +220,7 @@ export default function AdminReferencesPage() {
   const fetchMatrix = useCallback(async () => {
     setLoadingMatrix(true)
     try {
-      const r = await fetch(`/api/v1/reference-values/export`, {
+      const r = await fetch(`/api/v1/reference-values/export?format=json`, {
         credentials: 'include',
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
