@@ -185,8 +185,8 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
 
       await page.goto("/admin/login")
 
-      // Fill credentials (use placeholder selectors matching rendered form)
-      await page.getByPlaceholder("请输入邮箱").fill("test_user")
+      // Fill credentials — must be valid email for HTML5 type="email" validation
+      await page.getByPlaceholder("请输入邮箱").fill("test@example.com")
       await page.getByPlaceholder("请输入密码").fill("test_password")
 
       // Submit

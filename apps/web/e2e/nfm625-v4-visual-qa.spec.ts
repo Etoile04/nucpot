@@ -8,9 +8,27 @@
  * Run: E2E_TARGET=live npx playwright test nfm625-v4-visual-qa --project=chromium
  */
 
-import { test, expect, devices } from "@playwright/test"
+import { test, expect, type Browser } from "@playwright/test"
 
 const SCREENSHOTS_DIR = "test-results/nfm625-screenshots"
+
+// Auth cookies for E2E against protected /admin/* routes
+const BASE_URL = process.env.BASE_URL || "http://localhost"
+const AUTH_DOMAIN = new URL(BASE_URL).hostname
+const AUTH_COOKIES = [
+  { name: "access_token", value: "e2e-mock-token", domain: AUTH_DOMAIN, path: "/" },
+  { name: "blog_admin_token", value: "e2e-mock-token", domain: AUTH_DOMAIN, path: "/" },
+]
+
+/** Create a browser context with auth cookies pre-injected. */
+async function createAuthContext(
+  browser: Browser,
+  viewport: { width: number; height: number },
+) {
+  const context = await browser.newContext({ viewport })
+  await context.addCookies(AUTH_COOKIES)
+  return context
+}
 
 // V4 page routes
 const V4_PAGES = [
@@ -30,8 +48,9 @@ test.describe("NFM-625 V4 Extraction Visual QA", () => {
   for (const page of V4_PAGES) {
     for (const viewport of VIEWPORTS) {
       test(`${page.name} — ${viewport.name} (${viewport.width}x${viewport.height})`, async ({ browser }) => {
-        const context = await browser.newContext({
-          viewport: { width: viewport.width, height: viewport.height },
+        const context = await createAuthContext(browser, {
+          width: viewport.width,
+          height: viewport.height,
         })
         const p = await context.newPage()
 
@@ -58,9 +77,7 @@ test.describe("NFM-625 V4 Extraction Visual QA", () => {
 
 test.describe("NFM-625 Specific Component Verification", () => {
   test("browse page — sidebar skeleton or content renders (not blank spinner)", async ({ browser }) => {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-    })
+    const context = await createAuthContext(browser, { width: 1440, height: 900 })
     const p = await context.newPage()
 
     await p.goto("/admin/v4-extraction/browse", { waitUntil: "networkidle", timeout: 30_000 })
@@ -88,9 +105,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
   })
 
   test("submit page — toast provider wrapper present", async ({ browser }) => {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-    })
+    const context = await createAuthContext(browser, { width: 1440, height: 900 })
     const p = await context.newPage()
 
     await p.goto("/admin/v4-extraction/submit", { waitUntil: "networkidle", timeout: 30_000 })
@@ -116,9 +131,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
   })
 
   test("status page — error state or job info renders", async ({ browser }) => {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-    })
+    const context = await createAuthContext(browser, { width: 1440, height: 900 })
     const p = await context.newPage()
 
     // Use a fake jobId to trigger error state
@@ -148,9 +161,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
   })
 
   test("validate page — error state or content renders", async ({ browser }) => {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-    })
+    const context = await createAuthContext(browser, { width: 1440, height: 900 })
     const p = await context.newPage()
 
     // Use a fake validationId to trigger error state
