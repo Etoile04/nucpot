@@ -29,11 +29,6 @@ from nfm_db.services.kg_graph import (
     build_neighborhood_subgraph,
     resolve_focal_node,
 )
-from nfm_db.services.kg_graph import (
-    KGSubgraphNode,
-    build_neighborhood_subgraph,
-    resolve_focal_node,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
