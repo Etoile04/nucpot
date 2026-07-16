@@ -208,7 +208,8 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
         // Already set by server response
       } else {
         // Fallback for mock mode: set both cookies manually
-        const pageDomain = new URL(page.url()).hostname
+        const baseUrl = process.env.BASE_URL || "http://localhost"
+        const pageDomain = new URL(baseUrl).hostname
         await page.context().addCookies([
           { name: "access_token", value: "mock-login-token", domain: pageDomain, path: "/" },
           { name: "blog_admin_token", value: "mock-login-token", domain: pageDomain, path: "/" },

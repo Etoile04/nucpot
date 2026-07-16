@@ -142,9 +142,11 @@ const MOCK_TOKEN = "eyJhbGciOiJIUzI1NiJ9.mock-review-token-nfm1400"
  * (local E2E) and the production domain (CI E2E).
  */
 export async function injectAuth(page: Page): Promise<void> {
-  // Derive domain from the page URL (works for localhost + production)
-  const url = new URL(page.url() || "http://localhost")
-  const domain = url.hostname
+  // Derive domain from BASE_URL env (set by CI) or fall back to localhost.
+  // page.url() returns "about:blank" before the first navigation, so we
+  // cannot rely on it for the cookie domain.
+  const baseUrl = process.env.BASE_URL || "http://localhost"
+  const domain = new URL(baseUrl).hostname
 
   await page.context().addCookies([
     { name: "access_token", value: MOCK_TOKEN, domain, path: "/" },
