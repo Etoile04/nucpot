@@ -13,13 +13,10 @@ interface AdminStats {
   pendingReviews: number
 }
 
-type Tab = 'stats' | 'info'
-
 export default function AdminPage() {
   const router = useRouter()
   const { user, loading } = useAuth()
 
-  const [tab, setTab] = useState<Tab>('stats')
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

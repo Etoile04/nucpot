@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
 
 // PATCH: Approve or reject a contribution
 export async function PATCH(request: NextRequest) {
-  const { error, status, user } = await verifyAdmin(request)
+  const { error, status } = await verifyAdmin(request)
   if (error) {
     return NextResponse.json({ error }, { status })
   }

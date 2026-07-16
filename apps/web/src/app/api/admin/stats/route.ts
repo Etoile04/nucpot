@@ -4,12 +4,12 @@ import { supabase, supabaseAdmin } from '@/lib/supabase'
 
 // GET: Admin dashboard stats
 export async function GET(request: NextRequest) {
-  const { error, status } = await verifyAdmin(request)
-  if (error) {
-    return NextResponse.json({ error }, { status })
+  const result = await verifyAdmin(request)
+  if (result.error) {
+    return NextResponse.json({ error: result.error }, { status: result.status })
   }
 
-  // Gather stats
+  // Gather stats from Supabase
   const client = supabaseAdmin || supabase
 
   const [potentials, contributions, users] = await Promise.all([

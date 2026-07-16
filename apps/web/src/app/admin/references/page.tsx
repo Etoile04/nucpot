@@ -153,15 +153,21 @@ export default function AdminReferencesPage() {
   const [loadingMatrix, setLoadingMatrix] = useState(false)
 
   // ─── Data fetching ───────────────────────────────────────────────────────
+  // Note: After Supabase migration, reference values are managed via the
+  // backend API (/api/v1/reference-values/*).  The old Next.js BFF routes
+  // (/api/admin/ref-values/*) are no longer functional in production.
 
   const fetchRefs = useCallback(async () => {
     setLoadingRefs(true)
     setRefsError(null)
     try {
-      const r = await fetch(`/api/admin/ref-values`)
+      // Use backend export endpoint (requires credentials for auth)
+      const r = await fetch(`/api/v1/reference-values/export`, {
+        credentials: 'include',
+      })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
-      setRefs(Array.isArray(data) ? data : [])
+      setRefs(Array.isArray(data) ? data : data?.data ?? [])
     } catch (e: any) {
       setRefsError(e.message || '加载参考值失败')
     } finally {
@@ -172,11 +178,13 @@ export default function AdminReferencesPage() {
   const fetchReviewItems = useCallback(async () => {
     setLoadingReview(true)
     try {
-      const r = await fetch(`/api/admin/ref-values`)
+      const r = await fetch(`/api/v1/reference-values/pending-review?per_page=100`, {
+        credentials: 'include',
+      })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
-      // Admin ref-values returns { data: [...], total, page, limit }
-      setReviewItems(Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [])
+      // Backend returns { success, data: { records, total, ... } }
+      setReviewItems(data?.data?.records ?? Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [])
     } catch {
       // fallback: filter from main list
       const pending = refs.filter(r => r.status === 'pending' || r.needs_review === true)
@@ -189,10 +197,21 @@ export default function AdminReferencesPage() {
   const fetchMatrix = useCallback(async () => {
     setLoadingMatrix(true)
     try {
-      const r = await fetch(`/api/admin/ref-values/matrix`)
+      const r = await fetch(`/api/v1/reference-values/export`, {
+        credentials: 'include',
+      })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
-      setMatrixData(data)
+      const items = Array.isArray(data) ? data : data?.data ?? []
+      // Build matrix from exported data
+      const systems = [...new Set(items.map((r: any) => r.element_system))].sort()
+      const properties = [...new Set(items.map((r: any) => r.property_name))].sort()
+      const cells: Record<string, Record<string, unknown>> = {}
+      systems.forEach(s => { cells[s] = {}; properties.forEach(p => { cells[s][p] = null; }); })
+      items.forEach((r: any) => {
+        if (cells[r.element_system]) cells[r.element_system][r.property_name] = r.value
+      })
+      setMatrixData({ systems, properties, cells })
     } catch {
       setMatrixData(null)
     } finally {
@@ -284,17 +303,15 @@ export default function AdminReferencesPage() {
       }
 
       if (editingRef) {
-        const r = await fetch(`/api/admin/ref-values/${editingRef.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        // PATCH not available in backend API — show error
+        setRefsError('编辑功能暂不可用（后端 API 迁移中）')
       } else {
-        const r = await fetch(`/api/admin/ref-values`, {
+        // POST create via bulk endpoint
+        const r = await fetch(`/api/v1/reference-values/bulk`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          headers: { 'Content-Type': 'application/json', 'Authorization': '' },
+          credentials: 'include',
+          body: JSON.stringify({ values: [body] }),
         })
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
       }
@@ -310,14 +327,8 @@ export default function AdminReferencesPage() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return
-    try {
-      const r = await fetch(`/api/admin/ref-values/${deleteTarget.id}`, { method: 'DELETE' })
-      if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`)
-      setDeleteTarget(null)
-      await fetchRefs()
-    } catch (e: any) {
-      setRefsError(e.message || '删除失败')
-    }
+    setRefsError('删除功能暂不可用（后端 API 迁移中）')
+    setDeleteTarget(null)
   }
 
   // ─── Review Handlers ─────────────────────────────────────────────────────
@@ -325,13 +336,14 @@ export default function AdminReferencesPage() {
   const handleSingleReview = async (id: string, action: 'approve' | 'reject', notes?: string) => {
     setSubmittingReview(true)
     try {
-      const body: Record<string, unknown> = action === 'approve'
-        ? { review_notes: notes }
+      const body2: Record<string, unknown> = action === 'approve'
+        ? { review_note: notes }
         : { reason: notes }
-      const r = await fetch(`/api/admin/ref-values/${id}/${action}`, {
+      const r = await fetch(`/api/v1/reference-values/${id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        credentials: 'include',
+        body: JSON.stringify(body2),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       await fetchReviewItems()
@@ -354,10 +366,14 @@ export default function AdminReferencesPage() {
       }
       if (reviewAction.notes) body[reviewAction.type === 'approve' ? 'review_notes' : 'reason'] = reviewAction.notes
 
-      const r = await fetch(`/api/admin/ref-values/batch`, {
+      const r = await fetch(`/api/v1/reference-values/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        credentials: 'include',
+        body: JSON.stringify({
+          action: reviewAction.type,
+          staging_ids: ids,
+        }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
 
