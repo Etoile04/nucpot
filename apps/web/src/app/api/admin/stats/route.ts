@@ -1,29 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyAdmin } from '@/lib/verify-admin'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
 
+// GET: Admin dashboard stats
 export async function GET(request: NextRequest) {
-  // Verify admin
-  const authHeader = request.headers.get('authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-  }
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error } = await supabase.auth.getUser(token)
-  if (error || !user) {
-    return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-  }
-
-  // Check admin role
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (profile?.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  const { error, status } = await verifyAdmin(request)
+  if (error) {
+    return NextResponse.json({ error }, { status })
   }
 
   // Gather stats
+  const client = supabaseAdmin || supabase
+
   const [potentials, contributions, users] = await Promise.all([
-    supabase.from('potentials').select('id, type, source', { count: 'exact' }),
-    supabase.from('contributions').select('id, status, action', { count: 'exact' }),
-    (supabaseAdmin || supabase).from('profiles').select('id, role', { count: 'exact' }),
+    client.from('potentials').select('id, type, source', { count: 'exact' }),
+    client.from('contributions').select('id, status, action', { count: 'exact' }),
+    client.from('profiles').select('id, role', { count: 'exact' }),
   ])
 
   const stats = {

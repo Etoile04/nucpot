@@ -1,10 +1,7 @@
 /** API client for reference data admin operations.
-
-Provides functions for:
-- Listing pending review records
-- Approving staging records
-- Rejecting staging records
-*/
+ *
+ * Uses credentials:'include' to send HttpOnly cookies for admin auth.
+ */
 
 import type {
   ApiResponse,
@@ -14,7 +11,12 @@ import type {
   ReviewResponse,
 } from "./reference-data-types"
 
-// Relative paths — next.config.ts rewrite proxy handles backend routing.
+// ── Helper ──────────────────────────────────────────────────────────────────
+
+/** Wrapped fetch with credentials:'include' for all admin API calls. */
+function adminFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: 'include' })
+}
 
 /**
  * Build query string from params object.
@@ -47,7 +49,7 @@ export async function getPendingReview(
     per_page: params.per_page ?? 20,
   })
 
-  const response = await fetch(
+  const response = await adminFetch(
     `/api/v1/reference-values/pending-review${queryString}`,
   )
 
@@ -81,7 +83,7 @@ export async function getStagingHistory(
     per_page: params.per_page ?? 20,
   })
 
-  const response = await fetch(
+  const response = await adminFetch(
     `/api/v1/reference-values/pending-review${queryString}`,
   )
 
@@ -107,7 +109,7 @@ export async function approveRecord(
 ): Promise<ReviewResponse> {
   const payload: ReviewRequest = reviewNote ? { review_note: reviewNote } : {}
 
-  const response = await fetch(
+  const response = await adminFetch(
     `/api/v1/reference-values/${stagingId}/approve`,
     {
       method: "POST",
@@ -140,7 +142,7 @@ export async function rejectRecord(
 ): Promise<ReviewResponse> {
   const payload: ReviewRequest = reviewNote ? { review_note: reviewNote } : {}
 
-  const response = await fetch(
+  const response = await adminFetch(
     `/api/v1/reference-values/${stagingId}/reject`,
     {
       method: "POST",

@@ -67,13 +67,18 @@ async def login(
     response: Response,
 ) -> Token:
     """用户登录，获取访问令牌。Sets HttpOnly cookie for browser clients."""
-    result = await db.execute(select(User).where(User.username == form_data.username))
+    # 支持用户名或邮箱登录
+    result = await db.execute(
+        select(User).where(
+            (User.username == form_data.username) | (User.email == form_data.username)
+        )
+    )
     user = result.scalar_one_or_none()
 
     if not user or not authenticate_user(user, form_data.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="用户名或密码错误",
         )
 
     # Update last login
