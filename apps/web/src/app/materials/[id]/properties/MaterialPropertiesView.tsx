@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { Typography, Spin } from "antd"
-import { MaterialPropertyTable } from "@/components/materials/MaterialPropertyTable"
+import {
+  MaterialPropertyTable,
+  type TableChangeParams,
+  type SortField,
+} from "@/components/materials/MaterialPropertyTable"
 import {
   getMaterialProperties,
   getMaterial,
@@ -12,6 +16,8 @@ import {
 } from "@/lib/materials-api"
 
 const { Title, Text } = Typography
+
+const DEFAULT_PAGE_SIZE = 50
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -22,6 +28,11 @@ interface MaterialPropertiesViewProps {
 interface ViewState {
   readonly properties: ReadonlyArray<MaterialProperty>
   readonly total: number
+  readonly page: number
+  readonly pageSize: number
+  readonly sortField: SortField | null
+  readonly sortOrder: "asc" | "desc" | null
+  readonly filterText: string
   readonly loading: boolean
   readonly error: string | null
   readonly material: MaterialSummary | null
@@ -30,6 +41,11 @@ interface ViewState {
 const INITIAL_STATE: ViewState = {
   properties: [],
   total: 0,
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+  sortField: null,
+  sortOrder: null,
+  filterText: "",
   loading: true,
   error: null,
   material: null,
@@ -42,44 +58,81 @@ export function MaterialPropertiesView({
 }: MaterialPropertiesViewProps) {
   const [state, setState] = useState<ViewState>(INITIAL_STATE)
 
-  const fetchData = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, error: null }))
+  const fetchData = useCallback(
+    async (page: number, pageSize: number, sortField: SortField | null, sortOrder: "asc" | "desc" | null, filterText: string) => {
+      setState((prev) => ({ ...prev, loading: true, error: null }))
 
-    try {
-      const [material, propsResult] = await Promise.all([
-        getMaterial(materialId).catch(() => null),
+      // Use Promise.allSettled so a partial failure (e.g. properties 500
+      // while material 200) does not blank the header. Promise.all used to
+      // short-circuit and discard the successful material result.
+      const [materialResult, propsResult] = await Promise.allSettled([
+        getMaterial(materialId),
         getMaterialProperties(materialId, {
-          page: 1,
-          limit: 50,
-          sort: "name",
-          order: "asc",
+          page,
+          limit: pageSize,
+          sort: sortField ?? undefined,
+          order: sortOrder ?? undefined,
+          filter: filterText.trim() || undefined,
         }),
       ])
 
-      setState({
-        material,
-        properties: propsResult.data,
-        total: propsResult.meta.total,
-        loading: false,
-        error: null,
-      })
-    } catch (err) {
+      const material =
+        materialResult.status === "fulfilled" ? materialResult.value : null
+      const properties =
+        propsResult.status === "fulfilled"
+          ? propsResult.value
+          : { data: [] as ReadonlyArray<MaterialProperty>, meta: { total: 0, page: 1, limit: pageSize } }
+      const error =
+        propsResult.status === "rejected"
+          ? propsResult.reason instanceof Error
+            ? propsResult.reason.message
+            : "加载失败"
+          : null
+
       setState((prev) => ({
         ...prev,
+        material,
+        properties: properties.data,
+        total: properties.meta.total,
         loading: false,
-        error: err instanceof Error ? err.message : "加载失败",
+        error,
       }))
-    }
-  }, [materialId])
+    },
+    [materialId],
+  )
 
   useEffect(() => {
-    void fetchData()
-  }, [fetchData])
+    void fetchData(state.page, state.pageSize, state.sortField, state.sortOrder, state.filterText)
+  }, [fetchData, state.page, state.pageSize, state.sortField, state.sortOrder, state.filterText])
+
+  const handlePageChange = useCallback(
+    (params: TableChangeParams) => {
+      setState((prev) => ({
+        ...prev,
+        page: params.page,
+        pageSize: params.pageSize,
+        sortField: params.sortField,
+        sortOrder: params.sortOrder,
+      }))
+    },
+    [],
+  )
+
+  const handleFilterChange = useCallback(
+    (filter: string) => {
+      setState((prev) => ({
+        ...prev,
+        filterText: filter,
+        page: 1,
+      }))
+    },
+    [],
+  )
 
   return (
-    <main className="max-w-[1200px] mx-auto px-6 py-8">
+    <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-6">
         <div>
           <Title level={2} className="!m-0 text-white">
             {state.material?.name ?? "材料属性"}
@@ -101,7 +154,7 @@ export function MaterialPropertiesView({
       {/* Loading state */}
       {state.loading && !state.properties.length && (
         <div className="flex items-center justify-center py-20">
-          <Spin tip="加载中..."><div /></Spin>
+          <Spin tip="加载中..."><div className="h-8" /></Spin>
         </div>
       )}
 
@@ -111,6 +164,11 @@ export function MaterialPropertiesView({
           data={state.properties}
           total={state.total}
           error={state.error}
+          page={state.page}
+          pageSize={state.pageSize}
+          filterText={state.filterText}
+          onPageChange={handlePageChange}
+          onFilterChange={handleFilterChange}
         />
       )}
     </main>

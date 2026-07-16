@@ -1,11 +1,12 @@
 """Materials REST API endpoints (NFM-696).
 
-- GET  /materials              — paginated, filtered list
-- GET  /materials/search       — full-text search by name/alias/formula
-- GET  /materials/{id}         — detail with aliases + composition
-- POST /materials              — create (admin)
-- POST /materials/batch-import — bulk CSV/JSON import (NFM-1141)
-- PATCH /materials/{id}        — update (admin)
+- GET  /materials                       — paginated, filtered list
+- GET  /materials/search                — full-text search by name/alias/formula
+- GET  /materials/{id}                  — detail with aliases + composition
+- GET  /materials/{id}/properties       — property table (NFM-1067)
+- POST /materials                       — create (admin)
+- POST /materials/batch-import          — bulk CSV/JSON import (NFM-1141)
+- PATCH /materials/{id}                 — update (admin)
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from nfm_db.schemas.material import (
     MaterialResponse,
     MaterialUpdate,
 )
+from nfm_db.schemas.property import MaterialPropertyListResponse
 from nfm_db.services.batch_import_service import (
     BATCH_IMPORT_MAX_SIZE_MB,
     batch_import_materials,
@@ -42,6 +44,7 @@ from nfm_db.services.material_service import (
     search_materials,
     update_material,
 )
+from nfm_db.services.property_service import list_material_properties
 
 logger = logging.getLogger(__name__)
 
@@ -193,4 +196,43 @@ async def batch_import_endpoint(
     finally:
         lock.release()
 
+    return ApiResponse(success=True, data=result)
+
+
+# ---------------------------------------------------------------------------
+# Per-material property table (NFM-1067)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/materials/{material_id}/properties",
+    response_model=ApiResponse[MaterialPropertyListResponse],
+)
+async def list_material_properties_endpoint(
+    material_id: UUID,
+    page: int = Query(1, ge=1, description="1-based page index"),
+    limit: int = Query(50, ge=1, le=200, description="Page size (1-200)"),
+    sort: str = Query("name", pattern="^(name|value|created_at)$"),
+    order: Literal["asc", "desc"] = Query("asc"),
+    filter: str | None = Query(None, description="Case-insensitive name substring"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[MaterialPropertyListResponse]:
+    """List a single material's property table (NFM-1067).
+
+    Returns a flat list of ``{id, name, value, unit, source, confidence}``
+    rows shaped for the React property table. ``404`` when the material
+    does not exist; ``200`` with an empty list when the material exists
+    but has no measurements.
+    """
+    result = await list_material_properties(
+        db,
+        material_id,
+        page=page,
+        limit=limit,
+        sort=sort,
+        order=order,
+        filter=filter,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Material not found")
     return ApiResponse(success=True, data=result)
