@@ -35,11 +35,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Check for JWT token in cookies or Authorization header
-  // The app uses localStorage for token storage (blog_admin_token),
-  // but middleware runs on Edge and can't access localStorage.
-  // We check the cookie version that gets set on login.
+  // Check for JWT token in cookies.
+  // After auth unification (Sprint 3), the server sets an HttpOnly
+  // ``access_token`` cookie.  Legacy ``blog_admin_token`` is kept for
+  // backward compatibility during migration.
   const token =
+    request.cookies.get("access_token")?.value ||
     request.cookies.get("blog_admin_token")?.value ||
     request.cookies.get("auth_token")?.value
 

@@ -131,23 +131,26 @@ const TOKEN_KEY = "blog_admin_token"
 const MOCK_TOKEN = "eyJhbGciOiJIUzI1NiJ9.mock-review-token-nfm1400"
 
 /**
- * Inject a mock JWT token into both cookies and localStorage.
+ * Inject mock auth into the browser context.
  *
- * Two mechanisms are needed:
- *  1. Browser cookie — bypasses Edge middleware (src/middleware.ts) which
- *     checks request.cookies.get("blog_admin_token") before rendering any
- *     page under /review/*. Without this cookie, the middleware returns a 307
- *     redirect to /admin/login and the page never loads.
- *  2. localStorage via addInitScript — so that getToken() in api-client.ts
- *     returns a truthy value for client-side API calls.
+ * After auth unification (Sprint 3), auth uses HttpOnly ``access_token``
+ * cookies.  We inject both ``access_token`` (new) and ``blog_admin_token``
+ * (legacy middleware compat) so Edge middleware and client-side guards
+ * both see a valid session.
+ *
+ * Cookie domain is set per-base-URL so it works against both localhost
+ * (local E2E) and the production domain (CI E2E).
  */
 export async function injectAuth(page: Page): Promise<void> {
+  // Derive domain from the page URL (works for localhost + production)
+  const url = new URL(page.url() || "http://localhost")
+  const domain = url.hostname
+
   await page.context().addCookies([
-    { name: TOKEN_KEY, value: MOCK_TOKEN, domain: "localhost", path: "/" },
+    { name: "access_token", value: MOCK_TOKEN, domain, path: "/" },
+    { name: TOKEN_KEY, value: MOCK_TOKEN, domain, path: "/" },
   ])
-  // Pass token values as args — Playwright serializes the fn but does NOT
-  // capture outer-scope Node.js variables, so TOKEN_KEY/MOCK_TOKEN would
-  // be undefined inside the browser context without explicit argument passing.
+  // Also keep localStorage for any legacy code paths
   await page.context().addInitScript(
     (key: string, value: string) => {
       localStorage.setItem(key, value)
