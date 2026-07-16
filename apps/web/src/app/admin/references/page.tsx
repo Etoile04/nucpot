@@ -202,12 +202,21 @@ export default function AdminReferencesPage() {
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = await r.json()
-      const items = Array.isArray(data) ? data : data?.data ?? []
+      const items: any[] = Array.isArray(data) ? data : data?.data ?? []
       // Build matrix from exported data
-      const systems = [...new Set(items.map((r: any) => r.element_system))].sort()
-      const properties = [...new Set(items.map((r: any) => r.property_name))].sort()
+      const systemSet = new Set<string>()
+      const propSet = new Set<string>()
+      items.forEach((r: any) => {
+        if (r.element_system) systemSet.add(String(r.element_system))
+        if (r.property_name) propSet.add(String(r.property_name))
+      })
+      const systems = Array.from(systemSet).sort()
+      const properties = Array.from(propSet).sort()
       const cells: Record<string, Record<string, unknown>> = {}
-      systems.forEach(s => { cells[s] = {}; properties.forEach(p => { cells[s][p] = null; }); })
+      systems.forEach((s) => {
+        cells[s] = {}
+        properties.forEach((p) => { cells[s][p] = null })
+      })
       items.forEach((r: any) => {
         if (cells[r.element_system]) cells[r.element_system][r.property_name] = r.value
       })
