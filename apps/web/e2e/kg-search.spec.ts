@@ -77,9 +77,9 @@ test.describe("KG Search — interaction tests", { tag: "@integration" }, () => 
 
     await page.goto("/kg/search", { waitUntil: "domcontentloaded" })
 
-    // Locate the search input
+    // Locate the search input — production uses English placeholder
     const searchInput = page.locator(
-      'input[type="search"], input[name="q"], input[placeholder*="搜索" i]'
+      'input[type="search"], input[name="q"], input[placeholder*="search" i], input[placeholder*="搜索" i]'
     ).first()
     await expect(searchInput).toBeVisible({ timeout: 15_000 })
 
@@ -119,7 +119,9 @@ test.describe("KG Search — interaction tests", { tag: "@integration" }, () => 
     const consoleErrors = collectConsoleErrors(page)
     const pageErrors = collectPageErrors(page)
 
-    await page.goto("/kg/search", { waitUntil: "networkidle" })
+    // Use domcontentloaded instead of networkidle — production KG page
+    // has long-polling/websocket connections that prevent networkidle.
+    await page.goto("/kg/search", { waitUntil: "domcontentloaded" })
 
     // Wait for full hydration
     await page.waitForTimeout(2000)
