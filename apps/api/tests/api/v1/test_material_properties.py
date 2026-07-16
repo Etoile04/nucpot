@@ -376,7 +376,7 @@ async def test_list_material_properties_range_value_formatted(async_client, db_s
 
     assert response.status_code == 200
     row = response.json()["data"]["data"][0]
-    assert row["value"] == "4.0–6.0"
+    assert row["value"] == "4.0-6.0"
 
 
 @pytest.mark.asyncio

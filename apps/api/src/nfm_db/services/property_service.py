@@ -245,7 +245,7 @@ def _format_measurement_value(measurement: PropertyMeasurement) -> str:
     if measurement.value_expression is not None:
         return str(measurement.value_expression)
     if measurement.value_min is not None and measurement.value_max is not None:
-        return f"{float(measurement.value_min)}–{float(measurement.value_max)}"
+        return f"{float(measurement.value_min)}-{float(measurement.value_max)}"
     if measurement.value_scalar is not None:
         # Decimal → float so the trailing zeros from Numeric(16, 6) are dropped
         # (the database returns Decimal("5.680000") for value_scalar=5.68).
