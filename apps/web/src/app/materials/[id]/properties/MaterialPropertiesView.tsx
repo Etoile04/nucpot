@@ -166,6 +166,8 @@ export function MaterialPropertiesView({
           error={state.error}
           page={state.page}
           pageSize={state.pageSize}
+          sortField={state.sortField}
+          sortOrder={state.sortOrder}
           filterText={state.filterText}
           onPageChange={handlePageChange}
           onFilterChange={handleFilterChange}
