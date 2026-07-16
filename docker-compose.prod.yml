@@ -64,6 +64,7 @@ services:
     restart: unless-stopped
     ports:
       - "${PROD_API_HOST_PORT:-8001}:8000"
+      - "8002:8000"  # CF Tunnel ingress (verify.nucpot.dpdns.org)
     environment:
       NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
       NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
