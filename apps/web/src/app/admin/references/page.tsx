@@ -215,10 +215,10 @@ export default function AdminReferencesPage() {
       const cells: Record<string, Record<string, unknown>> = {}
       systems.forEach((s) => {
         cells[s] = {}
-        properties.forEach((p) => { cells[s][p] = null })
+        properties.forEach((p) => { cells[s]?.[p] = null })
       })
       items.forEach((r: any) => {
-        if (cells[r.element_system]) cells[r.element_system][r.property_name] = r.value
+        if (cells[r.element_system]) cells[r.element_system]?.[r.property_name] = r.value
       })
       setMatrixData({ systems, properties, cells })
     } catch {
