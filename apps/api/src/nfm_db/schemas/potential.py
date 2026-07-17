@@ -24,6 +24,11 @@ class PotentialSummary(BaseModel):
     version: str = "1.0"
     tags: list[str] = []
     file_url: str | None = None
+    # Origin of the record (NFM-296). Defaults to "local" so existing
+    # callers constructing PotentialSummary(...) without an explicit
+    # provider continue to work; OpenKIM mappers overwrite with
+    # provider="openkim".
+    provider: str = "local"
 
 
 class PotentialDetail(PotentialSummary):
