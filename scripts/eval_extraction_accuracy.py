@@ -55,6 +55,47 @@ _TABLE_EXTRACTION_TARGET = 0.60
 _VALUE_PARSING_TARGET = 0.60
 _OVERALL_TARGET = 0.60
 
+# Minimum fixture counts per figure type (from generate_fixtures.py DEFAULT_COUNTS)
+EXPECTED_COUNTS: dict[str, int] = {
+    "plot": 20,
+    "table": 15,
+    "microstructure": 10,
+    "diagram": 5,
+}
+
+
+class DiscoveredFixture:
+    """Lightweight fixture descriptor returned by discover_fixtures."""
+
+    __slots__ = ("figure_type", "fixture_dir")
+
+    def __init__(self, figure_type: str, fixture_dir: Path) -> None:
+        self.figure_type = figure_type
+        self.fixture_dir = fixture_dir
+
+
+def discover_fixtures(fixtures_root: Path) -> list[DiscoveredFixture]:
+    """Walk the fixture tree and return one entry per fixture directory.
+
+    Expected layout::
+
+        fixtures_root/<figure_type>/<paper_id>/ground_truth.json
+    """
+    if not fixtures_root.is_dir():
+        raise FileNotFoundError(f"Fixture root not found: {fixtures_root}")
+
+    results: list[DiscoveredFixture] = []
+    for fig_type_dir in sorted(fixtures_root.iterdir()):
+        if not fig_type_dir.is_dir():
+            continue
+        for paper_dir in sorted(fig_type_dir.iterdir()):
+            if not paper_dir.is_dir():
+                continue
+            if (paper_dir / "ground_truth.json").exists():
+                results.append(DiscoveredFixture(fig_type_dir.name, paper_dir))
+    return results
+
+
 _GOLDEN_FIXTURES_DIR = _REPO_ROOT / "apps" / "api" / "tests" / "fixtures" / "golden"
 _HELD_OUT_MANIFEST_PATH = (
     _REPO_ROOT / "apps" / "api" / "tests" / "fixtures" / "extraction" / "held_out" / "manifest.json"
