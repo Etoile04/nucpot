@@ -94,7 +94,7 @@ ignore = [
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
 # sys.path manipulation before module import is intentional
-"tests/eval/test_accuracy_benchmark.py" = ["E402"]
+"tests/eval/test_accuracy_benchmark.py" = ["E402", "RUF059"]
 # Scientific unicode (multiplication sign, Greek rho) in fixtures and test data is intentional
 "scripts/generate_golden_fixtures.py" = ["RUF001"]
 "src/nfm_db/services/conflict_resolver.py" = ["RUF002"]
@@ -173,6 +173,10 @@ module = [
     "nfm_db.services.potential_service",
     "nfm_db.schemas.domain_expert",
     "nfm_db.services.blog_post",
+    "nfm_db.models.kg_node",
+    "nfm_db.services.multi_source_fusion",
+    "nfm_db.services.openkim_mapper",
+    "nfm_db.services.providers.openkim",
 ]
 ignore_errors = true
 
