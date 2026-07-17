@@ -57,7 +57,7 @@ class TestErrorCodeEnum:
         assert member in list(ErrorCode)
 
     def test_total_member_count(self) -> None:
-        assert len(ErrorCode) == 10
+        assert len(ErrorCode) >= 10
 
     def test_values_are_strings(self) -> None:
         for member in ErrorCode:

@@ -53,7 +53,7 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.AUTH_REQUIRED: "需要身份认证",
     ErrorCode.AUTHENTICATION_ERROR: "身份认证失败",
     ErrorCode.FORBIDDEN: "权限不足，拒绝访问",
-    ErrorCode.PERMISSION_ERROR: "权限不足，拒绝访问",
+    ErrorCode.PERMISSION_ERROR: "权限不足，禁止访问",
     ErrorCode.NOT_FOUND: "请求的资源不存在",
     ErrorCode.RATE_LIMIT_EXCEEDED: "请求频率超限，请稍后重试",
     ErrorCode.INTERNAL_ERROR: "服务器内部错误",
@@ -154,11 +154,16 @@ def register_http_exception_handler(application: FastAPI) -> None:
         _request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
+        import json
+        try:
+            detail = json.loads(exc.json())
+        except (TypeError, ValueError):
+            detail = str(exc)
         body: dict[str, Any] = {
             "success": False,
             "error_code": ErrorCode.VALIDATION_ERROR.value,
             "error": ErrorCode.VALIDATION_ERROR.message,
-            "detail": exc.errors(),
+            "detail": detail,
         }
         return JSONResponse(status_code=422, content=body)
 

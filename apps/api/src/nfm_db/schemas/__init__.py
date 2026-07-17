@@ -2,6 +2,8 @@
 
 from nfm_db.schemas.common import (  # noqa: F401
     ApiResponse,
+    ErrorCode,
+    ErrorResponse,
     PaginatedResponse,
     PaginationParams,
 )
