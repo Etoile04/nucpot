@@ -60,47 +60,48 @@ function renderTableData(table: V4TableResult) {
             fontSize: 13,
           }}
         >
-          {/* Sub-headers row (if present) */}
-          {tableData.headers?.sub_headers &&
-            tableData.headers.sub_headers.length > 0 && (
-              <tr>
-                {tableData.headers.sub_headers.map((sub, i) => (
-                  <th
-                    key={`sub-h-${i}`}
-                    style={{
-                      padding: "4px 12px",
-                      background: "#f9fafb",
-                      border: "1px solid var(--color-border, #e5e7eb)",
-                      textAlign: "left",
-                      fontWeight: 500,
-                      fontSize: 11,
-                      color: "#6b7280",
-                    }}
-                  >
-                    {sub}
-                  </th>
-                ))}
-              </tr>
-            )}
+          {/* Header rows */}
+          <thead>
+            {tableData.headers?.sub_headers &&
+              tableData.headers.sub_headers.length > 0 && (
+                <tr>
+                  {tableData.headers.sub_headers.map((sub, i) => (
+                    <th
+                      key={`sub-h-${i}`}
+                      style={{
+                        padding: "4px 12px",
+                        background: "#f9fafb",
+                        border: "1px solid var(--color-border, #e5e7eb)",
+                        textAlign: "left",
+                        fontWeight: 500,
+                        fontSize: 11,
+                        color: "#6b7280",
+                      }}
+                    >
+                      {sub}
+                    </th>
+                  ))}
+                </tr>
+              )}
 
-          {/* Header row */}
-          <tr>
-            {columns.map((col, i) => (
-              <th
-                key={`h-${i}`}
-                style={{
-                  padding: "8px 12px",
-                  background: "#f3f4f6",
-                  border: "1px solid var(--color-border, #e5e7eb)",
-                  textAlign: "left",
-                  fontWeight: 600,
-                  fontSize: 12,
-                }}
-              >
-                {col}
-              </th>
-            ))}
-          </tr>
+            <tr>
+              {columns.map((col, i) => (
+                <th
+                  key={`h-${i}`}
+                  style={{
+                    padding: "8px 12px",
+                    background: "#f3f4f6",
+                    border: "1px solid var(--color-border, #e5e7eb)",
+                    textAlign: "left",
+                    fontWeight: 600,
+                    fontSize: 12,
+                  }}
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
 
           {/* Data rows */}
           <tbody>

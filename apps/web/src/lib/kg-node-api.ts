@@ -66,6 +66,26 @@ interface ApiResponse<T> {
   readonly data: T
 }
 
+/**
+ * Extract a human-readable message from a FastAPI error body.
+ *
+ * FastAPI returns `{ detail: [{loc, msg, type}] }` for validation errors
+ * (422) but `{ detail: "string" }` for simple errors. This helper handles
+ * both shapes so the UI never renders `[object Object]`.
+ */
+function extractDetailMessage(body: Record<string, unknown>): string | undefined {
+  const { detail } = body
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .filter((item: unknown) => item !== null && typeof item === "object")
+      .map((item) => (item as Record<string, unknown>).msg)
+      .filter((m): m is string => typeof m === "string")
+    return msgs.length > 0 ? msgs.join("; ") : undefined
+  }
+  if (typeof detail === "string") return detail
+  return undefined
+}
+
 function authHeaders(): Record<string, string> {
   return {
     'Content-Type': 'application/json',
@@ -77,7 +97,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(
-      body.detail ?? body.message ?? `API error: ${res.status}`,
+      extractDetailMessage(body) ?? (body.message as string) ?? `API error: ${res.status}`,
     )
   }
   return res.json() as Promise<T>
