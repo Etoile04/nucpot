@@ -30,8 +30,8 @@ from nfm_db.models.kg import VALID_NODE_TYPES, KGEdge, KGNode
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.kg import (
-    GraphEdgeItem,
-    GraphNodeItem,
+    KGGraphEdge,
+    KGGraphNode,
     KGGraphResponse,
     KGNodeDetail,
     KGRelationsResponse,
@@ -285,9 +285,9 @@ _NODE_TYPE_MAP: dict[str, str] = {
 }
 
 
-def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> GraphNodeItem:
-    """Map a KGNode to a GraphNodeItem for the visualization response."""
-    return GraphNodeItem(
+def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> KGGraphNode:
+    """Map a KGNode to a KGGraphNode for the visualization response."""
+    return KGGraphNode(
         id=str(node.id),
         label=node.label,
         type=_NODE_TYPE_MAP.get(node.node_type, "default"),
@@ -297,9 +297,9 @@ def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> GraphNodeItem
     )
 
 
-def _build_graph_edge(edge: KGEdge) -> GraphEdgeItem:
-    """Map a KGEdge to a GraphEdgeItem for the visualization response."""
-    return GraphEdgeItem(
+def _build_graph_edge(edge: KGEdge) -> KGGraphEdge:
+    """Map a KGEdge to a KGGraphEdge for the visualization response."""
+    return KGGraphEdge(
         id=str(edge.id),
         source=str(edge.source_node_id),
         target=str(edge.target_node_id),
@@ -363,8 +363,8 @@ async def get_kg_graph(
     node_ids = [n.id for n in node_rows]
 
     # Fetch edges for these nodes (both outgoing and incoming)
-    graph_nodes: list[GraphNodeItem] = []
-    graph_edges: list[GraphEdgeItem] = []
+    graph_nodes: list[KGGraphNode] = []
+    graph_edges: list[KGGraphEdge] = []
     total_edges: int = 0
 
     if node_ids:
