@@ -93,6 +93,13 @@ ignore = [
 # NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
+# sys.path manipulation before module import is intentional
+"tests/eval/test_accuracy_benchmark.py" = ["E402"]
+# Scientific unicode (multiplication sign, Greek rho) in fixtures and test data is intentional
+"scripts/generate_golden_fixtures.py" = ["RUF001"]
+"src/nfm_db/services/conflict_resolver.py" = ["RUF002"]
+"src/nfm_db/services/kg_query_service.py" = ["RUF002"]
+"tests/test_kg_query_service.py" = ["RUF001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nfm_db"]

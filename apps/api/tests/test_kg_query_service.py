@@ -21,7 +21,6 @@ from nfm_db.services.kg_query_service import (
     relation_query,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — deterministic IDs for reproducibility
 # ---------------------------------------------------------------------------

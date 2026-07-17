@@ -17,7 +17,7 @@ import statistics
 from datetime import datetime
 from typing import Any
 
-from nfm_db.models.conflict_record import ConflictStrategy, ConflictStatus
+from nfm_db.models.conflict_record import ConflictStrategy
 
 logger = logging.getLogger(__name__)
 

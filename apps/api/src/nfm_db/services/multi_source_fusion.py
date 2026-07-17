@@ -27,7 +27,7 @@ from nfm_db.models.conflict_record import (
     ConflictRecord,
     ConflictStatus,
 )
-from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.kg import KGEdge
 from nfm_db.models.property import PropertyType
 from nfm_db.schemas.conflict import FusionResult
 from nfm_db.services.conflict_resolver import (
