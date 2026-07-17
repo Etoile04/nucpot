@@ -17,7 +17,7 @@ export default async function OntologyPage({ searchParams }: OntologyPageProps) 
   const safeNode = node && node.length <= 200 ? node : undefined;
   const safeCorpus = corpus && corpus.length <= 200 ? corpus : undefined;
   return (
-    <div className="ontology-page h-full">
+    <div className="ontology-page h-full flex flex-col">
       <OntologyRecordRef node={safeNode} corpus={safeCorpus} />
     </div>
   );
