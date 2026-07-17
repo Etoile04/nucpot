@@ -30,6 +30,9 @@ from nfm_db.models.kg import VALID_NODE_TYPES, KGEdge, KGNode
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.kg import (
+    GraphEdgeItem,
+    GraphNodeItem,
+    KGGraphResponse,
     KGNodeDetail,
     KGRelationsResponse,
     KGSearchItem,
@@ -264,6 +267,156 @@ async def _structured_search(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+# ===========================================================================
+# Graph visualization endpoint (NFM-1093)
+# ===========================================================================
+
+# Map KGNode.node_type → GraphCanvas GraphNodeType
+_NODE_TYPE_MAP: dict[str, str] = {
+    "Material": "material",
+    "Property": "property",
+    "Experiment": "entity",
+    "Condition": "entity",
+    "Publication": "entity",
+    "Measurement": "entity",
+}
+
+
+def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> GraphNodeItem:
+    """Map a KGNode to a GraphNodeItem for the visualization response."""
+    return GraphNodeItem(
+        id=str(node.id),
+        label=node.label,
+        type=_NODE_TYPE_MAP.get(node.node_type, "default"),
+        size=node.confidence,
+        color="",
+        child_count=edge_count.get(str(node.id), 0),
+    )
+
+
+def _build_graph_edge(edge: KGEdge) -> GraphEdgeItem:
+    """Map a KGEdge to a GraphEdgeItem for the visualization response."""
+    return GraphEdgeItem(
+        id=str(edge.id),
+        source=str(edge.source_node_id),
+        target=str(edge.target_node_id),
+        label=edge.relation_type,
+        type=edge.relation_type,
+    )
+
+
+@router.get(
+    "/kg/graph",
+    response_model=ApiResponse[KGGraphResponse],
+    summary="Get graph data for visualization",
+)
+async def get_kg_graph(
+    type: str | None = Query(
+        None, description="Optional filter by node_type (Material, Property, etc.)"
+    ),
+    limit: int = Query(200, ge=1, le=500, description="Max nodes to return"),
+    edge_limit: int = Query(
+        500, ge=1, le=2000, description="Max edges to return"
+    ),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[KGGraphResponse]:
+    """Return nodes and edges formatted for force-directed graph visualization.
+
+    Returns a flat list of nodes (mapped to GraphCanvas GraphNode types)
+    and edges suitable for rendering in the interactive /kg/explore page.
+    Paginates both nodes and edges independently to stay within
+    bundle-size limits.
+    """
+    # Validate type filter
+    if type is not None and type not in VALID_NODE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid node_type: '{type}'. "
+                f"Must be one of: {', '.join(sorted(VALID_NODE_TYPES))}"
+            ),
+        )
+
+    # Build node query
+    node_filter = [KGNode.status == "active"]
+    if type is not None:
+        node_filter.append(KGNode.node_type == type)
+
+    # Count nodes
+    node_count_stmt = (
+        select(func.count()).select_from(KGNode).where(*node_filter)
+    )
+    total_nodes: int = (await session.execute(node_count_stmt)).scalar_one()
+
+    # Fetch nodes
+    node_stmt = (
+        select(KGNode)
+        .where(*node_filter)
+        .order_by(KGNode.label.asc())
+        .limit(limit)
+    )
+    node_rows = (await session.execute(node_stmt)).scalars().all()
+
+    node_ids = [n.id for n in node_rows]
+
+    # Fetch edges for these nodes (both outgoing and incoming)
+    graph_nodes: list[GraphNodeItem] = []
+    graph_edges: list[GraphEdgeItem] = []
+    total_edges: int = 0
+
+    if node_ids:
+        # Count edges per node for child_count
+        edge_count_stmt = (
+            select(
+                KGEdge.source_node_id,
+                func.count().label("cnt"),
+            )
+            .where(
+                or_(
+                    KGEdge.source_node_id.in_(node_ids),
+                    KGEdge.target_node_id.in_(node_ids),
+                )
+            )
+            .group_by(KGEdge.source_node_id)
+        )
+        edge_count_rows = (await session.execute(edge_count_stmt)).all()
+        edge_count_map = {str(row[0]): row[1] for row in edge_count_rows}
+
+        # Fetch edges
+        edge_filter = [
+            or_(
+                KGEdge.source_node_id.in_(node_ids),
+                KGEdge.target_node_id.in_(node_ids),
+            )
+        ]
+        total_edges_stmt = (
+            select(func.count()).select_from(KGEdge).where(*edge_filter)
+        )
+        total_edges = (await session.execute(total_edges_stmt)).scalar_one()
+
+        edge_stmt = (
+            select(KGEdge)
+            .where(*edge_filter)
+            .limit(edge_limit)
+        )
+        edge_rows = (await session.execute(edge_stmt)).scalars().all()
+
+        graph_nodes = [
+            _build_graph_node(n, edge_count_map) for n in node_rows
+        ]
+        graph_edges = [_build_graph_edge(e) for e in edge_rows]
+
+    return ApiResponse(
+        success=True,
+        data=KGGraphResponse(
+            nodes=graph_nodes,
+            edges=graph_edges,
+            total_nodes=total_nodes,
+            total_edges=total_edges,
+        ),
     )
 
 

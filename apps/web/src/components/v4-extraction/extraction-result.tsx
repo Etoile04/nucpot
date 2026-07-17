@@ -31,12 +31,10 @@ function getMultimodalSummary(
   if (totalMultimodal === 0) return null
 
   const avgConfidence =
-    totalMultimodal > 0
-      ? [
-          ...figures.map((f) => f.extraction.plot_data?.confidence ?? 0),
-          ...tables.map((t) => t.table_data.confidence),
-        ].reduce((sum, c) => sum + c, 0) / totalMultimodal
-      : 0
+    [
+      ...figures.map((f) => f.extraction.plot_data?.confidence ?? 0),
+      ...tables.map((t) => t.table_data.confidence),
+    ].reduce((sum, c) => sum + c, 0) / totalMultimodal
 
   return {
     figureCount,
