@@ -257,9 +257,17 @@ class TestConflictStatusEnum:
             assert isinstance(member.value, str)
 
     def test_expected_status_values(self) -> None:
-        """ConflictStatus has exactly the 3 required values."""
+        """ConflictStatus exposes the lifecycle states used by multi_source_fusion
+        and fusion_pipeline services."""
         values = {s.value for s in ConflictStatus}
-        assert values == {"pending", "resolved", "escalated"}
+        assert values == {
+            "pending",
+            "resolved",
+            "auto_resolved",
+            "manually_resolved",
+            "escalated",
+            "dismissed",
+        }
 
     def test_pending_value(self) -> None:
         assert ConflictStatus.PENDING == "pending"
