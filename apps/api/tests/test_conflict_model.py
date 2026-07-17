@@ -18,10 +18,10 @@ from nfm_db.models.conflict import (
     ConflictStatus,
     ResolutionStrategy,
 )
+from nfm_db.models.kg import KGNode
 
 # Backward-compatible alias used by existing tests
 ConflictStrategy = ResolutionStrategy
-from nfm_db.models.kg import KGNode
 
 
 class TestConflictRecordCreation:

@@ -14,7 +14,9 @@ COPY apps/api/src/ ./src/
 COPY apps/api/migrations/ ./migrations/
 
 # Install the package (now source is available for setuptools)
-RUN pip install --no-cache-dir .
+# --timeout/--retries guard against transient pip mirror read timeouts on
+# self-hosted runners (e.g. files.pythonhosted.org ReadTimeoutError).
+RUN pip install --no-cache-dir --timeout=120 --retries=5 .
 
 # Set PYTHONPATH so uvicorn/celery can find nfm_db
 ENV PYTHONPATH=/app/src
