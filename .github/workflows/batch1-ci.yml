@@ -97,7 +97,7 @@ jobs:
       - name: Unit tests (pytest)
         run: |
           cd "$GITHUB_WORKSPACE"
-          uv run pytest \
+          uv run --project apps/api pytest \
             apps/api/tests/test_extraction_pipeline_multimodal.py \
             apps/api/tests/test_plot_extractor.py \
             apps/api/tests/test_table_extractor.py \
