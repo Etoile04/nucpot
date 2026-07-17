@@ -32,7 +32,7 @@ class CompositeProvider:
         local_rows = await self.local.list_summaries(filters)
         try:
             openkim_rows = await self.openkim.list_summaries(filters)
-        except Exception:  # noqa: BLE001 — defensive, never fail the list
+        except Exception:
             logger.warning("OpenKIM list_summaries raised; serving local-only")
             openkim_rows = []
         return [*local_rows, *openkim_rows]
@@ -43,6 +43,6 @@ class CompositeProvider:
             return detail
         try:
             return await self.openkim.get_detail(potential_id)
-        except Exception:  # noqa: BLE001 — defensive, never fail the lookup
+        except Exception:
             logger.warning("OpenKIM get_detail raised; returning None")
             return None

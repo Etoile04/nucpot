@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from celery.exceptions import Retry
@@ -827,7 +827,7 @@ class TestPersistResultsHappyPath:
             mock_asyncio_run.return_value = None
             task_instance = _make_task_instance(mock_task_request)
 
-            result = _md_mod._run_md_verification_task_impl(
+            _ = _md_mod._run_md_verification_task_impl(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),
@@ -866,7 +866,7 @@ class TestPersistResultsHappyPath:
             mock_asyncio_run.return_value = None
             task_instance = _make_task_instance(mock_task_request)
 
-            result = _md_mod._run_md_verification_task_impl(
+            _ = _md_mod._run_md_verification_task_impl(
                 task_instance,
                 mock_job_id,
                 str(mock_potential_file),

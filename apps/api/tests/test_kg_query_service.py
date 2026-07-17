@@ -21,7 +21,6 @@ from nfm_db.services.kg_query_service import (
     relation_query,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — deterministic IDs for reproducibility
 # ---------------------------------------------------------------------------
@@ -50,7 +49,7 @@ async def seed_nodes(db_session) -> dict[str, uuid.UUID]:
             id=_DENSITY_PROP_ID,
             node_type="Property",
             label="Density",
-            aliases=json.dumps(["ρ"]),
+            aliases=json.dumps(["rho"]),
             properties={"unit": "g/cm³", "type": "physical"},
             confidence=0.9,
             status="active",

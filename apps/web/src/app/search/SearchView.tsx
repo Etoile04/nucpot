@@ -13,7 +13,7 @@ import {
   type PotentialSummary,
 } from "@/lib/potentials-api"
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 const DEBOUNCE_MS = 300
 const SEARCH_LIMIT = 24

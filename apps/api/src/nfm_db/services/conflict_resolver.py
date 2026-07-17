@@ -17,7 +17,7 @@ import statistics
 from datetime import datetime
 from typing import Any
 
-from nfm_db.models.conflict_record import ConflictStrategy, ConflictStatus
+from nfm_db.models.conflict_record import ConflictStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def resolve_confidence(entries: list[ConflictingEntry]) -> dict[str, Any] | None
 def resolve_consensus(entries: list[ConflictingEntry]) -> dict[str, Any] | None:
     """Statistical aggregation with outlier detection.
 
-    For numeric values: compute median, filter values within 1.5× IQR
+    For numeric values: compute median, filter values within 1.5x IQR
     of the median, then return the mean of the remaining values.
 
     For non-numeric values: return the most common value (mode).

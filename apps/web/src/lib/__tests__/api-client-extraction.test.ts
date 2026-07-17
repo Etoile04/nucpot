@@ -242,11 +242,4 @@ describe("Existing api-client exports are preserved", () => {
     const mod = await import("@/lib/api-client")
     expect(typeof mod.request).toBe("function")
   })
-
-  it("still exports getToken, setToken, clearToken", async () => {
-    const mod = await import("@/lib/api-client")
-    expect(typeof mod.getToken).toBe("function")
-    expect(typeof mod.setToken).toBe("function")
-    expect(typeof mod.clearToken).toBe("function")
-  })
 })

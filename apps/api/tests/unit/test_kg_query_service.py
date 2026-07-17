@@ -7,12 +7,12 @@ cache metrics, X-Response-Time header, and validation errors.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
 from cachetools import TTLCache
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,18 +20,15 @@ from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_query_service import (
     KGNodeNotFoundError,
     KGQueryTimeoutError,
-    _QUERY_TIMEOUT_SECONDS,
     _cache_key,
     get_cache_metrics,
+    get_edges_from_node,
+    get_node_by_id,
     invalidate_cache,
     list_edges_by_relation,
     list_nodes_by_type,
     reset_cache_metrics,
-    get_edges_from_node,
-    get_node_by_id,
 )
-from nfm_db.schemas.common import PaginationParams
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,8 +48,8 @@ def _make_node(
     }
     defaults.update(overrides)
     node = KGNode(**defaults)
-    node.created_at = datetime.now(timezone.utc)
-    node.updated_at = datetime.now(timezone.utc)
+    node.created_at = datetime.now(UTC)
+    node.updated_at = datetime.now(UTC)
     return node
 
 
@@ -71,7 +68,7 @@ def _make_edge(
     }
     defaults.update(overrides)
     edge = KGEdge(**defaults)
-    edge.created_at = datetime.now(timezone.utc)
+    edge.created_at = datetime.now(UTC)
     return edge
 
 
@@ -237,8 +234,8 @@ class TestGetNodeById:
         mock_impl.return_value = data
 
         nid = uuid4()
-        r1 = await get_node_by_id(session, nid, use_cache=True)
-        r2 = await get_node_by_id(session, nid, use_cache=True)
+        _r1 = await get_node_by_id(session, nid, use_cache=True)
+        _r2 = await get_node_by_id(session, nid, use_cache=True)
         assert mock_impl.call_count == 1
 
 
@@ -278,8 +275,8 @@ class TestGetEdgesFromNode:
         mock_impl.return_value = data
 
         nid = uuid4()
-        r1 = await get_edges_from_node(session, source_node_id=nid, use_cache=True)
-        r2 = await get_edges_from_node(session, source_node_id=nid, use_cache=True)
+        _r1 = await get_edges_from_node(session, source_node_id=nid, use_cache=True)
+        _r2 = await get_edges_from_node(session, source_node_id=nid, use_cache=True)
         assert mock_impl.call_count == 1
 
 

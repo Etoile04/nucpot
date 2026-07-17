@@ -9,8 +9,9 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 
 from nfm_db.models.conflict_record import ConflictStrategy
 from nfm_db.services.conflict_resolver import (

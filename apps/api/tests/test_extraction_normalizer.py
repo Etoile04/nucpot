@@ -16,9 +16,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from nfm_db.services.extraction_normalizer import NormalizedValue
-
-
 # ---------------------------------------------------------------------------
 # Test data structures (mirrors ExtractedProperty from schemas/extraction.py)
 # ---------------------------------------------------------------------------

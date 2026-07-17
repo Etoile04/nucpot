@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
-import { ApiHttpError } from "@/lib/api-client"
+// ApiHttpError was removed; the component now narrows 404s by message text.
 
 // ── Mock next/navigation ──────────────────────────────────────────────
 
@@ -193,7 +193,7 @@ describe("MaterialGraphView", () => {
 
   it("shows not-found state when API returns 404", async () => {
     mockGetKGGraph.mockRejectedValue(
-      new ApiHttpError(404, "KG node 'test-material' not found"),
+      new Error("KG node 'test-material' not found"),
     )
 
     renderView("test-material")
@@ -204,7 +204,7 @@ describe("MaterialGraphView", () => {
   })
 
   it("shows back-to-properties link in not-found state", async () => {
-    mockGetKGGraph.mockRejectedValue(new ApiHttpError(404, "not found"))
+    mockGetKGGraph.mockRejectedValue(new Error("not found"))
 
     renderView("test-material")
 

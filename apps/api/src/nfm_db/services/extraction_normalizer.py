@@ -351,8 +351,8 @@ class DeduplicationDetector:
             getattr(value, "property_name", ""),
             f"{getattr(value, 'value', 0):.10g}",
             normalized_unit,
-            (getattr(value, "material_name") or "").strip(),
-            (getattr(value, "source_file") or "").strip(),
+            (value.material_name or "").strip(),
+            (value.source_file or "").strip(),
         ])
         return hashlib.sha256(hash_key.encode("utf-8")).hexdigest()
 
@@ -435,8 +435,8 @@ class ExtractionNormalizer:
         seen: set[str] = set()
         for i, n in enumerate(normalized):
             src = values[i] if i < len(values) else None
-            material = (getattr(src, "material_name") or "").strip() if src else ""
-            source_file = (getattr(src, "source_file") or "").strip() if src else ""
+            material = (src.material_name or "").strip() if src else ""
+            source_file = (src.source_file or "").strip() if src else ""
             hash_key = (
                 f"{n.property_name}|{n.normalized_value:.10g}"
                 f"|{n.normalized_unit}|{material}|{source_file}"
