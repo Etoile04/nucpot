@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { Spin, Empty, Button, Typography } from "antd"
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons"
 import { useDebounce } from "@/components/potential/useDebounce"
+import { useReducedMotion } from "@/components/graph/useReducedMotion"
 import {
   fetchKgSearch,
   KG_NODE_TYPES,
@@ -22,6 +23,17 @@ const TYPE_OPTIONS = [
   { label: "All Types", value: "" },
   ...KG_NODE_TYPES.map((t) => ({ label: t, value: t })),
 ]
+
+/**
+ * Compose Tailwind class lists, dropping falsy entries so conditional
+ * utilities (e.g. motion classes suppressed under `prefers-reduced-motion`)
+ * can be omitted cleanly from the rendered className.
+ */
+function cx(
+  ...parts: Array<string | false | undefined | null>
+): string {
+  return parts.filter((p): p is string => Boolean(p)).join(" ")
+}
 
 // Color palette for node type badges
 const TYPE_COLORS: Record<string, string> = {
@@ -63,6 +75,7 @@ const INITIAL_STATE: SearchState = {
 export function KgSearchContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
+  const prefersReducedMotion = useReducedMotion()
 
   const urlQuery = searchParams.get("q") ?? ""
   const rawType = searchParams.get("type") ?? ""
@@ -176,6 +189,26 @@ export function KgSearchContent() {
       })
   }, [debouncedQuery, selectedType])
 
+  const inputClassName = cx(
+    "w-full pl-10 pr-4 py-2.5 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50",
+    !prefersReducedMotion && "transition-shadow",
+  )
+
+  const selectClassName = cx(
+    "px-4 py-2.5 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 min-w-[160px]",
+    !prefersReducedMotion && "transition-shadow",
+  )
+
+  const resultButtonClassName = cx(
+    "w-full text-left p-4 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] hover:border-blue-500/40 hover:bg-[var(--bg-elevated-hover,#22223a)] cursor-pointer group",
+    !prefersReducedMotion && "transition-all duration-150",
+  )
+
+  const resultLabelClassName = cx(
+    "text-white font-medium group-hover:text-blue-300 truncate",
+    !prefersReducedMotion && "transition-colors",
+  )
+
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
       {/* Header */}
@@ -198,13 +231,14 @@ export function KgSearchContent() {
             value={keyword}
             onChange={(e) => handleKeywordChange(e.target.value)}
             placeholder="Search nodes by label or alias…"
-            className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow"
+            className={inputClassName}
           />
         </div>
         <select
           value={selectedType}
           onChange={(e) => handleTypeChange(e.target.value)}
-          className="px-4 py-2.5 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-shadow min-w-[160px]"
+          className={selectClassName}
+          aria-label="Filter by node type"
         >
           {TYPE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -273,7 +307,7 @@ export function KgSearchContent() {
                 <button
                   type="button"
                   onClick={() => handleResultClick(item)}
-                  className="w-full text-left p-4 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] hover:border-blue-500/40 hover:bg-[var(--bg-elevated-hover,#22223a)] transition-all duration-150 cursor-pointer group"
+                  className={resultButtonClassName}
                 >
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     {/* Type badge */}
@@ -290,9 +324,7 @@ export function KgSearchContent() {
                       {confidenceLabel(item.confidence)}
                     </span>
                   </div>
-                  <div className="text-white font-medium group-hover:text-blue-300 transition-colors truncate">
-                    {item.label}
-                  </div>
+                  <div className={resultLabelClassName}>{item.label}</div>
                   {getExcerpt(item) && (
                     <div className="text-sm text-gray-400 mt-1 line-clamp-2">
                       {getExcerpt(item)}
