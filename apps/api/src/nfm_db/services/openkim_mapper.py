@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from typing import Any
 
 from nfm_db.schemas.potential import PotentialDetail, PotentialSummary
 
@@ -77,7 +78,8 @@ def map_openkim_summary(value: str) -> PotentialSummary:
 
     # Try to enrich from a long name; otherwise unknown.
     if value.startswith("MO_"):
-        potential_type, elements = "unknown", []
+        potential_type: str = "unknown"
+        elements: list[str] = []
     else:
         potential_type, elements = _parse_long_name(value)
 
@@ -91,7 +93,7 @@ def map_openkim_summary(value: str) -> PotentialSummary:
     )
 
 
-def map_openkim_model(model: dict) -> PotentialDetail:
+def map_openkim_model(model: dict[str, Any]) -> PotentialDetail:
     """Map an OpenKIM model-detail record → a PotentialDetail.
 
     Tolerates missing fields (defaults applied).  Raises ValueError only

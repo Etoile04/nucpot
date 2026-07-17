@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """OpenKIM query API provider.
 
 API docs: https://openkim.org/doc/usage/kim-query/

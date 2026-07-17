@@ -8,6 +8,8 @@ SQLAlchemy ORM models for the knowledge graph:
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -37,13 +39,13 @@ class KGNode(Base, TimestampMixin):
         String(50),
         nullable=False,
     )
-    aliases: Mapped[list] = mapped_column(
+    aliases: Mapped[list[str]] = mapped_column(
         JSON,
         nullable=False,
         default=list,
         server_default="[]",
     )
-    properties: Mapped[dict] = mapped_column(
+    properties: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         nullable=False,
         default=dict,
