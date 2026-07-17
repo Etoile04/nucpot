@@ -3,6 +3,9 @@
 Extracts structured data from scientific plot and chart images using
 a Vision Language Model (VLM). Produces a ``PlotData`` schema
 with axes, series, legend, and confidence information.
+
+When VLM is unavailable, automatically falls back to OCR-based
+extraction via ``OcrFallback``.
 """
 
 from __future__ import annotations
@@ -17,8 +20,13 @@ from nfm_db.schemas.vision_extraction import (
     SeriesData,
     VisionExtractionResult,
 )
+from nfm_db.services.ocr_fallback import (
+    OcrFallback,
+    ocr_fallback_plot_result,
+)
 from nfm_db.services.vision_client import (
     VisionClient,
+    VisionClientError,
     build_plot_extraction_prompt,
 )
 
@@ -40,8 +48,14 @@ class PlotExtractor:
         )
     """
 
-    def __init__(self, *, client: VisionClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        client: VisionClient | None = None,
+        ocr_fallback: OcrFallback | None = None,
+    ) -> None:
         self.client = client or VisionClient()
+        self.ocr_fallback = ocr_fallback or OcrFallback()
 
     async def extract(
         self,
@@ -51,16 +65,38 @@ class PlotExtractor:
     ) -> VisionExtractionResult:
         """Extract plot data from an image using VLM.
 
+        Falls back to OCR-based extraction when the VLM is unavailable
+        or returns an error.
+
         Args:
             image_data: Raw image bytes (PNG, JPEG, etc.).
             source_path: Optional path for provenance tracking.
 
         Returns:
-            VisionExtractionResult with plot_data populated.
-
-        Raises:
-            VisionClientError: If VLM call or parsing fails.
+            VisionExtractionResult with plot_data populated. Uses
+            ``fallback_used=True`` when OCR fallback was activated.
         """
+        try:
+            return await self._extract_vlm(
+                image_data=image_data,
+                source_path=source_path,
+            )
+        except VisionClientError as exc:
+            logger.warning(
+                "VLM plot extraction failed, falling back to OCR: %s", exc
+            )
+            return await self._extract_ocr_fallback(
+                image_data=image_data,
+                source_path=source_path,
+            )
+
+    async def _extract_vlm(
+        self,
+        *,
+        image_data: bytes,
+        source_path: str | None = None,
+    ) -> VisionExtractionResult:
+        """Attempt VLM-based extraction (primary path)."""
         start = time.monotonic()
         system_prompt = build_plot_extraction_prompt()
         user_prompt = (
@@ -88,6 +124,19 @@ class PlotExtractor:
             model=self.client.model,
             extraction_time_ms=elapsed_ms,
             fallback_used=False,
+        )
+
+    async def _extract_ocr_fallback(
+        self,
+        *,
+        image_data: bytes,
+        source_path: str | None = None,
+    ) -> VisionExtractionResult:
+        """Attempt OCR-based extraction (degraded path)."""
+        ocr_result = await self.ocr_fallback.extract_text(image_data=image_data)
+        return ocr_fallback_plot_result(
+            ocr_result=ocr_result,
+            source_path=source_path,
         )
 
     @staticmethod
