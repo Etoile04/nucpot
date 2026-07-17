@@ -1,0 +1,124 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 5: F82H response vs temperature",
+  "bounding_box": {
+    "x": 41.0,
+    "y": 73.2,
+    "width": 470.0,
+    "height": 366.3
+  },
+  "plot_data": {
+    "title": "MOX tensile response",
+    "plot_type": "scatter",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        130.975,
+        215.8027,
+        300.6304,
+        385.4581,
+        470.2858,
+        555.1135,
+        639.9412,
+        724.7689,
+        809.5966,
+        894.4243,
+        979.252,
+        1064.0797
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        48.8007,
+        110.993,
+        173.1853,
+        235.3776,
+        297.5699,
+        359.7622,
+        421.9545,
+        484.1468,
+        546.3391,
+        608.5314,
+        670.7237,
+        732.9159
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          114.1818,
+          771.2005,
+          452.6293,
+          867.5328,
+          790.3212,
+          339.1766,
+          573.1011,
+          823.4235,
+          160.8475,
+          121.3378,
+          652.4275,
+          409.1944
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          319.2825,
+          490.3973,
+          558.6068,
+          822.1176,
+          346.4407,
+          578.6657,
+          550.009,
+          251.7506,
+          351.9363,
+          721.4584,
+          260.5992,
+          663.5677
+        ],
+        "color": "red",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          367.1944,
+          568.396,
+          211.2763,
+          810.1157,
+          876.7536,
+          336.3867,
+          455.0264,
+          837.376,
+          366.173,
+          525.9544,
+          519.2802,
+          447.3914
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.78
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-004/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 152.7,
+  "fallback_used": false,
+  "paper_id": "plot-004"
+}

@@ -1,0 +1,75 @@
+{
+  "figure_type": "microstructure",
+  "title": "Micrograph 2: BeO grain distribution",
+  "bounding_box": {
+    "x": 41.4,
+    "y": 54.0,
+    "width": 538.1,
+    "height": 333.1
+  },
+  "plot_data": {
+    "title": "grain size distribution",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Grain size",
+      "unit": "um",
+      "values": [
+        0.1,
+        3.2125,
+        6.325,
+        9.4375,
+        12.55,
+        15.6625,
+        18.775,
+        21.8875,
+        25.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Frequency",
+      "unit": "%",
+      "values": [
+        0.0,
+        3.75,
+        7.5,
+        11.25,
+        15.0,
+        18.75,
+        22.5,
+        26.25,
+        30.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "frequency",
+        "values": [
+          1.2795,
+          27.6199,
+          5.9143,
+          19.379,
+          13.7692,
+          26.0941,
+          10.3488,
+          5.6934,
+          23.0226
+        ],
+        "color": "red",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "frequency"
+    ],
+    "annotations": [],
+    "confidence": 0.847
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/microstructure/microstructure-001/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 361.1,
+  "fallback_used": false,
+  "paper_id": "microstructure-001"
+}

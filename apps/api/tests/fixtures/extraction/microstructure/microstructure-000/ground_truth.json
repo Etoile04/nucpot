@@ -1,0 +1,81 @@
+{
+  "figure_type": "microstructure",
+  "title": "Micrograph 1: UO2 grain distribution",
+  "bounding_box": {
+    "x": 68.6,
+    "y": 47.5,
+    "width": 480.2,
+    "height": 327.9
+  },
+  "plot_data": {
+    "title": "grain size distribution",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Grain size",
+      "unit": "um",
+      "values": [
+        0.1,
+        2.59,
+        5.08,
+        7.57,
+        10.06,
+        12.55,
+        15.04,
+        17.53,
+        20.02,
+        22.51,
+        25.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Frequency",
+      "unit": "%",
+      "values": [
+        0.0,
+        3.0,
+        6.0,
+        9.0,
+        12.0,
+        15.0,
+        18.0,
+        21.0,
+        24.0,
+        27.0,
+        30.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "frequency",
+        "values": [
+          0.897,
+          12.3943,
+          23.3243,
+          29.5975,
+          3.3981,
+          15.4202,
+          27.9876,
+          14.3718,
+          13.7864,
+          2.7025,
+          29.1245
+        ],
+        "color": "black",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "frequency"
+    ],
+    "annotations": [],
+    "confidence": 0.855
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/microstructure/microstructure-000/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 187.7,
+  "fallback_used": false,
+  "paper_id": "microstructure-000"
+}

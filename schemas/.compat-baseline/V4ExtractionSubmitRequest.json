@@ -1,0 +1,62 @@
+{
+  "fields": {
+    "cache_level": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "confidence_threshold": {
+      "default": "0.5",
+      "required": false,
+      "type": "<class'float'>"
+    },
+    "conflict_strategy": {
+      "default": "'prefer_vlm'",
+      "required": false,
+      "type": "typing.Literal['prefer_vlm','prefer_text','merge','keep_both']"
+    },
+    "element_systems": {
+      "default": null,
+      "required": false,
+      "type": "list[str]|None"
+    },
+    "extract_figures": {
+      "default": "False",
+      "required": false,
+      "type": "<class'bool'>"
+    },
+    "extract_tables": {
+      "default": "False",
+      "required": false,
+      "type": "<class'bool'>"
+    },
+    "figure_types": {
+      "default": null,
+      "required": false,
+      "type": "list[str]|None"
+    },
+    "max_confidence": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "priority": {
+      "default": "'normal'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "source_reference": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "source_type": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {
+    "conflict_strategy": "typing.Literal['prefer_vlm', 'prefer_text', 'merge', 'keep_both']"
+  }
+}

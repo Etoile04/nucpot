@@ -1,0 +1,50 @@
+{
+  "fields": {
+    "confidence": {
+      "default": "0.0",
+      "required": false,
+      "type": "<class'float'>"
+    },
+    "has_merged_cells": {
+      "default": "False",
+      "required": false,
+      "type": "<class'bool'>"
+    },
+    "headers": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "<class'nfm_db.schemas.vision_extraction.TableHeader'>"
+    },
+    "notes": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    },
+    "num_columns": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "num_rows": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "raw_response": {
+      "default": null,
+      "required": false,
+      "type": "dict[str,typing.Any]|None"
+    },
+    "rows": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[list[nfm_db.schemas.vision_extraction.TableCell]]"
+    },
+    "title": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

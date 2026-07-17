@@ -1,0 +1,124 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 7: HT9 response vs temperature",
+  "bounding_box": {
+    "x": 72.8,
+    "y": 49.8,
+    "width": 486.6,
+    "height": 363.5
+  },
+  "plot_data": {
+    "title": "Zr-4 tensile response",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        495.7161,
+        551.5593,
+        607.4024,
+        663.2456,
+        719.0888,
+        774.932,
+        830.7751,
+        886.6183,
+        942.4615,
+        998.3046,
+        1054.1478,
+        1109.991
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        56.3347,
+        129.7799,
+        203.2251,
+        276.6703,
+        350.1155,
+        423.5607,
+        497.0058,
+        570.451,
+        643.8962,
+        717.3414,
+        790.7866,
+        864.2317
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          159.4729,
+          117.487,
+          958.0951,
+          935.0097,
+          155.7101,
+          907.8129,
+          142.7548,
+          870.0284,
+          494.1218,
+          170.9878,
+          319.832,
+          117.4386
+        ],
+        "color": "red",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          956.6143,
+          361.8832,
+          440.8294,
+          651.7405,
+          691.8703,
+          46.4568,
+          717.6224,
+          942.8168,
+          172.9023,
+          186.8473,
+          190.5992,
+          1007.8051
+        ],
+        "color": "red",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          872.6271,
+          863.5253,
+          720.7195,
+          741.7871,
+          369.5294,
+          662.7247,
+          156.1294,
+          57.1307,
+          761.7621,
+          451.2065,
+          502.1071,
+          637.8052
+        ],
+        "color": "red",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.931
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-006/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 261.3,
+  "fallback_used": false,
+  "paper_id": "plot-006"
+}

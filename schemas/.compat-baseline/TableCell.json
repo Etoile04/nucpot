@@ -1,0 +1,30 @@
+{
+  "fields": {
+    "col_span": {
+      "default": "1",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "confidence": {
+      "default": "1.0",
+      "required": false,
+      "type": "<class'float'>"
+    },
+    "is_header": {
+      "default": "False",
+      "required": false,
+      "type": "<class'bool'>"
+    },
+    "row_span": {
+      "default": "1",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "value": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

@@ -1,0 +1,114 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 10: WC-Co response vs temperature",
+  "bounding_box": {
+    "x": 85.7,
+    "y": 59.7,
+    "width": 475.4,
+    "height": 302.5
+  },
+  "plot_data": {
+    "title": "Inconel-718 tensile response",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        458.5746,
+        559.2399,
+        659.9053,
+        760.5706,
+        861.2359,
+        961.9013,
+        1062.5666,
+        1163.232,
+        1263.8973,
+        1364.5626
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        79.4695,
+        200.006,
+        320.5426,
+        441.0791,
+        561.6156,
+        682.1522,
+        802.6887,
+        923.2253,
+        1043.7618,
+        1164.2983
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          1184.7039,
+          679.1963,
+          1338.3816,
+          359.2769,
+          1316.4389,
+          969.2282,
+          913.3709,
+          130.3371,
+          1162.6382,
+          993.198
+        ],
+        "color": "green",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          547.2062,
+          670.3911,
+          350.5288,
+          1078.7568,
+          1240.2652,
+          816.6892,
+          1349.4718,
+          389.9894,
+          605.6312,
+          706.6056
+        ],
+        "color": "red",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          978.5392,
+          1213.8071,
+          915.7479,
+          205.9991,
+          998.7585,
+          221.2454,
+          1325.1148,
+          1209.1667,
+          120.7602,
+          1331.2598
+        ],
+        "color": "red",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.876
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-009/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 398.6,
+  "fallback_used": false,
+  "paper_id": "plot-009"
+}

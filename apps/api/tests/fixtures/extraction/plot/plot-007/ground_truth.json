@@ -1,0 +1,104 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 8: UO2 response vs temperature",
+  "bounding_box": {
+    "x": 54.0,
+    "y": 68.8,
+    "width": 532.3,
+    "height": 344.7
+  },
+  "plot_data": {
+    "title": "F82H tensile response",
+    "plot_type": "scatter",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        288.6417,
+        372.7553,
+        456.8689,
+        540.9826,
+        625.0962,
+        709.2098,
+        793.3234,
+        877.437
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        1.0345,
+        131.8122,
+        262.5899,
+        393.3676,
+        524.1453,
+        654.923,
+        785.7008,
+        916.4785
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          631.736,
+          333.5552,
+          607.9861,
+          684.2484,
+          660.7578,
+          74.6228,
+          517.7885,
+          220.4632
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          265.7591,
+          235.7474,
+          511.1661,
+          879.0199,
+          1021.3024,
+          799.2017,
+          187.5294,
+          402.0269
+        ],
+        "color": "green",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          215.9023,
+          128.4847,
+          410.9238,
+          686.3893,
+          1034.3842,
+          1055.7965,
+          285.8545,
+          615.0893
+        ],
+        "color": "black",
+        "marker_style": "square"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.943
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-007/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 139.0,
+  "fallback_used": false,
+  "paper_id": "plot-007"
+}
