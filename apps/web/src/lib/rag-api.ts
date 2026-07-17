@@ -26,6 +26,7 @@ export interface RagMessage {
 
 export interface RagQueryRequest {
   readonly query: string
+  readonly mode?: "naive" | "local" | "global" | "hybrid"
   readonly conversationId?: string
   readonly topK?: number
 }

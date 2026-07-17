@@ -38,14 +38,12 @@ function CitationChunkCard({
         </Paragraph>
       )}
       {url && (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <span
           className="inline-block mt-2 text-blue-400 hover:text-blue-300 text-xs transition-colors"
+          aria-label={`引用来源: ${source}`}
         >
           查看来源
-        </a>
+        </span>
       )}
     </div>
   )
