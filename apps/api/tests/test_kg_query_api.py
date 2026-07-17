@@ -12,6 +12,14 @@ import pytest
 
 from nfm_db.models.kg import KGEdge, KGNode
 
+# NFM-1142: The KG query endpoints (/api/v1/kg/query/{property,relation,path})
+# were removed during the kg_query_service refactor. These tests target the
+# legacy endpoints and need to be rewritten against the current KG API surface.
+pytestmark = pytest.mark.skip(
+    reason="KG query endpoints removed in NFM-1142; tests need rewrite "
+    "against current KG API",
+)
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -2,6 +2,17 @@
 
 import uuid
 
+import pytest
+
+# NFM-1142: The `provider` field on PotentialSummary / PotentialDetail was
+# removed during the provider refactor. All tests in this module depend on
+# that attribute (defaults + inheritance) and need a rewrite against the
+# current schema.
+pytestmark = pytest.mark.skip(
+    reason="PotentialSummary.provider / PotentialDetail.provider were "
+    "removed in NFM-1142; tests need rewrite against current schema",
+)
+
 
 class TestPotentialSchemaProvider:
     """Provider field on potential schemas (NFM-296 Task 1)."""

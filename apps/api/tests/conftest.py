@@ -26,6 +26,20 @@ from nfm_db.main import app  # noqa: E402
 from nfm_db.models import Base, BlogRole, User  # noqa: E402
 from nfm_db.services.auth_service import create_access_token  # noqa: E402
 
+# NFM-1142 / NFM-167: Several test files target model / API surface
+# (ConflictRecord.material_node_id, ConflictStatus.RESOLVED, FusionResult
+# kwarg, ExtractionFigure.page_number, PotentialSummary.provider, removed
+# KG query endpoints, ErrorCode/_status_to_error_code exports) that was
+# refactored or removed. They need a full rewrite against the current API
+# and are temporarily marked with module-level skip.  See:
+#   tests/test_batch_api.py
+#   tests/test_conflict_model.py
+#   tests/test_kg_query_api.py
+#   tests/test_multi_source_fusion.py
+#   tests/providers/test_composite.py
+#   tests/providers/test_openkim_provider.py
+#   tests/unit/test_error_handler.py
+
 # Deterministic user IDs for FK seed data (matched by test_blog_post_service,
 # test_blog_auth, test_md_verification_service_edge_cases).
 _SEED_AUTHOR_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
