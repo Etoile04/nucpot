@@ -12,7 +12,7 @@ import uuid
 
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nfm_db.models import JSONArray, Base, TimestampMixin
+from nfm_db.models import Base, JSONArray, TimestampMixin
 
 
 class ExtractionJob(TimestampMixin, Base):

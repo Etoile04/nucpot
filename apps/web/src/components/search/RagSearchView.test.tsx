@@ -11,6 +11,7 @@ vi.mock('@/lib/rag-api', () => ({
 
 // Import the mocked module after vi.mock
 import { ragApi } from '@/lib/rag-api'
+import type { RagQueryResponse } from '@/lib/rag-api'
 const mockedQuery = vi.mocked(ragApi.query)
 
 describe('RagSearchView', () => {
@@ -78,11 +79,11 @@ describe('RagSearchView', () => {
   })
 
   it('shows loading state during query', async () => {
-    let resolvePromise: (value: unknown) => void
+    let resolvePromise: (value: unknown) => void = () => {}
     mockedQuery.mockReturnValueOnce(
-      new Promise((resolve) => {
+      new Promise((resolve: (value: unknown) => void) => {
         resolvePromise = resolve
-      }),
+      }) as Promise<RagQueryResponse>,
     )
 
     render(<RagSearchView />)
@@ -110,11 +111,11 @@ describe('RagSearchView', () => {
   })
 
   it('disables input during loading', async () => {
-    let resolvePromise: (value: unknown) => void
+    let resolvePromise: (value: unknown) => void = () => {}
     mockedQuery.mockReturnValueOnce(
-      new Promise((resolve) => {
+      new Promise((resolve: (value: unknown) => void) => {
         resolvePromise = resolve
-      }),
+      }) as Promise<RagQueryResponse>,
     )
 
     render(<RagSearchView />)

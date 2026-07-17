@@ -27,7 +27,7 @@ from cachetools import TTLCache
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.kg import KGEdge, KGNode, VALID_NODE_TYPES, VALID_RELATION_TYPES
+from nfm_db.models.kg import VALID_NODE_TYPES, VALID_RELATION_TYPES, KGEdge, KGNode
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class CacheMetrics:
 class _CacheStats:
     """Mutable accumulator — internal, never exposed directly."""
 
-    __slots__ = ("_hits", "_misses", "_evictions")
+    __slots__ = ("_evictions", "_hits", "_misses")
 
     def __init__(self) -> None:
         self._hits = 0
@@ -162,7 +162,7 @@ async def list_nodes_by_type(
         corpus_id: Optional corpus identifier.
         status: Node status filter (default 'active').
         page: 1-based page number.
-        per_page: Page size (1–100).
+        per_page: Page size (1-100).
         use_cache: Whether to check/populate the cache.
 
     Returns:
@@ -483,7 +483,7 @@ async def _execute_with_timeout(coro, *args: Any, **kwargs: Any) -> Any:
             coro(*args, **kwargs),
             timeout=_QUERY_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         logger.warning(
             "KG query timed out after %.2fs", elapsed,

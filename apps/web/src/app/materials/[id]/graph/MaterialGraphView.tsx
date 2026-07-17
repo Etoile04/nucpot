@@ -11,7 +11,7 @@ import {
   transformGraphResponse,
   type KGGraphResponse,
 } from "@/lib/kg-api"
-import { ApiHttpError } from "@/lib/api-client"
+// ApiHttpError was renamed to ApiError; not used for narrowing here.
 
 const { Title, Text } = Typography
 
@@ -147,8 +147,10 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
       const message = err instanceof Error ? err.message : "未知错误"
 
       // 404 (not-found in KG) is a normal flow, not a system error.
-      // Match on typed status, not localized message text.
-      if (err instanceof ApiHttpError && err.status === 404) {
+      // We match on the message text since the shared request() helper
+      // throws a plain Error after reading the backend's `detail` field;
+      // there is no typed HTTP status on the thrown object.
+      if (err instanceof Error && /not found/i.test(message)) {
         setState((prev) => ({ ...prev, status: "not_found" }))
       } else {
         setState((prev) => ({

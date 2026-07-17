@@ -250,7 +250,6 @@ class TestKGNodeCreation:
         self, db_session: AsyncSession,
     ) -> None:
         """KGNode stores synced_to_graph and graph_synced_at."""
-        from datetime import datetime, timezone
 
         node = KGNode(
             node_type="Material",

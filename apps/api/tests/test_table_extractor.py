@@ -15,9 +15,9 @@ import pytest
 from nfm_db.schemas.vision_extraction import (
     VisionExtractionResult,
 )
+from nfm_db.services.ocr_fallback import OCRResult
 from nfm_db.services.table_extractor import TableExtractor, extract_table_data
 from nfm_db.services.vision_client import VisionClientError
-from nfm_db.services.ocr_fallback import OCRResult
 
 # ---------------------------------------------------------------------------
 # Helpers

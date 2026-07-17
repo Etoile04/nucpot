@@ -24,7 +24,7 @@ import { ArrowLeftOutlined } from "@ant-design/icons"
 import { ConfidenceBadge } from "@/components/shared/ConfidenceBadge"
 import {
   fetchKgNodeDetail,
-  type KgNodeDetail,
+  type KgNodeDetailFull,
   type KgRelationItem,
 } from "@/lib/kg-node-api"
 import { kgNodeTypeClass } from "@/lib/kg-node-theme"
@@ -38,7 +38,7 @@ interface KgNodeDetailContentProps {
 
 interface DetailState {
   readonly status: "loading" | "ok" | "error"
-  readonly node: KgNodeDetail | null
+  readonly node: KgNodeDetailFull | null
   readonly error: string | null
 }
 
