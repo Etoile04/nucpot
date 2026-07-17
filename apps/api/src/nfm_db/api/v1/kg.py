@@ -318,9 +318,7 @@ async def get_kg_graph(
         None, description="Optional filter by node_type (Material, Property, etc.)"
     ),
     limit: int = Query(200, ge=1, le=500, description="Max nodes to return"),
-    edge_limit: int = Query(
-        500, ge=1, le=2000, description="Max edges to return"
-    ),
+    edge_limit: int = Query(500, ge=1, le=2000, description="Max edges to return"),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KGGraphResponse]:
     """Return nodes and edges formatted for force-directed graph visualization.
@@ -346,18 +344,11 @@ async def get_kg_graph(
         node_filter.append(KGNode.node_type == type)
 
     # Count nodes
-    node_count_stmt = (
-        select(func.count()).select_from(KGNode).where(*node_filter)
-    )
+    node_count_stmt = select(func.count()).select_from(KGNode).where(*node_filter)
     total_nodes: int = (await session.execute(node_count_stmt)).scalar_one()
 
     # Fetch nodes
-    node_stmt = (
-        select(KGNode)
-        .where(*node_filter)
-        .order_by(KGNode.label.asc())
-        .limit(limit)
-    )
+    node_stmt = select(KGNode).where(*node_filter).order_by(KGNode.label.asc()).limit(limit)
     node_rows = (await session.execute(node_stmt)).scalars().all()
 
     node_ids = [n.id for n in node_rows]
@@ -392,21 +383,13 @@ async def get_kg_graph(
                 KGEdge.target_node_id.in_(node_ids),
             )
         ]
-        total_edges_stmt = (
-            select(func.count()).select_from(KGEdge).where(*edge_filter)
-        )
+        total_edges_stmt = select(func.count()).select_from(KGEdge).where(*edge_filter)
         total_edges = (await session.execute(total_edges_stmt)).scalar_one()
 
-        edge_stmt = (
-            select(KGEdge)
-            .where(*edge_filter)
-            .limit(edge_limit)
-        )
+        edge_stmt = select(KGEdge).where(*edge_filter).limit(edge_limit)
         edge_rows = (await session.execute(edge_stmt)).scalars().all()
 
-        graph_nodes = [
-            _build_graph_node(n, edge_count_map) for n in node_rows
-        ]
+        graph_nodes = [_build_graph_node(n, edge_count_map) for n in node_rows]
         graph_edges = [_build_graph_edge(e) for e in edge_rows]
 
     return ApiResponse(
