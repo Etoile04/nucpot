@@ -28,6 +28,7 @@ class Permission(str, enum.Enum):
     CREATE_POST = "create_post"
     EDIT_POST = "edit_post"
     DELETE_POST = "delete_post"
+    SUBMIT_FOR_REVIEW = "submit_for_review"
     PUBLISH_POST = "publish_post"
     REVIEW_POST = "review_post"
     ASSIGN_ROLES = "assign_roles"
@@ -92,6 +93,7 @@ class User(TimestampMixin, Base):
                 Permission.CREATE_POST,
                 Permission.EDIT_POST,
                 Permission.DELETE_POST,
+                Permission.SUBMIT_FOR_REVIEW,
                 Permission.PUBLISH_POST,
                 Permission.REVIEW_POST,
                 Permission.ASSIGN_ROLES,
@@ -99,6 +101,7 @@ class User(TimestampMixin, Base):
             BlogRole.EDITOR: {
                 Permission.CREATE_POST,
                 Permission.EDIT_POST,
+                Permission.SUBMIT_FOR_REVIEW,
             },
             BlogRole.REVIEWER: {
                 Permission.REVIEW_POST,
