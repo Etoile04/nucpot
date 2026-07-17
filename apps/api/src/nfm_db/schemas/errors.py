@@ -154,11 +154,16 @@ def register_http_exception_handler(application: FastAPI) -> None:
         _request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
-        import json
-        try:
-            detail = json.loads(exc.json())
-        except (TypeError, ValueError):
-            detail = str(exc)
+        def _safe_str(obj: Any) -> Any:
+            if isinstance(obj, (str, int, float, bool, type(None))):
+                return obj
+            if isinstance(obj, dict):
+                return {k: _safe_str(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [_safe_str(v) for v in obj]
+            return str(obj)
+
+        detail = _safe_str(exc.errors())
         body: dict[str, Any] = {
             "success": False,
             "error_code": ErrorCode.VALIDATION_ERROR.value,
