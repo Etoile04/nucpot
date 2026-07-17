@@ -211,6 +211,20 @@ module = [
 ]
 ignore_errors = true
 
+# KG query / multi-source fusion scaffold modules — strict typing deferred.
+# These modules use untyped caches (cachetools), untyped DB row access, and
+# evolving conflict/fusion schemas.  Track in NFM-1072 cleanup.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.models.kg_node",
+    "nfm_db.services.kg_query_service",
+    "nfm_db.services.openkim_mapper",
+    "nfm_db.services.providers.openkim",
+    "nfm_db.services.conflict_resolver",
+    "nfm_db.services.multi_source_fusion",
+]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
