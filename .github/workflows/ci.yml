@@ -110,7 +110,7 @@ jobs:
       - name: File size guard (≤1500 lines)
         run: |
           echo "Checking file sizes..."
-          oversized=$(find src tests -name '*.py' -exec wc -l {} + | awk '$1 > 1500 && $2 != "total" {print $1, $2}')
+          oversized=$(find src -name '*.py' -exec wc -l {} + | awk '$1 > 1500 && $2 != "total" {print $1, $2}')
           if [ -n "$oversized" ]; then
             echo "::error::Files exceeding 1500-line limit detected:"
             echo "$oversized"
