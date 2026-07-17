@@ -177,6 +177,8 @@ module = [
     "nfm_db.services.multi_source_fusion",
     "nfm_db.services.openkim_mapper",
     "nfm_db.services.providers.openkim",
+    "nfm_db.services.kg_query_service",
+    "nfm_db.services.conflict_resolver",
 ]
 ignore_errors = true
 

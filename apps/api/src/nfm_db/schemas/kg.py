@@ -105,6 +105,9 @@ class KGGraphEdge(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+# Alias for backwards compatibility (api/v1/kg.py uses GraphEdgeItem)
+GraphEdgeItem = KGGraphEdge
+
 class KGGraphResponse(BaseModel):
     focal: dict[str, Any]  # {"id": str, "depth": 0}
     nodes: list[KGGraphNode]
