@@ -486,11 +486,10 @@ async def _execute_with_timeout(coro, *args: Any, **kwargs: Any) -> Any:
     except TimeoutError:
         elapsed = time.monotonic() - start
         logger.warning(
-            "KG query timed out after %.2fs", elapsed,
+            "KG query timed out after %.2fs",
+            elapsed,
         )
-        raise KGQueryTimeoutError(
-            f"KG query exceeded {_QUERY_TIMEOUT_SECONDS}s timeout"
-        ) from None
+        raise KGQueryTimeoutError(f"KG query exceeded {_QUERY_TIMEOUT_SECONDS}s timeout") from None
     else:
         elapsed = time.monotonic() - start
         logger.info("KG query completed in %.3fs", elapsed)
