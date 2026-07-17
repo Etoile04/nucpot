@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import OntologyViewerFrame, {
   buildOntologyViewerSrc,
-  IFRAME_MIN_HEIGHT,
 } from "./OntologyViewerFrame";
 
 /**
@@ -66,18 +65,13 @@ describe("OntologyViewerFrame", () => {
     expect(src).not.toContain("data=");
   });
 
-  it("enforces the iframe height contract so it never collapses below 600px", () => {
+  it("fills available flex space without fixed min-height (NFM-1424 fix)", () => {
     const { container } = render(<OntologyViewerFrame />);
     const frame = container.querySelector("iframe");
     expect(frame).not.toBeNull();
     const style = frame?.getAttribute("style") ?? "";
-    const match = style.match(/min-height:\s*(\d+)px/i);
-    const minPx = match ? Number(match[1]) : 0;
-    expect(minPx).toBeGreaterThanOrEqual(IFRAME_MIN_HEIGHT);
-  });
-
-  it("exports IFRAME_MIN_HEIGHT as a named constant (M2 fix)", () => {
-    expect(IFRAME_MIN_HEIGHT).toBe(600);
+    // Should NOT have a fixed min-height that could overflow the viewport
+    expect(style).not.toMatch(/min-height:\s*600/i);
   });
 
   it("loads lazily and supports fullscreen", () => {

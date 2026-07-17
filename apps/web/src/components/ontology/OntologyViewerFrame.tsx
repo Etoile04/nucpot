@@ -19,24 +19,29 @@
  * See EMBEDDING.md §1–§5 in the viewer repo (commit 6345543).
  */
 
-/** Minimum iframe height (px) — EMBEDDING.md §5 height contract. */
-export const IFRAME_MIN_HEIGHT = 600;
-
 const VIEWER_ENTRY = "/ontology-viewer/index.html";
 const DEFAULT_DATA_URL = "/ontology-viewer/data/nvl_ontology_data.json";
 
-/** Reusable host container styles — full-width wrapper with height contract. */
+/**
+ * Reusable host container styles — fills the parent flex area exactly.
+ * The parent <main class="flex-1 overflow-y-auto"> provides the available
+ * height after the nav bar; we use height:100% to inherit it and min-height:0
+ * to allow the flex item to shrink below content size on short viewports.
+ * (Previously min-height:600px forced the iframe taller than the viewport on
+ * screens < 665px, causing the bottom of the viewer to be clipped by body's
+ * overflow:hidden — appearing as a dark overlay bar.)
+ */
 const HOST_CONTAINER_STYLE = {
   width: "100%",
   height: "100%",
-  minHeight: `${IFRAME_MIN_HEIGHT}px`,
+  minHeight: "0",
+  flex: "1",
 } as const;
 
 /** Reusable iframe chromeless styles — fills host, no border. */
 const IFRAME_STYLE = {
   width: "100%",
   height: "100%",
-  minHeight: `${IFRAME_MIN_HEIGHT}px`,
   border: "0",
 } as const;
 
