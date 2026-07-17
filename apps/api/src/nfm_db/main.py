@@ -16,6 +16,7 @@ from nfm_db.api.v1 import (
     feedback,
     health,
     kg,
+    kg_graph,
     lightrag,
     literature,
     materials,
@@ -222,6 +223,7 @@ app.include_router(properties.router, prefix="/api/v1", tags=["物性数据"])
 app.include_router(sources.router, prefix="/api/v1", tags=["数据源"])
 app.include_router(seed.router, prefix="/api/v1", tags=["种子数据"])
 app.include_router(kg.router, prefix="/api/v1", tags=["知识图谱"])
+app.include_router(kg_graph.router, prefix="/api/v1", tags=["知识图谱"])
 app.include_router(review.router, prefix="/api/v1/review", tags=["审核流程"])
 app.include_router(conflict.router, prefix="/api/v1/conflicts", tags=["冲突解决"])
 app.include_router(literature.router, prefix="/api/v1/literature", tags=["文献管理"])
