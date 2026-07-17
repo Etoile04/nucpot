@@ -137,10 +137,10 @@ describe("fetchKgNodeDetail", () => {
     expect(result.label).toBe("UO2")
     // edge-1: target is the focal node → incoming
     expect(result.relations.incoming).toHaveLength(1)
-    expect(result.relations.incoming[0].relation_type).toBe("references")
+    expect(result.relations.incoming[0]!.relation_type).toBe("references")
     // edge-2: source is the focal node → outgoing
     expect(result.relations.outgoing).toHaveLength(1)
-    expect(result.relations.outgoing[0].relation_type).toBe("hasProperty")
+    expect(result.relations.outgoing[0]!.relation_type).toBe("hasProperty")
   })
 
   it("3. rejects with a descriptive error when the API returns non-OK", async () => {
