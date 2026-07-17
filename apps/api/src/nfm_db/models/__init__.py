@@ -155,6 +155,10 @@ from nfm_db.models.review import (  # noqa: E402
     ReviewMixin,
     ReviewStatus,
 )
+from nfm_db.models.extraction_job import (  # noqa: E402
+    ExtractionJob,
+)
+
 from nfm_db.models.material import (  # noqa: E402
     Material,
     MaterialAlias,
@@ -245,6 +249,9 @@ __all__ = [
     "FeedbackType",
     "FittingMethod",
     "HPCFailoverEvent",
+    "KGEdge",
+    "KGNode",
+    "KGReviewQueue",
     "HpcJob",
     "HpcJobStatus",
     "JSONArray",
