@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import logging
 import statistics
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from nfm_db.models.conflict_record import ConflictStrategy
+from nfm_db.models.conflict import ResolutionStrategy as ConflictStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,11 @@ def resolve_manual(
 # Strategy dispatch
 # ---------------------------------------------------------------------------
 
-STRATEGY_FUNCTIONS: dict[str, type] = {
+# A strategy resolver takes a list of conflicting entries and returns the
+# winning entry (or None for manual escalation).
+StrategyFn = Callable[[list[ConflictingEntry]], "dict[str, Any] | None"]
+
+STRATEGY_FUNCTIONS: dict[str, StrategyFn] = {
     ConflictStrategy.NEWEST: resolve_newest,
     ConflictStrategy.CONFIDENCE: resolve_confidence,
     ConflictStrategy.CONSENSUS: resolve_consensus,
@@ -241,4 +246,4 @@ def get_strategy_for_property_type(
         return validate_strategy(override)
     if default_strategy is not None:
         return validate_strategy(default_strategy)
-    return ConflictStrategy.CONFIDENCE
+    return cast(str, ConflictStrategy.CONFIDENCE)

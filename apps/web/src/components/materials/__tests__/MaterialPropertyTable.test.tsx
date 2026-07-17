@@ -44,8 +44,11 @@ const NULL_UNIT_PROP = makeProperty({
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
-// Helper: the table gained pagination/sort/filter props after NFM-999.
-// Most tests don't care about them, so we spread a sensible default bag.
+// Helper: the table became a controlled component after NFM-999 — the parent
+// owns sort/filter/pagination state and re-fetches from the server.  Tests
+// therefore (a) pre-filter the data they pass in, and (b) assert that user
+// input in the filter box invokes `onFilterChange` rather than mutating the
+// table in place.
 const TABLE_PROPS = {
   page: 1,
   pageSize: 10,
@@ -90,22 +93,54 @@ describe("MaterialPropertyTable", () => {
     expect(screen.getByText(/共 42 条属性/)).toBeInTheDocument()
   })
 
-  it("filters rows by search text across name and value", () => {
-    render(<MaterialPropertyTable {...TABLE_PROPS} data={SAMPLE_DATA} total={3} error={null} />)
+  it("invokes onFilterChange when the user types in the filter box (controlled)", () => {
+    const onFilterChange = vi.fn()
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        onFilterChange={onFilterChange}
+        data={SAMPLE_DATA}
+        total={3}
+        error={null}
+      />,
+    )
 
     const searchInput = screen.getByPlaceholderText("筛选属性...")
     fireEvent.change(searchInput, { target: { value: "密度" } })
 
-    expect(screen.getByText("密度")).toBeInTheDocument()
-    expect(screen.queryByText("熔点")).not.toBeInTheDocument()
-    expect(screen.getByText(/筛选结果 1 条/)).toBeInTheDocument()
+    expect(onFilterChange).toHaveBeenCalledTimes(1)
+    expect(onFilterChange).toHaveBeenCalledWith("密度")
   })
 
-  it("filters rows by source text", () => {
-    render(<MaterialPropertyTable {...TABLE_PROPS} data={SAMPLE_DATA} total={3} error={null} />)
+  it("renders only the parent-supplied (pre-filtered) rows for a name filter", () => {
+    // Parent has already filtered to rows matching "密度".
+    const filtered = SAMPLE_DATA.filter((p) => p.name.includes("密度"))
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        filterText="密度"
+        data={filtered}
+        total={filtered.length}
+        error={null}
+      />,
+    )
 
-    const searchInput = screen.getByPlaceholderText("筛选属性...")
-    fireEvent.change(searchInput, { target: { value: "文献C" } })
+    expect(screen.getByText("密度")).toBeInTheDocument()
+    expect(screen.queryByText("熔点")).not.toBeInTheDocument()
+  })
+
+  it("renders only the parent-supplied (pre-filtered) rows for a source filter", () => {
+    // Parent has already filtered to rows whose source matches "文献C".
+    const filtered = SAMPLE_DATA.filter((p) => p.source.includes("文献C"))
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        filterText="文献C"
+        data={filtered}
+        total={filtered.length}
+        error={null}
+      />,
+    )
 
     expect(screen.getByText("热导率")).toBeInTheDocument()
     expect(screen.queryByText("密度")).not.toBeInTheDocument()
@@ -117,11 +152,18 @@ describe("MaterialPropertyTable", () => {
     expect(screen.getByText("暂无属性数据")).toBeInTheDocument()
   })
 
-  it("renders empty state when filter has no matches", () => {
-    render(<MaterialPropertyTable {...TABLE_PROPS} data={SAMPLE_DATA} total={3} error={null} />)
-
-    const searchInput = screen.getByPlaceholderText("筛选属性...")
-    fireEvent.change(searchInput, { target: { value: "nonexistent" } })
+  it("renders 'no matches' empty state when filterText is set but data is empty", () => {
+    // Controlled component: a non-empty filterText with zero rows signals
+    // the parent's filter produced no matches → show the filtered empty copy.
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        filterText="nonexistent"
+        data={[]}
+        total={0}
+        error={null}
+      />,
+    )
 
     expect(screen.getByText("没有匹配的属性")).toBeInTheDocument()
   })
@@ -147,21 +189,48 @@ describe("MaterialPropertyTable", () => {
     expect(dashes.length).toBeGreaterThanOrEqual(1)
   })
 
-  it("does not show filter count when no filter is active", () => {
-    render(<MaterialPropertyTable {...TABLE_PROPS} data={SAMPLE_DATA} total={3} error={null} />)
-
-    expect(screen.queryByText(/筛选结果/)).not.toBeInTheDocument()
-  })
-
-  it("clears filter when search input is cleared", () => {
-    render(<MaterialPropertyTable {...TABLE_PROPS} data={SAMPLE_DATA} total={3} error={null} />)
+  it("reflects controlled filterText in the input", () => {
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        filterText="密度"
+        data={SAMPLE_DATA}
+        total={3}
+        error={null}
+      />,
+    )
 
     const searchInput = screen.getByPlaceholderText("筛选属性...") as HTMLInputElement
-    fireEvent.change(searchInput, { target: { value: "密度" } })
-    expect(screen.queryByText("熔点")).not.toBeInTheDocument()
+    expect(searchInput.value).toBe("密度")
+  })
 
-    fireEvent.change(searchInput, { target: { value: "" } })
+  it("clears the displayed filter when the parent resets filterText to empty", () => {
+    const { rerender } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        filterText="密度"
+        data={SAMPLE_DATA.filter((p) => p.name.includes("密度"))}
+        total={1}
+        error={null}
+      />,
+    )
+
+    const searchInput = screen.getByPlaceholderText("筛选属性...") as HTMLInputElement
+    expect(searchInput.value).toBe("密度")
+
+    // Parent clears the filter and restores the full dataset.
+    rerender(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        filterText=""
+        data={SAMPLE_DATA}
+        total={3}
+        error={null}
+      />,
+    )
+
+    const searchInputAfter = screen.getByPlaceholderText("筛选属性...") as HTMLInputElement
+    expect(searchInputAfter.value).toBe("")
     expect(screen.getByText("熔点")).toBeInTheDocument()
-    expect(screen.queryByText(/筛选结果/)).not.toBeInTheDocument()
   })
 })

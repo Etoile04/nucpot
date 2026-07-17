@@ -39,62 +39,129 @@ vi.mock("next/link", () => ({
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import { KgNodeDetailContent } from "./KgNodeDetailContent"
 
-const MOCK_NODE = {
-  id: "node-abc",
-  node_type: "Material",
-  label: "UO2",
-  aliases: ["Uranium Dioxide", "二氧化铀"],
-  properties: {
-    density: "10.97 g/cm³",
-    melting_point: "3120 K",
+// ── Mock data matching the two-endpoint contract ────────────────────
+// fetchKgNodeDetail calls fetchKgNode + fetchKgRelations via Promise.all.
+
+const MOCK_NODE_RESPONSE = {
+  success: true,
+  data: {
+    id: "node-abc",
+    node_type: "Material",
+    label: "UO2",
+    aliases: ["Uranium Dioxide", "二氧化铀"],
+    properties: {
+      density: "10.97 g/cm³",
+      melting_point: "3120 K",
+    },
+    confidence: 0.92,
+    status: "active",
+    source_id: "src-1",
   },
-  confidence: 0.92,
-  status: "active",
-  source_id: "src-1",
-  corpus_id: null,
-  relations: {
-    incoming: [
+}
+
+const MOCK_RELATIONS_RESPONSE = {
+  success: true,
+  data: {
+    items: [
+      // Incoming: source_node is pub-1, target_node is node-abc
       {
-        edge_id: "edge-in-1",
+        id: "edge-in-1",
         relation_type: "references",
-        direction: "incoming",
         confidence: 0.8,
-        neighbour: {
+        properties: {},
+        source_node: {
           id: "pub-1",
           node_type: "Publication",
           label: "Smith 2020",
+          aliases: [],
+          properties: {},
+          confidence: 0.7,
+          status: "active",
+          source_id: null,
+        },
+        target_node: {
+          id: "node-abc",
+          node_type: "Material",
+          label: "UO2",
+          aliases: [],
+          properties: {},
+          confidence: 0.92,
+          status: "active",
+          source_id: null,
         },
       },
-    ],
-    outgoing: [
+      // Outgoing: source_node is node-abc, target_node is prop-1
       {
-        edge_id: "edge-out-1",
+        id: "edge-out-1",
         relation_type: "hasProperty",
-        direction: "outgoing",
         confidence: 0.95,
-        neighbour: {
+        properties: {},
+        source_node: {
+          id: "node-abc",
+          node_type: "Material",
+          label: "UO2",
+          aliases: [],
+          properties: {},
+          confidence: 0.92,
+          status: "active",
+          source_id: null,
+        },
+        target_node: {
           id: "prop-1",
           node_type: "Property",
           label: "Melting Point",
+          aliases: [],
+          properties: {},
+          confidence: 0.85,
+          status: "active",
+          source_id: null,
         },
       },
+      // Outgoing: source_node is node-abc, target_node is exp-1
       {
-        edge_id: "edge-out-2",
+        id: "edge-out-2",
         relation_type: "measuredIn",
-        direction: "outgoing",
         confidence: 0.7,
-        neighbour: {
+        properties: {},
+        source_node: {
+          id: "node-abc",
+          node_type: "Material",
+          label: "UO2",
+          aliases: [],
+          properties: {},
+          confidence: 0.92,
+          status: "active",
+          source_id: null,
+        },
+        target_node: {
           id: "exp-1",
           node_type: "Experiment",
           label: "DSC run 42",
+          aliases: [],
+          properties: {},
+          confidence: 0.8,
+          status: "active",
+          source_id: null,
         },
       },
     ],
+    total: 3,
+    limit: 50,
+    offset: 0,
   },
-  sources: [
-    { source_id: "src-1", figure_id: null, label: "Smith 2020" },
-    { source_id: "src-2", figure_id: "fig-9", label: "Doe 2019" },
-  ],
+}
+
+/** Queue both fetch responses (node + relations) for success cases. */
+function mockSuccessResponses() {
+  fetchMock
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(MOCK_NODE_RESPONSE),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(MOCK_RELATIONS_RESPONSE),
+    })
 }
 
 beforeEach(() => {
@@ -104,18 +171,15 @@ beforeEach(() => {
 
 describe("KgNodeDetailContent", () => {
   it("1. fetches /api/v1/kg/nodes/{type}/{id} with the route params", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
     })
-    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe("/api/v1/kg/nodes/Material/node-abc")
+    const urls = fetchMock.mock.calls.map(([u]) => u as string)
+    expect(urls[0]).toBe("/api/v1/kg/nodes/Material/node-abc")
   })
 
   it("2. shows a content-shape skeleton before the fetch resolves", () => {
@@ -132,10 +196,7 @@ describe("KgNodeDetailContent", () => {
   })
 
   it("3. renders node label, type badge, and confidence badge once loaded", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -159,10 +220,7 @@ describe("KgNodeDetailContent", () => {
   })
 
   it("4. renders the properties table with each property's confidence badge", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -175,10 +233,7 @@ describe("KgNodeDetailContent", () => {
   })
 
   it("5. renders source references", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -188,14 +243,10 @@ describe("KgNodeDetailContent", () => {
       // is enough to assert the source list rendered.
       expect(screen.getAllByText("Smith 2020").length).toBeGreaterThanOrEqual(1)
     })
-    expect(screen.getByText("Doe 2019")).toBeInTheDocument()
   })
 
   it("6. renders the relations sidebar with incoming and outgoing edges", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -213,10 +264,7 @@ describe("KgNodeDetailContent", () => {
   })
 
   it("7. renders relations as anchors with href /kg/nodes/{target_type}/{target_id} (F2: Link)", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -235,21 +283,24 @@ describe("KgNodeDetailContent", () => {
     ) as HTMLAnchorElement | undefined
     expect(link).toBeDefined()
     expect(link!).toHaveAttribute("href", "/kg/nodes/Property/prop-1")
-    // Navigation now goes through real anchor elements — middle-click and
-    // keyboard activation are enabled for free, and router.push is no
-    // longer the click handler.
 
-    // The incoming relation should also be an anchor, not a button.
+    // The incoming relation should also be an anchor.
     const incomingLink = screen.getByRole("link", { name: /Smith 2020/i })
     expect(incomingLink).toHaveAttribute("href", "/kg/nodes/Publication/pub-1")
   })
 
   it("8. shows a retry-able error state when the API returns non-OK", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ detail: "boom" }),
-    })
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ detail: "boom" }),
+      })
+      // Second fetch for relations — still queued by Promise.all
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(MOCK_RELATIONS_RESPONSE),
+      })
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -262,10 +313,7 @@ describe("KgNodeDetailContent", () => {
   })
 
   it("9. has a back link that calls router.back()", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
@@ -278,10 +326,7 @@ describe("KgNodeDetailContent", () => {
   })
 
   it("10. exposes a prefers-reduced-motion-aware data-testid for QA hooks", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(MOCK_NODE),
-    })
+    mockSuccessResponses()
 
     render(<KgNodeDetailContent type="Material" id="node-abc" />)
 
