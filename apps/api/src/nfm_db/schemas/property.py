@@ -279,3 +279,44 @@ class PropertyStatsResponse(BaseModel):
     total_measurements: int
     by_category: list[PropertyCategoryCount] = Field(default_factory=list)
     by_material: list[MaterialMeasurementCount] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# MaterialPropertyTable — frontend shape (NFM-1067)
+# ---------------------------------------------------------------------------
+
+
+class MaterialPropertyItem(BaseModel):
+    """One row in the material property table (frontend MaterialProperty).
+
+    Returned in a flat, denormalized shape tailored for the React table.
+    Source title comes from the underlying Dataset→DataSource join;
+    unit symbol comes from the measurement's explicit Unit (or the
+    property type's default unit if the measurement has none).
+    """
+
+    id: UUID
+    name: str
+    value: str
+    unit: str | None
+    source: str
+    confidence: float
+
+
+class MaterialPropertyListMeta(BaseModel):
+    """Pagination metadata for the material property table."""
+
+    total: int
+    page: int
+    limit: int
+
+
+class MaterialPropertyListResponse(BaseModel):
+    """Paginated list of material properties.
+
+    Note: the inner shape is `{ data: [...], meta: {...} }` — not the
+    standard ``PaginatedResponse`` (which uses ``items`` / ``pages``).
+    """
+
+    data: list[MaterialPropertyItem]
+    meta: MaterialPropertyListMeta
