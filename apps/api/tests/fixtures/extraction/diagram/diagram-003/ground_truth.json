@@ -1,0 +1,106 @@
+{
+  "figure_type": "diagram",
+  "title": "Diagram 4: WC-Co process flow",
+  "bounding_box": {
+    "x": 60.9,
+    "y": 41.1,
+    "width": 500.9,
+    "height": 280.3
+  },
+  "plot_data": {
+    "title": "process flow diagram",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Step",
+      "unit": "",
+      "values": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        300.0,
+        471.4286,
+        642.8571,
+        814.2857,
+        985.7143,
+        1157.1429,
+        1328.5714,
+        1500.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "path 0",
+        "values": [
+          457.0038,
+          538.3376,
+          542.1095,
+          893.7613,
+          1144.6443,
+          1055.6005,
+          1016.4554,
+          529.9082
+        ],
+        "color": "black",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "path 1",
+        "values": [
+          1369.1435,
+          915.5609,
+          1163.1708,
+          1244.4308,
+          856.9232,
+          1094.2033,
+          938.1978,
+          346.6742
+        ],
+        "color": "green",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "path 2",
+        "values": [
+          1111.2089,
+          1211.0453,
+          677.6375,
+          1295.2684,
+          424.6946,
+          510.7959,
+          1077.6662,
+          492.3927
+        ],
+        "color": "blue",
+        "marker_style": "square"
+      }
+    ],
+    "legend_entries": [
+      "path 0",
+      "path 1",
+      "path 2"
+    ],
+    "annotations": [
+      "inlet"
+    ],
+    "confidence": 0.912
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/diagram/diagram-003/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 325.2,
+  "fallback_used": false,
+  "paper_id": "diagram-003"
+}

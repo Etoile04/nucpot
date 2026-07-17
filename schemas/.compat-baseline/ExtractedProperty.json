@@ -1,0 +1,115 @@
+{
+  "fields": {
+    "cache_level": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "composition": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "conditions": {
+      "default": null,
+      "required": false,
+      "type": "dict[str,typing.Any]|None"
+    },
+    "confidence": {
+      "default": "'medium'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "context": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "element": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "element_system": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "material_name": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "method": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "phase": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "property": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "property_category": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "property_name": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "property_note": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "reference": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "source": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "source_doi": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "source_file": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "temperature": {
+      "default": null,
+      "required": false,
+      "type": "float|None"
+    },
+    "uncertainty": {
+      "default": null,
+      "required": false,
+      "type": "float|None"
+    },
+    "unit": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "value": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

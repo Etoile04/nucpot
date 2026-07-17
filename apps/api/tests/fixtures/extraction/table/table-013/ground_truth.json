@@ -1,0 +1,406 @@
+{
+  "figure_type": "table",
+  "title": "Table 14: BeO mechanical properties",
+  "bounding_box": {
+    "x": 51.7,
+    "y": 69.8,
+    "width": 508.2,
+    "height": 313.4
+  },
+  "table_data": {
+    "title": "Zr-4 mechanical properties",
+    "headers": {
+      "columns": [
+        "temperature_K",
+        "stress_MPa",
+        "strain_pct",
+        "youngs_modulus_GPa",
+        "density_gcc"
+      ],
+      "sub_headers": null
+    },
+    "rows": [
+      [
+        {
+          "value": "800.3",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "521.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "12.14",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "238.5",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "12.578",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "318.1",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "537.94",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "7.45",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "112.4",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "2.612",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "493.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "421.34",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "7.32",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "157.5",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "4.329",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "590.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "632.99",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "23.42",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "238.9",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "7.882",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "901.6",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "512.81",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "22.93",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "199.5",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "9.919",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "669.0",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "472.71",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "4.73",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "158.4",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "9.747",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "796.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "403.1",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "14.73",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "80.8",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "3.157",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "976.5",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "341.09",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "7.48",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "213.4",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "5.116",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "1071.1",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "215.83",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "4.76",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "121.6",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "11.138",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "873.4",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "734.64",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "22.34",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "245.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "11.714",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ]
+    ],
+    "num_columns": 5,
+    "num_rows": 10,
+    "has_merged_cells": false,
+    "notes": [],
+    "confidence": 0.976
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/table/table-013/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 395.7,
+  "fallback_used": false,
+  "paper_id": "table-013"
+}

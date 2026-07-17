@@ -1,0 +1,305 @@
+{
+  "figure_type": "table",
+  "title": "Table 10: UO2 mechanical properties",
+  "bounding_box": {
+    "x": 75.1,
+    "y": 61.9,
+    "width": 473.6,
+    "height": 342.3
+  },
+  "table_data": {
+    "title": "UO2 mechanical properties",
+    "headers": {
+      "columns": [
+        "temperature_K",
+        "stress_MPa",
+        "strain_pct",
+        "youngs_modulus_GPa"
+      ],
+      "sub_headers": null
+    },
+    "rows": [
+      [
+        {
+          "value": "883.3",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "188.29",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "10.55",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "214.8",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "405.5",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "168.04",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "18.82",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "159.4",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "831.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "364.04",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "17.22",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "161.5",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "545.8",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "71.15",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "15.02",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "180.6",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "443.9",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "269.12",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "1.37",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "234.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "1189.9",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "523.95",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "15.36",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "120.9",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "497.1",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "342.15",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "13.93",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "198.3",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "852.8",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "263.06",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "2.21",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "224.2",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ],
+      [
+        {
+          "value": "648.8",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "310.13",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "19.48",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        },
+        {
+          "value": "164.6",
+          "row_span": 1,
+          "col_span": 1,
+          "is_header": false,
+          "confidence": 1.0
+        }
+      ]
+    ],
+    "num_columns": 4,
+    "num_rows": 9,
+    "has_merged_cells": false,
+    "notes": [],
+    "confidence": 0.974
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/table/table-009/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 265.4,
+  "fallback_used": false,
+  "paper_id": "table-009"
+}

@@ -1,0 +1,40 @@
+{
+  "fields": {
+    "auto_approved": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "flagged": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "job_id": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "review_url": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "sent_to_review": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "total_properties": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'int'>"
+    },
+    "validation_id": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

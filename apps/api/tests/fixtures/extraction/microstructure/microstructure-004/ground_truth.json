@@ -1,0 +1,84 @@
+{
+  "figure_type": "microstructure",
+  "title": "Micrograph 5: BaFe12O19 grain distribution",
+  "bounding_box": {
+    "x": 80.4,
+    "y": 58.8,
+    "width": 459.4,
+    "height": 345.3
+  },
+  "plot_data": {
+    "title": "grain size distribution",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Grain size",
+      "unit": "um",
+      "values": [
+        0.1,
+        2.3636,
+        4.6273,
+        6.8909,
+        9.1545,
+        11.4182,
+        13.6818,
+        15.9455,
+        18.2091,
+        20.4727,
+        22.7364,
+        25.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Frequency",
+      "unit": "%",
+      "values": [
+        0.0,
+        2.7273,
+        5.4545,
+        8.1818,
+        10.9091,
+        13.6364,
+        16.3636,
+        19.0909,
+        21.8182,
+        24.5455,
+        27.2727,
+        30.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "frequency",
+        "values": [
+          1.246,
+          17.159,
+          2.5976,
+          23.2532,
+          14.9,
+          15.5835,
+          8.5488,
+          10.4033,
+          29.7314,
+          27.7572,
+          25.9136,
+          20.1584
+        ],
+        "color": "green",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "frequency"
+    ],
+    "annotations": [],
+    "confidence": 0.833
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/microstructure/microstructure-004/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 232.0,
+  "fallback_used": false,
+  "paper_id": "microstructure-004"
+}

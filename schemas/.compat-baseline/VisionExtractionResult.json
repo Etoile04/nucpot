@@ -1,0 +1,45 @@
+{
+  "fields": {
+    "extraction_time_ms": {
+      "default": "0.0",
+      "required": false,
+      "type": "<class'float'>"
+    },
+    "fallback_used": {
+      "default": "False",
+      "required": false,
+      "type": "<class'bool'>"
+    },
+    "figure_type": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "model": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "plot_data": {
+      "default": null,
+      "required": false,
+      "type": "nfm_db.schemas.vision_extraction.PlotData|None"
+    },
+    "provider": {
+      "default": "'openai'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "source_image_path": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "table_data": {
+      "default": null,
+      "required": false,
+      "type": "nfm_db.schemas.vision_extraction.TableData|None"
+    }
+  },
+  "literals": {}
+}

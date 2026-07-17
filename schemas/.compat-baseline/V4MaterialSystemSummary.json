@@ -1,0 +1,40 @@
+{
+  "fields": {
+    "categories": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    },
+    "confidence_summary": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "<class'schemas.extraction.V4ConfidenceSummary'>"
+    },
+    "display_name": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "last_extraction_at": {
+      "default": null,
+      "required": false,
+      "type": "datetime.datetime|None"
+    },
+    "name": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "pending_review_count": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "total_properties": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    }
+  },
+  "literals": {}
+}
