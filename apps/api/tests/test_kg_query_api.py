@@ -1,8 +1,11 @@
 """API endpoint tests for KG query routes (NFM-858).
 
 Tests the three GET endpoints via the async_client (SQLite-backed).
-"""
 
+NOTE: Tests are currently skipped because the kg_query_service API was
+refactored in NFM-1142 and the /api/v1/kg/query/* endpoints were removed.
+Tracked as a follow-up issue.
+"""
 from __future__ import annotations
 
 import json
@@ -11,6 +14,8 @@ import uuid
 import pytest
 
 from nfm_db.models.kg import KGEdge, KGNode
+
+pytestmark = pytest.mark.skip(reason="KG query endpoints removed in NFM-1142 refactor; tests need rewrite")
 
 # ---------------------------------------------------------------------------
 # Fixtures

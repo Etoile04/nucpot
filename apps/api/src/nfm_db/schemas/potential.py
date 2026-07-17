@@ -24,6 +24,7 @@ class PotentialSummary(BaseModel):
     version: str = "1.0"
     tags: list[str] = []
     file_url: str | None = None
+    provider: str = "local"
 
 
 class PotentialDetail(PotentialSummary):

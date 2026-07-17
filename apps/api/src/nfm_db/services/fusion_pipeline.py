@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -54,11 +54,28 @@ class ConflictGroup:
 
 @dataclass(frozen=True)
 class FusionResult:
-    """Result of a single fusion operation."""
+    """Result of a fusion operation.
 
-    material_id: str
-    property_type: str
-    conflict_detected: bool
+    Supports two usage shapes:
+    - Per-conflict result (from ``FusionPipeline.run``): ``material_id``,
+      ``property_type``, ``conflict_detected``, etc.
+    - Aggregated result (from ``run_fusion``): ``conflicts_detected``,
+      ``conflicts_resolved``, ``conflicts_escalated``, ``errors``.
+
+    All fields are optional so either shape can be constructed with only
+    the relevant subset populated.
+    """
+
+    # Aggregated fields (used by multi_source_fusion.run_fusion)
+    conflicts_detected: int = 0
+    conflicts_resolved: int = 0
+    conflicts_escalated: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    # Per-conflict fields (used by FusionPipeline.run)
+    material_id: str | None = None
+    property_type: str | None = None
+    conflict_detected: bool = False
     conflict_id: str | None = None
     resolved_value: dict[str, Any] | None = None
     strategy_used: str | None = None

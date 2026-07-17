@@ -22,9 +22,11 @@ class ConflictStatus(StrEnum):
     """Lifecycle states for a conflict record."""
 
     PENDING = "pending"
+    RESOLVED = "resolved"
+    ESCALATED = "escalated"
+    # Extended states (backward-compatible)
     AUTO_RESOLVED = "auto_resolved"
     MANUALLY_RESOLVED = "manually_resolved"
-    ESCALATED = "escalated"
     DISMISSED = "dismissed"
 
 

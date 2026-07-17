@@ -7,11 +7,24 @@ consistent JSON shape without duplicating boilerplate.
 from __future__ import annotations
 
 import math
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
+from nfm_db.schemas.errors import ErrorCode as _ErrorCode
+
 T = TypeVar("T")
+
+# Re-export ErrorCode from errors module for backward compatibility
+ErrorCode = _ErrorCode
+
+
+class ErrorResponse(BaseModel):
+    """Structured error response model with machine-readable error_code."""
+
+    error_code: ErrorCode
+    message: str
+    details: Any | None = None
 
 
 class PaginationParams(BaseModel):

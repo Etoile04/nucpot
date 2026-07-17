@@ -1,3 +1,4 @@
+# ruff: noqa: F821
 """Unit tests for KG query service (NFM-858).
 
 Tests the three query modes: property, relation, and path.

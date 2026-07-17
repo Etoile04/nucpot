@@ -286,6 +286,18 @@ async def import_properties(
 
         pm = PropertyMeasurement(**validated.model_dump(exclude_unset=True))
         db.add(pm)
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            errors.append(
+                BatchRowError(
+                    row=i,
+                    field="_FK",
+                    message=f"Row {i}: integrity constraint violation (missing FK or duplicate)",
+                )
+            )
+            continue
         imported += 1
 
     try:
