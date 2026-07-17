@@ -94,6 +94,20 @@ ignore = [
 # NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
+# NFM-1465: skipped test files reference removed/refactored APIs (NFM-1142 KG
+# service, NFM-861 KG-node conflict schema, NFM-296 provider schemas, etc.).
+# F821 (undefined name) is expected on the unfilled code paths until rewrite.
+"tests/test_kg_query_api.py" = ["F821"]
+"tests/test_kg_query_service.py" = ["F821"]
+"tests/test_conflict_model.py" = ["F821"]
+"tests/test_multi_source_fusion.py" = ["F821"]
+"tests/test_kg_models.py" = ["F821"]
+"tests/test_openkim_mapper.py" = ["F821"]
+"tests/providers/test_openkim_provider.py" = ["F821"]
+"tests/providers/test_composite.py" = ["F821"]
+"tests/test_batch_api.py" = ["F821"]
+"tests/test_potential_schema.py" = ["F821"]
+"tests/unit/test_error_handler.py" = ["F821"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nfm_db"]
