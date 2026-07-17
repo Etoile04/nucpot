@@ -1,0 +1,23 @@
+{
+  "kim_id": "MO_123629422045_006",
+  "long_name": "EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006",
+  "title": "EAM potential (LAMMPS cubic hermite tabulation) for Al developed by Ercolessi and Adams (1994) v006",
+  "authors": [
+    "F. Ercolessi",
+    "J. B. Adams"
+  ],
+  "publication_date": "2025",
+  "publisher": "OpenKIM",
+  "doi": "10.25950/6ab99cd5",
+  "description": "EAM potential (LAMMPS cubic hermite tabulation) for Al developed by Ercolessi and Adams (1994) v006; This is an EAM parameterization for pure aluminum due to F. Ercolessi and J. B. Adams. The potential was developed using the &quot;force-matching method&quot;, which includes forces from first-principles calculations in the fitting data base. The potential was fitted to properties of face-centered cubic (fcc) crystals.; EAM Dynamo ErcolessiAdams 1994 Al MO_123629422045_006 MO_123629422045",
+  "species": [
+    "Al"
+  ],
+  "potential_type": "eam",
+  "keywords": [
+    "Software",
+    "KIM Model",
+    "MO_123629422045_006",
+    "EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006"
+  ]
+}
