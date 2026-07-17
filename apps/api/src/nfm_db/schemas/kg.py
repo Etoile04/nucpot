@@ -106,6 +106,8 @@ class KGGraphEdge(BaseModel):
 
 
 class KGGraphResponse(BaseModel):
-    focal: dict[str, Any]  # {"id": str, "depth": 0}
+    focal: dict[str, Any] | None = None  # {"id": str, "depth": 0}
     nodes: list[KGGraphNode]
     edges: list[KGGraphEdge]
+    total_nodes: int | None = None
+    total_edges: int | None = None

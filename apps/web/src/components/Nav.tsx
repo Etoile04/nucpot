@@ -7,7 +7,9 @@ import { useAuth } from '@/components/AuthProvider'
 
 const NAV_LINKS = [
   { href: '/browse', label: '浏览' },
+  { href: '/materials', label: '材料库' },
   { href: '/ontology', label: '本体' },
+  { href: '/kg/explore', label: '知识图谱' },
   { href: '/search', label: '高级检索' },
   { href: '/compare', label: '对比' },
   { href: '/feedback', label: '反馈' },
