@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from nfm_db.models.conflict_record import ConflictStrategy
+from nfm_db.models.conflict import ResolutionStrategy as ConflictStrategy
 from nfm_db.services.conflict_resolver import (
     get_strategy_for_property_type,
     resolve_confidence,

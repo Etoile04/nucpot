@@ -13,11 +13,14 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.conflict_record import (
+from nfm_db.models.conflict import (
     ConflictRecord,
     ConflictStatus,
-    ConflictStrategy,
+    ResolutionStrategy,
 )
+
+# Backward-compatible alias used by existing tests
+ConflictStrategy = ResolutionStrategy
 from nfm_db.models.kg import KGNode
 
 

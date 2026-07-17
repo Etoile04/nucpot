@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
-from cachetools import TTLCache  # type: ignore[import-untyped]
+from cachetools import TTLCache
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 

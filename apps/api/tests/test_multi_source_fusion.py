@@ -21,7 +21,7 @@ import pytest
 from nfm_db.models.conflict import ConflictRecord, ConflictStatus
 from nfm_db.models.conflict import ResolutionStrategy as ConflictStrategy
 from nfm_db.models.kg import KGEdge
-from nfm_db.schemas.conflict import FusionResult
+from nfm_db.services.fusion_pipeline import FusionResult
 from nfm_db.services.multi_source_fusion import (
     detect_conflicts,
     list_conflicts,

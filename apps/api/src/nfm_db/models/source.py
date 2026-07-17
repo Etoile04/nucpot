@@ -20,7 +20,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nfm_db.models import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    from nfm_db.models.extraction_figure import ExtractionFigure
     from nfm_db.models.property import Dataset
 
 
@@ -54,9 +53,6 @@ class DataSource(TimestampMixin, Base):
         back_populates="data_source",
     )
     datasets: Mapped[list["Dataset"]] = relationship(
-        back_populates="source",
-    )
-    extraction_figures: Mapped[list["ExtractionFigure"]] = relationship(
         back_populates="source",
     )
 
