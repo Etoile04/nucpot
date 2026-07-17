@@ -20,10 +20,10 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from cachetools import TTLCache
+from cachetools import TTLCache  # type: ignore[import-untyped]
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,7 +100,7 @@ def reset_cache_metrics() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _on_cache_eviction(_, __, ___) -> None:
+def _on_cache_eviction(_key: Any, _value: Any, _reason: Any) -> None:
     _stats._evictions += 1
     logger.debug("KG query cache eviction (total=%d)", _stats._evictions)
 
@@ -187,7 +187,7 @@ async def list_nodes_by_type(
         cached = _kg_cache.get(key)
         if cached is not None:
             _stats._hits += 1
-            return cached
+            return cast(dict[str, Any], cached)
         _stats._misses += 1
 
     result = await _execute_with_timeout(
@@ -202,7 +202,7 @@ async def list_nodes_by_type(
 
     if use_cache:
         _kg_cache[key] = result
-    return result
+    return cast(dict[str, Any], result)
 
 
 async def _list_nodes_by_type_impl(
@@ -255,7 +255,7 @@ async def get_node_by_id(
         cached = _kg_cache.get(key)
         if cached is not None:
             _stats._hits += 1
-            return cached
+            return cast(dict[str, Any], cached)
         _stats._misses += 1
 
     result = await _execute_with_timeout(
@@ -266,7 +266,7 @@ async def get_node_by_id(
 
     if use_cache:
         _kg_cache[key] = result
-    return result
+    return cast(dict[str, Any], result)
 
 
 async def _get_node_by_id_impl(
@@ -308,7 +308,7 @@ async def get_edges_from_node(
         cached = _kg_cache.get(key)
         if cached is not None:
             _stats._hits += 1
-            return cached
+            return cast(dict[str, Any], cached)
         _stats._misses += 1
 
     result = await _execute_with_timeout(
@@ -323,7 +323,7 @@ async def get_edges_from_node(
 
     if use_cache:
         _kg_cache[key] = result
-    return result
+    return cast(dict[str, Any], result)
 
 
 async def _get_edges_from_node_impl(
@@ -386,7 +386,7 @@ async def list_edges_by_relation(
         cached = _kg_cache.get(key)
         if cached is not None:
             _stats._hits += 1
-            return cached
+            return cast(dict[str, Any], cached)
         _stats._misses += 1
 
     result = await _execute_with_timeout(
@@ -400,7 +400,7 @@ async def list_edges_by_relation(
 
     if use_cache:
         _kg_cache[key] = result
-    return result
+    return cast(dict[str, Any], result)
 
 
 async def _list_edges_by_relation_impl(
@@ -472,7 +472,7 @@ def _edge_to_dict(edge: KGEdge) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _execute_with_timeout(coro, *args: Any, **kwargs: Any) -> Any:
+async def _execute_with_timeout(coro: Any, *args: Any, **kwargs: Any) -> Any:
     """Wrap an async query coroutine with a 30s timeout.
 
     Logs elapsed time and raises ``KGQueryTimeoutError`` on expiry.
