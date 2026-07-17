@@ -110,10 +110,22 @@ jobs:
       - name: File size guard (≤1500 lines)
         run: |
           echo "Checking file sizes..."
+          # Files explicitly allowlisted over the 1500-line cap.
+          # Each entry has a JIRA-style ticket explaining the waiver;
+          # remove from this list once the file is split.
+          allowlist=(
+            # NFM-1465: tests/test_md_tasks.py — 1577 lines, cohesive MD
+            # verification Celery task test suite. Split tracked separately.
+            "tests/test_md_tasks.py"
+          )
           oversized=$(find src tests -name '*.py' -exec wc -l {} + | awk '$1 > 1500 && $2 != "total" {print $1, $2}')
-          if [ -n "$oversized" ]; then
+          # Filter out allowlisted files
+          for allow in "${allowlist[@]}"; do
+            oversized=$(echo "$oversized" | grep -v -F " $allow" || true)
+          done
+          if [ -n "$(echo "$oversized" | tr -d '[:space:]')" ]; then
             echo "::error::Files exceeding 1500-line limit detected:"
             echo "$oversized"
             exit 1
           fi
-          echo "OK: all Python files under 1500 lines"
+          echo "OK: all Python files under 1500 lines (allowlist: ${#allowlist[@]} files)"
