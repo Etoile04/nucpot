@@ -221,7 +221,7 @@ async def submit_extraction(
     _current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Submit a v4 extraction job.
+    """提交V4提取任务。
 
     Validates source_type, triggers the extraction pipeline, and returns
     a job_id for status polling.
@@ -285,7 +285,7 @@ async def submit_extraction(
     description="轮询提取任务进度，包含详细的步骤追踪。\n\nPoll extraction job progress with detailed step tracking.",
 )
 async def get_extraction_status(job_id: str) -> JSONResponse:
-    """Poll extraction job progress with detailed step tracking."""
+    """轮询提取任务进度（含详细步骤追踪）。"""
     job = get_job(job_id)
 
     if job is None:
@@ -333,7 +333,7 @@ async def get_extraction_result(
     limit: int = Query(default=50, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Retrieve extraction results for a completed job with pagination."""
+    """获取已完成任务的提取结果，支持分页。"""
     job = get_job(job_id)
 
     if job is None:
@@ -415,7 +415,7 @@ async def browse_properties(
     sort_by: str = Query(default="property"),
     sort_order: str = Query(default="asc"),
 ) -> JSONResponse:
-    """Browse extracted properties for a material system with filtering."""
+    """浏览材料体系的提取属性数据，支持筛选。"""
     if sort_by not in VALID_SORT_FIELDS:
         return _error_response(
             400,
@@ -514,7 +514,7 @@ async def validate_extraction(
     payload: V4ValidateRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Trigger a validation workflow for extracted properties."""
+    """触发提取属性验证工作流。"""
     job = get_job(job_id)
 
     if job is None:
@@ -578,7 +578,7 @@ async def list_material_systems(
     has_pending_review: bool = Query(default=False),
     category: str | None = Query(default=None),
 ) -> JSONResponse:
-    """List all material systems with extracted property data."""
+    """获取所有已提取属性数据的材料体系列表。"""
     systems = _build_material_systems_index()
 
     if has_pending_review:

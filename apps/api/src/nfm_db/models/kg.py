@@ -55,6 +55,8 @@ class KGNode(TimestampMixin, Base):
             name="ck_kg_nodes_confidence",
         ),
         Index("ix_kg_nodes_type", "node_type"),
+        Index("ix_kg_nodes_corpus_type_status", "corpus_id", "node_type", "status"),
+        Index("ix_kg_nodes_label", "label"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -146,6 +148,8 @@ class KGEdge(TimestampMixin, Base):
         Index("ix_kg_edges_target", "target_node_id"),
         Index("ix_kg_edges_relation", "relation_type"),
         Index("ix_kg_edges_source_relation", "source_node_id", "relation_type"),
+        Index("ix_kg_edges_corpus_source_relation", "corpus_id", "source_node_id", "relation_type"),
+        Index("ix_kg_edges_target_relation", "target_node_id", "relation_type"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
