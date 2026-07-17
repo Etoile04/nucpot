@@ -1,12 +1,15 @@
-"""Tests for Knowledge Graph models (kg_nodes, kg_edges).
+"""Tests for Knowledge Graph models (kg_nodes, kg_edges, kg_review_queue, ontology_id_map).
 
 Covers:
 - KGNode creation with all field types
+- KGNode figure_id FK to extraction_figures
 - KGEdge creation with FK constraints
 - FK constraint enforcement (source_id, source_node_id, target_node_id)
 - Unique constraint on edges (source_node_id, target_node_id, relation_type)
 - JSONB properties storage/retrieval
 - Relationship: KGNode -> outgoing/incoming KGEdges
+- KGReviewQueue creation, constraints, and status transitions
+- OntologyIdMap creation and unique constraint
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.kg import KGEdge, KGNode, KGReviewQueue, OntologyIdMap
 
 
 async def _refresh_rel(session: AsyncSession, obj: object, *attrs: str) -> None:
@@ -187,6 +190,78 @@ class TestKGNodeCreation:
         await db_session.refresh(node)
 
         assert node.source_id == source.id
+
+    @pytest.mark.asyncio
+    async def test_create_kg_node_with_figure_id(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGNode stores figure_id FK to extraction_figures."""
+        from nfm_db.models.extraction_figure import ExtractionFigure
+
+        figure = ExtractionFigure(
+            page_number=3,
+            figure_type="plot",
+            extracted_data={"curves": 2},
+        )
+        db_session.add(figure)
+        await db_session.flush()
+
+        node = KGNode(
+            node_type="Property",
+            label="Thermal Conductivity from Figure",
+            figure_id=figure.id,
+        )
+        db_session.add(node)
+        await db_session.commit()
+        await db_session.refresh(node)
+
+        assert node.figure_id == figure.id
+
+    @pytest.mark.asyncio
+    async def test_create_kg_node_figure_id_nullable(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGNode figure_id is nullable — nodes without figures accepted."""
+        node = KGNode(node_type="Material", label="Pure Data Node")
+        db_session.add(node)
+        await db_session.commit()
+        await db_session.refresh(node)
+
+        assert node.figure_id is None
+
+    @pytest.mark.asyncio
+    async def test_create_kg_node_with_corpus_id(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGNode stores corpus_id for multi-corpus support."""
+        node = KGNode(
+            node_type="Material",
+            label="Corpus Node",
+            corpus_id="nvl-v1.1",
+        )
+        db_session.add(node)
+        await db_session.commit()
+        await db_session.refresh(node)
+
+        assert node.corpus_id == "nvl-v1.1"
+
+    @pytest.mark.asyncio
+    async def test_create_kg_node_with_synced_to_graph(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGNode stores synced_to_graph and graph_synced_at."""
+        from datetime import datetime, timezone
+
+        node = KGNode(
+            node_type="Material",
+            label="Synced Node",
+            synced_to_graph=True,
+        )
+        db_session.add(node)
+        await db_session.commit()
+        await db_session.refresh(node)
+
+        assert node.synced_to_graph is True
 
 
 # ============================================================
@@ -683,3 +758,325 @@ class TestKGNodeCheckConstraints:
         db_session.add(edge)
         with pytest.raises((IntegrityError, OperationalError)):
             await db_session.commit()
+
+
+# ============================================================
+# KGReviewQueue Model Tests
+# ============================================================
+
+
+class TestKGReviewQueueCreation:
+    """KGReviewQueue model creation tests."""
+
+    @pytest.mark.asyncio
+    async def test_create_review_queue_entity(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue item_type=entity accepted with defaults."""
+        node = KGNode(node_type="Material", label="UO2")
+        db_session.add(node)
+        await db_session.flush()
+
+        item = KGReviewQueue(
+            item_type="entity",
+            item_id=node.id,
+            review_reason="Low confidence material",
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        assert item.id is not None
+        assert item.item_type == "entity"
+        assert item.item_id == node.id
+        assert item.review_reason == "Low confidence material"
+        assert item.status == "pending"
+        assert item.reviewer_notes is None
+        assert item.created_at is not None
+        assert item.reviewed_at is None
+
+    @pytest.mark.asyncio
+    async def test_create_review_queue_relation(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue item_type=relation accepted."""
+        source_node = KGNode(node_type="Material", label="UO2")
+        target_node = KGNode(node_type="Property", label="Density")
+        db_session.add_all([source_node, target_node])
+        await db_session.flush()
+
+        edge = KGEdge(
+            source_node_id=source_node.id,
+            target_node_id=target_node.id,
+            relation_type="hasProperty",
+        )
+        db_session.add(edge)
+        await db_session.flush()
+
+        item = KGReviewQueue(
+            item_type="relation",
+            item_id=edge.id,
+            review_reason="Borderline dedup similarity",
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        assert item.item_type == "relation"
+
+    @pytest.mark.asyncio
+    async def test_create_review_queue_with_notes(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue with reviewer_notes accepted."""
+        node = KGNode(node_type="Property", label="Unknown")
+        db_session.add(node)
+        await db_session.flush()
+
+        item = KGReviewQueue(
+            item_type="entity",
+            item_id=node.id,
+            review_reason="Ambiguous entity type",
+            reviewer_notes="Confirmed as Property",
+            status="modified",
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        assert item.reviewer_notes == "Confirmed as Property"
+        assert item.status == "modified"
+
+
+class TestKGReviewQueueConstraints:
+    """Database constraint tests for kg_review_queue."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_item_type_rejected(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue with invalid item_type is rejected."""
+        import uuid as _uuid
+
+        item = KGReviewQueue(
+            item_type="invalid_type",
+            item_id=_uuid.uuid4(),
+            review_reason="Test",
+        )
+        db_session.add(item)
+        with pytest.raises((IntegrityError, OperationalError)):
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_rejected(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue with invalid status is rejected."""
+        import uuid as _uuid
+
+        item = KGReviewQueue(
+            item_type="entity",
+            item_id=_uuid.uuid4(),
+            review_reason="Test",
+            status="deleted",
+        )
+        db_session.add(item)
+        with pytest.raises((IntegrityError, OperationalError)):
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_approved_status_accepted(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue status=approved accepted."""
+        node = KGNode(node_type="Material", label="UO2")
+        db_session.add(node)
+        await db_session.flush()
+
+        item = KGReviewQueue(
+            item_type="entity",
+            item_id=node.id,
+            review_reason="Reviewed and approved",
+            status="approved",
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        assert item.status == "approved"
+
+    @pytest.mark.asyncio
+    async def test_rejected_status_accepted(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """KGReviewQueue status=rejected accepted."""
+        node = KGNode(node_type="Publication", label="Spurious Paper")
+        db_session.add(node)
+        await db_session.flush()
+
+        item = KGReviewQueue(
+            item_type="entity",
+            item_id=node.id,
+            review_reason="False positive",
+            status="rejected",
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        assert item.status == "rejected"
+
+
+class TestKGReviewQueueRepr:
+    """__repr__ format tests."""
+
+    @pytest.mark.asyncio
+    async def test_review_queue_repr(self, db_session: AsyncSession) -> None:
+        """KGReviewQueue repr includes type and status."""
+        node = KGNode(node_type="Material", label="UO2")
+        db_session.add(node)
+        await db_session.flush()
+
+        item = KGReviewQueue(
+            item_type="entity",
+            item_id=node.id,
+            review_reason="Review",
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        r = repr(item)
+        assert "entity" in r
+        assert "pending" in r
+
+
+# ============================================================
+# OntologyIdMap Model Tests
+# ============================================================
+
+
+class TestOntologyIdMapCreation:
+    """OntologyIdMap model creation tests."""
+
+    @pytest.mark.asyncio
+    async def test_create_ontology_id_map(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """OntologyIdMap can be created with required fields."""
+        node = KGNode(node_type="Material", label="UO2")
+        db_session.add(node)
+        await db_session.flush()
+
+        mapping = OntologyIdMap(
+            nvl_id="NVL-001",
+            corpus_id="nvl-v1.1",
+            node_id=node.id,
+            graph_label="UraniumDioxide",
+        )
+        db_session.add(mapping)
+        await db_session.commit()
+        await db_session.refresh(mapping)
+
+        assert mapping.nvl_id == "NVL-001"
+        assert mapping.corpus_id == "nvl-v1.1"
+        assert mapping.node_id == node.id
+        assert mapping.graph_label == "UraniumDioxide"
+        assert mapping.created_at is not None
+
+    @pytest.mark.asyncio
+    async def test_ontology_id_map_graph_label_nullable(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """OntologyIdMap graph_label is nullable."""
+        node = KGNode(node_type="Property", label="Density")
+        db_session.add(node)
+        await db_session.flush()
+
+        mapping = OntologyIdMap(
+            nvl_id="NVL-002",
+            corpus_id="nvl-v1.1",
+            node_id=node.id,
+        )
+        db_session.add(mapping)
+        await db_session.commit()
+        await db_session.refresh(mapping)
+
+        assert mapping.graph_label is None
+
+    @pytest.mark.asyncio
+    async def test_ontology_id_map_unique_nvl_corpus(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Duplicate (nvl_id, corpus_id) pair is rejected."""
+        node1 = KGNode(node_type="Material", label="UO2")
+        node2 = KGNode(node_type="Material", label="Uranium Dioxide")
+        db_session.add_all([node1, node2])
+        await db_session.flush()
+
+        mapping1 = OntologyIdMap(
+            nvl_id="NVL-001",
+            corpus_id="nvl-v1.1",
+            node_id=node1.id,
+        )
+        db_session.add(mapping1)
+        await db_session.commit()
+
+        mapping2 = OntologyIdMap(
+            nvl_id="NVL-001",
+            corpus_id="nvl-v1.1",
+            node_id=node2.id,
+        )
+        db_session.add(mapping2)
+        with pytest.raises((IntegrityError, OperationalError)):
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_ontology_id_map_same_nvl_different_corpus(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Same nvl_id in different corpora is accepted."""
+        node1 = KGNode(node_type="Material", label="UO2")
+        node2 = KGNode(node_type="Material", label="UO2 (v2)")
+        db_session.add_all([node1, node2])
+        await db_session.flush()
+
+        db_session.add_all([
+            OntologyIdMap(
+                nvl_id="NVL-001",
+                corpus_id="nvl-v1.1",
+                node_id=node1.id,
+            ),
+            OntologyIdMap(
+                nvl_id="NVL-001",
+                corpus_id="nvl-v2.0",
+                node_id=node2.id,
+            ),
+        ])
+        await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_ontology_id_map_fk_cascade_on_node_delete(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Deleting a KGNode cascades to its OntologyIdMap entries."""
+        node = KGNode(node_type="Material", label="UO2")
+        db_session.add(node)
+        await db_session.flush()
+
+        mapping = OntologyIdMap(
+            nvl_id="NVL-001",
+            corpus_id="nvl-v1.1",
+            node_id=node.id,
+        )
+        db_session.add(mapping)
+        await db_session.commit()
+
+        await db_session.delete(node)
+        await db_session.commit()
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(select(OntologyIdMap))
+        remaining = list(result.scalars().all())
+        assert len(remaining) == 0
