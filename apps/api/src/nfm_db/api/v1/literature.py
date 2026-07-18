@@ -126,6 +126,16 @@ async def upload_literature(
     await db.commit()
     await db.refresh(source)
 
+    # NFM-1489: hand the parsing off to the background Celery worker so the
+    # HTTP request returns well under the 500 ms budget (AC #1).  NFM-1488's
+    # rewrite of this endpoint MUST preserve this dispatcher call, and the
+    # new ``POST /literature/from-doi`` MUST do the same.
+    from nfm_db.services.literature_dispatcher import (
+        schedule_literature_processing,
+    )
+
+    schedule_literature_processing(source.id)
+
     return ApiResponse(
         success=True,
         data=LiteratureUploadResponse(
