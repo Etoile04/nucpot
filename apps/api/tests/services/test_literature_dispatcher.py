@@ -32,7 +32,6 @@ from nfm_db.services.literature_dispatcher import (
     schedule_literature_processing,
 )
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -78,7 +77,7 @@ async def test_schedule_dispatches_to_literature_processing_queue() -> None:
         "nfm_db.services.literature_dispatcher._send_literature_task"
     ) as mock_send:
         mock_send.return_value = MagicMock(id="celery-task-id-123")
-        result = schedule_literature_processing(datasource_id)
+        schedule_literature_processing(datasource_id)
 
     mock_send.assert_called_once()
     kwargs = mock_send.call_args.kwargs
