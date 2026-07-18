@@ -77,6 +77,16 @@ from celery import Celery  # noqa: E402
 
 celery_app = Celery("nfm_tasks")
 
+# Route literature-processing tasks to their own queue so the MD worker
+# (--queues=md_verification) and the literature worker
+# (--queues=literature_processing) can scale independently. See
+# docker-compose.prod.yml and the NFM-1489 dispatcher module.
+celery_app.conf.task_routes = {
+    "nfm_db.services.literature_dispatcher.process_literature_task": {
+        "queue": "literature_processing",
+    },
+}
+
 
 @celery_app.task(
     bind=True,

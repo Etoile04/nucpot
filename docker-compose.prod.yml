@@ -81,6 +81,16 @@ services:
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
       NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
+      # NFM-1489: LLM env (literature parsing uses the Ollama endpoint).
+      # AC #4 — must be visible via ``docker exec nucpot-prod-api env``.
+      LLM_PROVIDER: ollama
+      LLM_API_KEY: ollama
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
+    volumes:
+      # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
+      # from the same path.  Distinct from the potentials / LightRAG volumes.
+      - prod-uploads:/app/uploads
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -152,7 +162,7 @@ services:
     restart: unless-stopped
     command: >
       python -m celery -A nfm_db.services.celery_app:celery_app worker
-      --queues=md_verification
+      --queues=md_verification,literature_processing
       --concurrency=${PROD_WORKER_CONCURRENCY:-1}
       --loglevel=INFO
       --max-tasks-per-child=1
@@ -166,6 +176,18 @@ services:
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
       NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
+      # NFM-1489: LLM env required by the worker because
+      # ``process_literature_task`` runs in this container.  Must mirror
+      # the api service values above.
+      LLM_PROVIDER: ollama
+      LLM_API_KEY: ollama
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
+    volumes:
+      # NFM-1489: the worker reads PDFs from the same upload volume the
+      # api service writes to.  Without this mount the worker sees an
+      # empty directory and every parse fails immediately.
+      - prod-uploads:/app/uploads
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -215,6 +237,9 @@ volumes:
   prod-redis-data:
   prod-lightrag-data:
     name: nucpot-prod-lightrag-data
+  # NFM-1489 §C: literature upload landing zone.  Owned by the api
+  # service (writes) and shared read-only by the worker (parses).
+  prod-uploads:
 
 networks:
   prod:
