@@ -32,7 +32,6 @@ from nfm_db.services.literature_dispatcher import (
     schedule_literature_processing,
 )
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -59,9 +58,7 @@ def _reset_mock_send_task():
 
 def test_task_name_is_stable_for_endpoint_contract() -> None:
     """The task name MUST be stable — endpoints and tests rely on it."""
-    assert LITERATURE_TASK_NAME == (
-        "nfm_db.services.literature_dispatcher.process_literature_task"
-    )
+    assert LITERATURE_TASK_NAME == ("nfm_db.services.literature_dispatcher.process_literature_task")
 
 
 # ---------------------------------------------------------------------------
@@ -74,11 +71,9 @@ async def test_schedule_dispatches_to_literature_processing_queue() -> None:
     """schedule_literature_processing MUST route to the literature_processing queue."""
     datasource_id = uuid.uuid4()
 
-    with patch(
-        "nfm_db.services.literature_dispatcher._send_literature_task"
-    ) as mock_send:
+    with patch("nfm_db.services.literature_dispatcher._send_literature_task") as mock_send:
         mock_send.return_value = MagicMock(id="celery-task-id-123")
-        result = schedule_literature_processing(datasource_id)
+        schedule_literature_processing(datasource_id)
 
     mock_send.assert_called_once()
     kwargs = mock_send.call_args.kwargs
@@ -93,9 +88,7 @@ async def test_schedule_returns_task_id_for_caller() -> None:
     """Callers need a task id to put in the response body or logs."""
     datasource_id = uuid.uuid4()
 
-    with patch(
-        "nfm_db.services.literature_dispatcher._send_literature_task"
-    ) as mock_send:
+    with patch("nfm_db.services.literature_dispatcher._send_literature_task") as mock_send:
         mock_send.return_value = MagicMock(id="celery-task-id-abc")
         result = schedule_literature_processing(datasource_id)
 
@@ -108,9 +101,7 @@ async def test_schedule_accepts_uuid_or_string() -> None:
     uuid_id = uuid.uuid4()
     str_id = str(uuid_id)
 
-    with patch(
-        "nfm_db.services.literature_dispatcher._send_literature_task"
-    ) as mock_send:
+    with patch("nfm_db.services.literature_dispatcher._send_literature_task") as mock_send:
         mock_send.return_value = MagicMock(id="x")
         schedule_literature_processing(uuid_id)
         schedule_literature_processing(str_id)
