@@ -27,7 +27,6 @@ The worker that picks up the task is started with
 from __future__ import annotations
 
 import logging
-from typing import Union
 from uuid import UUID
 
 from celery.exceptions import CeleryError
@@ -75,7 +74,7 @@ def _send_literature_task(*, task_name: str, datasource_id: str, queue: str):
 # ---------------------------------------------------------------------------
 
 
-def schedule_literature_processing(datasource_id: Union[UUID, str]) -> str:
+def schedule_literature_processing(datasource_id: UUID | str) -> str:
     """Schedule background parsing for *datasource_id*.
 
     Returns the Celery task id (str) so the caller can include it in the
