@@ -197,6 +197,10 @@ class KGEdge(TimestampMixin, Base):
         nullable=True,
         comment="Timestamp of last AGE graph sync",
     )
+    review_status: Mapped[str] = mapped_column(
+        String, default="pending",
+        comment="Review queue status for this edge",
+    )
 
     # -- relationships --
     source_node: Mapped["KGNode"] = relationship(
