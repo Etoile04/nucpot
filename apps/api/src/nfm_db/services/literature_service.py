@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import async_session_factory
 from nfm_db.models.source import DataSource
+from nfm_db.services.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ MAX_ERROR_LEN = 1000
 # ---------------------------------------------------------------------------
 
 
-def _get_storage():
+def _get_storage() -> StorageBackend:
     """Return the configured :class:`StorageBackend`.
 
     Imported lazily so the literature service module loads even when
@@ -82,7 +83,7 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
     ``RuntimeError``) so the caller can capture and re-raise with the
     truncated error message.
     """
-    import fitz  # PyMuPDF — declared in pyproject.toml
+    import fitz  # type: ignore[import-untyped]  # PyMuPDF — declared in pyproject.toml
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:

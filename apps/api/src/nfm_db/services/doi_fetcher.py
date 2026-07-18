@@ -122,7 +122,7 @@ class SemanticScholarFetcher:
 
 def _pdf_bytes_to_markdown(pdf_bytes: bytes, *, title: str = "") -> str:
     """Convert PDF bytes to Markdown text via PyMuPDF."""
-    import fitz
+    import fitz  # type: ignore[import-untyped]  # PyMuPDF ships no py.typed marker
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:

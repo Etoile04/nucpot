@@ -111,6 +111,10 @@ module = "asyncpg.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "cachetools.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "celery.*"
 ignore_missing_imports = true
 
