@@ -583,7 +583,7 @@ class TestConflictResolution:
         transport = ASGITransport(app=app)
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/v1/conflicts/kg/conflicts")
+            response = await client.get("/api/v1/kg/conflicts")
             assert response.status_code == 200
             data = response.json()
             assert data.get("success") is True
