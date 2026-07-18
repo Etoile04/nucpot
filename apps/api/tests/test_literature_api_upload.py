@@ -64,7 +64,7 @@ def _upload_context():
 @pytest.mark.asyncio
 async def test_upload_returns_401_without_auth(async_client) -> None:
     """AC #4: Unauthenticated requests must be rejected with 401."""
-    response = await async_client.post("/api/v1/literature/literature/upload")
+    response = await async_client.post("/api/v1/literature/upload")
     assert response.status_code == 401
 
 
@@ -82,7 +82,7 @@ async def test_upload_valid_pdf_returns_parsing_status(
     """AC #1: Valid PDF returns {literature_id, status:'parsing'}."""
     with _upload_context():
         response = await async_client.post(
-            "/api/v1/literature/literature/upload",
+            "/api/v1/literature/upload",
             files={
                 "file": (
                     MINIMAL_PDF_FILENAME,
@@ -117,7 +117,7 @@ async def test_upload_dispatches_celery_task(
     """AC #1 corollary: upload must call schedule_literature_processing."""
     with _upload_context():
         response = await async_client.post(
-            "/api/v1/literature/literature/upload",
+            "/api/v1/literature/upload",
             files={"file": ("paper.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
         )
 
@@ -136,7 +136,7 @@ async def test_upload_non_pdf_returns_415(
 ) -> None:
     """AC #2: Non-PDF content_type returns 415."""
     response = await async_client.post(
-        "/api/v1/literature/literature/upload",
+        "/api/v1/literature/upload",
         files={"file": ("image.png", io.BytesIO(b"not-a-pdf"), "image/png")},
     )
 
@@ -151,7 +151,7 @@ async def test_upload_wrong_magic_bytes_returns_415(
 ) -> None:
     """AC #2: Even with application/pdf content_type, wrong magic bytes → 415."""
     response = await async_client.post(
-        "/api/v1/literature/literature/upload",
+        "/api/v1/literature/upload",
         files={
             "file": ("tricky.pdf", io.BytesIO(b"NOT-PDF-content"), "application/pdf"),
         },
@@ -173,7 +173,7 @@ async def test_upload_oversized_file_returns_413(
     """AC #3: file_size > 50 MB returns 413."""
     oversized = b"%PDF-1.0\n" + b"x" * (51 * 1024 * 1024)
     response = await async_client.post(
-        "/api/v1/literature/literature/upload",
+        "/api/v1/literature/upload",
         files={
             "file": ("huge.pdf", io.BytesIO(oversized), "application/pdf"),
         },
@@ -197,7 +197,7 @@ async def test_upload_idempotent_same_hash_returns_original_id(
     """AC #5: Re-uploading the same PDF (same sha256) returns original literature_id."""
     with _upload_context():
         resp1 = await async_client.post(
-            "/api/v1/literature/literature/upload",
+            "/api/v1/literature/upload",
             files={
                 "file": ("paper.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf"),
             },
@@ -208,7 +208,7 @@ async def test_upload_idempotent_same_hash_returns_original_id(
 
     with _upload_context():
         resp2 = await async_client.post(
-            "/api/v1/literature/literature/upload",
+            "/api/v1/literature/upload",
             files={
                 "file": ("copy.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf"),
             },

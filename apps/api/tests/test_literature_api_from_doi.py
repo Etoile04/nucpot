@@ -91,7 +91,7 @@ def _doi_failure_context():
 async def test_from_doi_returns_401_without_auth(async_client) -> None:
     """AC #4 corollary: Unauthenticated requests must be rejected with 401."""
     response = await async_client.post(
-        "/api/v1/literature/literature/from-doi",
+        "/api/v1/literature/from-doi",
         json={"doi": VALID_DOI},
     )
     assert response.status_code == 401
@@ -111,7 +111,7 @@ async def test_from_doi_valid_doi_returns_parsed_status(
     """AC #6: Valid DOI returns {literature_id, status:'parsed'}."""
     with _doi_happy_context():
         response = await async_client.post(
-            "/api/v1/literature/literature/from-doi",
+            "/api/v1/literature/from-doi",
             json={"doi": VALID_DOI},
         )
 
@@ -140,7 +140,7 @@ async def test_from_doi_dispatches_celery_task(
     """AC #6 corollary: from-doi must call schedule_literature_processing."""
     with _doi_happy_context():
         response = await async_client.post(
-            "/api/v1/literature/literature/from-doi",
+            "/api/v1/literature/from-doi",
             json={"doi": VALID_DOI},
         )
 
@@ -167,7 +167,7 @@ async def test_from_doi_malformed_returns_400(
     ]
     for bad_doi in malformed_dois:
         response = await async_client.post(
-            "/api/v1/literature/literature/from-doi",
+            "/api/v1/literature/from-doi",
             json={"doi": bad_doi},
         )
         assert response.status_code == 400, f"Expected 400 for DOI: {bad_doi!r}"
@@ -186,7 +186,7 @@ async def test_from_doi_fetch_failure_returns_502(
     """AC #8: DOI that fails doi_fetcher returns 502."""
     with _doi_failure_context():
         response = await async_client.post(
-            "/api/v1/literature/literature/from-doi",
+            "/api/v1/literature/from-doi",
             json={"doi": VALID_DOI},
         )
 
@@ -208,7 +208,7 @@ async def test_from_doi_idempotent_returns_original_id(
     """AC #9: Already-ingested DOI returns original literature_id."""
     with _doi_happy_context():
         resp1 = await async_client.post(
-            "/api/v1/literature/literature/from-doi",
+            "/api/v1/literature/from-doi",
             json={"doi": VALID_DOI},
         )
 
@@ -217,7 +217,7 @@ async def test_from_doi_idempotent_returns_original_id(
 
     with _doi_happy_context():
         resp2 = await async_client.post(
-            "/api/v1/literature/literature/from-doi",
+            "/api/v1/literature/from-doi",
             json={"doi": VALID_DOI},
         )
 
