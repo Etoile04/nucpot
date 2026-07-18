@@ -27,6 +27,7 @@ The worker that picks up the task is started with
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from celery.exceptions import CeleryError
@@ -56,7 +57,7 @@ LITERATURE_QUEUE = "literature_processing"
 # ---------------------------------------------------------------------------
 
 
-def _send_literature_task(*, task_name: str, datasource_id: str, queue: str):
+def _send_literature_task(*, task_name: str, datasource_id: str, queue: str) -> Any:
     """Send the task to Celery with the correct routing.
 
     Wrapped in a tiny function so unit tests can patch it without booting
@@ -140,7 +141,7 @@ def schedule_literature_processing(datasource_id: UUID | str) -> str:
 # can exercise the dispatcher without standing up the full service layer.
 
 
-@celery_app.task(
+@celery_app.task(  # type: ignore[untyped-decorator]
     bind=True,
     name=LITERATURE_TASK_NAME,
     max_retries=2,
@@ -151,21 +152,23 @@ def schedule_literature_processing(datasource_id: UUID | str) -> str:
     retry_jitter=True,
     acks_late=True,
 )
-def process_literature_task(self, datasource_id: str) -> dict:
+def process_literature_task(self, datasource_id: str) -> dict[str, Any]:  # type: ignore[no-untyped-def]
     """Parse a PDF or DOI-fetched document into KG nodes/edges.
 
-    Delegates to :func:`nfm_db.services.literature_service.process_literature`
+    Delegates to :func:`nfm_db.services.literature_service.process_literature_sync`
     (NFM-1485-2 / NFM-1487).  We import lazily so a partial deploy that has
-    the dispatcher but not yet the service still imports cleanly.
+    the dispatcher but not yet the service still imports cleanly.  The
+    ``_sync`` wrapper bridges Celery's sync worker loop with the async DB
+    session used by :func:`process_literature`.
     """
-    from nfm_db.services.literature_service import process_literature
+    from nfm_db.services.literature_service import process_literature_sync
 
     logger.info(
         "process_literature_task started datasource_id=%s task_id=%s",
         datasource_id,
         self.request.id,
     )
-    return process_literature(datasource_id)
+    return process_literature_sync(datasource_id)
 
 
 __all__ = [

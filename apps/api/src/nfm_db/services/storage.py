@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 from uuid import UUID
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ class S3Storage:
     during integration rather than silently writing to a fake path.
     """
 
-    def __init__(self, *_, **__) -> None:  # pragma: no cover - stub seam
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - stub seam
         raise NotImplementedError(
             "S3Storage is a reserved seam for NFM-1485-2. "
             "Use LocalDiskStorage via get_storage() for now.",
@@ -199,7 +199,9 @@ def get_storage() -> StorageBackend:
     if backend == "local":
         return LocalDiskStorage(_resolve_root())
     if backend == "s3":
-        return S3Storage()
+        # S3Storage is a reserved seam that raises NotImplementedError on
+        # construction; cast so the static type matches StorageBackend.
+        return cast(StorageBackend, S3Storage())
     raise ValueError(f"Unknown LITERATURE_STORAGE_BACKEND: {backend!r}")
 
 
