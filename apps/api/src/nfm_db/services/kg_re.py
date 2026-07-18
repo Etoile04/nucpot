@@ -392,6 +392,13 @@ class GraphBuilder:
                     )
                     review_count += 1
 
+        # Flush all nodes so their server-side ids are populated before
+        # we try to build edges that reference them. Without this flush,
+        # node.id is None for newly-created nodes (default=uuid.uuid4 is a
+        # server-side default, not a Python-side one), and KGEdge inserts
+        # fail with NotNullViolationError on target_node_id.
+        await self._session.flush()
+
         # Phase 3: Relation extraction and edge creation
         relations = self._extractor.extract_relations(entities)
         edges_created = 0

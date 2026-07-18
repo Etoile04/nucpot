@@ -24,11 +24,14 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from nfm_db.services.storage import StorageBackend
 
 from nfm_db.database import async_session_factory
 from nfm_db.models.source import DataSource
@@ -54,7 +57,7 @@ MAX_ERROR_LEN = 1000
 # ---------------------------------------------------------------------------
 
 
-def _get_storage():
+def _get_storage() -> StorageBackend:
     """Return the configured :class:`StorageBackend`.
 
     Imported lazily so the literature service module loads even when
@@ -82,7 +85,7 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
     ``RuntimeError``) so the caller can capture and re-raise with the
     truncated error message.
     """
-    import fitz  # PyMuPDF — declared in pyproject.toml
+    import fitz  # type: ignore[import-untyped]
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:

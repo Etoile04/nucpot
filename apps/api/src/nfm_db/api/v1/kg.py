@@ -291,20 +291,21 @@ def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> KGGraphNode:
         id=str(node.id),
         label=node.label,
         type=_NODE_TYPE_MAP.get(node.node_type, "default"),
-        size=node.confidence,
-        color="",
-        child_count=edge_count.get(str(node.id), 0),
+        properties={**(node.properties or {}), "child_count": edge_count.get(str(node.id), 0)},
+        status=node.status,
+        confidence=node.confidence,
+        source_id=str(node.source_id) if node.source_id else None,
     )
 
 
 def _build_graph_edge(edge: KGEdge) -> KGGraphEdge:
     """Map a KGEdge to a KGGraphEdge for the visualization response."""
     return KGGraphEdge(
-        id=str(edge.id),
         source=str(edge.source_node_id),
         target=str(edge.target_node_id),
-        label=edge.relation_type,
         type=edge.relation_type,
+        properties=dict(edge.properties or {}),
+        confidence=edge.confidence,
     )
 
 

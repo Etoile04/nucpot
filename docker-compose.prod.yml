@@ -85,7 +85,7 @@ services:
       # AC #4 — must be visible via ``docker exec nucpot-prod-api env``.
       LLM_PROVIDER: ollama
       LLM_API_KEY: ollama
-      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_BASE_URL: http://192.168.3.228:11434/v1
       LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
     volumes:
       # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
@@ -181,7 +181,7 @@ services:
       # the api service values above.
       LLM_PROVIDER: ollama
       LLM_API_KEY: ollama
-      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_BASE_URL: http://192.168.3.228:11434/v1
       LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
     volumes:
       # NFM-1489: the worker reads PDFs from the same upload volume the
