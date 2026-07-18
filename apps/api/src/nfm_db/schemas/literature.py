@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 class LiteratureUploadResponse(BaseModel):
     """Response for literature upload initiation."""
 
-    id: UUID
+    literature_id: UUID
     status: str = "uploaded"
 
 

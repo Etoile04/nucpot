@@ -1,6 +1,7 @@
-"""Literature Management API endpoints (Phase 2).
+"""Literature Management API endpoints (NFM-1488 / NFM-1485-3).
 
-NFM-764 §9.2: 7 endpoints for upload, status, CRUD, search, and re-extract.
+Rewritten upload endpoint accepts real PDF uploads via multipart/form-data.
+New ``from-doi`` endpoint fetches paper content by DOI.
 
 Literature status machine:
   uploaded → parsing → extracting → completed
@@ -8,7 +9,8 @@ Literature status machine:
                           failed           failed
 
 Endpoints:
-- POST   /upload           — Upload a PDF
+- POST   /upload           — Upload a PDF (multipart)
+- POST   /from-doi        — Fetch paper by DOI (JSON)
 - GET    /{id}/status       — Check processing status
 - GET    /{id}             — Full literature detail
 - GET    /                  — List (paginated, filterable)
@@ -19,12 +21,14 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +50,28 @@ from nfm_db.schemas.literature import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/literature", tags=["文献管理"])
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: Maximum file size for PDF uploads (50 MB).
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+
+#: First 5 bytes of a valid PDF file.
+PDF_MAGIC = b"%PDF-"
+
+# ---------------------------------------------------------------------------
+# Request / response schemas local to this module
+# ---------------------------------------------------------------------------
+
+
+class DoiRequest(BaseModel):
+    """Request body for POST /literature/from-doi."""
+
+    doi: str = Field(
+        ..., description="Digital Object Identifier (e.g. 10.1016/j.jnucmat.2020.152307)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -109,28 +135,186 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
 )
 async def upload_literature(
     current_user: Annotated[User, Depends(require_editor)],
+    file: UploadFile = File(..., description="PDF file to upload (max 50 MB)"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[LiteratureUploadResponse]:
-    """上传PDF文件进行解析和提取。
+    """Upload a PDF file for parsing and extraction.
 
-    Upload a PDF file for parsing and extraction.
-    Note: File upload handling requires multipart form data.
-    This endpoint creates a placeholder DataSource record.
-    Full file upload with OCR/VLM pipeline will be implemented in NFM-817.
+    Accepts multipart/form-data with a ``file`` field.  Validates content type
+    and file size, computes SHA-256 for idempotency, persists via the storage
+    backend, creates a DataSource row, and dispatches background Celery processing.
+
+    Returns immediately with ``{literature_id, status: "parsing"}`` — the actual
+    PDF→Markdown→extraction runs in the worker.
     """
+    # --- Read and validate file bytes -----------------------------------
+    raw_bytes = await file.read()
+
+    # AC #3: file_size ≤ 50 MB → 413.
+    if len(raw_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {len(raw_bytes)} bytes (max {MAX_UPLOAD_SIZE})",
+        )
+
+    # AC #2: content_type starts with application/pdf AND magic bytes → 415.
+    content_type = file.content_type or ""
+    if not content_type.startswith("application/pdf") or raw_bytes[:5] != PDF_MAGIC:
+        raise HTTPException(
+            status_code=415,
+            detail="Only PDF files are accepted (content_type must be application/pdf).",
+        )
+
+    # --- Compute SHA-256 hash ------------------------------------------
+    file_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+    # --- Idempotency: same hash → return existing record ----------------
+    existing_stmt = select(DataSource).where(DataSource.file_hash == file_hash)
+    existing_result = await db.execute(existing_stmt)
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None:
+        return ApiResponse(
+            success=True,
+            data=LiteratureUploadResponse(
+                literature_id=existing.id,
+                status=existing.parse_status,
+            ),
+        )
+
+    # --- Save file via storage backend ----------------------------------
+    datasource_id = uuid.uuid4()
+    filename = file.filename or f"{datasource_id}.pdf"
+    title = filename.rsplit(".pdf", 1)[0] if filename.endswith(".pdf") else filename
+
+    from nfm_db.services.storage import get_storage
+
+    storage = get_storage()
+    file_path = storage.save(datasource_id, filename, raw_bytes)
+
+    # --- Create DataSource row ------------------------------------------
     source = DataSource(
-        title="Uploaded document",
+        id=datasource_id,
+        file_path=file_path,
+        file_hash=file_hash,
+        file_size=len(raw_bytes),
+        parse_status="parsing",
+        original_filename=filename,
         source_type="journal_article",
+        title=title,
     )
     db.add(source)
     await db.commit()
     await db.refresh(source)
 
+    # --- Dispatch background processing ----------------------------------
+    from nfm_db.services.literature_dispatcher import (
+        schedule_literature_processing,
+    )
+
+    schedule_literature_processing(source.id)
+
     return ApiResponse(
         success=True,
         data=LiteratureUploadResponse(
             literature_id=source.id,
-            status="uploaded",
+            status="parsing",
+        ),
+    )
+
+
+@router.post(
+    "/from-doi",
+    response_model=ApiResponse[LiteratureUploadResponse],
+    summary="通过DOI获取文献",
+    description="通过DOI获取文献内容并创建数据源。\n\nFetch paper content by DOI and create a data source.",
+)
+async def from_doi_literature(
+    request: DoiRequest,
+    current_user: Annotated[User, Depends(require_editor)],
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[LiteratureUploadResponse]:
+    """Fetch paper content by DOI and create a DataSource.
+
+    Accepts ``application/json`` with a ``doi`` field.  Validates the DOI
+    format, checks idempotency, fetches content via the doi_fetcher, saves
+    the Markdown to storage, creates a DataSource row with
+    ``parse_status='parsed'``, and dispatches background extraction.
+
+    Returns ``{literature_id, status: "parsed"}`` immediately.
+    """
+    doi = request.doi.strip()
+
+    # --- Validate DOI format (AC #7: malformed → 400) -------------------
+    from nfm_db.services.doi_fetcher import DOIFetchError, fetch_paper_content, validate_doi_format
+
+    if not validate_doi_format(doi):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid DOI format. Expected: 10.xxxx/yyyy.",
+        )
+
+    # --- Idempotency: same DOI → return existing record -----------------
+    existing_stmt = select(DataSource).where(DataSource.doi == doi)
+    existing_result = await db.execute(existing_stmt)
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None:
+        return ApiResponse(
+            success=True,
+            data=LiteratureUploadResponse(
+                literature_id=existing.id,
+                status=existing.parse_status,
+            ),
+        )
+
+    # --- Fetch content via doi_fetcher (AC #8: failure → 502) ---------
+    try:
+        md_content = fetch_paper_content(doi)
+    except (DOIFetchError, Exception) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"DOI fetch failed: {exc}",
+        )
+
+    # --- Save Markdown to storage --------------------------------------
+    datasource_id = uuid.uuid4()
+    md_filename = f"{doi}.md"
+    md_bytes = md_content.encode("utf-8")
+
+    from nfm_db.services.storage import get_storage
+
+    storage = get_storage()
+    file_path = storage.save(datasource_id, md_filename, md_bytes)
+
+    # --- Create DataSource row (AC #6: status='parsed') -----------------
+    file_hash = hashlib.sha256(md_bytes).hexdigest()
+    source = DataSource(
+        id=datasource_id,
+        doi=doi,
+        content_md=md_content,
+        file_path=file_path,
+        file_hash=file_hash,
+        file_size=len(md_bytes),
+        parse_status="parsed",
+        original_filename=md_filename,
+        source_type="journal_article",
+        title=f"DOI: {doi}",
+    )
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+
+    # --- Dispatch background processing ----------------------------------
+    from nfm_db.services.literature_dispatcher import (
+        schedule_literature_processing,
+    )
+
+    schedule_literature_processing(source.id)
+
+    return ApiResponse(
+        success=True,
+        data=LiteratureUploadResponse(
+            literature_id=source.id,
+            status="parsed",
         ),
     )
 

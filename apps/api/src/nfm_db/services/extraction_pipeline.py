@@ -221,6 +221,7 @@ async def ontofuel_extract(
     source_reference: str,
     source_type: str,
     element_systems: list[str] | None = None,
+    db: AsyncSession | None = None,
 ) -> list[dict[str, Any]]:
     """Extract material properties from a literature source using LLM.
 
@@ -228,9 +229,40 @@ async def ontofuel_extract(
     data from Markdown source files. Falls back to stub mode when
     EXTRACTION_STUB_MODE is set or when LLM is not configured.
 
+    ``source_type`` routing:
+    - ``"datasource"`` — *source_reference* is a DataSource UUID;
+      ``content_md`` is loaded from the DB (requires *db*).
+    - ``"doi"`` — legacy DOI path (may return empty in stub mode).
+    - other — *source_reference* is a file path on disk.
+
     Expected return format: list of dicts with keys matching
     schemas.extraction.ExtractedProperty fields.
     """
+    # --- source_type='datasource': load content_md from DB (NFM-1487) ---
+    if source_type == "datasource":
+        if db is None:
+            raise ValueError("ontofuel_extract(source_type='datasource') requires a db session")
+        from uuid import UUID
+
+        from nfm_db.models.source import DataSource
+
+        ds = await db.get(DataSource, UUID(source_reference))
+        if ds is None:
+            logger.warning(
+                "ontofuel_extract: DataSource %s not found — returning empty",
+                source_reference,
+            )
+            return []
+        if ds.content_md is None:
+            logger.warning(
+                "ontofuel_extract: DataSource %s has no content_md — returning empty",
+                source_reference,
+            )
+            return []
+        # Pre-load content; fall through to LLM extraction below.
+        content = ds.content_md
+        source_reference = ds.title or source_reference
+
     # Stub mode + DOI: return empty (DOI content not available in stub) (NFM-636)
     if _is_stub_mode() and source_type == "doi":
         logger.info(
@@ -270,8 +302,9 @@ async def ontofuel_extract(
     )
 
     try:
-        # Load source content
-        content = _load_source_content(source_reference)
+        # Load source content (already set for 'datasource' type above)
+        if source_type != "datasource":
+            content = _load_source_content(source_reference)
 
         # Build system prompt
         system_prompt = build_extraction_system_prompt()

@@ -43,6 +43,20 @@ class DataSource(TimestampMixin, Base):
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
+    # -- PDF upload + parse pipeline (NFM-1486) ---------------------------
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parse_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="uploaded",
+        default="uploaded",
+    )
+    parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     # -- relationships --
     authors: Mapped[list["Author"]] = relationship(
         secondary="data_source_authors",
