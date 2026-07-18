@@ -21,6 +21,10 @@ class ExtractionResult(Base):
     value: Mapped[Any] = mapped_column(JSON, default=None)
     confidence: Mapped[float] = mapped_column(default=0.0)
     source: Mapped[str | None] = mapped_column(default=None)
+    review_status: Mapped[str] = mapped_column(default="pending")
+    reviewed_by: Mapped[str | None] = mapped_column(default=None)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    review_notes: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
