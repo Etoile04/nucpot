@@ -106,6 +106,10 @@ class KGNode(TimestampMixin, Base):
         nullable=True,
         comment="Timestamp of last AGE graph sync",
     )
+    review_status: Mapped[str] = mapped_column(
+        String, default="pending",
+        comment="Review queue status for this node",
+    )
 
     # -- relationships --
     source: Mapped["DataSource | None"] = relationship()
