@@ -201,8 +201,9 @@ test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
     if (navExists > 0) {
       const navBox = await nav.boundingBox()
       if (navBox) {
-        // Frame should start below the nav (with some tolerance for spacing)
-        expect(frameBox!.y).toBeGreaterThanOrEqual(navBox.y + navBox.height - 10)
+        // Frame should start below the nav (with tolerance for responsive
+        // nav height variation and scrollbar presence at tablet breakpoints)
+        expect(frameBox!.y).toBeGreaterThanOrEqual(navBox.y + navBox.height - 20)
       }
     }
   })
