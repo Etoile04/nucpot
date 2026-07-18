@@ -97,8 +97,16 @@ class TestDefenseInDepthDoiGuard:
         assert response.status_code in (400, 422)
 
 
-class TestStubModeDoiFailure:
-    """Tests for stub mode returning FAILED for DOI source_type (NFM-636)."""
+class TestStubModeDoiNotFailed:
+    """Tests that stub mode + DOI is NOT short-circuited to FAILED (NFM-1482 / NFM-1475-B2).
+
+    NFM-636 originally required stub mode + DOI to fail with a stub-mode error.
+    After NFM-1482, DOI is a real content source (fetched via Unpaywall -> PDF -> MD),
+    so the stub-mode guard only short-circuits based on LLM availability, not
+    source_type. In CI/test environments with EXTRACTION_STUB_MODE=true (no LLM),
+    DOI requests now follow the same path as file requests: return demo stub
+    results and end in ``completed`` or ``partial`` rather than ``failed``.
+    """
 
     @pytest.fixture(autouse=True)
     def _enable_stub_mode(self, monkeypatch):
@@ -106,7 +114,7 @@ class TestStubModeDoiFailure:
         monkeypatch.setenv("EXTRACTION_STUB_MODE", "true")
 
     @pytest.mark.asyncio
-    async def test_stub_mode_doi_returns_failed_status(self, doi_client):
+    async def test_stub_mode_doi_no_longer_returns_failed(self, doi_client):
         payload = {
             "source_reference": "10.1016/j.nucengdes.2023.01.001",
             "source_type": "doi",
@@ -115,18 +123,23 @@ class TestStubModeDoiFailure:
         assert response.status_code == 202
         body = response.json()
         assert body["success"] is True
-        assert body["data"]["status"] == "failed"
-        assert "stub mode" in (body["data"].get("error_message") or "").lower()
+        data = body["data"]
+        # Stub mode + DOI must NOT short-circuit to 'failed' anymore.
+        assert data["status"] != "failed"
+        # Demo stub data flows through the quality gate -> completed or partial.
+        assert data["status"] in ("completed", "partial")
 
     @pytest.mark.asyncio
-    async def test_stub_mode_doi_with_prefix_returns_failed(self, doi_client):
+    async def test_stub_mode_doi_with_prefix_no_longer_returns_failed(self, doi_client):
         payload = {
             "source_reference": "doi:10.1016/j.nucengdes.2023.01.001",
             "source_type": "doi",
         }
         response = await doi_client.post("/api/v4/extraction/submit", json=payload)
         assert response.status_code == 202
-        assert response.json()["data"]["status"] == "failed"
+        data = response.json()["data"]
+        assert data["status"] != "failed"
+        assert data["status"] in ("completed", "partial")
 
     @pytest.mark.asyncio
     async def test_stub_mode_file_still_returns_stub_data(self, doi_client):

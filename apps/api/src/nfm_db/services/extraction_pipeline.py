@@ -28,6 +28,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.services.doi_fetcher import fetch_paper_content  # NFM-1480
 from nfm_db.services.extraction_prompt import build_extraction_system_prompt
 from nfm_db.services.gap_scan_service import GapScanService
 from nfm_db.services.llm_client import call_llm, is_llm_configured
@@ -231,15 +232,7 @@ async def ontofuel_extract(
     Expected return format: list of dicts with keys matching
     schemas.extraction.ExtractedProperty fields.
     """
-    # Stub mode + DOI: return empty (DOI content not available in stub) (NFM-636)
-    if _is_stub_mode() and source_type == "doi":
-        logger.info(
-            "OntoFuel stub mode: DOI content not available for %s — returning empty",
-            source_reference,
-        )
-        return []
-
-    # Stub mode: return demo data for CI/testing
+    # Stub mode: return demo data for CI/testing (no source-type special case)
     if _is_stub_mode():
         logger.info(
             "OntoFuel stub mode: returning demo data for %s",
@@ -249,13 +242,6 @@ async def ontofuel_extract(
 
     # Real LLM extraction
     if not is_llm_configured():
-        # DOI without LLM: same as stub DOI behavior (NFM-636)
-        if source_type == "doi":
-            logger.warning(
-                "LLM not configured — DOI content not available for %s",
-                source_reference,
-            )
-            return []
         logger.warning(
             "LLM not configured (LLM_API_KEY not set) — falling back to stub mode for %s",
             source_reference,
@@ -270,8 +256,12 @@ async def ontofuel_extract(
     )
 
     try:
-        # Load source content
-        content = _load_source_content(source_reference)
+        # Load source content (NFM-1482): DOI sources fetch paper content
+        # via the doi_fetcher module; file/path sources use the local loader.
+        if source_type == "doi":
+            content = await fetch_paper_content(source_reference)
+        else:
+            content = _load_source_content(source_reference)
 
         # Build system prompt
         system_prompt = build_extraction_system_prompt()
