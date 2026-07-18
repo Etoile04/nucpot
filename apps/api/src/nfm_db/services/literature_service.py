@@ -24,11 +24,14 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from nfm_db.services.storage import StorageBackend
 
 from nfm_db.database import async_session_factory
 from nfm_db.models.source import DataSource

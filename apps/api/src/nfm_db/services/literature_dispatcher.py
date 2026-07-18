@@ -27,6 +27,7 @@ The worker that picks up the task is started with
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from celery.exceptions import CeleryError
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Name of the Celery task that performs the actual PDF/DOI parsing.
-#: Must match the ``@celery_app.task(  # type: ignore[misc]name=...)`` decorator in this module.
+#: Must match the ``@celery_app.task(  # type: ignore[untyped-decorator]name=...)`` decorator in this module.
 LITERATURE_TASK_NAME = (
     "nfm_db.services.literature_dispatcher.process_literature_task"
 )
@@ -140,7 +141,7 @@ def schedule_literature_processing(datasource_id: UUID | str) -> str:
 # can exercise the dispatcher without standing up the full service layer.
 
 
-@celery_app.task(  # type: ignore[misc]
+@celery_app.task(  # type: ignore[untyped-decorator]
     bind=True,
     name=LITERATURE_TASK_NAME,
     max_retries=2,
