@@ -169,7 +169,7 @@ class S3Storage:
     during integration rather than silently writing to a fake path.
     """
 
-    def __init__(self, *_, **__) -> None:  # pragma: no cover - stub seam
+    def __init__(self, *_: Any, **__: Any) -> None:  # pragma: no cover - stub seam
         raise NotImplementedError(
             "S3Storage is a reserved seam for NFM-1485-2. "
             "Use LocalDiskStorage via get_storage() for now.",
@@ -199,7 +199,7 @@ def get_storage() -> StorageBackend:
     if backend == "local":
         return LocalDiskStorage(_resolve_root())
     if backend == "s3":
-        return S3Storage()
+        return S3Storage()  # type: ignore[return-value]
     raise ValueError(f"Unknown LITERATURE_STORAGE_BACKEND: {backend!r}")
 
 
