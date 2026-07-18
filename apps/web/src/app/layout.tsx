@@ -25,7 +25,7 @@ export default function RootLayout({
           <QueryProvider>
             <AuthProvider>
             <Nav />
-            <main className="flex-1 overflow-y-auto">{children}</main>
+            <main className="flex-1 overflow-y-auto relative">{children}</main>
             <Footer />
             <FeedbackFloatButton />
             </AuthProvider>
