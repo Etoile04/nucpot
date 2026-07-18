@@ -408,6 +408,22 @@ class GraphBuilder:
                 )
                 continue
 
+            # NFM-1499 invariant guard: a resolved node object whose .id
+            # is None indicates a regression — _create_node now assigns a
+            # concrete UUID at construction time, so this should never
+            # happen. Fail fast with a clear diagnostic (source/target
+            # labels) rather than silently persisting None FKs and
+            # blowing up on flush with an opaque IntegrityError.
+            if source_node.id is None or target_node.id is None:
+                raise RuntimeError(
+                    "GraphBuilder invariant violation: resolved source or "
+                    "target node has a null id. source_label="
+                    f"{relation.source_label!r}, target_label="
+                    f"{relation.target_label!r}. This indicates a "
+                    "regression in _create_node (it must assign id="
+                    "uuid.uuid4() at construction time)."
+                )
+
             edge = await self._create_edge(relation, source_node.id, target_node.id)
             new_edges.append(edge)
             edges_created += 1
@@ -529,7 +545,16 @@ class GraphBuilder:
 
     async def _create_node(self, entity: ExtractedEntity) -> KGNode:
         """Create a new KGNode from an extracted entity."""
+        # NFM-1499 fix: assign a concrete UUID at construction time so that
+        # downstream consumers (sync_node, _queue_for_review, _create_edge
+        # reading source_node.id / target_node.id) always see a real UUID
+        # before the final flush. Without this, the SQLAlchemy Python-side
+        # default=uuid.uuid4 only fires at flush time and the pre-flush
+        # node.id is None, producing IntegrityError on the NOT NULL FK
+        # columns kg_review_queue.item_id, kg_edges.source_node_id /
+        # target_node_id.
         node = KGNode(
+            id=uuid.uuid4(),
             node_type=entity.entity_type,
             label=entity.label,
             aliases=json.dumps(entity.aliases) if entity.aliases else None,
@@ -564,7 +589,13 @@ class GraphBuilder:
         target_node_id: uuid.UUID,
     ) -> KGEdge:
         """Create a new KGEdge from an extracted relation."""
+        # NFM-1499 fix: assign a concrete UUID to the edge itself so that
+        # downstream consumers (_queue_for_review for low-confidence
+        # relations, sync_edge) always see a real edge.id before the
+        # final flush. source_node_id and target_node_id are guaranteed
+        # non-None by the fail-fast guard in build_from_extraction.
         edge = KGEdge(
+            id=uuid.uuid4(),
             source_node_id=source_node_id,
             target_node_id=target_node_id,
             relation_type=relation.relation_type,
