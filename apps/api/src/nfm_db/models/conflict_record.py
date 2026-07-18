@@ -21,22 +21,14 @@ class ConflictRecord(Base):
     __tablename__ = "conflict_records"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    material_node_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("kg_nodes.id")
-    )
-    property_node_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("kg_nodes.id")
-    )
-    conflicting_values: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, default=list
-    )
+    material_node_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("kg_nodes.id"))
+    property_node_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("kg_nodes.id"))
+    conflicting_values: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     strategy: Mapped[str] = mapped_column(String, default="manual")
     status: Mapped[str] = mapped_column(String, default="pending")
     resolution: Mapped[str | None] = mapped_column(String, default=None)
     resolved_value: Mapped[Any | None] = mapped_column(JSON, nullable=True, default=None)
-    resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     resolved_by: Mapped[str | None] = mapped_column(String, default=None)
     resolution_notes: Mapped[str | None] = mapped_column(String, default=None)
     source_values: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
@@ -60,7 +52,4 @@ class ConflictRecord(Base):
     property_node = relationship("KGNode", foreign_keys=[property_node_id])
 
     def __repr__(self) -> str:
-        return (
-            f"ConflictRecord(strategy={self.strategy!r}, "
-            f"status={self.status!r})"
-        )
+        return f"ConflictRecord(strategy={self.strategy!r}, status={self.status!r})"
