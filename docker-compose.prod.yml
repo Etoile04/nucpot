@@ -213,6 +213,10 @@ services:
       - "${PROD_WEB_HOST_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
+      # SSR server-side fetch needs to reach the backend directly (not via
+      # the public domain). Without this, fetchFullGraphData falls back to
+      # localhost:8000 which is not reachable inside the container.
+      API_SERVER_URL: "http://nucpot-prod-api:8000"
       # NFM-1407: nginx already routes /api/* on the host, so the Next.js
       # rewrite proxy would either hang or loop when /api/* requests hit
       # the web container directly (e.g. host-port health probes).

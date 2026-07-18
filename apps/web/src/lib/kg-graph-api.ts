@@ -31,7 +31,10 @@ export async function fetchFullGraph(
     )
   }
 
-  return response.json() as Promise<KgGraphApiResponse>
+  const json = await response.json()
+  // Backend wraps the payload in { success, data: { nodes, edges } }.
+  // Unwrap so mapSubgraphResponse receives nodes/edges at the top level.
+  return (json.data ?? json) as KgGraphApiResponse
 }
 
 /** Fetch and map full graph to GraphData format. */
