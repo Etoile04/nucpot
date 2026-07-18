@@ -375,13 +375,131 @@ jobs:
           path: apps/web/playwright-report/
           retention-days: 7
 
+  # ===========================================================================
+  # S2: Deploy notification — GitHub issue + Feishu alert + auto-close
+  # ===========================================================================
   notify:
     name: Notify Deployment Status
     runs-on: ubuntu-latest
     needs: [smoke-test]
-    if: always()
+    if: always() && github.event_name == 'push'
+    permissions:
+      issues: write
     steps:
-      - name: Send notification
+      - name: Deploy result triage
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const sha = context.sha.slice(0, 7);
+            const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            const deployResult = '${{ needs.smoke-test.result }}';
+
+            if (deployResult === 'failure') {
+              // Close stale deploy-failure issues
+              const stale = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: ['deploy-failure'],
+                state: 'open',
+              });
+              for (const old of stale.data) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: old.number,
+                  state: 'closed',
+                });
+              }
+
+              // Create new deploy-failure issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[DEPLOY-FAILED] Production deploy failed (${sha})`,
+                body: `## Production Deployment Failed\n\n` +
+                  `**Time**: ${now}\n` +
+                  `**Commit**: \`${sha}\`\n` +
+                  `**Deploy job**: failure\n` +
+                  `**Smoke test**: ${deployResult}\n\n` +
+                  `### Actions\n` +
+                  `1. [View failed run](${runUrl})\n` +
+                  `2. Check Docker containers: \`ssh lwj04@<host> docker ps\`\n` +
+                  `3. Check Cloudflare Tunnel status\n` +
+                  `4. Manual rollback: \`ssh lwj04@<host> docker compose -f docker-compose.prod.yml down && git checkout <prev-sha> && docker compose -f docker-compose.prod.yml up -d --build\`\n` +
+                  `5. This issue auto-closes on next successful deploy`,
+                labels: ['deploy-failure'],
+              });
+            } else if (deployResult === 'success') {
+              // Close open deploy-failure issues
+              const stale = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: ['deploy-failure'],
+                state: 'open',
+              });
+              for (const issue of stale.data) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: `✅ **Deploy recovered** at ${now}\n\nGreen commit: \`${sha}\`\nClosing.`
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                });
+              }
+
+              // Only create deploy-success issue on version tags
+              if (context.ref.startsWith('refs/tags/v')) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `[DEPLOY-OK] Production ${context.ref} deployed (${sha})`,
+                  body: `## Production Deployment Succeeded\n\n` +
+                    `**Time**: ${now}\n` +
+                    `**Tag**: ${context.ref}\n` +
+                    `**Commit**: \`${sha}\`\n` +
+                    `[View Run](${runUrl})`,
+                  labels: ['deploy-success'],
+                });
+              }
+            }
+
+      - name: Send Feishu alert
+        if: always()
         run: |
-          echo "Deployment status: ${{ job.status }}"
-          # Add Slack/Email notification here
+          if [ -n "$WEBHOOK_URL" ]; then
+            TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            SHA="${{ github.sha }}"
+
+            if [ "${{ job.status }}" = "failure" ]; then
+              TEMPLATE="red"
+              TITLE="Deploy Failed"
+            else
+              TEMPLATE="green"
+              TITLE="Deploy Succeeded"
+            fi
+
+            curl -sf -X POST "$WEBHOOK_URL" \
+              -H 'Content-Type: application/json' \
+              -d '{
+                "msg_type": "interactive",
+                "card": {
+                  "header": {
+                    "title": {"tag": "plain_text", "content": "'"$TITLE"'"},
+                    "template": "'"$TEMPLATE"'"
+                  },
+                  "elements": [{
+                    "tag": "markdown",
+                    "content": "**NucPot '"$TITLE"'**\nTime: '"$TIMESTAMP"'\nSHA: `'"$SHA"'`\n[View Run]('"$RUN_URL"')\nResult: '"${{ needs.smoke-test.result }}"'"
+                  }]
+                }
+              }' || true
+          fi
+        env:
+          WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK }}

@@ -117,3 +117,174 @@ jobs:
             exit 1
           fi
           echo "OK: all Python files under 1500 lines"
+
+  # ===========================================================================
+  # S1: CI Failure Triage — dedup, create issue, Feishu alert, auto-close
+  # ===========================================================================
+  ci-failure-triage:
+    name: CI Failure Triage
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, e2e]
+    if: failure() && github.event_name == 'push'
+    permissions:
+      issues: write
+      actions: read
+    steps:
+      - name: Collect failure info & create/update issue
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const sha = context.sha.slice(0, 7);
+            const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+            // Determine which jobs failed
+            const frontendResult = '${{ needs.frontend.result }}';
+            const backendResult = '${{ needs.backend.result }}';
+            const e2eResult = '${{ needs.e2e.result }}';
+
+            const failed = [];
+            if (frontendResult === 'failure') failed.push('Frontend');
+            if (backendResult === 'failure') failed.push('Backend');
+            if (e2eResult === 'failure') failed.push('E2E');
+
+            if (failed.length === 0) {
+              core.info('No jobs actually failed, skipping triage.');
+              return;
+            }
+
+            const failedJobs = failed.join(', ');
+            const title = `[CI-AUTO] ${failedJobs} failed (${sha})`;
+
+            // Dedup: search for open issue with same title prefix + same SHA
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['ci-failure'],
+              state: 'open',
+            });
+
+            const match = existing.data.find(i => i.title.includes(sha));
+
+            if (match) {
+              // Append comment to existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: `⚠️ **Still failing** at ${now}\n\nFailed: ${failedJobs}\n[View Run](${runUrl})`
+              });
+              core.info(`Updated existing issue #${match.number}`);
+            } else {
+              // Close stale ci-failure issues from previous commits
+              for (const old of existing.data) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: old.number,
+                  state: 'closed',
+                });
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: old.number,
+                  body: `✅ Auto-closed: superseded by newer CI failure [#${0}](${runUrl}) on ${sha}.`
+                });
+                core.info(`Closed stale issue #${old.number}`);
+              }
+
+              // Create new issue
+              const newIssue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: `## CI Failure — ${now}\n\n` +
+                  `**Commit**: \`${sha}\`\n` +
+                  `**Failed jobs**: ${failedJobs}\n` +
+                  `**Branch**: \`${{ github.ref_name }}\`\n\n` +
+                  `### Failed Jobs\n` +
+                  `- Frontend: ${frontendResult}\n` +
+                  `- Backend: ${backendResult}\n` +
+                  `- E2E: ${e2eResult}\n\n` +
+                  `### Actions\n` +
+                  `1. [View failed run](${runUrl})\n` +
+                  `2. Download artifacts for detailed logs\n` +
+                  `3. Fix or quarantine flaky tests\n` +
+                  `4. This issue will auto-close when CI passes`,
+                labels: ['ci-failure'],
+              });
+              core.info(`Created new issue #${newIssue.data.number}`);
+            }
+
+      - name: Send Feishu alert
+        if: always() && failure()
+        run: |
+          if [ -n "$WEBHOOK_URL" ]; then
+            TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            SHA="${{ github.sha }}"
+            FAILED_JOBS="${{ needs.frontend.result }},${{ needs.backend.result }},${{ needs.e2e.result }}"
+
+            curl -sf -X POST "$WEBHOOK_URL" \
+              -H 'Content-Type: application/json' \
+              -d '{
+                "msg_type": "interactive",
+                "card": {
+                  "header": {
+                    "title": {"tag": "plain_text", "content": "CI Failed"},
+                    "template": "red"
+                  },
+                  "elements": [{
+                    "tag": "markdown",
+                    "content": "**NucPot CI failed**\nTime: '"$TIMESTAMP"'\nSHA: `'"$SHA"'`\n[View Run]('"$RUN_URL"')\nJobs: Frontend='"${{ needs.frontend.result }}"', Backend='"${{ needs.backend.result }}"', E2E='"${{ needs.e2e.result }}"'"
+                  }]
+                }
+              }' || true
+          fi
+        env:
+          WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK }}
+
+  # ===========================================================================
+  # S1b: Auto-close ci-failure issues when CI passes on new commit
+  # ===========================================================================
+  ci-recovery:
+    name: CI Recovery — close stale issues
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, e2e]
+    if: success() && github.event_name == 'push'
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            // Close all open ci-failure issues — CI is green now
+            const sha = context.sha.slice(0, 7);
+            const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['ci-failure'],
+              state: 'open',
+            });
+
+            for (const issue of issues.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `✅ **CI recovered** at ${now}\n\nGreen commit: \`${sha}\`\nClosing this issue.`
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+              core.info(`Closed recovered issue #${issue.number}`);
+            }
+
+            if (issues.data.length === 0) {
+              core.info('No open ci-failure issues to close.');
+            }
