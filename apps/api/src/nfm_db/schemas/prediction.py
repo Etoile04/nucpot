@@ -6,10 +6,7 @@ Output: Phase classification (label + probabilities) or temperature prediction.
 
 from __future__ import annotations
 
-from typing import Dict
-
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Feature Input — shared by both endpoints
@@ -75,7 +72,7 @@ class PredictionFeatures(BaseModel):
             self.lattice_distortion,
         ]
 
-    def to_feature_dict(self) -> Dict[str, float]:
+    def to_feature_dict(self) -> dict[str, float]:
         """Convert to dict matching PHYSICAL_FEATURE_NAMES."""
         return {
             "mo_equivalent": self.mo_equivalent,

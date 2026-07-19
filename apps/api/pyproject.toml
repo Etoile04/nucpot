@@ -86,6 +86,9 @@ ignore = [
 "src/nfm_db/core/extraction_rules.py" = ["RUF001", "RUF002", "RUF003"]
 # Greek alpha / Chinese characters in docstrings and test data are intentional
 "src/nfm_db/core/phase_rules.py" = ["RUF002"]
+# Greek letters (alpha, gamma), multiplication sign, and minus sign are intentional scientific notation
+"src/nfm_db/ml/*.py" = ["RUF001", "RUF002", "RUF003"]
+"src/nfm_db/schemas/prediction.py" = ["RUF001"]
 "tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
 "tests/test_extraction_prompt.py" = ["RUF001"]
 "tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
