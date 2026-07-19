@@ -23,6 +23,7 @@ from nfm_db.api.v1 import (
     md_verification,
     ontology,
     potentials,
+    predict,
     properties,
     reference_gaps,
     reference_values,
@@ -232,3 +233,4 @@ app.include_router(literature.router, prefix="/api/v1", tags=["文献管理"])
 app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
 app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])
+app.include_router(predict.router, prefix="/api/v1", tags=["ML 预测"])
