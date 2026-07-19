@@ -1,10 +1,10 @@
-"""Integration tests for /api/v1/review endpoints (Phase 2).
+"""Integration tests for /api/v1/review endpoints (Phase 3).
 
-ADR-NFM-796 §4: 5 review endpoints across extraction_results,
-kg_nodes, kg_edges, and property_measurements.
+5 review endpoints across extraction_results, kg_nodes, kg_edges,
+and property_measurements, with state machine transition validation.
 
-NOTE: These endpoints are not yet implemented. Tests are skipped to
-unblock CI (NFM-1211).
+Tests use ExtractionResult (no FKs to external tables in SQLite),
+which provides sufficient code-path coverage for the cross-table union logic.
 """
 
 from __future__ import annotations
@@ -13,10 +13,8 @@ import uuid
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="Review endpoints not yet implemented (NFM-1211)")
-
-from nfm_db.models.extraction_result import ExtractionResult  # noqa: E402
-from nfm_db.models.review import ReviewStatus  # noqa: E402
+from nfm_db.models.extraction_result import ExtractionResult
+from nfm_db.models.review import ReviewStatus
 
 # NOTE: KGNode/KGEdge/PropertyMeasurement have FK references to tables that
 # don't exist in SQLite (e.g. kg_nodes.source_id → "sources.id"). Since the
@@ -34,6 +32,7 @@ async def _seed_extraction_result(db_session, **overrides):
     defaults = dict(
         item_type="property",
         item_data={"property": "thermal_conductivity", "value": 3.5},
+        value=3.5,
         source_paragraph="The thermal conductivity of UO2 at 1000K.",
         source_page=42,
         source_doi="10.1234/test.doi",
@@ -241,6 +240,39 @@ async def test_update_review_status_needs_revision(async_client, db_session) -> 
     assert response.json()["data"]["review_status"] == "needs_revision"
 
 
+@pytest.mark.asyncio
+async def test_update_review_status_invalid_transition(async_client, db_session) -> None:
+    """Cannot transition from approved back to pending (409 Conflict)."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.APPROVED.value,
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "pending"},
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_review_status_corrected_from_needs_revision(
+    async_client, db_session,
+) -> None:
+    """Needs_revision -> corrected is a valid transition."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.NEEDS_REVISION.value,
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "corrected", "note": "Fixed value"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["review_status"] == "corrected"
+
+
 # ---------------------------------------------------------------------------
 # R4: POST /api/v1/review/batch — batch operations
 # ---------------------------------------------------------------------------
@@ -329,7 +361,7 @@ async def test_batch_review_invalid_status(async_client, db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_review_stats_with_data(async_client, db_session) -> None:
-    """Stats aggregate counts across statuses."""
+    """Stats aggregate counts across all statuses."""
     await _seed_extraction_result(
         db_session,
         review_status=ReviewStatus.PENDING.value,
@@ -346,6 +378,10 @@ async def test_review_stats_with_data(async_client, db_session) -> None:
         db_session,
         review_status=ReviewStatus.NEEDS_REVISION.value,
     )
+    await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.CORRECTED.value,
+    )
 
     response = await async_client.get("/api/v1/review/stats")
     assert response.status_code == 200
@@ -356,6 +392,7 @@ async def test_review_stats_with_data(async_client, db_session) -> None:
     assert data["approved"] == 1
     assert data["rejected"] == 1
     assert data["needs_revision"] == 1
+    assert data["corrected"] == 1
 
 
 @pytest.mark.asyncio
@@ -368,6 +405,7 @@ async def test_review_stats_empty(async_client) -> None:
     assert data["approved"] == 0
     assert data["rejected"] == 0
     assert data["needs_revision"] == 0
+    assert data["corrected"] == 0
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ Stores material property data with multi-type value support and conditions.
 """
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Numeric,
@@ -196,8 +198,14 @@ class PropertyMeasurement(TimestampMixin, Base):
     review_status: Mapped[str] = mapped_column(
         String(50),
         default="pending",
+        comment="pending | approved | rejected | needs_revision | corrected",
     )
     reviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last review action",
+    )
 
     # -- relationships --
     dataset: Mapped["Dataset"] = relationship(back_populates="measurements")
