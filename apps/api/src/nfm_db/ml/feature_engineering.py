@@ -13,7 +13,6 @@ References:
 from __future__ import annotations
 
 import math
-from typing import Dict, FrozenSet, List, Tuple
 
 import pandas as pd
 
@@ -29,7 +28,7 @@ GAS_CONSTANT_R: float = 8.314  # J/(mol·K)
 # Formula: Mo_eq = 1.0×Mo + 1.13×Nb + 2.42×V + 1.86×Ti + 1.1×Zr
 # ---------------------------------------------------------------------------
 
-MO_EQUIVALENT_COEFFICIENTS: FrozenSet[Tuple[str, float]] = frozenset({
+MO_EQUIVALENT_COEFFICIENTS: frozenset[tuple[str, float]] = frozenset({
     ("Mo", 1.0),
     ("Nb", 1.13),
     ("V", 2.42),
@@ -38,7 +37,7 @@ MO_EQUIVALENT_COEFFICIENTS: FrozenSet[Tuple[str, float]] = frozenset({
 })
 
 
-def calculate_mo_equivalent(composition: Dict[str, float]) -> float:
+def calculate_mo_equivalent(composition: dict[str, float]) -> float:
     """Calculate Mo equivalent (Mo_eq) for a given composition.
 
     The Mo equivalent parameter characterizes the solid-solution
@@ -75,7 +74,7 @@ def calculate_mo_equivalent(composition: Dict[str, float]) -> float:
 
 # Pauling electronegativity values (dimensionless)
 # Source: L. Pauling, "The Nature of the Chemical Bond" (3rd ed., 1960)
-PAULING_ELECTRONEGATIVITY: FrozenSet[Tuple[str, float]] = frozenset({
+PAULING_ELECTRONEGATIVITY: frozenset[tuple[str, float]] = frozenset({
     ("H", 2.20), ("Li", 0.98), ("Be", 1.57), ("B", 2.04), ("C", 2.55),
     ("N", 3.04), ("O", 3.44), ("F", 3.98), ("Na", 0.93), ("Mg", 1.31),
     ("Al", 1.61), ("Si", 1.90), ("P", 2.19), ("S", 2.58), ("Cl", 3.16),
@@ -98,7 +97,7 @@ PAULING_ELECTRONEGATIVITY: FrozenSet[Tuple[str, float]] = frozenset({
 _CHI_U_PAULING: float = 1.38
 
 
-def calculate_pauling_chi_diff(composition: Dict[str, float]) -> float:
+def calculate_pauling_chi_diff(composition: dict[str, float]) -> float:
     """Calculate Pauling electronegativity difference from uranium.
 
     Measures the solid-solution strengthening degree by quantifying
@@ -129,7 +128,7 @@ def calculate_pauling_chi_diff(composition: Dict[str, float]) -> float:
 
 # Allen electronegativity values (dimensionless, configuration-energy average)
 # Source: L.C. Allen, J. Am. Chem. Soc. 111, 9003 (1989)
-ALLEN_ELECTRONEGATIVITY: FrozenSet[Tuple[str, float]] = frozenset({
+ALLEN_ELECTRONEGATIVITY: frozenset[tuple[str, float]] = frozenset({
     ("H", 2.300), ("Li", 0.912), ("Be", 1.576), ("B", 2.051), ("C", 2.544),
     ("N", 3.066), ("O", 3.610), ("F", 4.193), ("Na", 0.869), ("Mg", 1.293),
     ("Al", 1.613), ("Si", 1.916), ("P", 2.253), ("S", 2.589), ("Cl", 2.869),
@@ -152,7 +151,7 @@ ALLEN_ELECTRONEGATIVITY: FrozenSet[Tuple[str, float]] = frozenset({
 _CHI_U_ALLEN: float = 1.226
 
 
-def calculate_allen_chi_diff(composition: Dict[str, float]) -> float:
+def calculate_allen_chi_diff(composition: dict[str, float]) -> float:
     """Calculate Allen electronegativity difference from uranium.
 
     Allen scale uses configuration-energy averaged electronegativity,
@@ -182,7 +181,7 @@ def calculate_allen_chi_diff(composition: Dict[str, float]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def calculate_config_entropy(composition: Dict[str, float]) -> float:
+def calculate_config_entropy(composition: dict[str, float]) -> float:
     """Calculate ideal mixing configuration entropy.
 
     Measures the high-entropy effect of a multi-component alloy.
@@ -225,7 +224,7 @@ def calculate_config_entropy(composition: Dict[str, float]) -> float:
 # Bulk modulus (GPa) and atomic volume (cm³/mol) for key elements
 # Sources: Gschneidner (1964) for volumes; Landolt-Börnstein for
 #          bulk moduli; nuclear materials handbooks for actinides.
-BULK_MODULUS: FrozenSet[Tuple[str, float]] = frozenset({
+BULK_MODULUS: frozenset[tuple[str, float]] = frozenset({
     ("U", 113.0), ("Mo", 263.0), ("Nb", 170.0), ("V", 162.0),
     ("Ti", 110.0), ("Zr", 94.0), ("Cr", 160.0), ("Fe", 170.0),
     ("Ni", 180.0), ("Ru", 220.0), ("Rh", 240.0), ("Pd", 180.0),
@@ -235,7 +234,7 @@ BULK_MODULUS: FrozenSet[Tuple[str, float]] = frozenset({
     ("Th", 54.0), ("Pa", 97.0), ("Np", 48.0), ("Pu", 40.0),
 })
 
-ATOMIC_VOLUME_CM3_PER_MOL: FrozenSet[Tuple[str, float]] = frozenset({
+ATOMIC_VOLUME_CM3_PER_MOL: frozenset[tuple[str, float]] = frozenset({
     ("U", 12.49), ("Mo", 9.38), ("Nb", 10.83), ("V", 8.35),
     ("Ti", 10.63), ("Zr", 14.02), ("Cr", 7.23), ("Fe", 7.09),
     ("Ni", 6.59), ("Ru", 8.28), ("Rh", 8.28), ("Pd", 8.87),
@@ -246,7 +245,7 @@ ATOMIC_VOLUME_CM3_PER_MOL: FrozenSet[Tuple[str, float]] = frozenset({
 })
 
 
-def calculate_bv_ratio(composition: Dict[str, float]) -> float:
+def calculate_bv_ratio(composition: dict[str, float]) -> float:
     """Calculate the composition-weighted bulk modulus to volume ratio.
 
     Measures the atomic size factor and elastic stiffness contribution.
@@ -290,7 +289,7 @@ def calculate_bv_ratio(composition: Dict[str, float]) -> float:
 # ---------------------------------------------------------------------------
 
 # Atomic weights (g/mol) for key elements
-ATOMIC_WEIGHT: FrozenSet[Tuple[str, float]] = frozenset({
+ATOMIC_WEIGHT: frozenset[tuple[str, float]] = frozenset({
     ("H", 1.008), ("He", 4.003), ("Li", 6.941), ("Be", 9.012),
     ("B", 10.811), ("C", 12.011), ("N", 14.007), ("O", 15.999),
     ("F", 18.998), ("Na", 22.990), ("Mg", 24.305), ("Al", 26.982),
@@ -315,7 +314,7 @@ ATOMIC_WEIGHT: FrozenSet[Tuple[str, float]] = frozenset({
 })
 
 
-def calculate_u_density(composition: Dict[str, float]) -> float:
+def calculate_u_density(composition: dict[str, float]) -> float:
     """Calculate theoretical uranium alloy density.
 
     Computes the mass-weighted density from atomic weights and atomic
@@ -367,7 +366,7 @@ def calculate_u_density(composition: Dict[str, float]) -> float:
 #   - de Boer, F.R. et al. (1988). "Cohesion in Metals."
 #   - Takeuchi & Inoue (2005). Mater. Trans., 46, 2817.
 #   - Nuclear fuel-specific values from Miedema model calculations.
-_MIEDEMA_PAIRS: FrozenSet[Tuple[str, str, float]] = frozenset({
+_MIEDEMA_PAIRS: frozenset[tuple[str, str, float]] = frozenset({
     # U-X pairs
     ("U", "Mo", -5.0), ("Mo", "U", -5.0),
     ("U", "Nb", -4.0), ("Nb", "U", -4.0),
@@ -456,12 +455,12 @@ _MIEDEMA_PAIRS: FrozenSet[Tuple[str, str, float]] = frozenset({
     ("Hf", "Ta", 0.0), ("Ta", "Hf", 0.0),
 })
 
-_MIEDEMA_LOOKUP: Dict[Tuple[str, str], float] = {
+_MIEDEMA_LOOKUP: dict[tuple[str, str], float] = {
     (a, b): val for a, b, val in _MIEDEMA_PAIRS
 }
 
 
-def calculate_mixing_enthalpy(composition: Dict[str, float]) -> float:
+def calculate_mixing_enthalpy(composition: dict[str, float]) -> float:
     """Calculate Miedema binary mixing enthalpy for a composition.
 
     Uses the extended Miedema model binary interaction parameters
@@ -510,7 +509,7 @@ def calculate_mixing_enthalpy(composition: Dict[str, float]) -> float:
 
 # Atomic radii (Å) — empirical metallic radii for CN12 coordination
 # Source: Slater (1964); nuclear materials handbooks
-ATOMIC_RADIUS: FrozenSet[Tuple[str, float]] = frozenset({
+ATOMIC_RADIUS: frozenset[tuple[str, float]] = frozenset({
     ("U", 1.56), ("Mo", 1.39), ("Nb", 1.43), ("V", 1.34),
     ("Ti", 1.47), ("Zr", 1.60), ("Cr", 1.28), ("Fe", 1.26),
     ("Ni", 1.24), ("Ru", 1.34), ("Rh", 1.34), ("Pd", 1.37),
@@ -526,7 +525,7 @@ ATOMIC_RADIUS: FrozenSet[Tuple[str, float]] = frozenset({
 })
 
 
-def calculate_lattice_distortion(composition: Dict[str, float]) -> float:
+def calculate_lattice_distortion(composition: dict[str, float]) -> float:
     """Calculate the atomic size mismatch parameter (lattice distortion).
 
     Measures the degree of atomic size mismatch in a solid solution,
@@ -574,7 +573,7 @@ def calculate_lattice_distortion(composition: Dict[str, float]) -> float:
 # Aggregation Functions
 # ---------------------------------------------------------------------------
 
-_FEATURE_CALCULATORS: List[Tuple[str, callable]] = [
+_FEATURE_CALCULATORS: list[tuple[str, callable]] = [
     ("mo_equivalent", calculate_mo_equivalent),
     ("pauling_chi_diff", calculate_pauling_chi_diff),
     ("allen_chi_diff", calculate_allen_chi_diff),
@@ -585,12 +584,12 @@ _FEATURE_CALCULATORS: List[Tuple[str, callable]] = [
     ("lattice_distortion", calculate_lattice_distortion),
 ]
 
-_FEATURE_COLUMNS: List[str] = [name for name, _ in _FEATURE_CALCULATORS]
+_FEATURE_COLUMNS: list[str] = [name for name, _ in _FEATURE_CALCULATORS]
 
 
 def compute_all_features(
-    composition: Dict[str, float],
-) -> Dict[str, float]:
+    composition: dict[str, float],
+) -> dict[str, float]:
     """Compute all 8 physical features for a single composition.
 
     Returns a dictionary mapping feature names to computed values.
@@ -619,7 +618,7 @@ def compute_all_features(
 
 
 def batch_compute(
-    compositions: List[Dict[str, float]],
+    compositions: list[dict[str, float]],
 ) -> pd.DataFrame:
     """Compute all 8 physical features for multiple compositions.
 

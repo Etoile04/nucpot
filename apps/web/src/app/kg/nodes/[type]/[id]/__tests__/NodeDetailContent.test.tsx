@@ -343,7 +343,11 @@ describe('NodeDetailContent', () => {
     expect(await screen.findByText('UO2')).toBeInTheDocument()
     expect(screen.getByText('Material')).toBeInTheDocument()
     // 3 calls: initial node (500) → retry node (success) → relations
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // The relations useEffect fires after the render that shows UO2,
+    // so we must waitFor the fetch count to settle.
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
   })
 
   it('15. renders nested object properties with indented JSON', async () => {

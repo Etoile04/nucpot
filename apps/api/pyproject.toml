@@ -91,6 +91,8 @@ ignore = [
 "tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
 "tests/test_phase_rules.py" = ["RUF001", "RUF002"]
 "tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
+# NFM-1569: Unicode math symbols (×, γ, ρ, δ, Δ, √, −) are intentional in nuclear materials science formulas
+"src/nfm_db/ml/feature_engineering.py" = ["RUF002", "RUF003"]
 # NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
