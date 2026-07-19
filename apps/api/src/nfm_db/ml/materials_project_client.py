@@ -17,7 +17,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from nfm_db.ml.feature_engineering import calculate_lattice_distortion
 
@@ -32,7 +32,7 @@ DEFAULT_KPOINT_DENSITY: str = "MP-standard"
 DEFAULT_CODE: str = "VASP"
 
 # Backoff schedule for rate-limit retries (seconds)
-_BACKOFF_DELAYS: List[float] = [1.0, 2.0, 4.0, 8.0, 30.0]
+_BACKOFF_DELAYS: list[float] = [1.0, 2.0, 4.0, 8.0, 30.0]
 _MAX_RETRIES: int = len(_BACKOFF_DELAYS)
 
 
@@ -46,15 +46,15 @@ class MPEntry:
     """Immutable record for a single Materials Project database entry."""
 
     material_id: str
-    composition: Dict[str, float]
+    composition: dict[str, float]
     formation_energy_per_atom: float
-    formation_energy_uncertainty: Optional[float]
-    lattice_constants: Dict[str, float]
-    lattice_type: Optional[str]
+    formation_energy_uncertainty: float | None
+    lattice_constants: dict[str, float]
+    lattice_type: str | None
     functional: str
-    band_gap: Optional[float]
-    is_gap_direct: Optional[bool]
-    e_above_hull: Optional[float]
+    band_gap: float | None
+    is_gap_direct: bool | None
+    e_above_hull: float | None
 
 
 @dataclass(frozen=True)
@@ -70,11 +70,11 @@ class SupplementaryRecord:
     phase: str
     functional: str
     formation_energy: float
-    formation_energy_uncertainty: Optional[float]
-    cohesive_energy: Optional[float]
+    formation_energy_uncertainty: float | None
+    cohesive_energy: float | None
     lattice_constant_a: float
-    lattice_constant_b: Optional[float]
-    lattice_constant_c: Optional[float]
+    lattice_constant_b: float | None
+    lattice_constant_c: float | None
     lattice_distortion: float
     source_id: str
     cutoff_energy: float
@@ -87,7 +87,7 @@ class SupplementaryRecord:
 # ---------------------------------------------------------------------------
 
 
-def composition_cache_key(composition: Dict[str, float]) -> str:
+def composition_cache_key(composition: dict[str, float]) -> str:
     """Generate a deterministic SHA256 hex digest for a composition dict.
 
     Elements are sorted before hashing so that ``{"U":70,"Zr":30}`` and
@@ -111,8 +111,8 @@ def _cache_file_path(cache_dir: str, key: str) -> str:
 
 def write_cache_entry(
     cache_dir: str,
-    composition: Dict[str, float],
-    entries: List[MPEntry],
+    composition: dict[str, float],
+    entries: list[MPEntry],
 ) -> None:
     """Write MPEntry list to the JSON file cache.
 
@@ -146,8 +146,8 @@ def write_cache_entry(
 
 def read_cache_entry(
     cache_dir: str,
-    composition: Dict[str, float],
-) -> Optional[List[MPEntry]]:
+    composition: dict[str, float],
+) -> list[MPEntry] | None:
     """Read cached MPEntry list for a given composition.
 
     Args:
@@ -164,7 +164,7 @@ def read_cache_entry(
         return None
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         return [
@@ -257,8 +257,8 @@ def _validate_api_key(api_key: str) -> None:
 
 
 def _parse_summary_to_entries(
-    summaries: List[Any],
-) -> List[MPEntry]:
+    summaries: list[Any],
+) -> list[MPEntry]:
     """Convert raw MP summary docs to MPEntry list.
 
     Args:
@@ -267,14 +267,14 @@ def _parse_summary_to_entries(
     Returns:
         List of MPEntry objects.
     """
-    entries: List[MPEntry] = []
+    entries: list[MPEntry] = []
 
     for doc in summaries:
         try:
             lattice = doc.structure.lattice if doc.structure else None
             abc = list(lattice.abc) if lattice and hasattr(lattice, "abc") else [0.0]
 
-            lattice_constants: Dict[str, float] = {}
+            lattice_constants: dict[str, float] = {}
             if len(abc) >= 1:
                 lattice_constants["a"] = abc[0]
             if len(abc) >= 2:
@@ -331,7 +331,7 @@ def _parse_entry_doc_to_mp_entry(doc: Any) -> MPEntry:
     lattice = doc.structure.lattice if doc.structure else None
     abc = list(lattice.abc) if lattice and hasattr(lattice, "abc") else [0.0]
 
-    lattice_constants: Dict[str, float] = {}
+    lattice_constants: dict[str, float] = {}
     if len(abc) >= 1:
         lattice_constants["a"] = abc[0]
     if len(abc) >= 2:
@@ -361,9 +361,9 @@ def _parse_entry_doc_to_mp_entry(doc: Any) -> MPEntry:
 
 
 def fetch_entries_by_composition(
-    composition: Dict[str, float],
+    composition: dict[str, float],
     api_key: str,
-) -> List[MPEntry]:
+) -> list[MPEntry]:
     """Query the Materials Project API for entries matching a composition.
 
     Uses nearest-neighbor search via ``MPRester.materials.summary``.
@@ -457,10 +457,10 @@ def fetch_by_material_id(
 
 
 def batch_query(
-    compositions: List[Dict[str, float]],
+    compositions: list[dict[str, float]],
     api_key: str,
     cache_dir: str,
-) -> List[SupplementaryRecord]:
+) -> list[SupplementaryRecord]:
     """Batch-query the MP API for multiple compositions with caching.
 
     For each composition:
@@ -487,7 +487,7 @@ def batch_query(
         )
         return []
 
-    records: List[SupplementaryRecord] = []
+    records: list[SupplementaryRecord] = []
 
     for composition in compositions:
         cached = read_cache_entry(cache_dir, composition)

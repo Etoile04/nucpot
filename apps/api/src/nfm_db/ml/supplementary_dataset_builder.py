@@ -19,9 +19,8 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from nfm_db.ml.calphad_ternary_data import check_single_phase_bcc
 from nfm_db.ml.feature_engineering import (
@@ -40,7 +39,7 @@ logger = logging.getLogger(__name__)
 # Constants -- DFT export CSV field names (matches spec S3 + validator)
 # ---------------------------------------------------------------------------
 
-DFT_EXPORT_CSV_FIELDS: Tuple[str, ...] = (
+DFT_EXPORT_CSV_FIELDS: tuple[str, ...] = (
     "element_system",
     "composition",
     "phase",
@@ -81,7 +80,7 @@ class BuildResult:
     mp_matched_count: int
     calphad_fallback_count: int
     total_output_records: int
-    output_files: Tuple[str, ...]
+    output_files: tuple[str, ...]
     mp_api_key_used: bool
     build_timestamp: str
 
@@ -92,7 +91,7 @@ class BuildResult:
 
 # CALPHAD-estimated lattice constants for U-Mo-Nb and U-Mo-Ti systems
 # (representative values from literature assessments)
-_CALPHAD_LATTICE_ESTIMATES: Dict[str, float] = {
+_CALPHAD_LATTICE_ESTIMATES: dict[str, float] = {
     "U": 3.47,   # alpha-U (orthorhombic, a-axis)
     "Mo": 3.15,  # BCC Mo
     "Nb": 3.30,  # BCC Nb
@@ -101,13 +100,13 @@ _CALPHAD_LATTICE_ESTIMATES: Dict[str, float] = {
 }
 
 
-def _composition_cache_key(composition: Dict[str, float]) -> str:
+def _composition_cache_key(composition: dict[str, float]) -> str:
     """Deterministic hash for a composition dict (sorted keys)."""
     canonical = json.dumps(composition, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
-def calphad_proxy(composition: Dict[str, float]) -> Optional[SupplementaryRecord]:
+def calphad_proxy(composition: dict[str, float]) -> SupplementaryRecord | None:
     """Generate a SupplementaryRecord from CALPHAD estimates for known systems.
 
     Currently supports U-Mo-Nb and U-Mo-Ti ternary systems where CALPHAD
@@ -210,7 +209,7 @@ def calphad_proxy(composition: Dict[str, float]) -> Optional[SupplementaryRecord
 # ---------------------------------------------------------------------------
 
 
-def deduplicate_records(records: List[SupplementaryRecord]) -> List[SupplementaryRecord]:
+def deduplicate_records(records: list[SupplementaryRecord]) -> list[SupplementaryRecord]:
     """Remove duplicate compositions, preferring MP source over CALPHAD.
 
     Args:
@@ -222,7 +221,7 @@ def deduplicate_records(records: List[SupplementaryRecord]) -> List[Supplementar
     if not records:
         return []
 
-    seen: Dict[str, SupplementaryRecord] = {}
+    seen: dict[str, SupplementaryRecord] = {}
 
     for record in records:
         comp_key = record.composition
@@ -247,14 +246,14 @@ def deduplicate_records(records: List[SupplementaryRecord]) -> List[Supplementar
 # ---------------------------------------------------------------------------
 
 
-def _fmt_float_or_empty(value: Optional[float]) -> str:
+def _fmt_float_or_empty(value: float | None) -> str:
     """Format an optional float as string, or empty string if None."""
     if value is None:
         return ""
     return str(value)
 
 
-def _record_to_csv_row(record: SupplementaryRecord) -> Dict[str, str]:
+def _record_to_csv_row(record: SupplementaryRecord) -> dict[str, str]:
     """Convert a SupplementaryRecord to a flat dict matching DFT export CSV fields."""
     return {
         "element_system": record.element_system,
@@ -288,7 +287,7 @@ def _record_to_csv_row(record: SupplementaryRecord) -> Dict[str, str]:
 
 
 def write_dft_export_csv(
-    records: List[SupplementaryRecord],
+    records: list[SupplementaryRecord],
     output_path: str,
 ) -> Path:
     """Write SupplementaryRecord list to a DFT export format CSV file.
@@ -322,7 +321,7 @@ def write_dft_export_csv(
 def build_supplementary_dataset(
     heaps_csv_path: str,
     output_dir: str,
-    mp_api_key: Optional[str] = None,
+    mp_api_key: str | None = None,
 ) -> BuildResult:
     """Run the full supplementary DFT dataset build pipeline.
 
@@ -343,10 +342,10 @@ def build_supplementary_dataset(
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    build_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    build_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
     # Step 1: Parse HEAPS CSV
-    heaps_records: List[HeapsRecord] = parse_heaps_csv(heaps_csv_path)
+    heaps_records: list[HeapsRecord] = parse_heaps_csv(heaps_csv_path)
     total_heaps = len(heaps_records)
 
     # Step 2: Extract unique compositions for MP query
@@ -355,7 +354,7 @@ def build_supplementary_dataset(
         for rec in heaps_records
     }.values())
 
-    mp_records: List[SupplementaryRecord] = []
+    mp_records: list[SupplementaryRecord] = []
     cache_dir = os.path.join(output_dir, ".cache")
 
     if mp_api_key:
@@ -369,7 +368,7 @@ def build_supplementary_dataset(
     # Step 3: CALPHAD fallback for compositions not covered by MP
     mp_compositions = {r.composition for r in mp_records}
 
-    calphad_records: List[SupplementaryRecord] = []
+    calphad_records: list[SupplementaryRecord] = []
     for comp_dict in compositions:
         comp_json = json.dumps(comp_dict, sort_keys=True)
         if comp_json not in mp_compositions:
@@ -384,7 +383,7 @@ def build_supplementary_dataset(
 
     # Step 5: Write output CSV
     total_output = len(all_records)
-    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    date_str = datetime.now(UTC).strftime("%Y%m%d")
     batch_num = 1
     filename = f"supplementary_dft_batch_{batch_num:03d}_{total_output}_{date_str}.csv"
     output_path = os.path.join(output_dir, filename)

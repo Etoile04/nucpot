@@ -38,12 +38,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, ConstantKernel, WhiteKernel
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import LeaveOneOut
 from sklearn.preprocessing import StandardScaler
@@ -140,14 +139,14 @@ class TempPrediction:
         features: Computed physical-feature dict used for prediction.
     """
 
-    composition: Dict[str, float]
+    composition: dict[str, float]
     predicted_temp_c: float
     confidence_lower_c: float
     confidence_upper_c: float
     gpr_predicted_temp_c: float
     svr_predicted_temp_c: float
     gpr_std_c: float
-    features: Dict[str, float]
+    features: dict[str, float]
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +155,7 @@ class TempPrediction:
 
 
 def build_temp_feature_vector(
-    physical_features: Dict[str, float],
+    physical_features: dict[str, float],
     cluster_type: str,
 ) -> np.ndarray:
     """Build a 12-dim feature vector for temperature regression.
@@ -180,7 +179,7 @@ def build_temp_feature_vector(
 
 
 def cluster_type_from_features(
-    physical_features: Dict[str, float],
+    physical_features: dict[str, float],
 ) -> str:
     """Infer cluster type from physical features for inference-only inputs.
 
@@ -271,7 +270,7 @@ class TempPredictor:
         self._target_mean: float = 0.0
         self._target_std: float = 1.0
         self._trained: bool = False
-        self._loo_report: Optional[RegressionReport] = None
+        self._loo_report: RegressionReport | None = None
 
     # ------------------------------------------------------------------
     # Training API
@@ -325,8 +324,8 @@ class TempPredictor:
 
     def train_and_evaluate(
         self,
-        X: Optional[np.ndarray] = None,
-        y: Optional[np.ndarray] = None,
+        X: np.ndarray | None = None,
+        y: np.ndarray | None = None,
         target_mae_c: float = TARGET_MAE_C,
     ) -> RegressionReport:
         """Run Leave-One-Out CV then refit on the full dataset.
@@ -346,7 +345,7 @@ class TempPredictor:
             X, y = build_experimental_design_matrix()
 
         loo = LeaveOneOut()
-        fold_results: List[RegressionFoldResult] = []
+        fold_results: list[RegressionFoldResult] = []
 
         for fold_idx, (train_idx, test_idx) in enumerate(loo.split(X)):
             X_train, X_test = X[train_idx], X[test_idx]
@@ -420,7 +419,7 @@ class TempPredictor:
         return report
 
     @property
-    def loo_report(self) -> Optional[RegressionReport]:
+    def loo_report(self) -> RegressionReport | None:
         """LOO-CV report from the last ``train_and_evaluate`` call."""
         return self._loo_report
 
@@ -430,8 +429,8 @@ class TempPredictor:
 
     def predict_phase_transition_temp(
         self,
-        composition: Dict[str, float],
-        cluster_type: Optional[str] = None,
+        composition: dict[str, float],
+        cluster_type: str | None = None,
     ) -> TempPrediction:
         """Predict γ-phase transition temperature for a composition.
 
@@ -492,8 +491,8 @@ class TempPredictor:
 
     def predict_batch(
         self,
-        compositions: List[Dict[str, float]],
-    ) -> List[TempPrediction]:
+        compositions: list[dict[str, float]],
+    ) -> list[TempPrediction]:
         """Predict temperatures for a batch of compositions.
 
         Args:
@@ -585,7 +584,7 @@ class TempPredictor:
 # ---------------------------------------------------------------------------
 
 
-_SYSTEM_TO_CLUSTER: Dict[str, str] = {
+_SYSTEM_TO_CLUSTER: dict[str, str] = {
     "Mo-U": "I", "Nb-U": "I", "Cr-U": "I", "Ta-U": "I",
     "U-Zr": "II", "Ti-U": "II", "Ru-U": "II",
     "Mo-Nb-U": "II", "Mo-U-Zr": "II",
@@ -595,7 +594,7 @@ _SYSTEM_TO_CLUSTER: Dict[str, str] = {
 }
 
 
-def _system_label(composition: Dict[str, float]) -> str:
+def _system_label(composition: dict[str, float]) -> str:
     """Reconstruct element_system label from a composition dict.
 
     Mirrors training_data.ExperimentalRecord.element_system convention:
@@ -610,7 +609,7 @@ def _system_label(composition: Dict[str, float]) -> str:
     return "-".join(others)
 
 
-def build_experimental_design_matrix() -> Tuple[np.ndarray, np.ndarray]:
+def build_experimental_design_matrix() -> tuple[np.ndarray, np.ndarray]:
     """Build (X, y) from the 55 experimental compositions.
 
     Cluster types are mapped from the element system using the same
@@ -623,8 +622,8 @@ def build_experimental_design_matrix() -> Tuple[np.ndarray, np.ndarray]:
     """
     compositions, temperatures = load_compositions_and_temperatures()
 
-    X_list: List[np.ndarray] = []
-    y_list: List[float] = []
+    X_list: list[np.ndarray] = []
+    y_list: list[float] = []
 
     for comp, temp in zip(compositions, temperatures):
         sys_label = _system_label(comp)
@@ -674,13 +673,13 @@ def format_report(report: RegressionReport) -> str:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_MODEL_PATH = Path("models/temp_predictor_v1.0.0.joblib")
-_CACHED_PREDICTOR: Optional[TempPredictor] = None
+_CACHED_PREDICTOR: TempPredictor | None = None
 
 
 def predict_phase_transition_temp(
-    composition: Dict[str, float],
-    model_path: Optional[str | Path] = None,
-    cluster_type: Optional[str] = None,
+    composition: dict[str, float],
+    model_path: str | Path | None = None,
+    cluster_type: str | None = None,
 ) -> TempPrediction:
     """Module-level convenience wrapper for inference.
 

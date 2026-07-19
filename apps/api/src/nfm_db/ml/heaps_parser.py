@@ -11,7 +11,6 @@ import csv
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Atomic weights (g/mol) — sourced from feature_engineering.ATOMIC_WEIGHT
 # ---------------------------------------------------------------------------
 
-ATOMIC_WEIGHT: FrozenSet[Tuple[str, float]] = frozenset({
+ATOMIC_WEIGHT: frozenset[tuple[str, float]] = frozenset({
     ("H", 1.008), ("He", 4.003), ("Li", 6.941), ("Be", 9.012),
     ("B", 10.811), ("C", 12.011), ("N", 14.007), ("O", 15.999),
     ("F", 18.998), ("Na", 22.990), ("Mg", 24.305), ("Al", 26.982),
@@ -44,7 +43,7 @@ ATOMIC_WEIGHT: FrozenSet[Tuple[str, float]] = frozenset({
 })
 
 # Pre-built lookup for fast access
-_ATOMIC_WEIGHT_MAP: Dict[str, float] = dict(ATOMIC_WEIGHT)
+_ATOMIC_WEIGHT_MAP: dict[str, float] = dict(ATOMIC_WEIGHT)
 
 # Regex to split compact composition strings like "U97.5Mo2Nb0V0Ti0.5"
 # Matches: element symbol (1-2 uppercase/lowercase letters) + number (with optional decimal)
@@ -61,9 +60,9 @@ class HeapsRecord:
     """Immutable record for a single HEAPS alloy composition entry."""
 
     element_system: str
-    composition_at_percent: Dict[str, float]
-    composition_wt_percent: Dict[str, float]
-    phase: Optional[str]
+    composition_at_percent: dict[str, float]
+    composition_wt_percent: dict[str, float]
+    phase: str | None
     raw_system_string: str
     source_row_index: int
 
@@ -73,7 +72,7 @@ class HeapsRecord:
 # ---------------------------------------------------------------------------
 
 
-def parse_composition_string(system_string: str) -> Dict[str, float]:
+def parse_composition_string(system_string: str) -> dict[str, float]:
     """Parse a HEAPS alloy system string into an element-to-wt% mapping.
 
     HEAPS uses compact notation where element symbols are immediately
@@ -98,7 +97,7 @@ def parse_composition_string(system_string: str) -> Dict[str, float]:
     return {element: float(wt) for element, wt in matches}
 
 
-def wt_to_at_percent(composition_wt: Dict[str, float]) -> Dict[str, float]:
+def wt_to_at_percent(composition_wt: dict[str, float]) -> dict[str, float]:
     """Convert weight percent composition to atomic percent.
 
     Formula:
@@ -116,7 +115,7 @@ def wt_to_at_percent(composition_wt: Dict[str, float]) -> Dict[str, float]:
     if not composition_wt:
         raise ValueError("Empty composition — cannot convert to at.%")
 
-    moles: Dict[str, float] = {}
+    moles: dict[str, float] = {}
     for element, wt_frac in composition_wt.items():
         if element not in _ATOMIC_WEIGHT_MAP:
             raise ValueError(
@@ -131,7 +130,7 @@ def wt_to_at_percent(composition_wt: Dict[str, float]) -> Dict[str, float]:
     return {element: (mol / total_moles) * 100.0 for element, mol in moles.items()}
 
 
-def format_element_system(elements: List[str]) -> str:
+def format_element_system(elements: list[str]) -> str:
     """Format a sorted list of element symbols as a hyphen-joined string.
 
     Args:
@@ -150,7 +149,7 @@ def format_element_system(elements: List[str]) -> str:
     return "-".join(sorted_elements)
 
 
-def parse_heaps_csv(filepath: str) -> List[HeapsRecord]:
+def parse_heaps_csv(filepath: str) -> list[HeapsRecord]:
     """Parse a HEAPS CSV file and return a list of immutable composition records.
 
     Reads the CSV file, extracts the ``System`` column from each data row,
@@ -169,10 +168,10 @@ def parse_heaps_csv(filepath: str) -> List[HeapsRecord]:
     Raises:
         FileNotFoundError: If the CSV file does not exist.
     """
-    records: List[HeapsRecord] = []
+    records: list[HeapsRecord] = []
 
     try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
             reader = csv.DictReader(f)
             if reader.fieldnames is None:
                 logger.warning("CSV file has no header: %s", filepath)

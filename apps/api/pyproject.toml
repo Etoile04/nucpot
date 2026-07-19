@@ -94,6 +94,15 @@ ignore = [
 # NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
+# NFM-1565: scientific ML feature engineering — Greek letters (μ, σ, ρ, γ) and
+# multiplication sign × are intentional physics notation in docstrings/comments.
+# Uppercase X is the matrix convention; zip() without strict= is a benign
+# Python 3.10+ lint, not a runtime bug.
+"src/nfm_db/ml/feature_engineering.py" = ["RUF002", "RUF003"]
+"src/nfm_db/ml/temp_predictor.py" = ["RUF002", "RUF003", "N803", "B905"]
+"src/nfm_db/ml/phase_classifier.py" = ["RUF002", "RUF003", "N803", "B905"]
+"src/nfm_db/ml/train_phase_classifier.py" = ["RUF002", "RUF003", "B905"]
+"src/nfm_db/ml/heaps_parser.py" = ["RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nfm_db"]
