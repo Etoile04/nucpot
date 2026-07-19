@@ -637,3 +637,156 @@ def batch_compute(
 
     rows = [compute_all_features(comp) for comp in compositions]
     return pd.DataFrame(rows, columns=_FEATURE_COLUMNS)
+
+
+# ===========================================================================
+# Part 2: Cluster-type features (NFM-1585)
+# ===========================================================================
+
+VALENCE_ELECTRON_COUNT: frozenset[tuple[str, float]] = frozenset({
+    ("U", 6.0), ("Th", 4.0), ("Pa", 5.0), ("Np", 5.0),
+    ("Pu", 6.0), ("Am", 6.0),
+    ("Ti", 4.0), ("V", 5.0), ("Cr", 6.0), ("Mn", 7.0),
+    ("Fe", 8.0), ("Co", 9.0), ("Ni", 10.0), ("Cu", 11.0),
+    ("Zn", 12.0),
+    ("Y", 3.0), ("Zr", 4.0), ("Nb", 5.0), ("Mo", 6.0),
+    ("Tc", 7.0), ("Ru", 8.0), ("Rh", 9.0), ("Pd", 10.0),
+    ("Ag", 11.0), ("Cd", 12.0),
+    ("Hf", 4.0), ("Ta", 5.0), ("W", 6.0), ("Re", 7.0),
+    ("Os", 8.0), ("Ir", 9.0), ("Pt", 10.0), ("Au", 11.0),
+    ("Al", 3.0), ("Si", 4.0), ("Ga", 3.0), ("Ge", 4.0),
+    ("Sn", 4.0), ("Pb", 4.0), ("Sb", 5.0), ("Bi", 5.0),
+    ("La", 3.0), ("Ce", 3.0), ("Nd", 3.0), ("Gd", 3.0),
+    ("Dy", 3.0), ("Er", 3.0), ("Yb", 3.0), ("Lu", 3.0),
+    ("Sc", 3.0),
+})
+
+
+def calculate_vec(composition: dict[str, float]) -> float:
+    """VEC = Σ(x_i × VEC_i). Returns electrons/atom.
+
+    Valence Electron Concentration is a key predictor of crystal
+    structure: VEC < 6.87 → BCC, VEC > 8.0 → FCC.
+
+    Args:
+        composition: Element name to atomic percent or fraction mapping.
+
+    Returns:
+        Weighted valence electron concentration. Elements without
+        VEC data are excluded; their fraction is redistributed.
+    """
+    total = sum(composition.values())
+    if total <= 0:
+        return 0.0
+    vec_lookup = dict(VALENCE_ELECTRON_COUNT)
+    weighted_sum = 0.0
+    known_fraction = 0.0
+    for element, frac in composition.items():
+        if element in vec_lookup:
+            norm_frac = frac / total
+            weighted_sum += norm_frac * vec_lookup[element]
+            known_fraction += norm_frac
+    if known_fraction > 0:
+        return weighted_sum / known_fraction
+    return 0.0
+
+
+_CLUSTER_TYPE_LABELS: list[str] = ["I", "II", "III", "IV"]
+
+
+def _get_element_cluster_type(element: str) -> str | None:
+    """Delegate to cluster_model to avoid circular imports."""
+    from nfm_db.ml.cluster_model import get_element_cluster_type as _gect
+
+    return _gect(element)
+
+
+def calculate_cluster_fractions(composition: dict[str, float]) -> dict[str, float]:
+    """Cluster fractions: normalized solute atomic fractions per cluster type.
+
+    Classifies solute elements into Type I–IV based on Miedema enthalpy
+    signs (see cluster_model.py), then returns the fraction of classified
+    solute belonging to each type. Fractions are normalized to sum to 1.0.
+
+    Args:
+        composition: Element name to atomic percent or fraction mapping.
+
+    Returns:
+        Dictionary with keys cluster_I through cluster_IV.
+    """
+    total = sum(composition.values())
+    if total <= 0:
+        return {f"cluster_{k}": 0.0 for k in _CLUSTER_TYPE_LABELS}
+    fractions_by_type: dict[str, float] = {k: 0.0 for k in _CLUSTER_TYPE_LABELS}
+    classified_total = 0.0
+    for element, frac in composition.items():
+        if element == "U":
+            continue
+        ct = _get_element_cluster_type(element)
+        if ct is not None:
+            norm_frac = frac / total
+            fractions_by_type[ct] += norm_frac
+            classified_total += norm_frac
+    if classified_total > 0:
+        return {
+            f"cluster_{k}": fractions_by_type[k] / classified_total
+            for k in _CLUSTER_TYPE_LABELS
+        }
+    return {f"cluster_{k}": 0.0 for k in _CLUSTER_TYPE_LABELS}
+
+
+ML_FEATURE_NAMES: list[str] = [
+    "mo_equivalent",
+    "lattice_distortion",
+    "allen_chi_diff",
+    "vec",
+    "cluster_I",
+    "cluster_II",
+    "cluster_III",
+    "cluster_IV",
+]
+
+_ML_FEATURE_CALCULATORS: list[tuple[str, Callable]] = [
+    ("mo_equivalent", calculate_mo_equivalent),
+    ("lattice_distortion", calculate_lattice_distortion),
+    ("allen_chi_diff", calculate_allen_chi_diff),
+    ("vec", calculate_vec),
+]
+
+
+def compute_ml_features(composition: dict[str, float]) -> dict[str, float]:
+    """8D ML feature vector: Part 1 physical + Part 2 cluster features.
+
+    Combines mo_equivalent, lattice_distortion, allen_chi_diff, vec
+    with cluster_I through cluster_IV into a single feature dictionary.
+
+    Args:
+        composition: Element name to atomic percent or fraction mapping.
+
+    Returns:
+        Dictionary with 8 keys matching ML_FEATURE_NAMES.
+    """
+    result: dict[str, float] = {}
+    for name, calc in _ML_FEATURE_CALCULATORS:
+        result[name] = calc(composition)
+    cluster_fracs = calculate_cluster_fractions(composition)
+    result.update(cluster_fracs)
+    return result
+
+
+def batch_compute_ml_features(compositions: list[dict[str, float]]) -> pd.DataFrame:
+    """Batch 8D ML feature vector → DataFrame.
+
+    Args:
+        compositions: List of composition dictionaries.
+
+    Returns:
+        DataFrame with one row per composition and 8 ML feature columns.
+
+    Raises:
+        ValueError: If compositions list is empty.
+    """
+    if not compositions:
+        raise ValueError("compositions list must not be empty")
+    rows = [compute_ml_features(comp) for comp in compositions]
+    return pd.DataFrame(rows, columns=ML_FEATURE_NAMES)

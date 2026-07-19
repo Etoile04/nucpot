@@ -1,6 +1,11 @@
 """NFMD ML pipeline: feature engineering, phase classification, and prediction."""
 
 from nfm_db.ml.feature_engineering import (
+    ML_FEATURE_NAMES,
+    batch_compute_ml_features,
+    calculate_cluster_fractions,
+    calculate_vec,
+    compute_ml_features,
     calculate_allen_chi_diff,
     calculate_bv_ratio,
     calculate_config_entropy,
@@ -24,4 +29,9 @@ __all__ = [
     "calculate_lattice_distortion",
     "compute_all_features",
     "batch_compute",
+    "ML_FEATURE_NAMES",
+    "batch_compute_ml_features",
+    "calculate_cluster_fractions",
+    "calculate_vec",
+    "compute_ml_features",
 ]
