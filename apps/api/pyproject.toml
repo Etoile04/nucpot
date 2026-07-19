@@ -40,6 +40,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "types-cachetools>=5.0.0",
     "aiosqlite>=0.20.0",
 ]
 lightrag = [
@@ -93,7 +94,8 @@ ignore = [
 # Greek alpha / Chinese characters in docstrings and test data are intentional
 "src/nfm_db/core/phase_rules.py" = ["RUF002"]
 # Greek letters (alpha, gamma), multiplication sign, and minus sign are intentional scientific notation
-"src/nfm_db/ml/*.py" = ["RUF001", "RUF002", "RUF003"]
+# scikit-learn convention uses uppercase X for feature matrices (N803)
+"src/nfm_db/ml/*.py" = ["RUF001", "RUF002", "RUF003", "N803"]
 "src/nfm_db/schemas/prediction.py" = ["RUF001"]
 "tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
 "tests/test_extraction_prompt.py" = ["RUF001"]
@@ -222,12 +224,14 @@ module = [
 ignore_errors = true
 
 # ML prediction pipeline (NFM-1560) — strict typing deferred.
-# Missing type annotations, untyped ML library stubs (pandas, numpy, joblib).
+# Missing type annotations, untyped ML library stubs (pandas, numpy, joblib, sklearn).
 # Track restoration in a dedicated cleanup issue alongside NFM-1072.
 [[tool.mypy.overrides]]
 module = [
     "nfm_db.ml.feature_engineering",
     "nfm_db.ml.prediction_service",
+    "nfm_db.ml.training_data",
+    "nfm_db.ml.temp_gpr_baseline",
     "nfm_db.ml",
 ]
 ignore_errors = true
