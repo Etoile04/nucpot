@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -25,7 +24,7 @@ MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "mode
 PHASE_MODEL_PATH = MODELS_DIR / "phase_classifier_v01.joblib"
 TEMP_MODEL_PATH = MODELS_DIR / "temp_predictor_v01.joblib"
 
-PHYSICAL_FEATURE_NAMES: List[str] = [
+PHYSICAL_FEATURE_NAMES: list[str] = [
     "mo_equivalent",
     "pauling_chi_diff",
     "allen_chi_diff",
@@ -36,16 +35,16 @@ PHYSICAL_FEATURE_NAMES: List[str] = [
     "lattice_distortion",
 ]
 
-CLUSTER_TYPE_NAMES: List[str] = [
+CLUSTER_TYPE_NAMES: list[str] = [
     "type_I",
     "type_II",
     "type_III",
     "type_IV",
 ]
 
-CLUSTER_TYPE_LABELS: List[str] = ["I", "II", "III", "IV"]
+CLUSTER_TYPE_LABELS: list[str] = ["I", "II", "III", "IV"]
 
-CLUSTER_PHASE_LABELS: Dict[str, str] = {
+CLUSTER_PHASE_LABELS: dict[str, str] = {
     "I": "α-U (single phase)",
     "II": "α+γ two-phase",
     "III": "γ (single phase)",
@@ -65,7 +64,7 @@ _temp_model = None
 # ---------------------------------------------------------------------------
 
 
-def _cluster_type_from_features(features: Dict[str, float]) -> str:
+def _cluster_type_from_features(features: dict[str, float]) -> str:
     """Infer dominant cluster type from physical features.
 
     Uses a heuristic based on mixing_enthalpy and pauling_chi_diff:
@@ -89,7 +88,7 @@ def _cluster_type_from_features(features: Dict[str, float]) -> str:
     return "IV"
 
 
-def _cluster_type_to_one_hot(cluster_type: str) -> List[float]:
+def _cluster_type_to_one_hot(cluster_type: str) -> list[float]:
     """Convert a cluster type label to one-hot encoding."""
     idx = CLUSTER_TYPE_LABELS.index(cluster_type)
     return [1.0 if i == idx else 0.0 for i in range(len(CLUSTER_TYPE_LABELS))]
@@ -101,7 +100,7 @@ def _cluster_type_to_one_hot(cluster_type: str) -> List[float]:
 
 
 def build_feature_vector(
-    features: Dict[str, float],
+    features: dict[str, float],
     cluster_type: str | None = None,
 ) -> np.ndarray:
     """Build the 12-dimensional feature vector expected by the model.
@@ -132,7 +131,7 @@ def build_feature_vector(
 
 def _load_phase_classifier():
     """Load the phase classifier model from disk (lazy)."""
-    global _phase_model  # noqa: PLW0603
+    global _phase_model
 
     if _phase_model is not None:
         return _phase_model
@@ -156,7 +155,7 @@ def _load_phase_classifier():
 
 def _load_temp_predictor():
     """Load the temperature predictor model from disk (lazy)."""
-    global _temp_model  # noqa: PLW0603
+    global _temp_model
 
     if _temp_model is not None:
         return _temp_model
@@ -183,7 +182,7 @@ def _load_temp_predictor():
 # ---------------------------------------------------------------------------
 
 
-def predict_phase(features: Dict[str, float]) -> Dict | None:
+def predict_phase(features: dict[str, float]) -> dict | None:
     """Run phase classification on 8 physical features.
 
     Args:
@@ -224,7 +223,7 @@ def predict_phase(features: Dict[str, float]) -> Dict | None:
         return None
 
 
-def predict_temperature(features: Dict[str, float]) -> Dict | None:
+def predict_temperature(features: dict[str, float]) -> dict | None:
     """Run temperature prediction on 8 physical features.
 
     Args:
