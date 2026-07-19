@@ -25,6 +25,7 @@ dependencies = [
     "PyMuPDF>=1.24.0",
     "Pillow>=10.4.0",
     "rapidfuzz>=3.0.0",
+    "pandas>=2.0.0",
 ]
 
 [project.optional-dependencies]
