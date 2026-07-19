@@ -1,16 +1,22 @@
 """NFMD ML pipeline: feature engineering, phase classification, and prediction."""
 
 from nfm_db.ml.feature_engineering import (
+    ML_FEATURE_NAMES,
+    FeaturePipeline,
     batch_compute,
+    batch_compute_ml_features,
     calculate_allen_chi_diff,
     calculate_bv_ratio,
+    calculate_cluster_fractions,
     calculate_config_entropy,
     calculate_lattice_distortion,
     calculate_mixing_enthalpy,
     calculate_mo_equivalent,
     calculate_pauling_chi_diff,
     calculate_u_density,
+    calculate_vec,
     compute_all_features,
+    compute_ml_features,
 )
 from nfm_db.ml.temp_predictor import (
     TARGET_MAE_C,
@@ -26,24 +32,30 @@ from nfm_db.ml.temp_predictor import (
 )
 
 __all__ = [
+    "ML_FEATURE_NAMES",
     "TARGET_MAE_C",
+    "FeaturePipeline",
     "RegressionFoldResult",
     "RegressionReport",
     "TempPrediction",
     "TempPredictor",
     "batch_compute",
+    "batch_compute_ml_features",
     "build_experimental_design_matrix",
     "build_temp_feature_vector",
     "calculate_allen_chi_diff",
     "calculate_bv_ratio",
+    "calculate_cluster_fractions",
     "calculate_config_entropy",
     "calculate_lattice_distortion",
     "calculate_mixing_enthalpy",
     "calculate_mo_equivalent",
     "calculate_pauling_chi_diff",
     "calculate_u_density",
+    "calculate_vec",
     "cluster_type_from_features",
     "compute_all_features",
+    "compute_ml_features",
     "format_report",
     "predict_phase_transition_temp",
 ]

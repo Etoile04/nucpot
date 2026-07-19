@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
+import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -637,3 +638,329 @@ def batch_compute(
 
     rows = [compute_all_features(comp) for comp in compositions]
     return pd.DataFrame(rows, columns=_FEATURE_COLUMNS)
+
+
+# ---------------------------------------------------------------------------
+# FeaturePipeline — unified composition→ndarray interface
+# ---------------------------------------------------------------------------
+
+
+class FeaturePipeline:
+    """Unified feature computation pipeline for ML model consumption.
+
+    Wraps the 8 individual feature calculators into a single callable
+    that accepts a composition dict and returns a numpy array suitable
+    for direct use as ML model input.
+
+    The feature order matches ``PHYSICAL_FEATURE_NAMES`` defined in
+    ``phase_classifier.py`` for seamless downstream consumption.
+
+    Usage::
+
+        pipeline = FeaturePipeline()
+        features = pipeline.extract_features({"U": 0.9, "Mo": 0.1})
+        # features is np.ndarray of shape (8,)
+    """
+
+    __slots__ = ()
+
+    def extract_features(
+        self,
+        composition: dict[str, float],
+    ) -> np.ndarray:
+        """Compute all 8 physical features and return as numpy array.
+
+        Args:
+            composition: Element name to atomic percent or atomic
+                fraction mapping. Fraction-based features normalize
+                internally.
+
+        Returns:
+            numpy array of shape (8,) containing feature values in
+            canonical order: mo_equivalent, pauling_chi_diff,
+            allen_chi_diff, config_entropy, bv_ratio, u_density,
+            mixing_enthalpy, lattice_distortion.
+
+        Raises:
+            ValueError: If composition is empty or sums to zero.
+        """
+        total = sum(composition.values())
+        if total <= 0:
+            raise ValueError(
+                "composition must contain at least one element "
+                "with a positive fraction"
+            )
+
+        features = compute_all_features(composition)
+        return np.array(
+            [features[name] for name in _FEATURE_COLUMNS],
+            dtype=np.float64,
+        )
+
+    @property
+    def feature_names(self) -> list[str]:
+        """Return canonical feature names in array order."""
+        return list(_FEATURE_COLUMNS)
+
+    @property
+    def n_features(self) -> int:
+        """Return the number of features (8)."""
+        return len(_FEATURE_COLUMNS)
+
+    def extract_features_batch(
+        self,
+        compositions: list[dict[str, float]],
+    ) -> np.ndarray:
+        """Compute features for multiple compositions.
+
+        Args:
+            compositions: List of composition dictionaries.
+
+        Returns:
+            numpy array of shape (n_compositions, 8).
+
+        Raises:
+            ValueError: If compositions list is empty.
+        """
+        if not compositions:
+            raise ValueError("compositions list must not be empty")
+
+        return np.array(
+            [self.extract_features(comp) for comp in compositions],
+            dtype=np.float64,
+        )
+
+
+# ===========================================================================
+# Part 2: Cluster-type features (NFM-1585)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Feature 9: Valence Electron Concentration (VEC)
+# Formula: VEC = Σ(x_i × VEC_i)
+# ---------------------------------------------------------------------------
+
+# Valence electron count per element (group number convention for alloys)
+# Sources:
+#   - Guo & Liu (2011), Prog. Mater. Sci. for HEA VEC definition
+#   - Actinides: group number based on 5f/6d/7s valence shell occupation
+VALENCE_ELECTRON_COUNT: frozenset[tuple[str, float]] = frozenset({
+    # Actinides
+    ("U", 6.0), ("Th", 4.0), ("Pa", 5.0), ("Np", 5.0),
+    ("Pu", 6.0), ("Am", 6.0),
+    # 3d transition metals
+    ("Ti", 4.0), ("V", 5.0), ("Cr", 6.0), ("Mn", 7.0),
+    ("Fe", 8.0), ("Co", 9.0), ("Ni", 10.0), ("Cu", 11.0),
+    ("Zn", 12.0),
+    # 4d transition metals
+    ("Y", 3.0), ("Zr", 4.0), ("Nb", 5.0), ("Mo", 6.0),
+    ("Tc", 7.0), ("Ru", 8.0), ("Rh", 9.0), ("Pd", 10.0),
+    ("Ag", 11.0), ("Cd", 12.0),
+    # 5d transition metals
+    ("Hf", 4.0), ("Ta", 5.0), ("W", 6.0), ("Re", 7.0),
+    ("Os", 8.0), ("Ir", 9.0), ("Pt", 10.0), ("Au", 11.0),
+    # Main group / sp elements
+    ("Al", 3.0), ("Si", 4.0), ("Ga", 3.0), ("Ge", 4.0),
+    ("Sn", 4.0), ("Pb", 4.0), ("Sb", 5.0), ("Bi", 5.0),
+    ("La", 3.0), ("Ce", 3.0), ("Nd", 3.0), ("Gd", 3.0),
+    ("Dy", 3.0), ("Er", 3.0), ("Yb", 3.0), ("Lu", 3.0),
+    ("Sc", 3.0),
+})
+
+
+def calculate_vec(composition: dict[str, float]) -> float:
+    """Calculate Valence Electron Concentration (VEC).
+
+    VEC is the composition-weighted average number of valence electrons
+    per atom. It is a key predictor of phase stability in high-entropy
+    alloys: VEC < 6.87 favors BCC phases, while VEC > 8.0 favors FCC.
+
+    Formula:
+        VEC = Σ(x_i × VEC_i)
+
+    where x_i are atomic fractions and VEC_i is the valence electron
+    count for each element.
+
+    Args:
+        composition: Element name to atomic fraction mapping.
+
+    Returns:
+        VEC (electrons/atom). Elements without VEC data are skipped;
+        their fraction is redistributed among known elements.
+        Returns 0.0 for empty or fully-unknown compositions.
+
+    Examples:
+        >>> round(calculate_vec({"U": 0.9, "Mo": 0.1}), 3)
+        6.0
+        >>> calculate_vec({"U": 1.0})
+        6.0
+    """
+    total = sum(composition.values())
+    if total <= 0:
+        return 0.0
+    vec_lookup = dict(VALENCE_ELECTRON_COUNT)
+
+    weighted_sum = 0.0
+    known_fraction = 0.0
+    for element, frac in composition.items():
+        if element in vec_lookup:
+            norm_frac = frac / total
+            weighted_sum += norm_frac * vec_lookup[element]
+            known_fraction += norm_frac
+
+    if known_fraction > 0:
+        return weighted_sum / known_fraction
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Feature 10–13: Cluster-type Fractions (Type I–IV)
+# Formula: cluster_K = Σ(x_i for solute i in type K) / Σ(x_j for all classified solute j)
+# ---------------------------------------------------------------------------
+
+_CLUSTER_TYPE_LABELS: list[str] = ["I", "II", "III", "IV"]
+
+
+def _get_element_cluster_type(element: str) -> str | None:
+    """Classify an element's cluster type using Miedema enthalpy signs.
+
+    Deferred import to avoid circular dependency at module load time.
+    Falls back to the in-file Miedema lookup for elements present there.
+    """
+    from nfm_db.ml.cluster_model import get_element_cluster_type as _gect
+
+    return _gect(element)
+
+
+def calculate_cluster_fractions(
+    composition: dict[str, float],
+) -> dict[str, float]:
+    """Calculate cluster-type fractions for a composition.
+
+    For each solute element, determines its cluster type (I–IV) based
+    on the sign of U-X and X-X binary mixing enthalpies (Miedema model).
+    The cluster fraction for each type is the sum of atomic fractions
+    of solutes belonging to that type, normalized by the total classified
+    solute fraction.
+
+    U (the solvent/matrix element) is always excluded from cluster
+    fraction calculation — it represents the host lattice, not a solute.
+
+    Args:
+        composition: Element name to atomic fraction mapping.
+
+    Returns:
+        Dictionary with keys ``cluster_I``, ``cluster_II``, ``cluster_III``,
+        ``cluster_IV``. Values sum to 1.0 when at least one solute is
+        classified. Returns all-zero dict for pure U or empty compositions.
+
+    Examples:
+        >>> result = calculate_cluster_fractions({"U": 0.9, "Mo": 0.1})
+        >>> result["cluster_I"]  # Mo is Type I
+        1.0
+        >>> result["cluster_II"]  # no Type II solutes
+        0.0
+    """
+    total = sum(composition.values())
+    if total <= 0:
+        return {f"cluster_{k}": 0.0 for k in _CLUSTER_TYPE_LABELS}
+
+    fractions_by_type: dict[str, float] = {k: 0.0 for k in _CLUSTER_TYPE_LABELS}
+    classified_total = 0.0
+
+    for element, frac in composition.items():
+        if element == "U":
+            continue
+        ct = _get_element_cluster_type(element)
+        if ct is not None:
+            norm_frac = frac / total
+            fractions_by_type[ct] += norm_frac
+            classified_total += norm_frac
+
+    if classified_total > 0:
+        return {
+            f"cluster_{k}": fractions_by_type[k] / classified_total
+            for k in _CLUSTER_TYPE_LABELS
+        }
+    return {f"cluster_{k}": 0.0 for k in _CLUSTER_TYPE_LABELS}
+
+
+# ---------------------------------------------------------------------------
+# 8-Dimensional ML Feature Vector (Part 1 + Part 2)
+# ---------------------------------------------------------------------------
+
+# Canonical names for the 8D ML feature vector used by PhaseClassifier,
+# TempPredictor, and EnergyPredictor.
+ML_FEATURE_NAMES: list[str] = [
+    "mo_equivalent",
+    "lattice_distortion",
+    "allen_chi_diff",
+    "vec",
+    "cluster_I",
+    "cluster_II",
+    "cluster_III",
+    "cluster_IV",
+]
+
+_ML_FEATURE_CALCULATORS: list[tuple[str, Callable[[dict[str, float]], float]]] = [
+    ("mo_equivalent", calculate_mo_equivalent),
+    ("lattice_distortion", calculate_lattice_distortion),
+    ("allen_chi_diff", calculate_allen_chi_diff),
+    ("vec", calculate_vec),
+]
+
+
+def compute_ml_features(
+    composition: dict[str, float],
+) -> dict[str, float]:
+    """Compute the 8-dimensional ML feature vector for a single composition.
+
+    Combines Part 1 basic physical features with Part 2 cluster-type
+    features into the canonical 8D vector used by all ML models:
+
+    1. mo_equivalent      — Mo equivalent (γ-phase stability)
+    2. lattice_distortion  — Atomic size mismatch δ
+    3. allen_chi_diff      — Allen electronegativity difference Δχ_a
+    4. vec                 — Valence electron concentration
+    5. cluster_I           — Solute fraction in cluster Type I (SRO formers)
+    6. cluster_II          — Solute fraction in cluster Type II (ideal SS)
+    7. cluster_III         — Solute fraction in cluster Type III (segregation)
+    8. cluster_IV          — Solute fraction in cluster Type IV (immiscible)
+
+    Input composition is not mutated.
+
+    Args:
+        composition: Element name to atomic percent or atomic fraction
+            mapping.
+
+    Returns:
+        Dictionary with 8 keys matching ``ML_FEATURE_NAMES``.
+    """
+    result: dict[str, float] = {}
+    for name, calc in _ML_FEATURE_CALCULATORS:
+        result[name] = calc(composition)
+    cluster_fracs = calculate_cluster_fractions(composition)
+    result.update(cluster_fracs)
+    return result
+
+
+def batch_compute_ml_features(
+    compositions: list[dict[str, float]],
+) -> pd.DataFrame:
+    """Compute the 8D ML feature vector for multiple compositions.
+
+    Args:
+        compositions: List of composition dictionaries.
+
+    Returns:
+        DataFrame with one row per composition and columns matching
+        ``ML_FEATURE_NAMES``.
+
+    Raises:
+        ValueError: If compositions list is empty.
+    """
+    if not compositions:
+        raise ValueError("compositions list must not be empty")
+
+    rows = [compute_ml_features(comp) for comp in compositions]
+    return pd.DataFrame(rows, columns=ML_FEATURE_NAMES)

@@ -1,14 +1,16 @@
-"""Unit tests for physical feature engineering pipeline (NFM-1560).
+"""Unit tests for physical feature engineering pipeline (NFM-1560 / NFM-1585).
 
-Tests all 8 physical feature functions, compute_all_features aggregation,
-and batch_compute DataFrame output. Covers edge cases, immutability, and
-formula correctness per roadmap §4.1.2.
+Tests all physical feature functions, compute_all_features aggregation,
+batch_compute DataFrame output, Part 2 cluster features (VEC, cluster
+fractions), and the 8D ML feature vector. Covers edge cases,
+immutability, and formula correctness per roadmap §4.1.2 / §5.1.
 """
 
 from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from nfm_db.ml.feature_engineering import (
@@ -18,19 +20,26 @@ from nfm_db.ml.feature_engineering import (
     ATOMIC_WEIGHT,
     BULK_MODULUS,
     GAS_CONSTANT_R,
+    ML_FEATURE_NAMES,
     MO_EQUIVALENT_COEFFICIENTS,
     PAULING_ELECTRONEGATIVITY,
+    VALENCE_ELECTRON_COUNT,
     _MIEDEMA_LOOKUP,
+    FeaturePipeline,
     batch_compute,
+    batch_compute_ml_features,
     calculate_allen_chi_diff,
     calculate_bv_ratio,
+    calculate_cluster_fractions,
     calculate_config_entropy,
     calculate_lattice_distortion,
     calculate_mixing_enthalpy,
     calculate_mo_equivalent,
     calculate_pauling_chi_diff,
     calculate_u_density,
+    calculate_vec,
     compute_all_features,
+    compute_ml_features,
 )
 
 
@@ -78,6 +87,22 @@ class TestCalculateMoEquivalent:
         original = dict(comp)
         calculate_mo_equivalent(comp)
         assert comp == original
+
+    def test_u_10nb_binary(self) -> None:
+        """U-10Nb binary pair: Mo_eq = 1.13 × 10.0 = 11.3."""
+        assert calculate_mo_equivalent({"U": 90.0, "Nb": 10.0}) == pytest.approx(11.3)
+
+    def test_u_10v_binary(self) -> None:
+        """U-10V binary pair: Mo_eq = 2.42 × 10.0 = 24.2."""
+        assert calculate_mo_equivalent({"U": 90.0, "V": 10.0}) == pytest.approx(24.2)
+
+    def test_u_10ti_binary(self) -> None:
+        """U-10Ti binary pair: Mo_eq = 1.86 × 10.0 = 18.6."""
+        assert calculate_mo_equivalent({"U": 90.0, "Ti": 10.0}) == pytest.approx(18.6)
+
+    def test_u_10zr_binary(self) -> None:
+        """U-10Zr binary pair: Mo_eq = 1.1 × 10.0 = 11.0."""
+        assert calculate_mo_equivalent({"U": 90.0, "Zr": 10.0}) == pytest.approx(11.0)
 
     def test_coefficients_match_roadmap(self) -> None:
         """Verify coefficient values match roadmap §4.1.2 exactly."""
@@ -515,3 +540,440 @@ class TestConstantsIntegrity:
                     abs=0.001,
                 ), f"Miedema asymmetry: {pair}={val} vs {reverse}"
             seen.add(pair)
+
+
+# ---------------------------------------------------------------------------
+# FeaturePipeline
+# ---------------------------------------------------------------------------
+
+
+class TestFeaturePipeline:
+    """Tests for FeaturePipeline.extract_features(composition) -> np.ndarray."""
+
+    @pytest.fixture()
+    def pipeline(self) -> FeaturePipeline:
+        return FeaturePipeline()
+
+    def test_returns_numpy_array(self, pipeline: FeaturePipeline) -> None:
+        """extract_features must return a numpy ndarray."""
+        result = pipeline.extract_features({"U": 0.9, "Mo": 0.1})
+        assert hasattr(result, "dtype")
+        assert hasattr(result, "shape")
+
+    def test_output_shape_is_8(self, pipeline: FeaturePipeline) -> None:
+        """Output array must have shape (8,)."""
+        result = pipeline.extract_features({"U": 0.9, "Mo": 0.1})
+        assert result.shape == (8,)
+
+    def test_output_dtype_is_float64(self, pipeline: FeaturePipeline) -> None:
+        """Output dtype should be float64 for ML model compatibility."""
+        result = pipeline.extract_features({"U": 0.9, "Mo": 0.1})
+        assert result.dtype == np.float64
+
+    def test_values_match_compute_all_features(
+        self, pipeline: FeaturePipeline
+    ) -> None:
+        """Pipeline output must match compute_all_features dict values."""
+        comp = {"U": 0.9, "Mo": 0.1}
+        expected = compute_all_features(comp)
+        result = pipeline.extract_features(comp)
+        names = pipeline.feature_names
+        for i, name in enumerate(names):
+            assert result[i] == pytest.approx(expected[name], abs=1e-10)
+
+    def test_feature_names_match_phase_classifier(
+        self, pipeline: FeaturePipeline
+    ) -> None:
+        """feature_names must match PHYSICAL_FEATURE_NAMES in phase_classifier."""
+        expected = [
+            "mo_equivalent",
+            "pauling_chi_diff",
+            "allen_chi_diff",
+            "config_entropy",
+            "bv_ratio",
+            "u_density",
+            "mixing_enthalpy",
+            "lattice_distortion",
+        ]
+        assert pipeline.feature_names == expected
+
+    def test_n_features_is_8(self, pipeline: FeaturePipeline) -> None:
+        assert pipeline.n_features == 8
+
+    def test_pure_uranium_values(self, pipeline: FeaturePipeline) -> None:
+        """Pure U should have mo_eq=0, chi_diff=0, entropy=0, etc."""
+        result = pipeline.extract_features({"U": 1.0})
+        names = pipeline.feature_names
+        name_to_idx = {name: i for i, name in enumerate(names)}
+
+        assert result[name_to_idx["mo_equivalent"]] == 0.0
+        assert result[name_to_idx["pauling_chi_diff"]] == 0.0
+        assert result[name_to_idx["allen_chi_diff"]] == 0.0
+        assert result[name_to_idx["config_entropy"]] == 0.0
+        assert result[name_to_idx["mixing_enthalpy"]] == 0.0
+
+    def test_empty_composition_raises(self, pipeline: FeaturePipeline) -> None:
+        """Empty composition must raise ValueError."""
+        with pytest.raises(ValueError, match="at least one element"):
+            pipeline.extract_features({})
+
+    def test_zero_composition_raises(self, pipeline: FeaturePipeline) -> None:
+        """All-zero composition must raise ValueError."""
+        with pytest.raises(ValueError, match="at least one element"):
+            pipeline.extract_features({"U": 0.0, "Mo": 0.0})
+
+    def test_does_not_mutate_input(self, pipeline: FeaturePipeline) -> None:
+        """Input dict must not be modified."""
+        comp = {"U": 0.9, "Mo": 0.1}
+        original = dict(comp)
+        pipeline.extract_features(comp)
+        assert comp == original
+
+    def test_multi_element_composition(self, pipeline: FeaturePipeline) -> None:
+        """U-Mo-Nb-Ti-V quinary alloy should produce all non-zero features."""
+        comp = {"U": 85.0, "Mo": 5.0, "Nb": 3.0, "Ti": 2.0, "V": 5.0}
+        result = pipeline.extract_features(comp)
+        assert result.shape == (8,)
+        # Mo_eq should be non-zero (Mo, Nb, V, Ti present)
+        assert result[0] > 0.0
+
+
+class TestFeaturePipelineBatch:
+    """Tests for FeaturePipeline.extract_features_batch."""
+
+    @pytest.fixture()
+    def pipeline(self) -> FeaturePipeline:
+        return FeaturePipeline()
+
+    def test_returns_2d_array(self, pipeline: FeaturePipeline) -> None:
+        comps = [{"U": 0.9, "Mo": 0.1}, {"U": 0.8, "Mo": 0.2}]
+        result = pipeline.extract_features_batch(comps)
+        assert result.ndim == 2
+        assert result.shape == (2, 8)
+
+    def test_empty_list_raises(self, pipeline: FeaturePipeline) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            pipeline.extract_features_batch([])
+
+    def test_single_composition(self, pipeline: FeaturePipeline) -> None:
+        comp = {"U": 0.9, "Mo": 0.1}
+        single = pipeline.extract_features(comp)
+        batch = pipeline.extract_features_batch([comp])
+        assert batch.shape == (1, 8)
+        for i in range(8):
+            assert batch[0, i] == pytest.approx(single[i], abs=1e-10)
+
+    def test_batch_matches_individual(self, pipeline: FeaturePipeline) -> None:
+        """Batch results must match individual extract_features calls."""
+        comps = [
+            {"U": 0.9, "Mo": 0.1},
+            {"U": 0.8, "Mo": 0.15, "Nb": 0.05},
+            {"U": 0.7, "Mo": 0.2, "Zr": 0.1},
+        ]
+        batch = pipeline.extract_features_batch(comps)
+        assert batch.shape == (3, 8)
+        for i, comp in enumerate(comps):
+            individual = pipeline.extract_features(comp)
+            for j in range(8):
+                assert batch[i, j] == pytest.approx(individual[j], abs=1e-10)
+
+    def test_output_dtype_is_float64(self, pipeline: FeaturePipeline) -> None:
+        result = pipeline.extract_features_batch(
+            [{"U": 0.9, "Mo": 0.1}, {"U": 1.0}]
+        )
+        assert result.dtype == np.float64
+
+    def test_does_not_mutate_inputs(self, pipeline: FeaturePipeline) -> None:
+        comps = [{"U": 0.9, "Mo": 0.1}, {"U": 0.8, "Mo": 0.2}]
+        originals = [dict(c) for c in comps]
+        pipeline.extract_features_batch(comps)
+        for comp, orig in zip(comps, originals):
+            assert comp == orig
+
+
+# ===========================================================================
+# Part 2: VEC, Cluster Fractions, 8D ML Feature Vector (NFM-1585)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Feature 9: Valence Electron Concentration (VEC)
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateVec:
+    """Tests for VEC = Σ(x_i × VEC_i)."""
+
+    def test_pure_uranium(self) -> None:
+        """Pure U should yield VEC = 6.0."""
+        assert calculate_vec({"U": 1.0}) == pytest.approx(6.0)
+
+    def test_u_10mo(self) -> None:
+        """U-10Mo: VEC = 0.9×6 + 0.1×6 = 6.0."""
+        assert calculate_vec({"U": 0.9, "Mo": 0.1}) == pytest.approx(6.0)
+
+    def test_u_10nb(self) -> None:
+        """U-10Nb: VEC = 0.9×6 + 0.1×5 = 5.9."""
+        result = calculate_vec({"U": 0.9, "Nb": 0.1})
+        assert result == pytest.approx(0.9 * 6.0 + 0.1 * 5.0)
+
+    def test_u_with_ti_v(self) -> None:
+        """U-Ti-V: Ti(4) and V(5) should pull VEC down."""
+        comp = {"U": 0.8, "Ti": 0.1, "V": 0.1}
+        result = calculate_vec(comp)
+        expected = 0.8 * 6.0 + 0.1 * 4.0 + 0.1 * 5.0
+        assert result == pytest.approx(expected, abs=0.001)
+
+    def test_high_vec_with_ni(self) -> None:
+        """U-Ni: Ni(10) should push VEC above 6."""
+        result = calculate_vec({"U": 0.9, "Ni": 0.1})
+        assert result > 6.0
+        assert result < 7.0
+
+    def test_empty_composition(self) -> None:
+        assert calculate_vec({}) == 0.0
+
+    def test_unknown_elements_skipped(self) -> None:
+        """Unknown elements are excluded; fraction redistributed."""
+        assert calculate_vec({"Xx": 1.0}) == 0.0
+
+    def test_does_not_mutate_input(self) -> None:
+        comp = {"U": 0.9, "Mo": 0.1}
+        original = dict(comp)
+        calculate_vec(comp)
+        assert comp == original
+
+    def test_at_percent_same_as_fraction(self) -> None:
+        """at.% and fraction inputs should produce same VEC."""
+        frac = calculate_vec({"U": 0.9, "Mo": 0.1})
+        atpct = calculate_vec({"U": 90.0, "Mo": 10.0})
+        assert frac == pytest.approx(atpct, abs=0.001)
+
+
+class TestVecConstants:
+    """Verify VEC lookup table integrity."""
+
+    def test_uranium_present(self) -> None:
+        lookup = dict(VALENCE_ELECTRON_COUNT)
+        assert "U" in lookup
+        assert lookup["U"] == 6.0
+
+    def test_key_elements_present(self) -> None:
+        """Mo, Nb, V, Ti, Zr must be in VEC table."""
+        lookup = dict(VALENCE_ELECTRON_COUNT)
+        for el in ["Mo", "Nb", "V", "Ti", "Zr", "Cr", "Fe", "Ni", "Al"]:
+            assert el in lookup, f"{el} missing from VEC table"
+
+    def test_vec_values_reasonable(self) -> None:
+        """VEC values should be between 2 and 12 for common elements."""
+        lookup = dict(VALENCE_ELECTRON_COUNT)
+        for el, vec in lookup.items():
+            assert 2.0 <= vec <= 14.0, f"VEC for {el} = {vec} out of range"
+
+
+# ---------------------------------------------------------------------------
+# Feature 10–13: Cluster-type Fractions
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateClusterFractions:
+    """Tests for cluster_K = Σ(x_i in type K) / Σ(all classified)."""
+
+    def test_pure_uranium(self) -> None:
+        """Pure U should yield all-zero cluster fractions."""
+        result = calculate_cluster_fractions({"U": 1.0})
+        for key in result:
+            assert result[key] == 0.0
+
+    def test_u_10mo_type_I(self) -> None:
+        """Mo is Type I → cluster_I = 1.0, rest = 0.0."""
+        result = calculate_cluster_fractions({"U": 0.9, "Mo": 0.1})
+        assert result["cluster_I"] == pytest.approx(1.0)
+        assert result["cluster_II"] == 0.0
+        assert result["cluster_III"] == 0.0
+        assert result["cluster_IV"] == 0.0
+
+    def test_u_10nb_type_I(self) -> None:
+        """Nb is Type I → cluster_I = 1.0."""
+        result = calculate_cluster_fractions({"U": 0.9, "Nb": 0.1})
+        assert result["cluster_I"] == pytest.approx(1.0)
+
+    def test_u_10ti_type_II(self) -> None:
+        """Ti is Type II → cluster_II = 1.0."""
+        result = calculate_cluster_fractions({"U": 0.9, "Ti": 0.1})
+        assert result["cluster_II"] == pytest.approx(1.0)
+
+    def test_u_10v_type_III(self) -> None:
+        """V is Type III → cluster_III = 1.0."""
+        result = calculate_cluster_fractions({"U": 0.9, "V": 0.1})
+        assert result["cluster_III"] == pytest.approx(1.0)
+
+    def test_u_10al_type_IV(self) -> None:
+        """Al is Type IV → cluster_IV = 1.0."""
+        result = calculate_cluster_fractions({"U": 0.9, "Al": 0.1})
+        assert result["cluster_IV"] == pytest.approx(1.0)
+
+    def test_multi_type_mixed(self) -> None:
+        """Multi-type composition: fractions should sum to 1.0."""
+        comp = {"U": 0.8, "Mo": 0.05, "Ti": 0.05, "V": 0.05, "Al": 0.05}
+        result = calculate_cluster_fractions(comp)
+        total = sum(result.values())
+        assert total == pytest.approx(1.0, abs=0.001)
+
+    def test_mixed_type_proportional(self) -> None:
+        """Type I (Mo=0.08) and Type II (Ti=0.02): I=0.8, II=0.2."""
+        comp = {"U": 0.90, "Mo": 0.08, "Ti": 0.02}
+        result = calculate_cluster_fractions(comp)
+        assert result["cluster_I"] == pytest.approx(0.8, abs=0.01)
+        assert result["cluster_II"] == pytest.approx(0.2, abs=0.01)
+
+    def test_empty_composition(self) -> None:
+        result = calculate_cluster_fractions({})
+        for key in result:
+            assert result[key] == 0.0
+
+    def test_unknown_solute_ignored(self) -> None:
+        """Unknown solutes not in cluster database are excluded."""
+        result = calculate_cluster_fractions({"U": 0.9, "Xx": 0.1})
+        for key in result:
+            assert result[key] == 0.0
+
+    def test_does_not_mutate_input(self) -> None:
+        comp = {"U": 0.9, "Mo": 0.1}
+        original = dict(comp)
+        calculate_cluster_fractions(comp)
+        assert comp == original
+
+    def test_has_four_keys(self) -> None:
+        """Result must always have exactly 4 keys."""
+        result = calculate_cluster_fractions({"U": 0.5, "Mo": 0.5})
+        assert set(result.keys()) == {"cluster_I", "cluster_II", "cluster_III", "cluster_IV"}
+
+    def test_at_percent_same_as_fraction(self) -> None:
+        """at.% and fraction inputs should produce same cluster fractions."""
+        frac = calculate_cluster_fractions({"U": 90.0, "Mo": 10.0})
+        atpct = calculate_cluster_fractions({"U": 0.9, "Mo": 0.1})
+        for key in frac:
+            assert frac[key] == pytest.approx(atpct[key], abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# 8D ML Feature Vector
+# ---------------------------------------------------------------------------
+
+
+class TestMLFeatureNames:
+    """Verify ML_FEATURE_NAMES constant."""
+
+    def test_has_eight_names(self) -> None:
+        assert len(ML_FEATURE_NAMES) == 8
+
+    def test_expected_names(self) -> None:
+        expected = [
+            "mo_equivalent",
+            "lattice_distortion",
+            "allen_chi_diff",
+            "vec",
+            "cluster_I",
+            "cluster_II",
+            "cluster_III",
+            "cluster_IV",
+        ]
+        assert ML_FEATURE_NAMES == expected
+
+
+class TestComputeMlFeatures:
+    """Tests for compute_ml_features(composition) -> Dict[str, float]."""
+
+    def test_returns_eight_features(self) -> None:
+        result = compute_ml_features({"U": 0.9, "Mo": 0.1})
+        assert len(result) == 8
+
+    def test_keys_match_ml_feature_names(self) -> None:
+        result = compute_ml_features({"U": 0.9, "Mo": 0.1})
+        assert set(result.keys()) == set(ML_FEATURE_NAMES)
+
+    def test_values_are_float(self) -> None:
+        result = compute_ml_features({"U": 0.9, "Mo": 0.1})
+        for value in result.values():
+            assert isinstance(value, float)
+
+    def test_pure_uranium(self) -> None:
+        result = compute_ml_features({"U": 1.0})
+        assert result["mo_equivalent"] == 0.0
+        assert result["lattice_distortion"] == pytest.approx(0.0)
+        assert result["allen_chi_diff"] == pytest.approx(0.0)
+        assert result["vec"] == pytest.approx(6.0)
+        # No solutes → all cluster fractions = 0
+        assert result["cluster_I"] == 0.0
+        assert result["cluster_II"] == 0.0
+        assert result["cluster_III"] == 0.0
+        assert result["cluster_IV"] == 0.0
+
+    def test_u_10mo_cluster_I(self) -> None:
+        """Mo is Type I → cluster_I=1.0, others=0."""
+        result = compute_ml_features({"U": 0.9, "Mo": 0.1})
+        assert result["cluster_I"] == pytest.approx(1.0)
+        assert result["cluster_IV"] == 0.0
+
+    def test_multi_type_cluster_fractions_sum_to_one(self) -> None:
+        comp = {"U": 0.8, "Mo": 0.05, "Ti": 0.05, "V": 0.05, "Al": 0.05}
+        result = compute_ml_features(comp)
+        cluster_sum = sum(
+            result[k] for k in ["cluster_I", "cluster_II", "cluster_III", "cluster_IV"]
+        )
+        assert cluster_sum == pytest.approx(1.0, abs=0.01)
+
+    def test_does_not_mutate_input(self) -> None:
+        comp = {"U": 0.9, "Mo": 0.1}
+        original = dict(comp)
+        compute_ml_features(comp)
+        assert comp == original
+
+    def test_mixed_composition(self) -> None:
+        """U-Mo-Nb: both Type I → cluster_I still = 1.0."""
+        result = compute_ml_features({"U": 0.8, "Mo": 0.1, "Nb": 0.1})
+        assert result["cluster_I"] == pytest.approx(1.0)
+
+    def test_vec_present(self) -> None:
+        """VEC feature must be present and > 0."""
+        result = compute_ml_features({"U": 0.9, "Mo": 0.1})
+        assert result["vec"] > 0.0
+
+
+class TestBatchComputeMlFeatures:
+    """Tests for batch_compute_ml_features(compositions) -> DataFrame."""
+
+    def test_returns_dataframe(self) -> None:
+        result = batch_compute_ml_features([{"U": 0.9, "Mo": 0.1}])
+        assert hasattr(result, "columns")
+        assert hasattr(result, "iloc")
+
+    def test_column_names(self) -> None:
+        result = batch_compute_ml_features([{"U": 0.9, "Mo": 0.1}])
+        assert list(result.columns) == ML_FEATURE_NAMES
+
+    def test_row_count(self) -> None:
+        comps = [{"U": 0.9, "Mo": 0.1}, {"U": 0.8, "Mo": 0.2}]
+        result = batch_compute_ml_features(comps)
+        assert len(result) == 2
+
+    def test_empty_raises(self) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            batch_compute_ml_features([])
+
+    def test_values_match_individual(self) -> None:
+        comps = [{"U": 0.9, "Mo": 0.1}, {"U": 0.8, "Nb": 0.2}]
+        df = batch_compute_ml_features(comps)
+        for i, comp in enumerate(comps):
+            individual = compute_ml_features(comp)
+            for col in ML_FEATURE_NAMES:
+                assert df.iloc[i][col] == pytest.approx(
+                    individual[col], abs=1e-10
+                )
+
+    def test_cluster_columns_are_present(self) -> None:
+        """DataFrame must include all 4 cluster columns."""
+        df = batch_compute_ml_features([{"U": 0.9, "Mo": 0.1}])
+        for k in ["cluster_I", "cluster_II", "cluster_III", "cluster_IV"]:
+            assert k in df.columns

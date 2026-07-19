@@ -27,6 +27,7 @@ from nfm_db.ml.phase_classifier import (
     ALL_FEATURE_NAMES,
     CLUSTER_TYPE_NAMES,
     CVResult,
+    ModelComparison,
     SHAPReport,
     PhaseClassifier,
     TrainingSample,
@@ -787,4 +788,173 @@ class TestTrainingScript:
             for keyword in ("accuracy", "precision", "recall", "f1"):
                 assert keyword in report_text.lower(), (
                     f"Report missing '{keyword}' metric: {report_text}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# NFM-1589: RF vs XGBoost comparison
+# ---------------------------------------------------------------------------
+
+
+class TestModelComparison:
+    """Tests for ModelComparison dataclass (NFM-1589)."""
+
+    def test_model_comparison_fields(self) -> None:
+        comp = ModelComparison(
+            rf_mean_accuracy=0.95,
+            rf_min_fold_accuracy=0.93,
+            rf_fold_accuracies=(0.95, 0.96, 0.94, 0.95, 0.96),
+            rf_mean_f1=0.94,
+            xgb_mean_accuracy=0.96,
+            xgb_min_fold_accuracy=0.94,
+            xgb_fold_accuracies=(0.96, 0.97, 0.95, 0.96, 0.97),
+            xgb_mean_f1=0.95,
+            ensemble_mean_accuracy=0.97,
+            ensemble_min_fold_accuracy=0.95,
+            best_model="ensemble",
+            best_accuracy=0.97,
+            n_samples=1000,
+            n_features=12,
+        )
+        assert comp.best_model == "ensemble"
+        assert comp.best_accuracy == 0.97
+        assert len(comp.rf_fold_accuracies) == 5
+        assert len(comp.xgb_fold_accuracies) == 5
+        assert comp.n_samples == 1000
+        assert comp.n_features == 12
+
+    def test_model_comparison_frozen(self) -> None:
+        comp = ModelComparison(
+            rf_mean_accuracy=0.95,
+            rf_min_fold_accuracy=0.93,
+            rf_fold_accuracies=(0.95, 0.96, 0.94, 0.95, 0.96),
+            rf_mean_f1=0.94,
+            xgb_mean_accuracy=0.96,
+            xgb_min_fold_accuracy=0.94,
+            xgb_fold_accuracies=(0.96, 0.97, 0.95, 0.96, 0.97),
+            xgb_mean_f1=0.95,
+            ensemble_mean_accuracy=0.97,
+            ensemble_min_fold_accuracy=0.95,
+            best_model="ensemble",
+            best_accuracy=0.97,
+            n_samples=1000,
+            n_features=12,
+        )
+        import dataclasses
+        assert dataclasses.is_dataclass(type(comp))
+
+
+class TestRFvsXGBComparison:
+    """Tests for individual RF/XGBoost training and comparison (NFM-1589)."""
+
+    @pytest.fixture(scope="class")
+    def comparison_result(self):
+        X, y, _, _ = generate_synthetic_training_data(
+            n_target=300, augmentation=True, seed=42,
+        )
+        return PhaseClassifier.compare_rf_xgb(X, y, n_splits=3)
+
+    def test_compare_rf_xgb_returns_comparison(self, comparison_result) -> None:
+        assert isinstance(comparison_result, ModelComparison)
+
+    def test_compare_rf_xgb_both_above_threshold(self, comparison_result) -> None:
+        assert comparison_result.rf_mean_accuracy > 0.75
+        assert comparison_result.xgb_mean_accuracy > 0.75
+
+    def test_compare_rf_xgb_best_model_is_valid(self, comparison_result) -> None:
+        assert comparison_result.best_model in ("rf", "xgb", "ensemble")
+        assert comparison_result.best_accuracy > 0.75
+
+    def test_compare_rf_xgb_fold_counts(self, comparison_result) -> None:
+        assert len(comparison_result.rf_fold_accuracies) == 3
+        assert len(comparison_result.xgb_fold_accuracies) == 3
+
+    def test_compare_rf_xgb_f1_scores(self, comparison_result) -> None:
+        assert 0.0 <= comparison_result.rf_mean_f1 <= 1.0
+        assert 0.0 <= comparison_result.xgb_mean_f1 <= 1.0
+
+    def test_compare_rf_xgb_sample_info(self, comparison_result) -> None:
+        assert comparison_result.n_samples > 300  # augmented
+        assert comparison_result.n_features == 12
+
+    def test_train_rf_only_sets_trained(self) -> None:
+        X, y, _, _ = generate_synthetic_training_data(
+            n_target=200, augmentation=False, seed=42,
+        )
+        clf = PhaseClassifier()
+        clf.train_rf_only(X, y)
+        assert clf.is_trained
+
+    def test_train_rf_only_predicts(self) -> None:
+        X, y, _, _ = generate_synthetic_training_data(
+            n_target=200, augmentation=False, seed=42,
+        )
+        clf = PhaseClassifier()
+        clf.train_rf_only(X, y)
+        labels, proba = clf.predict_batch(X[:10])
+        assert labels.shape == (10,)
+        assert proba.shape == (10, 2)
+
+    def test_train_xgb_only_sets_trained(self) -> None:
+        X, y, _, _ = generate_synthetic_training_data(
+            n_target=200, augmentation=False, seed=42,
+        )
+        clf = PhaseClassifier()
+        clf.train_xgb_only(X, y)
+        assert clf.is_trained
+
+    def test_train_xgb_only_predicts(self) -> None:
+        X, y, _, _ = generate_synthetic_training_data(
+            n_target=200, augmentation=False, seed=42,
+        )
+        clf = PhaseClassifier()
+        clf.train_xgb_only(X, y)
+        labels, proba = clf.predict_batch(X[:10])
+        assert labels.shape == (10,)
+        assert proba.shape == (10, 2)
+
+
+class TestTrainingScriptComparison:
+    """NFM-1589: training script produces comparison report."""
+
+    def test_training_script_produces_comparison_report(self) -> None:
+        import subprocess
+        import sys
+
+        repo_root = Path(__file__).resolve().parent.parent
+        script = (
+            repo_root
+            / "apps"
+            / "api"
+            / "src"
+            / "nfm_db"
+            / "ml"
+            / "train_phase_classifier.py"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--output-dir",
+                    str(out),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(repo_root),
+                timeout=600,
+            )
+            assert result.returncode == 0, (
+                f"Training script failed:\n"
+                f"stdout={result.stdout}\nstderr={result.stderr}"
+            )
+            comparison = out / "phase_classifier_v1.0.0_comparison.txt"
+            assert comparison.exists(), (
+                f"Comparison report not produced: {comparison}"
+            )
+            comp_text = comparison.read_text()
+            for keyword in ("RF", "XGBoost", "Ensemble", "Best model:"):
+                assert keyword in comp_text, (
+                    f"Comparison missing '{keyword}': {comp_text}"
                 )
