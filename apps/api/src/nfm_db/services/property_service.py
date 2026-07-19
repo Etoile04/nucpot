@@ -310,9 +310,7 @@ async def list_material_properties(
         select(PropertyMeasurement)
         .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
         .options(
-            selectinload(PropertyMeasurement.property_type).selectinload(
-                PropertyType.default_unit
-            ),
+            selectinload(PropertyMeasurement.property_type).selectinload(PropertyType.default_unit),
             selectinload(PropertyMeasurement.unit),
             selectinload(PropertyMeasurement.dataset).selectinload(Dataset.source),
         )
@@ -325,9 +323,7 @@ async def list_material_properties(
     sort_key = sort if sort in _MATERIAL_PROPERTY_SORT_COLUMNS else "name"
     needs_property_type_join = bool(filter) or sort_key in ("name", "value")
     if needs_property_type_join:
-        stmt = stmt.join(
-            PropertyType, PropertyMeasurement.property_type_id == PropertyType.id
-        )
+        stmt = stmt.join(PropertyType, PropertyMeasurement.property_type_id == PropertyType.id)
 
     # 4. Optional name filter (case-insensitive substring on PropertyType.name).
     if filter:

@@ -26,6 +26,4 @@ class ExtractionFigure(Base):
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     figure_type: Mapped[str | None] = mapped_column(String, nullable=True)
     file_path: Mapped[str] = mapped_column(String, default="")
-    extracted_data: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON, nullable=True, default=None
-    )
+    extracted_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)

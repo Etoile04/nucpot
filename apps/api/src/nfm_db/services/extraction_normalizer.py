@@ -209,9 +209,7 @@ class UnitConverter:
 
         Already in SI; normalizes unit string aliases only.
         """
-        resolved = UnitConverter._resolve_alias(
-            unit, _THERMAL_CONDUCTIVITY_ALIASES
-        )
+        resolved = UnitConverter._resolve_alias(unit, _THERMAL_CONDUCTIVITY_ALIASES)
         if resolved == _THERMAL_CONDUCTIVITY_CANONICAL:
             return value
         return value
@@ -229,9 +227,7 @@ class UnitConverter:
         return value * factor
 
     @staticmethod
-    def convert(
-        property_type: str, value: float, unit: str
-    ) -> tuple[float, str]:
+    def convert(property_type: str, value: float, unit: str) -> tuple[float, str]:
         """Convert a value to SI for the given property type.
 
         Returns:
@@ -245,8 +241,11 @@ class UnitConverter:
                 return UnitConverter.convert_temperature(value, unit), "K"
             return value, unit
         if prop_key in (
-            "pressure", "youngs_modulus", "shear_modulus",
-            "bulk_modulus", "yield_strength",
+            "pressure",
+            "youngs_modulus",
+            "shear_modulus",
+            "bulk_modulus",
+            "yield_strength",
             "ultimate_tensile_strength",
         ):
             return UnitConverter.convert_pressure(value, unit), "Pa"
@@ -299,13 +298,9 @@ class ValueValidator:
         errors: list[str] = []
 
         if value < min_val:
-            errors.append(
-                f"{property_type} value {value} is below minimum {min_val}"
-            )
+            errors.append(f"{property_type} value {value} is below minimum {min_val}")
         if value > max_val:
-            errors.append(
-                f"{property_type} value {value} exceeds maximum {max_val}"
-            )
+            errors.append(f"{property_type} value {value} exceeds maximum {max_val}")
 
         return errors
 
@@ -330,7 +325,8 @@ class DeduplicationDetector:
         Collapses equivalent representations like W/(m-K), W/(m*K), W/(m·K).
         """
         return (
-            unit.strip().lower()
+            unit.strip()
+            .lower()
             .replace("·", "")
             .replace("²", "2")
             .replace("³", "3")
@@ -344,25 +340,22 @@ class DeduplicationDetector:
     @staticmethod
     def compute_hash(value: Any) -> str:
         """Compute a deterministic SHA-256 hash for an extracted value."""
-        normalized_unit = DeduplicationDetector._normalize_unit_for_hash(
-            getattr(value, "unit", "")
+        normalized_unit = DeduplicationDetector._normalize_unit_for_hash(getattr(value, "unit", ""))
+        hash_key = "|".join(
+            [
+                getattr(value, "property_name", ""),
+                f"{getattr(value, 'value', 0):.10g}",
+                normalized_unit,
+                (value.material_name or "").strip(),
+                (value.source_file or "").strip(),
+            ]
         )
-        hash_key = "|".join([
-            getattr(value, "property_name", ""),
-            f"{getattr(value, 'value', 0):.10g}",
-            normalized_unit,
-            (value.material_name or "").strip(),
-            (value.source_file or "").strip(),
-        ])
         return hashlib.sha256(hash_key.encode("utf-8")).hexdigest()
 
     @staticmethod
     def is_duplicate(a: Any, b: Any) -> bool:
         """Check if two extracted values are duplicates."""
-        return (
-            DeduplicationDetector.compute_hash(a)
-            == DeduplicationDetector.compute_hash(b)
-        )
+        return DeduplicationDetector.compute_hash(a) == DeduplicationDetector.compute_hash(b)
 
     def deduplicate(self, values: list[Any]) -> list[Any]:
         """Remove duplicates from a list, preserving first occurrence order."""
@@ -406,9 +399,7 @@ class ExtractionNormalizer:
         raw_value = getattr(value, "value", 0.0)
         raw_unit = getattr(value, "unit", "")
 
-        normalized_value, si_unit = self.converter.convert(
-            prop_name, raw_value, raw_unit
-        )
+        normalized_value, si_unit = self.converter.convert(prop_name, raw_value, raw_unit)
 
         errors = self.validator.validate(prop_name, normalized_value)
 
@@ -426,9 +417,7 @@ class ExtractionNormalizer:
         """Normalize a batch of extracted values."""
         return [self.normalize(v) for v in values]
 
-    def normalize_and_deduplicate(
-        self, values: list[Any]
-    ) -> list[NormalizedValue]:
+    def normalize_and_deduplicate(self, values: list[Any]) -> list[NormalizedValue]:
         """Normalize, validate, and deduplicate in one pass."""
         normalized = self.normalize_batch(values)
         unique: list[NormalizedValue] = []
@@ -445,4 +434,3 @@ class ExtractionNormalizer:
                 seen.add(hash_key)
                 unique.append(n)
         return unique
-

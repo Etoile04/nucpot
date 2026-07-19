@@ -42,7 +42,9 @@ limiter = Limiter(
 )
 
 
-def _inject_global_headers(limiter_instance: Limiter, request: Request, response: Response) -> Response:
+def _inject_global_headers(
+    limiter_instance: Limiter, request: Request, response: Response
+) -> Response:
     """Inject X-RateLimit-* headers for globally-limited routes.
 
     slowapi's ``SlowAPIMiddleware`` only injects headers when a per-endpoint

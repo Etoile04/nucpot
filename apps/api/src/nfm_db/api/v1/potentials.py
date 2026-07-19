@@ -42,7 +42,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["势函数管理"])
 
 
-@router.get("/potentials", response_model=ApiResponse[PotentialListResponse], summary="分页查询势函数列表", description="返回分页的势函数列表，支持按类型、元素和关键词筛选。\n\nReturn a paginated, filtered list of interatomic potentials.")
+@router.get(
+    "/potentials",
+    response_model=ApiResponse[PotentialListResponse],
+    summary="分页查询势函数列表",
+    description="返回分页的势函数列表，支持按类型、元素和关键词筛选。\n\nReturn a paginated, filtered list of interatomic potentials.",
+)
 async def list_potentials_endpoint(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100, alias="per_page"),
@@ -65,7 +70,13 @@ async def list_potentials_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.post("/potentials", response_model=ApiResponse, status_code=201, summary="创建势函数", description="创建一条新的势函数记录。\n\nCreate a new interatomic potential.")
+@router.post(
+    "/potentials",
+    response_model=ApiResponse,
+    status_code=201,
+    summary="创建势函数",
+    description="创建一条新的势函数记录。\n\nCreate a new interatomic potential.",
+)
 async def create_potential_endpoint(
     payload: PotentialCreateRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -76,14 +87,32 @@ async def create_potential_endpoint(
         potential = await create_potential(db, payload)
         await db.commit()
         await db.refresh(potential)
-        return ApiResponse(success=True, data={"id": str(potential.id), "name": potential.name, "display_name": potential.display_name, "type": potential.type, "elements": potential.elements, "format": potential.format, "description": potential.description, "version": potential.version, "tags": potential.tags})
+        return ApiResponse(
+            success=True,
+            data={
+                "id": str(potential.id),
+                "name": potential.name,
+                "display_name": potential.display_name,
+                "type": potential.type,
+                "elements": potential.elements,
+                "format": potential.format,
+                "description": potential.description,
+                "version": potential.version,
+                "tags": potential.tags,
+            },
+        )
     except PotentialNameConflictError:
         raise HTTPException(status_code=409, detail="Potential name already exists")
     except PotentialUploadError as e:
         raise HTTPException(status_code=400, detail=e.message)
 
 
-@router.get("/potentials/{potential_id}", response_model=ApiResponse[PotentialDetail], summary="获取势函数详情", description="获取单个势函数的详细信息。\n\nReturn full detail of a single interatomic potential.")
+@router.get(
+    "/potentials/{potential_id}",
+    response_model=ApiResponse[PotentialDetail],
+    summary="获取势函数详情",
+    description="获取单个势函数的详细信息。\n\nReturn full detail of a single interatomic potential.",
+)
 async def get_potential_endpoint(
     potential_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -94,7 +123,12 @@ async def get_potential_endpoint(
     return ApiResponse(success=True, data=detail)
 
 
-@router.post("/potentials/{potential_id}/file", response_model=ApiResponse, summary="上传势函数文件", description="为指定势函数上传势函数文件（如 .eam、.meam、.fs 等）。\n\nUpload a potential file for a given potential.")
+@router.post(
+    "/potentials/{potential_id}/file",
+    response_model=ApiResponse,
+    summary="上传势函数文件",
+    description="为指定势函数上传势函数文件（如 .eam、.meam、.fs 等）。\n\nUpload a potential file for a given potential.",
+)
 async def upload_potential_file(
     potential_id: UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -111,7 +145,18 @@ async def upload_potential_file(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Potential not found")
 
-    allowed = {".eam", ".alloy", ".fs", ".meam", ".repram", ".json", ".yaml", ".txt", ".dat", ".pot"}
+    allowed = {
+        ".eam",
+        ".alloy",
+        ".fs",
+        ".meam",
+        ".repram",
+        ".json",
+        ".yaml",
+        ".txt",
+        ".dat",
+        ".pot",
+    }
     ext = Path(file.filename).suffix.lower() if file.filename else ""
     if ext not in allowed:
         raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")

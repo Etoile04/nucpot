@@ -70,7 +70,11 @@ async def list_properties_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/properties/stats", summary="物性测量汇总统计", description="获取物性测量数据的汇总统计信息。\n\nReturn aggregate statistics about measurements.")
+@router.get(
+    "/properties/stats",
+    summary="物性测量汇总统计",
+    description="获取物性测量数据的汇总统计信息。\n\nReturn aggregate statistics about measurements.",
+)
 async def get_properties_stats_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PropertyStatsResponse]:

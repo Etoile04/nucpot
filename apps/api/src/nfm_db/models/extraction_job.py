@@ -29,5 +29,7 @@ class ExtractionJob(TimestampMixin, Base):
     extract_tables: Mapped[bool] = mapped_column(default=False)
     confidence_threshold: Mapped[float] = mapped_column(default=0.5)
     figure_types: Mapped[list[str] | None] = mapped_column(
-        JSONArray, default=None, nullable=True,
+        JSONArray,
+        default=None,
+        nullable=True,
     )

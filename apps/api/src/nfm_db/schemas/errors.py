@@ -140,6 +140,7 @@ def register_http_exception_handler(application: FastAPI) -> None:
         exc: Exception,
     ) -> JSONResponse:
         import logging
+
         logging.getLogger(__name__).exception("Unhandled exception: %s", exc)
         body: dict[str, Any] = {
             "success": False,

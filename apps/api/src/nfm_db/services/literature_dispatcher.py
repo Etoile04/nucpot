@@ -43,9 +43,7 @@ logger = logging.getLogger(__name__)
 
 #: Name of the Celery task that performs the actual PDF/DOI parsing.
 #: Must match the ``@celery_app.task(  # type: ignore[untyped-decorator]name=...)`` decorator in this module.
-LITERATURE_TASK_NAME = (
-    "nfm_db.services.literature_dispatcher.process_literature_task"
-)
+LITERATURE_TASK_NAME = "nfm_db.services.literature_dispatcher.process_literature_task"
 
 #: Queue the dispatcher routes tasks to. The worker MUST be started with
 #: ``--queues=literature_processing`` (see docker-compose.prod.yml).
@@ -104,8 +102,7 @@ def schedule_literature_processing(datasource_id: UUID | str) -> str:
         )
     except CeleryError:
         logger.exception(
-            "Celery broker error while scheduling literature task "
-            "for datasource_id=%s",
+            "Celery broker error while scheduling literature task for datasource_id=%s",
             datasource_id,
         )
         raise

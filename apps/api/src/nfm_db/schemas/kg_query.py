@@ -189,6 +189,7 @@ class PathQueryRequest(BaseModel):
     @classmethod
     def _split_csv(cls, value: Any) -> list[str] | None:
         return _split_csv_relations(value)
+
     limit: int = Field(
         10,
         ge=1,

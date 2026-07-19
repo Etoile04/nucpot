@@ -57,7 +57,9 @@ class OpenKIMProvider:
         self.detail_base = detail_base or OPENKIM_DETAIL_BASE
         self.timeout = timeout if timeout is not None else OPENKIM_TIMEOUT
         effective_ttl = (
-            cache_ttl if cache_ttl is not None else (ttl if ttl is not None else OPENKIM_CACHE_TTL_SECONDS)
+            cache_ttl
+            if cache_ttl is not None
+            else (ttl if ttl is not None else OPENKIM_CACHE_TTL_SECONDS)
         )
         self._list_cache: TTLCache = TTLCache(maxsize=cache_maxsize, ttl=effective_ttl)
         self._detail_cache: TTLCache = TTLCache(maxsize=cache_maxsize, ttl=effective_ttl)
@@ -83,7 +85,7 @@ class OpenKIMProvider:
     async def _fetch_model_ids(self, filters: PotentialFilters) -> list[str]:
         """Call get_available_models with optional species filter. Never raises."""
         try:
-            data = {"model_interface": "[\"mo\"]"}
+            data = {"model_interface": '["mo"]'}
             if filters.elements:
                 import json
 
@@ -169,14 +171,9 @@ def _parse_model_detail_html(html: str, kim_id: str) -> dict:
         return m.group(1) if m else None
 
     authors = [
-        m.group(1)
-        for m in re.finditer(
-            r'<meta\s+name="citation_author"\s+content="([^"]*)"', html
-        )
+        m.group(1) for m in re.finditer(r'<meta\s+name="citation_author"\s+content="([^"]*)"', html)
     ]
-    canon = re.search(
-        r'<link rel="canonical" href="https://openkim\.org/id/([A-Za-z0-9_]+)"', html
-    )
+    canon = re.search(r'<link rel="canonical" href="https://openkim\.org/id/([A-Za-z0-9_]+)"', html)
     long_name = canon.group(1) if canon else kim_id
 
     # Species from long-name convention: _<year>_<Elements>__MO_...

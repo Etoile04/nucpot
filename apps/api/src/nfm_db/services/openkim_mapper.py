@@ -112,9 +112,7 @@ def map_openkim_model(model: dict[str, Any]) -> PotentialDetail:
             "potential_type": "eam",
         }
     """
-    kim_id = extract_kim_id(model.get("kim_id", "")) or extract_kim_id(
-        model.get("long_name", "")
-    )
+    kim_id = extract_kim_id(model.get("kim_id", "")) or extract_kim_id(model.get("long_name", ""))
     if kim_id is None:
         raise ValueError("OpenKIM model record has no usable KIM ID")
 

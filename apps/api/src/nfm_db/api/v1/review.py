@@ -128,10 +128,14 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
             "notes": row.notes,
         }
     elif table_name == "extraction_results":
-        item_data = row.item_data if row.item_data else {
-            "property_name": row.property_name,
-            "value": row.value,
-        }
+        item_data = (
+            row.item_data
+            if row.item_data
+            else {
+                "property_name": row.property_name,
+                "value": row.value,
+            }
+        )
 
     return ReviewItemResponse(
         id=row.id,
@@ -309,9 +313,7 @@ async def batch_review(
     for item in body.items:
         if item.status not in VALID_STATUSES:
             failed += 1
-            errors.append(
-                {"id": str(item.id), "error": f"Invalid status: {item.status}"}
-            )
+            errors.append({"id": str(item.id), "error": f"Invalid status: {item.status}"})
             continue
 
         try:

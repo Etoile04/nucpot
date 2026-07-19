@@ -66,10 +66,7 @@ async def detect_conflicts(
       - strategy: the effective strategy
     """
     # Base query: all hasProperty edges
-    stmt = (
-        select(KGEdge)
-        .where(KGEdge.relation_type == "hasProperty")
-    )
+    stmt = select(KGEdge).where(KGEdge.relation_type == "hasProperty")
 
     if material_id is not None:
         stmt = stmt.where(KGEdge.source_node_id == material_id)
@@ -101,14 +98,14 @@ async def detect_conflicts(
         # Build conflicting values list
         conflicting_values = []
         for edge in edge_list:
-            conflicting_values.append({
-                "value": edge.properties or {},
-                "source_id": edge.source_id,
-                "confidence": edge.confidence,
-                "extracted_at": (
-                    edge.created_at.isoformat() if edge.created_at else None
-                ),
-            })
+            conflicting_values.append(
+                {
+                    "value": edge.properties or {},
+                    "source_id": edge.source_id,
+                    "confidence": edge.confidence,
+                    "extracted_at": (edge.created_at.isoformat() if edge.created_at else None),
+                }
+            )
 
         # Determine strategy
         effective_strategy = ConflictStrategy.CONFIDENCE
@@ -123,17 +120,17 @@ async def detect_conflicts(
                     default_strat, strategy_override
                 )
         else:
-            effective_strategy = get_strategy_for_property_type(
-                None, strategy_override
-            )
+            effective_strategy = get_strategy_for_property_type(None, strategy_override)
 
-        conflicts.append({
-            "material_node_id": material_node_id,
-            "property_node_id": property_node_id,
-            "property_type_id": property_type_id,
-            "conflicting_values": conflicting_values,
-            "strategy": effective_strategy,
-        })
+        conflicts.append(
+            {
+                "material_node_id": material_node_id,
+                "property_node_id": property_node_id,
+                "property_type_id": property_type_id,
+                "conflicting_values": conflicting_values,
+                "strategy": effective_strategy,
+            }
+        )
 
     return conflicts
 
@@ -256,9 +253,7 @@ async def run_fusion(
             property_type_id=conflict_desc.get("property_type_id"),
             conflicting_values=entries,
             strategy=strategy,
-            resolved_value=(
-                winning.get("value", winning) if winning else None
-            ),
+            resolved_value=(winning.get("value", winning) if winning else None),
             status=status,
         )
         session.add(record)
@@ -307,11 +302,7 @@ async def list_conflicts(
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar() or 0
 
-    stmt = (
-        stmt.order_by(ConflictRecord.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
+    stmt = stmt.order_by(ConflictRecord.created_at.desc()).offset(offset).limit(limit)
     records = (await session.execute(stmt)).scalars().all()
 
     return list(records), total

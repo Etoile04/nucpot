@@ -125,8 +125,7 @@ class KGReviewQueue(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return (
-            f"<KGReviewQueue id={self.id} entity={self.entity_name!r} "
-            f"confidence={self.confidence}>"
+            f"<KGReviewQueue id={self.id} entity={self.entity_name!r} confidence={self.confidence}>"
         )
 
 
@@ -166,7 +165,4 @@ class KGProvenance(Base, TimestampMixin):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<KGProvenance id={self.id} node_id={self.node_id} "
-            f"source={self.source_id!r}>"
-        )
+        return f"<KGProvenance id={self.id} node_id={self.node_id} source={self.source_id!r}>"

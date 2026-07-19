@@ -36,6 +36,7 @@ stats_router = APIRouter(prefix="/stats", tags=["统计"])
 
 # --- profile endpoints -----------------------------------------------------
 
+
 @profile_router.get("/profile", response_model=ApiResponse[ProfileResponse])
 async def get_profile(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -72,6 +73,7 @@ async def update_profile(
 
 # --- contributions endpoint ------------------------------------------------
 
+
 @contributions_router.get(
     "/me",
     response_model=ApiResponse[list[ContributionItem]],
@@ -99,6 +101,7 @@ async def get_my_contributions(
 
 # --- stats endpoint --------------------------------------------------------
 
+
 @stats_router.get("", response_model=ApiResponse[StatsResponse])
 async def get_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -114,9 +117,7 @@ async def get_stats(
     total_potentials = total_result.scalar_one()
 
     # Distinct potential types
-    types_result = await db.execute(
-        select(func.count(func.distinct(Potential.type)))
-    )
+    types_result = await db.execute(select(func.count(func.distinct(Potential.type))))
     total_types = types_result.scalar_one()
 
     # Distinct elements (stored as JSON arrays — flatten in Python)
@@ -128,9 +129,7 @@ async def get_stats(
 
     # Recent potentials (5 most recent)
     recent_result = await db.execute(
-        select(Potential)
-        .order_by(Potential.created_at.desc())
-        .limit(5),
+        select(Potential).order_by(Potential.created_at.desc()).limit(5),
     )
     recent_potentials = [
         RecentPotentialItem(

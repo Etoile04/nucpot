@@ -55,9 +55,7 @@ class LocalPotentialProvider:
             "type": Potential.type,
             "updated": Potential.updated_at,
         }.get(filters.sort, Potential.updated_at)
-        stmt = stmt.order_by(
-            sort_column.desc() if filters.sort == "updated" else sort_column.asc()
-        )
+        stmt = stmt.order_by(sort_column.desc() if filters.sort == "updated" else sort_column.asc())
 
         rows = (await self.db.execute(stmt)).scalars().all()
 

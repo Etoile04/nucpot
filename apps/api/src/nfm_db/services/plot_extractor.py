@@ -82,9 +82,7 @@ class PlotExtractor:
                 source_path=source_path,
             )
         except VisionClientError as exc:
-            logger.warning(
-                "VLM plot extraction failed, falling back to OCR: %s", exc
-            )
+            logger.warning("VLM plot extraction failed, falling back to OCR: %s", exc)
             return await self._extract_ocr_fallback(
                 image_data=image_data,
                 source_path=source_path,
