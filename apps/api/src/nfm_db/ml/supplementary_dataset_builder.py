@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nfm_db.ml.calphad_ternary_data import check_single_phase_bcc
+from nfm_db.ml.calphad_ternary_data import check_single_phase_bcc  # type: ignore[import-untyped]
 from nfm_db.ml.feature_engineering import (
     calculate_lattice_distortion,
     calculate_mixing_enthalpy,

@@ -33,16 +33,16 @@ class ReviewStatus(str, enum.Enum):
 
 # Valid transitions enforced at the API/service layer.
 VALID_TRANSITIONS: dict[ReviewStatus, frozenset[ReviewStatus]] = {
-    ReviewStatus.PENDING: {
+    ReviewStatus.PENDING: frozenset({
         ReviewStatus.APPROVED,
         ReviewStatus.REJECTED,
         ReviewStatus.NEEDS_REVISION,
-    },
-    ReviewStatus.NEEDS_REVISION: {
+    }),
+    ReviewStatus.NEEDS_REVISION: frozenset({
         ReviewStatus.CORRECTED,
         ReviewStatus.APPROVED,
         ReviewStatus.REJECTED,
-    },
+    }),
 }
 
 

@@ -1,6 +1,6 @@
 """NFMD ML pipeline: cluster model, feature engineering, phase classification, and prediction."""
 
-from nfm_db.ml.cluster_model import (
+from nfm_db.ml.cluster_model import (  # type: ignore[import-untyped]
     ClusterCompositionGenerator,
     CompositionCandidate,
     classify_cluster_type,
