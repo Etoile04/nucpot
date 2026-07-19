@@ -265,6 +265,8 @@ export default function Nav() {
           <button
             onClick={() => setKgMobileOpen(prev => !prev)}
             className={`flex items-center gap-1 text-left transition ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400'}`}
+            aria-expanded={kgMobileOpen}
+            aria-haspopup="true"
           >
             知识图谱
             <svg
