@@ -1,0 +1,41 @@
+PhaseClassifier v1.0 - 5-fold CV Training Report
+============================================================
+Training samples:   3811  (base n_target=500, augmentation=True)
+Features:           12
+CV folds:           5
+Training time:      2.2 s
+
+Acceptance criteria
+------------------------------------------------------------
+  Mean accuracy:    0.9995  (target >= 0.75)
+  Min fold accuracy:0.9987  (target >= 0.70)
+  Overall:          PASS
+
+Per-fold metrics
+------------------------------------------------------------
+  fold  accuracy  precision  recall  f1
+     0  1.0000    1.0000    1.0000  1.0000
+     1  1.0000    1.0000    1.0000  1.0000
+     2  0.9987    1.0000    0.9932  0.9966
+     3  0.9987    0.9933    1.0000  0.9966
+     4  1.0000    1.0000    1.0000  1.0000
+
+Summary statistics
+------------------------------------------------------------
+  Mean accuracy:    0.9995  +/- 0.0007
+  Mean precision:   0.9987  +/- 0.0030
+  Mean recall:      0.9986  +/- 0.0030
+  Mean F1:          0.9986  +/- 0.0019
+
+Top features (SHAP)
+------------------------------------------------------------
+  type_II                   0.136491
+  mo_equivalent             0.054723
+  lattice_distortion        0.038790
+  u_density                 0.038186
+  mixing_enthalpy           0.017818
+  bv_ratio                  0.017502
+  config_entropy            0.010822
+  type_I                    0.009880
+
+Reference: docs/technical-roadmap-nuclear-fuel-data-platform-1.6.md §5.2.3
