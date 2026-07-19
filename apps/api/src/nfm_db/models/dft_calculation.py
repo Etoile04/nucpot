@@ -142,7 +142,7 @@ class DFTCalculation(TimestampMixin, Base):
     )
 
     # -- Relationships --
-    material: Mapped["Material | None"] = relationship(
+    material: Mapped[Material | None] = relationship(
         back_populates="dft_calculations",
     )
 
