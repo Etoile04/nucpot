@@ -53,10 +53,10 @@ Supported CALPHAD systems: U-Mo-Nb, U-Mo-Ti, U-Mo-Nb-Ti (ternary and quaternary)
 ### 1.4 Systems NOT in CALPHAD scope
 
 The following systems have MP DFT data only (no CALPHAD fallback):
-- **U-Zr** — binary BCC alloys (12 compositions)
-- **U-Mo** — binary BCC alloys (15 compositions)
-- **UO₂** — fluorite oxide (1 composition)
-- **Fe-Cr-Ni** — austenitic FCC stainless steels (15 compositions)
+- **U-Zr** — binary BCC alloys (30 compositions)
+- **Mo-U** — binary BCC alloys (15 compositions)
+- **O-U** — fluorite oxide UO₂ (1 composition)
+- **Cr-Fe-Ni** — austenitic FCC stainless steels (15 compositions)
 
 ---
 
@@ -221,22 +221,26 @@ python3 data/dft-export/validate_and_transform.py \
 
 | Element System | Records | Phase(s) | Source |
 |---------------|---------|----------|--------|
-| U-Zr | 12 | BCC | MP (PBE, PBEsol) |
+| U-Zr | 30 | BCC | MP (PBE, PBEsol) |
 | Mo-U | 15 | BCC | MP (PBE) |
-| Mo-Nb-U | 15 | BCC | MP (PBE) + CALPHAD |
-| Mo-Ti-U | 15 | BCC | MP (PBE) + CALPHAD |
-| Mo-Nb-Ti-U | 22 | BCC | MP (PBE) + CALPHAD |
+| Mo-Nb-U | 20 | BCC, BCC_A2 | MP (PBE) + CALPHAD |
+| Mo-Ti-U | 21 | BCC, BCC_A2 | MP (PBE) + CALPHAD |
+| Mo-Nb-Ti-U | 10 | BCC_A2 | CALPHAD |
 | O-U | 1 | fluorite | MP (PBE) |
 | Cr-Fe-Ni | 15 | FCC | MP (PBE) |
+
+*Sum: 30 + 15 + 20 + 21 + 10 + 1 + 15 = 112 records.*
 
 ### 6.3 Phase Breakdown
 
 | Phase | Count |
 |-------|-------|
-| BCC | 92 |
+| BCC | 75 |
 | BCC_A2 | 21 |
 | FCC | 15 |
 | fluorite | 1 |
+
+*Sum: 75 + 21 + 15 + 1 = 112 records.*
 
 ---
 
