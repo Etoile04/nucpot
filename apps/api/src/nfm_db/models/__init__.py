@@ -180,6 +180,7 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
 from nfm_db.models.review import (  # noqa: E402
     ReviewMixin,
     ReviewStatus,
+    VALID_TRANSITIONS,
 )
 from nfm_db.models.source import (  # noqa: E402
     Author,
@@ -230,13 +231,7 @@ __all__ = [
     "JobType",
     "KEntityType",
     "KGEdge",
-    "KGEdge",
-    "KGEdge",
     "KGNode",
-    "KGNode",
-    "KGNode",
-    "KGReviewQueue",
-    "KGReviewQueue",
     "KGReviewQueue",
     "KRelationType",
     "MDSimulationResult",
@@ -260,6 +255,7 @@ __all__ = [
     "ResolutionStrategy",
     "ReviewMixin",
     "ReviewStatus",
+    "VALID_TRANSITIONS",
     "StagingStatus",
     "TimestampMixin",
     "Unit",
