@@ -13,6 +13,7 @@ References:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import pandas as pd
 

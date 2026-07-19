@@ -60,7 +60,7 @@ async def predict_client(
     """
     from nfm_db.api.v1 import predict as predict_module
 
-    app = async_client._transport.app  # noqa: SLF001
+    app = async_client._transport.app
     app.dependency_overrides[predict_module.get_artifact_path] = (
         lambda: ARTIFACT_PATH
     )
@@ -205,7 +205,7 @@ class TestPredictPhaseArtifactMissing:
     ) -> None:
         from nfm_db.api.v1 import predict as predict_module
 
-        app = async_client._transport.app  # noqa: SLF001
+        app = async_client._transport.app
         app.dependency_overrides[predict_module.get_artifact_path] = (
             lambda: tmp_path / "missing.joblib"
         )

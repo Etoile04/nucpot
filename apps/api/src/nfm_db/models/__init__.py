@@ -178,9 +178,9 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     StagingStatus,
 )
 from nfm_db.models.review import (  # noqa: E402
+    VALID_TRANSITIONS,
     ReviewMixin,
     ReviewStatus,
-    VALID_TRANSITIONS,
 )
 from nfm_db.models.source import (  # noqa: E402
     Author,
@@ -200,6 +200,7 @@ from nfm_db.models.user import (  # noqa: E402
 __all__ = [
     "VALID_NODE_TYPES",
     "VALID_RELATION_TYPES",
+    "VALID_TRANSITIONS",
     "Author",
     "Base",
     "BlogPostMetadata",
@@ -255,7 +256,6 @@ __all__ = [
     "ResolutionStrategy",
     "ReviewMixin",
     "ReviewStatus",
-    "VALID_TRANSITIONS",
     "StagingStatus",
     "TimestampMixin",
     "Unit",
