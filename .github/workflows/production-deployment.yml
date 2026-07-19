@@ -326,8 +326,20 @@ jobs:
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
+
+          echo "=== Frontend smoke ==="
           curl -f https://nucpot.dpdns.org/ | grep -q "NFMD" || exit 1
-          curl -f https://nucpot.dpdns.org/api/v1/health || exit 1
+
+          echo "=== API health endpoint ==="
+          curl -f https://verify.nucpot.dpdns.org/api/v1/health || exit 1
+
+          echo "=== API /potentials endpoint (key data route) ==="
+          curl -sf https://verify.nucpot.dpdns.org/api/v1/potentials -o /dev/null || exit 1
+
+          echo "=== API /reference-values endpoint ==="
+          curl -sf https://verify.nucpot.dpdns.org/api/v1/reference-values -o /dev/null || exit 1
+
+          echo "=== All external smoke tests passed ==="
 
       - name: Verify Celery workers
         run: |
