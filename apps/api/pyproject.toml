@@ -25,6 +25,12 @@ dependencies = [
     "PyMuPDF>=1.24.0",
     "Pillow>=10.4.0",
     "rapidfuzz>=3.0.0",
+    # ML prediction pipeline (NFM-1560) — eagerly imported at module level,
+    # so these are required dependencies, not optional.
+    "pandas>=2.2.0",
+    "numpy>=2.0.0",
+    "scikit-learn>=1.5.0",
+    "joblib>=1.4.0",
 ]
 
 [project.optional-dependencies]
@@ -42,14 +48,6 @@ lightrag = [
     # against a live LightRAG sidecar (not required in production,
     # where the sidecar runs independently).
     "lightrag-hku==1.5.4",
-]
-ml = [
-    # ML prediction pipeline dependencies.
-    # Install via: uv sync --extra ml
-    "pandas>=2.2.0",
-    "numpy>=2.0.0",
-    "scikit-learn>=1.5.0",
-    "joblib>=1.4.0",
 ]
 
 [tool.ruff]
