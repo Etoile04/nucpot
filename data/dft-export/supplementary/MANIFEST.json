@@ -1,0 +1,78 @@
+{
+  "export_version": "1.0-supplementary",
+  "export_date": "2026-07-19",
+  "total_entries": 112,
+  "batches": [
+    {
+      "filename": "supplementary_dft_batch_001_100_20260719.csv",
+      "row_count": 100,
+      "sha256": "df284fe1c0475ec8a055b11687ac5c6d61f7ccf04b9914fd32742756ad51851a",
+      "completeness_pct": 100.0,
+      "element_systems": [
+        "Cr-Fe-Ni",
+        "Mo-Nb-U",
+        "Mo-Ti-U",
+        "Mo-U",
+        "O-U",
+        "U-Zr"
+      ],
+      "functional_breakdown": {
+        "CALPHAD": 9,
+        "PBE": 85,
+        "PBEsol": 6
+      },
+      "source_breakdown": {
+        "SUPPL-MP": 91,
+        "SUPPL-CALPHAD": 9
+      }
+    },
+    {
+      "filename": "supplementary_dft_batch_002_12_20260719.csv",
+      "row_count": 12,
+      "sha256": "7cbbda02235159af1a23407af4aaa7500e6ae4107dd29da923e73682e85ddbd6",
+      "completeness_pct": 100.0,
+      "element_systems": [
+        "Mo-Nb-Ti-U",
+        "Mo-Ti-U"
+      ],
+      "functional_breakdown": {
+        "CALPHAD": 12
+      },
+      "source_breakdown": {
+        "SUPPL-CALPHAD": 12
+      }
+    }
+  ],
+  "summary": {
+    "total_element_systems": 7,
+    "total_phases": 4,
+    "element_systems": [
+      "Cr-Fe-Ni",
+      "Mo-Nb-Ti-U",
+      "Mo-Nb-U",
+      "Mo-Ti-U",
+      "Mo-U",
+      "O-U",
+      "U-Zr"
+    ],
+    "functional_breakdown": {
+      "CALPHAD": 21,
+      "PBE": 85,
+      "PBEsol": 6
+    },
+    "source_breakdown": {
+      "SUPPL-MP": 91,
+      "SUPPL-CALPHAD": 21
+    },
+    "missing_fields_summary": {
+      "formation_energy_uncertainty": 21,
+      "cohesive_energy_uncertainty": 21,
+      "lattice_constant_uncertainty": 21,
+      "lattice_distortion_uncertainty": 21,
+      "temperature": 112,
+      "magnetic_ordering": 112,
+      "source_doi": 21,
+      "calculation_date": 0
+    }
+  }
+}
