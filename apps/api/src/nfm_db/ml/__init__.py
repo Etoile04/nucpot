@@ -1,11 +1,5 @@
-"""NFMD ML pipeline: cluster model, feature engineering, phase classification, and prediction."""
+"""NFMD ML pipeline: feature engineering, phase classification, and prediction."""
 
-from nfm_db.ml.cluster_model import (  # type: ignore[import-untyped]
-    ClusterCompositionGenerator,
-    CompositionCandidate,
-    classify_cluster_type,
-    get_element_cluster_type,
-)
 from nfm_db.ml.feature_engineering import (
     batch_compute,
     calculate_allen_chi_diff,
@@ -33,8 +27,6 @@ from nfm_db.ml.temp_predictor import (
 
 __all__ = [
     "TARGET_MAE_C",
-    "ClusterCompositionGenerator",
-    "CompositionCandidate",
     "RegressionFoldResult",
     "RegressionReport",
     "TempPrediction",
@@ -50,10 +42,8 @@ __all__ = [
     "calculate_mo_equivalent",
     "calculate_pauling_chi_diff",
     "calculate_u_density",
-    "classify_cluster_type",
     "cluster_type_from_features",
     "compute_all_features",
     "format_report",
-    "get_element_cluster_type",
     "predict_phase_transition_temp",
 ]
