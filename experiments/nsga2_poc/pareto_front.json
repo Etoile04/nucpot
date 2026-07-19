@@ -1,0 +1,1516 @@
+{
+  "metadata": {
+    "algorithm": "NSGA-II",
+    "population_size": 100,
+    "generations": 100,
+    "seed": 42,
+    "n_pareto_solutions": 100,
+    "n_feasible": 100,
+    "n_total": 100
+  },
+  "convergence_metrics": {
+    "n_evals": 10000
+  },
+  "pareto_front": [
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 4.99,
+        "Nb": 0.0,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.7651,
+        "T_stable": 649.7552,
+        "fabricability": 0.7502
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 19.99,
+        "Nb": 0.01,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.7085,
+        "T_stable": 1099.9119,
+        "fabricability": 0.0003
+      }
+    },
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 1.18,
+        "Nb": 0.62,
+        "V": 1.25,
+        "Ti": 1.22,
+        "Zr": 0.73
+      },
+      "objectives": {
+        "rho_U": 18.5975,
+        "T_stable": 550.9061,
+        "fabricability": 0.7969
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 10.19,
+        "Nb": 8.12,
+        "V": 1.63,
+        "Ti": 0.03,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.4662,
+        "T_stable": 1039.9217,
+        "fabricability": 0.148
+      }
+    },
+    {
+      "composition": {
+        "U": 82.97,
+        "Mo": 10.24,
+        "Nb": 6.41,
+        "V": 0.23,
+        "Ti": 0.0,
+        "Zr": 0.15
+      },
+      "objectives": {
+        "rho_U": 17.7485,
+        "T_stable": 997.5127,
+        "fabricability": 0.2353
+      }
+    },
+    {
+      "composition": {
+        "U": 87.03,
+        "Mo": 9.06,
+        "Nb": 3.73,
+        "V": 0.12,
+        "Ti": 0.03,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 18.1133,
+        "T_stable": 908.2016,
+        "fabricability": 0.3825
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 16.17,
+        "Nb": 3.82,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.6133,
+        "T_stable": 1081.4429,
+        "fabricability": 0.0692
+      }
+    },
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 1.24,
+        "Nb": 1.1,
+        "V": 1.34,
+        "Ti": 0.63,
+        "Zr": 0.69
+      },
+      "objectives": {
+        "rho_U": 18.6208,
+        "T_stable": 563.111,
+        "fabricability": 0.7964
+      }
+    },
+    {
+      "composition": {
+        "U": 88.37,
+        "Mo": 7.14,
+        "Nb": 3.08,
+        "V": 0.39,
+        "Ti": 0.6,
+        "Zr": 0.41
+      },
+      "objectives": {
+        "rho_U": 18.1564,
+        "T_stable": 844.3404,
+        "fabricability": 0.4667
+      }
+    },
+    {
+      "composition": {
+        "U": 94.85,
+        "Mo": 3.35,
+        "Nb": 0.75,
+        "V": 0.97,
+        "Ti": 0.04,
+        "Zr": 0.04
+      },
+      "objectives": {
+        "rho_U": 18.7097,
+        "T_stable": 622.1081,
+        "fabricability": 0.7716
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 15.22,
+        "Nb": 4.58,
+        "V": 0.03,
+        "Ti": 0.03,
+        "Zr": 0.14
+      },
+      "objectives": {
+        "rho_U": 17.5818,
+        "T_stable": 1075.3322,
+        "fabricability": 0.0842
+      }
+    },
+    {
+      "composition": {
+        "U": 88.77,
+        "Mo": 8.4,
+        "Nb": 2.41,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.42
+      },
+      "objectives": {
+        "rho_U": 18.245,
+        "T_stable": 858.7556,
+        "fabricability": 0.4538
+      }
+    },
+    {
+      "composition": {
+        "U": 93.7,
+        "Mo": 5.11,
+        "Nb": 1.07,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.12
+      },
+      "objectives": {
+        "rho_U": 18.641,
+        "T_stable": 689.9288,
+        "fabricability": 0.6992
+      }
+    },
+    {
+      "composition": {
+        "U": 90.06,
+        "Mo": 6.42,
+        "Nb": 3.38,
+        "V": 0.01,
+        "Ti": 0.07,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 18.3327,
+        "T_stable": 807.9405,
+        "fabricability": 0.5403
+      }
+    },
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 4.66,
+        "Nb": 0.1,
+        "V": 0.01,
+        "Ti": 0.22,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.7495,
+        "T_stable": 641.2524,
+        "fabricability": 0.7565
+      }
+    },
+    {
+      "composition": {
+        "U": 81.51,
+        "Mo": 9.95,
+        "Nb": 8.44,
+        "V": 0.01,
+        "Ti": 0.02,
+        "Zr": 0.07
+      },
+      "objectives": {
+        "rho_U": 17.6027,
+        "T_stable": 1021.5818,
+        "fabricability": 0.196
+      }
+    },
+    {
+      "composition": {
+        "U": 89.15,
+        "Mo": 7.09,
+        "Nb": 3.55,
+        "V": 0.01,
+        "Ti": 0.19,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.261,
+        "T_stable": 837.3822,
+        "fabricability": 0.4947
+      }
+    },
+    {
+      "composition": {
+        "U": 93.07,
+        "Mo": 4.46,
+        "Nb": 2.42,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 18.5705,
+        "T_stable": 701.5137,
+        "fabricability": 0.687
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 17.39,
+        "Nb": 1.81,
+        "V": 0.78,
+        "Ti": 0.02,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.6445,
+        "T_stable": 1084.944,
+        "fabricability": 0.0487
+      }
+    },
+    {
+      "composition": {
+        "U": 92.06,
+        "Mo": 5.26,
+        "Nb": 2.24,
+        "V": 0.39,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.497,
+        "T_stable": 737.4917,
+        "fabricability": 0.6354
+      }
+    },
+    {
+      "composition": {
+        "U": 81.35,
+        "Mo": 11.81,
+        "Nb": 6.73,
+        "V": 0.02,
+        "Ti": 0.03,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 17.633,
+        "T_stable": 1036.5923,
+        "fabricability": 0.1655
+      }
+    },
+    {
+      "composition": {
+        "U": 83.29,
+        "Mo": 9.94,
+        "Nb": 5.77,
+        "V": 0.96,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.779,
+        "T_stable": 986.4225,
+        "fabricability": 0.2497
+      }
+    },
+    {
+      "composition": {
+        "U": 88.57,
+        "Mo": 10.41,
+        "Nb": 0.48,
+        "V": 0.37,
+        "Ti": 0.15,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 18.2922,
+        "T_stable": 883.3818,
+        "fabricability": 0.3959
+      }
+    },
+    {
+      "composition": {
+        "U": 82.38,
+        "Mo": 10.06,
+        "Nb": 7.52,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.04
+      },
+      "objectives": {
+        "rho_U": 17.6917,
+        "T_stable": 1008.3995,
+        "fabricability": 0.2205
+      }
+    },
+    {
+      "composition": {
+        "U": 84.83,
+        "Mo": 14.49,
+        "Nb": 0.04,
+        "V": 0.01,
+        "Ti": 0.41,
+        "Zr": 0.22
+      },
+      "objectives": {
+        "rho_U": 18.0159,
+        "T_stable": 993.2809,
+        "fabricability": 0.1868
+      }
+    },
+    {
+      "composition": {
+        "U": 84.2,
+        "Mo": 9.74,
+        "Nb": 5.65,
+        "V": 0.38,
+        "Ti": 0.02,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.8605,
+        "T_stable": 971.1189,
+        "fabricability": 0.2808
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 18.14,
+        "Nb": 1.8,
+        "V": 0.01,
+        "Ti": 0.03,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.6601,
+        "T_stable": 1090.958,
+        "fabricability": 0.0355
+      }
+    },
+    {
+      "composition": {
+        "U": 91.23,
+        "Mo": 6.98,
+        "Nb": 1.76,
+        "V": 0.0,
+        "Ti": 0.02,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.4603,
+        "T_stable": 784.6105,
+        "fabricability": 0.57
+      }
+    },
+    {
+      "composition": {
+        "U": 90.12,
+        "Mo": 9.01,
+        "Nb": 0.43,
+        "V": 0.39,
+        "Ti": 0.04,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.4076,
+        "T_stable": 833.0355,
+        "fabricability": 0.482
+      }
+    },
+    {
+      "composition": {
+        "U": 87.51,
+        "Mo": 10.45,
+        "Nb": 1.98,
+        "V": 0.01,
+        "Ti": 0.04,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 18.1939,
+        "T_stable": 911.5162,
+        "fabricability": 0.3638
+      }
+    },
+    {
+      "composition": {
+        "U": 88.66,
+        "Mo": 8.4,
+        "Nb": 2.41,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.53
+      },
+      "objectives": {
+        "rho_U": 18.2285,
+        "T_stable": 860.3337,
+        "fabricability": 0.45
+      }
+    },
+    {
+      "composition": {
+        "U": 81.82,
+        "Mo": 16.4,
+        "Nb": 1.01,
+        "V": 0.69,
+        "Ti": 0.0,
+        "Zr": 0.08
+      },
+      "objectives": {
+        "rho_U": 17.7942,
+        "T_stable": 1055.9059,
+        "fabricability": 0.0894
+      }
+    },
+    {
+      "composition": {
+        "U": 85.21,
+        "Mo": 10.85,
+        "Nb": 3.0,
+        "V": 0.39,
+        "Ti": 0.01,
+        "Zr": 0.54
+      },
+      "objectives": {
+        "rho_U": 17.9614,
+        "T_stable": 956.3307,
+        "fabricability": 0.2884
+      }
+    },
+    {
+      "composition": {
+        "U": 94.34,
+        "Mo": 5.13,
+        "Nb": 0.41,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.12
+      },
+      "objectives": {
+        "rho_U": 18.7018,
+        "T_stable": 670.5971,
+        "fabricability": 0.7229
+      }
+    },
+    {
+      "composition": {
+        "U": 94.56,
+        "Mo": 4.94,
+        "Nb": 0.1,
+        "V": 0.01,
+        "Ti": 0.01,
+        "Zr": 0.39
+      },
+      "objectives": {
+        "rho_U": 18.704,
+        "T_stable": 657.6256,
+        "fabricability": 0.7347
+      }
+    },
+    {
+      "composition": {
+        "U": 84.91,
+        "Mo": 9.94,
+        "Nb": 5.1,
+        "V": 0.0,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.9336,
+        "T_stable": 960.9522,
+        "fabricability": 0.2986
+      }
+    },
+    {
+      "composition": {
+        "U": 93.62,
+        "Mo": 5.93,
+        "Nb": 0.41,
+        "V": 0.03,
+        "Ti": 0.0,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.6601,
+        "T_stable": 703.9107,
+        "fabricability": 0.6796
+      }
+    },
+    {
+      "composition": {
+        "U": 87.29,
+        "Mo": 8.64,
+        "Nb": 3.64,
+        "V": 0.39,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.1294,
+        "T_stable": 896.898,
+        "fabricability": 0.3998
+      }
+    },
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 1.59,
+        "Nb": 1.4,
+        "V": 0.95,
+        "Ti": 0.05,
+        "Zr": 1.02
+      },
+      "objectives": {
+        "rho_U": 18.631,
+        "T_stable": 578.3145,
+        "fabricability": 0.795
+      }
+    },
+    {
+      "composition": {
+        "U": 90.94,
+        "Mo": 8.91,
+        "Nb": 0.12,
+        "V": 0.0,
+        "Ti": 0.03,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.4822,
+        "T_stable": 814.1677,
+        "fabricability": 0.5109
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 12.27,
+        "Nb": 6.55,
+        "V": 0.97,
+        "Ti": 0.02,
+        "Zr": 0.19
+      },
+      "objectives": {
+        "rho_U": 17.5083,
+        "T_stable": 1054.6562,
+        "fabricability": 0.1248
+      }
+    },
+    {
+      "composition": {
+        "U": 85.92,
+        "Mo": 8.11,
+        "Nb": 5.57,
+        "V": 0.37,
+        "Ti": 0.01,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.9856,
+        "T_stable": 922.3024,
+        "fabricability": 0.365
+      }
+    },
+    {
+      "composition": {
+        "U": 83.81,
+        "Mo": 9.74,
+        "Nb": 5.65,
+        "V": 0.71,
+        "Ti": 0.01,
+        "Zr": 0.08
+      },
+      "objectives": {
+        "rho_U": 17.821,
+        "T_stable": 976.2667,
+        "fabricability": 0.2689
+      }
+    },
+    {
+      "composition": {
+        "U": 92.59,
+        "Mo": 6.89,
+        "Nb": 0.5,
+        "V": 0.01,
+        "Ti": 0.01,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.5871,
+        "T_stable": 746.1372,
+        "fabricability": 0.62
+      }
+    },
+    {
+      "composition": {
+        "U": 90.94,
+        "Mo": 6.98,
+        "Nb": 2.06,
+        "V": 0.0,
+        "Ti": 0.02,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.434,
+        "T_stable": 792.5855,
+        "fabricability": 0.5598
+      }
+    },
+    {
+      "composition": {
+        "U": 93.06,
+        "Mo": 5.31,
+        "Nb": 1.59,
+        "V": 0.01,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.5901,
+        "T_stable": 712.474,
+        "fabricability": 0.6714
+      }
+    },
+    {
+      "composition": {
+        "U": 89.31,
+        "Mo": 10.69,
+        "Nb": 0.0,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.374,
+        "T_stable": 873.5976,
+        "fabricability": 0.409
+      }
+    },
+    {
+      "composition": {
+        "U": 83.55,
+        "Mo": 14.01,
+        "Nb": 2.37,
+        "V": 0.01,
+        "Ti": 0.03,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 17.9024,
+        "T_stable": 1016.8786,
+        "fabricability": 0.1742
+      }
+    },
+    {
+      "composition": {
+        "U": 94.64,
+        "Mo": 5.25,
+        "Nb": 0.04,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 18.7346,
+        "T_stable": 663.6967,
+        "fabricability": 0.7314
+      }
+    },
+    {
+      "composition": {
+        "U": 90.41,
+        "Mo": 7.17,
+        "Nb": 1.87,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.53
+      },
+      "objectives": {
+        "rho_U": 18.3641,
+        "T_stable": 802.8519,
+        "fabricability": 0.5372
+      }
+    },
+    {
+      "composition": {
+        "U": 91.88,
+        "Mo": 4.15,
+        "Nb": 3.79,
+        "V": 0.01,
+        "Ti": 0.15,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 18.4462,
+        "T_stable": 730.3649,
+        "fabricability": 0.6461
+      }
+    },
+    {
+      "composition": {
+        "U": 92.98,
+        "Mo": 5.9,
+        "Nb": 1.07,
+        "V": 0.03,
+        "Ti": 0.0,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.5991,
+        "T_stable": 722.5742,
+        "fabricability": 0.6565
+      }
+    },
+    {
+      "composition": {
+        "U": 89.17,
+        "Mo": 9.96,
+        "Nb": 0.43,
+        "V": 0.39,
+        "Ti": 0.04,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.3416,
+        "T_stable": 866.2333,
+        "fabricability": 0.4263
+      }
+    },
+    {
+      "composition": {
+        "U": 94.93,
+        "Mo": 4.95,
+        "Nb": 0.1,
+        "V": 0.01,
+        "Ti": 0.01,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.7571,
+        "T_stable": 651.2828,
+        "fabricability": 0.7483
+      }
+    },
+    {
+      "composition": {
+        "U": 87.96,
+        "Mo": 8.98,
+        "Nb": 2.99,
+        "V": 0.03,
+        "Ti": 0.02,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 18.2014,
+        "T_stable": 887.4185,
+        "fabricability": 0.4138
+      }
+    },
+    {
+      "composition": {
+        "U": 89.4,
+        "Mo": 7.2,
+        "Nb": 2.43,
+        "V": 0.92,
+        "Ti": 0.03,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 18.296,
+        "T_stable": 827.7468,
+        "fabricability": 0.5015
+      }
+    },
+    {
+      "composition": {
+        "U": 86.17,
+        "Mo": 9.16,
+        "Nb": 4.51,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.15
+      },
+      "objectives": {
+        "rho_U": 18.0292,
+        "T_stable": 927.6345,
+        "fabricability": 0.3532
+      }
+    },
+    {
+      "composition": {
+        "U": 91.64,
+        "Mo": 5.97,
+        "Nb": 1.32,
+        "V": 0.92,
+        "Ti": 0.0,
+        "Zr": 0.15
+      },
+      "objectives": {
+        "rho_U": 18.471,
+        "T_stable": 752.7472,
+        "fabricability": 0.6064
+      }
+    },
+    {
+      "composition": {
+        "U": 86.57,
+        "Mo": 9.51,
+        "Nb": 3.45,
+        "V": 0.26,
+        "Ti": 0.21,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.0761,
+        "T_stable": 919.6051,
+        "fabricability": 0.3581
+      }
+    },
+    {
+      "composition": {
+        "U": 90.1,
+        "Mo": 9.33,
+        "Nb": 0.45,
+        "V": 0.03,
+        "Ti": 0.04,
+        "Zr": 0.05
+      },
+      "objectives": {
+        "rho_U": 18.4116,
+        "T_stable": 839.0195,
+        "fabricability": 0.4728
+      }
+    },
+    {
+      "composition": {
+        "U": 92.72,
+        "Mo": 5.24,
+        "Nb": 0.9,
+        "V": 1.09,
+        "Ti": 0.01,
+        "Zr": 0.04
+      },
+      "objectives": {
+        "rho_U": 18.5604,
+        "T_stable": 712.5511,
+        "fabricability": 0.6601
+      }
+    },
+    {
+      "composition": {
+        "U": 90.8,
+        "Mo": 5.72,
+        "Nb": 3.24,
+        "V": 0.04,
+        "Ti": 0.03,
+        "Zr": 0.17
+      },
+      "objectives": {
+        "rho_U": 18.381,
+        "T_stable": 779.1107,
+        "fabricability": 0.5806
+      }
+    },
+    {
+      "composition": {
+        "U": 87.81,
+        "Mo": 6.27,
+        "Nb": 5.87,
+        "V": 0.0,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.1191,
+        "T_stable": 863.7775,
+        "fabricability": 0.462
+      }
+    },
+    {
+      "composition": {
+        "U": 93.96,
+        "Mo": 5.31,
+        "Nb": 0.54,
+        "V": 0.01,
+        "Ti": 0.03,
+        "Zr": 0.16
+      },
+      "objectives": {
+        "rho_U": 18.6668,
+        "T_stable": 683.5981,
+        "fabricability": 0.7049
+      }
+    },
+    {
+      "composition": {
+        "U": 90.95,
+        "Mo": 5.05,
+        "Nb": 3.82,
+        "V": 0.12,
+        "Ti": 0.03,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 18.3846,
+        "T_stable": 768.2514,
+        "fabricability": 0.5973
+      }
+    },
+    {
+      "composition": {
+        "U": 92.55,
+        "Mo": 6.58,
+        "Nb": 0.84,
+        "V": 0.01,
+        "Ti": 0.01,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.5758,
+        "T_stable": 743.4704,
+        "fabricability": 0.6259
+      }
+    },
+    {
+      "composition": {
+        "U": 87.39,
+        "Mo": 7.17,
+        "Nb": 4.42,
+        "V": 0.4,
+        "Ti": 0.6,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 18.0831,
+        "T_stable": 872.4624,
+        "fabricability": 0.4319
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 12.74,
+        "Nb": 6.97,
+        "V": 0.07,
+        "Ti": 0.02,
+        "Zr": 0.2
+      },
+      "objectives": {
+        "rho_U": 17.5181,
+        "T_stable": 1060.9395,
+        "fabricability": 0.1189
+      }
+    },
+    {
+      "composition": {
+        "U": 87.92,
+        "Mo": 9.54,
+        "Nb": 2.51,
+        "V": 0.02,
+        "Ti": 0.01,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.2118,
+        "T_stable": 894.016,
+        "fabricability": 0.3992
+      }
+    },
+    {
+      "composition": {
+        "U": 88.94,
+        "Mo": 9.16,
+        "Nb": 1.85,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 18.2993,
+        "T_stable": 866.4522,
+        "fabricability": 0.4407
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 14.33,
+        "Nb": 5.67,
+        "V": 0.0,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.5672,
+        "T_stable": 1071.522,
+        "fabricability": 0.0974
+      }
+    },
+    {
+      "composition": {
+        "U": 81.69,
+        "Mo": 15.1,
+        "Nb": 2.37,
+        "V": 0.01,
+        "Ti": 0.8,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 17.7232,
+        "T_stable": 1046.3972,
+        "fabricability": 0.115
+      }
+    },
+    {
+      "composition": {
+        "U": 92.62,
+        "Mo": 5.87,
+        "Nb": 1.07,
+        "V": 0.03,
+        "Ti": 0.0,
+        "Zr": 0.41
+      },
+      "objectives": {
+        "rho_U": 18.5445,
+        "T_stable": 727.7481,
+        "fabricability": 0.644
+      }
+    },
+    {
+      "composition": {
+        "U": 80.34,
+        "Mo": 19.64,
+        "Nb": 0.0,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 17.7332,
+        "T_stable": 1094.6107,
+        "fabricability": 0.0076
+      }
+    },
+    {
+      "composition": {
+        "U": 85.9,
+        "Mo": 10.75,
+        "Nb": 2.87,
+        "V": 0.44,
+        "Ti": 0.01,
+        "Zr": 0.03
+      },
+      "objectives": {
+        "rho_U": 18.0497,
+        "T_stable": 945.8907,
+        "fabricability": 0.31
+      }
+    },
+    {
+      "composition": {
+        "U": 91.11,
+        "Mo": 7.68,
+        "Nb": 1.04,
+        "V": 0.04,
+        "Ti": 0.07,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 18.4632,
+        "T_stable": 794.2971,
+        "fabricability": 0.5493
+      }
+    },
+    {
+      "composition": {
+        "U": 89.48,
+        "Mo": 6.43,
+        "Nb": 3.38,
+        "V": 0.59,
+        "Ti": 0.07,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 18.2795,
+        "T_stable": 818.9781,
+        "fabricability": 0.5191
+      }
+    },
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 3.17,
+        "Nb": 0.78,
+        "V": 0.97,
+        "Ti": 0.04,
+        "Zr": 0.04
+      },
+      "objectives": {
+        "rho_U": 18.7193,
+        "T_stable": 614.5402,
+        "fabricability": 0.78
+      }
+    },
+    {
+      "composition": {
+        "U": 92.45,
+        "Mo": 5.26,
+        "Nb": 2.24,
+        "V": 0.01,
+        "Ti": 0.04,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.5316,
+        "T_stable": 729.6175,
+        "fabricability": 0.6496
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 18.9,
+        "Nb": 0.72,
+        "V": 0.38,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.6821,
+        "T_stable": 1093.7615,
+        "fabricability": 0.0213
+      }
+    },
+    {
+      "composition": {
+        "U": 90.95,
+        "Mo": 5.56,
+        "Nb": 3.47,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.4001,
+        "T_stable": 775.9914,
+        "fabricability": 0.5887
+      }
+    },
+    {
+      "composition": {
+        "U": 84.42,
+        "Mo": 9.52,
+        "Nb": 5.65,
+        "V": 0.38,
+        "Ti": 0.02,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.8761,
+        "T_stable": 965.1733,
+        "fabricability": 0.2913
+      }
+    },
+    {
+      "composition": {
+        "U": 86.37,
+        "Mo": 10.6,
+        "Nb": 3.01,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.0903,
+        "T_stable": 937.66,
+        "fabricability": 0.3271
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 18.46,
+        "Nb": 1.48,
+        "V": 0.0,
+        "Ti": 0.04,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 17.6683,
+        "T_stable": 1092.5098,
+        "fabricability": 0.0296
+      }
+    },
+    {
+      "composition": {
+        "U": 92.08,
+        "Mo": 5.59,
+        "Nb": 2.31,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.5072,
+        "T_stable": 744.7628,
+        "fabricability": 0.6299
+      }
+    },
+    {
+      "composition": {
+        "U": 81.5,
+        "Mo": 11.67,
+        "Nb": 6.73,
+        "V": 0.01,
+        "Ti": 0.03,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 17.6442,
+        "T_stable": 1033.4586,
+        "fabricability": 0.1715
+      }
+    },
+    {
+      "composition": {
+        "U": 80.0,
+        "Mo": 12.86,
+        "Nb": 7.02,
+        "V": 0.08,
+        "Ti": 0.03,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.5296,
+        "T_stable": 1062.6743,
+        "fabricability": 0.1173
+      }
+    },
+    {
+      "composition": {
+        "U": 88.99,
+        "Mo": 5.31,
+        "Nb": 5.7,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.2079,
+        "T_stable": 824.9415,
+        "fabricability": 0.5141
+      }
+    },
+    {
+      "composition": {
+        "U": 89.97,
+        "Mo": 6.95,
+        "Nb": 2.99,
+        "V": 0.03,
+        "Ti": 0.04,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 18.3402,
+        "T_stable": 816.7815,
+        "fabricability": 0.5266
+      }
+    },
+    {
+      "composition": {
+        "U": 94.02,
+        "Mo": 4.99,
+        "Nb": 0.85,
+        "V": 0.03,
+        "Ti": 0.0,
+        "Zr": 0.12
+      },
+      "objectives": {
+        "rho_U": 18.6682,
+        "T_stable": 678.3576,
+        "fabricability": 0.7136
+      }
+    },
+    {
+      "composition": {
+        "U": 85.79,
+        "Mo": 10.67,
+        "Nb": 3.49,
+        "V": 0.01,
+        "Ti": 0.03,
+        "Zr": 0.01
+      },
+      "objectives": {
+        "rho_U": 18.0364,
+        "T_stable": 949.7634,
+        "fabricability": 0.3089
+      }
+    },
+    {
+      "composition": {
+        "U": 87.07,
+        "Mo": 11.49,
+        "Nb": 1.23,
+        "V": 0.0,
+        "Ti": 0.06,
+        "Zr": 0.15
+      },
+      "objectives": {
+        "rho_U": 18.1719,
+        "T_stable": 929.0969,
+        "fabricability": 0.3235
+      }
+    },
+    {
+      "composition": {
+        "U": 92.68,
+        "Mo": 4.93,
+        "Nb": 2.39,
+        "V": 0.01,
+        "Ti": 0.0,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 18.5464,
+        "T_stable": 719.5562,
+        "fabricability": 0.6641
+      }
+    },
+    {
+      "composition": {
+        "U": 84.94,
+        "Mo": 9.08,
+        "Nb": 5.78,
+        "V": 0.18,
+        "Ti": 0.01,
+        "Zr": 0.0
+      },
+      "objectives": {
+        "rho_U": 17.916,
+        "T_stable": 952.5298,
+        "fabricability": 0.3155
+      }
+    },
+    {
+      "composition": {
+        "U": 82.48,
+        "Mo": 8.1,
+        "Nb": 8.85,
+        "V": 0.36,
+        "Ti": 0.03,
+        "Zr": 0.18
+      },
+      "objectives": {
+        "rho_U": 17.6464,
+        "T_stable": 988.6812,
+        "fabricability": 0.2406
+      }
+    },
+    {
+      "composition": {
+        "U": 80.17,
+        "Mo": 10.8,
+        "Nb": 8.71,
+        "V": 0.24,
+        "Ti": 0.06,
+        "Zr": 0.02
+      },
+      "objectives": {
+        "rho_U": 17.4942,
+        "T_stable": 1046.9047,
+        "fabricability": 0.1465
+      }
+    },
+    {
+      "composition": {
+        "U": 84.1,
+        "Mo": 10.86,
+        "Nb": 4.86,
+        "V": 0.0,
+        "Ti": 0.02,
+        "Zr": 0.16
+      },
+      "objectives": {
+        "rho_U": 17.8718,
+        "T_stable": 982.8718,
+        "fabricability": 0.2566
+      }
+    },
+    {
+      "composition": {
+        "U": 85.87,
+        "Mo": 11.89,
+        "Nb": 1.17,
+        "V": 0.98,
+        "Ti": 0.03,
+        "Zr": 0.06
+      },
+      "objectives": {
+        "rho_U": 18.074,
+        "T_stable": 952.713,
+        "fabricability": 0.2811
+      }
+    },
+    {
+      "composition": {
+        "U": 90.39,
+        "Mo": 7.2,
+        "Nb": 1.32,
+        "V": 0.92,
+        "Ti": 0.03,
+        "Zr": 0.15
+      },
+      "objectives": {
+        "rho_U": 18.3829,
+        "T_stable": 800.9352,
+        "fabricability": 0.5357
+      }
+    },
+    {
+      "composition": {
+        "U": 95.0,
+        "Mo": 2.06,
+        "Nb": 1.83,
+        "V": 0.8,
+        "Ti": 0.05,
+        "Zr": 0.27
+      },
+      "objectives": {
+        "rho_U": 18.6791,
+        "T_stable": 597.2463,
+        "fabricability": 0.7916
+      }
+    }
+  ]
+}
