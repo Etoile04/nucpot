@@ -24,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nfm_db.models import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from nfm_db.models.dft_calculation import DFTCalculation
     from nfm_db.models.property import Dataset
 
 
@@ -103,6 +104,9 @@ class Material(TimestampMixin, Base):
         back_populates="material",
     )
     datasets: Mapped[list["Dataset"]] = relationship(
+        back_populates="material",
+    )
+    dft_calculations: Mapped[list["DFTCalculation"]] = relationship(
         back_populates="material",
     )
 

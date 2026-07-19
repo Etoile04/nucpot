@@ -109,6 +109,7 @@ from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
     ConflictStatus,
     ResolutionStrategy,
 )
+from nfm_db.models.dft_calculation import DFTCalculation  # noqa: E402
 from nfm_db.models.entity_merge import (  # noqa: E402
     EntityMergeLog,
     MatchMethod,
@@ -214,6 +215,7 @@ __all__ = [
     "Dataset",
     "DefectAnalysisResult",
     "DefectType",
+    "DFTCalculation",
     "EntityMergeLog",
     "ExecutionStatus",
     "ExtractionFigure",
