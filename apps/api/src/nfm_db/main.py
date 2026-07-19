@@ -23,6 +23,7 @@ from nfm_db.api.v1 import (
     md_verification,
     ontology,
     potentials,
+    prediction,
     properties,
     reference_gaps,
     reference_values,
@@ -100,7 +101,8 @@ app = FastAPI(
         "- **认证 (Authentication)** — 用户登录、注册、角色管理\n"
         "- **反馈 (Feedback)** — 用户反馈提交与后台审阅\n"
         "- **博客 (Blog)** — 内部博客管理 (草稿/审核/发布工作流)\n"
-        "- **健康检查 (Health)** — 服务可用性与模块健康状态\n\n"
+        "- **健康检查 (Health)** — 服务可用性与模块健康状态\n"
+        "- **ML预测 (ML Prediction)** — 相类型分类与相变温度预测\n\n"
         "### API 约定\n\n"
         "所有响应均使用统一的 `{success: bool, data?: ..., error?: string}` 信封结构。\n"
         "分页接口返回 `{items, total, page, limit, pages}` 元数据。\n"
@@ -144,6 +146,7 @@ app = FastAPI(
         {"name": "博客", "description": "内部博客的 CRUD 与审核/发布工作流(管理员/编辑)。"},
         {"name": "健康检查", "description": "服务与各模块的健康状态。"},
         {"name": "V4 信息抽取", "description": "NFM v4 版本的信息抽取接口(实验性)。"},
+        {"name": "ML预测", "description": "ML相类型分类与相变温度预测。"},
     ],
     lifespan=lifespan,
 )
@@ -232,3 +235,4 @@ app.include_router(literature.router, prefix="/api/v1", tags=["文献管理"])
 app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"])
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
 app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])
+app.include_router(prediction.router, prefix="/api/v1", tags=["ML预测"])
