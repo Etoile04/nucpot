@@ -50,6 +50,12 @@ router = APIRouter(prefix="/review", tags=["评审管理"])
 
 VALID_STATUSES = {s.value for s in ReviewStatus}
 
+# Column name for reviewer note differs across models.
+_NOTE_COLUMN: dict[str, str] = {
+    "property_measurements": "reviewer_note",
+}
+_DEFAULT_NOTE_COLUMN = "review_note"
+
 # Maps table name → item_type label for review items.
 _TABLE_TYPE_MAP: dict[str, str] = {
     "extraction_results": "extraction",
@@ -122,6 +128,19 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
         source=source_info,
         created_at=row.created_at,
     )
+
+
+def _set_review_fields(row: Any, table_name: str, status: str, note: str | None) -> None:
+    """Set review_status, review_note, and reviewed_at on a row.
+
+    Handles per-model column name differences (e.g. PropertyMeasurement
+    uses ``reviewer_note`` instead of ``review_note``).
+    """
+    row.review_status = status
+    note_col = _NOTE_COLUMN.get(table_name, _DEFAULT_NOTE_COLUMN)
+    setattr(row, note_col, note)
+    if hasattr(row, "reviewed_at"):
+        row.reviewed_at = datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -268,9 +287,7 @@ async def update_review_status(
         )
 
     row, table_name = await _find_review_item(item_id, db)
-    row.review_status = body.status
-    row.review_note = body.note
-    row.reviewed_at = datetime.now(UTC)
+    _set_review_fields(row, table_name, body.status, body.note)
     await db.commit()
     await db.refresh(row)
 
@@ -311,10 +328,8 @@ async def batch_review(
             continue
 
         try:
-            row, _ = await _find_review_item(item.id, db)
-            row.review_status = item.status
-            row.review_note = item.note
-            row.reviewed_at = datetime.now(UTC)
+            row, table_name = await _find_review_item(item.id, db)
+            _set_review_fields(row, table_name, item.status, item.note)
             succeeded += 1
         except HTTPException:
             failed += 1

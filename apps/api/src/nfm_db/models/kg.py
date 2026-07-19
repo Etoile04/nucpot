@@ -111,6 +111,16 @@ class KGNode(TimestampMixin, Base):
         default="pending",
         comment="Review queue status for this node",
     )
+    review_note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Reviewer notes from review process",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last review action",
+    )
 
     # -- relationships --
     source: Mapped["DataSource | None"] = relationship()
@@ -198,8 +208,19 @@ class KGEdge(TimestampMixin, Base):
         comment="Timestamp of last AGE graph sync",
     )
     review_status: Mapped[str] = mapped_column(
-        String, default="pending",
+        String,
+        default="pending",
         comment="Review queue status for this edge",
+    )
+    review_note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Reviewer notes from review process",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last review action",
     )
 
     # -- relationships --
