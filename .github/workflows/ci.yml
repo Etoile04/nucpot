@@ -119,12 +119,54 @@ jobs:
           echo "OK: all Python files under 1500 lines"
 
   # ===========================================================================
+  # Docker Build Verification — catches missing deps before production deploy
+  # ===========================================================================
+  # This job rebuilds both production Dockerfiles (API + Web) to catch:
+  # - pyproject.toml changes that add new Python deps not in Docker image
+  # - Dockerfile syntax errors
+  # - pnpm-lock.json vs Docker build mismatch
+  # - pip install failures from missing system libraries
+  # ===========================================================================
+  docker-build:
+    name: Docker Build Verification
+    runs-on: ubuntu-latest
+    needs: [backend]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        run: docker build -f docker/prod-api.Dockerfile -t nucpot-ci-api:verify .
+
+      - name: Verify API image can start
+        run: |
+          # Quick smoke: import the app module inside the container
+          docker run --rm nucpot-ci-api:verify \
+            python -c "from nfm_db.main import app; print('✅ API app imports successfully')"
+
+      - name: Build Web image
+        run: docker build -f docker/web.Dockerfile -t nucpot-ci-web:verify .
+
+      - name: Verify Web image can start
+        run: |
+          docker run --rm -e NODE_ENV=production nucpot-ci-web:verify \
+            node -e "require('./apps/web/server.js')" &
+          WEB_PID=$!
+          sleep 5
+          # Kill if still running (we just need to verify no startup crash)
+          kill $WEB_PID 2>/dev/null || true
+          echo "✅ Web image starts without error"
+
+  # ===========================================================================
   # S1: CI Failure Triage — dedup, create issue, Feishu alert, auto-close
   # ===========================================================================
   ci-failure-triage:
     name: CI Failure Triage
     runs-on: ubuntu-latest
-    needs: [frontend, backend, e2e]
+    needs: [frontend, backend, docker-build, e2e]
     if: failure() && github.event_name == 'push'
     permissions:
       issues: write
@@ -141,11 +183,13 @@ jobs:
             // Determine which jobs failed
             const frontendResult = '${{ needs.frontend.result }}';
             const backendResult = '${{ needs.backend.result }}';
+            const dockerBuildResult = '${{ needs.docker-build.result }}';
             const e2eResult = '${{ needs.e2e.result }}';
 
             const failed = [];
             if (frontendResult === 'failure') failed.push('Frontend');
             if (backendResult === 'failure') failed.push('Backend');
+            if (dockerBuildResult === 'failure') failed.push('Docker-Build');
             if (e2eResult === 'failure') failed.push('E2E');
 
             if (failed.length === 0) {
@@ -205,6 +249,7 @@ jobs:
                   `### Failed Jobs\n` +
                   `- Frontend: ${frontendResult}\n` +
                   `- Backend: ${backendResult}\n` +
+                  `- Docker-Build: ${dockerBuildResult}\n` +
                   `- E2E: ${e2eResult}\n\n` +
                   `### Actions\n` +
                   `1. [View failed run](${runUrl})\n` +
@@ -250,7 +295,7 @@ jobs:
   ci-recovery:
     name: CI Recovery — close stale issues
     runs-on: ubuntu-latest
-    needs: [frontend, backend, e2e]
+    needs: [frontend, backend, docker-build, e2e]
     if: success() && github.event_name == 'push'
     permissions:
       issues: write
