@@ -43,6 +43,14 @@ lightrag = [
     # where the sidecar runs independently).
     "lightrag-hku==1.5.4",
 ]
+ml = [
+    # ML prediction pipeline dependencies.
+    # Install via: uv sync --extra ml
+    "pandas>=2.2.0",
+    "numpy>=2.0.0",
+    "scikit-learn>=1.5.0",
+    "joblib>=1.4.0",
+]
 
 [tool.ruff]
 target-version = "py312"
@@ -212,6 +220,17 @@ ignore_errors = true
 module = [
     "nfm_db.services.lightrag_client",
     "nfm_db.services.rag_provider",
+]
+ignore_errors = true
+
+# ML prediction pipeline (NFM-1560) — strict typing deferred.
+# Missing type annotations, untyped ML library stubs (pandas, numpy, joblib).
+# Track restoration in a dedicated cleanup issue alongside NFM-1072.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.ml.feature_engineering",
+    "nfm_db.ml.prediction_service",
+    "nfm_db.ml",
 ]
 ignore_errors = true
 

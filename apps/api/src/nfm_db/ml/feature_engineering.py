@@ -574,7 +574,7 @@ def calculate_lattice_distortion(composition: dict[str, float]) -> float:
 # Aggregation Functions
 # ---------------------------------------------------------------------------
 
-_FEATURE_CALCULATORS: list[tuple[str, callable]] = [
+_FEATURE_CALCULATORS: list[tuple[str, Callable]] = [
     ("mo_equivalent", calculate_mo_equivalent),
     ("pauling_chi_diff", calculate_pauling_chi_diff),
     ("allen_chi_diff", calculate_allen_chi_diff),
