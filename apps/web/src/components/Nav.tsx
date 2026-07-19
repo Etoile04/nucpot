@@ -9,7 +9,7 @@ const NAV_LINKS = [
   { href: '/browse', label: '浏览' },
   { href: '/materials', label: '材料库' },
   { href: '/ontology', label: '本体' },
-  { href: '/kg/explore', label: '知识图谱' },
+  { href: '/literature', label: '文献管理' },
   { href: '/search', label: '高级检索' },
   { href: '/compare', label: '对比' },
   { href: '/feedback', label: '反馈' },
@@ -17,20 +17,40 @@ const NAV_LINKS = [
   { href: '/blog', label: '博客' },
 ]
 
+const KG_LINKS = [
+  { href: '/kg/explore', label: '图谱浏览' },
+  { href: '/kg/search', label: 'KG 搜索' },
+]
+
+function isKgActive(pathname: string): boolean {
+  return pathname.startsWith('/kg')
+}
+
+function isKgLinkActive(pathname: string, href: string): boolean {
+  return pathname === href
+}
+
 export default function Nav() {
   const pathname = usePathname()
   const router = useRouter()
   const { user, loading, signOut } = useAuth()
 
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [kgMobileOpen, setKgMobileOpen] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [kgDropdownOpen, setKgDropdownOpen] = useState(false)
 
-  // Close dropdown when clicking outside
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const kgDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdowns when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false)
+      }
+      if (kgDropdownRef.current && !kgDropdownRef.current.contains(e.target as Node)) {
+        setKgDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -39,7 +59,9 @@ export default function Nav() {
 
   async function handleSignOut() {
     setDropdownOpen(false)
+    setKgDropdownOpen(false)
     setMobileOpen(false)
+    setKgMobileOpen(false)
     await signOut()
     router.push('/')
     router.refresh()
@@ -67,6 +89,40 @@ export default function Nav() {
               {link.label}
             </Link>
           ))}
+
+          {/* KG dropdown */}
+          <div className="relative" ref={kgDropdownRef}>
+            <button
+              onClick={() => setKgDropdownOpen(prev => !prev)}
+              className={`flex items-center gap-1 transition ${isKgActive(pathname) ? 'text-blue-400' : 'hover:text-blue-400'}`}
+              aria-expanded={kgDropdownOpen}
+              aria-haspopup="true"
+            >
+              知识图谱
+              <svg
+                className={`w-3.5 h-3.5 transition-transform ${kgDropdownOpen ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {kgDropdownOpen && (
+              <div className="absolute left-0 mt-2 w-36 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 py-1 text-sm">
+                {KG_LINKS.map(link => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setKgDropdownOpen(false)}
+                    aria-current={isKgLinkActive(pathname, link.href) ? 'page' : undefined}
+                    className={`block px-4 py-2 hover:bg-gray-700/60 transition ${isKgLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-200 hover:text-white'}`}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Auth section */}
           {!loading && (
@@ -112,6 +168,20 @@ export default function Nav() {
                         className="block px-4 py-2 hover:bg-gray-700/60 text-gray-200 hover:text-white transition"
                       >
                         上传势函数
+                      </Link>
+                      <Link
+                        href="/review/kg"
+                        onClick={() => setDropdownOpen(false)}
+                        className="block px-4 py-2 hover:bg-gray-700/60 text-gray-200 hover:text-white transition"
+                      >
+                        审核队列
+                      </Link>
+                      <Link
+                        href="/review/conflicts"
+                        onClick={() => setDropdownOpen(false)}
+                        className="block px-4 py-2 hover:bg-gray-700/60 text-gray-200 hover:text-white transition"
+                      >
+                        冲突审核
                       </Link>
                       {isAdmin && (
                         <Link
@@ -191,6 +261,34 @@ export default function Nav() {
             </Link>
           ))}
 
+          {/* Mobile KG sub-menu */}
+          <button
+            onClick={() => setKgMobileOpen(prev => !prev)}
+            className={`flex items-center gap-1 text-left transition ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400'}`}
+          >
+            知识图谱
+            <svg
+              className={`w-3.5 h-3.5 transition-transform ${kgMobileOpen ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {kgMobileOpen && (
+            <div className="ml-4 flex flex-col gap-2">
+              {KG_LINKS.map(link => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => { setMobileOpen(false); setKgMobileOpen(false) }}
+                  className={isKgLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400 transition'}
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Mobile auth */}
           {!loading && (
             <>
@@ -220,6 +318,20 @@ export default function Nav() {
                     className="text-gray-300 hover:text-blue-400 transition"
                   >
                     上传势函数
+                  </Link>
+                  <Link
+                    href="/review/kg"
+                    onClick={() => setMobileOpen(false)}
+                    className="text-gray-300 hover:text-blue-400 transition"
+                  >
+                    审核队列
+                  </Link>
+                  <Link
+                    href="/review/conflicts"
+                    onClick={() => setMobileOpen(false)}
+                    className="text-gray-300 hover:text-blue-400 transition"
+                  >
+                    冲突审核
                   </Link>
                   {isAdmin && (
                     <Link
