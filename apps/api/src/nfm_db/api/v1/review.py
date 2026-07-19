@@ -28,7 +28,7 @@ from nfm_db.database import get_db
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.property import PropertyMeasurement
-from nfm_db.models.review import ReviewStatus, VALID_TRANSITIONS
+from nfm_db.models.review import VALID_TRANSITIONS, ReviewStatus
 from nfm_db.models.source import DataSource
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
@@ -233,8 +233,8 @@ async def get_review_source(
         ds = await db.get(DataSource, source_id)
         if ds is not None:
             source_title = ds.title
-            journal = ds.journal
-            year = ds.year
+            journal = getattr(ds, "journal", None)
+            year = getattr(ds, "year", None)
 
     paragraph = getattr(row, "source_paragraph", None)
     page = getattr(row, "source_page", None)
@@ -316,17 +316,23 @@ async def batch_review(
 
         try:
             row, _ = await _find_review_item(item.id, db)
-            _validate_transition(row.review_status, item.status)
-            row.review_status = item.status
-            row.review_note = item.note
-            row.reviewed_by = str(current_user.id) if current_user else None
-            row.reviewed_at = datetime.now(UTC)
-            succeeded += 1
-        except HTTPException:
+        except HTTPException as exc:
             failed += 1
-            errors.append(
-                {"id": str(item.id), "error": "Item not found"}
-            )
+            errors.append({"id": str(item.id), "error": exc.detail})
+            continue
+
+        try:
+            _validate_transition(row.review_status, item.status)
+        except HTTPException as exc:
+            failed += 1
+            errors.append({"id": str(item.id), "error": exc.detail})
+            continue
+
+        row.review_status = item.status
+        row.review_note = item.note
+        row.reviewed_by = str(current_user.id) if current_user else None
+        row.reviewed_at = datetime.now(UTC)
+        succeeded += 1
 
     await db.commit()
 
