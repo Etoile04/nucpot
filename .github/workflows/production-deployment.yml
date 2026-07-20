@@ -336,8 +336,8 @@ jobs:
           echo "=== API /potentials endpoint (key data route) ==="
           curl -sf https://verify.nucpot.dpdns.org/api/v1/potentials -o /dev/null || exit 1
 
-          echo "=== API /reference-values endpoint ==="
-          curl -sf https://verify.nucpot.dpdns.org/api/v1/reference-values -o /dev/null || exit 1
+          echo "=== API /reference-values/pending-review endpoint ==="
+          curl -sf https://verify.nucpot.dpdns.org/api/v1/reference-values/pending-review -o /dev/null || exit 1
 
           echo "=== All external smoke tests passed ==="
 
