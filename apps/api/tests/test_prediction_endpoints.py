@@ -30,7 +30,7 @@ VALID_FEATURES = {
 
 PHASE_MODEL_RESULT = {
     "predicted_phase": "I",
-    "predicted_phase_label": "α-U (single phase)",
+    "predicted_phase_label": "α-U (single phase)",  # noqa: RUF001
     "probabilities": [
         {"cluster_type": "I", "probability": 0.85},
         {"cluster_type": "II", "probability": 0.10},
@@ -80,7 +80,7 @@ class TestPredictPhase:
         assert body["success"] is True
         data = body["data"]
         assert data["predicted_phase"] == "I"
-        assert data["predicted_phase_label"] == "α-U (single phase)"
+        assert data["predicted_phase_label"] == "α-U (single phase)"  # noqa: RUF001
         assert len(data["probabilities"]) == 4
         assert data["model_version"] == "v0.1"
 
