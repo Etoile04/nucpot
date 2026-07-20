@@ -18,6 +18,7 @@ from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.prediction import (
     PhasePredictRequest,
     PhasePredictResponse,
+    PhaseProbabilityItem,
     TempPredictRequest,
     TempPredictResponse,
 )
@@ -56,7 +57,13 @@ async def predict_phase_endpoint(
         data=PhasePredictResponse(
             predicted_phase=result["predicted_phase"],
             predicted_phase_label=result["predicted_phase_label"],
-            probabilities=result["probabilities"],
+            probabilities=[
+                PhaseProbabilityItem(
+                    class_label=p["class"],
+                    probability=p["probability"],
+                )
+                for p in result["probabilities"]
+            ],
             model_version=result["model_version"],
         ),
     )

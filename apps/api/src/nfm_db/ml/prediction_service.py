@@ -131,7 +131,12 @@ def build_feature_vector(
 
 
 def _load_phase_classifier():
-    """Load the phase classifier model from disk (lazy)."""
+    """Load the phase classifier model from disk (lazy).
+
+    The trained artifact (``phase_classifier_v01.joblib``) is a dict with a
+    ``model`` key holding the actual VotingClassifier.  We extract that key
+    so downstream inference code can call ``model.predict()`` directly.
+    """
     global _phase_model
 
     if _phase_model is not None:
@@ -146,16 +151,33 @@ def _load_phase_classifier():
     try:
         import joblib
 
-        _phase_model = joblib.load(model_path)
-        logger.info("Loaded phase classifier from %s", model_path)
+        raw = joblib.load(model_path)
+
+        # Artifact may be a dict wrapper or a bare estimator
+        if isinstance(raw, dict):
+            _phase_model = raw["model"]
+            logger.info(
+                "Loaded phase classifier from %s (dict wrapper, extracted 'model' key)",
+                model_path,
+            )
+        else:
+            _phase_model = raw
+            logger.info("Loaded phase classifier from %s", model_path)
+
         return _phase_model
     except Exception:
         logger.exception("Failed to load phase classifier from %s", model_path)
         return None
 
 
-def _load_temp_predictor():
-    """Load the temperature predictor model from disk (lazy)."""
+def _load_temp_predictor() -> dict | None:
+    """Load the temperature predictor model from disk (lazy).
+
+    The trained artifact (``temp_predictor_v01.joblib``) is a dict containing
+    ``gpr`` (GaussianProcessRegressor), ``svr`` (SVR), and ``scaler``
+    (StandardScaler) rather than a single sklearn estimator.  We return the
+    full dict so the inference function can orchestrate the ensemble manually.
+    """
     global _temp_model
 
     if _temp_model is not None:
@@ -170,8 +192,18 @@ def _load_temp_predictor():
     try:
         import joblib
 
-        _temp_model = joblib.load(model_path)
-        logger.info("Loaded temperature predictor from %s", model_path)
+        raw = joblib.load(model_path)
+
+        if isinstance(raw, dict):
+            _temp_model = raw
+            logger.info(
+                "Loaded temperature predictor from %s (dict: gpr + svr + scaler)",
+                model_path,
+            )
+        else:
+            _temp_model = raw
+            logger.info("Loaded temperature predictor from %s", model_path)
+
         return _temp_model
     except Exception:
         logger.exception("Failed to load temperature predictor from %s", model_path)
@@ -185,6 +217,10 @@ def _load_temp_predictor():
 
 def predict_phase(features: dict[str, float]) -> dict | None:
     """Run phase classification on 8 physical features.
+
+    The model may be binary (2 classes) or multi-class.  We introspect
+    ``model.classes_`` at inference time to build the correct probability
+    mapping rather than assuming a fixed number of cluster types.
 
     Args:
         features: Dictionary of 8 physical feature values.
@@ -200,22 +236,42 @@ def predict_phase(features: dict[str, float]) -> dict | None:
     feature_vec = build_feature_vector(features).reshape(1, -1)
 
     try:
-        predicted_index = model.predict(feature_vec)[0]
+        predicted_index = int(model.predict(feature_vec)[0])
         proba = model.predict_proba(feature_vec)[0]
 
-        predicted_label = CLUSTER_TYPE_LABELS[predicted_index]
+        # Use actual model classes to build probability list
+        n_classes = len(model.classes_)
+
+        # Map class indices to human-readable labels
+        if n_classes == len(CLUSTER_TYPE_LABELS):
+            labels = CLUSTER_TYPE_LABELS
+            phase_labels = CLUSTER_PHASE_LABELS
+        elif n_classes == 2:
+            # Binary classifier: 0 = single phase, 1 = multi/two-phase
+            labels = ["single_phase", "multi_phase"]
+            phase_labels = {
+                "single_phase": "single phase",
+                "multi_phase": "multi/two-phase",
+            }
+        else:
+            labels = [str(c) for c in model.classes_]
+            phase_labels = {str(c): f"class_{c}" for c in model.classes_}
+
+        predicted_label = labels[predicted_index]
 
         probabilities = [
             {
-                "cluster_type": CLUSTER_TYPE_LABELS[i],
+                "class": labels[i],
                 "probability": round(float(proba[i]), 6),
             }
-            for i in range(len(CLUSTER_TYPE_LABELS))
+            for i in range(n_classes)
         ]
 
         return {
             "predicted_phase": predicted_label,
-            "predicted_phase_label": CLUSTER_PHASE_LABELS[predicted_label],
+            "predicted_phase_label": phase_labels.get(
+                predicted_label, predicted_label
+            ),
             "probabilities": probabilities,
             "model_version": "v0.1",
         }
@@ -227,13 +283,17 @@ def predict_phase(features: dict[str, float]) -> dict | None:
 def predict_temperature(features: dict[str, float]) -> dict | None:
     """Run temperature prediction on 8 physical features.
 
+    The model artifact is a dict containing ``gpr``, ``svr``, and ``scaler``.
+    Inference: scale features → predict from GPR and SVR → equally-weighted
+    ensemble → inverse-transform to original temperature scale.
+
     Args:
         features: Dictionary of 8 physical feature values.
 
     Returns:
         Dictionary with keys: predicted_temp_c, confidence_lower_c,
-        confidence_upper_c, model_version. Returns None if model
-        unavailable.
+        confidence_upper_c, gpr_predicted_temp_c, svr_predicted_temp_c,
+        model_version. Returns None if model unavailable.
     """
     model = _load_temp_predictor()
     if model is None:
@@ -242,44 +302,83 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
     feature_vec = build_feature_vector(features).reshape(1, -1)
 
     try:
+        # Handle both dict-based artifact and bare sklearn estimator
+        if isinstance(model, dict):
+            return _predict_temp_from_dict(model, feature_vec)
+
+        # Fallback: bare estimator (e.g., if artifact is re-saved)
         predicted_temp = float(model.predict(feature_vec)[0])
-
-        # Try to get uncertainty estimates
-        confidence_width = 30.0  # Default ±30°C if no uncertainty method
-        if hasattr(model, "predict_std"):
-            std = float(model.predict_std(feature_vec)[0])
-            confidence_width = max(std * 1.96, 15.0)  # 95% CI, floor 15°C
-        elif hasattr(model, "estimators"):
-            # Ensemble: use std across individual predictions
-            preds = [float(e.predict(feature_vec)[0]) for e in model.estimators]
-            std = float(np.std(preds))
-            confidence_width = max(std * 1.96, 15.0)
-
-        gpr_temp = None
-        svr_temp = None
-
-        # If it's an ensemble with named components, extract them
-        if hasattr(model, "named_estimators") or (
-            hasattr(model, "estimators") and hasattr(model, "estimator_weights")
-        ):
-            names = list(getattr(model, "estimators_", []))
-            if hasattr(model, "named_estimators"):
-                names = list(model.named_estimators.keys())
-            for i, name in enumerate(names):
-                pred = float(model.estimators_[i].predict(feature_vec)[0])
-                if "gpr" in name.lower():
-                    gpr_temp = round(pred, 1)
-                elif "svr" in name.lower():
-                    svr_temp = round(pred, 1)
+        confidence_width = 30.0
 
         return {
             "predicted_temp_c": round(predicted_temp, 1),
             "confidence_lower_c": round(predicted_temp - confidence_width, 1),
             "confidence_upper_c": round(predicted_temp + confidence_width, 1),
-            "gpr_predicted_temp_c": gpr_temp,
-            "svr_predicted_temp_c": svr_temp,
+            "gpr_predicted_temp_c": None,
+            "svr_predicted_temp_c": None,
             "model_version": "v0.1",
         }
     except Exception:
         logger.exception("Temperature prediction failed")
         return None
+
+
+def _predict_temp_from_dict(
+    model: dict,
+    feature_vec: np.ndarray,
+) -> dict:
+    """Run ensemble temperature prediction from a dict-based model artifact.
+
+    The dict contains:
+    - ``gpr``: GaussianProcessRegressor (standardised-scale output)
+    - ``svr``: SVR (standardised-scale output)
+    - ``scaler``: StandardScaler fitted on training features
+    - ``target_mean`` / ``target_std``: z-score normalisation of target
+
+    Steps:
+    1. Scale input features with ``scaler.transform()``
+    2. Predict with GPR and SVR on scaled features
+    3. Average (equal weights) for ensemble prediction
+    4. Inverse z-score transform to get temperature in °C
+    5. Estimate confidence from GPR std (or default ±30°C)
+    """
+    gpr = model["gpr"]
+    svr = model["svr"]
+    scaler = model["scaler"]
+    target_mean = model.get("target_mean", 0.0)
+    target_std = model.get("target_std", 1.0)
+
+    scaled = scaler.transform(feature_vec)
+
+    gpr_pred_z = float(gpr.predict(scaled)[0])
+    svr_pred_z = float(svr.predict(scaled)[0])
+    ensemble_z = 0.5 * gpr_pred_z + 0.5 * svr_pred_z
+
+    # Inverse z-score → °C
+    predicted_temp = ensemble_z * target_std + target_mean
+
+    # Confidence from GPR uncertainty (if available)
+    confidence_width = 30.0  # Default ±30°C
+    if hasattr(gpr, "predict") and hasattr(gpr, "_check_predict_params"):
+        try:
+            gpr_pred_std = gpr.predict(scaled, return_std=True)
+            if isinstance(gpr_pred_std, tuple):
+                std_z = float(gpr_pred_std[1][0])
+            else:
+                std_z = float(gpr_pred_std)
+            std_c = std_z * target_std
+            confidence_width = max(std_c * 1.96, 15.0)  # 95% CI, floor 15°C
+        except Exception:
+            logger.debug("GPR std estimation failed, using default confidence")
+
+    gpr_temp_c = round(gpr_pred_z * target_std + target_mean, 1)
+    svr_temp_c = round(svr_pred_z * target_std + target_mean, 1)
+
+    return {
+        "predicted_temp_c": round(predicted_temp, 1),
+        "confidence_lower_c": round(predicted_temp - confidence_width, 1),
+        "confidence_upper_c": round(predicted_temp + confidence_width, 1),
+        "gpr_predicted_temp_c": gpr_temp_c,
+        "svr_predicted_temp_c": svr_temp_c,
+        "model_version": "v0.1",
+    }

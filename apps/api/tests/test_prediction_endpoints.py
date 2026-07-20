@@ -29,13 +29,11 @@ VALID_FEATURES = {
 }
 
 PHASE_MODEL_RESULT = {
-    "predicted_phase": "I",
-    "predicted_phase_label": "α-U (single phase)",  # noqa: RUF001
+    "predicted_phase": "single_phase",
+    "predicted_phase_label": "single phase",
     "probabilities": [
-        {"cluster_type": "I", "probability": 0.85},
-        {"cluster_type": "II", "probability": 0.10},
-        {"cluster_type": "III", "probability": 0.04},
-        {"cluster_type": "IV", "probability": 0.01},
+        {"class": "single_phase", "probability": 0.88},
+        {"class": "multi_phase", "probability": 0.12},
     ],
     "model_version": "v0.1",
 }
@@ -79,9 +77,9 @@ class TestPredictPhase:
         body = resp.json()
         assert body["success"] is True
         data = body["data"]
-        assert data["predicted_phase"] == "I"
-        assert data["predicted_phase_label"] == "α-U (single phase)"  # noqa: RUF001
-        assert len(data["probabilities"]) == 4
+        assert data["predicted_phase"] == "single_phase"
+        assert data["predicted_phase_label"] == "single phase"
+        assert len(data["probabilities"]) == 2
         assert data["model_version"] == "v0.1"
 
     @pytest.mark.asyncio
