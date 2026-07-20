@@ -73,7 +73,7 @@ TARGETS: list[CheckTarget] = [
     ),
     CheckTarget(
         name="Backend API Reference Values",
-        url="https://verify.nucpot.dpdns.org/api/v1/reference-values",
+        url="https://verify.nucpot.dpdns.org/api/v1/reference-values/pending-review",
         expected_status=200,
         max_response_ms=10000,
         severity="P1",
