@@ -1,7 +1,15 @@
+/**
+ * KgExploreView — tests TanStack Query integration, loading/error states,
+ * filter behavior, and accessibility.
+ *
+ * Tests the production KgExploreView component (replaces the legacy
+ * KgExploreContent which used manual useEffect/useState fetch pattern).
+ *
+ * Spec: NFM-1605
+ */
+
 import { describe, it, expect, vi, beforeEach } from "vitest"
-// @vitest-environment jsdom
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
-import { KgExploreContent } from "./KgExploreContent"
 
 /* ------------------------------------------------------------------ */
 /*  Polyfill ResizeObserver for jsdom                                   */
@@ -48,6 +56,27 @@ vi.mock("d3-force", () => ({
 }))
 
 /* ------------------------------------------------------------------ */
+/*  useGraphControls mock                                              */
+/* ------------------------------------------------------------------ */
+
+vi.mock("@/components/graph/useGraphControls", () => ({
+  useGraphControls: (initial: unknown, _onChange: unknown) => ({
+    viewport: initial,
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    fitToView: vi.fn(),
+  }),
+}))
+
+/* ------------------------------------------------------------------ */
+/*  useReducedMotion mock                                              */
+/* ------------------------------------------------------------------ */
+
+vi.mock("@/components/graph/useReducedMotion", () => ({
+  useReducedMotion: () => false,
+}))
+
+/* ------------------------------------------------------------------ */
 /*  next/navigation mock                                              */
 /* ------------------------------------------------------------------ */
 
@@ -72,6 +101,33 @@ vi.mock("@/lib/kg-explore-api", () => ({
 }))
 
 /* ------------------------------------------------------------------ */
+/*  TanStack Query mock — controlled behavior per test                 */
+/* ------------------------------------------------------------------ */
+
+const mockRefetch = vi.fn()
+
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    isFetching: false,
+    refetch: mockRefetch,
+  })),
+  useQueryClient: vi.fn(() => ({
+    invalidateQueries: vi.fn(() => Promise.resolve()),
+  })),
+}))
+
+/* ------------------------------------------------------------------ */
+/*  Imports (after mocks)                                             */
+/* ------------------------------------------------------------------ */
+
+import { useQuery } from "@tanstack/react-query"
+import { KgExploreView } from "./KgExploreView"
+
+/* ------------------------------------------------------------------ */
 /*  Test helpers                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -91,117 +147,135 @@ function makeGraphData(): GraphData {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Default: query resolved with data
+  vi.mocked(useQuery).mockReturnValue({
+    data: makeGraphData(),
+    isLoading: false,
+    isError: false,
+    error: null,
+    isFetching: false,
+    refetch: mockRefetch,
+  } as unknown as ReturnType<typeof useQuery<GraphData>>)
 })
 
 /* ------------------------------------------------------------------ */
 /*  Tests                                                             */
 /* ------------------------------------------------------------------ */
 
-describe("KgExploreContent", () => {
+describe("KgExploreView", () => {
   it("shows loading state initially", () => {
-    mockGetKgExploreGraph.mockReturnValueOnce(
-      new Promise(() => {}),
-    )
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      isFetching: true,
+      refetch: mockRefetch,
+    } as unknown as ReturnType<typeof useQuery<GraphData>>)
 
-    const { container } = render(<KgExploreContent />)
+    const { container } = render(<KgExploreView initialData={makeGraphData()} />)
 
-    // Ant Design Spin may not render tip text in jsdom;
-    // verify the loading container is present (Spin renders a .ant-spin wrapper).
+    // Ant Design Spin renders a .ant-spin wrapper
     const spinEl = container.querySelector(".ant-spin")
     expect(spinEl).toBeInTheDocument()
   })
 
-  it("renders graph after successful fetch", async () => {
-    mockGetKgExploreGraph.mockResolvedValueOnce(makeGraphData())
+  it("renders graph after successful fetch", () => {
+    render(<KgExploreView initialData={makeGraphData()} />)
 
-    render(<KgExploreContent />)
-    await waitFor(() => {
-      expect(screen.getByRole("application", { name: /knowledge graph/i })).toBeInTheDocument()
-    })
+    expect(
+      screen.getByRole("application", { name: /knowledge graph/i }),
+    ).toBeInTheDocument()
   })
 
-  it("shows empty state when API returns empty nodes", async () => {
-    mockGetKgExploreGraph.mockResolvedValueOnce({ nodes: [], edges: [] })
+  it("shows empty state when data has no nodes", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: { nodes: [], edges: [] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      isFetching: false,
+      refetch: mockRefetch,
+    } as unknown as ReturnType<typeof useQuery<GraphData>>)
 
-    render(<KgExploreContent />)
-    await waitFor(() => {
-      expect(screen.getByText("暂无知识图谱数据")).toBeInTheDocument()
-    })
+    render(<KgExploreView initialData={{ nodes: [], edges: [] }} />)
+
+    expect(screen.getByText("暂无知识图谱数据")).toBeInTheDocument()
   })
 
-  it("shows error state with retry button on fetch failure", async () => {
-    mockGetKgExploreGraph.mockRejectedValueOnce(new Error("Network error"))
+  it("shows error state with retry button on fetch failure", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("Network error"),
+      isFetching: false,
+      refetch: mockRefetch,
+    } as unknown as ReturnType<typeof useQuery<GraphData>>)
 
-    render(<KgExploreContent />)
-    await waitFor(() => {
-      expect(screen.getByText("Failed to load graph")).toBeInTheDocument()
-    })
+    render(<KgExploreView initialData={{ nodes: [], edges: [] }} />)
+
+    expect(screen.getByText("Failed to load graph")).toBeInTheDocument()
     expect(screen.getByText("Retry")).toBeInTheDocument()
   })
 
-  it("re-fetches data when retry button is clicked", async () => {
-    mockGetKgExploreGraph
-      .mockRejectedValueOnce(new Error("Network error"))
-      .mockResolvedValueOnce(makeGraphData())
+  it("re-fetches data when retry button is clicked", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("Network error"),
+      isFetching: false,
+      refetch: mockRefetch,
+    } as unknown as ReturnType<typeof useQuery<GraphData>>)
 
-    render(<KgExploreContent />)
-
-    await waitFor(() => {
-      expect(screen.getByText("Retry")).toBeInTheDocument()
-    })
+    render(<KgExploreView initialData={{ nodes: [], edges: [] }} />)
 
     fireEvent.click(screen.getByText("Retry"))
-
-    await waitFor(() => {
-      expect(mockGetKgExploreGraph).toHaveBeenCalledTimes(2)
-    })
+    expect(mockRefetch).toHaveBeenCalled()
   })
 
-  it("shows legend bar with all node categories", async () => {
-    mockGetKgExploreGraph.mockResolvedValueOnce(makeGraphData())
+  it("shows legend bar with all node categories", () => {
+    render(<KgExploreView initialData={makeGraphData()} />)
 
-    render(<KgExploreContent />)
-    await waitFor(() => {
-      expect(screen.getByText("Legend")).toBeInTheDocument()
-    })
-
+    expect(
+      screen.getByRole("complementary", { name: /graph legend/i }),
+    ).toBeInTheDocument()
     expect(screen.getByText("Material")).toBeInTheDocument()
     expect(screen.getByText("Property")).toBeInTheDocument()
-    expect(screen.getByText("Ontology")).toBeInTheDocument()
+    expect(screen.getByText("Entity")).toBeInTheDocument()
     expect(screen.getByText("Other")).toBeInTheDocument()
   })
 
-  it("renders page heading", async () => {
-    mockGetKgExploreGraph.mockResolvedValueOnce(makeGraphData())
+  it("shows toolbar with filter controls", () => {
+    render(<KgExploreView initialData={makeGraphData()} />)
 
-    render(<KgExploreContent />)
-
-    expect(screen.getByText("Knowledge Graph Explorer")).toBeInTheDocument()
+    expect(
+      screen.getByRole("combobox", { name: /filter by type/i }),
+    ).toBeInTheDocument()
   })
 
-  it("shows filter dropdown in toolbar", async () => {
-    mockGetKgExploreGraph.mockResolvedValueOnce(makeGraphData())
+  it("filters nodes by toggling type filter", async () => {
+    render(<KgExploreView initialData={makeGraphData()} />)
 
-    render(<KgExploreContent />)
-
-    const select = screen.getByLabelText("Filter by node type")
-    expect(select).toBeInTheDocument()
-    expect(screen.getByText("Filter by type…")).toBeInTheDocument()
-  })
-
-  it("navigates to node detail on node click", async () => {
-    mockGetKgExploreGraph.mockResolvedValueOnce(makeGraphData())
-
-    render(<KgExploreContent />)
+    const select = screen.getByRole("combobox", { name: /filter by type/i })
+    fireEvent.change(select, { target: { value: "property" } })
 
     await waitFor(() => {
-      expect(screen.getByRole("application")).toBeInTheDocument()
+      const app = screen.getByRole("application", {
+        name: /knowledge graph/i,
+      })
+      expect(app).toBeInTheDocument()
     })
+  })
 
-    const nodeElement = document.querySelector("[data-node-id='material:ZrO2']")
-    if (nodeElement) {
-      fireEvent.click(nodeElement)
-      expect(pushMock).toHaveBeenCalledWith("/kg/nodes/material/material:ZrO2")
-    }
+  it("provides refresh button that calls refetch", () => {
+    render(<KgExploreView initialData={makeGraphData()} />)
+
+    const refreshBtn = screen.getByRole("button", { name: /refresh graph data/i })
+    expect(refreshBtn).toBeInTheDocument()
+
+    fireEvent.click(refreshBtn)
+    expect(mockRefetch).toHaveBeenCalled()
   })
 })

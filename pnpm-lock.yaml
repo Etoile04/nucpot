@@ -111,7 +111,7 @@ importers:
         specifier: ^15.5.19
         version: 15.5.20(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
       jsdom:
-        specifier: ^25.0.0
+        specifier: ^25.0.1
         version: 25.0.1
       prettier:
         specifier: ^3.9.5

@@ -61,7 +61,11 @@ vi.mock("@tanstack/react-query", () => ({
     isLoading: false,
     isError: false,
     error: null,
+    isFetching: false,
     refetch: vi.fn(),
+  })),
+  useQueryClient: vi.fn(() => ({
+    invalidateQueries: vi.fn(() => Promise.resolve()),
   })),
 }))
 
