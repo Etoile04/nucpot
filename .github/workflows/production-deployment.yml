@@ -319,6 +319,12 @@ jobs:
           ENDSSH
 
       - name: External smoke tests
+        env:
+          # Bypass the deploy proxy — these are public URLs accessible directly
+          HTTP_PROXY: ""
+          HTTPS_PROXY: ""
+          http_proxy: ""
+          https_proxy: ""
         run: |
           # Retry loop: give Cloudflare Tunnel time to stabilize after container restart
           for i in 1 2 3; do
