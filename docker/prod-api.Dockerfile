@@ -13,13 +13,19 @@ COPY apps/api/pyproject.toml ./
 COPY apps/api/src/ ./src/
 COPY apps/api/migrations/ ./migrations/
 
-# Install the package (now source is available for setuptools)
-RUN pip install --no-cache-dir .
+# Install the package (retry logic for flaky PyPI networks in CN region)
+RUN pip install --no-cache-dir --default-timeout=120 --retries=10 . || \
+    (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 .) || \
+    (sleep 20 && pip install --no-cache-dir --default-timeout=180 --retries=15 .)
 
 # Bake in alembic config so the entrypoint can auto-migrate (matches staging-api.Dockerfile).
 # Without this, new migrations shipped in code are never applied to the production DB,
 # causing UndefinedColumnError at runtime (schema drift incident, 2026-07-20).
 COPY apps/api/alembic.ini ./
+
+# ML model artifacts for prediction endpoints (phase classifier + temp predictor)
+# prediction_service.py resolves MODELS_DIR = /app/models (6 parent hops from src/nfm_db/ml/)
+COPY apps/api/models/ ./models/
 
 # Set PYTHONPATH so uvicorn/celery can find nfm_db
 ENV PYTHONPATH=/app/src

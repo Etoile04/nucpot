@@ -2,6 +2,7 @@
 
 from nfm_db.api.v1 import (
     blog,
+    composition,
     extraction,
     feedback,
     health,
@@ -21,6 +22,7 @@ from nfm_db.api.v1 import (
 
 __all__ = [
     "blog",
+    "composition",
     "extraction",
     "feedback",
     "health",

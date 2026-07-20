@@ -1,0 +1,22 @@
+TempPredictor v1.0 — LOO-CV Regression Report
+==================================================
+Samples:        61
+Mean MAE:       19.44 °C (target < 40.0 °C)
+RMSE:           23.96 °C
+R²:             0.7412
+Max |err|:      49.82 °C
+Min |err|:      0.17 °C
+Acceptance:     PASS
+
+Per-fold results (first 10 shown):
+  fold=  0  true=668.00°C  pred=644.25°C  |err|=23.75°C  gpr_std= 9.49°C
+  fold=  1  true=660.00°C  pred=643.23°C  |err|=16.77°C  gpr_std= 1.62°C
+  fold=  2  true=650.00°C  pred=638.01°C  |err|=11.99°C  gpr_std= 1.35°C
+  fold=  3  true=638.00°C  pred=631.67°C  |err|= 6.33°C  gpr_std= 1.30°C
+  fold=  4  true=625.00°C  pred=624.74°C  |err|= 0.26°C  gpr_std= 1.28°C
+  fold=  5  true=612.00°C  pred=618.35°C  |err|= 6.35°C  gpr_std= 1.38°C
+  fold=  6  true=590.00°C  pred=608.32°C  |err|=18.32°C  gpr_std= 1.61°C
+  fold=  7  true=565.00°C  pred=594.00°C  |err|=29.00°C  gpr_std= 1.50°C
+  fold=  8  true=548.00°C  pred=587.41°C  |err|=39.41°C  gpr_std= 1.68°C
+  fold=  9  true=530.00°C  pred=579.82°C  |err|=49.82°C  gpr_std= 4.92°C
+  ... (51 more folds)
