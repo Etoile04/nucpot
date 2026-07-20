@@ -25,7 +25,7 @@ class SHAPReport:
             self.__dict__.update(state)
         elif isinstance(state, (list, tuple)):
             try:
-                self.__dict__.update(dict(state))  # type: ignore[arg-type]
+                self.__dict__.update(dict(state))
             except (TypeError, ValueError):
                 # Fallback: store raw state list
                 self.__dict__["_raw_state"] = state
