@@ -321,10 +321,10 @@ jobs:
       - name: External smoke tests
         env:
           # Bypass the deploy proxy — these are public URLs accessible directly
+          # GitHub Actions env var names are case-insensitive; do NOT add
+          # lowercase duplicates (http_proxy / https_proxy) here.
           HTTP_PROXY: ""
           HTTPS_PROXY: ""
-          http_proxy: ""
-          https_proxy: ""
         run: |
           # Retry loop: give Cloudflare Tunnel time to stabilize after container restart
           for i in 1 2 3; do
