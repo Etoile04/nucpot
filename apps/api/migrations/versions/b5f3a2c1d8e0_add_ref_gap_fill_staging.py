@@ -20,12 +20,12 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create _ref_gap_fill_staging table with enums and indexes."""
-    op.execute("CREATE TYPE confidence_enum AS ENUM (\'high\', \'medium\', \'low\')")
-    op.execute("CREATE TYPE staging_status_enum AS ENUM (\'pending\', \'approved\', \'rejected\', \'promoted\')")
-    op.execute("CREATE TYPE cache_level_enum AS ENUM (\'L1\', \'L2\', \'L3A\', \'L3B\')")
+    op.execute("CREATE TYPE IF NOT EXISTS confidence_enum AS ENUM ('high', 'medium', 'low')")
+    op.execute("CREATE TYPE IF NOT EXISTS staging_status_enum AS ENUM ('pending', 'approved', 'rejected', 'promoted')")
+    op.execute("CREATE TYPE IF NOT EXISTS cache_level_enum AS ENUM ('L1', 'L2', 'L3A', 'L3B')")
 
     op.execute("""
-        CREATE TABLE _ref_gap_fill_staging (
+        CREATE TABLE IF NOT EXISTS _ref_gap_fill_staging (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             element_system VARCHAR(50) NOT NULL,
             phase VARCHAR(50),
@@ -46,9 +46,9 @@ def upgrade() -> None:
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    op.execute("CREATE INDEX idx_staging_status ON _ref_gap_fill_staging (staging_status)")
-    op.execute("CREATE INDEX idx_staging_element_system ON _ref_gap_fill_staging (element_system)")
-    op.execute("CREATE INDEX idx_staging_property ON _ref_gap_fill_staging (property_name)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_staging_status ON _ref_gap_fill_staging (staging_status)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_staging_element_system ON _ref_gap_fill_staging (element_system)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_staging_property ON _ref_gap_fill_staging (property_name)")
 
 
 def downgrade() -> None:
