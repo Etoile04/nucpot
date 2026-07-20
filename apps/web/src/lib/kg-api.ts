@@ -96,7 +96,7 @@ function toGraphNode(node: KGGraphNode, focalId: string): GraphNode {
  * Transforms a KGGraphResponse into GraphCanvas-compatible GraphData.
  */
 export function transformGraphResponse(response: KGGraphResponse): GraphData {
-  const focalId = response.focal.id
+  const focalId = response.focal?.id ?? ""
 
   return {
     nodes: response.nodes.map((n) => toGraphNode(n, focalId)),
