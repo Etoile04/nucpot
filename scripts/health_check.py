@@ -59,14 +59,21 @@ TARGETS: list[CheckTarget] = [
     ),
     CheckTarget(
         name="Backend API Health",
-        url="https://verify.nucpot.dpdns.org/api/health",
+        url="https://verify.nucpot.dpdns.org/api/v1/health",
         expected_status=200,
         expected_contains='"ok"',
         severity="P0",
     ),
     CheckTarget(
         name="Backend API Potentials",
-        url="https://verify.nucpot.dpdns.org/api/potentials",
+        url="https://verify.nucpot.dpdns.org/api/v1/potentials",
+        expected_status=200,
+        max_response_ms=10000,
+        severity="P1",
+    ),
+    CheckTarget(
+        name="Backend API Reference Values",
+        url="https://verify.nucpot.dpdns.org/api/v1/reference-values",
         expected_status=200,
         max_response_ms=10000,
         severity="P1",
