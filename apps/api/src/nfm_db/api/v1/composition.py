@@ -66,7 +66,8 @@ async def generate_compositions(
             raw = [rng.random() for _ in solutes]
             total = sum(raw)
             fractions = {
-                s: remaining * (r / total) for s, r in zip(solutes, raw)
+                s: remaining * (r / total)
+                for s, r in zip(solutes, raw, strict=False)
             }
 
         composition = {"U": u_frac}
