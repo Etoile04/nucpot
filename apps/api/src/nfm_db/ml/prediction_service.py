@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "models"
+# File lives at apps/api/src/nfm_db/ml/ → 6 .parent hops reach project root
+MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "models"
 
 PHASE_MODEL_PATH = MODELS_DIR / "phase_classifier_v01.joblib"
 TEMP_MODEL_PATH = MODELS_DIR / "temp_predictor_v01.joblib"
