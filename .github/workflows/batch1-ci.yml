@@ -56,7 +56,7 @@ jobs:
         working-directory: apps/api
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v5
 
       - name: Install Python toolchain
         uses: actions/setup-python@v6
