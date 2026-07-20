@@ -96,9 +96,12 @@ class PhasePredictRequest(PredictionFeatures):
 
 
 class PhaseProbabilityItem(BaseModel):
-    """Probability for a single cluster type."""
+    """Probability for a single class."""
 
-    cluster_type: str = Field(..., description="Cluster type label (e.g. 'I', 'II')")
+    class_label: str = Field(
+        ...,
+        description="Class label (e.g. 'I', 'II', 'single_phase', 'multi_phase')",
+    )
     probability: float = Field(..., ge=0, le=1, description="Predicted probability")
 
 
