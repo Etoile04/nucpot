@@ -144,15 +144,22 @@ export function toGraphNodeType(apiType: string): GraphNodeType {
  * edges get a stable `id` synthesized from their source/target.
  */
 export function mapSubgraphResponse(
-  response: KgGraphApiResponse,
+  response: KgGraphApiResponse | { data: KgGraphApiResponse },
 ): GraphData {
-  const nodes: GraphNode[] = response.nodes.map((node) => ({
+  // The API wraps the payload in a { success, data, error } envelope.
+  // request() returns the raw envelope without unwrapping .data,
+  // so handle both shapes defensively.
+  const payload = "data" in response && "nodes" in (response as any).data
+    ? (response as any).data
+    : response
+
+  const nodes: GraphNode[] = payload.nodes.map((node: KgGraphApiNode) => ({
     id: node.id,
     label: node.label,
     type: toGraphNodeType(node.type),
   }))
 
-  const edges: GraphEdge[] = response.edges.map((edge, index) => ({
+  const edges: GraphEdge[] = payload.edges.map((edge: KgGraphApiEdge, index: number) => ({
     id: `e-${index}-${edge.source}->${edge.target}`,
     source: edge.source,
     target: edge.target,
