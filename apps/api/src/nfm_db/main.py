@@ -11,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 
 from nfm_db.api.v1 import (
     blog,
+    composition,
     conflict,
     extraction,
     feedback,
@@ -236,3 +237,4 @@ app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"]
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
 app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])
 app.include_router(prediction.router, prefix="/api/v1", tags=["ML预测"])
+app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
