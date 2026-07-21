@@ -17,6 +17,7 @@
 import type { Page, Route } from "@playwright/test"
 import {
   MOCK_OPTIMIZE_RESPONSE,
+  MOCK_EMPTY_PARETO_RESPONSE,
   MOCK_PHASE_PREDICT_RESPONSE,
   MOCK_TEMP_PREDICT_RESPONSE,
   OPTIMIZE_ERROR_RESPONSE,
@@ -28,7 +29,7 @@ import {
 // Scenario type
 // =============================================================================
 
-export type DesignMockScenario = "normal" | "error" | "validation-error"
+export type DesignMockScenario = "normal" | "empty" | "error" | "validation-error"
 
 // =============================================================================
 // Route handler helpers
@@ -89,6 +90,14 @@ function handleErrorScenario(route: Route, url: string): void {
   handleNormalScenario(route, url)
 }
 
+function handleEmptyScenario(route: Route, url: string): void {
+  if (url.endsWith("/api/v1/design/optimize")) {
+    jsonResponse(route, wrapSuccess(MOCK_EMPTY_PARETO_RESPONSE))
+    return
+  }
+  handleNormalScenario(route, url)
+}
+
 function handleValidationErrorScenario(route: Route, url: string): void {
   if (url.endsWith("/api/v1/design/optimize")) {
     jsonResponse(route, VALIDATION_ERROR_RESPONSE, 422)
@@ -126,6 +135,9 @@ export async function setupDesignMockApi(
       case "validation-error":
         handleValidationErrorScenario(route, url)
         break
+      case "empty":
+        handleEmptyScenario(route, url)
+        break
       case "normal":
       default:
         handleNormalScenario(route, url)
@@ -142,6 +154,7 @@ export async function setupDesignMockApi(
       case "error":
       case "normal":
       case "validation-error":
+      case "empty":
       default:
         handleNormalScenario(route, url)
         break
