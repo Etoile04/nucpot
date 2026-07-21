@@ -13,6 +13,7 @@ from nfm_db.api.v1 import (
     blog,
     composition,
     conflict,
+    design,
     extraction,
     feedback,
     health,
@@ -103,7 +104,8 @@ app = FastAPI(
         "- **反馈 (Feedback)** — 用户反馈提交与后台审阅\n"
         "- **博客 (Blog)** — 内部博客管理 (草稿/审核/发布工作流)\n"
         "- **健康检查 (Health)** — 服务可用性与模块健康状态\n"
-        "- **ML预测 (ML Prediction)** — 相类型分类与相变温度预测\n\n"
+        "- **ML预测 (ML Prediction)** — 相类型分类与相变温度预测\n"
+        "- **设计优化 (Design Optimization)** — NSGA-II多目标合金成分优化\n\n"
         "### API 约定\n\n"
         "所有响应均使用统一的 `{success: bool, data?: ..., error?: string}` 信封结构。\n"
         "分页接口返回 `{items, total, page, limit, pages}` 元数据。\n"
@@ -148,6 +150,10 @@ app = FastAPI(
         {"name": "健康检查", "description": "服务与各模块的健康状态。"},
         {"name": "V4 信息抽取", "description": "NFM v4 版本的信息抽取接口(实验性)。"},
         {"name": "ML预测", "description": "ML相类型分类与相变温度预测。"},
+        {
+            "name": "设计优化",
+            "description": "NSGA-II多目标合金成分优化设计与帕累托前沿搜索。",
+        },
     ],
     lifespan=lifespan,
 )
@@ -237,4 +243,5 @@ app.include_router(lightrag.router, prefix="/api/v1/lightrag", tags=["LightRAG"]
 app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽取"])
 app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])
 app.include_router(prediction.router, prefix="/api/v1", tags=["ML预测"])
+app.include_router(design.router, prefix="/api/v1", tags=["设计优化"])
 app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
