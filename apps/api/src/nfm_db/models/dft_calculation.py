@@ -125,6 +125,11 @@ class DFTCalculation(TimestampMixin, Base):
     )
 
     # -- Metadata --
+    source: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Data source tag (e.g. 'materials_project', 'incremental_200')",
+    )
     status: Mapped[str] = mapped_column(
         String(50),
         default="pending",
