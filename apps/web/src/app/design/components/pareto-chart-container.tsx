@@ -15,6 +15,7 @@ import { ParetoScatterChart } from "./pareto-scatter-chart"
 import { ConvergenceLineChart } from "./convergence-line-chart"
 import { AxisSwitcher } from "./axis-switcher"
 import { LoadingOverlay } from "./loading-overlay"
+import { useMediaQuery } from "../hooks/use-media-query"
 
 const { Text } = Typography
 
@@ -76,6 +77,12 @@ export function ParetoChartContainer({
   const [activeTab, setActiveTab] = useState<TabKey>("pareto")
   const [selectedXAxis, setSelectedXAxis] = useState<ObjectiveKey>(DEFAULT_AXIS_PAIR.x)
   const [selectedYAxis, setSelectedYAxis] = useState<ObjectiveKey>(DEFAULT_AXIS_PAIR.y)
+
+  // NFM-1698 (QA Phase 3) — at <=480px the bilingual toolbar ("Pareto前沿 /
+  // Pareto Front") used to wrap character-by-character because the row had
+  // no flex-wrap and the heading had no whitespace-nowrap. We also let the
+  // tab strip drop onto its own line on narrow viewports.
+  const isNarrow = useMediaQuery("(max-width: 480px)")
 
   /** Handle point click — toggle selection */
   const handlePointClick = useCallback(
@@ -215,20 +222,24 @@ export function ParetoChartContainer({
       aria-label="Pareto优化结果 / Pareto optimization results"
     >
       {/* Toolbar row */}
-      <div style={{
-        padding: "12px 16px",
-        borderBottom: "1px solid var(--color-border)",
-        flexShrink: 0,
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}>
-        <Space>
-          <Typography.Text strong>
-            Pareto前沿 / Pareto Front
+      <div
+        style={{
+          padding: isNarrow ? "8px 12px" : "12px 16px",
+          borderBottom: "1px solid var(--color-border)",
+          flexShrink: 0,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Space size={isNarrow ? 4 : 8} wrap>
+          <Typography.Text strong style={{ whiteSpace: "nowrap", wordBreak: "keep-all" }}>
+            {isNarrow ? "Pareto前沿" : "Pareto前沿 / Pareto Front"}
           </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {paretoCount} 个解 / solutions
+          <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+            {paretoCount} {isNarrow ? "解" : "个解 / solutions"}
           </Typography.Text>
         </Space>
         <Tabs
@@ -238,7 +249,7 @@ export function ParetoChartContainer({
           tabBarGutter={4}
           items={[
             { key: "pareto", label: "Pareto" },
-            { key: "convergence", label: "收敛 / Convergence" },
+            { key: "convergence", label: isNarrow ? "收敛" : "收敛 / Convergence" },
           ]}
           tabBarStyle={{ marginBottom: 0 }}
         />
