@@ -1,7 +1,7 @@
-"""Pydantic schemas for ML prediction endpoints (NFM-1598).
+"""Pydantic schemas for ML prediction endpoints (NFM-1598, NFM-1669).
 
 Input: 8 physical features computed from composition.
-Output: Phase classification (label + probabilities) or temperature prediction.
+Output: Phase classification or temperature prediction with confidence scoring.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # Feature Input — shared by both endpoints
 # ---------------------------------------------------------------------------
+
 
 class PredictionFeatures(BaseModel):
     """8 physical features computed from alloy composition.
@@ -87,11 +88,31 @@ class PredictionFeatures(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Shared prediction output fields (NFM-1669)
+# ---------------------------------------------------------------------------
+
+
+class PredictionWarningItem(BaseModel):
+    """A warning generated during prediction."""
+
+    code: str = Field(
+        ...,
+        description="Machine-readable warning identifier",
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable warning description",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Phase Classification — input + output
 # ---------------------------------------------------------------------------
 
+
 class PhasePredictRequest(PredictionFeatures):
     """Request body for POST /api/v1/predict/phase."""
+
     pass
 
 
@@ -120,6 +141,16 @@ class PhasePredictResponse(BaseModel):
         ...,
         description="Predicted probabilities for each cluster type",
     )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Prediction confidence score (max class probability)",
+    )
+    warnings: list[PredictionWarningItem] = Field(
+        default_factory=list,
+        description="Warnings generated during prediction (e.g. low confidence)",
+    )
     model_version: str = Field(
         ...,
         description="Model artifact version identifier",
@@ -130,8 +161,10 @@ class PhasePredictResponse(BaseModel):
 # Temperature Prediction — input + output
 # ---------------------------------------------------------------------------
 
+
 class TempPredictRequest(PredictionFeatures):
     """Request body for POST /api/v1/predict/temperature."""
+
     pass
 
 
@@ -157,6 +190,16 @@ class TempPredictResponse(BaseModel):
     svr_predicted_temp_c: float | None = Field(
         default=None,
         description="SVR component prediction (°C)",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Prediction confidence score (from GPR std or default)",
+    )
+    warnings: list[PredictionWarningItem] = Field(
+        default_factory=list,
+        description="Warnings generated during prediction (e.g. low confidence)",
     )
     model_version: str = Field(
         ...,

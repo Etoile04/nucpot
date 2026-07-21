@@ -35,7 +35,9 @@ PHASE_MODEL_RESULT = {
         {"class": "single_phase", "probability": 0.88},
         {"class": "multi_phase", "probability": 0.12},
     ],
-    "model_version": "v0.1",
+    "confidence": 0.88,
+    "warnings": [],
+    "model_version": "v1.0",
 }
 
 TEMP_MODEL_RESULT = {
@@ -44,7 +46,9 @@ TEMP_MODEL_RESULT = {
     "confidence_upper_c": 646.0,
     "gpr_predicted_temp_c": 615.0,
     "svr_predicted_temp_c": 626.0,
-    "model_version": "v0.1",
+    "confidence": 0.72,
+    "warnings": [],
+    "model_version": "v1.0",
 }
 
 
@@ -80,7 +84,7 @@ class TestPredictPhase:
         assert data["predicted_phase"] == "single_phase"
         assert data["predicted_phase_label"] == "single phase"
         assert len(data["probabilities"]) == 2
-        assert data["model_version"] == "v0.1"
+        assert data["model_version"] == "v1.0"
 
     @pytest.mark.asyncio
     async def test_phase_503_when_model_unavailable(self, client: AsyncClient) -> None:
@@ -161,6 +165,41 @@ class TestPredictPhase:
         for item in data["probabilities"]:
             assert 0.0 <= item["probability"] <= 1.0
 
+    @pytest.mark.asyncio
+    async def test_phase_confidence_and_warnings(self, client: AsyncClient) -> None:
+        """Response includes confidence score and warnings array."""
+        with patch(
+            "nfm_db.api.v1.prediction.predict_phase",
+            return_value=PHASE_MODEL_RESULT,
+        ):
+            resp = await client.post("/api/v1/predict/phase", json=VALID_FEATURES)
+
+        data = resp.json()["data"]
+        assert "confidence" in data
+        assert 0.0 <= data["confidence"] <= 1.0
+        assert "warnings" in data
+        assert isinstance(data["warnings"], list)
+
+    @pytest.mark.asyncio
+    async def test_phase_low_confidence_warning(self, client: AsyncClient) -> None:
+        """Low confidence generates warning in response."""
+        low_conf_result = dict(PHASE_MODEL_RESULT)
+        low_conf_result["confidence"] = 0.35
+        low_conf_result["warnings"] = [
+            {"code": "low_confidence_on_phase", "message": "Below threshold"}
+        ]
+
+        with patch(
+            "nfm_db.api.v1.prediction.predict_phase",
+            return_value=low_conf_result,
+        ):
+            resp = await client.post("/api/v1/predict/phase", json=VALID_FEATURES)
+
+        data = resp.json()["data"]
+        assert data["confidence"] == 0.35
+        assert len(data["warnings"]) == 1
+        assert data["warnings"][0]["code"] == "low_confidence_on_phase"
+
 
 # ---------------------------------------------------------------------------
 # POST /api/v1/predict/temperature
@@ -190,7 +229,7 @@ class TestPredictTemperature:
         assert data["confidence_upper_c"] > data["predicted_temp_c"]
         assert data["gpr_predicted_temp_c"] == 615.0
         assert data["svr_predicted_temp_c"] == 626.0
-        assert data["model_version"] == "v0.1"
+        assert data["model_version"] == "v1.0"
 
     @pytest.mark.asyncio
     async def test_temperature_503_when_model_unavailable(
@@ -259,6 +298,79 @@ class TestPredictTemperature:
         assert data["confidence_lower_c"] < data["predicted_temp_c"] < data[
             "confidence_upper_c"
         ]
+
+    @pytest.mark.asyncio
+    async def test_temperature_confidence_and_warnings(
+        self, client: AsyncClient
+    ) -> None:
+        """Response includes confidence score and warnings array."""
+        with patch(
+            "nfm_db.api.v1.prediction.predict_temperature",
+            return_value=TEMP_MODEL_RESULT,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/temperature", json=VALID_FEATURES
+            )
+
+        data = resp.json()["data"]
+        assert "confidence" in data
+        assert 0.0 <= data["confidence"] <= 1.0
+        assert "warnings" in data
+        assert isinstance(data["warnings"], list)
+
+    @pytest.mark.asyncio
+    async def test_temperature_low_confidence_warning(
+        self, client: AsyncClient
+    ) -> None:
+        """Low confidence generates warning in response."""
+        low_conf_result = dict(TEMP_MODEL_RESULT)
+        low_conf_result["confidence"] = 0.30
+        low_conf_result["warnings"] = [
+            {
+                "code": "low_confidence_on_temperature",
+                "message": "GPR std is high",
+            }
+        ]
+
+        with patch(
+            "nfm_db.api.v1.prediction.predict_temperature",
+            return_value=low_conf_result,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/temperature", json=VALID_FEATURES
+            )
+
+        data = resp.json()["data"]
+        assert data["confidence"] == 0.30
+        assert len(data["warnings"]) == 1
+        assert data["warnings"][0]["code"] == "low_confidence_on_temperature"
+
+    @pytest.mark.asyncio
+    async def test_temperature_no_uncertainty_warning(
+        self, client: AsyncClient
+    ) -> None:
+        """Default confidence when GPR std unavailable generates warning."""
+        no_uncertainty_result = dict(TEMP_MODEL_RESULT)
+        no_uncertainty_result["confidence"] = 0.5
+        no_uncertainty_result["warnings"] = [
+            {
+                "code": "temperature_no_uncertainty",
+                "message": "GPR uncertainty not available",
+            }
+        ]
+
+        with patch(
+            "nfm_db.api.v1.prediction.predict_temperature",
+            return_value=no_uncertainty_result,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/temperature", json=VALID_FEATURES
+            )
+
+        data = resp.json()["data"]
+        assert data["confidence"] == 0.5
+        assert len(data["warnings"]) == 1
+        assert data["warnings"][0]["code"] == "temperature_no_uncertainty"
 
 
 # ---------------------------------------------------------------------------

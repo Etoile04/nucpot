@@ -1,7 +1,9 @@
-"""ML prediction API endpoints (NFM-1598).
+"""ML prediction API endpoints (NFM-1598, NFM-1669).
 
 - POST /api/v1/predict/phase        — phase classification from 8 physical features
 - POST /api/v1/predict/temperature  — transition temperature prediction
+
+All responses include model_version, confidence score, and warnings.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from nfm_db.schemas.prediction import (
     PhasePredictRequest,
     PhasePredictResponse,
     PhaseProbabilityItem,
+    PredictionWarningItem,
     TempPredictRequest,
     TempPredictResponse,
 )
@@ -64,6 +67,11 @@ async def predict_phase_endpoint(
                 )
                 for p in result["probabilities"]
             ],
+            confidence=result["confidence"],
+            warnings=[
+                PredictionWarningItem(code=w["code"], message=w["message"])
+                for w in result.get("warnings", [])
+            ],
             model_version=result["model_version"],
         ),
     )
@@ -101,6 +109,11 @@ async def predict_temperature_endpoint(
             confidence_upper_c=result["confidence_upper_c"],
             gpr_predicted_temp_c=result.get("gpr_predicted_temp_c"),
             svr_predicted_temp_c=result.get("svr_predicted_temp_c"),
+            confidence=result["confidence"],
+            warnings=[
+                PredictionWarningItem(code=w["code"], message=w["message"])
+                for w in result.get("warnings", [])
+            ],
             model_version=result["model_version"],
         ),
     )
