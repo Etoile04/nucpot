@@ -11,6 +11,11 @@ Public API:
     - ALLOY_ELEMENTS: element names and bounds for the search space
 """
 
+from nfm_db.optimization.ml_surrogate import (
+    ConvergenceRecord,
+    ConvergenceTracker,
+    MLSurrogateEvaluator,
+)
 from nfm_db.optimization.nsga2_problem import (
     ALLOY_ELEMENTS,
     BOUNDS_BV_MAX,
@@ -37,7 +42,10 @@ __all__ = [
     "CONSTRAINT_MAX_ELEMENTS",
     "CONSTRAINT_MIN_ELEMENTS",
     "ELEMENT_ABSENCE_THRESHOLD",
+    "ConvergenceRecord",
+    "ConvergenceTracker",
     "FabricabilityScorer",
+    "MLSurrogateEvaluator",
     "NuclearFuelOptimizationProblem",
     "OptimizationConfig",
     "OptimizationResult",

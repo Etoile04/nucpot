@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from pymoo.core.problem import Problem
+
+if TYPE_CHECKING:
+    from nfm_db.optimization.ml_surrogate import MLSurrogateEvaluator
 
 from nfm_db.ml.feature_engineering import (
     compute_all_features,
@@ -233,122 +236,31 @@ class NuclearFuelOptimizationProblem(Problem):
             xu=xu,
         )
 
-        self._use_ml_surrogate = use_ml_surrogate
         self._fabricability_scorer = (
             fabricability_scorer if fabricability_scorer is not None
             else FabricabilityScorer.default()
         )
         self._eval_count = 0
 
-        # Lazy-loaded ML model references
-        self._temp_predictor_fn = None
-        self._phase_predictor_fn = None
+        # Lazy-loaded ML surrogate evaluator (vectorized batch)
+        self._ml_evaluator: MLSurrogateEvaluator | None = None
 
         if use_ml_surrogate:
             self._init_ml_models()
 
     def _init_ml_models(self) -> None:
-        """Lazy-initialize ML model inference functions."""
+        """Lazy-initialize ML surrogate evaluator for vectorized batching."""
         try:
-            from nfm_db.ml.prediction_service import (
-                predict_phase,
-                predict_temperature,
-            )
+            from nfm_db.optimization.ml_surrogate import MLSurrogateEvaluator
 
-            self._phase_predictor_fn = predict_phase
-            self._temp_predictor_fn = predict_temperature
-            logger.info("ML surrogate models loaded successfully")
-        except ImportError:
+            self._ml_evaluator = MLSurrogateEvaluator(use_ml_surrogate=True)
+            logger.info("ML surrogate evaluator loaded successfully")
+        except (ImportError, Exception):
             logger.warning(
-                "prediction_service not available; "
+                "ML surrogate evaluator not available; "
                 "falling back to synthetic evaluator"
             )
-            self._use_ml_surrogate = False
-
-    # ------------------------------------------------------------------
-    # Batch helpers: convert decision matrix → feature dictionaries
-    # ------------------------------------------------------------------
-
-    def _decision_to_features(
-        self, X: np.ndarray  # noqa: N803 - X is pymoo convention for decision matrix
-    ) -> tuple[list[dict[str, float]], np.ndarray, np.ndarray]:
-        """Convert decision variable matrix to feature dictionaries.
-
-        Args:
-            X: Decision matrix (n_pop, n_var).
-
-        Returns:
-            Tuple of (compositions, u_densities, bv_ratios).
-        """
-        n = X.shape[0]
-        compositions: list[dict[str, float]] = []
-        u_densities = np.zeros(n)
-        bv_ratios = np.zeros(n)
-
-        for i in range(n):
-            solute_sum = float(np.sum(X[i]))
-            u_frac = max(1.0 - solute_sum, 0.0)
-
-            composition = {"U": u_frac}
-            for (elem, _, _), frac in zip(ALLOY_ELEMENTS, X[i], strict=False):
-                composition[elem] = float(frac)
-
-            compositions.append(composition)
-
-            features = compute_all_features(composition)
-            u_densities[i] = features.get("u_density", 0.0)
-            bv_ratios[i] = features.get("bv_ratio", 0.0)
-
-        return compositions, u_densities, bv_ratios
-
-    def _predict_temperatures_batch(
-        self, compositions: list[dict[str, float]]
-    ) -> np.ndarray:
-        """Predict phase stability temperatures for a batch of compositions.
-
-        Args:
-            compositions: List of composition dictionaries.
-
-        Returns:
-            Array of predicted temperatures in °C. Falls back to synthetic
-            values when ML models are unavailable.
-        """
-        n = len(compositions)
-        temps = np.full(n, 400.0)
-
-        if self._temp_predictor_fn is None:
-            return temps
-
-        for i, comp in enumerate(compositions):
-            features = compute_all_features(comp)
-            result = self._temp_predictor_fn(features)
-            if result is not None:
-                temps[i] = result.get("predicted_temp_c", 400.0)
-
-        return temps
-
-    def _predict_fabricability_batch(
-        self,
-        compositions: list[dict[str, float]],
-    ) -> np.ndarray:
-        """Compute fabricability scores for a batch.
-
-        Args:
-            compositions: List of composition dictionaries.
-
-        Returns:
-            Array of fabricability scores in [0, 1].
-        """
-        n = len(compositions)
-        entropies = np.zeros(n)
-        bv_ratios = np.zeros(n)
-
-        for i, comp in enumerate(compositions):
-            features = compute_all_features(comp)
-            entropies[i] = features.get("config_entropy", 0.0)
-            bv_ratios[i] = features.get("bv_ratio", 0.0)
-
-        return self._fabricability_scorer.score(entropies, bv_ratios)
+            self._ml_evaluator = None
 
     # ------------------------------------------------------------------
     # Core evaluation (vectorized)
@@ -365,6 +277,9 @@ class NuclearFuelOptimizationProblem(Problem):
             out["F"]: (n, 3) objective matrix — minimize all three.
             out["G"]: (n, 4) inequality constraint violations — ≤ 0 feasible.
 
+        Uses MLSurrogateEvaluator for vectorized batch prediction when
+        available, falling back to per-individual feature computation.
+
         Args:
             X: Decision variable matrix (n_pop, n_var).
             out: Output dictionary to populate with F and G.
@@ -372,33 +287,121 @@ class NuclearFuelOptimizationProblem(Problem):
         n = X.shape[0]
         self._eval_count += n
 
-        compositions, u_densities, bv_ratios = self._decision_to_features(X)
+        compositions = self._build_compositions(X)
 
-        # Objective 1: minimize -ρ_U (maximize density)
+        # Use ML surrogate evaluator for vectorized batch prediction
+        if self._ml_evaluator is not None:
+            self._evaluate_with_ml(X, compositions, out)
+        else:
+            self._evaluate_synthetic(X, compositions, out)
+
+    def _build_compositions(
+        self,
+        X: np.ndarray,  # noqa: N803
+    ) -> list[dict[str, float]]:
+        """Convert decision variable matrix to composition dictionaries.
+
+        Args:
+            X: Decision matrix (n_pop, n_var).
+
+        Returns:
+            List of composition dictionaries.
+        """
+        compositions: list[dict[str, float]] = []
+        for i in range(X.shape[0]):
+            solute_sum = float(np.sum(X[i]))
+            u_frac = max(1.0 - solute_sum, 0.0)
+
+            composition = {"U": u_frac}
+            for (elem, _, _), frac in zip(ALLOY_ELEMENTS, X[i], strict=False):
+                composition[elem] = float(frac)
+
+            compositions.append(composition)
+        return compositions
+
+    def _evaluate_with_ml(
+        self,
+        X: np.ndarray,  # noqa: N803
+        compositions: list[dict[str, float]],
+        out: dict[str, Any],
+    ) -> None:
+        """Vectorized evaluation using MLSurrogateEvaluator.
+
+        Builds a single feature matrix and calls sklearn batch predict,
+        eliminating per-individual Python loops.
+        """
+        evaluator = self._ml_evaluator
+        assert evaluator is not None  # Guarded by caller
+
+        feature_matrix = evaluator.build_feature_matrix(compositions)
+        u_densities, bv_ratios, config_entropies = (
+            evaluator.extract_physical_properties(feature_matrix)
+        )
+
+        # Objective 1: minimize -ρ_U
         f1 = -u_densities
 
-        # Objective 2: minimize -T_stable (maximize temperature)
-        temps = self._predict_temperatures_batch(compositions)
+        # Objective 2: minimize -T_stable (vectorized batch predict)
+        temps = evaluator.predict_temperatures_from_features(feature_matrix)
         f2 = -temps
 
-        # Objective 3: minimize -fabricability (maximize fabricability)
-        fabricability = self._predict_fabricability_batch(compositions)
-        f3 = -fabricability
+        # Objective 3: minimize -fabricability
+        f3 = -self._fabricability_scorer.score(config_entropies, bv_ratios)
 
         out["F"] = np.column_stack([f1, f2, f3])
 
-        # Constraint 1: U_MIN - u_fraction ≤ 0
+        # Constraints
+        self._compute_constraints(X, bv_ratios, out)
+
+    def _evaluate_synthetic(
+        self,
+        X: np.ndarray,  # noqa: N803
+        compositions: list[dict[str, float]],
+        out: dict[str, Any],
+    ) -> None:
+        """Fallback evaluation using per-individual feature computation.
+
+        Used when ML surrogate models are unavailable (synthetic mode).
+        """
+        n = len(compositions)
+        u_densities = np.zeros(n)
+        bv_ratios = np.zeros(n)
+        temps = np.full(n, 400.0)
+        entropies = np.zeros(n)
+
+        for i, comp in enumerate(compositions):
+            features = compute_all_features(comp)
+            u_densities[i] = features.get("u_density", 0.0)
+            bv_ratios[i] = features.get("bv_ratio", 0.0)
+            entropies[i] = features.get("config_entropy", 0.0)
+
+        f1 = -u_densities
+        f2 = -temps
+        f3 = -self._fabricability_scorer.score(entropies, bv_ratios)
+
+        out["F"] = np.column_stack([f1, f2, f3])
+
+        self._compute_constraints(X, bv_ratios, out)
+
+    def _compute_constraints(
+        self,
+        X: np.ndarray,  # noqa: N803
+        bv_ratios: np.ndarray,
+        out: dict[str, Any],
+    ) -> None:
+        """Compute inequality constraints (shared by ML and synthetic paths).
+
+        Constraint 1: U_MIN - u_fraction ≤ 0  (U ≥ 60 at.%)
+        Constraint 2: u_fraction - U_MAX ≤ 0  (U ≤ 90 at.%)
+        Constraint 3: max_element - 0.20 ≤ 0  (each solute ≤ 20 at.%)
+        Constraint 4: B/V out of [8.0, 18.0]
+        """
         solute_sums = np.sum(X, axis=1)
         u_fracs = 1.0 - solute_sums
+
         g1 = BOUNDS_U_MIN - u_fracs
-
-        # Constraint 2: u_fraction - U_MAX ≤ 0
         g2 = u_fracs - BOUNDS_U_MAX
-
-        # Constraint 3: max element fraction - 0.20 ≤ 0
         g3 = np.max(X, axis=1) - BOUNDS_MAX_SINGLE_ELEMENT
-
-        # Constraint 4: B/V out of [8.0, 18.0] → max(8.0 - BV, BV - 18.0) ≤ 0
         g4 = np.maximum(BOUNDS_BV_MIN - bv_ratios, bv_ratios - BOUNDS_BV_MAX)
 
         out["G"] = np.column_stack([g1, g2, g3, g4])
