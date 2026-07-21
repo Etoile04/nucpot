@@ -93,7 +93,7 @@ describe("next.config.ts rewrites", () => {
     expect(rewrites).toEqual([
       {
         source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
+        destination: "http://localhost:8100/api/:path*",
       },
     ])
   })

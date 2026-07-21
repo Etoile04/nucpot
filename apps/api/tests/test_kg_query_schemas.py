@@ -16,7 +16,6 @@ from nfm_db.schemas.kg_query import (
     PropertyQueryRequest,
     PropertyQueryResponse,
     RelationQueryRequest,
-    RelationQueryResponse,
     _split_csv_relations,
 )
 

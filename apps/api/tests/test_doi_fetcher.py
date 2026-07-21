@@ -8,9 +8,9 @@ import pytest
 
 from nfm_db.services.doi_fetcher import (
     DOI_REGEX,
-    DOIFetchError,
     MAX_CONTENT_LENGTH,
     REQUEST_TIMEOUT,
+    DOIFetchError,
     SemanticScholarFetcher,
     fetch_paper_content,
     validate_doi_format,

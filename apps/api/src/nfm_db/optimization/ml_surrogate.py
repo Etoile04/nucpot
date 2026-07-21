@@ -94,8 +94,8 @@ class ConvergenceTracker:
     def update(
         self,
         generation: int,
-        F: np.ndarray,
-        G: np.ndarray | None,
+        F: np.ndarray,  # noqa: N803
+        G: np.ndarray | None,  # noqa: N803
         n_obj: int = 3,
     ) -> None:
         """Compute and store convergence metrics for the current generation.
@@ -136,7 +136,7 @@ class ConvergenceTracker:
 
     def _compute_gd(
         self,
-        F: np.ndarray,
+        F: np.ndarray,  # noqa: N803
         feasible_mask: np.ndarray,
     ) -> float:
         """Compute Generational Distance from population to Pareto archive."""
@@ -151,7 +151,7 @@ class ConvergenceTracker:
         min_distances = np.min(distances, axis=1)
         return float(np.mean(min_distances))
 
-    def _compute_hv(self, F: np.ndarray, n_obj: int) -> float:
+    def _compute_hv(self, F: np.ndarray, n_obj: int) -> float:  # noqa: N803
         """Compute Hypervolume indicator relative to the reference point."""
         try:
             from pymoo.indicators.hv import HV
@@ -244,8 +244,9 @@ class MLSurrogateEvaluator:
 
     def _load_models(self) -> None:
         """Load temperature predictor and phase classifier from disk."""
-        import joblib
         import os
+
+        import joblib
 
         from nfm_db.ml.prediction_service import (
             PHASE_MODEL_PATH,
@@ -549,7 +550,7 @@ def _merge_nondominated(
     return _filter_nondominated(combined)
 
 
-def _filter_nondominated(F: np.ndarray) -> np.ndarray:
+def _filter_nondominated(F: np.ndarray) -> np.ndarray:  # noqa: N803
     """Filter an objective matrix to only non-dominated solutions.
 
     Args:
@@ -566,7 +567,7 @@ def _filter_nondominated(F: np.ndarray) -> np.ndarray:
     for i in range(n):
         if is_dominated[i]:
             continue
-        dom = np.all(F <= F[i], axis=1) & np.any(F < F[i], axis=1)
+        dom = np.all(F[i] >= F, axis=1) & np.any(F[i] > F, axis=1)
         dom[i] = False
         # dom[j] is True when F[j] dominates F[i]; only mark i as dominated
         if np.any(dom):
