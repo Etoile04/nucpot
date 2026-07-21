@@ -10,9 +10,9 @@
 
 "use client"
 
-import { useState, useCallback, useMemo } from "react"
-import { Typography, Breadcrumb } from "antd"
-import { HomeOutlined, ExperimentOutlined } from "@ant-design/icons"
+import { useState, useCallback, useMemo, useEffect } from "react"
+import { Typography, Breadcrumb, Drawer, Button } from "antd"
+import { HomeOutlined, ExperimentOutlined, MenuOutlined } from "@ant-design/icons"
 import type {
   ObjectiveKey,
   ConfigType,
@@ -27,6 +27,7 @@ import {
 } from "./constants"
 import { useOptimization } from "./hooks/use-optimization"
 import { usePrediction } from "./hooks/use-prediction"
+import { useMediaQuery } from "./hooks/use-media-query"
 import { ObjectivePanel } from "./components/objective-panel"
 import { ConstraintPanel } from "./components/constraint-panel"
 import { ParetoChartContainer } from "./components/pareto-chart-container"
@@ -104,6 +105,20 @@ export default function DesignPage() {
   // --- Drawer state ---
   const [selectedSolution, setSelectedSolution] = useState<ParetoSolution | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // --- Responsive state (NFM-1702) ---
+  // <=768px collapses the 280px left sidebar into a hamburger drawer so the
+  // center Pareto chart is not overlapped on mobile.
+  const isMobile = useMediaQuery("(max-width: 768px)")
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false)
+
+  // Auto-close the mobile drawer when the viewport grows past the breakpoint,
+  // so the panel reverts to its inline 280px sidebar without a stale overlay.
+  useEffect(() => {
+    if (!isMobile && mobilePanelOpen) {
+      setMobilePanelOpen(false)
+    }
+  }, [isMobile, mobilePanelOpen])
 
   // ---------------------------------------------------------------------------
   // Derived
@@ -229,19 +244,143 @@ export default function DesignPage() {
 
       {/* Main 3-panel area */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Left panel — scrollable, 280px */}
+        {/* Left panel — inline 280px on desktop, hidden behind a Drawer on mobile */}
+        {!isMobile && (
+          <div
+            data-testid="design-left-panel"
+            style={{
+              width: 280,
+              flexShrink: 0,
+              borderRight: "1px solid var(--color-border, rgba(255,255,255,0.12))",
+              overflowY: "auto",
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <ObjectivePanel
+              selectedObjectives={selectedObjectives}
+              onSelectedObjectivesChange={setSelectedObjectives}
+              weights={weights}
+              onWeightsChange={setWeights}
+              uContentMin={constraints.uContentMin}
+              uContentMax={constraints.uContentMax}
+              singleElementCeiling={constraints.singleElementCeiling}
+              totalAddedElements={constraints.totalAddedElements}
+              onUContentMinChange={(val) =>
+                setConstraints((c) => ({
+                  ...c,
+                  uContentMin: val ?? DEFAULT_CONSTRAINTS.uContentMin,
+                }))
+              }
+              onUContentMaxChange={(val) =>
+                setConstraints((c) => ({
+                  ...c,
+                  uContentMax: val ?? DEFAULT_CONSTRAINTS.uContentMax,
+                }))
+              }
+              onSingleElementCeilingChange={(val) =>
+                setConstraints((c) => ({
+                  ...c,
+                  singleElementCeiling: val ?? DEFAULT_CONSTRAINTS.singleElementCeiling,
+                }))
+              }
+              onTotalAddedElementsChange={(val) =>
+                setConstraints((c) => ({
+                  ...c,
+                  totalAddedElements: val ?? DEFAULT_CONSTRAINTS.totalAddedElements,
+                }))
+              }
+            />
+            <ConstraintPanel
+              bvRatioMin={constraints.bvRatioMin}
+              bvRatioMax={constraints.bvRatioMax}
+              onBvRatioMinChange={(val) =>
+                setConstraints((c) => ({ ...c, bvRatioMin: val ?? 3.0 }))
+              }
+              onBvRatioMaxChange={(val) =>
+                setConstraints((c) => ({ ...c, bvRatioMax: val ?? 6.5 }))
+              }
+              configTypes={configTypeFilter}
+              onConfigTypesChange={setConfigTypeFilter}
+              densityLowerBound={constraints.densityLowerBound}
+              thermalConductivityMin={constraints.thermalConductivityMin}
+              maxDpa={constraints.maxDpa}
+              onDensityLowerBoundChange={(val) =>
+                setConstraints((c) => ({ ...c, densityLowerBound: val ?? undefined }))
+              }
+              onThermalConductivityMinChange={(val) =>
+                setConstraints((c) => ({ ...c, thermalConductivityMin: val ?? undefined }))
+              }
+              onMaxDpaChange={(val) =>
+                setConstraints((c) => ({ ...c, maxDpa: val ?? undefined }))
+              }
+            />
+          </div>
+        )}
+
+        {/* Center panel */}
         <div
-          style={{
-            width: 280,
-            flexShrink: 0,
-            borderRight: "1px solid var(--color-border, rgba(255,255,255,0.12))",
-            overflowY: "auto",
-            padding: 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
+          data-testid="pareto-chart-container"
+          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
         >
+          {isMobile && (
+            <div
+              style={{
+                padding: "8px 12px",
+                borderBottom: "1px solid var(--color-border, rgba(255,255,255,0.12))",
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <Button
+                data-testid="design-left-panel-toggle"
+                type="text"
+                aria-label="打开左侧参数面板 / Open left parameter panel"
+                icon={<MenuOutlined />}
+                onClick={() => setMobilePanelOpen(true)}
+              />
+              <span style={{ fontSize: 13, opacity: 0.85 }}>
+                参数设置 / Parameters
+              </span>
+            </div>
+          )}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <ParetoChartContainer
+              paretoData={paretoData}
+              generationalDistance={convergenceData.generationalDistance}
+              hypervolume={convergenceData.hypervolume}
+              selectedId={selectedSolution?.id ?? null}
+              configTypeFilter={configTypeFilter}
+              isOptimizing={isOptimizing}
+              optimizationProgress={progress}
+              currentGeneration={generation > 0 ? generation : undefined}
+              totalGenerations={totalGenerations || 100}
+              isLoading={false}
+              isError={isError}
+              errorMessage={optError ?? undefined}
+              optimizationStatus={optimizationStatus}
+              onPointClick={handlePointClick}
+              onRetry={handleRetry}
+              onReset={handleReset}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile left-panel drawer (NFM-1702) — visible only on viewports <=768px */}
+      <Drawer
+        title="参数设置 / Parameters"
+        placement="left"
+        open={isMobile && mobilePanelOpen}
+        onClose={() => setMobilePanelOpen(false)}
+        width={Math.min(320, typeof window !== "undefined" ? window.innerWidth - 32 : 288)}
+        styles={{ body: { padding: 12 } }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <ObjectivePanel
             selectedObjectives={selectedObjectives}
             onSelectedObjectivesChange={setSelectedObjectives}
@@ -301,27 +440,7 @@ export default function DesignPage() {
             }
           />
         </div>
-
-        {/* Center panel */}
-        <ParetoChartContainer
-          paretoData={paretoData}
-          generationalDistance={convergenceData.generationalDistance}
-          hypervolume={convergenceData.hypervolume}
-          selectedId={selectedSolution?.id ?? null}
-          configTypeFilter={configTypeFilter}
-          isOptimizing={isOptimizing}
-          optimizationProgress={progress}
-          currentGeneration={generation > 0 ? generation : undefined}
-          totalGenerations={totalGenerations || 100}
-          isLoading={false}
-          isError={isError}
-          errorMessage={optError ?? undefined}
-          optimizationStatus={optimizationStatus}
-          onPointClick={handlePointClick}
-          onRetry={handleRetry}
-          onReset={handleReset}
-        />
-      </div>
+      </Drawer>
 
       {/* Sticky footer bar */}
       <DesignFooterBar
