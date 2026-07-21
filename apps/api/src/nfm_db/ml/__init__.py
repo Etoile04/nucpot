@@ -1,5 +1,14 @@
-"""NFMD ML pipeline: feature engineering, phase classification, and prediction."""
+"""NFMD ML pipeline: feature engineering, data pipeline, phase classification, and prediction."""
 
+from nfm_db.ml.data_pipeline import (
+    QualityReport,
+    format_quality_report,
+    load_training_set,
+    prepare_sklearn_data,
+    run_full_pipeline,
+    split_train_val,
+    validate_data_quality,
+)
 from nfm_db.ml.feature_engineering import (
     ML_FEATURE_NAMES,
     batch_compute,
@@ -19,6 +28,15 @@ from nfm_db.ml.feature_engineering import (
 )
 
 __all__ = [
+    # data_pipeline
+    "QualityReport",
+    "format_quality_report",
+    "load_training_set",
+    "prepare_sklearn_data",
+    "run_full_pipeline",
+    "split_train_val",
+    "validate_data_quality",
+    # feature_engineering
     "ML_FEATURE_NAMES",
     "batch_compute",
     "batch_compute_ml_features",
