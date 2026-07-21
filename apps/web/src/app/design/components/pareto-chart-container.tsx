@@ -211,8 +211,8 @@ export function ParetoChartContainer({
         flexDirection: "column",
         overflow: "hidden",
       }}
-      role="img"
-      aria-label="Pareto前沿散点图"
+      role="region"
+      aria-label="Pareto优化结果 / Pareto optimization results"
     >
       {/* Toolbar row */}
       <div style={{
