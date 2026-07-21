@@ -6,7 +6,7 @@ Output: Pareto-optimal solutions with convergence metrics.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +71,23 @@ class OptimizationConstraints(BaseModel):
         (3.0, 6.5),
         description="B/V ratio bounds",
     )
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> OptimizationConstraints:
+        """Ensure u_min <= u_max and n_elements range is valid."""
+        if self.u_min > self.u_max:
+            raise ValueError(
+                f"u_min ({self.u_min}) must not exceed u_max ({self.u_max})"
+            )
+        if self.n_elements[0] > self.n_elements[1]:
+            raise ValueError(
+                "n_elements lower bound must not exceed upper bound"
+            )
+        if self.bv_ratio[0] > self.bv_ratio[1]:
+            raise ValueError(
+                "bv_ratio lower bound must not exceed upper bound"
+            )
+        return self
 
 
 class AlgorithmParams(BaseModel):

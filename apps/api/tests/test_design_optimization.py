@@ -110,6 +110,14 @@ async def test_optimize_negative_weight(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.unit
+async def test_optimize_invalid_constraints(client):
+    """u_min > u_max should return 422."""
+    payload = {"constraints": {"u_min": 95, "u_max": 80}}
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # 503: ML model unavailable
 # ---------------------------------------------------------------------------
@@ -165,6 +173,55 @@ async def test_optimize_empty_pareto(mock_problem_cls, mock_minimize, client):
 # ---------------------------------------------------------------------------
 # 200: Successful optimization
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@patch(
+    "nfm_db.api.v1.design.minimize",
+    autospec=True,
+)
+@patch(
+    "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
+    autospec=True,
+)
+async def test_optimize_small_population(mock_problem_cls, mock_minimize, client):
+    """Small pop_size (10) × 1 gen should still return valid structure."""
+    mock_problem_cls.return_value = _mock_problem(ml_available=True)
+    mock_minimize.return_value = _mock_result(n_solutions=2)
+
+    payload = {"algorithm": {"pop_size": 10, "n_gen": 1, "seed": 42}}
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 200
+
+    data = resp.json()["data"]
+    assert isinstance(data["pareto_front"], list)
+    assert data["algorithm_params"]["pop_size"] == 10
+    assert data["algorithm_params"]["n_gen"] == 1
+
+
+@pytest.mark.unit
+@patch(
+    "nfm_db.api.v1.design.minimize",
+    autospec=True,
+)
+@patch(
+    "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
+    autospec=True,
+)
+async def test_optimize_custom_objectives(mock_problem_cls, mock_minimize, client):
+    """Custom objective weights should be accepted without error."""
+    mock_problem_cls.return_value = _mock_problem(ml_available=True)
+    mock_minimize.return_value = _mock_result(n_solutions=3)
+
+    payload = {
+        "objectives": {"u_density": 2.0, "phase_temp": 1.0, "fabricability": 0.0}
+    }
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert body["success"] is True
+    assert body["data"]["n_solutions"] > 0
 
 
 @pytest.mark.unit
