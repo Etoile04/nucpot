@@ -31,6 +31,7 @@ dependencies = [
     "numpy>=2.0.0",
     "scikit-learn>=1.5.0",
     "joblib>=1.4.0",
+    "pymoo>=0.6.0",
 ]
 
 [project.optional-dependencies]
@@ -94,12 +95,17 @@ ignore = [
 "src/nfm_db/core/phase_rules.py" = ["RUF002"]
 # Greek letters (alpha, gamma), multiplication sign, and minus sign are intentional scientific notation
 "src/nfm_db/ml/*.py" = ["RUF001", "RUF002", "RUF003"]
+# Greek letters (ρ), en-dashes, and other math notation are intentional in
+# alloy optimization docstrings (NFM-1681)
+"src/nfm_db/optimization/*.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nfm_db/schemas/prediction.py" = ["RUF001"]
 "tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
 "tests/test_extraction_prompt.py" = ["RUF001"]
 "tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
 "tests/test_phase_rules.py" = ["RUF001", "RUF002"]
 "tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
+# Multiplication sign × is intentional in alloy-population math docs (NFM-1681)
+"tests/test_design_optimization.py" = ["RUF001", "RUF002"]
 # NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
@@ -229,6 +235,21 @@ module = [
     "nfm_db.ml.feature_engineering",
     "nfm_db.ml.prediction_service",
     "nfm_db.ml",
+]
+ignore_errors = true
+
+# NFM-1547/1678/1681: data pipeline, DFT import, compute_incremental_features,
+# merge_training_set, design optimization. Strict typing deferred to NFM-1072
+# cleanup alongside NFM-1560 — pandas/sklearn stubs missing, pymoo missing
+# stubs, dict[str, float | None] union narrowing in compute paths.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.ml.data_pipeline",
+    "nfm_db.ml.dft_import",
+    "nfm_db.ml.merge_training_set",
+    "nfm_db.ml.compute_incremental_features",
+    "nfm_db.api.v1.design",
+    "nfm_db.optimization.*",
 ]
 ignore_errors = true
 
