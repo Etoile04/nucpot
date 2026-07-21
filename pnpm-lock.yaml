@@ -10,6 +10,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@ant-design/cssinjs':
+        specifier: ^1.21.1
+        version: 1.24.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@ant-design/icons':
         specifier: ^6.2.5
         version: 6.3.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
