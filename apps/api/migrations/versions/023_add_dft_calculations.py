@@ -9,8 +9,8 @@ NFM-1595
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision: str = "023"
 down_revision: str | Sequence[str] | None = "022"
@@ -19,7 +19,14 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create dft_calculations table."""
+    """Create dft_calculations table (idempotent — skip if already exists).
+
+    NFM-1692: Made idempotent so this migration is safe to run in any order
+    relative to migration 054, which may create the table as a fallback.
+    """
+    conn = op.get_bind()
+    if conn.dialect.has_table(conn, 'dft_calculations'):
+        return
     op.create_table(
         "dft_calculations",
         sa.Column("id", sa.Uuid(), nullable=False),
