@@ -46,10 +46,8 @@ export function RecommendationDrawer({
   onClose,
   predictionState = "idle",
   prediction = null,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  tempPredictionState: _tempPredictionState = "idle",
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  tempPrediction: _tempPrediction = null,
+  tempPredictionState = "idle",
+  tempPrediction = null,
 }: RecommendationDrawerProps) {
   if (!selected) {
     return null
@@ -242,7 +240,115 @@ export function RecommendationDrawer({
         </Descriptions>
       )}
 
-      {/* Temp prediction removed for debugging */}
+      {/* ML Temperature Prediction Section */
+      <Divider style={{ borderColor: "var(--color-border)", margin: "16px 0 12px" }}>
+        <Text strong style={{ color: "inherit", fontSize: 14 }}>
+          <ExperimentOutlined style={{ marginRight: 8 }} />
+          温度预测 / Temperature Prediction
+        </Text>
+      </Divider>
+
+      {tempPredictionState === "loading" && (
+        <div style={{ textAlign: "center", padding: "16px 0" }}>
+          <LoadingOutlined style={{ fontSize: 20, marginRight: 8 }} />
+          <Text type="secondary">温度预测中 / Predicting temperature…</Text>
+        </div>
+      )}
+
+      {tempPredictionState === "unavailable" && (
+        <Alert
+          type="info"
+          showIcon
+          message="温度预测服务暂不可用"
+          description="ML 温度预测服务暂时不可用。/ Temperature prediction service temporarily unavailable."
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {tempPredictionState === "idle" && (
+        <Alert
+          type="info"
+          showIcon
+          message="点击 Pareto 点触发预测"
+          description="选中 Pareto 前沿上的点后，将自动触发 ML 相变温度预测。/ Click a Pareto point to trigger temperature prediction."
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {tempPredictionState === "success" && tempPrediction && (
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="模型版本 / Model Version">
+            <Text code>{tempPrediction.model_version}</Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="预测相变温度 / Predicted Temp">
+            <Text
+              strong
+              style={{ fontFamily: "monospace", fontSize: 16, color: "#60a5fa" }}
+            >
+              {tempPrediction.predicted_temp_c.toFixed(1)}°C
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="95% 置信区间 / 95% CI">
+            <Text style={{ fontFamily: "monospace" }}>
+              {tempPrediction.confidence_lower_c.toFixed(1)}°C — {tempPrediction.confidence_upper_c.toFixed(1)}°C
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="置信度 / Confidence">
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: "50%",
+                  backgroundColor: confidenceColor(tempPrediction.confidence),
+                  border: "2px solid rgba(255,255,255,0.3)",
+                }}
+              />
+              <Text
+                strong
+                style={{ color: confidenceColor(tempPrediction.confidence), fontFamily: "monospace" }}
+              >
+                {(tempPrediction.confidence * 100).toFixed(1)}%
+              </Text>
+              <Tag
+                style={{
+                  borderColor: confidenceColor(tempPrediction.confidence),
+                  color: confidenceColor(tempPrediction.confidence),
+                }}
+              >
+                {confidenceLabel(tempPrediction.confidence)}
+              </Tag>
+            </div>
+          </Descriptions.Item>
+          {(tempPrediction.gpr_predicted_temp_c !== null || tempPrediction.svr_predicted_temp_c !== null) && (
+            <Descriptions.Item label="模型分解 / Model Breakdown">
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {tempPrediction.gpr_predicted_temp_c !== null && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    GPR: {tempPrediction.gpr_predicted_temp_c.toFixed(1)}°C
+                  </Text>
+                )}
+                {tempPrediction.svr_predicted_temp_c !== null && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    SVR: {tempPrediction.svr_predicted_temp_c.toFixed(1)}°C
+                  </Text>
+                )}
+              </div>
+            </Descriptions.Item>
+          )}
+          {tempPrediction.warnings.length > 0 && (
+            <Descriptions.Item label="警告 / Warnings">
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {tempPrediction.warnings.map((w, i) => (
+                  <Text key={i} type="warning" style={{ fontSize: 12 }}>
+                    [{w.code}] {w.message}
+                  </Text>
+                ))}
+              </div>
+            </Descriptions.Item>
+          )}
+        </Descriptions>
+      )}
     </Drawer>
   )
 }
