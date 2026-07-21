@@ -72,8 +72,11 @@ test.describe("Search Page — 1440px viewport", { tag: "@integration" }, () => 
     })
 
     await page.goto("/search", { waitUntil: "domcontentloaded" })
-    await expect(page.locator("h2").first()).toBeVisible()
-    await page.waitForLoadState("networkidle")
+    // WHY: `networkidle` is unreliable when the live site holds open streaming
+    // or long-poll responses — Playwright never reaches the idle state and the
+    // wait times out at 30s. The page is hydrated as soon as the heading h2 is
+    // visible, so we wait on that explicit element signal instead.
+    await expect(page.locator("h2").first()).toBeVisible({ timeout: 15_000 })
 
     const realErrors = consoleErrors.filter((t) =>
       FAILURE_SIGNATURES.some((re) => re.test(t)),
