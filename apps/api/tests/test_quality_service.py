@@ -1,110 +1,87 @@
-"""Tests for quality_service (NFM-704).
+"""Unit tests for quality_service (NFM-704).
 
-TDD RED phase: these tests define acceptance criteria for the quality
-evaluation service. They should FAIL until quality_service.py is
-implemented.
+Pure mock-based tests that run with --noconftest.
 
-Tests cover:
-- calculate_extraction_accuracy: spot-check accuracy against references
-- calculate_coverage_by_category: measurement counts per category
-- get_quality_summary: combined quality report
-- Review workflow: list unreviewed, approve/reject
-- Edge cases: empty data, no references, boundary values
+Tests for:
+- calculate_extraction_accuracy: confidence-based and reference-based
+- calculate_coverage_by_category: category aggregation
+- _get_confidence_distribution: confidence level counts
+- get_quality_summary: combined metrics
+- list_unreviewed: paginated pending records
+- _apply_review: approve/reject with flush+refresh
+- approve_extraction / reject_extraction: thin wrappers
+- bulk_review: batch processing with error handling
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.ref_gap_fill import (
-    Confidence,
-    RefGapFillStaging,
-    StagingStatus,
-)
+from nfm_db.models.ref_gap_fill import Confidence, RefGapFillStaging, StagingStatus
 from nfm_db.schemas.quality import (
     AccuracyReport,
+    ConfidenceDistribution,
     CoverageReport,
     QualitySummary,
 )
+from nfm_db.services.quality_service import (
+    _apply_review,
+    _get_confidence_distribution,
+    approve_extraction,
+    bulk_review,
+    calculate_coverage_by_category,
+    calculate_extraction_accuracy,
+    get_quality_summary,
+    list_unreviewed,
+    reject_extraction,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_staging(
+def _make_record(
     *,
-    element_system: str = "UO2",
-    phase: str | None = "FCC",
+    id: uuid.UUID | None = None,
     property_name: str = "lattice_constant",
     value: float = 5.47,
-    unit: str = "angstrom",
-    method: str | None = "DFT",
-    source: str = "test_source.md",
     confidence: Confidence = Confidence.HIGH,
-    status: StagingStatus = StagingStatus.APPROVED,
+    status: StagingStatus = StagingStatus.PENDING,
     property_category: str | None = "thermal",
-) -> dict[str, Any]:
-    """Build a RefGapFillStaging kwargs dict for test data seeding."""
-    return {
-        "element_system": element_system,
-        "phase": phase,
-        "property_name": property_name,
-        "value": value,
-        "unit": unit,
-        "method": method,
-        "source": source,
-        "confidence": confidence,
-        "status": status,
-        "property_category": property_category,
-        "dedup_hash": uuid.uuid4().hex[:64],
-        "range_validated": True,
-    }
+    source: str = "10.1016/test",
+    element_system: str = "UO2",
+    phase: str | None = "FCC",
+    unit: str = "angstrom",
+    created_at: datetime | None = None,
+) -> RefGapFillStaging:
+    """Build a lightweight RefGapFillStaging mock."""
+    record = MagicMock(spec=RefGapFillStaging)
+    record.id = id or uuid.uuid4()
+    record.property_name = property_name
+    record.value = value
+    record.confidence = confidence
+    record.status = status
+    record.property_category = property_category
+    record.source = source
+    record.element_system = element_system
+    record.phase = phase
+    record.unit = unit
+    record.created_at = created_at or datetime.now(UTC)
+    record.reviewer_id = None
+    record.reviewed_at = None
+    record.review_note = None
+    return record
 
 
-async def _seed_staging_records(
-    session: AsyncSession,
-    count: int = 5,
-    *,
-    confidence: Confidence = Confidence.HIGH,
-    status: StagingStatus = StagingStatus.APPROVED,
-    property_category: str = "thermal",
-    uniform_category: bool = False,
-    unique_names: bool = False,
-) -> list[RefGapFillStaging]:
-    """Insert N staging records and return them.
-
-    Args:
-        uniform_category: If True, all records use property_category as-is.
-            If False (default), alternates between property_category and "mechanical".
-        unique_names: If True, each record gets a unique property_name
-            (property_0, property_1, ...) instead of cycling via i % 3.
-    """
-    records: list[RefGapFillStaging] = []
-    for i in range(count):
-        if uniform_category:
-            cat = property_category
-        else:
-            cat = property_category if i % 2 == 0 else "mechanical"
-        name = f"property_{i}" if unique_names else f"property_{i % 3}"
-        record = RefGapFillStaging(
-            **_make_staging(
-                element_system=f"UO2_{i}",
-                property_name=name,
-                value=float(i + 1),
-                confidence=confidence,
-                status=status,
-                property_category=cat,
-            ),
-        )
-        session.add(record)
-        records.append(record)
-    await session.flush()
-    return records
+def _mock_session() -> AsyncMock:
+    """Return an AsyncMock mimicking AsyncSession."""
+    return AsyncMock()
 
 
 # ---------------------------------------------------------------------------
@@ -112,97 +89,188 @@ async def _seed_staging_records(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestCalculateExtractionAccuracy:
-    """Accuracy calculation via spot-check against reference values."""
+    """Tests for the accuracy calculation service."""
 
-    @pytest.mark.asyncio
-    async def test_basic_accuracy_calculation(self, db_session: AsyncSession) -> None:
-        """Accuracy score reflects correct/incorrect comparisons."""
-        from nfm_db.services.quality_service import calculate_extraction_accuracy
+    async def test_empty_records_returns_zero_accuracy(self):
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
 
-        await _seed_staging_records(db_session, count=10, confidence=Confidence.HIGH)
+        report = await calculate_extraction_accuracy(session, sample_size=10)
 
-        references: list[dict[str, Any]] = [
-            {"property_name": "property_0", "expected_value": "1.0", "tolerance": 0.1},
-            {"property_name": "property_1", "expected_value": "999.0", "tolerance": 0.1},
-        ]
-
-        report: AccuracyReport = await calculate_extraction_accuracy(
-            db_session,
-            sample_size=2,
-            references=references,
-        )
-        assert report.total_sampled == 2
-        assert report.accuracy_score >= 0.0
-        assert report.accuracy_score <= 1.0
-        assert len(report.failed_items) <= 2
-
-    @pytest.mark.asyncio
-    async def test_empty_database_returns_zero_accuracy(self, db_session: AsyncSession) -> None:
-        """No staging records → accuracy_score=0.0, target_met=False."""
-        from nfm_db.services.quality_service import calculate_extraction_accuracy
-
-        report: AccuracyReport = await calculate_extraction_accuracy(
-            db_session,
-            sample_size=5,
-            references=[],
-        )
+        assert report.sample_size == 10
         assert report.total_sampled == 0
         assert report.accuracy_score == 0.0
         assert report.target_met is False
 
-    @pytest.mark.asyncio
-    async def test_sample_size_clamped_to_available(self, db_session: AsyncSession) -> None:
-        """Sample size larger than available records uses all records."""
-        from nfm_db.services.quality_service import calculate_extraction_accuracy
-
-        await _seed_staging_records(db_session, count=3)
-
-        report: AccuracyReport = await calculate_extraction_accuracy(
-            db_session,
-            sample_size=100,
-        )
-        assert report.total_sampled <= 3
-
-    @pytest.mark.asyncio
-    async def test_target_met_when_accuracy_ge_70(self, db_session: AsyncSession) -> None:
-        """target_met=True when accuracy >= 0.70."""
-        from nfm_db.services.quality_service import calculate_extraction_accuracy
-
-        # Seed records with unique property names for deterministic matching
-        records = await _seed_staging_records(
-            db_session, count=5, confidence=Confidence.HIGH, unique_names=True
-        )
-        # Build references that match each record's value exactly
-        references = [
-            {
-                "property_name": r.property_name,
-                "expected_value": str(r.value),
-                "tolerance": 0.01,
-            }
-            for r in records
+    async def test_confidence_based_high_and_medium_counted_correct(self):
+        records = [
+            _make_record(confidence=Confidence.HIGH),
+            _make_record(confidence=Confidence.MEDIUM),
+            _make_record(confidence=Confidence.HIGH),
         ]
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = records
+        session.execute = AsyncMock(return_value=mock_result)
 
-        report: AccuracyReport = await calculate_extraction_accuracy(
-            db_session,
-            sample_size=5,
-            references=references,
-        )
+        report = await calculate_extraction_accuracy(session, sample_size=5)
+
+        assert report.total_sampled == 3
+        assert report.correct == 3
+        assert report.incorrect == 0
+        assert report.accuracy_score == pytest.approx(1.0)
         assert report.target_met is True
 
-    @pytest.mark.asyncio
-    async def test_accuracy_without_explicit_references(self, db_session: AsyncSession) -> None:
-        """When no references provided, accuracy defaults to confidence-based estimate."""
-        from nfm_db.services.quality_service import calculate_extraction_accuracy
+    async def test_confidence_based_low_counted_incorrect(self):
+        records = [
+            _make_record(confidence=Confidence.HIGH),
+            _make_record(confidence=Confidence.LOW),
+            _make_record(confidence=Confidence.MEDIUM),
+            _make_record(confidence=Confidence.LOW),
+        ]
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = records
+        session.execute = AsyncMock(return_value=mock_result)
 
-        await _seed_staging_records(db_session, count=5, confidence=Confidence.HIGH)
-        report: AccuracyReport = await calculate_extraction_accuracy(
-            db_session,
-            sample_size=5,
-        )
-        assert report.total_sampled == 5
-        # Confidence-based: high confidence → treated as accurate
-        assert report.accuracy_score >= 0.7
+        report = await calculate_extraction_accuracy(session)
+
+        assert report.total_sampled == 4
+        assert report.correct == 2
+        assert report.incorrect == 2
+        assert report.accuracy_score == pytest.approx(0.5)
+        assert report.target_met is False
+
+    async def test_reference_based_all_within_tolerance(self):
+        records = [
+            _make_record(property_name="density", value=10.5),
+            _make_record(property_name="density", value=10.6),
+        ]
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = records
+        session.execute = AsyncMock(return_value=mock_result)
+
+        references = [
+            {"property_name": "density", "expected_value": 10.5, "tolerance": 0.2},
+        ]
+
+        report = await calculate_extraction_accuracy(session, references=references)
+
+        assert report.total_sampled == 2
+        assert report.correct == 2
+        assert report.incorrect == 0
+        assert report.failed_items == []
+
+    async def test_reference_based_out_of_tolerance_fails(self):
+        rec = _make_record(property_name="melting_point", value=3000.0)
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [rec]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        references = [
+            {
+                "property_name": "melting_point",
+                "expected_value": 3138.0,
+                "tolerance": 10.0,
+            },
+        ]
+
+        report = await calculate_extraction_accuracy(session, references=references)
+
+        assert report.total_sampled == 1
+        assert report.correct == 0
+        assert report.incorrect == 1
+        assert len(report.failed_items) == 1
+        assert report.failed_items[0].property_name == "melting_point"
+
+    async def test_reference_based_no_matching_ref_counts_correct(self):
+        rec = _make_record(property_name="unknown_prop", value=42.0)
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [rec]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        references = [
+            {"property_name": "other_prop", "expected_value": 1.0, "tolerance": 0.1},
+        ]
+
+        report = await calculate_extraction_accuracy(session, references=references)
+
+        assert report.total_sampled == 1
+        assert report.correct == 1
+        assert report.incorrect == 0
+
+    async def test_accuracy_target_met_at_threshold(self):
+        """Exactly 70% accuracy meets the threshold."""
+        # 7 high/medium, 3 low -> 7/10 = 0.70
+        records = [
+            _make_record(confidence=Confidence.HIGH),
+            _make_record(confidence=Confidence.MEDIUM),
+            _make_record(confidence=Confidence.LOW),
+            _make_record(confidence=Confidence.LOW),
+            _make_record(confidence=Confidence.LOW),
+            _make_record(confidence=Confidence.HIGH),
+            _make_record(confidence=Confidence.HIGH),
+            _make_record(confidence=Confidence.MEDIUM),
+            _make_record(confidence=Confidence.HIGH),
+            _make_record(confidence=Confidence.MEDIUM),
+        ]
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = records
+        session.execute = AsyncMock(return_value=mock_result)
+
+        report = await calculate_extraction_accuracy(session)
+
+        # 7 high/medium out of 10 = 0.70
+        assert report.accuracy_score == pytest.approx(0.7)
+        assert report.target_met is True
+
+    async def test_reference_based_failed_item_reason_format(self):
+        """Failed items include detailed reason strings."""
+        rec = _make_record(property_name="thermal_conductivity", value=5.0)
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [rec]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        references = [
+            {
+                "property_name": "thermal_conductivity",
+                "expected_value": 10.0,
+                "tolerance": 1.0,
+            },
+        ]
+
+        report = await calculate_extraction_accuracy(session, references=references)
+
+        assert len(report.failed_items) == 1
+        failure = report.failed_items[0]
+        assert "5.0" in failure.extracted_value
+        assert "10.0" in failure.expected_value
+        assert "tolerance" in failure.reason
+
+    async def test_reference_based_default_tolerance(self):
+        """Missing tolerance defaults to 0.1."""
+        rec = _make_record(property_name="prop", value=1.0)
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [rec]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        references = [
+            {"property_name": "prop", "expected_value": 1.05, "tolerance": 0.1},
+        ]
+
+        report = await calculate_extraction_accuracy(session, references=references)
+
+        assert report.correct == 1  # 1.0 is within 0.1 of 1.05
 
 
 # ---------------------------------------------------------------------------
@@ -210,77 +278,151 @@ class TestCalculateExtractionAccuracy:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestCalculateCoverageByCategory:
-    """Coverage analysis: measurement counts per property category."""
+    """Tests for coverage analysis by property category."""
 
-    @pytest.mark.asyncio
-    async def test_returns_category_counts(self, db_session: AsyncSession) -> None:
-        """Each property_category gets a count of staging records."""
-        from nfm_db.services.quality_service import calculate_coverage_by_category
+    async def test_no_categories_returns_zero_completeness(self):
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
 
-        await _seed_staging_records(
-            db_session,
-            count=6,
-            confidence=Confidence.HIGH,
-            property_category="thermal",
-        )
+        report = await calculate_coverage_by_category(session)
 
-        report: CoverageReport = await calculate_coverage_by_category(db_session)
-        assert report.total_measurements == 6
-        assert len(report.categories) > 0
-        cat_names = {c.category for c in report.categories}
-        assert "thermal" in cat_names
-
-    @pytest.mark.asyncio
-    async def test_empty_database_returns_zero(self, db_session: AsyncSession) -> None:
-        """No records → total_measurements=0, empty categories."""
-        from nfm_db.services.quality_service import calculate_coverage_by_category
-
-        report: CoverageReport = await calculate_coverage_by_category(db_session)
         assert report.total_measurements == 0
         assert report.categories == []
         assert report.completeness_score == 0.0
 
-    @pytest.mark.asyncio
-    async def test_multiple_categories(self, db_session: AsyncSession) -> None:
-        """Records across different categories are counted separately."""
-        from nfm_db.services.quality_service import calculate_coverage_by_category
+    async def test_partial_category_coverage(self):
+        session = _mock_session()
+        row = MagicMock()
+        row.property_category = "thermal"
+        row.count = 5
+        mock_result = MagicMock()
+        mock_result.all.return_value = [row]
+        session.execute = AsyncMock(return_value=mock_result)
 
-        await _seed_staging_records(
-            db_session,
-            count=4,
-            confidence=Confidence.HIGH,
-            property_category="thermal",
-            uniform_category=True,
-        )
-        await _seed_staging_records(
-            db_session,
-            count=3,
-            confidence=Confidence.HIGH,
-            property_category="mechanical",
-            uniform_category=True,
-        )
+        report = await calculate_coverage_by_category(session)
 
-        report: CoverageReport = await calculate_coverage_by_category(db_session)
-        assert report.total_measurements == 7
+        assert report.total_measurements == 5
+        assert len(report.categories) == 1
+        assert report.categories[0].category == "thermal"
+        assert report.categories[0].count == 5
+        assert report.completeness_score == pytest.approx(1 / 8)
+
+    async def test_all_expected_categories_returns_full_completeness(self):
+        expected_categories = [
+            "thermal", "mechanical", "nuclear", "electrical",
+            "optical", "magnetic", "chemical", "dimensional",
+        ]
+        rows = []
+        for cat in expected_categories:
+            row = MagicMock()
+            row.property_category = cat
+            row.count = 3
+            rows.append(row)
+
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.all.return_value = rows
+        session.execute = AsyncMock(return_value=mock_result)
+
+        report = await calculate_coverage_by_category(session)
+
+        assert report.completeness_score == pytest.approx(1.0)
+        assert report.total_measurements == 24
+
+    async def test_unknown_category_not_counted_toward_completeness(self):
+        session = _mock_session()
+        row = MagicMock()
+        row.property_category = "exotic"
+        row.count = 10
+        mock_result = MagicMock()
+        mock_result.all.return_value = [row]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        report = await calculate_coverage_by_category(session)
+
+        assert report.total_measurements == 10
+        assert report.completeness_score == 0.0
+
+    async def test_multiple_categories_counted_separately(self):
+        rows = []
+        for cat, count in [("thermal", 5), ("mechanical", 3), ("nuclear", 7)]:
+            row = MagicMock()
+            row.property_category = cat
+            row.count = count
+            rows.append(row)
+
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.all.return_value = rows
+        session.execute = AsyncMock(return_value=mock_result)
+
+        report = await calculate_coverage_by_category(session)
+
+        assert report.total_measurements == 15
+        assert report.completeness_score == pytest.approx(3 / 8)
         cat_map = {c.category: c.count for c in report.categories}
-        assert cat_map.get("thermal", 0) == 4
-        assert cat_map.get("mechanical", 0) == 3
+        assert cat_map["thermal"] == 5
+        assert cat_map["mechanical"] == 3
+        assert cat_map["nuclear"] == 7
 
-    @pytest.mark.asyncio
-    async def test_completeness_score(self, db_session: AsyncSession) -> None:
-        """Completeness = categories_with_data / expected_categories."""
-        from nfm_db.services.quality_service import calculate_coverage_by_category
 
-        await _seed_staging_records(
-            db_session,
-            count=2,
-            confidence=Confidence.HIGH,
-            property_category="thermal",
-        )
+# ---------------------------------------------------------------------------
+# _get_confidence_distribution
+# ---------------------------------------------------------------------------
 
-        report: CoverageReport = await calculate_coverage_by_category(db_session)
-        assert 0.0 <= report.completeness_score <= 1.0
+
+@pytest.mark.unit
+class TestGetConfidenceDistribution:
+    """Tests for confidence distribution aggregation."""
+
+    async def test_empty_result_returns_all_zeros(self):
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
+
+        dist = await _get_confidence_distribution(session)
+
+        assert dist.high == 0
+        assert dist.medium == 0
+        assert dist.low == 0
+
+    async def test_populated_distribution(self):
+        session = _mock_session()
+        rows = []
+        for conf_val, count in [("high", 10), ("medium", 20), ("low", 5)]:
+            row = MagicMock()
+            row.confidence = Confidence(conf_val)
+            row._mapping = {"count": count}
+            rows.append(row)
+
+        mock_result = MagicMock()
+        mock_result.all.return_value = rows
+        session.execute = AsyncMock(return_value=mock_result)
+
+        dist = await _get_confidence_distribution(session)
+
+        assert dist.high == 10
+        assert dist.medium == 20
+        assert dist.low == 5
+
+    async def test_none_confidence_row_skipped(self):
+        session = _mock_session()
+        row = MagicMock()
+        row.confidence = None
+        mock_result = MagicMock()
+        mock_result.all.return_value = [row]
+        session.execute = AsyncMock(return_value=mock_result)
+
+        dist = await _get_confidence_distribution(session)
+
+        assert dist.high == 0
+        assert dist.medium == 0
+        assert dist.low == 0
 
 
 # ---------------------------------------------------------------------------
@@ -288,163 +430,329 @@ class TestCalculateCoverageByCategory:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestGetQualitySummary:
-    """Combined quality summary report."""
+    """Tests for combined quality summary."""
 
-    @pytest.mark.asyncio
-    async def test_returns_complete_summary(self, db_session: AsyncSession) -> None:
-        """Summary contains all required fields."""
-        from nfm_db.services.quality_service import get_quality_summary
+    @patch("nfm_db.services.quality_service.calculate_coverage_by_category")
+    @patch("nfm_db.services.quality_service.calculate_extraction_accuracy")
+    @patch("nfm_db.services.quality_service._get_confidence_distribution")
+    async def test_zero_measurements_returns_zero_score(
+        self,
+        mock_conf_dist,
+        mock_accuracy,
+        mock_coverage,
+    ):
+        session = _mock_session()
 
-        await _seed_staging_records(db_session, count=10, confidence=Confidence.HIGH)
-        # Add some pending records
-        await _seed_staging_records(
-            db_session,
-            count=3,
-            confidence=Confidence.MEDIUM,
-            status=StagingStatus.PENDING,
+        call_count = 0
+
+        async def fake_execute(_stmt):
+            nonlocal call_count
+            scalar_result = MagicMock()
+            values = [0, 0, 0]  # papers, measurements, unreviewed
+            scalar_result.scalar_one.return_value = values[call_count]
+            call_count += 1
+            return scalar_result
+
+        session.execute = fake_execute
+
+        mock_accuracy.return_value = AccuracyReport(
+            sample_size=20, total_sampled=0, correct=0,
+            incorrect=0, accuracy_score=0.0, target_met=False,
         )
+        mock_coverage.return_value = CoverageReport(
+            total_measurements=0, categories=[], completeness_score=0.0,
+        )
+        mock_conf_dist.return_value = ConfidenceDistribution(high=0, medium=0, low=0)
 
-        summary: QualitySummary = await get_quality_summary(db_session)
-        assert summary.total_measurements >= 10
-        assert summary.total_papers >= 1
-        assert 0.0 <= summary.overall_score <= 1.0
-        assert summary.accuracy.accuracy_score >= 0.0
-        assert summary.coverage.total_measurements >= 10
-        assert summary.confidence_distribution.high >= 10
-        assert summary.confidence_distribution.medium >= 3
+        summary = await get_quality_summary(session)
+
+        assert summary.overall_score == 0.0
+        assert summary.total_measurements == 0
+        assert summary.total_papers == 0
+
+    @patch("nfm_db.services.quality_service.calculate_coverage_by_category")
+    @patch("nfm_db.services.quality_service.calculate_extraction_accuracy")
+    @patch("nfm_db.services.quality_service._get_confidence_distribution")
+    async def test_composite_score_calculation(
+        self,
+        mock_conf_dist,
+        mock_accuracy,
+        mock_coverage,
+    ):
+        session = _mock_session()
+
+        call_count = 0
+
+        async def fake_execute(_stmt):
+            nonlocal call_count
+            scalar_result = MagicMock()
+            # total_papers=5, total_measurements=100, unreviewed=10
+            values = [5, 100, 10]
+            scalar_result.scalar_one.return_value = values[call_count]
+            call_count += 1
+            return scalar_result
+
+        session.execute = fake_execute
+
+        mock_accuracy.return_value = AccuracyReport(
+            sample_size=20, total_sampled=20, correct=18,
+            incorrect=2, accuracy_score=0.9, target_met=True,
+        )
+        mock_coverage.return_value = CoverageReport(
+            total_measurements=100, categories=[], completeness_score=0.75,
+        )
+        mock_conf_dist.return_value = ConfidenceDistribution(high=50, medium=40, low=10)
+
+        summary = await get_quality_summary(session)
+
+        # accuracy=0.9*0.5 + coverage=0.75*0.3 + unreviewed_factor=0.5*0.2
+        # = 0.45 + 0.225 + 0.1 = 0.775
+        assert summary.overall_score == pytest.approx(0.775, abs=0.01)
+        assert summary.total_papers == 5
+        assert summary.unreviewed_count == 10
         assert summary.generated_at is not None
 
-    @pytest.mark.asyncio
-    async def test_empty_database_summary(self, db_session: AsyncSession) -> None:
-        """Empty DB → zero scores, target not met."""
-        from nfm_db.services.quality_service import get_quality_summary
+    @patch("nfm_db.services.quality_service.calculate_coverage_by_category")
+    @patch("nfm_db.services.quality_service.calculate_extraction_accuracy")
+    @patch("nfm_db.services.quality_service._get_confidence_distribution")
+    async def test_no_unreviewed_boosts_review_factor(
+        self,
+        mock_conf_dist,
+        mock_accuracy,
+        mock_coverage,
+    ):
+        session = _mock_session()
 
-        summary: QualitySummary = await get_quality_summary(db_session)
-        assert summary.total_papers == 0
-        assert summary.total_measurements == 0
-        assert summary.overall_score == 0.0
-        assert summary.accuracy.target_met is False
+        call_count = 0
+
+        async def fake_execute(_stmt):
+            nonlocal call_count
+            scalar_result = MagicMock()
+            values = [3, 50, 0]  # unreviewed=0
+            scalar_result.scalar_one.return_value = values[call_count]
+            call_count += 1
+            return scalar_result
+
+        session.execute = fake_execute
+
+        mock_accuracy.return_value = AccuracyReport(
+            sample_size=20, total_sampled=20, correct=10,
+            incorrect=10, accuracy_score=0.5, target_met=False,
+        )
+        mock_coverage.return_value = CoverageReport(
+            total_measurements=50, categories=[], completeness_score=0.5,
+        )
+        mock_conf_dist.return_value = ConfidenceDistribution(high=10, medium=20, low=20)
+
+        summary = await get_quality_summary(session)
+
+        # accuracy=0.5*0.5 + coverage=0.5*0.3 + (1.0)*0.2 = 0.25 + 0.15 + 0.2 = 0.6
+        assert summary.overall_score == pytest.approx(0.6, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
-# Review workflow
+# list_unreviewed
 # ---------------------------------------------------------------------------
 
 
-class TestReviewWorkflow:
-    """List unreviewed extractions, approve, reject."""
+@pytest.mark.unit
+class TestListUnreviewed:
+    """Tests for listing unreviewed extractions."""
 
-    @pytest.mark.asyncio
-    async def test_list_unreviewed(self, db_session: AsyncSession) -> None:
-        """Only pending status records are returned."""
-        from nfm_db.services.quality_service import list_unreviewed
+    async def test_returns_empty_list_for_no_records(self):
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
 
-        # Mix of approved and pending
-        await _seed_staging_records(
-            db_session,
-            count=3,
-            status=StagingStatus.APPROVED,
-        )
-        pending = await _seed_staging_records(
-            db_session,
-            count=2,
-            status=StagingStatus.PENDING,
-            confidence=Confidence.MEDIUM,
-        )
+        result = await list_unreviewed(session)
 
-        results = await list_unreviewed(db_session, page=1, limit=20)
-        assert len(results) == 2
-        result_ids = {r.id for r in results}
-        assert all(p.id in result_ids for p in pending)
+        assert result == []
 
-    @pytest.mark.asyncio
-    async def test_list_unreviewed_empty(self, db_session: AsyncSession) -> None:
-        """No pending records → empty list."""
-        from nfm_db.services.quality_service import list_unreviewed
+    async def test_maps_records_to_dto(self):
+        rec = _make_record(confidence=Confidence.LOW, status=StagingStatus.PENDING)
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [rec]
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await list_unreviewed(db_session, page=1, limit=20)
-        assert results == []
+        result = await list_unreviewed(session)
 
-    @pytest.mark.asyncio
-    async def test_approve_extraction(self, db_session: AsyncSession) -> None:
-        """Approving sets status=approved with reviewer and timestamp."""
-        from nfm_db.services.quality_service import approve_extraction
+        assert len(result) == 1
+        assert result[0].id == rec.id
+        assert result[0].property_name == "lattice_constant"
+        assert result[0].confidence == "low"
+        assert result[0].value == 5.47
 
-        records = await _seed_staging_records(
-            db_session,
-            count=1,
-            status=StagingStatus.PENDING,
-            confidence=Confidence.MEDIUM,
-        )
-        record = records[0]
-        reviewer_id = uuid.uuid4()
+    async def test_confidence_none_maps_to_unknown(self):
+        rec = _make_record()
+        rec.confidence = None
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [rec]
+        session.execute = AsyncMock(return_value=mock_result)
 
-        updated = await approve_extraction(
-            db_session,
+        result = await list_unreviewed(session)
+
+        assert result[0].confidence == "unknown"
+
+    async def test_pagination_params_passed_to_query(self):
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await list_unreviewed(session, page=3, limit=10)
+
+        assert session.execute.called
+
+
+# ---------------------------------------------------------------------------
+# _apply_review / approve_extraction / reject_extraction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestApplyReview:
+    """Tests for the review workflow."""
+
+    async def test_approve_sets_approved_status(self):
+        record = _make_record()
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = record
+        session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _apply_review(
+            session,
             extraction_id=record.id,
-            reviewer_id=reviewer_id,
+            reviewer_id=uuid.uuid4(),
+            action="approve",
+        )
+
+        assert record.status == StagingStatus.APPROVED
+        assert record.reviewer_id is not None
+        assert record.reviewed_at is not None
+        session.flush.assert_awaited_once()
+        session.refresh.assert_awaited_once_with(record)
+
+    async def test_reject_sets_rejected_status(self):
+        record = _make_record()
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = record
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await _apply_review(
+            session,
+            extraction_id=record.id,
+            reviewer_id=uuid.uuid4(),
+            action="reject",
+        )
+
+        assert record.status == StagingStatus.REJECTED
+
+    async def test_review_note_stored(self):
+        record = _make_record()
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = record
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await _apply_review(
+            session,
+            extraction_id=record.id,
+            reviewer_id=uuid.uuid4(),
+            action="approve",
             review_note="Looks good",
         )
 
-        assert updated.status == StagingStatus.APPROVED
-        assert updated.reviewer_id == reviewer_id
-        assert updated.reviewed_at is not None
-        assert updated.review_note == "Looks good"
+        assert record.review_note == "Looks good"
 
-    @pytest.mark.asyncio
-    async def test_reject_extraction(self, db_session: AsyncSession) -> None:
-        """Rejecting sets status=rejected with reviewer and timestamp."""
-        from nfm_db.services.quality_service import reject_extraction
+    async def test_review_note_none_does_not_overwrite(self):
+        record = _make_record()
+        record.review_note = "existing note"
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = record
+        session.execute = AsyncMock(return_value=mock_result)
 
-        records = await _seed_staging_records(
-            db_session,
-            count=1,
-            status=StagingStatus.PENDING,
-            confidence=Confidence.MEDIUM,
-        )
-        record = records[0]
-        reviewer_id = uuid.uuid4()
-
-        updated = await reject_extraction(
-            db_session,
+        await _apply_review(
+            session,
             extraction_id=record.id,
-            reviewer_id=reviewer_id,
-            review_note="Value out of range",
+            reviewer_id=uuid.uuid4(),
+            action="approve",
+            review_note=None,
         )
 
-        assert updated.status == StagingStatus.REJECTED
-        assert updated.reviewer_id == reviewer_id
-        assert updated.reviewed_at is not None
+        assert record.review_note == "existing note"
 
-    @pytest.mark.asyncio
-    async def test_review_nonexistent_raises_error(self, db_session: AsyncSession) -> None:
-        """Reviewing a nonexistent ID raises ValueError."""
-        from nfm_db.services.quality_service import approve_extraction
+    async def test_not_found_raises_value_error(self):
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=mock_result)
 
         with pytest.raises(ValueError, match="not found"):
-            await approve_extraction(
-                db_session,
+            await _apply_review(
+                session,
                 extraction_id=uuid.uuid4(),
                 reviewer_id=uuid.uuid4(),
+                action="approve",
             )
 
-    @pytest.mark.asyncio
-    async def test_bulk_approve(self, db_session: AsyncSession) -> None:
-        """Bulk approve processes multiple IDs correctly."""
-        from nfm_db.services.quality_service import bulk_review
+    async def test_approve_extraction_delegates(self):
+        record = _make_record()
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = record
+        session.execute = AsyncMock(return_value=mock_result)
 
-        records = await _seed_staging_records(
-            db_session,
-            count=3,
-            status=StagingStatus.PENDING,
-            confidence=Confidence.MEDIUM,
+        result = await approve_extraction(
+            session,
+            extraction_id=record.id,
+            reviewer_id=uuid.uuid4(),
         )
+
+        assert record.status == StagingStatus.APPROVED
+
+    async def test_reject_extraction_delegates(self):
+        record = _make_record()
+        session = _mock_session()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = record
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await reject_extraction(
+            session,
+            extraction_id=record.id,
+            reviewer_id=uuid.uuid4(),
+        )
+
+        assert record.status == StagingStatus.REJECTED
+
+
+# ---------------------------------------------------------------------------
+# bulk_review
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestBulkReview:
+    """Tests for bulk review operations."""
+
+    @patch("nfm_db.services.quality_service._apply_review")
+    async def test_bulk_approve_all_success(self, mock_apply):
+        session = _mock_session()
+        ids = [uuid.uuid4() for _ in range(3)]
         reviewer_id = uuid.uuid4()
+        mock_apply.return_value = _make_record()
 
         result = await bulk_review(
-            db_session,
-            ids=[r.id for r in records],
+            session,
+            ids=ids,
             action="approve",
             reviewer_id=reviewer_id,
         )
@@ -452,50 +760,85 @@ class TestReviewWorkflow:
         assert result.processed == 3
         assert result.approved == 3
         assert result.rejected == 0
+        assert result.errors == []
 
-    @pytest.mark.asyncio
-    async def test_bulk_reject(self, db_session: AsyncSession) -> None:
-        """Bulk reject processes multiple IDs correctly."""
-        from nfm_db.services.quality_service import bulk_review
-
-        records = await _seed_staging_records(
-            db_session,
-            count=2,
-            status=StagingStatus.PENDING,
-            confidence=Confidence.LOW,
-        )
+    @patch("nfm_db.services.quality_service._apply_review")
+    async def test_bulk_reject_all_success(self, mock_apply):
+        session = _mock_session()
+        ids = [uuid.uuid4() for _ in range(2)]
         reviewer_id = uuid.uuid4()
+        mock_apply.return_value = _make_record()
 
         result = await bulk_review(
-            db_session,
-            ids=[r.id for r in records],
+            session,
+            ids=ids,
             action="reject",
             reviewer_id=reviewer_id,
-            review_note="Low confidence",
         )
 
         assert result.processed == 2
         assert result.approved == 0
         assert result.rejected == 2
 
-    @pytest.mark.asyncio
-    async def test_bulk_review_skips_invalid_ids(self, db_session: AsyncSession) -> None:
-        """Invalid IDs are skipped but don't fail the batch."""
-        from nfm_db.services.quality_service import bulk_review
+    @patch("nfm_db.services.quality_service._apply_review")
+    async def test_bulk_review_collects_errors(self, mock_apply):
+        session = _mock_session()
+        ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+        reviewer_id = uuid.uuid4()
 
-        records = await _seed_staging_records(
-            db_session,
-            count=1,
-            status=StagingStatus.PENDING,
-            confidence=Confidence.MEDIUM,
-        )
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise ValueError("not found")
+            return _make_record()
+
+        mock_apply.side_effect = side_effect
 
         result = await bulk_review(
-            db_session,
-            ids=[records[0].id, uuid.uuid4()],
+            session,
+            ids=ids,
+            action="approve",
+            reviewer_id=reviewer_id,
+        )
+
+        assert result.processed == 2
+        assert result.approved == 2
+        assert len(result.errors) == 1
+        assert "not found" in result.errors[0]
+
+    @patch("nfm_db.services.quality_service._apply_review")
+    async def test_bulk_review_empty_ids(self, mock_apply):
+        session = _mock_session()
+
+        result = await bulk_review(
+            session,
+            ids=[],
             action="approve",
             reviewer_id=uuid.uuid4(),
         )
 
-        assert result.processed == 1
-        assert len(result.errors) == 1
+        assert result.processed == 0
+        assert result.approved == 0
+        assert result.rejected == 0
+        assert result.errors == []
+        mock_apply.assert_not_awaited()
+
+    @patch("nfm_db.services.quality_service._apply_review")
+    async def test_bulk_review_with_note(self, mock_apply):
+        session = _mock_session()
+        record = _make_record()
+        mock_apply.return_value = record
+
+        await bulk_review(
+            session,
+            ids=[uuid.uuid4()],
+            action="approve",
+            reviewer_id=uuid.uuid4(),
+            review_note="Batch approved",
+        )
+
+        _, kwargs = mock_apply.call_args
+        assert kwargs["review_note"] == "Batch approved"

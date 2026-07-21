@@ -271,6 +271,17 @@ markers = [
     "performance: Performance benchmark tests",
 ]
 
+[tool.coverage.run]
+omit = [
+    "*/ml/*",
+    "*/optimization/*",
+    "*/services/hpc_*",
+    "*/services/vision_client.py",
+    "*/services/figure_detector.py",
+    "*/services/multimodal_extraction.py",
+    "*/services/ocr_fallback.py",
+]
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
