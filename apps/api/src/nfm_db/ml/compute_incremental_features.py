@@ -30,7 +30,14 @@ import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Forward refs for type hints only - actual runtime imports live inside
+    # the DB-mode functions to avoid loading the DB stack during file mode.
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from nfm_db.models.material import Material
 
 logger = logging.getLogger(__name__)
 
@@ -278,10 +285,10 @@ def _make_formula(composition: dict[str, float]) -> str:
 
 
 async def compute_incremental_features_db(
-    db: "AsyncSession",
+    db: AsyncSession,
     *,
     source_tag: str = "incremental_200",
-) -> "ComputeResult":
+) -> ComputeResult:
     """Compute 8D ML features for DFT records stored in the database.
 
     Queries DFTCalculation records whose computation_metadata contains
@@ -291,14 +298,12 @@ async def compute_incremental_features_db(
     This is the entry point for DB-mode operation (requires async session).
     """
     from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from nfm_db.ml.feature_engineering import (
         ML_FEATURE_NAMES,
         compute_ml_features,
     )
     from nfm_db.models.dft_calculation import DFTCalculation
-    from nfm_db.models.material import Material, MaterialComposition
 
     stmt = select(DFTCalculation)
     result = await db.execute(stmt)
@@ -368,12 +373,11 @@ async def compute_incremental_features_db(
 
 
 async def _find_material_by_formula(
-    db: "AsyncSession",
+    db: AsyncSession,
     formula: str,
-) -> "Material | None":
+) -> Material | None:
     """Look up a Material by its formula field."""
     from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from nfm_db.models.material import Material
 
@@ -383,14 +387,13 @@ async def _find_material_by_formula(
 
 
 async def _create_material_with_composition(
-    db: "AsyncSession",
+    db: AsyncSession,
     *,
     name: str,
     formula: str,
     composition: dict[str, float],
-) -> "Material":
+) -> Material:
     """Create a Material record with its MaterialComposition entries."""
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from nfm_db.models.material import Material, MaterialComposition
 

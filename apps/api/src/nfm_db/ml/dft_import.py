@@ -22,7 +22,7 @@ import hashlib
 import json
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +126,7 @@ def parse_csv_file(filepath: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"DFT data file not found: {filepath}")
 
     records: list[dict[str, Any]] = []
-    with open(filepath, "r", encoding="utf-8", newline="") as f:
+    with open(filepath, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             record = dict(row)

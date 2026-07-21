@@ -45,7 +45,6 @@ from nfm_db.ml.dft_import import (
 from nfm_db.models import Base
 from nfm_db.models.dft_calculation import DFTCalculation
 
-
 # ---------------------------------------------------------------------------
 # SQLite compatibility helpers (PostgreSQL JSONB → SQLite JSON)
 # ---------------------------------------------------------------------------
@@ -460,7 +459,7 @@ class TestBulkInsertDft:
         # Corrupt one record
         bad = dict(batch_records[0])
         bad["formation_energy"] = None
-        records = [bad] + batch_records[1:]
+        records = [bad, *batch_records[1:]]
 
         report = await bulk_insert_dft(db_session, records, source="test")
         assert report.failed == 1

@@ -92,7 +92,7 @@ async def optimize_endpoint(
 
     # 4. Verify ML surrogates actually loaded (the problem silently falls
     #    back to synthetic evaluators when model artifacts are missing).
-    if not problem._use_ml_surrogate:  # noqa: SLF001
+    if not problem._use_ml_surrogate:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -182,8 +182,8 @@ def _params_from_config(config: OptimizationConfig) -> AlgorithmParams:
 
 
 def _build_pareto_solutions(
-    F: np.ndarray | None,
-    X: np.ndarray | None,
+    F: np.ndarray | None,  # noqa: N803 - pymoo convention: F=objectives, X=decisions
+    X: np.ndarray | None,  # noqa: N803
 ) -> list[ParetoSolution]:
     """Convert raw objective / decision matrices into schema objects."""
     if F is None or X is None:
@@ -211,7 +211,7 @@ def _decision_to_composition(x: np.ndarray) -> dict[str, float]:
     u_frac = max(1.0 - solute_sum, 0.0)
 
     composition: dict[str, float] = {"U": round(u_frac, 6)}
-    for (elem, _, _), frac in zip(ALLOY_ELEMENTS, x):
+    for (elem, _, _), frac in zip(ALLOY_ELEMENTS, x, strict=False):
         val = float(frac)
         if val > 0.001:
             composition[elem] = round(val, 6)

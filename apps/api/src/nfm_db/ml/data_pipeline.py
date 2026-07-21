@@ -25,7 +25,6 @@ Usage::
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,7 +33,6 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from nfm_db.ml.feature_engineering import ML_FEATURE_NAMES
 from nfm_db.ml.merge_training_set import (
     ML_FEATURE_COLUMNS,
     TARGET_COLUMN,
@@ -315,7 +313,7 @@ def validate_data_quality(
 
 
 def split_train_val(
-    X: np.ndarray,
+    X: np.ndarray,  # noqa: N803 - X is standard ML feature-matrix notation
     y: np.ndarray,
     val_ratio: float = 0.2,
     seed: int = 42,

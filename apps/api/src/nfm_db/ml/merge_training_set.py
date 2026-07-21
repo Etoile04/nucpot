@@ -23,7 +23,7 @@ import logging
 import math
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -141,7 +141,7 @@ _ELEMENT_CLUSTER_TYPES: dict[str, str] = {
 _CLUSTER_TYPE_LABELS: list[str] = ["I", "II", "III", "IV"]
 
 
-def _normalize_frac(composition: Dict[str, float]) -> Dict[str, float]:
+def _normalize_frac(composition: dict[str, float]) -> dict[str, float]:
     """Normalize composition fractions to sum to 1.0."""
     total = sum(composition.values())
     if total <= 0:
@@ -149,20 +149,20 @@ def _normalize_frac(composition: Dict[str, float]) -> Dict[str, float]:
     return {el: frac / total for el, frac in composition.items()}
 
 
-def _calc_mo_equivalent(comp: Dict[str, float]) -> float:
+def _calc_mo_equivalent(comp: dict[str, float]) -> float:
     """Mo_eq = 1.0×Mo + 1.13×Nb + 2.42×V + 1.86×Ti + 1.1×Zr."""
     frac = _normalize_frac(comp)
     return sum(frac.get(el, 0.0) * c for el, c in MO_EQUIVALENT_COEFFICIENTS.items())
 
 
-def _calc_allen_chi_diff(comp: Dict[str, float]) -> float:
+def _calc_allen_chi_diff(comp: dict[str, float]) -> float:
     """Weighted Allen electronegativity difference from uranium."""
     frac = _normalize_frac(comp)
     chi_u = 1.226
     return sum(f * abs(ALLEN_ELECTRONEGATIVITY.get(el, chi_u) - chi_u) for el, f in frac.items())
 
 
-def _calc_lattice_distortion(comp: Dict[str, float]) -> float:
+def _calc_lattice_distortion(comp: dict[str, float]) -> float:
     """Atomic size mismatch: delta = sqrt(sum(x_i * (1 - r_i/r_bar)^2))."""
     frac = _normalize_frac(comp)
     r_avg = sum(f * ATOMIC_RADIUS.get(el, 0.0) for el, f in frac.items() if el in ATOMIC_RADIUS)
@@ -173,7 +173,7 @@ def _calc_lattice_distortion(comp: Dict[str, float]) -> float:
     return math.sqrt(max(delta_sq, 0.0))
 
 
-def _calc_vec(comp: Dict[str, float]) -> float:
+def _calc_vec(comp: dict[str, float]) -> float:
     """Valence Electron Concentration = sum(x_i * VEC_i)."""
     frac = _normalize_frac(comp)
     ws = 0.0
@@ -185,10 +185,10 @@ def _calc_vec(comp: Dict[str, float]) -> float:
     return ws / kf if kf > 0 else 0.0
 
 
-def _calc_cluster_fractions(comp: Dict[str, float]) -> Dict[str, float]:
+def _calc_cluster_fractions(comp: dict[str, float]) -> dict[str, float]:
     """Normalized solute fractions per Miedema cluster type (I-IV)."""
     frac = _normalize_frac(comp)
-    by_type: Dict[str, float] = {k: 0.0 for k in _CLUSTER_TYPE_LABELS}
+    by_type: dict[str, float] = {k: 0.0 for k in _CLUSTER_TYPE_LABELS}
     total = 0.0
     for el, f in frac.items():
         if el == "U":
@@ -202,13 +202,13 @@ def _calc_cluster_fractions(comp: Dict[str, float]) -> Dict[str, float]:
     return {f"cluster_{k}": 0.0 for k in _CLUSTER_TYPE_LABELS}
 
 
-def compute_8d_features(composition: Dict[str, float]) -> Dict[str, float]:
+def compute_8d_features(composition: dict[str, float]) -> dict[str, float]:
     """Compute all 8D ML features for a single composition.
 
     Returns dict with keys: mo_equivalent, lattice_distortion, allen_chi_diff,
     vec, cluster_I, cluster_II, cluster_III, cluster_IV.
     """
-    features: Dict[str, float] = {
+    features: dict[str, float] = {
         "mo_equivalent": _calc_mo_equivalent(composition),
         "allen_chi_diff": _calc_allen_chi_diff(composition),
         "lattice_distortion": _calc_lattice_distortion(composition),
@@ -218,7 +218,7 @@ def compute_8d_features(composition: Dict[str, float]) -> Dict[str, float]:
     return features
 
 
-def _element_system_from_composition(composition: Dict[str, float]) -> str:
+def _element_system_from_composition(composition: dict[str, float]) -> str:
     """Generate element_system string from sorted composition keys."""
     return "-".join(sorted(composition.keys()))
 
@@ -228,19 +228,19 @@ def _element_system_from_composition(composition: Dict[str, float]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_experimental_records(path: Path) -> List[Dict[str, Any]]:
+def load_experimental_records(path: Path) -> list[dict[str, Any]]:
     """Load experimental records from train.csv (8D features precomputed)."""
     if not path.exists():
         logger.warning("Experimental data not found: %s", path)
         return []
 
     df = pd.read_csv(path)
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for _, row in df.iterrows():
         comp = json.loads(row["composition_json"])
         features = compute_8d_features(comp)
 
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "composition": row["composition_json"],
             "element_system": _element_system_from_composition(comp),
             "source": SOURCE_EXPERIMENTAL,
@@ -255,7 +255,7 @@ def load_experimental_records(path: Path) -> List[Dict[str, Any]]:
     return records
 
 
-def load_dft_batch_records(directory: Path) -> List[Dict[str, Any]]:
+def load_dft_batch_records(directory: Path) -> list[dict[str, Any]]:
     """Load DFT records from batch CSV files in data/dft-export/."""
     if not directory.exists():
         logger.warning("DFT export directory not found: %s", directory)
@@ -266,7 +266,7 @@ def load_dft_batch_records(directory: Path) -> List[Dict[str, Any]]:
         logger.warning("No DFT batch files found in %s", directory)
         return []
 
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for filepath in batch_files:
         with filepath.open("r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -279,7 +279,7 @@ def load_dft_batch_records(directory: Path) -> List[Dict[str, Any]]:
 
                 features = compute_8d_features(comp)
 
-                record: Dict[str, Any] = {
+                record: dict[str, Any] = {
                     "composition": comp_str,
                     "element_system": row.get("element_system", ""),
                     "source": SOURCE_DFT_MP,
@@ -294,13 +294,13 @@ def load_dft_batch_records(directory: Path) -> List[Dict[str, Any]]:
     return records
 
 
-def load_incremental_dft_records(path: Path) -> List[Dict[str, Any]]:
+def load_incremental_dft_records(path: Path) -> list[dict[str, Any]]:
     """Load 200 incremental DFT records."""
     if not path.exists():
         logger.warning("Incremental DFT data not found: %s", path)
         return []
 
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -312,7 +312,7 @@ def load_incremental_dft_records(path: Path) -> List[Dict[str, Any]]:
 
             features = compute_8d_features(comp)
 
-            record: Dict[str, Any] = {
+            record: dict[str, Any] = {
                 "composition": comp_str,
                 "element_system": row.get("element_system", ""),
                 "source": SOURCE_DFT_INCR,
@@ -333,16 +333,16 @@ def load_incremental_dft_records(path: Path) -> List[Dict[str, Any]]:
 
 
 def merge_all_sources(
-    experimental_path: Optional[Path] = None,
-    dft_export_dir: Optional[Path] = None,
-    incremental_dft_path: Optional[Path] = None,
+    experimental_path: Path | None = None,
+    dft_export_dir: Path | None = None,
+    incremental_dft_path: Path | None = None,
 ) -> pd.DataFrame:
     """Load and merge all data sources into a unified DataFrame."""
     exp_path = experimental_path or TRAINING_DATA_DIR / "train.csv"
     dft_dir = dft_export_dir or DFT_EXPORT_DIR
     incr_path = incremental_dft_path or DATA_DIR / "dft_incremental_200.csv"
 
-    all_records: List[Dict[str, Any]] = []
+    all_records: list[dict[str, Any]] = []
 
     all_records.extend(load_experimental_records(exp_path))
     all_records.extend(load_dft_batch_records(dft_dir))
@@ -360,7 +360,7 @@ def merge_all_sources(
 
 def export_merged_dataset(
     df: pd.DataFrame,
-    output_dir: Optional[Path] = None,
+    output_dir: Path | None = None,
 ) -> tuple[Path, Path]:
     """Export merged DataFrame to parquet and CSV."""
     out_dir = output_dir or DATA_DIR
@@ -386,10 +386,10 @@ def export_merged_dataset(
 
 def generate_distribution_report(
     df: pd.DataFrame,
-    output_path: Optional[Path] = None,
+    output_path: Path | None = None,
 ) -> str:
     """Generate a markdown distribution report for the merged dataset."""
-    report_lines: List[str] = []
+    report_lines: list[str] = []
     report_lines.append("# Training Set Distribution Report")
     report_lines.append("")
     report_lines.append(f"**Total records:** {len(df)}")
