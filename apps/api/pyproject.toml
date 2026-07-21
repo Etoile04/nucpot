@@ -227,29 +227,16 @@ module = [
 ]
 ignore_errors = true
 
-# ML prediction pipeline (NFM-1560) — strict typing deferred.
-# Missing type annotations, untyped ML library stubs (pandas, numpy, joblib).
-# Track restoration in a dedicated cleanup issue alongside NFM-1072.
+# ML modules (NFM-1560, NFM-1547/1678/1681) — strict typing deferred.
+# Missing type annotations, untyped ML library stubs (pandas, numpy, sklearn,
+# joblib, xgboost, shap, pymoo). Track restoration in a dedicated cleanup
+# issue alongside NFM-1072.
 [[tool.mypy.overrides]]
 module = [
-    "nfm_db.ml.feature_engineering",
-    "nfm_db.ml.prediction_service",
+    "nfm_db.ml.*",
     "nfm_db.ml",
-]
-ignore_errors = true
-
-# NFM-1547/1678/1681: data pipeline, DFT import, compute_incremental_features,
-# merge_training_set, design optimization. Strict typing deferred to NFM-1072
-# cleanup alongside NFM-1560 — pandas/sklearn stubs missing, pymoo missing
-# stubs, dict[str, float | None] union narrowing in compute paths.
-[[tool.mypy.overrides]]
-module = [
-    "nfm_db.ml.data_pipeline",
-    "nfm_db.ml.dft_import",
-    "nfm_db.ml.merge_training_set",
-    "nfm_db.ml.compute_incremental_features",
-    "nfm_db.api.v1.design",
     "nfm_db.optimization.*",
+    "nfm_db.api.v1.design",
 ]
 ignore_errors = true
 
