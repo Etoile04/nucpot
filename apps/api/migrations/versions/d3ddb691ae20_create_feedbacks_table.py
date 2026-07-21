@@ -17,33 +17,49 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create feedbacks table with enums - all via raw SQL."""
+    """Create feedbacks table with enums - all via raw SQL (idempotent).
+
+    Uses DO $$ ... EXCEPTION blocks for ENUM types and CREATE TABLE IF NOT
+    EXISTS so this migration succeeds whether the objects already exist
+    (e.g. from Supabase init) or not.  This unblocks the
+    d3ddb691ae20 -> 022 -> 023 migration chain in environments where
+    the root was never applied.
+    """
     op.execute("""
-        CREATE TYPE feedback_type_enum AS ENUM (
-            \'bug_report\', \'feature_request\', \'data_correction\', \'usage_inquiry\'
-        )
+        DO $$ BEGIN
+            CREATE TYPE feedback_type_enum AS ENUM (
+                'bug_report', 'feature_request', 'data_correction', 'usage_inquiry'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
     """)
     op.execute("""
-        CREATE TYPE priority_enum AS ENUM (
-            \'urgent\', \'high\', \'medium\', \'low\'
-        )
+        DO $$ BEGIN
+            CREATE TYPE priority_enum AS ENUM (
+                'urgent', 'high', 'medium', 'low'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
     """)
     op.execute("""
-        CREATE TYPE feedback_status_enum AS ENUM (
-            \'open\', \'classified\', \'assigned\', \'in_progress\',
-            \'resolved\', \'closed\'
-        )
+        DO $$ BEGIN
+            CREATE TYPE feedback_status_enum AS ENUM (
+                'open', 'classified', 'assigned', 'in_progress',
+                'resolved', 'closed'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
     """)
     op.execute("""
-        CREATE TABLE feedbacks (
+        CREATE TABLE IF NOT EXISTS feedbacks (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             feedback_type feedback_type_enum NOT NULL,
             title VARCHAR(100) NOT NULL,
             description TEXT NOT NULL,
             page_url VARCHAR(500),
             contact_email VARCHAR(255),
-            priority priority_enum NOT NULL DEFAULT \'medium\',
-            status feedback_status_enum NOT NULL DEFAULT \'open\',
+            priority priority_enum NOT NULL DEFAULT 'medium',
+            status feedback_status_enum NOT NULL DEFAULT 'open',
             assignee VARCHAR(100),
             resolution TEXT,
             resolved_at TIMESTAMPTZ,
