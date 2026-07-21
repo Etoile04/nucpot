@@ -298,7 +298,6 @@ test.describe("MD Verification — tablet viewport", { tag: "@integration" }, ()
 
     await page.setViewportSize({ width: 768, height: 1024 })
     await page.goto("/admin/md-verification")
-    await page.waitForLoadState("networkidle")
 
     // Tabs should be visible at tablet width
     const submitTab = page.getByRole("tab", { name: "提交任务" })

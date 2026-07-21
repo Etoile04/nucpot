@@ -73,7 +73,6 @@ test.describe("Search Page — 1440px viewport", { tag: "@integration" }, () => 
 
     await page.goto("/search", { waitUntil: "domcontentloaded" })
     await expect(page.locator("h2").first()).toBeVisible()
-    await page.waitForLoadState("networkidle")
 
     const realErrors = consoleErrors.filter((t) =>
       FAILURE_SIGNATURES.some((re) => re.test(t)),

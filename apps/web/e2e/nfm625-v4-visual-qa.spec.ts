@@ -54,7 +54,7 @@ test.describe("NFM-625 V4 Extraction Visual QA", () => {
         })
         const p = await context.newPage()
 
-        await p.goto(page.path, { waitUntil: "networkidle", timeout: 30_000 })
+        await p.goto(page.path, { waitUntil: "domcontentloaded" })
 
         // Wait for main content to render
         await p.waitForTimeout(2_000)
@@ -80,7 +80,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
     const context = await createAuthContext(browser, { width: 1440, height: 900 })
     const p = await context.newPage()
 
-    await p.goto("/admin/v4-extraction/browse", { waitUntil: "networkidle", timeout: 30_000 })
+    await p.goto("/admin/v4-extraction/browse", { waitUntil: "domcontentloaded" })
     await p.waitForTimeout(3_000)
 
     // The browse page should show either the sidebar content or skeleton —
@@ -108,7 +108,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
     const context = await createAuthContext(browser, { width: 1440, height: 900 })
     const p = await context.newPage()
 
-    await p.goto("/admin/v4-extraction/submit", { waitUntil: "networkidle", timeout: 30_000 })
+    await p.goto("/admin/v4-extraction/submit", { waitUntil: "domcontentloaded" })
     await p.waitForTimeout(2_000)
 
     // Submit page should render the form card
@@ -136,8 +136,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
 
     // Use a fake jobId to trigger error state
     await p.goto("/admin/v4-extraction/status/nonexistent-job-xyz", {
-      waitUntil: "networkidle",
-      timeout: 30_000,
+      waitUntil: "domcontentloaded",
     })
     await p.waitForTimeout(3_000)
 
@@ -166,8 +165,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
 
     // Use a fake validationId to trigger error state
     await p.goto("/admin/v4-extraction/validate/nonexistent-validation-xyz", {
-      waitUntil: "networkidle",
-      timeout: 30_000,
+      waitUntil: "domcontentloaded",
     })
     await p.waitForTimeout(3_000)
 

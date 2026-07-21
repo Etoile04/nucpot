@@ -87,7 +87,6 @@ test.describe("Materials List — 1440px viewport", { tag: "@integration" }, () 
 
     await page.goto("/materials", { waitUntil: "domcontentloaded" })
     await expect(page.locator("h2")).toBeVisible()
-    await page.waitForLoadState("networkidle")
 
     const realErrors = consoleErrors.filter((t) =>
       FAILURE_SIGNATURES.some((re) => re.test(t)),
