@@ -41,7 +41,10 @@ from nfm_db.ml.merge_training_set import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
+# Resolve project root robustly across local + Docker layouts:
+#   Local:  parents[5] = <repo>/nucpot/   Docker: parents[3] = /app
+_PARENTS = Path(__file__).resolve().parents
+PROJECT_ROOT: Path = _PARENTS[5] if len(_PARENTS) >= 6 else _PARENTS[3]
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_PARQUET = DATA_DIR / "training_set_5551.parquet"
 
