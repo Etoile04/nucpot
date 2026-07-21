@@ -65,12 +65,29 @@ def _mock_result(n_solutions: int = 3):
     return result
 
 
-def _mock_empty_result():
-    """Create a mock pymoo Result with no solutions."""
+def _mock_empty_result(with_history: bool = False, n_gen: int = 3):
+    """Create a mock pymoo Result with no Pareto-optimal solutions.
+
+    Args:
+        with_history: If True, populate algorithm history with generation
+            data so convergence metrics can still be computed.
+        n_gen: Number of generations to include in history.
+    """
     result = MagicMock()
     result.opt = None
-    result.algorithm = MagicMock()
-    result.algorithm.history = []
+
+    if with_history:
+        history = []
+        for _ in range(n_gen):
+            h_entry = MagicMock()
+            h_pop, _, _ = _mock_population(n_solutions=5)
+            h_entry.pop = h_pop
+            history.append(h_entry)
+        result.algorithm = MagicMock()
+        result.algorithm.history = history
+    else:
+        result.algorithm = MagicMock()
+        result.algorithm.history = []
     return result
 
 
@@ -168,6 +185,44 @@ async def test_optimize_empty_pareto(mock_problem_cls, mock_minimize, client):
     assert data["pareto_front"] == []
     assert len(data["warnings"]) > 0
     assert "no feasible" in data["warnings"][0].lower() or "empty" in data["warnings"][0].lower()
+
+
+@pytest.mark.unit
+@patch(
+    "nfm_db.api.v1.design.minimize",
+    autospec=True,
+)
+@patch(
+    "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
+    autospec=True,
+)
+async def test_optimize_convergence_with_empty_pareto(
+    mock_problem_cls, mock_minimize, client
+):
+    """gd_history and hv_history should be non-empty when n_gen >= 1
+    even if the Pareto front is empty (NFM-1685)."""
+    mock_problem_cls.return_value = _mock_problem(ml_available=True)
+    mock_minimize.return_value = _mock_empty_result(with_history=True, n_gen=3)
+
+    payload = {"algorithm": {"pop_size": 10, "n_gen": 3}}
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 200
+
+    data = resp.json()["data"]
+    assert data["n_solutions"] == 0
+    assert data["pareto_front"] == []
+    assert len(data["warnings"]) > 0
+
+    # Convergence metrics MUST be non-empty (NFM-1685 acceptance criteria)
+    convergence = data["convergence"]
+    assert len(convergence["gd_history"]) > 0, (
+        "gd_history should be non-empty when n_gen >= 1"
+    )
+    assert len(convergence["hv_history"]) > 0, (
+        "hv_history should be non-empty when n_gen >= 1"
+    )
+    assert len(convergence["gd_history"]) == 3
+    assert len(convergence["hv_history"]) == 3
 
 
 # ---------------------------------------------------------------------------

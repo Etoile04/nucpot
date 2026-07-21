@@ -131,13 +131,19 @@ async def optimize_endpoint(
 
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-    # 7. Handle empty Pareto front gracefully.
+    # 7. Compute per-generation convergence metrics (NFM-1685).
+    #    Done BEFORE the empty Pareto guard so that even when no feasible
+    #    solutions are found, users still get diagnostic GD/HV history
+    #    across all completed generations.
+    convergence = _compute_convergence(result)
+
+    # 8. Handle empty Pareto front gracefully.
     if result.opt is None or len(result.opt) == 0:
         return ApiResponse(
             success=True,
             data=OptimizeResponse(
                 pareto_front=[],
-                convergence=ConvergenceMetrics(),
+                convergence=convergence,
                 n_solutions=0,
                 compute_time_ms=elapsed_ms,
                 algorithm_params=_params_from_config(config),
@@ -147,13 +153,10 @@ async def optimize_endpoint(
             ),
         )
 
-    # 8. Extract Pareto front → response schemas.
+    # 9. Extract Pareto front → response schemas.
     F = result.opt.get("F")
     X = result.opt.get("X")
     pareto_solutions = _build_pareto_solutions(F, X)
-
-    # 9. Compute per-generation convergence metrics.
-    convergence = _compute_convergence(result)
 
     return ApiResponse(
         success=True,
