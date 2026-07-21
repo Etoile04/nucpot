@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 
@@ -49,7 +49,7 @@ class TestCandidate:
         assert isinstance(c.extracted_at, datetime)
 
     def test_extracted_at_from_datetime(self) -> None:
-        dt = datetime(2025, 6, 15, 12, 0, tzinfo=timezone.utc)
+        dt = datetime(2025, 6, 15, 12, 0, tzinfo=datetime.UTC)
         c = Candidate(_make_entry(extracted_at=dt))
         assert c.extracted_at == dt
 

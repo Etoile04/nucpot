@@ -244,8 +244,9 @@ class MLSurrogateEvaluator:
 
     def _load_models(self) -> None:
         """Load temperature predictor and phase classifier from disk."""
-        import joblib
         import os
+
+        import joblib
 
         from nfm_db.ml.prediction_service import (
             PHASE_MODEL_PATH,
