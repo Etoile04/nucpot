@@ -15,6 +15,7 @@ import type {
   PhasePredictResponse,
   TempPredictRequest,
   TempPredictResponse,
+  CompositionPredictRequest,
 } from "./types"
 
 // =============================================================================
@@ -83,6 +84,27 @@ export async function predictTemperature(
     {
       method: "POST",
       body: JSON.stringify(features),
+    },
+  )
+  return envelope.data
+}
+
+/**
+ * Predict phase type from raw alloy composition.
+ *
+ * POST /api/v1/predict/phase-from-composition
+ *
+ * @param payload - Raw composition (element→fraction mapping).
+ * @returns Predicted phase type with probabilities and confidence score.
+ */
+export async function predictPhaseFromComposition(
+  payload: CompositionPredictRequest,
+): Promise<PhasePredictResponse> {
+  const envelope = await request<ApiResponse<PhasePredictResponse>>(
+    "/api/v1/predict/phase-from-composition",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
     },
   )
   return envelope.data

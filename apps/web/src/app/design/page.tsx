@@ -99,7 +99,7 @@ export default function DesignPage() {
   } = useOptimization()
 
   // --- Prediction hook ---
-  const { state: predState, prediction, clear: clearPrediction } = usePrediction()
+  const { state: predState, prediction, predictFromComposition, clear: clearPrediction } = usePrediction()
 
   // --- Drawer state ---
   const [selectedSolution, setSelectedSolution] = useState<ParetoSolution | null>(null)
@@ -130,15 +130,20 @@ export default function DesignPage() {
       setDrawerOpen(solution !== null)
 
       if (solution) {
-        // TODO: trigger prediction with computed physical features
-        // once the composition-to-features pipeline is connected.
-        // predict({ mo_equivalent: ..., ... })
-        clearPrediction()
+        // Parse the JSON-stringified composition back to a dict
+        // and trigger ML phase prediction.
+        let composition: Readonly<Record<string, number>> = {}
+        try {
+          composition = JSON.parse(solution.composition) as Record<string, number>
+        } catch {
+          // If composition can't be parsed, prediction stays idle
+        }
+        predictFromComposition(composition)
       } else {
         clearPrediction()
       }
     },
-    [clearPrediction],
+    [predictFromComposition, clearPrediction],
   )
 
   const handleDrawerClose = useCallback(() => {

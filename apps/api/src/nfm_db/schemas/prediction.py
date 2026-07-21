@@ -116,6 +116,22 @@ class PhasePredictRequest(PredictionFeatures):
     pass
 
 
+class CompositionPredictRequest(BaseModel):
+    """Request body for POST /api/v1/predict/phase-from-composition.
+
+    Accepts raw alloy composition and computes physical features
+    internally using ``compute_all_features()``.
+    """
+
+    composition: dict[str, float] = Field(
+        ...,
+        description=(
+            "Element name to atomic fraction mapping. "
+            'Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
+        ),
+    )
+
+
 class PhaseProbabilityItem(BaseModel):
     """Probability for a single class."""
 

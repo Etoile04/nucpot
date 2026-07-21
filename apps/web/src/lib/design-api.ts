@@ -11,6 +11,7 @@
 export {
   startOptimization as runOptimization,
   predictPhase,
+  predictPhaseFromComposition,
 } from "@/app/design/api"
 
 export type {
@@ -18,5 +19,6 @@ export type {
   OptimizeResponse,
   PhasePredictRequest,
   PhasePredictResponse,
+  CompositionPredictRequest,
   PredictionWarningItem,
 } from "@/app/design/types"

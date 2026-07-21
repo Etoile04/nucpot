@@ -115,6 +115,11 @@ interface PredictionWarningItem {
 /** Request body for POST /api/v1/predict/phase. */
 type PhasePredictRequest = PredictionFeatures
 
+/** Request body for POST /api/v1/predict/phase-from-composition. */
+interface CompositionPredictRequest {
+  readonly composition: Readonly<Record<string, number>>
+}
+
 /** Probability for a single class. */
 interface PhaseProbabilityItem {
   readonly class_label: string
@@ -219,6 +224,7 @@ export type {
   PredictionFeatures,
   PredictionWarningItem,
   PhasePredictRequest,
+  CompositionPredictRequest,
   PhaseProbabilityItem,
   PhasePredictResponse,
   TempPredictRequest,

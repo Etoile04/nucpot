@@ -18,6 +18,7 @@ from nfm_db.ml.prediction_service import (
 )
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.prediction import (
+    CompositionPredictRequest,
     PhasePredictRequest,
     PhasePredictResponse,
     PhaseProbabilityItem,
@@ -109,6 +110,61 @@ async def predict_temperature_endpoint(
             confidence_upper_c=result["confidence_upper_c"],
             gpr_predicted_temp_c=result.get("gpr_predicted_temp_c"),
             svr_predicted_temp_c=result.get("svr_predicted_temp_c"),
+            confidence=result["confidence"],
+            warnings=[
+                PredictionWarningItem(code=w["code"], message=w["message"])
+                for w in result.get("warnings", [])
+            ],
+            model_version=result["model_version"],
+        ),
+    )
+
+
+@router.post(
+    "/phase-from-composition",
+    response_model=ApiResponse[PhasePredictResponse],
+    summary="从成分预测相类型",
+    description=(
+        "输入原始合金成分（元素→原子分数），自动计算8维物理特征后预测相类型。\n\n"
+        "Convenience endpoint that accepts raw alloy composition, "
+        "computes 8 physical features internally, then predicts phase type."
+    ),
+)
+async def predict_phase_from_composition_endpoint(
+    payload: CompositionPredictRequest,
+) -> ApiResponse[PhasePredictResponse]:
+    """Predict phase type from raw alloy composition.
+
+    Computes physical features via ``compute_all_features()``, then
+    delegates to ``predict_phase()``.
+    """
+    from nfm_db.ml.feature_engineering import compute_all_features
+
+    features = compute_all_features(payload.composition)
+    result = predict_phase(features)
+
+    if result is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Phase classifier model is not available. "
+                "Ensure the model artifact is deployed at "
+                "models/phase_classifier_v01.joblib."
+            ),
+        )
+
+    return ApiResponse(
+        success=True,
+        data=PhasePredictResponse(
+            predicted_phase=result["predicted_phase"],
+            predicted_phase_label=result["predicted_phase_label"],
+            probabilities=[
+                PhaseProbabilityItem(
+                    class_label=p["class"],
+                    probability=p["probability"],
+                )
+                for p in result["probabilities"]
+            ],
             confidence=result["confidence"],
             warnings=[
                 PredictionWarningItem(code=w["code"], message=w["message"])

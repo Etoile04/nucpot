@@ -1,11 +1,10 @@
 /**
  * usePrediction — fetches ML phase prediction for a selected Pareto point.
  *
- * When a Pareto solution is selected, this hook attempts to predict
- * the phase classification. Since the predict endpoint requires 8 physical
- * features (not raw composition), we display prediction data when available
- * and show "unavailable" when the composition-to-features pipeline isn't
- * connected.
+ * Supports two prediction modes:
+ *   1. From 8 physical features (PhasePredictRequest)
+ *   2. From raw alloy composition (CompositionPredictRequest) — preferred for
+ *      Pareto point clicks since we only have composition from the optimizer.
  *
  * NFM-1698 §3
  */
@@ -13,6 +12,7 @@
 import { useState, useCallback } from "react"
 import {
   predictPhase,
+  predictPhaseFromComposition,
   type PhasePredictResponse,
   type PhasePredictRequest,
 } from "@/lib/design-api"
@@ -26,6 +26,8 @@ interface UsePredictionReturn {
   readonly prediction: PhasePredictResponse | null
   /** Trigger a prediction with 8 physical features */
   readonly predict: (features: PhasePredictRequest) => Promise<void>
+  /** Trigger a prediction from raw composition (convenience endpoint) */
+  readonly predictFromComposition: (composition: Readonly<Record<string, number>>) => Promise<void>
   /** Clear prediction state */
   readonly clear: () => void
 }
@@ -43,9 +45,6 @@ export function usePrediction(): UsePredictionReturn {
       setPrediction(result)
       setState("success")
     } catch (err: unknown) {
-      // If the prediction service is unavailable (503), show unavailable
-      // instead of a hard error — the optimization results are still valid.
-      // Log the error so it isn't silently swallowed.
       const message = err instanceof Error ? err.message : "Prediction failed"
       // eslint-disable-next-line no-console -- intentional: prediction is non-critical
       console.warn(`[ML Prediction] Service unavailable: ${message}`)
@@ -54,10 +53,30 @@ export function usePrediction(): UsePredictionReturn {
     }
   }, [])
 
+  const predictFromComposition = useCallback(
+    async (composition: Readonly<Record<string, number>>) => {
+      setState("loading")
+      setPrediction(null)
+
+      try {
+        const result = await predictPhaseFromComposition({ composition })
+        setPrediction(result)
+        setState("success")
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Prediction failed"
+        // eslint-disable-next-line no-console -- intentional: prediction is non-critical
+        console.warn(`[ML Prediction] Service unavailable: ${message}`)
+        setState("unavailable")
+        setPrediction(null)
+      }
+    },
+    [],
+  )
+
   const clear = useCallback(() => {
     setState("idle")
     setPrediction(null)
   }, [])
 
-  return { state, prediction, predict, clear }
+  return { state, prediction, predict, predictFromComposition, clear }
 }
