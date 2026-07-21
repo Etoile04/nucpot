@@ -41,7 +41,13 @@ from nfm_db.ml.merge_training_set import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
+# Resolve the nucpot repo root for both layouts (NFM-1690 CI fix).
+# See apps/api/src/nfm_db/ml/merge_training_set.py for the full rationale
+# (local dev → parents[5]; Docker container → parents[3] = /app).
+try:
+    PROJECT_ROOT = Path(__file__).resolve().parents[5]  # nucpot repo root (dev)
+except IndexError:
+    PROJECT_ROOT = Path(__file__).resolve().parents[3]  # /app in container
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_PARQUET = DATA_DIR / "training_set_5551.parquet"
 

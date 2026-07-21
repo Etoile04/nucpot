@@ -33,7 +33,19 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]  # nucpot repo root
+# Resolve the nucpot repo root for both layouts (NFM-1690 CI fix):
+#   - Local dev: this file lives at <repo>/apps/api/src/nfm_db/ml/merge_training_set.py
+#                so parents[5] = nucpot repo root.
+#   - Docker:    the API Dockerfile copies apps/api/src/ to /app/src/, so the file
+#                lives at /app/src/nfm_db/ml/merge_training_set.py. parents[3] = /app
+#                serves as the "repo root" in the container.
+# This module-level constant is evaluated at import time, so an unguarded parents[5]
+# raises IndexError in the container smoke test (`from nfm_db.main import app`),
+# which transitively imports this module. Guard with a fallback.
+try:
+    PROJECT_ROOT = Path(__file__).resolve().parents[5]  # nucpot repo root (dev)
+except IndexError:
+    PROJECT_ROOT = Path(__file__).resolve().parents[3]  # /app in container
 DATA_DIR = PROJECT_ROOT / "data"
 TRAINING_DATA_DIR = DATA_DIR / "training_data"
 DFT_EXPORT_DIR = DATA_DIR / "dft-export"
