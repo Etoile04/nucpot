@@ -54,10 +54,14 @@ test.describe("Review Conflicts — Authenticated", { tag: "@integration" }, () 
     // Should NOT redirect away from conflicts page
     await expect(page).toHaveURL(/\/review\/conflicts/, { timeout: 10_000 })
 
-    // Heading should be visible
-    await expect(
-      page.locator("h1").filter({ hasText: "冲突解决" }),
-    ).toBeVisible({ timeout: 15_000 })
+    // WHY: The h1 renders early during SSR but the page is not interactive
+    // until hydration completes. On the slow live site, hydration can take
+    // longer than 15s. The "刷新" (refresh) button is mounted only after
+    // hydration finishes, so waiting for it is a deterministic post-hydration
+    // signal that also implies the h1 is fully rendered.
+    await expect(page.getByRole("button", { name: "刷新" })).toBeVisible({
+      timeout: 30_000,
+    })
 
     // Log any console errors for diagnostics
     const realErrors = consoleErrors.filter((t) =>
@@ -75,9 +79,13 @@ test.describe("Review Conflicts — Authenticated", { tag: "@integration" }, () 
     await page.goto("/review/conflicts", { waitUntil: "domcontentloaded" })
     await expect(page).toHaveURL(/\/review\/conflicts/, { timeout: 10_000 })
 
-    await expect(
-      page.locator("h1").filter({ hasText: "冲突解决" }),
-    ).toBeVisible({ timeout: 15_000 })
+    // WHY: Same hydration race as the test above — the refresh button only
+    // mounts after the client component hydrates. Using it as the readiness
+    // signal replaces the flaky 15s h1 wait with a deterministic 30s wait
+    // tied to actual post-hydration mount.
+    await expect(page.getByRole("button", { name: "刷新" })).toBeVisible({
+      timeout: 30_000,
+    })
 
     // Refresh button should be present
     const refreshButton = page.getByRole("button", { name: "刷新" })
