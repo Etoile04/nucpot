@@ -5,7 +5,7 @@
  * center (ParetoChartContainer with tabs), right drawer overlay (recommendation).
  * Sticky footer bar.
  *
- * NFM-1668 §4 + NFM-1697
+ * NFM-1668 §4 + NFM-1697 + NFM-1700 (wire real hooks)
  */
 
 "use client"
@@ -18,9 +18,15 @@ import type {
   ConfigType,
   DesignConstraints,
   ParetoSolution,
-  ConvergencePoint,
 } from "./types"
-import { ALL_OBJECTIVES, ALL_CONFIG_TYPES } from "./constants"
+import {
+  ALL_OBJECTIVES,
+  ALL_CONFIG_TYPES,
+  DEFAULT_OBJECTIVES,
+  DEFAULT_ALGORITHM,
+} from "./constants"
+import { useOptimization } from "./hooks/use-optimization"
+import { usePrediction } from "./hooks/use-prediction"
 import { ObjectivePanel } from "./components/objective-panel"
 import { ConstraintPanel } from "./components/constraint-panel"
 import { ParetoChartContainer } from "./components/pareto-chart-container"
@@ -49,6 +55,23 @@ const DEFAULT_CONSTRAINTS: DesignConstraints = {
   configTypes: ALL_CONFIG_TYPES,
 }
 
+/**
+ * Map hook lifecycle states to the page-level status strings
+ * expected by ParetoChartContainer.
+ */
+function mapStatus(
+  hookState: "idle" | "loading" | "success" | "error",
+): "idle" | "running" | "completed" | "error" {
+  switch (hookState) {
+    case "loading":
+      return "running"
+    case "success":
+      return "completed"
+    default:
+      return hookState
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Page component
 // ---------------------------------------------------------------------------
@@ -62,18 +85,21 @@ export default function DesignPage() {
   const [constraints, setConstraints] = useState<DesignConstraints>({ ...DEFAULT_CONSTRAINTS })
   const [configTypeFilter, setConfigTypeFilter] = useState<ConfigType[]>([...ALL_CONFIG_TYPES])
 
-  // --- Optimization state ---
-  const [optimizationStatus, setOptimizationStatus] = useState<
-    "idle" | "running" | "completed" | "error"
-  >("idle")
-  const [optimizationError, setOptimizationError] = useState<string | undefined>()
-  const [optimizationProgress, setOptimizationProgress] = useState(0)
-  const [currentGeneration, setCurrentGeneration] = useState<number | undefined>()
+  // --- Optimization hook (replaces mock setInterval) ---
+  const {
+    state: optHookState,
+    paretoData,
+    convergenceData,
+    error: optError,
+    progress,
+    generation,
+    totalGenerations,
+    startOptimization,
+    reset: resetOptimization,
+  } = useOptimization()
 
-  // --- Chart data ---
-  const [paretoData, setParetoData] = useState<ParetoSolution[]>([])
-  const [generationalDistance, setGenerationalDistance] = useState<ConvergencePoint[]>([])
-  const [hypervolume, setHypervolume] = useState<ConvergencePoint[]>([])
+  // --- Prediction hook ---
+  const { state: predState, prediction, clear: clearPrediction } = usePrediction()
 
   // --- Drawer state ---
   const [selectedSolution, setSelectedSolution] = useState<ParetoSolution | null>(null)
@@ -82,8 +108,9 @@ export default function DesignPage() {
   // ---------------------------------------------------------------------------
   // Derived
   // ---------------------------------------------------------------------------
-  const isOptimizing = optimizationStatus === "running"
-  const isError = optimizationStatus === "error"
+  const optimizationStatus = mapStatus(optHookState)
+  const isOptimizing = optHookState === "loading"
+  const isError = optHookState === "error"
 
   const isValid = useMemo(
     () =>
@@ -97,75 +124,54 @@ export default function DesignPage() {
   // Handlers
   // ---------------------------------------------------------------------------
 
-  const handlePointClick = useCallback((solution: ParetoSolution | null) => {
-    setSelectedSolution(solution)
-    setDrawerOpen(solution !== null)
-  }, [])
+  const handlePointClick = useCallback(
+    (solution: ParetoSolution | null) => {
+      setSelectedSolution(solution)
+      setDrawerOpen(solution !== null)
+
+      if (solution) {
+        // TODO: trigger prediction with computed physical features
+        // once the composition-to-features pipeline is connected.
+        // predict({ mo_equivalent: ..., ... })
+        clearPrediction()
+      } else {
+        clearPrediction()
+      }
+    },
+    [clearPrediction],
+  )
 
   const handleDrawerClose = useCallback(() => {
     setDrawerOpen(false)
   }, [])
 
-  /** Start optimization — TODO: replace mock with real API call */
-  const handleStartOptimization = useCallback(() => {
-    setOptimizationStatus("running")
-    setOptimizationError(undefined)
-    setOptimizationProgress(0)
-    setCurrentGeneration(0)
-    setParetoData([])
-    setGenerationalDistance([])
-    setHypervolume([])
-    setSelectedSolution(null)
-    setDrawerOpen(false)
+  /**
+   * Build the API request from current form state and start optimization.
+   * Weights are normalised to the 0-1 scale expected by the backend.
+   */
+  const handleStartOptimization = useCallback(async () => {
+    // Normalise integer weights (sum=100) to float weights (sum≈1)
+    const weightSum = (weights.u_density + weights.phase_stability + weights.fabricability) || 1
+    const normalised = {
+      u_density: DEFAULT_OBJECTIVES.u_density * (weights.u_density / weightSum),
+      phase_temp: DEFAULT_OBJECTIVES.phase_temp * (weights.phase_stability / weightSum),
+      fabricability: DEFAULT_OBJECTIVES.fabricability * (weights.fabricability / weightSum),
+    }
 
-    const totalGens = 100
-    let gen = 0
-    const interval = setInterval(() => {
-      gen += 5
-      const progress = Math.min((gen / totalGens) * 100, 100)
-
-      setOptimizationProgress(progress)
-      setCurrentGeneration(gen)
-
-      setGenerationalDistance((prev) => [
-        ...prev,
-        {
-          generation: gen,
-          value: Math.max(0.01, 1.0 - gen * 0.009 + Math.random() * 0.02),
-        },
-      ])
-      setHypervolume((prev) => [
-        ...prev,
-        {
-          generation: gen,
-          value: Math.min(0.95, gen * 0.009 + Math.random() * 0.02),
-        },
-      ])
-
-      if (gen >= totalGens) {
-        clearInterval(interval)
-
-        const CONFIG_TYPE_CYCLE: ConfigType[] = [
-          "type_i", "type_ii", "type_iii", "type_iv",
-        ]
-        const mockPareto: ParetoSolution[] = Array.from({ length: 20 }, (_, i) => ({
-          id: `sol-${String(i + 1).padStart(3, "0")}`,
-          composition: `U-${80 - i * 2}Mo-${5 + i}Zr-${5 + i}Nb-${2 + i}Ti`,
-          uDensity: +(11.0 + Math.random() * 3).toFixed(2),
-          phaseStability: +(800 + Math.random() * 400).toFixed(0) as unknown as number,
-          fabricability: +(0.5 + Math.random() * 0.5).toFixed(2) as unknown as number,
-          configType: CONFIG_TYPE_CYCLE[i % 4]!,
-          bvRatio: +(2.0 + Math.random() * 3).toFixed(2),
-          rank: i < 3 ? 1 : i < 10 ? 2 : 3,
-        }))
-
-        setParetoData(mockPareto)
-        setOptimizationStatus("completed")
-        setOptimizationProgress(100)
-        setCurrentGeneration(totalGens)
-      }
-    }, 200)
-  }, [])
+    await startOptimization({
+      objectives: normalised,
+      constraints: {
+        u_min: constraints.uContentMin,
+        u_max: constraints.uContentMax,
+        max_single_element: constraints.singleElementCeiling,
+        n_elements: [2, constraints.totalAddedElements] as const,
+        bv_ratio: [constraints.bvRatioMin, constraints.bvRatioMax] as const,
+      },
+      algorithm: {
+        ...DEFAULT_ALGORITHM,
+      },
+    })
+  }, [weights, constraints, startOptimization])
 
   /** Reset all state to defaults */
   const handleReset = useCallback(() => {
@@ -173,21 +179,15 @@ export default function DesignPage() {
     setWeights({ ...DEFAULT_WEIGHTS })
     setConstraints({ ...DEFAULT_CONSTRAINTS })
     setConfigTypeFilter([...ALL_CONFIG_TYPES])
-    setOptimizationStatus("idle")
-    setOptimizationError(undefined)
-    setOptimizationProgress(0)
-    setCurrentGeneration(undefined)
-    setParetoData([])
-    setGenerationalDistance([])
-    setHypervolume([])
+    resetOptimization()
+    clearPrediction()
     setSelectedSolution(null)
     setDrawerOpen(false)
-  }, [])
+  }, [resetOptimization, clearPrediction])
 
   const handleRetry = useCallback(() => {
-    setOptimizationStatus("idle")
-    setOptimizationError(undefined)
-  }, [])
+    resetOptimization()
+  }, [resetOptimization])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -300,17 +300,17 @@ export default function DesignPage() {
         {/* Center panel */}
         <ParetoChartContainer
           paretoData={paretoData}
-          generationalDistance={generationalDistance}
-          hypervolume={hypervolume}
+          generationalDistance={convergenceData.generationalDistance}
+          hypervolume={convergenceData.hypervolume}
           selectedId={selectedSolution?.id ?? null}
           configTypeFilter={configTypeFilter}
           isOptimizing={isOptimizing}
-          optimizationProgress={optimizationProgress}
-          currentGeneration={currentGeneration}
-          totalGenerations={100}
+          optimizationProgress={progress}
+          currentGeneration={generation > 0 ? generation : undefined}
+          totalGenerations={totalGenerations || 100}
           isLoading={false}
           isError={isError}
-          errorMessage={optimizationError}
+          errorMessage={optError ?? undefined}
           optimizationStatus={optimizationStatus}
           onPointClick={handlePointClick}
           onRetry={handleRetry}
@@ -331,6 +331,8 @@ export default function DesignPage() {
         open={drawerOpen}
         selected={selectedSolution}
         onClose={handleDrawerClose}
+        predictionState={predState}
+        prediction={prediction}
       />
     </div>
   )

@@ -3,18 +3,14 @@
 import { useMemo, useCallback } from "react"
 import { Slider } from "antd"
 import type { ObjectiveKey } from "../types"
-import { OBJECTIVES } from "../constants"
+import { OBJECTIVES, ALL_OBJECTIVES } from "../constants"
 
 interface WeightSliderGroupProps {
   readonly weights: Record<ObjectiveKey, number>
   readonly onChange: (weights: Record<ObjectiveKey, number>) => void
 }
 
-const OBJECTIVE_KEYS: ObjectiveKey[] = [
-  "u_density",
-  "phase_stability",
-  "fabricability",
-]
+const OBJECTIVE_KEYS = ALL_OBJECTIVES
 
 /**
  * Three sliders for objective weights (0-100). Auto-normalizes so they

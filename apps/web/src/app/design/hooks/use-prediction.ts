@@ -42,9 +42,13 @@ export function usePrediction(): UsePredictionReturn {
       const result = await predictPhase(features)
       setPrediction(result)
       setState("success")
-    } catch {
+    } catch (err: unknown) {
       // If the prediction service is unavailable (503), show unavailable
       // instead of a hard error — the optimization results are still valid.
+      // Log the error so it isn't silently swallowed.
+      const message = err instanceof Error ? err.message : "Prediction failed"
+      // eslint-disable-next-line no-console -- intentional: prediction is non-critical
+      console.warn(`[ML Prediction] Service unavailable: ${message}`)
       setState("unavailable")
       setPrediction(null)
     }

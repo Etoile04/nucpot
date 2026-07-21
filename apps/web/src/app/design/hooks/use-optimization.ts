@@ -7,7 +7,7 @@
  */
 
 import { useState, useCallback, useRef } from "react"
-import type { ParetoSolution, ConvergenceData } from "../types"
+import type { ParetoSolution, ConvergenceData, ConfigType } from "../types"
 import {
   runOptimization,
   type OptimizeResponse,
@@ -37,6 +37,44 @@ interface UseOptimizationReturn {
   readonly reset: () => void
 }
 
+/**
+ * Derive config type from the number of solute elements in the composition.
+ *
+ * Matches CLUSTER_PHASE_LABELS convention:
+ *   ≤2 elements → Type I (α-U single phase)
+ *   3 elements  → Type II (α+γ two-phase)
+ *   4 elements  → Type III (γ single phase)
+ *   5+ elements → Type IV (amorphous / metastable)
+ */
+function deriveConfigType(
+  composition: Readonly<Record<string, number>>,
+): ConfigType {
+  const soluteCount = Object.keys(composition).filter(
+    (el) => el !== "U" && (composition[el] ?? 0) > 0,
+  ).length
+  if (soluteCount <= 2) return "type_i"
+  if (soluteCount === 3) return "type_ii"
+  if (soluteCount === 4) return "type_iii"
+  return "type_iv"
+}
+
+/**
+ * Compute B/V ratio from composition (B = group V total, V = group VI total).
+ * Falls back to 0 if the denominator is zero.
+ */
+function deriveBvRatio(composition: Readonly<Record<string, number>>): number {
+  const groupV =
+    (composition["V"] ?? 0) +
+    (composition["Nb"] ?? 0) +
+    (composition["Ta"] ?? 0)
+  const groupVI =
+    (composition["Cr"] ?? 0) +
+    (composition["Mo"] ?? 0) +
+    (composition["W"] ?? 0)
+  if (groupVI === 0) return 0
+  return +(groupV / groupVI).toFixed(2)
+}
+
 function mapBackendToFrontend(
   response: OptimizeResponse,
 ): { pareto: ParetoSolution[]; convergence: ConvergenceData } {
@@ -47,8 +85,8 @@ function mapBackendToFrontend(
       uDensity: sol.objectives.u_density ?? 0,
       phaseStability: sol.objectives.phase_temp ?? 0,
       fabricability: sol.objectives.fabricability ?? 0,
-      configType: "type_i" as const,
-      bvRatio: 4.5,
+      configType: deriveConfigType(sol.composition),
+      bvRatio: deriveBvRatio(sol.composition),
       rank: sol.rank,
     }),
   )
