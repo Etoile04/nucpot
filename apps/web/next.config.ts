@@ -17,7 +17,7 @@ const DISABLE_API_REWRITE =
   process.env.DISABLE_API_REWRITE === "true" ||
   process.env.DISABLE_API_REWRITE === "1"
 
-const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://localhost:8000"
+const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://localhost:8100"
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,

@@ -1,8 +1,8 @@
-"""Model loading and inference service for prediction endpoints (NFM-1598).
+"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669).
 
 Provides lazy-loaded model instances and inference functions for:
-- Phase classification (RF+XGB VotingClassifier)
-- Temperature prediction (GPR+SVR ensemble)
+- Phase classification (RF+XGB VotingClassifier) with confidence scoring
+- Temperature prediction (GPR+SVR ensemble) with confidence scoring
 """
 
 from __future__ import annotations
@@ -12,6 +12,15 @@ import os
 from pathlib import Path
 
 import numpy as np
+
+from nfm_db.ml.model_version import (
+    PHASE_CLASSIFIER_VERSION,
+    TEMP_PREDICTOR_VERSION,
+    confidence_from_default,
+    confidence_from_gpr_std,
+    confidence_from_probability,
+    warnings_to_dicts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +236,8 @@ def predict_phase(features: dict[str, float]) -> dict | None:
 
     Returns:
         Dictionary with keys: predicted_phase, predicted_phase_label,
-        probabilities, model_version. Returns None if model unavailable.
+        probabilities, confidence, warnings, model_version.
+        Returns None if model unavailable.
     """
     model = _load_phase_classifier()
     if model is None:
@@ -267,13 +277,19 @@ def predict_phase(features: dict[str, float]) -> dict | None:
             for i in range(n_classes)
         ]
 
+        # Confidence from max class probability
+        proba_values = [float(proba[i]) for i in range(n_classes)]
+        confidence = confidence_from_probability(proba_values)
+
         return {
             "predicted_phase": predicted_label,
             "predicted_phase_label": phase_labels.get(
                 predicted_label, predicted_label
             ),
             "probabilities": probabilities,
-            "model_version": "v0.1",
+            "confidence": confidence.score,
+            "warnings": warnings_to_dicts(confidence.warnings),
+            "model_version": PHASE_CLASSIFIER_VERSION,
         }
     except Exception:
         logger.exception("Phase prediction failed")
@@ -293,7 +309,8 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
     Returns:
         Dictionary with keys: predicted_temp_c, confidence_lower_c,
         confidence_upper_c, gpr_predicted_temp_c, svr_predicted_temp_c,
-        model_version. Returns None if model unavailable.
+        confidence, warnings, model_version.
+        Returns None if model unavailable.
     """
     model = _load_temp_predictor()
     if model is None:
@@ -310,13 +327,17 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
         predicted_temp = float(model.predict(feature_vec)[0])
         confidence_width = 30.0
 
+        confidence = confidence_from_default(predicted_temp)
+
         return {
             "predicted_temp_c": round(predicted_temp, 1),
             "confidence_lower_c": round(predicted_temp - confidence_width, 1),
             "confidence_upper_c": round(predicted_temp + confidence_width, 1),
             "gpr_predicted_temp_c": None,
             "svr_predicted_temp_c": None,
-            "model_version": "v0.1",
+            "confidence": confidence.score,
+            "warnings": warnings_to_dicts(confidence.warnings),
+            "model_version": TEMP_PREDICTOR_VERSION,
         }
     except Exception:
         logger.exception("Temperature prediction failed")
@@ -341,6 +362,7 @@ def _predict_temp_from_dict(
     3. Average (equal weights) for ensemble prediction
     4. Inverse z-score transform to get temperature in °C
     5. Estimate confidence from GPR std (or default ±30°C)
+    6. Compute confidence score from GPR standard deviation
     """
     gpr = model["gpr"]
     svr = model["svr"]
@@ -359,6 +381,7 @@ def _predict_temp_from_dict(
 
     # Confidence from GPR uncertainty (if available)
     confidence_width = 30.0  # Default ±30°C
+    gpr_std_c: float | None = None
     if hasattr(gpr, "predict") and hasattr(gpr, "_check_predict_params"):
         try:
             gpr_pred_std = gpr.predict(scaled, return_std=True)
@@ -366,13 +389,19 @@ def _predict_temp_from_dict(
                 std_z = float(gpr_pred_std[1][0])
             else:
                 std_z = float(gpr_pred_std)
-            std_c = std_z * target_std
-            confidence_width = max(std_c * 1.96, 15.0)  # 95% CI, floor 15°C
+            gpr_std_c = std_z * target_std
+            confidence_width = max(gpr_std_c * 1.96, 15.0)  # 95% CI, floor 15°C
         except Exception:
             logger.debug("GPR std estimation failed, using default confidence")
 
     gpr_temp_c = round(gpr_pred_z * target_std + target_mean, 1)
     svr_temp_c = round(svr_pred_z * target_std + target_mean, 1)
+
+    # Compute confidence score
+    if gpr_std_c is not None:
+        confidence = confidence_from_gpr_std(gpr_std_c, predicted_temp)
+    else:
+        confidence = confidence_from_default(predicted_temp)
 
     return {
         "predicted_temp_c": round(predicted_temp, 1),
@@ -380,5 +409,7 @@ def _predict_temp_from_dict(
         "confidence_upper_c": round(predicted_temp + confidence_width, 1),
         "gpr_predicted_temp_c": gpr_temp_c,
         "svr_predicted_temp_c": svr_temp_c,
-        "model_version": "v0.1",
+        "confidence": confidence.score,
+        "warnings": warnings_to_dicts(confidence.warnings),
+        "model_version": TEMP_PREDICTOR_VERSION,
     }

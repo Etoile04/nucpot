@@ -162,7 +162,7 @@ class TestProblemInstantiation:
         assert synthetic_problem.eval_count == 0
 
     def test_synthetic_mode_flag(self, synthetic_problem: NuclearFuelOptimizationProblem) -> None:
-        assert synthetic_problem._use_ml_surrogate is False
+        assert synthetic_problem._ml_evaluator is None
 
 
 # ---------------------------------------------------------------------------
@@ -354,14 +354,21 @@ class TestMLSurrogateIntegration:
     def test_ml_surrogate_returns_model_temp(
         self,
     ) -> None:
-        """When ML model returns 500°C, objective f2 should be -500."""
-        mock_temp_fn = MagicMock(return_value={"predicted_temp_c": 500.0})
+        """When ML evaluator returns 500°C, objective f2 should be -500."""
+        mock_evaluator = MagicMock()
+        mock_evaluator.build_feature_matrix.return_value = np.array([
+            [0.0, 0.0, 0.0, 18.0, 18.5, 0.0, 0.0, 0.0],
+        ])
+        mock_evaluator.extract_physical_properties.return_value = (
+            np.array([18.5]), np.array([18.0]), np.array([0.0]),
+        )
+        mock_evaluator.predict_temperatures_from_features.return_value = np.array([500.0])
 
         with patch(
             "nfm_db.optimization.nsga2_problem.NuclearFuelOptimizationProblem._init_ml_models"
         ):
             problem = NuclearFuelOptimizationProblem(use_ml_surrogate=False)
-            problem._temp_predictor_fn = mock_temp_fn
+            problem._ml_evaluator = mock_evaluator
 
         X = np.array([[0.10, 0.05, 0.03, 0.02, 0.04, 0.02]])
         out: dict = {}
@@ -370,14 +377,12 @@ class TestMLSurrogateIntegration:
         assert out["F"][0, 1] == pytest.approx(-500.0)
 
     def test_ml_surrogate_none_returns_fallback(self) -> None:
-        """When ML model returns None, fallback temp (400°C) is used."""
-        mock_temp_fn = MagicMock(return_value=None)
-
+        """When ML evaluator is None, synthetic fallback temp (400°C) is used."""
         with patch(
             "nfm_db.optimization.nsga2_problem.NuclearFuelOptimizationProblem._init_ml_models"
         ):
             problem = NuclearFuelOptimizationProblem(use_ml_surrogate=False)
-            problem._temp_predictor_fn = mock_temp_fn
+            problem._ml_evaluator = None
 
         X = np.array([[0.10, 0.05, 0.03, 0.02, 0.04, 0.02]])
         out: dict = {}
@@ -385,15 +390,25 @@ class TestMLSurrogateIntegration:
 
         assert out["F"][0, 1] == pytest.approx(-400.0)
 
-    def test_ml_surrogate_called_once_per_individual(self) -> None:
-        """Verify ML prediction is called exactly once per individual."""
-        mock_temp_fn = MagicMock(return_value={"predicted_temp_c": 450.0})
+    def test_ml_surrogate_batch_called_once(self) -> None:
+        """Verify ML batch predict is called once for the entire batch."""
+        mock_evaluator = MagicMock()
+        mock_evaluator.build_feature_matrix.return_value = np.array([
+            [0.0, 0.0, 0.0, 18.0, 18.5, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 17.0, 18.0, 0.0, 0.0, 0.0],
+        ])
+        mock_evaluator.extract_physical_properties.return_value = (
+            np.array([18.5, 18.0]),
+            np.array([18.0, 17.0]),
+            np.array([0.0, 0.0]),
+        )
+        mock_evaluator.predict_temperatures_from_features.return_value = np.array([450.0, 460.0])
 
         with patch(
             "nfm_db.optimization.nsga2_problem.NuclearFuelOptimizationProblem._init_ml_models"
         ):
             problem = NuclearFuelOptimizationProblem(use_ml_surrogate=False)
-            problem._temp_predictor_fn = mock_temp_fn
+            problem._ml_evaluator = mock_evaluator
 
         X = np.array([
             [0.10, 0.05, 0.03, 0.02, 0.04, 0.02],
@@ -402,7 +417,8 @@ class TestMLSurrogateIntegration:
         out: dict = {}
         problem._evaluate(X, out)
 
-        assert mock_temp_fn.call_count == 2
+        # Vectorized: one batch call, not one per individual
+        assert mock_evaluator.predict_temperatures_from_features.call_count == 1
 
 
 # ---------------------------------------------------------------------------
