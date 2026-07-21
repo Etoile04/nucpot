@@ -97,7 +97,7 @@ export function useOptimization(): UseOptimizationReturn {
       setError(null)
       setProgress(0)
       setGeneration(0)
-      setTotalGenerations(params.algorithm.n_gen)
+      setTotalGenerations(params.algorithm?.n_gen ?? 100)
 
       // Simulate progress (backend runs synchronously, so we show
       // incremental progress to keep the UI responsive).
@@ -110,7 +110,7 @@ export function useOptimization(): UseOptimizationReturn {
           return next
         })
         setGeneration((prev) =>
-          Math.min(prev + 1, params.algorithm.n_gen),
+          Math.min(prev + 1, params.algorithm?.n_gen ?? 100),
         )
       }, 300)
 
@@ -123,7 +123,7 @@ export function useOptimization(): UseOptimizationReturn {
         setParetoData(pareto)
         setConvergenceData(convergence)
         setProgress(100)
-        setGeneration(params.algorithm.n_gen)
+        setGeneration(params.algorithm?.n_gen ?? 100)
         setState("success")
       } catch (err: unknown) {
         clearProgressTimer()
