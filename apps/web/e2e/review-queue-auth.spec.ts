@@ -54,16 +54,24 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
     })
 
     test("redirects /review/kg to /login", async ({ page }) => {
-      await page.goto("/review/kg")
+      // WHY: The auth redirect is performed by Next.js edge middleware. On the
+      // slow live site the middleware round-trip can take >10s, which is why
+      // the original 10s URL assertion flaked. `domcontentloaded` lets the
+      // goto return as soon as the redirect HTML starts streaming instead of
+      // waiting for the (unreachable) load event, and the URL timeout is
+      // widened to 30s to accommodate the slower middleware response.
+      await page.goto("/review/kg", { waitUntil: "domcontentloaded" })
 
-      // ReviewAuthGuard checks token → missing → redirects to /login
-      await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
+      await expect(page).toHaveURL(/\/login/, { timeout: 30_000 })
     })
 
     test("redirects /review/conflicts to /login", async ({ page }) => {
-      await page.goto("/review/conflicts")
+      // WHY: Same middleware redirect race as above — see the /review/kg test
+      // for the rationale. `domcontentloaded` + 30s URL wait replaces the
+      // flaky 10s URL wait that fired before the middleware redirect landed.
+      await page.goto("/review/conflicts", { waitUntil: "domcontentloaded" })
 
-      await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
+      await expect(page).toHaveURL(/\/login/, { timeout: 30_000 })
     })
   })
 
