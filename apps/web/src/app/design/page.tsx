@@ -27,6 +27,7 @@ import {
 } from "./constants"
 import { useOptimization } from "./hooks/use-optimization"
 import { usePrediction } from "./hooks/use-prediction"
+import { useTemperaturePrediction } from "./hooks/use-temperature-prediction"
 import { useMediaQuery } from "./hooks/use-media-query"
 import { ObjectivePanel } from "./components/objective-panel"
 import { ConstraintPanel } from "./components/constraint-panel"
@@ -102,6 +103,9 @@ export default function DesignPage() {
   // --- Prediction hook ---
   const { state: predState, prediction, predictFromComposition, clear: clearPrediction } = usePrediction()
 
+  // --- Temperature prediction hook ---
+  const { state: tempPredState, temperature: tempPrediction, predictFromComposition: predictTempFromComposition, clear: clearTempPrediction } = useTemperaturePrediction()
+
   // --- Drawer state ---
   const [selectedSolution, setSelectedSolution] = useState<ParetoSolution | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -146,7 +150,7 @@ export default function DesignPage() {
 
       if (solution) {
         // Parse the JSON-stringified composition back to a dict
-        // and trigger ML phase prediction.
+        // and trigger ML phase + temperature prediction.
         let composition: Readonly<Record<string, number>> = {}
         try {
           composition = JSON.parse(solution.composition) as Record<string, number>
@@ -154,11 +158,13 @@ export default function DesignPage() {
           // If composition can't be parsed, prediction stays idle
         }
         predictFromComposition(composition)
+        predictTempFromComposition(composition)
       } else {
         clearPrediction()
+        clearTempPrediction()
       }
     },
-    [predictFromComposition, clearPrediction],
+    [predictFromComposition, clearPrediction, predictTempFromComposition, clearTempPrediction],
   )
 
   const handleDrawerClose = useCallback(() => {
@@ -201,9 +207,10 @@ export default function DesignPage() {
     setConfigTypeFilter([...ALL_CONFIG_TYPES])
     resetOptimization()
     clearPrediction()
+    clearTempPrediction()
     setSelectedSolution(null)
     setDrawerOpen(false)
-  }, [resetOptimization, clearPrediction])
+  }, [resetOptimization, clearPrediction, clearTempPrediction])
 
   const handleRetry = useCallback(() => {
     resetOptimization()
@@ -457,6 +464,8 @@ export default function DesignPage() {
         onClose={handleDrawerClose}
         predictionState={predState}
         prediction={prediction}
+        tempPredictionState={tempPredState}
+        tempPrediction={tempPrediction}
       />
     </div>
   )
