@@ -277,10 +277,14 @@ function calculateMixingEnthalpy(composition: Readonly<Record<string, number>>):
   let deltaH = 0
 
   for (let i = 0; i < elements.length; i++) {
+    const ei = elements[i]
+    if (ei === undefined) continue
     for (let j = i + 1; j < elements.length; j++) {
-      const omega = MIEDEMA_PAIRS[`${elements[i]}:${elements[j]}` as MiedemaKey]
+      const ej = elements[j]
+      if (ej === undefined) continue
+      const omega = MIEDEMA_PAIRS[`${ei}:${ej}` as MiedemaKey]
       if (omega !== undefined) {
-        deltaH += omega * fractions[elements[i]] * fractions[elements[j]]
+        deltaH += omega * (fractions[ei] ?? 0) * (fractions[ej] ?? 0)
       }
     }
   }
