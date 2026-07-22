@@ -46,8 +46,10 @@ export function RecommendationDrawer({
   onClose,
   predictionState = "idle",
   prediction = null,
-  tempPredictionState = "idle",
-  tempPrediction = null,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  tempPredictionState: _tempPredictionState = "idle",
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  tempPrediction: _tempPrediction = null,
 }: RecommendationDrawerProps) {
   if (!selected) {
     return null
