@@ -1,0 +1,137 @@
+{
+  "values": [
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "formation_energy",
+      "value": -3.25,
+      "unit": "eV/atom",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-001",
+      "confidence": "high",
+      "uncertainty": 0.05
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "cohesive_energy",
+      "value": -6.85,
+      "unit": "eV/atom",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-001",
+      "confidence": "high",
+      "uncertainty": 0.08
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "lattice_constant",
+      "value": 3.52,
+      "unit": "angstrom",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-001",
+      "confidence": "high"
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "lattice_distortion",
+      "value": 0.35,
+      "unit": "%",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-001",
+      "confidence": "high",
+      "uncertainty": 0.02
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "formation_energy",
+      "value": -2.98,
+      "unit": "eV/atom",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-002",
+      "confidence": "high",
+      "uncertainty": 0.06
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "cohesive_energy",
+      "value": -6.12,
+      "unit": "eV/atom",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-002",
+      "confidence": "high",
+      "uncertainty": 0.09
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "lattice_constant",
+      "value": 3.48,
+      "unit": "angstrom",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-002",
+      "confidence": "high"
+    },
+    {
+      "element_system": "U-Zr",
+      "phase": "BCC",
+      "property_name": "lattice_distortion",
+      "value": 0.42,
+      "unit": "%",
+      "method": "DFT-PBE",
+      "source": "DFT-UZr-002",
+      "confidence": "high",
+      "uncertainty": 0.03
+    },
+    {
+      "element_system": "UO2",
+      "phase": "fluorite",
+      "property_name": "formation_energy",
+      "value": -10.52,
+      "unit": "eV/atom",
+      "method": "DFT-PBE",
+      "source": "DFT-UO2-001",
+      "confidence": "high",
+      "uncertainty": 0.03,
+      "temperature": 300.0
+    },
+    {
+      "element_system": "UO2",
+      "phase": "fluorite",
+      "property_name": "cohesive_energy",
+      "value": -31.2,
+      "unit": "eV/atom",
+      "method": "DFT-PBE",
+      "source": "DFT-UO2-001",
+      "confidence": "high",
+      "uncertainty": 0.15,
+      "temperature": 300.0
+    },
+    {
+      "element_system": "UO2",
+      "phase": "fluorite",
+      "property_name": "lattice_constant",
+      "value": 5.47,
+      "unit": "angstrom",
+      "method": "DFT-PBE",
+      "source": "DFT-UO2-001",
+      "confidence": "high",
+      "temperature": 300.0
+    },
+    {
+      "element_system": "UO2",
+      "phase": "fluorite",
+      "property_name": "lattice_distortion",
+      "value": 0.0,
+      "unit": "%",
+      "method": "DFT-PBE",
+      "source": "DFT-UO2-001",
+      "confidence": "high",
+      "uncertainty": 0.0,
+      "temperature": 300.0
+    }
+  ]
+}

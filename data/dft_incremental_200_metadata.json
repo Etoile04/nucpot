@@ -1,0 +1,86 @@
+{
+  "export_version": "1.0",
+  "export_date": "20260721",
+  "issue": "NFM-1677",
+  "total_records": 200,
+  "source": "Synthetic DFT data generation for Sprint 5 ML training",
+  "generation_parameters": {
+    "random_seed": 20260721,
+    "script": "scripts/generate_incremental_dft_200.py"
+  },
+  "quality_checks": {
+    "scf_convergence": {
+      "criterion": "|ΔE| < 1e-5 eV",
+      "passed": 200,
+      "failed": 0,
+      "max_delta_e_ev": 7.87e-06,
+      "all_converged": true
+    },
+    "deduplication": {
+      "method": "composition+functional uniqueness",
+      "unique_keys": 200,
+      "duplicates_found": 0,
+      "all_unique": true
+    },
+    "field_completeness": {
+      "required_fields": "100%",
+      "notes": "All required fields populated for every record"
+    }
+  },
+  "summary": {
+    "total_element_systems": 18,
+    "element_systems": [
+      "C-U",
+      "C-Zr",
+      "Co-Cr",
+      "Cr-Fe-Ni",
+      "Cr-Ni",
+      "Fe-Ni",
+      "Hf-Nb",
+      "Hf-Zr",
+      "Mo-Nb",
+      "Mo-Ti-U",
+      "Mo-U",
+      "Mo-U-Zr",
+      "N-U",
+      "N-Zr",
+      "Nb-U",
+      "Nb-U-Zr",
+      "Ti-Zr",
+      "U-Zr"
+    ],
+    "functional_breakdown": {
+      "HSE06": 15,
+      "PBE": 177,
+      "PBEsol": 8
+    },
+    "phase_breakdown": {
+      "B1": 16,
+      "BCC": 138,
+      "FCC": 46
+    },
+    "code_breakdown": {
+      "QE": 4,
+      "VASP": 196
+    }
+  },
+  "file_hashes": {
+    "csv": {
+      "path": "data/dft_incremental_200.csv",
+      "sha256": "c71f411dddeb6b7e85b7cc0c29c25d037001ed7aac024fddda0d8c0c92d314b0",
+      "size_bytes": 46760
+    },
+    "json": {
+      "path": "data/dft_incremental_200.json",
+      "sha256": "08100b473065b4ebb8aeed47e348e7c661567273269270fa588d79886be1cb8e",
+      "size_bytes": 73390
+    }
+  },
+  "acceptance_criteria": {
+    "record_count_200": true,
+    "format_matches_model": true,
+    "scf_convergence_verified": true,
+    "no_duplicates": true,
+    "data_in_project_dir": true
+  }
+}

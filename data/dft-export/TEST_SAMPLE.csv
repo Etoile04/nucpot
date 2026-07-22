@@ -1,0 +1,4 @@
+element_system,composition,phase,functional,cutoff_energy,kpoint_density,pseudopotential,code,formation_energy,formation_energy_uncertainty,cohesive_energy,cohesive_energy_uncertainty,lattice_constant_a,lattice_constant_b,lattice_constant_c,lattice_constant_uncertainty,lattice_distortion,lattice_distortion_uncertainty,temperature,pressure,magnetic_ordering,source_id,source_doi,calculation_date,notes
+U-Zr,"{""U"":70.0,""Zr"":30.0}",BCC,PBE,500.0,6x6x6,PAW_PBE,VASP,-3.25,0.05,-6.85,0.08,3.52,,,0.01,0.35,0.02,,0.0,,DFT-UZr-001,,2026-06-15,
+U-Zr,"{""U"":50.0,""Zr"":50.0}",BCC,PBE,500.0,6x6x6,PAW_PBE,VASP,-2.98,0.06,-6.12,0.09,3.48,,,0.01,0.42,0.03,,0.0,FM,DFT-UZr-002,,2026-06-15,ferromagnetic variant
+UO2,"{""U"":33.3,""O"":66.7}",fluorite,PBE,600.0,8x8x8,PAW_PBE,VASP,-10.52,0.03,-31.20,0.15,5.47,,,0.005,0.00,0.00,300,0.0,,DFT-UO2-001,,2026-06-20,T=300K calculation
