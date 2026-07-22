@@ -278,9 +278,14 @@ function calculateMixingEnthalpy(composition: Readonly<Record<string, number>>):
 
   for (let i = 0; i < elements.length; i++) {
     for (let j = i + 1; j < elements.length; j++) {
-      const omega = MIEDEMA_PAIRS[`${elements[i]}:${elements[j]}` as MiedemaKey]
+      const ei = elements[i]
+      const ej = elements[j]
+      if (ei === undefined || ej === undefined) continue
+      const omega = MIEDEMA_PAIRS[`${ei}:${ej}` as MiedemaKey]
       if (omega !== undefined) {
-        deltaH += omega * fractions[elements[i]] * fractions[elements[j]]
+        const fi = fractions[ei] ?? 0
+        const fj = fractions[ej] ?? 0
+        deltaH += omega * fi * fj
       }
     }
   }
