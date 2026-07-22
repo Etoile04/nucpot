@@ -115,6 +115,7 @@ export function RecommendationDrawer({
           </Text>
         </Descriptions.Item>
       </Descriptions>
+      <div>
 
       {/* ML Prediction Section */}
       <Divider style={{ borderColor: "var(--color-border)", margin: "16px 0 12px" }}>
@@ -240,7 +241,7 @@ export function RecommendationDrawer({
         </Descriptions>
       )}
 
-      {/* ML Temperature Prediction Section */
+      {/* ML Temperature Prediction Section */}
       <Divider style={{ borderColor: "var(--color-border)", margin: "16px 0 12px" }}>
         <Text strong style={{ color: "inherit", fontSize: 14 }}>
           <ExperimentOutlined style={{ marginRight: 8 }} />
@@ -349,6 +350,8 @@ export function RecommendationDrawer({
           )}
         </Descriptions>
       )}
+      </div>
     </Drawer>
   )
 }
+
