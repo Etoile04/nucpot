@@ -3,14 +3,22 @@
  * with ML phase prediction and temperature prediction sections.
  *
  * NFM-1668 §4.5 + NFM-1700 (ML prediction) + NFM-1744 (temperature prediction)
+ * + NFM-1751 (verification task creation)
  */
 
 "use client"
 
 import { Drawer, Descriptions, Typography, Tag, Button, Divider, Space, Alert } from "antd"
-import { ExportOutlined, ExperimentOutlined, LoadingOutlined } from "@ant-design/icons"
+import {
+  ExportOutlined,
+  ExperimentOutlined,
+  LoadingOutlined,
+  SendOutlined,
+  CheckCircleOutlined,
+} from "@ant-design/icons"
 import type { ParetoSolution, PhasePredictResponse, TempPredictResponse } from "../types"
 import { CONFIG_TYPES, CONFIG_TYPE_LABELS } from "../constants"
+import { useCreateVerificationTask } from "../hooks/use-create-verification-task"
 
 const { Text } = Typography
 
@@ -49,6 +57,8 @@ export function RecommendationDrawer({
   tempPredictionState = "idle",
   tempPrediction = null,
 }: RecommendationDrawerProps) {
+  const { loading: verifyLoading, createdTask, createTask } = useCreateVerificationTask()
+
   if (!selected) {
     return null
   }
@@ -63,13 +73,22 @@ export function RecommendationDrawer({
       width={480}
       placement="right"
       footer={
-        <Space>
+        <Space style={{ width: "100%", justifyContent: "space-between" }}>
           <Button onClick={onClose}>
             关闭 / Close
           </Button>
-          <Button type="primary" icon={<ExportOutlined />}>
-            导出配方 / Export
-          </Button>
+          <Space>
+            <Button
+              icon={<SendOutlined />}
+              loading={verifyLoading}
+              onClick={() => createTask(selected.composition)}
+            >
+              创建验证任务 / Verify
+            </Button>
+            <Button type="primary" icon={<ExportOutlined />}>
+              导出配方 / Export
+            </Button>
+          </Space>
         </Space>
       }
     >
@@ -351,6 +370,37 @@ export function RecommendationDrawer({
         </Descriptions>
       )}
       </div>
+
+      {/* Verification Task Result Section */}
+      {createdTask && (
+        <>
+          <Divider style={{ borderColor: "var(--color-border)", margin: "16px 0 12px" }}>
+            <Text strong style={{ color: "inherit", fontSize: 14 }}>
+              <CheckCircleOutlined style={{ marginRight: 8, color: "#34d399" }} />
+              验证任务 / Verification Task
+            </Text>
+          </Divider>
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="任务 ID / Task ID">
+              <Text code style={{ fontSize: 12 }}>{createdTask.id}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="状态 / Status">
+              <Tag color="processing">{createdTask.status}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="势函数 / Potential">
+              <Text code>{createdTask.potential_function}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="温度范围 / Temp Range">
+              <Text>
+                {createdTask.temperature_min}K — {createdTask.temperature_max}K
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="时间步 / Timesteps">
+              <Text>{createdTask.timestep_count.toLocaleString()}</Text>
+            </Descriptions.Item>
+          </Descriptions>
+        </>
+      )}
     </Drawer>
   )
 }

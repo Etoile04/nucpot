@@ -16,6 +16,8 @@ import type {
   TempPredictRequest,
   TempPredictResponse,
   CompositionPredictRequest,
+  CreateVerificationTaskRequest,
+  VerificationTaskResponse,
 } from "./types"
 
 // =============================================================================
@@ -102,6 +104,31 @@ export async function predictPhaseFromComposition(
 ): Promise<PhasePredictResponse> {
   const envelope = await request<ApiResponse<PhasePredictResponse>>(
     "/api/v1/predict/phase-from-composition",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  )
+  return envelope.data
+}
+
+// =============================================================================
+// Verification task API
+// =============================================================================
+
+/**
+ * Create a LAMMPS MD verification task from a Pareto recommendation composition.
+ *
+ * POST /api/v1/verification/tasks
+ *
+ * @param payload - Composition and simulation parameters.
+ * @returns The created verification task with its ID and initial status.
+ */
+export async function createVerificationTask(
+  payload: CreateVerificationTaskRequest,
+): Promise<VerificationTaskResponse> {
+  const envelope = await request<ApiResponse<VerificationTaskResponse>>(
+    "/api/v1/verification/tasks",
     {
       method: "POST",
       body: JSON.stringify(payload),

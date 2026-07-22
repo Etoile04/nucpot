@@ -208,6 +208,34 @@ interface OptimizeResponse {
   readonly warnings: readonly string[]
 }
 
+// --- Verification task (mirrors CreateVerificationTaskRequest/Response) ---
+
+/** Request body for POST /api/v1/verification/tasks. */
+interface CreateVerificationTaskRequest {
+  readonly composition: Readonly<Record<string, number>>
+  readonly potential_function: string
+  readonly temperature_min: number
+  readonly temperature_max: number
+  readonly timestep_count: number
+}
+
+/** Response body for a created verification task. */
+interface VerificationTaskResponse {
+  readonly id: string
+  readonly composition: Readonly<Record<string, number>>
+  readonly potential_function: string
+  readonly temperature_min: number
+  readonly temperature_max: number
+  readonly timestep_count: number
+  readonly status: string
+  readonly rating: string | null
+  readonly rating_summary: string | null
+  readonly rating_metrics: Readonly<Record<string, number>> | null
+  readonly error_message: string | null
+  readonly created_at: string
+  readonly updated_at: string
+}
+
 export type {
   // §1  UI domain types
   ObjectiveKey,
@@ -236,4 +264,7 @@ export type {
   ApiParetoSolution,
   ConvergenceMetrics,
   OptimizeResponse,
+  // §3  Verification task types
+  CreateVerificationTaskRequest,
+  VerificationTaskResponse,
 }
