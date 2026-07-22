@@ -11,7 +11,7 @@ import enum
 import uuid
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, Float, Integer, String
+from sqlalchemy import CheckConstraint, Float, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 

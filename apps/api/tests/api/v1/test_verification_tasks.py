@@ -15,6 +15,7 @@ import pytest
 
 from nfm_db.main import app
 
+
 # ---------------------------------------------------------------------------
 # Auth fixture — same pattern as test_verification.py
 # ---------------------------------------------------------------------------
