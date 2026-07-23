@@ -109,6 +109,13 @@ services:
     volumes:
       - staging-lightrag-data:/app/data
     environment:
+      # --- PostgreSQL (shared with NFM API) ---
+      POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-staging-db}
+      POSTGRES_PORT: ${LIGHTRAG_PG_PORT:-5432}
+      POSTGRES_USER: ${LIGHTRAG_PG_USER:-${STAGING_POSTGRES_USER:-nfm}}
+      POSTGRES_PASSWORD: ${LIGHTRAG_PG_PASSWORD:-${STAGING_POSTGRES_PASSWORD:?Set STAGING_POSTGRES_PASSWORD}}
+      POSTGRES_DATABASE: ${LIGHTRAG_PG_DB:-${STAGING_POSTGRES_DB:-nfm_db}}
+      # --- LLM Configuration ---
       LLM_BINDING: ${STAGING_LIGHTRAG_LLM_BINDING:-openai}
       LLM_MODEL: ${STAGING_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
       LLM_BINDING_HOST: ${STAGING_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
