@@ -1,4 +1,4 @@
-"""Model version management and confidence scoring utilities (NFM-1669).
+"""Model version management and confidence scoring utilities (NFM-1669, NFM-1789).
 
 Provides:
 - Centralized version constants for all ML models
@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 PHASE_CLASSIFIER_VERSION: str = "v1.0"
 TEMP_PREDICTOR_VERSION: str = "v1.0"
+ENERGY_PREDICTOR_VERSION: str = "v1.0"
 
 
 # ---------------------------------------------------------------------------
