@@ -123,6 +123,7 @@ def _composition_to_dict(composition: Any) -> dict[str, float]:
 def fetch_u_alloys_from_mp(
     elements: list[str] | None = None,
     e_above_hull_max: float = 0.2,
+    api_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch U-X binary alloy entries from Materials Project.
 
@@ -146,7 +147,7 @@ def fetch_u_alloys_from_mp(
     all_entries: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
 
-    with MPRester() as mpr:
+    with MPRester(api_key=api_key) as mpr:
         for partner in partners:
             chemsys = f"U-{partner}"
             try:
@@ -173,7 +174,9 @@ def fetch_u_alloys_from_mp(
                 for entry in results:
                     if getattr(entry, "nelements", 0) != 2:
                         continue
-                    elems = getattr(entry, "elements", [])
+                    elems = [
+                        str(el) for el in getattr(entry, "elements", [])
+                    ]
                     if "U" not in elems:
                         continue
 
@@ -190,7 +193,7 @@ def fetch_u_alloys_from_mp(
                         "composition": _composition_to_dict(
                             getattr(entry, "composition", None)
                         ),
-                        "elements": list(elems),
+                        "elements": elems,
                         "formation_energy_per_atom": float(
                             getattr(
                                 entry, "formation_energy_per_atom", None
@@ -437,10 +440,10 @@ def main() -> int:
     parser.add_argument(
         "--e-above-hull",
         type=float,
-        default=0.2,
+        default=2.0,
         help=(
             "Maximum energy above hull in eV/atom. "
-            "Default: 0.2 (includes metastable phases)."
+            "Default: 2.0 (includes metastable phases relevant for ML)."
         ),
     )
     parser.add_argument(
@@ -473,6 +476,7 @@ def main() -> int:
 
     entries = fetch_u_alloys_from_mp(
         elements=elements,
+        api_key=api_key,
         e_above_hull_max=args.e_above_hull,
     )
 
