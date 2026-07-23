@@ -47,13 +47,13 @@ class CreateVerificationTaskRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_composition_not_empty(self) -> type[CreateVerificationTaskRequest]:
+    def validate_composition_not_empty(self) -> CreateVerificationTaskRequest:
         if not self.composition:
             raise ValueError("composition must contain at least one element")
         return self
 
     @model_validator(mode="after")
-    def validate_fractions_sum_to_one(self) -> type[CreateVerificationTaskRequest]:
+    def validate_fractions_sum_to_one(self) -> CreateVerificationTaskRequest:
         total = sum(self.composition.values())
         if not (0.99 <= total <= 1.01):
             raise ValueError(
@@ -62,7 +62,7 @@ class CreateVerificationTaskRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_temperature_range(self) -> type[CreateVerificationTaskRequest]:
+    def validate_temperature_range(self) -> CreateVerificationTaskRequest:
         if self.temperature_min >= self.temperature_max:
             raise ValueError(
                 "temperature_min must be less than temperature_max"
