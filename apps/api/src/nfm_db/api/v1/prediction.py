@@ -1,16 +1,17 @@
-"""ML prediction API endpoints (NFM-1598, NFM-1669).
+"""ML prediction API endpoints (NFM-1598, NFM-1669, NFM-1790).
 
 - POST /api/v1/predict/phase        — phase classification from 8 physical features
 - POST /api/v1/predict/temperature  — transition temperature prediction
 
 All responses include model_version, confidence score, and warnings.
+Pass ?importance=true to include feature importance scores.
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from nfm_db.ml.prediction_service import (
     predict_phase,
@@ -44,10 +45,11 @@ router = APIRouter(prefix="/predict", tags=["ML预测"])
 )
 async def predict_phase_endpoint(
     payload: PhasePredictRequest,
+    importance: bool = Query(False, description="Include feature importance scores"),
 ) -> ApiResponse[PhasePredictResponse]:
     """Predict phase type from 8 physical features."""
     features = payload.to_feature_dict()
-    result = predict_phase(features)
+    result = predict_phase(features, include_importance=importance)
 
     if result is None:
         raise HTTPException(
@@ -74,6 +76,7 @@ async def predict_phase_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            feature_importance=result.get("feature_importance"),
         ),
     )
 
@@ -90,10 +93,11 @@ async def predict_phase_endpoint(
 )
 async def predict_temperature_endpoint(
     payload: TempPredictRequest,
+    importance: bool = Query(False, description="Include feature importance scores"),
 ) -> ApiResponse[TempPredictResponse]:
     """Predict phase transition temperature from 8 physical features."""
     features = payload.to_feature_dict()
-    result = predict_temperature(features)
+    result = predict_temperature(features, include_importance=importance)
 
     if result is None:
         raise HTTPException(
@@ -116,6 +120,7 @@ async def predict_temperature_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            feature_importance=result.get("feature_importance"),
         ),
     )
 
@@ -132,6 +137,7 @@ async def predict_temperature_endpoint(
 )
 async def predict_phase_from_composition_endpoint(
     payload: CompositionPredictRequest,
+    importance: bool = Query(False, description="Include feature importance scores"),
 ) -> ApiResponse[PhasePredictResponse]:
     """Predict phase type from raw alloy composition.
 
@@ -141,7 +147,7 @@ async def predict_phase_from_composition_endpoint(
     from nfm_db.ml.feature_engineering import compute_all_features
 
     features = compute_all_features(payload.composition)
-    result = predict_phase(features)
+    result = predict_phase(features, include_importance=importance)
 
     if result is None:
         raise HTTPException(
@@ -171,5 +177,6 @@ async def predict_phase_from_composition_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            feature_importance=result.get("feature_importance"),
         ),
     )

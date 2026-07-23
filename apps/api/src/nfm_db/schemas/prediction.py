@@ -171,6 +171,13 @@ class PhasePredictResponse(BaseModel):
         ...,
         description="Model artifact version identifier",
     )
+    feature_importance: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per-feature permutation importance scores. "
+            "Populated only when ?importance=true is passed."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,4 +227,11 @@ class TempPredictResponse(BaseModel):
     model_version: str = Field(
         ...,
         description="Model artifact version identifier",
+    )
+    feature_importance: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per-feature permutation importance scores. "
+            "Populated only when ?importance=true is passed."
+        ),
     )

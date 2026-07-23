@@ -1,8 +1,9 @@
-"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669).
+"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1790).
 
 Provides lazy-loaded model instances and inference functions for:
 - Phase classification (RF+XGB VotingClassifier) with confidence scoring
 - Temperature prediction (GPR+SVR ensemble) with confidence scoring
+- Optional feature importance via permutation importance (cached sidecar)
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from nfm_db.ml.feature_importance import get_cached_importance
 from nfm_db.ml.model_version import (
     PHASE_CLASSIFIER_VERSION,
     TEMP_PREDICTOR_VERSION,
@@ -224,7 +226,10 @@ def _load_temp_predictor() -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def predict_phase(features: dict[str, float]) -> dict | None:
+def predict_phase(
+    features: dict[str, float],
+    include_importance: bool = False,
+) -> dict | None:
     """Run phase classification on 8 physical features.
 
     The model may be binary (2 classes) or multi-class.  We introspect
@@ -233,10 +238,12 @@ def predict_phase(features: dict[str, float]) -> dict | None:
 
     Args:
         features: Dictionary of 8 physical feature values.
+        include_importance: If True, include feature_importance in result.
 
     Returns:
         Dictionary with keys: predicted_phase, predicted_phase_label,
-        probabilities, confidence, warnings, model_version.
+        probabilities, confidence, warnings, model_version, and
+        optionally feature_importance.
         Returns None if model unavailable.
     """
     model = _load_phase_classifier()
@@ -281,7 +288,7 @@ def predict_phase(features: dict[str, float]) -> dict | None:
         proba_values = [float(proba[i]) for i in range(n_classes)]
         confidence = confidence_from_probability(proba_values)
 
-        return {
+        result: dict = {
             "predicted_phase": predicted_label,
             "predicted_phase_label": phase_labels.get(
                 predicted_label, predicted_label
@@ -290,13 +297,27 @@ def predict_phase(features: dict[str, float]) -> dict | None:
             "confidence": confidence.score,
             "warnings": warnings_to_dicts(confidence.warnings),
             "model_version": PHASE_CLASSIFIER_VERSION,
+            "feature_importance": None,
         }
+
+        if include_importance:
+            model_path = os.environ.get(
+                "PHASE_CLASSIFIER_PATH", str(PHASE_MODEL_PATH)
+            )
+            result["feature_importance"] = get_cached_importance(
+                model_path, PHYSICAL_FEATURE_NAMES
+            ) or None
+
+        return result
     except Exception:
         logger.exception("Phase prediction failed")
         return None
 
 
-def predict_temperature(features: dict[str, float]) -> dict | None:
+def predict_temperature(
+    features: dict[str, float],
+    include_importance: bool = False,
+) -> dict | None:
     """Run temperature prediction on 8 physical features.
 
     The model artifact is a dict containing ``gpr``, ``svr``, and ``scaler``.
@@ -305,11 +326,13 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
 
     Args:
         features: Dictionary of 8 physical feature values.
+        include_importance: If True, include feature_importance in result.
 
     Returns:
         Dictionary with keys: predicted_temp_c, confidence_lower_c,
         confidence_upper_c, gpr_predicted_temp_c, svr_predicted_temp_c,
-        confidence, warnings, model_version.
+        confidence, warnings, model_version, and optionally
+        feature_importance.
         Returns None if model unavailable.
     """
     model = _load_temp_predictor()
@@ -321,7 +344,7 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
     try:
         # Handle both dict-based artifact and bare sklearn estimator
         if isinstance(model, dict):
-            return _predict_temp_from_dict(model, feature_vec)
+            return _predict_temp_from_dict(model, feature_vec, include_importance)
 
         # Fallback: bare estimator (e.g., if artifact is re-saved)
         predicted_temp = float(model.predict(feature_vec)[0])
@@ -329,7 +352,7 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
 
         confidence = confidence_from_default(predicted_temp)
 
-        return {
+        result: dict = {
             "predicted_temp_c": round(predicted_temp, 1),
             "confidence_lower_c": round(predicted_temp - confidence_width, 1),
             "confidence_upper_c": round(predicted_temp + confidence_width, 1),
@@ -338,7 +361,18 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
             "confidence": confidence.score,
             "warnings": warnings_to_dicts(confidence.warnings),
             "model_version": TEMP_PREDICTOR_VERSION,
+            "feature_importance": None,
         }
+
+        if include_importance:
+            model_path = os.environ.get(
+                "TEMP_PREDICTOR_PATH", str(TEMP_MODEL_PATH)
+            )
+            result["feature_importance"] = get_cached_importance(
+                model_path, PHYSICAL_FEATURE_NAMES
+            ) or None
+
+        return result
     except Exception:
         logger.exception("Temperature prediction failed")
         return None
@@ -347,6 +381,7 @@ def predict_temperature(features: dict[str, float]) -> dict | None:
 def _predict_temp_from_dict(
     model: dict,
     feature_vec: np.ndarray,
+    include_importance: bool = False,
 ) -> dict:
     """Run ensemble temperature prediction from a dict-based model artifact.
 
@@ -403,7 +438,7 @@ def _predict_temp_from_dict(
     else:
         confidence = confidence_from_default(predicted_temp)
 
-    return {
+    result: dict = {
         "predicted_temp_c": round(predicted_temp, 1),
         "confidence_lower_c": round(predicted_temp - confidence_width, 1),
         "confidence_upper_c": round(predicted_temp + confidence_width, 1),
@@ -412,4 +447,15 @@ def _predict_temp_from_dict(
         "confidence": confidence.score,
         "warnings": warnings_to_dicts(confidence.warnings),
         "model_version": TEMP_PREDICTOR_VERSION,
+        "feature_importance": None,
     }
+
+    if include_importance:
+        model_path = os.environ.get(
+            "TEMP_PREDICTOR_PATH", str(TEMP_MODEL_PATH)
+        )
+        result["feature_importance"] = get_cached_importance(
+            model_path, PHYSICAL_FEATURE_NAMES
+        ) or None
+
+    return result
