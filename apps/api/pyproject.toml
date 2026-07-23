@@ -66,6 +66,7 @@ ignore = [
     "B008",
     "UP042",  # intentional: str-enums back DB CHECK constraints & JSON
     "N806",   # MockManager in test fixtures
+    "N803",   # X, F, G are standard mathematical notation in ML/optimization code
     "B904",   # raise … from err — pervasive in pre-existing code
     "B017",   # assert blind Exception — test pattern
     "B015",   # pointless comparison at end of function scope

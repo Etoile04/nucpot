@@ -2,8 +2,10 @@ import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import type { ComponentPropsWithoutRef, ReactElement, ReactNode } from "react"
 import { getAllPosts, getPostBySlug, getAllSlugs } from "@/lib/blog/posts"
 import { formatDate } from "@/lib/blog/format-date"
+import { slugifyHeadingText } from "@/lib/blog/headings"
 import {
   BlogNavigation,
   BlogBreadcrumb,
@@ -36,6 +38,43 @@ export async function generateMetadata({
     title: `${post.frontmatter.title} — 核燃料与材料物性数据库`,
     description: post.frontmatter.summary,
   }
+}
+
+interface HeadingProps extends ComponentPropsWithoutRef<"h1"> {
+  readonly children?: React.ReactNode
+}
+
+/**
+ * Build a ReactMarkdown heading component (h1..h6) that applies
+ * `id={slugifyHeadingText(textContent)}` so TOC anchor clicks can
+ * resolve via `getElementById`. Reading textContent (rather than the
+ * `node` tree) keeps the slug algorithm stable across inline markup.
+ */
+function makeHeadingComponent(tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+  return function Heading({
+    children,
+    ...props
+  }: HeadingProps): ReactElement {
+    const text = extractText(children)
+    const id = slugifyHeadingText(text)
+    const Tag = tag
+    return (
+      <Tag id={id} {...props}>
+        {children}
+      </Tag>
+    )
+  }
+}
+
+function extractText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return ""
+  if (typeof node === "string" || typeof node === "number") return String(node)
+  if (Array.isArray(node)) return node.map(extractText).join("")
+  if (typeof node === "object" && "props" in node) {
+    const child = (node as { props: { children?: ReactNode } }).props.children
+    return extractText(child)
+  }
+  return ""
 }
 
 function findAdjacentPosts(
@@ -103,6 +142,12 @@ export default async function BlogDetailPage({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
+                h1: makeHeadingComponent("h1"),
+                h2: makeHeadingComponent("h2"),
+                h3: makeHeadingComponent("h3"),
+                h4: makeHeadingComponent("h4"),
+                h5: makeHeadingComponent("h5"),
+                h6: makeHeadingComponent("h6"),
                 pre({ children, ...props }) {
                   // Check if this is a code block
                   const childArray = children as Array<unknown>

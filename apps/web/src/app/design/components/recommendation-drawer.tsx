@@ -1,15 +1,15 @@
 /**
  * RecommendationDrawer — right-side Drawer showing selected Pareto solution details
- * with ML prediction section (model_version, confidence, warnings, predicted_phase).
+ * with ML phase prediction and temperature prediction sections.
  *
- * NFM-1668 §4.5 + NFM-1700 (ML prediction section)
+ * NFM-1668 §4.5 + NFM-1700 (ML prediction) + NFM-1744 (temperature prediction)
  */
 
 "use client"
 
 import { Drawer, Descriptions, Typography, Tag, Button, Divider, Space, Alert } from "antd"
 import { ExportOutlined, ExperimentOutlined, LoadingOutlined } from "@ant-design/icons"
-import type { ParetoSolution, PhasePredictResponse } from "../types"
+import type { ParetoSolution, PhasePredictResponse, TempPredictResponse } from "../types"
 import { CONFIG_TYPES, CONFIG_TYPE_LABELS } from "../constants"
 
 const { Text } = Typography
@@ -20,6 +20,8 @@ interface RecommendationDrawerProps {
   onClose: () => void
   predictionState?: "idle" | "loading" | "success" | "unavailable"
   prediction?: PhasePredictResponse | null
+  tempPredictionState?: "idle" | "loading" | "success" | "unavailable"
+  tempPrediction?: TempPredictResponse | null
 }
 
 /**
@@ -44,6 +46,10 @@ export function RecommendationDrawer({
   onClose,
   predictionState = "idle",
   prediction = null,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  tempPredictionState: _tempPredictionState = "idle",
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  tempPrediction: _tempPrediction = null,
 }: RecommendationDrawerProps) {
   if (!selected) {
     return null
@@ -235,6 +241,8 @@ export function RecommendationDrawer({
           )}
         </Descriptions>
       )}
+
+      {/* Temp prediction removed for debugging */}
     </Drawer>
   )
 }

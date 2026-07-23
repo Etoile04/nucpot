@@ -182,8 +182,8 @@ def _params_from_config(config: OptimizationConfig) -> AlgorithmParams:
 
 
 def _build_pareto_solutions(
-    F: np.ndarray | None,  # noqa: N803 - pymoo convention: F=objectives, X=decisions
-    X: np.ndarray | None,  # noqa: N803
+    F: np.ndarray | None,
+    X: np.ndarray | None,
 ) -> list[ParetoSolution]:
     """Convert raw objective / decision matrices into schema objects."""
     if F is None or X is None:

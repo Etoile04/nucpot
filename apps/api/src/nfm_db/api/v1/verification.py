@@ -1,9 +1,13 @@
-"""Verification API endpoints (NFM-98).
+"""Verification API endpoints (NFM-98, NFM-1750).
 
-Exposes the three Nuclear Domain Expert workflows:
+NFM-98 — Nuclear Domain Expert workflows:
 - POST /api/v1/verification/check-gap — Reference validation workflow
 - POST /api/v1/verification/adjudicate-grade — F-grade adjudication workflow
 - POST /api/v1/verification/quarterly-audit — Quarterly audit workflow
+
+NFM-1750 — LAMMPS verification task management:
+- POST /api/v1/verification/tasks — Create verification task from Pareto composition
+- GET  /api/v1/verification/tasks/{id} — Get task status and A-F rating
 """
 
 from __future__ import annotations
@@ -14,9 +18,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.core.auth import get_current_user
+from nfm_db.database import get_db
 from nfm_db.models import User
+from nfm_db.models.verification_task import TaskStatus, VerificationTask
+from nfm_db.schemas.common import ApiResponse
+from nfm_db.schemas.verification_task import (
+    CreateVerificationTaskRequest,
+    VerificationTaskResponse,
+)
 from nfm_db.services.domain_expert import (
     AdjudicationRequest as DomainAdjudicationRequest,
 )
@@ -407,3 +419,88 @@ async def verification_health() -> dict[str, str]:
         "version": "1.0.0",
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# NFM-1750: LAMMPS Verification Task Management
+# ---------------------------------------------------------------------------
+
+
+def _task_to_response(task: VerificationTask) -> VerificationTaskResponse:
+    """Convert an ORM VerificationTask to a Pydantic response schema."""
+    return VerificationTaskResponse(
+        id=task.id,
+        composition=task.composition,
+        potential_function=task.potential_function,
+        temperature_min=task.temperature_min,
+        temperature_max=task.temperature_max,
+        timestep_count=task.timestep_count,
+        status=task.status.value if isinstance(task.status, TaskStatus) else task.status,
+        rating=task.rating,
+        rating_summary=task.rating_summary,
+        rating_metrics=task.rating_metrics,
+        error_message=task.error_message,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
+@router.post(
+    "/tasks",
+    response_model=ApiResponse[VerificationTaskResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="创建LAMMPS验证任务",
+    description="从帕累托推荐成分创建LAMMPS分子动力学验证任务。\n\n"
+    "Create a LAMMPS MD verification task from a Pareto recommendation composition.",
+)
+async def create_verification_task(
+    payload: CreateVerificationTaskRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[VerificationTaskResponse]:
+    """Create a new LAMMPS verification task.
+
+    Accepts composition data (element→fraction pairs), potential function
+    selection, temperature range, and timestep count. Returns the created
+    task with status 'queued'.
+    """
+    task = VerificationTask(
+        composition=payload.composition,
+        potential_function=payload.potential_function,
+        temperature_min=payload.temperature_min,
+        temperature_max=payload.temperature_max,
+        timestep_count=payload.timestep_count,
+        status=TaskStatus.QUEUED,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    return ApiResponse(success=True, data=_task_to_response(task))
+
+
+@router.get(
+    "/tasks/{task_id}",
+    response_model=ApiResponse[VerificationTaskResponse],
+    summary="获取验证任务状态",
+    description="返回验证任务的状态和A-F评级结果。\n\n"
+    "Return verification task status and A-F structural stability rating.",
+)
+async def get_verification_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[VerificationTaskResponse]:
+    """Get a verification task by ID.
+
+    Returns the current status (queued/running/completed/failed) and,
+    when completed, the A-F structural stability rating result.
+    """
+    task = await db.get(VerificationTask, task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Verification task {task_id} not found",
+        )
+
+    return ApiResponse(success=True, data=_task_to_response(task))
