@@ -1,13 +1,14 @@
 {
   "version": "v1.0",
-  "n_samples": 2000,
+  "n_samples": 1512,
   "n_features": 8,
   "split": "80/20 hold-out",
-  "r2": 0.996,
-  "rmse": 0.0014,
-  "mae": 0.001,
+  "r2": 0.8293,
+  "rmse": 0.5696,
+  "mae": 0.338,
   "target_r2": 0.9,
-  "acceptance_passed": true,
-  "training_seconds": 0.64,
-  "model_path": "/Users/lwj04/Projects/nucpot/.paperclip/worktrees/NFM-1788-energypredictor-xgboost-r-0-90/apps/api/models/energy_predictor_v01.joblib"
+  "acceptance_passed": false,
+  "training_seconds": 1.2,
+  "model_path": "/Users/lwj04/Projects/nucpot/.paperclip/worktrees/NFM-1788-energypredictor-xgboost-r-0-90/apps/api/models/energy_predictor_v01.joblib",
+  "notes": "Aggregated from 12 dft-export batches (1200) + 2 supplementary batches (112) + dft_incremental_200.csv (200). R^2=0.8293 on 80/20 hold-out. AC #1 (R^2>0.90) NOT MET with current 8D Miedema-style feature pipeline on real DFT data. Previous r^2=0.996 was a false positive from the closed-form identity bug closed in 622d362. Escalated to CPO for AC decision."
 }
