@@ -565,6 +565,71 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Release the global app-shell scroll lock on /blog/* routes.
+ *
+ * The root layout in `app/layout.tsx` declares
+ *   body { height: 100vh; overflow: hidden }
+ *   main { flex: 1; overflow-y: auto }
+ * so that the inner <main> is the document's scroll container. Blog articles
+ * need document-level scrolling (`window.scrollTo(0, n)` → `scrollTop > 0`)
+ * to satisfy NFM-1689 acceptance criteria.
+ *
+ * The blog route layout (`app/blog/layout.tsx`) renders a marker div with
+ * class `blog-page-mount`. The `:has()` selector below activates only when
+ * that marker is present, so other routes keep the original app-shell
+ * behaviour. The override:
+ *   - lets the document scroll (`overflow-y: auto` with auto body height)
+ *   - lets the inner <main> grow with content (`overflow: visible`, no
+ *     fixed flex-1 sizing) so the document is the sole scroll container
+ *   - still keeps `min-height: 100vh` so a short blog page fills the viewport
+ * --------------------------------------------------------------------------- */
+body:has(.blog-page-mount) {
+  height: auto;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body:has(.blog-page-mount) main {
+  height: auto;
+  flex: none;
+  overflow: visible;
+}
+
+/* ---------------------------------------------------------------------------
+ * Constrain content width on small viewports (NFM-1689).
+ *
+ * At <1024px the blog detail layout uses a single-column grid. Long inline
+ * tokens (unwrappable URLs, code samples with no whitespace) force the grid
+ * item to its min-content width, blowing out the viewport. Enforce
+ * `min-width: 0` on the grid children and force long tokens to wrap so the
+ * page never develops horizontal overflow.
+ * --------------------------------------------------------------------------- */
+.blog-detail-layout > * {
+  min-width: 0;
+}
+
+.blog-prose {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.blog-prose code,
+.blog-prose pre,
+.blog-prose p,
+.blog-prose li,
+.blog-prose h1,
+.blog-prose h2,
+.blog-prose h3,
+.blog-prose h4,
+.blog-prose h5,
+.blog-prose h6 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* Blog prose - improved typography */
 .blog-prose {
   font-size: var(--blog-text-base);

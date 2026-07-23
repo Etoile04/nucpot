@@ -1,12 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-
-interface TocItem {
-  readonly id: string
-  readonly text: string
-  readonly level: number
-}
+import { extractHeadings } from "@/lib/blog/headings"
 
 interface BlogTableOfContentsProps {
   readonly content: string
@@ -14,52 +9,59 @@ interface BlogTableOfContentsProps {
 
 export function BlogTableOfContents({ content }: BlogTableOfContentsProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [tocItems, setTocItems] = useState<readonly TocItem[]>([])
+
+  // Heading extraction is pure and only depends on the markdown source, which
+  // is static at render time. Computing it inline avoids an extra render
+  // cycle (and the old effect-based setState).
+  const tocItems = extractHeadings(content)
 
   useEffect(() => {
-    // Extract headings from markdown content
-    const headingRegex = /^(#{1,6})\s+(.+)$/gm
-    const items: TocItem[] = []
-    let match
+    if (tocItems.length === 0) return
 
-    while ((match = headingRegex.exec(content)) !== null) {
-      const level = match[1]?.length ?? 1
-      const text = match[2]?.trim() ?? ""
-      const id = text
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/\s+/g, "-")
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setActiveId(entry.target.id)
+          }
+        })
+      },
+      { rootMargin: "-100px 0px -66%" }
+    )
 
-      items.push({ id, text, level })
-    }
+    tocItems.forEach((item) => {
+      const element = document.getElementById(item.id)
+      if (element) observer.observe(element)
+    })
 
-    setTocItems(items)
-
-    // Set up scroll spy
-    if (items.length > 0) {
-      const observer = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              setActiveId(entry.target.id)
-            }
-          })
-        },
-        { rootMargin: "-100px 0px -66%" }
-      )
-
-      // Observe all headings
-      items.forEach((item) => {
-        const element = document.getElementById(item.id)
-        if (element) observer.observe(element)
-      })
-
-      return () => observer.disconnect()
-    }
-  }, [content])
+    return () => observer.disconnect()
+  }, [tocItems])
 
   if (tocItems.length === 0) {
     return null
+  }
+
+  function scrollToHeading(itemId: string, itemText: string): void {
+    const direct = document.getElementById(itemId)
+    if (direct) {
+      direct.scrollIntoView({ behavior: "smooth" })
+      setActiveId(itemId)
+      return
+    }
+
+    // Fallback for headings whose id wasn't applied at render time. Locate
+    // the heading by matching textContent, then inject the id and scroll.
+    const headings = document.querySelectorAll(
+      ".blog-prose h1, .blog-prose h2, .blog-prose h3, .blog-prose h4, .blog-prose h5, .blog-prose h6"
+    )
+    for (const heading of Array.from(headings)) {
+      if (heading.textContent?.trim() === itemText) {
+        heading.id = itemId
+        heading.scrollIntoView({ behavior: "smooth" })
+        setActiveId(itemId)
+        return
+      }
+    }
   }
 
   return (
@@ -81,11 +83,7 @@ export function BlogTableOfContents({ content }: BlogTableOfContentsProps) {
                   }`}
                   onClick={(e) => {
                     e.preventDefault()
-                    const element = document.getElementById(item.id)
-                    if (element) {
-                      element.scrollIntoView({ behavior: "smooth" })
-                      setActiveId(item.id)
-                    }
+                    scrollToHeading(item.id, item.text)
                   }}
                 >
                   {item.text}
