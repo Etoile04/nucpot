@@ -316,7 +316,7 @@ def validate_data_quality(
 
 
 def split_train_val(
-    X: np.ndarray,  # noqa: N803 - X is standard ML feature-matrix notation
+    X: np.ndarray,
     y: np.ndarray,
     val_ratio: float = 0.2,
     seed: int = 42,
