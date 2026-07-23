@@ -26,13 +26,28 @@ from nfm_db.ml.feature_engineering import (
     compute_all_features,
     compute_ml_features,
 )
+from nfm_db.ml.group_kfold_cv import (
+    CVResult,
+    FoldMetrics,
+    build_group_labels,
+    build_group_labels_from_json,
+    derive_element_system,
+    derive_element_system_from_json,
+    run_cv,
+    run_group_kfold_cv,
+    run_stratified_kfold_cv,
+)
 
 # isort-style case-insensitive sort (ruff RUF022 - sorted __all__ required)
 __all__ = [
+    "CVResult",
+    "FoldMetrics",
     "ML_FEATURE_NAMES",
     "QualityReport",
     "batch_compute",
     "batch_compute_ml_features",
+    "build_group_labels",
+    "build_group_labels_from_json",
     "calculate_allen_chi_diff",
     "calculate_bv_ratio",
     "calculate_cluster_fractions",
@@ -45,10 +60,15 @@ __all__ = [
     "calculate_vec",
     "compute_all_features",
     "compute_ml_features",
+    "derive_element_system",
+    "derive_element_system_from_json",
     "format_quality_report",
     "load_training_set",
     "prepare_sklearn_data",
+    "run_cv",
     "run_full_pipeline",
+    "run_group_kfold_cv",
+    "run_stratified_kfold_cv",
     "split_train_val",
     "validate_data_quality",
 ]

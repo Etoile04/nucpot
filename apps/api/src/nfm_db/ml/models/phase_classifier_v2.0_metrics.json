@@ -1,0 +1,398 @@
+{
+  "code_sha256": "78eb4a6f5e0f5468674a64f8e8ea212f7a4c0ad3fe2a7d8d55aecbffc0b712ad",
+  "confusion_matrix": [
+    [
+      2872,
+      79
+    ],
+    [
+      537,
+      247
+    ]
+  ],
+  "cv_fold_accuracies": [
+    0.698391,
+    0.900804,
+    0.740642,
+    0.92246,
+    0.912985
+  ],
+  "cv_macro_avg_f1": 0.6769772381556696,
+  "cv_macro_avg_precision": 0.8218267665597901,
+  "cv_macro_avg_recall": 0.6743106515395979,
+  "cv_max_fold_accuracy": 0.9224598930481284,
+  "cv_mean_accuracy": 0.8350565178329793,
+  "cv_min_fold_accuracy": 0.6983914209115282,
+  "cv_n_groups": 73,
+  "cv_n_splits": 5,
+  "cv_per_fold_details": [
+    {
+      "accuracy": 0.698391,
+      "confusion_matrix": [
+        [
+          485,
+          0
+        ],
+        [
+          225,
+          36
+        ]
+      ],
+      "fold": 0,
+      "n_test": 746,
+      "n_train": 2989,
+      "per_class_report": {
+        "H": {
+          "f1-score": 0.8117154811715481,
+          "precision": 0.6830985915492958,
+          "recall": 1.0,
+          "support": 485.0
+        },
+        "M": {
+          "f1-score": 0.24242424242424243,
+          "precision": 1.0,
+          "recall": 0.13793103448275862,
+          "support": 261.0
+        },
+        "macro avg": {
+          "f1-score": 0.5270698617978953,
+          "precision": 0.8415492957746479,
+          "recall": 0.5689655172413793,
+          "support": 746.0
+        }
+      }
+    },
+    {
+      "accuracy": 0.900804,
+      "confusion_matrix": [
+        [
+          640,
+          27
+        ],
+        [
+          47,
+          32
+        ]
+      ],
+      "fold": 1,
+      "n_test": 746,
+      "n_train": 2989,
+      "per_class_report": {
+        "H": {
+          "f1-score": 0.9453471196454948,
+          "precision": 0.9315866084425036,
+          "recall": 0.95952023988006,
+          "support": 667.0
+        },
+        "M": {
+          "f1-score": 0.463768115942029,
+          "precision": 0.5423728813559322,
+          "recall": 0.4050632911392405,
+          "support": 79.0
+        },
+        "macro avg": {
+          "f1-score": 0.7045576177937619,
+          "precision": 0.7369797448992179,
+          "recall": 0.6822917655096502,
+          "support": 746.0
+        }
+      }
+    },
+    {
+      "accuracy": 0.740642,
+      "confusion_matrix": [
+        [
+          472,
+          10
+        ],
+        [
+          184,
+          82
+        ]
+      ],
+      "fold": 2,
+      "n_test": 748,
+      "n_train": 2987,
+      "per_class_report": {
+        "H": {
+          "f1-score": 0.8295254833040422,
+          "precision": 0.7195121951219512,
+          "recall": 0.979253112033195,
+          "support": 482.0
+        },
+        "M": {
+          "f1-score": 0.4581005586592179,
+          "precision": 0.8913043478260869,
+          "recall": 0.3082706766917293,
+          "support": 266.0
+        },
+        "macro avg": {
+          "f1-score": 0.6438130209816301,
+          "precision": 0.805408271474019,
+          "recall": 0.6437618943624621,
+          "support": 748.0
+        }
+      }
+    },
+    {
+      "accuracy": 0.92246,
+      "confusion_matrix": [
+        [
+          670,
+          2
+        ],
+        [
+          56,
+          20
+        ]
+      ],
+      "fold": 3,
+      "n_test": 748,
+      "n_train": 2987,
+      "per_class_report": {
+        "H": {
+          "f1-score": 0.9585121602288984,
+          "precision": 0.9228650137741047,
+          "recall": 0.9970238095238095,
+          "support": 672.0
+        },
+        "M": {
+          "f1-score": 0.40816326530612246,
+          "precision": 0.9090909090909091,
+          "recall": 0.2631578947368421,
+          "support": 76.0
+        },
+        "macro avg": {
+          "f1-score": 0.6833377127675104,
+          "precision": 0.9159779614325069,
+          "recall": 0.6300908521303258,
+          "support": 748.0
+        }
+      }
+    },
+    {
+      "accuracy": 0.912985,
+      "confusion_matrix": [
+        [
+          605,
+          40
+        ],
+        [
+          25,
+          77
+        ]
+      ],
+      "fold": 4,
+      "n_test": 747,
+      "n_train": 2988,
+      "per_class_report": {
+        "H": {
+          "f1-score": 0.9490196078431372,
+          "precision": 0.9603174603174603,
+          "recall": 0.937984496124031,
+          "support": 645.0
+        },
+        "M": {
+          "f1-score": 0.7031963470319634,
+          "precision": 0.6581196581196581,
+          "recall": 0.7549019607843137,
+          "support": 102.0
+        },
+        "macro avg": {
+          "f1-score": 0.8261079774375504,
+          "precision": 0.8092185592185592,
+          "recall": 0.8464432284541723,
+          "support": 747.0
+        }
+      }
+    }
+  ],
+  "cv_std_accuracy": 0.09552645184592161,
+  "cv_strategy": "groupkf",
+  "data_sha256": "293314139d21e5f86a5caf84c42470ae661dd2b2d6cbf08393bca92bf18cff0d",
+  "deduplicated_count": 416,
+  "dependency_lock_sha256": "bc139a2424d42da4f8d467011bb89228cf0fc13973df9af8630ceac5f0c9d400",
+  "feature_importance": {
+    "allen_chi_diff": 0.052787527553810686,
+    "bv_ratio": 0.09265716465580777,
+    "config_entropy": 0.05884883673446094,
+    "lattice_distortion": 0.15493241352868967,
+    "mixing_enthalpy": 0.12602082177584684,
+    "mo_equivalent": 0.17632540829226354,
+    "u_density": 0.0848267808412321,
+    "vec": 0.25360102612879176
+  },
+  "feature_names": [
+    "mo_equivalent",
+    "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
+    "vec"
+  ],
+  "git_commit_sha": "f1b98b256134abaccfdb17901d4395633c135895",
+  "group_labels": [
+    "Al",
+    "Al-Cr",
+    "Al-Fe",
+    "Al-Mn",
+    "Al-Mo",
+    "Al-Nb",
+    "Al-Ru",
+    "Al-Ta",
+    "Al-Ti",
+    "Al-V",
+    "Al-Zr",
+    "Cr",
+    "Cr-Fe",
+    "Cr-Mn",
+    "Cr-Mo",
+    "Cr-Nb",
+    "Cr-Ru",
+    "Cr-Si",
+    "Cr-Ti",
+    "Cr-V",
+    "Cr-Zr",
+    "Fe",
+    "Fe-Mn",
+    "Fe-Mo",
+    "Fe-Nb",
+    "Fe-Ru",
+    "Fe-Si",
+    "Fe-Ta",
+    "Fe-Ti",
+    "Fe-V",
+    "Fe-Zr",
+    "Mn",
+    "Mn-Mo",
+    "Mn-Nb",
+    "Mn-Ru",
+    "Mn-Si",
+    "Mn-Ta",
+    "Mn-V",
+    "Mn-Zr",
+    "Mo",
+    "Mo-Nb",
+    "Mo-Ru",
+    "Mo-Si",
+    "Mo-Ti",
+    "Mo-V",
+    "Mo-Zr",
+    "Nb",
+    "Nb-Ru",
+    "Nb-Si",
+    "Nb-Ta",
+    "Nb-Zr",
+    "Ni",
+    "Ru",
+    "Ru-Si",
+    "Ru-Ti",
+    "Ru-V",
+    "Ru-Zr",
+    "Si",
+    "Si-Ta",
+    "Si-Ti",
+    "Si-V",
+    "Si-Zr",
+    "Ta",
+    "Ta-Ti",
+    "Ta-V",
+    "Ta-Zr",
+    "Ti",
+    "Ti-V",
+    "Ti-Zr",
+    "U-only",
+    "V",
+    "V-Zr",
+    "Zr"
+  ],
+  "group_min_size": 1,
+  "group_sizes": {
+    "Al": 190,
+    "Al-Cr": 17,
+    "Al-Fe": 14,
+    "Al-Mn": 15,
+    "Al-Mo": 23,
+    "Al-Nb": 12,
+    "Al-Ru": 8,
+    "Al-Ta": 23,
+    "Al-Ti": 7,
+    "Al-V": 21,
+    "Al-Zr": 25,
+    "Cr": 221,
+    "Cr-Fe": 17,
+    "Cr-Mn": 48,
+    "Cr-Mo": 18,
+    "Cr-Nb": 25,
+    "Cr-Ru": 17,
+    "Cr-Si": 13,
+    "Cr-Ti": 13,
+    "Cr-V": 13,
+    "Cr-Zr": 6,
+    "Fe": 213,
+    "Fe-Mn": 13,
+    "Fe-Mo": 11,
+    "Fe-Nb": 29,
+    "Fe-Ru": 7,
+    "Fe-Si": 6,
+    "Fe-Ta": 19,
+    "Fe-Ti": 31,
+    "Fe-V": 5,
+    "Fe-Zr": 17,
+    "Mn": 207,
+    "Mn-Mo": 17,
+    "Mn-Nb": 30,
+    "Mn-Ru": 27,
+    "Mn-Si": 5,
+    "Mn-Ta": 11,
+    "Mn-V": 7,
+    "Mn-Zr": 23,
+    "Mo": 260,
+    "Mo-Nb": 33,
+    "Mo-Ru": 28,
+    "Mo-Si": 7,
+    "Mo-Ti": 5,
+    "Mo-V": 18,
+    "Mo-Zr": 29,
+    "Nb": 247,
+    "Nb-Ru": 7,
+    "Nb-Si": 25,
+    "Nb-Ta": 14,
+    "Nb-Zr": 11,
+    "Ni": 16,
+    "Ru": 223,
+    "Ru-Si": 4,
+    "Ru-Ti": 31,
+    "Ru-V": 30,
+    "Ru-Zr": 17,
+    "Si": 109,
+    "Si-Ta": 18,
+    "Si-Ti": 33,
+    "Si-V": 2,
+    "Si-Zr": 14,
+    "Ta": 235,
+    "Ta-Ti": 27,
+    "Ta-V": 27,
+    "Ta-Zr": 19,
+    "Ti": 249,
+    "Ti-V": 25,
+    "Ti-Zr": 37,
+    "U-only": 1,
+    "V": 237,
+    "V-Zr": 12,
+    "Zr": 261
+  },
+  "n_features": 8,
+  "n_samples": 3735,
+  "rd2_label": "[EXPLORATORY]",
+  "rd2_reasons": [
+    "fold standard deviation exceeded 8 percentage points"
+  ],
+  "rd3_triggered": true,
+  "schema_sha256": "c8ab60305c93c8292a7f837658fb4405bc2b274dcba933fb965f7a80e6e24cc2",
+  "seed": 42,
+  "training_seconds": 2.560973250074312,
+  "version": "v2.0"
+}
