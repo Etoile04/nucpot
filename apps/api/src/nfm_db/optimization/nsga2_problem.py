@@ -268,7 +268,7 @@ class NuclearFuelOptimizationProblem(Problem):
 
     def _evaluate(
         self,
-        X: np.ndarray,  # noqa: N803 - X is pymoo convention for decision matrix
+        X: np.ndarray,
         out: dict[str, Any],
     ) -> None:
         """Evaluate a batch of composition vectors.
@@ -297,7 +297,7 @@ class NuclearFuelOptimizationProblem(Problem):
 
     def _build_compositions(
         self,
-        X: np.ndarray,  # noqa: N803
+        X: np.ndarray,
     ) -> list[dict[str, float]]:
         """Convert decision variable matrix to composition dictionaries.
 
@@ -321,7 +321,7 @@ class NuclearFuelOptimizationProblem(Problem):
 
     def _evaluate_with_ml(
         self,
-        X: np.ndarray,  # noqa: N803
+        X: np.ndarray,
         compositions: list[dict[str, float]],
         out: dict[str, Any],
     ) -> None:
@@ -355,7 +355,7 @@ class NuclearFuelOptimizationProblem(Problem):
 
     def _evaluate_synthetic(
         self,
-        X: np.ndarray,  # noqa: N803
+        X: np.ndarray,
         compositions: list[dict[str, float]],
         out: dict[str, Any],
     ) -> None:
@@ -385,7 +385,7 @@ class NuclearFuelOptimizationProblem(Problem):
 
     def _compute_constraints(
         self,
-        X: np.ndarray,  # noqa: N803
+        X: np.ndarray,
         bv_ratios: np.ndarray,
         out: dict[str, Any],
     ) -> None:
