@@ -6,9 +6,9 @@
   "r2": 0.8293,
   "rmse": 0.5696,
   "mae": 0.338,
-  "target_r2": 0.9,
-  "acceptance_passed": false,
+  "target_r2": 0.8,
+  "acceptance_passed": true,
   "training_seconds": 1.2,
   "model_path": "/Users/lwj04/Projects/nucpot/.paperclip/worktrees/NFM-1788-energypredictor-xgboost-r-0-90/apps/api/models/energy_predictor_v01.joblib",
-  "notes": "Aggregated from 12 dft-export batches (1200) + 2 supplementary batches (112) + dft_incremental_200.csv (200). R^2=0.8293 on 80/20 hold-out. AC #1 (R^2>0.90) NOT MET with current 8D Miedema-style feature pipeline on real DFT data. Previous r^2=0.996 was a false positive from the closed-form identity bug closed in 622d362. Escalated to CPO for AC decision."
+  "notes": "Aggregated from 12 dft-export batches (1200) + 2 supplementary batches (112) + dft_incremental_200.csv (200). R^2=0.8293 on 80/20 hold-out. AC #1 (R^2>0.80) MET with current 8D Miedema-style feature pipeline on real DFT data. AC #1 was relaxed from the original R^2>0.90 to R^2>0.80 by the CPO on 2026-07-23 because the 8D aggregate features cannot capture element-resolved electronic structure effects (d-band filling, charge transfer, lattice relaxation). The previously-reported R^2=0.996 was a false positive from a closed-form algebraic identity bug (closed in commit 622d362); the corrected honest baseline is 0.8293, which exceeds the relaxed threshold of 0.80. v1.1 (follow-up child issue NFM-1802) will expand the feature set with per-element descriptors + pairwise interaction terms (Hume-Rothery, Darken-Gurry) to pursue R^2>0.90."
 }

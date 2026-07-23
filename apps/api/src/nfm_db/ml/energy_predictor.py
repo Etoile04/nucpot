@@ -3,7 +3,12 @@
 Predicts formation energy (eV/atom) from 8D physical features using XGBoost regression.
 Follows the lazy-load pattern from prediction_service.py.
 
-Acceptance criterion: R² > 0.90 on 80/20 hold-out split.
+Acceptance criterion: R² > 0.80 on 80/20 hold-out split.
+
+Note: AC #1 was relaxed from R² > 0.90 to R² > 0.80 by the CPO on 2026-07-23
+because the 8D Miedema-style aggregate features cannot capture
+element-resolved electronic structure effects. v1.1 (follow-up child
+issue NFM-1802) plans to expand the feature set to pursue R² > 0.90.
 """
 
 from __future__ import annotations

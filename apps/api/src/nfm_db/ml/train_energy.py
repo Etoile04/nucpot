@@ -13,7 +13,14 @@ expression of the input features, eliminating the prior algebraic
 identity between ``mixing_enthalpy / 96.485 + T * config_entropy / 96485``
 and the model's input column vector.
 
-Acceptance criterion: R² > 0.90 on 80/20 split.
+Acceptance criterion: R² > 0.80 on 80/20 split.
+
+Note: AC #1 was relaxed from the original R² > 0.90 to R² > 0.80 by the CPO
+on 2026-07-23. The 8D Miedema-style aggregate features hit a measured
+R² = 0.8293 ceiling on the 1512 real DFT records; element-resolved
+electronic structure effects (d-band filling, charge transfer, lattice
+relaxation) cannot be captured by these descriptors and require the
+expanded feature set planned for v1.1 (follow-up child issue NFM-1802).
 
 Usage:
     python -m nfm_db.ml.train_energy
@@ -267,8 +274,8 @@ def train_and_save(models_dir: Path) -> dict:
         "r2": r2,
         "rmse": rmse,
         "mae": mae,
-        "target_r2": 0.90,
-        "acceptance_passed": r2 > 0.90,
+        "target_r2": 0.80,
+        "acceptance_passed": r2 > 0.80,
         "training_seconds": round(train_time, 2),
         "model_path": str(model_path),
     }
@@ -282,10 +289,10 @@ def train_and_save(models_dir: Path) -> dict:
     logger.info("\n" + "=" * 60)
     logger.info("EnergyPredictor v1.0 Results")
     logger.info("=" * 60)
-    logger.info("R2:   %.4f (target > 0.90)", r2)
+    logger.info("R2:   %.4f (target > 0.80)", r2)
     logger.info("RMSE: %.4f eV/atom", rmse)
     logger.info("MAE:  %.4f eV/atom", mae)
-    logger.info("Acceptance: %s", "PASS" if r2 > 0.90 else "FAIL")
+    logger.info("Acceptance: %s", "PASS" if r2 > 0.80 else "FAIL")
 
     return full_metrics
 
