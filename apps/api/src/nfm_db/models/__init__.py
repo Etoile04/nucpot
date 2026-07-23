@@ -197,6 +197,10 @@ from nfm_db.models.user import (  # noqa: E402
     Permission,
     User,
 )
+from nfm_db.models.verification_task import (  # noqa: E402
+    TaskStatus,
+    VerificationTask,
+)
 
 __all__ = [
     "VALID_NODE_TYPES",
@@ -259,9 +263,11 @@ __all__ = [
     "ReviewMixin",
     "ReviewStatus",
     "StagingStatus",
+    "TaskStatus",
     "TimestampMixin",
     "Unit",
     "UnitConversion",
     "User",
     "VerificationResultMD",
+    "VerificationTask",
 ]
