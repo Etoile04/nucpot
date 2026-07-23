@@ -790,3 +790,301 @@ def batch_compute_ml_features(compositions: list[dict[str, float]]) -> pd.DataFr
         raise ValueError("compositions list must not be empty")
     rows = [compute_ml_features(comp) for comp in compositions]
     return pd.DataFrame(rows, columns=ML_FEATURE_NAMES)
+
+
+# ===========================================================================
+# Part 3: EnergyPredictor v1.1 expanded features (NFM-1806)
+# ===========================================================================
+# Per-element weighted descriptors, pairwise interaction terms, and
+# variance features to capture element-resolved electronic structure
+# effects that aggregate descriptors miss.
+# Target: R²>0.90 on 80/20 hold-out with XGBoost.
+
+
+# D-electron count for transition metals (3d, 4d, 5d series)
+# Source: standard electron configurations
+D_ELECTRON_COUNT: dict[str, int] = {
+    # 3d series
+    "Sc": 1, "Ti": 2, "V": 3, "Cr": 5, "Mn": 5, "Fe": 6, "Co": 7, "Ni": 8,
+    "Cu": 10, "Zn": 10,
+    # 4d series
+    "Y": 1, "Zr": 2, "Nb": 4, "Mo": 5, "Tc": 6, "Ru": 7, "Rh": 8, "Pd": 10,
+    "Ag": 10, "Cd": 10,
+    # 5d series
+    "Hf": 2, "Ta": 3, "W": 4, "Re": 5, "Os": 6, "Ir": 7, "Pt": 9, "Au": 10,
+    # Actinides (5f contribution treated as d-like)
+    "Th": 0, "Pa": 2, "U": 3, "Np": 4, "Pu": 6, "Am": 7,
+}
+
+# Work function (eV) — polycrystalline values
+# Source: Michaelson, J. Appl. Phys. 48, 4729 (1977); CRC Handbook
+WORK_FUNCTION: dict[str, float] = {
+    "U": 3.63, "Th": 3.38, "Pa": 3.0, "Np": 3.5, "Pu": 3.5,
+    "Ti": 4.33, "V": 4.44, "Cr": 4.50, "Mn": 4.10, "Fe": 4.67,
+    "Co": 5.00, "Ni": 5.15, "Cu": 4.65, "Zn": 4.33,
+    "Y": 3.10, "Zr": 4.05, "Nb": 4.30, "Mo": 4.60, "Tc": 4.5,
+    "Ru": 4.71, "Rh": 4.98, "Pd": 5.12, "Ag": 4.26,
+    "Hf": 3.90, "Ta": 4.25, "W": 4.55, "Re": 4.96, "Os": 4.83,
+    "Ir": 5.27, "Pt": 5.65, "Au": 5.10, "Al": 4.28, "Si": 4.85,
+}
+
+
+def _normalize_fractions(composition: dict[str, float]) -> dict[str, float]:
+    """Normalize composition values to fractions summing to 1.0.
+
+    Args:
+        composition: Element name to value mapping.
+
+    Returns:
+        Normalized fractions dict. Elements with non-positive values
+        are excluded.
+    """
+    filtered = {k: v for k, v in composition.items() if v > 0}
+    total = sum(filtered.values())
+    if total <= 0:
+        return filtered
+    return {k: v / total for k, v in filtered.items()}
+
+
+def _weighted_stat(
+    composition: dict[str, float],
+    lookup: dict[str, float],
+    stat: str = "mean",
+) -> float:
+    """Compute a weighted statistic of an element property.
+
+    Args:
+        composition: Element to fraction mapping (fractions sum to 1).
+        lookup: Element to property value mapping.
+        stat: "mean" for weighted average, "variance" for weighted variance.
+
+    Returns:
+        Weighted mean or variance. Elements not in lookup are
+        excluded (fraction redistributed). Returns 0.0 if no known elements.
+    """
+    fracs = _normalize_fractions(composition)
+    known = {e: f for e, f in fracs.items() if e in lookup}
+    if not known:
+        return 0.0
+    total_f = sum(known.values())
+    norm = {e: f / total_f for e, f in known.items()}
+    mean = sum(norm[e] * lookup[e] for e in norm)
+    if stat == "variance":
+        var = sum(norm[e] * (lookup[e] - mean) ** 2 for e in norm)
+        return var
+    return mean
+
+
+def calculate_pauling_chi_mean(composition: dict[str, float]) -> float:
+    """Composition-weighted mean Pauling electronegativity."""
+    return _weighted_stat(composition, dict(PAULING_ELECTRONEGATIVITY), "mean")
+
+
+def calculate_allen_chi_mean(composition: dict[str, float]) -> float:
+    """Composition-weighted mean Allen electronegativity."""
+    return _weighted_stat(composition, dict(ALLEN_ELECTRONEGATIVITY), "mean")
+
+
+def calculate_allen_chi_variance(composition: dict[str, float]) -> float:
+    """Composition-weighted variance of Allen electronegativity.
+
+    Captures the spread of electronegativity across constituent elements,
+    a key driver of charge transfer and chemical ordering.
+    """
+    return _weighted_stat(composition, dict(ALLEN_ELECTRONEGATIVITY), "variance")
+
+
+def calculate_atomic_volume_mean(composition: dict[str, float]) -> float:
+    """Composition-weighted mean atomic volume (cm³/mol)."""
+    return _weighted_stat(composition, dict(ATOMIC_VOLUME_CM3_PER_MOL), "mean")
+
+
+def calculate_bulk_modulus_mean(composition: dict[str, float]) -> float:
+    """Composition-weighted mean bulk modulus (GPa)."""
+    return _weighted_stat(composition, dict(BULK_MODULUS), "mean")
+
+
+def calculate_d_electron_mean(composition: dict[str, float]) -> float:
+    """Composition-weighted mean d-electron count.
+
+    Averages d-electron occupancy across all elements. For f-block
+    elements, a nominal d-like contribution is used. Captures the
+    average d-band filling which governs bonding character.
+    """
+    return _weighted_stat(composition, D_ELECTRON_COUNT, "mean")
+
+
+def calculate_work_function_mean(composition: dict[str, float]) -> float:
+    """Composition-weighted mean work function (eV)."""
+    return _weighted_stat(composition, WORK_FUNCTION, "mean")
+
+
+def calculate_size_factor(composition: dict[str, float]) -> float:
+    """Hume-Rothery size factor: max |r_i/r_U - 1| across solutes.
+
+    Larger values indicate greater atomic size mismatch with U,
+    which destabilizes solid solutions.
+    """
+    fracs = _normalize_fractions(composition)
+    radius_lookup = dict(ATOMIC_RADIUS)
+    r_u = radius_lookup.get("U", 1.56)
+    max_ratio_diff = 0.0
+    for element in fracs:
+        if element == "U":
+            continue
+        r_i = radius_lookup.get(element)
+        if r_i is not None:
+            max_ratio_diff = max(max_ratio_diff, abs(r_i / r_u - 1.0))
+    return max_ratio_diff
+
+
+def _pair_enthalpy_stats(composition: dict[str, float]) -> dict[str, float]:
+    """Compute statistics over all binary pair enthalpies.
+
+    Returns dict with keys: max_abs, min, range, mean_abs, count.
+    """
+    fracs = _normalize_fractions(composition)
+    elements = sorted(fracs.keys())
+    values: list[float] = []
+    for i in range(len(elements)):
+        for j in range(i + 1, len(elements)):
+            omega = _MIEDEMA_LOOKUP.get((elements[i], elements[j]))
+            if omega is not None:
+                values.append(omega)
+    if not values:
+        return {"max_abs": 0.0, "min": 0.0, "range": 0.0, "mean_abs": 0.0, "count": 0.0}
+    return {
+        "max_abs": max(abs(v) for v in values),
+        "min": min(values),
+        "range": max(values) - min(values),
+        "mean_abs": sum(abs(v) for v in values) / len(values),
+        "count": float(len(values)),
+    }
+
+
+def calculate_max_pair_enthalpy_abs(composition: dict[str, float]) -> float:
+    """Maximum absolute binary pair mixing enthalpy |Ω_ij|."""
+    return _pair_enthalpy_stats(composition)["max_abs"]
+
+
+def calculate_min_pair_enthalpy(composition: dict[str, float]) -> float:
+    """Minimum (most negative) binary pair mixing enthalpy Ω_ij."""
+    return _pair_enthalpy_stats(composition)["min"]
+
+
+def calculate_pair_enthalpy_range(composition: dict[str, float]) -> float:
+    """Range of binary pair mixing enthalpies (max - min)."""
+    return _pair_enthalpy_stats(composition)["range"]
+
+
+def calculate_mean_pair_enthalpy_abs(composition: dict[str, float]) -> float:
+    """Mean absolute binary pair mixing enthalpy."""
+    return _pair_enthalpy_stats(composition)["mean_abs"]
+
+
+def calculate_moequiv_squared(composition: dict[str, float]) -> float:
+    """Mo equivalent squared — captures nonlinear Mo effect."""
+    return calculate_mo_equivalent(composition) ** 2
+
+
+# ---------------------------------------------------------------------------
+# v1.1 Energy Feature Set (24 features)
+# ---------------------------------------------------------------------------
+
+# Original 4 physical features used in v1.0 ML_FEATURE_NAMES
+_ENERGY_BASE_CALCULATORS: list[tuple[str, Callable]] = [
+    ("mo_equivalent", calculate_mo_equivalent),
+    ("lattice_distortion", calculate_lattice_distortion),
+    ("allen_chi_diff", calculate_allen_chi_diff),
+    ("vec", calculate_vec),
+]
+
+# New per-element and pairwise features
+_ENERGY_V11_NEW_CALCULATORS: list[tuple[str, Callable]] = [
+    ("pauling_chi_mean", calculate_pauling_chi_mean),
+    ("allen_chi_mean", calculate_allen_chi_mean),
+    ("allen_chi_variance", calculate_allen_chi_variance),
+    ("atomic_volume_mean", calculate_atomic_volume_mean),
+    ("bulk_modulus_mean", calculate_bulk_modulus_mean),
+    ("d_electron_mean", calculate_d_electron_mean),
+    ("work_function_mean", calculate_work_function_mean),
+    ("size_factor", calculate_size_factor),
+    ("max_pair_enthalpy_abs", calculate_max_pair_enthalpy_abs),
+    ("min_pair_enthalpy", calculate_min_pair_enthalpy),
+    ("pair_enthalpy_range", calculate_pair_enthalpy_range),
+    ("mean_pair_enthalpy_abs", calculate_mean_pair_enthalpy_abs),
+    ("moequiv_squared", calculate_moequiv_squared),
+]
+
+# Reuse existing physical features not in v1.0 ML set
+_ENERGY_V11_REUSE_CALCULATORS: list[tuple[str, Callable]] = [
+    ("pauling_chi_diff", calculate_pauling_chi_diff),
+    ("config_entropy", calculate_config_entropy),
+    ("bv_ratio", calculate_bv_ratio),
+    ("mixing_enthalpy", calculate_mixing_enthalpy),
+    ("u_density", calculate_u_density),
+]
+
+# Full ordered list: base(4) + reused(5) + new(13) + cluster(4) = 26
+# But cluster fractions are problematic for regression (discontinuous),
+# so we exclude them and use 4 + 5 + 13 = 22 features.
+_ENERGY_V11_ALL_CALCULATORS: list[tuple[str, Callable]] = (
+    _ENERGY_BASE_CALCULATORS
+    + _ENERGY_V11_REUSE_CALCULATORS
+    + _ENERGY_V11_NEW_CALCULATORS
+)
+
+ENERGY_V11_FEATURE_NAMES: list[str] = [
+    name for name, _ in _ENERGY_V11_ALL_CALCULATORS
+]
+
+
+def compute_energy_v11_features(
+    composition: dict[str, float],
+) -> dict[str, float]:
+    """Compute 22D feature vector for EnergyPredictor v1.1.
+
+    Expands the v1.0 8D Miedema-style aggregate descriptors with
+    per-element weighted electronic structure descriptors and pairwise
+    interaction features to capture element-resolved effects.
+
+    Features (22 total):
+      Base (4): mo_equivalent, lattice_distortion, allen_chi_diff, vec
+      Reused (5): pauling_chi_diff, config_entropy, bv_ratio,
+                 mixing_enthalpy, u_density
+      New (13): pauling_chi_mean, allen_chi_mean, allen_chi_variance,
+               atomic_volume_mean, bulk_modulus_mean, d_electron_mean,
+               work_function_mean, size_factor, max_pair_enthalpy_abs,
+               min_pair_enthalpy, pair_enthalpy_range,
+               mean_pair_enthalpy_abs, moequiv_squared
+
+    Args:
+        composition: Element name to atomic percent or fraction mapping.
+
+    Returns:
+        Dictionary with 22 keys matching ENERGY_V11_FEATURE_NAMES.
+    """
+    return {
+        name: calculator(composition)
+        for name, calculator in _ENERGY_V11_ALL_CALCULATORS
+    }
+
+
+def batch_compute_energy_v11(
+    compositions: list[dict[str, float]],
+) -> pd.DataFrame:
+    """Batch 22D v1.1 energy features → DataFrame.
+
+    Args:
+        compositions: List of composition dictionaries.
+
+    Returns:
+        DataFrame with one row per composition, 22 feature columns.
+
+    Raises:
+        ValueError: If compositions list is empty.
+    """
+    if not compositions:
+        raise ValueError("compositions list must not be empty")
+    rows = [compute_energy_v11_features(comp) for comp in compositions]
+    return pd.DataFrame(rows, columns=ENERGY_V11_FEATURE_NAMES)

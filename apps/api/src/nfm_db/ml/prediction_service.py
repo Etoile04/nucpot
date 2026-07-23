@@ -1,9 +1,9 @@
-"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1788).
+"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1789).
 
 Provides lazy-loaded model instances and inference functions for:
 - Phase classification (RF+XGB VotingClassifier) with confidence scoring
 - Temperature prediction (GPR+SVR ensemble) with confidence scoring
-- Formation energy prediction (XGBoost regression) with confidence scoring
+- Energy prediction (formation energy) with confidence scoring
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent.parent 
 
 PHASE_MODEL_PATH = MODELS_DIR / "phase_classifier_v01.joblib"
 TEMP_MODEL_PATH = MODELS_DIR / "temp_predictor_v01.joblib"
+ENERGY_MODEL_PATH = MODELS_DIR / "energy_predictor_v11.joblib"
 
 PHYSICAL_FEATURE_NAMES: list[str] = [
     "mo_equivalent",
@@ -69,6 +70,7 @@ CLUSTER_PHASE_LABELS: dict[str, str] = {
 
 _phase_model = None
 _temp_model = None
+_energy_model = None
 
 
 # ---------------------------------------------------------------------------
@@ -417,19 +419,96 @@ def _predict_temp_from_dict(
     }
 
 
-def predict_formation_energy(features: dict[str, float]) -> dict | None:
-    """Predict formation energy from 8 physical features.
+# ---------------------------------------------------------------------------
+# Energy prediction — model loading + inference (NFM-1789)
+# ---------------------------------------------------------------------------
 
-    Delegates to energy_predictor.predict_energy(), which uses a lazy-loaded
-    XGBoost regressor with z-score-normalised target.
+
+def _load_energy_predictor():
+    """Load the energy predictor model artifact from disk (lazy).
+
+    v1.1 artifact is a dict with model, scaler, target stats,
+    metrics, and feature_names.  We store the full dict so
+    predict_energy() can use the scaler and z-score params.
+    """
+    global _energy_model
+
+    if _energy_model is not None:
+        return _energy_model
+
+    model_path = os.environ.get(
+        "ENERGY_PREDICTOR_PATH", str(ENERGY_MODEL_PATH),
+    )
+
+    if not Path(model_path).exists():
+        logger.warning("Energy predictor model not found at %s", model_path)
+        return None
+
+    try:
+        import joblib
+
+        raw = joblib.load(model_path)
+
+        if isinstance(raw, dict) and "model" in raw:
+            _energy_model = raw
+            logger.info(
+                "Loaded energy predictor v1.1 from %s "
+                "(dict: model + scaler + target stats)",
+                model_path,
+            )
+        else:
+            _energy_model = raw
+            logger.info("Loaded energy predictor from %s", model_path)
+
+        return _energy_model
+    except Exception:
+        logger.exception("Failed to load energy predictor from %s", model_path)
+        return None
+
+
+def predict_energy(features: dict[str, float]) -> dict | None:
+    """Run formation energy prediction using v1.1 22D expanded features.
+
+    The model is a regressor that predicts formation energy in eV/atom.
 
     Args:
-        features: Dictionary of 8 physical feature values.
+        features: Dictionary of feature values.
 
     Returns:
-        Dictionary with keys: predicted_energy (eV/atom), confidence,
+        Dictionary with keys: predicted_energy, confidence, warnings,
         model_version.  Returns None if model unavailable.
     """
-    from nfm_db.ml.energy_predictor import predict_energy
+    model_data = _load_energy_predictor()
+    if model_data is None:
+        return None
 
-    return predict_energy(features)
+    try:
+        model = model_data["model"]
+        scaler = model_data["scaler"]
+        target_mean = model_data.get("target_mean", 0.0)
+        target_std = model_data.get("target_std", 1.0)
+
+        feature_names = model_data.get(
+            "feature_names", PHYSICAL_FEATURE_NAMES,
+        )
+        feature_values = [features.get(name, 0.0) for name in feature_names]
+        X = np.array(feature_values, dtype=np.float64).reshape(1, -1)
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
+        X_scaled = scaler.transform(X)
+        y_z = float(model.predict(X_scaled)[0])
+        predicted_energy = y_z * target_std + target_mean
+
+        stored_metrics = model_data.get("metrics", {})
+        r2 = stored_metrics.get("r2", 0.0)
+        confidence = max(0.0, min(float(r2), 1.0))
+
+        return {
+            "predicted_energy": round(predicted_energy, 6),
+            "confidence": round(confidence, 4),
+            "warnings": [],
+            "model_version": ENERGY_PREDICTOR_VERSION,
+        }
+    except Exception:
+        logger.exception("Energy prediction failed")
+        return None

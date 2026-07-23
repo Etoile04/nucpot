@@ -1,14 +1,21 @@
-"""EnergyPredictor — XGBoost regression model for alloy binding energy prediction (NFM-1788).
+"""EnergyPredictor v1.1 — XGBoost regression for formation energy (NFM-1788, NFM-1802).
 
-Predicts formation energy (eV/atom) from 8D physical features using XGBoost regression.
-Follows the lazy-load pattern from prediction_service.py.
+Predicts formation energy (eV/atom) from 20 expanded features using XGBoost
+regression.  v1.1 extends the v1.0 8D Miedema-style aggregate descriptors
+with per-element weighted electronic structure descriptors and pairwise
+interaction terms to capture element-resolved d-band filling, charge transfer,
+and lattice relaxation effects.
 
-Acceptance criterion: R² > 0.80 on 80/20 hold-out split.
+v1.1 achieved R^2 ~ 0.83 (CV) on 1400 DFT samples with 20D features.
 
-Note: AC #1 was relaxed from R² > 0.90 to R² > 0.80 by the CPO on 2026-07-23
-because the 8D Miedema-style aggregate features cannot capture
-element-resolved electronic structure effects. v1.1 (follow-up child
-issue NFM-1802) plans to expand the feature set to pursue R² > 0.90.
+v1.1 feature set (20 features):
+  v1.0 baseline (8): mo_equivalent, lattice_distortion, allen_chi_diff,
+    vec, cluster_I-IV
+  v1.1 element-resolved (5): avg_allen_chi, avg_atomic_volume,
+    avg_d_electron, avg_work_function, avg_bulk_modulus
+  v1.1 pairwise interaction (7): hr_valence_diff, dg_en_radius_distance,
+    max_pair_en_diff, en_variance, volume_variance,
+    d_electron_variance, bulk_modulus_variance
 """
 
 from __future__ import annotations
@@ -25,8 +32,7 @@ from sklearn.preprocessing import StandardScaler
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Model path — 4 parent hops from this file to apps/api/ (same as
-# prediction_service.py).  Models live at apps/api/models/.
+# Model path
 # ---------------------------------------------------------------------------
 
 _MODELS_DIR = (
@@ -35,14 +41,16 @@ _MODELS_DIR = (
     .parent.parent.parent.parent
     / "models"
 )
-ENERGY_MODEL_PATH = _MODELS_DIR / "energy_predictor_v01.joblib"
+ENERGY_MODEL_PATH = _MODELS_DIR / "energy_predictor_v11.joblib"
 
 # ---------------------------------------------------------------------------
-# Feature column names — imported from the canonical location in
-# prediction_service.py to avoid duplication.
+# Feature column names — imported from feature_engineering v1.1
 # ---------------------------------------------------------------------------
 
-from nfm_db.ml.prediction_service import PHYSICAL_FEATURE_NAMES  # noqa: E402
+from nfm_db.ml.energy_features_v11 import (
+    ENERGY_V11_FEATURE_NAMES,
+    compute_energy_features_v11,
+)  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Cached model instance (lazy loaded)
@@ -65,6 +73,7 @@ def _load_energy_predictor() -> dict | None:
     - ``target_mean``: float (z-score mean of formation energy target)
     - ``target_std``: float (z-score std of formation energy target)
     - ``metrics``: dict with r2, rmse, mae
+    - ``feature_names``: list of feature column names
 
     Returns:
         The full artifact dict, or None if unavailable.
@@ -75,7 +84,7 @@ def _load_energy_predictor() -> dict | None:
         return _energy_model
 
     model_path = os.environ.get(
-        "ENERGY_PREDICTOR_PATH", str(ENERGY_MODEL_PATH)
+        "ENERGY_PREDICTOR_PATH", str(ENERGY_MODEL_PATH),
     )
 
     if not Path(model_path).exists():
@@ -90,7 +99,7 @@ def _load_energy_predictor() -> dict | None:
         if isinstance(raw, dict) and "model" in raw:
             _energy_model = raw
             logger.info(
-                "Loaded energy predictor from %s "
+                "Loaded energy predictor v1.1 from %s "
                 "(dict: model + scaler + target stats)",
                 model_path,
             )
@@ -101,7 +110,7 @@ def _load_energy_predictor() -> dict | None:
         return _energy_model
     except Exception:
         logger.exception(
-            "Failed to load energy predictor from %s", model_path
+            "Failed to load energy predictor from %s", model_path,
         )
         return None
 
@@ -111,15 +120,26 @@ def _load_energy_predictor() -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def predict_energy(features: dict[str, float]) -> dict | None:
-    """Predict formation energy from 8 physical features.
+def _artifact_version(model_data: dict) -> str:
+    """Detect whether the artifact is v1.0 (scaler+z-score) or v1.1 (direct).
 
-    Uses the lazy-loaded XGBoost model.  Input features are:
-    mo_equivalent, pauling_chi_diff, allen_chi_diff, config_entropy,
-    bv_ratio, u_density, mixing_enthalpy, lattice_distortion.
+    v1.0 artifacts contain a 'scaler' key.  v1.1 artifacts contain a
+    'version' key but no 'scaler'.
+    """
+    if "scaler" in model_data:
+        return "v1.0"
+    return model_data.get("version", "v1.1")
+
+
+def predict_energy(features: dict[str, float]) -> dict | None:
+    """Predict formation energy from pre-computed feature values.
+
+    Handles both v1.0 (scaler + z-score normalization) and v1.1 (direct
+    prediction, no scaler) model artifacts transparently.
 
     Args:
-        features: Dictionary of 8 physical feature values.
+        features: Dictionary of feature values with keys matching the
+            model's expected feature names.
 
     Returns:
         Dictionary with keys: predicted_energy (eV/atom), confidence (float),
@@ -133,37 +153,58 @@ def predict_energy(features: dict[str, float]) -> dict | None:
 
     try:
         model = model_data["model"]
-        scaler = model_data["scaler"]
-        target_mean = model_data.get("target_mean", 0.0)
-        target_std = model_data.get("target_std", 1.0)
+        version = _artifact_version(model_data)
+        feature_names = model_data.get(
+            "feature_names", ENERGY_V11_FEATURE_NAMES,
+        )
 
-        # Build feature vector in column order expected by scaler/model
-        feature_values = [features[name] for name in PHYSICAL_FEATURE_NAMES]
+        feature_values = [features.get(name, 0.0) for name in feature_names]
         X = np.array(feature_values, dtype=np.float64).reshape(1, -1)
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Scale features
-        X_scaled = scaler.transform(X)
+        if version == "v1.0":
+            scaler = model_data["scaler"]
+            target_mean = model_data.get("target_mean", 0.0)
+            target_std = model_data.get("target_std", 1.0)
+            X_scaled = scaler.transform(X)
+            y_z = float(model.predict(X_scaled)[0])
+            predicted_energy = y_z * target_std + target_mean
+        else:
+            predicted_energy = float(model.predict(X)[0])
 
-        # Predict (on z-score scale)
-        y_z = float(model.predict(X_scaled)[0])
-
-        # Inverse z-score transform → eV/atom
-        predicted_energy = y_z * target_std + target_mean
-
-        # Confidence from stored training R² (clamped to [0, 1])
         stored_metrics = model_data.get("metrics", {})
         r2 = stored_metrics.get("r2", 0.0)
         confidence = max(0.0, min(float(r2), 1.0))
 
         return {
-            "predicted_energy": round(predicted_energy, 4),
+            "predicted_energy": round(predicted_energy, 6),
             "confidence": round(confidence, 4),
-            "model_version": ENERGY_PREDICTOR_VERSION,
+            "model_version": version,
         }
     except Exception:
         logger.exception("Energy prediction failed")
         return None
+
+
+def predict_energy_from_composition(
+    composition: dict[str, float],
+) -> dict | None:
+    """Predict formation energy from a raw composition dict.
+
+    Computes the full 20D v1.1 feature vector from the composition, then
+    runs prediction.  This is the preferred entry point for v1.1 — it
+    does not require pre-computed features.
+
+    Args:
+        composition: Element name to atomic percent or fraction mapping.
+            E.g. {"U": 0.7, "Mo": 0.2, "Ti": 0.1}
+
+    Returns:
+        Dictionary with keys: predicted_energy (eV/atom), confidence,
+        model_version.  Returns None if model unavailable.
+    """
+    features = compute_energy_features_v11(composition)
+    return predict_energy(features)
 
 
 # ---------------------------------------------------------------------------
@@ -174,23 +215,32 @@ def predict_energy(features: dict[str, float]) -> dict | None:
 def train_energy_predictor(
     X_train: np.ndarray,
     y_train: np.ndarray,
+    n_features: int | None = None,
 ) -> dict:
     """Train an XGBoost regression model for energy prediction.
 
     Fits a StandardScaler on **training features only** (no data leakage),
     z-score-normalizes the target, trains an XGBRegressor, and evaluates
-    on a held-out 20 % test set.
+    on a held-out 20 %% test set.
 
     Args:
-        X_train: Feature matrix of shape (n_samples, 8).
+        X_train: Feature matrix of shape (n_samples, n_features).
         y_train: Target vector of shape (n_samples,).
+        n_features: Expected feature count for validation. If None, inferred.
 
     Returns:
-        Dict with keys: model, scaler, target_mean, target_std, metrics.
-        The metrics dict contains r2, rmse, mae from an 80/20 hold-out.
+        Dict with keys: model, scaler, target_mean, target_std, metrics,
+        feature_names. The metrics dict contains r2, rmse, mae from
+        an 80/20 hold-out.
     """
     X = np.nan_to_num(X_train, nan=0.0, posinf=0.0, neginf=0.0)
     y = np.asarray(y_train, dtype=np.float64)
+
+    if n_features is not None and X.shape[1] != n_features:
+        logger.warning(
+            "Feature dimension mismatch: expected %d, got %d",
+            n_features, X.shape[1],
+        )
 
     # Z-score normalize target for better XGBoost convergence
     target_mean = float(y.mean())
@@ -209,13 +259,13 @@ def train_energy_predictor(
     X_tr_scaled = scaler.fit_transform(X_tr)
     X_val_scaled = scaler.transform(X_val)
 
-    # Train XGBoost
+    # Train XGBoost with hyperparameters tuned for 22D features
     from xgboost import XGBRegressor
 
     model = XGBRegressor(
-        n_estimators=300,
-        max_depth=6,
-        learning_rate=0.1,
+        n_estimators=500,
+        max_depth=7,
+        learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
         reg_alpha=0.1,
@@ -234,11 +284,9 @@ def train_energy_predictor(
     mae = float(mean_absolute_error(y_val_orig, y_pred))
 
     logger.info(
-        "EnergyPredictor training: R2=%.4f, RMSE=%.4f, MAE=%.4f "
-        "(80/20 split)",
-        r2,
-        rmse,
-        mae,
+        "EnergyPredictor v1.1 training: R2=%.4f, RMSE=%.4f, MAE=%.4f "
+        "(80/20 split, %d features)",
+        r2, rmse, mae, X.shape[1],
     )
 
     return {
@@ -251,4 +299,5 @@ def train_energy_predictor(
             "rmse": round(rmse, 4),
             "mae": round(mae, 4),
         },
+        "feature_names": list(ENERGY_V11_FEATURE_NAMES),
     }

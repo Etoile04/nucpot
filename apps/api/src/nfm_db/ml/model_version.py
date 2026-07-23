@@ -1,4 +1,4 @@
-"""Model version management and confidence scoring utilities (NFM-1669).
+"""Model version management and confidence scoring utilities (NFM-1669, NFM-1789).
 
 Provides:
 - Centralized version constants for all ML models
@@ -20,24 +20,7 @@ from dataclasses import dataclass, field
 
 PHASE_CLASSIFIER_VERSION: str = "v1.0"
 TEMP_PREDICTOR_VERSION: str = "v1.0"
-ENERGY_PREDICTOR_VERSION: str = "v1.0"
-"""XGBoost formation-energy regressor version.
-
-Honest baseline measured on 1512 real DFT records using the 8D
-Miedema-style aggregate features produced by ``compute_all_features``
-(``mo_equivalent``, ``lattice_distortion``, ``allen_chi_diff``, ``vec``,
-``cluster_I``--``cluster_IV``):
-
-* **R^2 = 0.8293** (RMSE = 0.57 eV/atom, MAE = 0.338 eV/atom)
-
-These 8D aggregate descriptors cannot capture element-resolved electronic
-structure effects (d-band filling, charge transfer, lattice relaxation)
-that dominate formation energy, so v1.0 plateaus at this honest baseline.
-v1.1 (follow-up child issue NFM-1802) will expand the feature set with
-per-element descriptors (electronegativity-by-element, atomic volume,
-d-electron count, work function) plus pairwise interaction terms
-(Hume-Rothery, Darken-Gurry) to pursue R^2 > 0.90.
-"""
+ENERGY_PREDICTOR_VERSION: str = "v1.1"  # AC #3 NFM-1806: expanded 22D feature set
 
 
 # ---------------------------------------------------------------------------

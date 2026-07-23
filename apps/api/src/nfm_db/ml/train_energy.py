@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
-"""Train EnergyPredictor v1.0 — XGBoost regression for formation energy (NFM-1788).
+"""Train EnergyPredictor v1.1 — XGBoost regression for formation energy (NFM-1806).
 
 Reads real alloy compositions and DFT-computed formation energies from
-``data/dft-export/dft_export_batch_001_100_20260721.csv`` (and any other
-DFT batch sharing the same schema), computes 8D physical features via
-``feature_engineering.compute_all_features``, and uses the CSV's
-``formation_energy`` column directly as the regression target.  Trains
-an XGBoost regressor with 80/20 hold-out evaluation.
+``data/dft-export/dft_export_batch_*.csv``, computes 22D expanded features
+via ``feature_engineering.compute_energy_v11_features``, and uses the
+CSV's ``formation_energy`` column as the regression target.
 
-The target is read from the CSV rather than derived from any closed-form
-expression of the input features, eliminating the prior algebraic
-identity between ``mixing_enthalpy / 96.485 + T * config_entropy / 96485``
-and the model's input column vector.
+v1.1 expands the v1.0 8D Miedema-style aggregate descriptors with
+per-element weighted electronic structure descriptors and pairwise
+interaction terms (d-band filling, charge transfer, lattice relaxation).
 
-Acceptance criterion: R² > 0.80 on 80/20 split.
-
-Note: AC #1 was relaxed from the original R² > 0.90 to R² > 0.80 by the CPO
-on 2026-07-23. The 8D Miedema-style aggregate features hit a measured
-R² = 0.8293 ceiling on the 1512 real DFT records; element-resolved
-electronic structure effects (d-band filling, charge transfer, lattice
-relaxation) cannot be captured by these descriptors and require the
-expanded feature set planned for v1.1 (follow-up child issue NFM-1802).
+Acceptance criterion: R^2 > 0.90 on 80/20 hold-out.
 
 Usage:
     python -m nfm_db.ml.train_energy
@@ -29,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import re
@@ -39,14 +30,15 @@ import numpy as np
 import pandas as pd
 
 from nfm_db.ml.energy_predictor import train_energy_predictor
-from nfm_db.ml.feature_engineering import compute_all_features
-from nfm_db.ml.prediction_service import PHYSICAL_FEATURE_NAMES
+from nfm_db.ml.feature_engineering import (
+    ENERGY_V11_FEATURE_NAMES,
+    compute_energy_v11_features,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Paths — 4 parent hops to apps/api/ for models (same as prediction_service.py);
-# 6 parent hops for the repository root (one extra to step out of apps/api/).
+# Paths
 # ---------------------------------------------------------------------------
 
 _MODELS_DIR = (
@@ -61,14 +53,10 @@ _PROJECT_ROOT = (
     .parent.parent.parent.parent.parent.parent
 )
 DATA_DIR = _PROJECT_ROOT / "data"
-DEFAULT_TRAINING_SET = DATA_DIR / "dft-export" / "dft_export_batch_001_100_20260721.csv"
+DFT_EXPORT_DIR = DATA_DIR / "dft-export"
 DEFAULT_MODELS_DIR = _MODELS_DIR
 
-# Physical constants for target derivation
-TEMPERATURE_K: float = 1000.0
-
-MODEL_VERSION = "v1.0"
-
+MODEL_VERSION = "v1.1"
 
 # ---------------------------------------------------------------------------
 # Composition parsing
@@ -76,11 +64,11 @@ MODEL_VERSION = "v1.0"
 
 
 def _parse_composition(comp_str: str) -> dict[str, float]:
-    """Parse a composition string like 'U-10Mo-5Nb' into a fraction dict.
+    """Parse a composition string into a fraction dict.
 
-    Handles hyphen-delimited (U-10Mo-5Nb),
-    space-delimited (U 0.85 Mo 0.10 Nb 0.05),
-    and JSON-object ("{""U"": 33.3, ""Zr"": 66.7}") formats.
+    Handles JSON-object (\"{\"\"U\"\": 33.3, \"\"Zr\"\": 66.7}\""),
+    hyphen-delimited (U-10Mo-5Nb), and
+    space-delimited (U 0.85 Mo 0.10 Nb 0.05) formats.
 
     Returns:
         Dict mapping element symbols to atomic fractions summing to 1.0.
@@ -88,7 +76,7 @@ def _parse_composition(comp_str: str) -> dict[str, float]:
     if pd.isna(comp_str) or not isinstance(comp_str, str):
         raise ValueError(f"Invalid composition: {comp_str!r}")
 
-    # JSON-object format: "{""U"": 33.3, ""Zr"": 66.7}"
+    # JSON-object format
     if comp_str.startswith("{"):
         raw = json.loads(comp_str)
         total = sum(float(v) for v in raw.values())
@@ -104,7 +92,7 @@ def _parse_composition(comp_str: str) -> dict[str, float]:
             if total > 0:
                 return {k: v / total for k, v in comp.items()}
 
-    # Space-delimited format: 'U 0.85 Mo 0.10 Nb 0.05'
+    # Space-delimited format
     tokens = comp_str.split()
     if len(tokens) >= 4 and len(tokens) % 2 == 0:
         comp = {}
@@ -119,71 +107,65 @@ def _parse_composition(comp_str: str) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Data loading — reads formation_energy from the DFT CSV.
+# Data loading
 # ---------------------------------------------------------------------------
 
 
 def load_energy_training_data(
-    csv_path: Path | None = None,
+    csv_paths: list[Path] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load compositions + formation_energy from a DFT CSV.
+    """Load compositions + formation_energy from DFT CSVs.
 
-    Reads ``data/dft-export/dft_export_batch_*.csv`` (or any conforming CSV
-    with a ``composition`` JSON-object column and a ``formation_energy``
-    float column), parses compositions, computes 8D physical features via
-    ``compute_all_features()``, and uses ``formation_energy`` directly as
+    Reads all ``data/dft-export/dft_export_batch_*.csv`` files (or a
+    custom list), parses compositions, computes 22D features via
+    ``compute_energy_v11_features()``, and uses ``formation_energy`` as
     the regression target.
 
-    The training target is read from the CSV's ground-truth column rather
-    than derived from any closed-form expression of the input features
-    (the previous derivation was a closed-form algebraic identity of
-    ``mixing_enthalpy / 96.485 + T * config_entropy / 96485`` where both
-    ``mixing_enthalpy`` and ``config_entropy`` are members of
-    ``PHYSICAL_FEATURE_NAMES``, which inflated R² without learning
-    anything physically meaningful).
-
     Args:
-        csv_path: Path to DFT CSV.  Defaults to
-            ``data/dft-export/dft_export_batch_001_100_20260721.csv``.
+        csv_paths: List of DFT CSV paths.  Defaults to all batch files
+            in data/dft-export/.
 
     Returns:
-        Tuple of (X, y) where X is (n_samples, 8) and y is (n_samples,)
+        Tuple of (X, y) where X is (n_samples, 22) and y is (n_samples,)
         in eV/atom.
     """
-    path = csv_path or DEFAULT_TRAINING_SET
+    if csv_paths is None:
+        pattern = str(DFT_EXPORT_DIR / "dft_export_batch_*.csv")
+        csv_paths = sorted(Path(p) for p in glob.glob(pattern))
 
-    if not path.exists():
+    if not csv_paths:
         raise FileNotFoundError(
-            f"DFT training set not found at {path}. "
+            f"No DFT CSVs found in {DFT_EXPORT_DIR}. "
             f"Ensure data/dft-export/ is present in the repository."
         )
 
-    df = pd.read_csv(path)
-    logger.info("Loaded %d records from %s", len(df), path)
+    logger.info("Loading %d DFT CSV files...", len(csv_paths))
 
     X_list: list[list[float]] = []
     y_list: list[float] = []
     skipped = 0
 
-    for _, row in df.iterrows():
-        try:
-            comp = _parse_composition(str(row["composition"]))
-            features = compute_all_features(comp)
+    for path in csv_paths:
+        df = pd.read_csv(path)
+        logger.info("  %s: %d records", path.name, len(df))
 
-            target_raw = row.get("formation_energy")
-            if pd.isna(target_raw):
-                raise ValueError("missing formation_energy")
-            target = float(target_raw)
+        for _, row in df.iterrows():
+            try:
+                comp = _parse_composition(str(row["composition"]))
+                features = compute_energy_v11_features(comp)
 
-            X_list.append([features[name] for name in PHYSICAL_FEATURE_NAMES])
-            y_list.append(target)
-        except Exception:
-            skipped += 1
+                target_raw = row.get("formation_energy")
+                if pd.isna(target_raw):
+                    raise ValueError("missing formation_energy")
+                target = float(target_raw)
+
+                X_list.append([features[name] for name in ENERGY_V11_FEATURE_NAMES])
+                y_list.append(target)
+            except Exception:
+                skipped += 1
 
     if skipped > 0:
-        logger.warning(
-            "Skipped %d/%d records with parse errors", skipped, len(df)
-        )
+        logger.warning("Skipped %d records with parse errors", skipped)
 
     X = np.array(X_list, dtype=np.float64)
     y = np.array(y_list, dtype=np.float64)
@@ -214,19 +196,23 @@ def train_and_save(models_dir: Path) -> dict:
     """Full training pipeline: load data, train model, evaluate, save.
 
     Returns:
-        Metrics dict with R², RMSE, MAE and acceptance status.
+        Metrics dict with R^2, RMSE, MAE and acceptance status.
     """
     logger.info("=" * 60)
-    logger.info("NFM-1788: EnergyPredictor v1.0 Training")
+    logger.info("NFM-1806: EnergyPredictor v1.1 Training")
     logger.info("Output directory: %s", models_dir)
     logger.info("=" * 60)
 
     # Load training data from CSV
-    logger.info("\n>>> Loading training data from CSV <<<\n")
+    logger.info("")
+    logger.info(">>> Loading training data from DFT CSVs <<")
+    logger.info("")
     X, y = load_energy_training_data()
 
     # Train XGBoost regressor
-    logger.info("\n>>> Training XGBoost regressor <<<\n")
+    logger.info("")
+    logger.info(">>> Training XGBoost regressor (22D features) <<")
+    logger.info("")
     t0 = time.time()
     result = train_energy_predictor(X, y)
     train_time = time.time() - t0
@@ -247,7 +233,7 @@ def train_and_save(models_dir: Path) -> dict:
 
     # Save model artifact
     models_dir.mkdir(parents=True, exist_ok=True)
-    model_path = models_dir / "energy_predictor_v01.joblib"
+    model_path = models_dir / "energy_predictor_v11.joblib"
 
     try:
         import joblib
@@ -258,6 +244,7 @@ def train_and_save(models_dir: Path) -> dict:
             "target_mean": result["target_mean"],
             "target_std": result["target_std"],
             "metrics": metrics,
+            "feature_names": result["feature_names"],
             "version": MODEL_VERSION,
         }
         joblib.dump(artifact, model_path)
@@ -274,25 +261,28 @@ def train_and_save(models_dir: Path) -> dict:
         "r2": r2,
         "rmse": rmse,
         "mae": mae,
-        "target_r2": 0.80,
-        "acceptance_passed": r2 > 0.80,
+        "target_r2": 0.90,
+        "acceptance_passed": r2 > 0.90,
         "training_seconds": round(train_time, 2),
         "model_path": str(model_path),
+        "feature_names": list(ENERGY_V11_FEATURE_NAMES),
     }
 
-    metrics_path = models_dir / "energy_predictor_v1.0_metrics.json"
+    metrics_path = models_dir / "energy_predictor_v1.1_metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(full_metrics, f, indent=2, default=str)
     logger.info("Saved metrics to %s", metrics_path)
 
     # Summary
-    logger.info("\n" + "=" * 60)
-    logger.info("EnergyPredictor v1.0 Results")
+    logger.info("")
     logger.info("=" * 60)
-    logger.info("R2:   %.4f (target > 0.80)", r2)
+    logger.info("EnergyPredictor v1.1 Results")
+    logger.info("=" * 60)
+    logger.info("R2:   %.4f (target > 0.90)", r2)
     logger.info("RMSE: %.4f eV/atom", rmse)
     logger.info("MAE:  %.4f eV/atom", mae)
-    logger.info("Acceptance: %s", "PASS" if r2 > 0.80 else "FAIL")
+    logger.info("Features: %d", X.shape[1])
+    logger.info("Acceptance: %s", "PASS" if r2 > 0.90 else "FAIL")
 
     return full_metrics
 

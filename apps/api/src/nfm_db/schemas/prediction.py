@@ -1,7 +1,8 @@
-"""Pydantic schemas for ML prediction endpoints (NFM-1598, NFM-1669).
+"""Pydantic schemas for ML prediction endpoints (NFM-1598, NFM-1669, NFM-1789).
 
 Input: 8 physical features computed from composition.
-Output: Phase classification or temperature prediction with confidence scoring.
+Output: Phase classification, temperature prediction, or energy prediction
+with confidence scoring.
 """
 
 from __future__ import annotations
@@ -212,6 +213,40 @@ class TempPredictResponse(BaseModel):
         ge=0,
         le=1,
         description="Prediction confidence score (from GPR std or default)",
+    )
+    warnings: list[PredictionWarningItem] = Field(
+        default_factory=list,
+        description="Warnings generated during prediction (e.g. low confidence)",
+    )
+    model_version: str = Field(
+        ...,
+        description="Model artifact version identifier",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Energy Prediction — input + output (NFM-1789)
+# ---------------------------------------------------------------------------
+
+
+class EnergyPredictRequest(PredictionFeatures):
+    """Request body for POST /api/v1/predict/energy."""
+
+    pass
+
+
+class EnergyPredictResponse(BaseModel):
+    """Response body for formation energy prediction."""
+
+    predicted_energy: float = Field(
+        ...,
+        description="Predicted formation energy (eV/atom)",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Prediction confidence score",
     )
     warnings: list[PredictionWarningItem] = Field(
         default_factory=list,
