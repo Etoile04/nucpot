@@ -1,8 +1,9 @@
-"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669).
+"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1788).
 
 Provides lazy-loaded model instances and inference functions for:
 - Phase classification (RF+XGB VotingClassifier) with confidence scoring
 - Temperature prediction (GPR+SVR ensemble) with confidence scoring
+- Formation energy prediction (XGBoost regression) with confidence scoring
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from nfm_db.ml.model_version import (
+    ENERGY_PREDICTOR_VERSION,
     PHASE_CLASSIFIER_VERSION,
     TEMP_PREDICTOR_VERSION,
     confidence_from_default,
@@ -413,3 +415,21 @@ def _predict_temp_from_dict(
         "warnings": warnings_to_dicts(confidence.warnings),
         "model_version": TEMP_PREDICTOR_VERSION,
     }
+
+
+def predict_formation_energy(features: dict[str, float]) -> dict | None:
+    """Predict formation energy from 8 physical features.
+
+    Delegates to energy_predictor.predict_energy(), which uses a lazy-loaded
+    XGBoost regressor with z-score-normalised target.
+
+    Args:
+        features: Dictionary of 8 physical feature values.
+
+    Returns:
+        Dictionary with keys: predicted_energy (eV/atom), confidence,
+        model_version.  Returns None if model unavailable.
+    """
+    from nfm_db.ml.energy_predictor import predict_energy
+
+    return predict_energy(features)

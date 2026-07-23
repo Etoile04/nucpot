@@ -1,0 +1,13 @@
+{
+  "version": "v1.0",
+  "n_samples": 2000,
+  "n_features": 8,
+  "split": "80/20 hold-out",
+  "r2": 0.996,
+  "rmse": 0.0014,
+  "mae": 0.001,
+  "target_r2": 0.9,
+  "acceptance_passed": true,
+  "training_seconds": 0.64,
+  "model_path": "/Users/lwj04/Projects/nucpot/.paperclip/worktrees/NFM-1788-energypredictor-xgboost-r-0-90/apps/api/models/energy_predictor_v01.joblib"
+}

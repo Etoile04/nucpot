@@ -36,6 +36,9 @@ AGENTS.md
 *.tsbuildinfo
 test-results/
 
+# ML model binaries (regenerated on deploy)
+*.joblib
+
 # Auto-generated blog content (not source material)
 apps/api/content/blog/
 .paperclip/
