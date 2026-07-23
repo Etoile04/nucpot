@@ -138,7 +138,7 @@ test.describe.skip("Monitor Progress", { tag: "@unit" }, () => {
     await page.locator('.ant-select-item-option:has-text("已完成")').click()
 
     // Wait for API response and table update
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
   })
 
   test("navigates to job detail from list", async ({ page }) => {
