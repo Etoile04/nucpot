@@ -69,17 +69,18 @@ test.describe("Browse Page", { tag: "@smoke" }, () => {
 test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
   test("filter controls are present and interactive", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "networkidle" })
-    await page.waitForTimeout(2000)
+    await page.goto("/browse", { waitUntil: "domcontentloaded" })
 
     // The browse page has a filter sidebar with checkboxes for function types
-    // and an element filter, plus a sort dropdown
+    // and an element filter, plus a sort dropdown. Wait for the first checkbox
+    // to appear (a deterministic hydration signal) instead of an arbitrary
+    // timeout — `networkidle` against the live site never settles cleanly.
     const checkboxes = page.locator('input[type="checkbox"]')
     const checkboxCount = await checkboxes.count()
 
     // At least one filter checkbox should be present (function types)
     if (checkboxCount > 0) {
-      await expect(checkboxes.first()).toBeVisible()
+      await expect(checkboxes.first()).toBeVisible({ timeout: 15_000 })
     }
 
     expect(filterRealErrors(consoleErrors)).toEqual([])
@@ -87,15 +88,18 @@ test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
 
   test("sort dropdown is present", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "networkidle" })
-    await page.waitForTimeout(2000)
+    await page.goto("/browse", { waitUntil: "domcontentloaded" })
 
-    // The sort dropdown has options: 最近更新/按名称/按类型
+    // The sort dropdown has options: 最近更新/按名称/按类型. Use
+    // `domcontentloaded` + an explicit visibility timeout instead of
+    // `networkidle` + an arbitrary `waitForTimeout` — background traffic on
+    // the live site (analytics, fonts, images) prevents `networkidle` from
+    // ever settling within Playwright's 30s test budget.
     const sortSelect = page.locator('.ant-select, select').first()
     const sortExists = await sortSelect.count()
 
     if (sortExists > 0) {
-      await expect(sortSelect.first()).toBeVisible({ timeout: 10_000 })
+      await expect(sortSelect.first()).toBeVisible({ timeout: 15_000 })
     }
 
     expect(filterRealErrors(consoleErrors)).toEqual([])
@@ -103,8 +107,14 @@ test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
 
   test("potential cards render after load", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "networkidle" })
-    await page.waitForTimeout(2000)
+    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+
+    // Wait for the filter sidebar to render as a deterministic hydration
+    // signal (filter checkboxes are JS-mounted, not in the SSR shell). This
+    // replaces the previous `networkidle` + 2s sleep, which never settled on
+    // the live site and was the flake source on CI run 29985526783.
+    const checkboxes = page.locator('input[type="checkbox"]')
+    await expect(checkboxes.first()).toBeVisible({ timeout: 15_000 })
 
     // Potential cards should render in the grid
     const bodyText = await page.locator("body").innerText()
