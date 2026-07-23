@@ -161,6 +161,11 @@ ignore_missing_imports = true
 module = "nfm_md_runner.*"
 ignore_missing_imports = true
 
+# cachetools has no published type stubs (NFM-1804).
+[[tool.mypy.overrides]]
+module = "cachetools.*"
+ignore_missing_imports = true
+
 # Pre-existing modules with unresolved mypy errors (existed on main before this branch).
 # Strict typing deferred to a dedicated cleanup issue.
 [[tool.mypy.overrides]]
@@ -234,6 +239,7 @@ ignore_errors = true
 module = [
     "nfm_db.ml.feature_engineering",
     "nfm_db.ml.prediction_service",
+    "nfm_db.ml.train_v11",
     "nfm_db.ml",
 ]
 ignore_errors = true
