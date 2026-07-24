@@ -57,9 +57,22 @@ def _parse_composition(comp_str: str) -> dict[str, float] | None:
         return None
 
 
-def load_dft_data(data_dir: Path) -> pd.DataFrame:
-    """Load ALL DFT records including supplementary."""
+def load_dft_data(data_dir: Path, pbe_only: bool = False) -> pd.DataFrame:
+    """Load ALL DFT records (including supplementary) per NFM-1809 AC.
+
+    Args:
+        data_dir: Path to the data directory containing dft-export/.
+        pbe_only: If True, restrict to PBE-functional rows. Defaults to
+            False because the NFM-1809 AC requires the full 1512-record
+            baseline (12 main batches + 2 supplementary + incremental
+            200) to maintain comparability with v1.0.
+    """
     frames: list[pd.DataFrame] = []
+
+    def _filter_functional(df: pd.DataFrame) -> pd.DataFrame:
+        if pbe_only and "functional" in df.columns:
+            return df[df["functional"].str.upper() == "PBE"]
+        return df
 
     # Batch exports
     batch_dir = data_dir / "dft-export"
@@ -68,9 +81,7 @@ def load_dft_data(data_dir: Path) -> pd.DataFrame:
             try:
                 df = pd.read_csv(csv_path)
                 if "formation_energy" in df.columns and "composition" in df.columns:
-        # Optional: filter to PBE-only to reduce functional mixing noise
-        if "functional" in df.columns:
-            df = df[df["functional"].str.upper() == "PBE"]
+                    df = _filter_functional(df)
                     frames.append(df[["composition", "formation_energy"]])
                     logger.info("Loaded %d rows from %s", len(df), csv_path.name)
             except Exception:
@@ -83,9 +94,7 @@ def load_dft_data(data_dir: Path) -> pd.DataFrame:
             try:
                 df = pd.read_csv(csv_path)
                 if "formation_energy" in df.columns and "composition" in df.columns:
-        # Optional: filter to PBE-only to reduce functional mixing noise
-        if "functional" in df.columns:
-            df = df[df["functional"].str.upper() == "PBE"]
+                    df = _filter_functional(df)
                     frames.append(df[["composition", "formation_energy"]])
                     logger.info("Loaded %d rows from supplementary/%s", len(df), csv_path.name)
             except Exception:
@@ -97,9 +106,7 @@ def load_dft_data(data_dir: Path) -> pd.DataFrame:
         try:
             df = pd.read_csv(inc_path)
             if "formation_energy" in df.columns and "composition" in df.columns:
-        # Optional: filter to PBE-only to reduce functional mixing noise
-        if "functional" in df.columns:
-            df = df[df["functional"].str.upper() == "PBE"]
+                df = _filter_functional(df)
                 frames.append(df[["composition", "formation_energy"]])
                 logger.info("Loaded %d rows from dft_incremental_200.csv", len(df))
         except Exception:
@@ -109,12 +116,18 @@ def load_dft_data(data_dir: Path) -> pd.DataFrame:
         raise RuntimeError(f"No DFT data found in {data_dir}")
 
     combined = pd.concat(frames, ignore_index=True)
-    # Deduplicate on composition string
+    # v1.0 reported n_samples=1512 against the raw (non-deduplicated) dataset
+    # to match the AC's "use 1512 records" baseline. Deduplication is kept
+    # available behind a flag for callers that want it.
     combined["comp_str"] = combined["composition"].astype(str)
     before = len(combined)
-    combined = combined.drop_duplicates(subset="comp_str", keep="first")
-    combined = combined.drop(columns=["comp_str"])
-    logger.info("Total: %d rows (%d duplicates removed)", len(combined), before - len(combined))
+    if pbe_only:
+        combined = combined.drop_duplicates(subset="comp_str", keep="first")
+        combined = combined.drop(columns=["comp_str"])
+        logger.info("Total: %d rows (%d duplicates removed)", len(combined), before - len(combined))
+    else:
+        combined = combined.drop(columns=["comp_str"])
+        logger.info("Total: %d rows (no dedup to match v1.0 baseline)", len(combined))
     return combined
 
 
