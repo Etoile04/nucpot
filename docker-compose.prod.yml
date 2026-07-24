@@ -87,6 +87,13 @@ services:
       LLM_API_KEY: ollama
       LLM_BASE_URL: http://192.168.3.228:11434/v1
       LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
+      # NFM-1807: httpx does not support wildcards in NO_PROXY.
+      # List every Docker-internal hostname the API may call so
+      # requests bypass the host proxy and go directly over the
+      # Docker bridge network.  Without this, API→LightRAG traffic
+      # is forwarded to host.docker.internal:7892 → 502.
+      NO_PROXY: ${PROD_API_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
+      no_proxy: ${PROD_API_no_proxy:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
     volumes:
       # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
       # from the same path.  Distinct from the potentials / LightRAG volumes.
@@ -143,8 +150,8 @@ services:
       # host.docker.internal, so Ollama calls (host.docker.internal:11434)
       # get routed through the host proxy (host.docker.internal:7892) and
       # return HTTP 502. Safe global addition — does not change LLM behavior.
-      NO_PROXY: ${PROD_LIGHTRAG_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-*,host.docker.internal}
-      no_proxy: ${PROD_LIGHTRAG_no_proxy:-localhost,127.0.0.1,nucpot-prod-*,host.docker.internal}
+      NO_PROXY: ${PROD_LIGHTRAG_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-api,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
+      no_proxy: ${PROD_LIGHTRAG_no_proxy:-localhost,127.0.0.1,nucpot-prod-api,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
       # NFM-1763: Qwen3 thinking models emit `reasoning_content` blocks that
       # OpenAI-compatible clients must explicitly suppress, otherwise
       # entity extraction produces zero content. Pass through when set.
