@@ -281,7 +281,7 @@ jobs:
     env:
       HTTP_PROXY: http://127.0.0.1:7892
       HTTPS_PROXY: http://127.0.0.1:7892
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,nucpot.dpdns.org,verify.nucpot.dpdns.org
     steps:
       - uses: actions/checkout@v7
 
