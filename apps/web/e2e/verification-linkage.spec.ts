@@ -66,7 +66,7 @@ function filterRealErrors(errors: string[]): string[] {
 async function navigateToRecommendationDrawer(page: import("@playwright/test").Page): Promise<void> {
   await setupDesignMockApi(page, "normal")
   await page.goto("/design")
-  await page.waitForLoadState("networkidle")
+  await page.waitForLoadState("domcontentloaded")
 
   // Wait for page to render
   const panels = page.locator("[data-panel], [class*='panel'], section")

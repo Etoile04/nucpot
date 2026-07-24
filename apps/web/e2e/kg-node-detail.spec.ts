@@ -99,7 +99,7 @@ test.describe("KG Node Detail — interaction tests", { tag: "@integration" }, (
     const pageErrors: string[] = []
     page.on("pageerror", (e) => pageErrors.push(e.message))
 
-    await page.goto(NODE_URL, { waitUntil: "networkidle" })
+    await page.goto(NODE_URL, { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     expect(filterRealErrors(consoleErrors)).toEqual([])

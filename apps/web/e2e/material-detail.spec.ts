@@ -66,7 +66,7 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
     page,
   }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto(DETAIL_URL, { waitUntil: "networkidle" })
+    await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     // The detail page has buttons: "查看知识图谱" and "查看属性"
@@ -99,7 +99,7 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
     const pageErrors: string[] = []
     page.on("pageerror", (e) => pageErrors.push(e.message))
 
-    await page.goto(DETAIL_URL, { waitUntil: "networkidle" })
+    await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     expect(filterRealErrors(consoleErrors)).toEqual([])
@@ -110,7 +110,7 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
 test.describe("Material Properties — interaction tests", { tag: "@integration" }, () => {
   test("properties table renders with data rows", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto(PROPERTIES_URL, { waitUntil: "networkidle" })
+    await page.goto(PROPERTIES_URL, { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     // The properties page has a MaterialPropertyTable component
@@ -148,7 +148,7 @@ test.describe("Material Properties — interaction tests", { tag: "@integration"
 test.describe("Material Graph — interaction tests", { tag: "@integration" }, () => {
   test("sub-graph canvas or graph container renders", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto(GRAPH_URL, { waitUntil: "networkidle" })
+    await page.goto(GRAPH_URL, { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(3000)
 
     // The graph page renders a MaterialSubgraphView with a canvas or container
@@ -178,7 +178,7 @@ test.describe("Material Graph — interaction tests", { tag: "@integration" }, (
     const pageErrors: string[] = []
     page.on("pageerror", (e) => pageErrors.push(e.message))
 
-    await page.goto(GRAPH_URL, { waitUntil: "networkidle" })
+    await page.goto(GRAPH_URL, { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(3000)
 
     expect(filterRealErrors(consoleErrors)).toEqual([])

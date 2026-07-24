@@ -36,7 +36,7 @@ test.describe("Feedback", { tag: "@integration" }, () => {
   test("feedback page loads successfully", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto("/feedback")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
     await expect(page).toHaveTitle(/.+/)
     expect(filterRealErrors(consoleErrors)).toEqual([])
   })
@@ -92,7 +92,7 @@ test.describe("Feedback — form validation", { tag: "@integration" }, () => {
   test("feedback form has required fields", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto("/feedback")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // The feedback page has: type select, title input (required), description textarea
     const titleInput = page.getByPlaceholder(/标题|title/i)
@@ -108,7 +108,7 @@ test.describe("Feedback — form validation", { tag: "@integration" }, () => {
   test("submit button shows loading state on click", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto("/feedback")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // The submit button is "提交反馈"
     const submitBtn = page.getByRole("button", { name: /提交反馈|提交/i })
@@ -124,7 +124,7 @@ test.describe("Feedback — form validation", { tag: "@integration" }, () => {
   test("type select dropdown is present", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto("/feedback")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // The type dropdown has options: Bug 报告/功能建议/数据纠错/其他
     const typeSelect = page.locator('.ant-select, select').first()
@@ -144,7 +144,7 @@ test.describe("Feedback — responsive", { tag: "@integration" }, () => {
 
     await page.setViewportSize({ width: 1024, height: 768 })
     await page.goto("/feedback")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     await expect(page).toHaveTitle(/.+/)
     const bodyText = await page.locator("body").innerText()

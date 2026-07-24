@@ -32,7 +32,7 @@ test.describe("Design Workspace", () => {
 
     // 2. Navigate to /design
     await page.goto("/design")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // 3. Verify page loads with 3-panel layout
     // The design workspace should have at least 3 major sections/panels
@@ -202,7 +202,7 @@ test.describe("Design Workspace Error Handling", () => {
   test("design workspace error handling", async ({ page }) => {
     // 1. Navigate to /design
     await page.goto("/design")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // 2. Set up error mock BEFORE clicking optimize
     // We delay mock setup so the page loads normally, then override
