@@ -39,7 +39,3 @@ test-results/
 # Auto-generated blog content (not source material)
 apps/api/content/blog/
 .paperclip/
-.gstack/
-
-# Generated DFT data (reproducible via scripts/fetch_mp_dft_data.py)
-data/mp_u_alloys.json

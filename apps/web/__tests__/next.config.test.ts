@@ -87,13 +87,16 @@ describe("next.config.ts rewrites", () => {
 
   it("proxies /api/* to the fallback host when API_SERVER_URL is unset (local dev)", async () => {
     const config = await loadConfig({
-      // No API_SERVER_URL → uses API_SERVER_FALLBACK = http://localhost:8000
+      // No API_SERVER_URL → uses API_SERVER_FALLBACK = http://localhost:8100
+      // (uvicorn default port — see apps/web/next.config.ts API_SERVER_FALLBACK
+      // and the NFM-1698 commit that aligned this default with the actual
+      // local backend port).
     })
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual([
       {
         source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
+        destination: "http://localhost:8100/api/:path*",
       },
     ])
   })

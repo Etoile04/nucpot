@@ -3,7 +3,7 @@
 # LightRAG Sidecar — Entrypoint Script
 # =============================================================================
 # Validates required environment variables and starts the LightRAG FastAPI
-# server with PostgreSQL storage backend (pgvector + Apache AGE).
+# server with hybrid storage: pgvector for vectors, NetworkX for graph.
 #
 # Environment variables (required):
 #   POSTGRES_HOST     - PostgreSQL host (e.g. nucpot-prod-db)
@@ -57,12 +57,14 @@ if [ -z "${LLM_BINDING:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Set storage backends to PostgreSQL (pgvector + AGE)
+# 3. Configure hybrid storage (CTO Option C)
+#    Vector: PGVectorStorage (pgvector in PostgreSQL)
+#    Graph:  NetworkX (default, in-memory — no graph DB extensions)
+#    KV / DocStatus: default (JSON file-based)
 # ---------------------------------------------------------------------------
-export LIGHTRAG_KV_STORAGE="PGKVStorage"
 export LIGHTRAG_VECTOR_STORAGE="PGVectorStorage"
-export LIGHTRAG_GRAPH_STORAGE="PGGraphStorage"
-export LIGHTRAG_DOC_STATUS_STORAGE="PGDocStatusStorage"
+# LIGHTRAG_GRAPH_STORAGE is intentionally NOT set — NetworkX is the default.
+# LIGHTRAG_KV_STORAGE and LIGHTRAG_DOC_STATUS_STORAGE use JSON defaults.
 
 # ---------------------------------------------------------------------------
 # 4. Set defaults
@@ -89,7 +91,7 @@ echo "============================================================"
 echo "  Port:            ${HOST}:${PORT}"
 echo "  Database:         ${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}"
 echo "  Vector storage:   ${LIGHTRAG_VECTOR_STORAGE} (${POSTGRES_VECTOR_INDEX_TYPE})"
-echo "  Graph storage:    ${LIGHTRAG_GRAPH_STORAGE} (Apache AGE)"
+echo "  Graph storage:    NetworkX (in-memory)"
 echo "  LLM binding:      ${LLM_BINDING:-<not configured>}"
 echo "  LLM model:        ${LLM_MODEL:-<not configured>}"
 echo "  Embedding model:  ${EMBEDDING_MODEL} (${EMBEDDING_DIM}d)"

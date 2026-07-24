@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -30,13 +29,12 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, WhiteKernel
 from sklearn.metrics import (
-    accuracy_score,
     classification_report,
     confusion_matrix,
     mean_absolute_error,
     r2_score,
 )
-from sklearn.model_selection import cross_val_score, LeaveOneOut
+from sklearn.model_selection import LeaveOneOut, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 
@@ -731,7 +729,7 @@ def train_temp_predictor_v11(
         "=" * 60,
         f"Samples:        {n_samples}",
         f"Features:       {X.shape[1]} (8 base + 5 interactions)",
-        f"Target:         log(T) transform",
+        "Target:         log(T) transform",
         f"Mean MAE:       {mae:.2f} C (target < 35.0 C)",
         f"RMSE:           {rmse:.2f} C",
         f"R2:             {r2:.4f}",
@@ -772,7 +770,7 @@ def _compute_shap_importance(
     Falls back to permutation importance if SHAP is unavailable.
     """
     try:
-        import shap  # noqa: F401
+        import shap
 
         # Use the first estimator (RF) for SHAP
         if hasattr(model, "estimators_"):

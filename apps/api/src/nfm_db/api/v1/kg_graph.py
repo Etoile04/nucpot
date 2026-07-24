@@ -40,7 +40,7 @@ router = APIRouter()
     },
 )
 async def get_kg_graph(
-    nodeId: str = Query(  # noqa: N803
+    nodeId: str = Query(
         min_length=1, description="Focal node: UUID, 'type:label', or label"
     ),
     depth: int = Query(default=2, ge=1, le=3),

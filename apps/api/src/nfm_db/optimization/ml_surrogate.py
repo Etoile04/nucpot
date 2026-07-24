@@ -244,8 +244,9 @@ class MLSurrogateEvaluator:
 
     def _load_models(self) -> None:
         """Load temperature predictor and phase classifier from disk."""
-        import joblib
         import os
+
+        import joblib
 
         from nfm_db.ml.prediction_service import (
             PHASE_MODEL_PATH,
@@ -566,7 +567,7 @@ def _filter_nondominated(F: np.ndarray) -> np.ndarray:
     for i in range(n):
         if is_dominated[i]:
             continue
-        dom = np.all(F <= F[i], axis=1) & np.any(F < F[i], axis=1)
+        dom = np.all(F[i] >= F, axis=1) & np.any(F[i] > F, axis=1)
         dom[i] = False
         # dom[j] is True when F[j] dominates F[i]; only mark i as dominated
         if np.any(dom):
