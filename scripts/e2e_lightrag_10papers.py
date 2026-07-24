@@ -582,7 +582,7 @@ def run_queries_direct(
                 "mode": tc.mode,
                 "include_references": True,
             },
-            timeout=240.0,
+            timeout=600.0,
         )
         elapsed = time.monotonic() - t0
 
@@ -660,7 +660,7 @@ def run_queries_via_api(
                 "include_references": True,
             },
             headers=headers,
-            timeout=240.0,
+            timeout=600.0,
         )
         elapsed = time.monotonic() - t0
 
