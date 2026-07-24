@@ -1,8 +1,9 @@
-"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669).
+"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1789).
 
 Provides lazy-loaded model instances and inference functions for:
 - Phase classification (RF+XGB VotingClassifier) with confidence scoring
 - Temperature prediction (GPR+SVR ensemble) with confidence scoring
+- Energy prediction (formation energy) with confidence scoring
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from nfm_db.ml.model_version import (
+    ENERGY_PREDICTOR_VERSION,
     PHASE_CLASSIFIER_VERSION,
     TEMP_PREDICTOR_VERSION,
     confidence_from_default,
@@ -33,6 +35,7 @@ MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent.parent 
 
 PHASE_MODEL_PATH = MODELS_DIR / "phase_classifier_v01.joblib"
 TEMP_MODEL_PATH = MODELS_DIR / "temp_predictor_v01.joblib"
+ENERGY_MODEL_PATH = MODELS_DIR / "energy_predictor_v01.joblib"
 
 PHYSICAL_FEATURE_NAMES: list[str] = [
     "mo_equivalent",
@@ -67,6 +70,7 @@ CLUSTER_PHASE_LABELS: dict[str, str] = {
 
 _phase_model = None
 _temp_model = None
+_energy_model = None
 
 
 # ---------------------------------------------------------------------------
@@ -413,3 +417,85 @@ def _predict_temp_from_dict(
         "warnings": warnings_to_dicts(confidence.warnings),
         "model_version": TEMP_PREDICTOR_VERSION,
     }
+
+
+# ---------------------------------------------------------------------------
+# Energy prediction — model loading + inference (NFM-1789)
+# ---------------------------------------------------------------------------
+
+
+def _load_energy_predictor():
+    """Load the energy predictor model from disk (lazy).
+
+    The trained artifact (``energy_predictor_v01.joblib``) is a dict with a
+    ``model`` key holding the actual regressor.  We extract that key
+    so downstream inference code can call ``model.predict()`` directly.
+    """
+    global _energy_model
+
+    if _energy_model is not None:
+        return _energy_model
+
+    model_path = os.environ.get(
+        "ENERGY_PREDICTOR_PATH", str(ENERGY_MODEL_PATH),
+    )
+
+    if not Path(model_path).exists():
+        logger.warning("Energy predictor model not found at %s", model_path)
+        return None
+
+    try:
+        import joblib
+
+        raw = joblib.load(model_path)
+
+        # Artifact may be a dict wrapper or a bare estimator
+        if isinstance(raw, dict):
+            _energy_model = raw["model"]
+            logger.info(
+                "Loaded energy predictor from %s (dict wrapper, extracted 'model' key)",
+                model_path,
+            )
+        else:
+            _energy_model = raw
+            logger.info("Loaded energy predictor from %s", model_path)
+
+        return _energy_model
+    except Exception:
+        logger.exception("Failed to load energy predictor from %s", model_path)
+        return None
+
+
+def predict_energy(features: dict[str, float]) -> dict | None:
+    """Run formation energy prediction on 8 physical features.
+
+    The model is a regressor that predicts formation energy in eV/atom.
+
+    Args:
+        features: Dictionary of 8 physical feature values.
+
+    Returns:
+        Dictionary with keys: predicted_energy, confidence, warnings,
+        model_version.  Returns None if model unavailable.
+    """
+    model = _load_energy_predictor()
+    if model is None:
+        return None
+
+    feature_vec = build_feature_vector(features).reshape(1, -1)
+
+    try:
+        predicted_energy = float(model.predict(feature_vec)[0])
+
+        # Use moderate default confidence for regression without GPR std
+        confidence = confidence_from_default(predicted_energy)
+
+        return {
+            "predicted_energy": round(predicted_energy, 6),
+            "confidence": confidence.score,
+            "warnings": warnings_to_dicts(confidence.warnings),
+            "model_version": ENERGY_PREDICTOR_VERSION,
+        }
+    except Exception:
+        logger.exception("Energy prediction failed")
+        return None
