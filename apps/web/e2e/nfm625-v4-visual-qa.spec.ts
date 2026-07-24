@@ -166,7 +166,7 @@ test.describe("NFM-625 Specific Component Verification", () => {
 
     // Use a fake validationId to trigger error state
     await p.goto("/admin/v4-extraction/validate/nonexistent-validation-xyz", {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
       timeout: 30_000,
     })
     await p.waitForTimeout(3_000)
