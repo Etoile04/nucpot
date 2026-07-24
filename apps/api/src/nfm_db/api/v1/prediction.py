@@ -19,6 +19,9 @@ from nfm_db.ml.prediction_service import (
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.prediction import (
     CompositionPredictRequest,
+    EnergyPredictRequest,
+    EnergyPredictResponse,
+    EnergyPredictV11Request,
     PhasePredictRequest,
     PhasePredictResponse,
     PhaseProbabilityItem,
@@ -110,6 +113,43 @@ async def predict_temperature_endpoint(
             confidence_upper_c=result["confidence_upper_c"],
             gpr_predicted_temp_c=result.get("gpr_predicted_temp_c"),
             svr_predicted_temp_c=result.get("svr_predicted_temp_c"),
+            confidence=result["confidence"],
+            warnings=[
+                PredictionWarningItem(code=w["code"], message=w["message"])
+                for w in result.get("warnings", [])
+            ],
+            model_version=result["model_version"],
+        ),
+    )
+
+
+@router.post(
+    "/energy",
+    response_model=ApiResponse[EnergyPredictResponse],
+    summary="结合能预测",
+    description=(
+        "输入8维物理特征，预测核燃料合金的形成能（eV/atom）。\n\n"
+        "Predict the formation energy (eV/atom) of a nuclear fuel "
+        "alloy from 8 computed physical features."
+    ),
+)
+async def predict_energy_endpoint(
+    payload: EnergyPredictV11Request,
+) -> ApiResponse[EnergyPredictResponse]:
+    """Predict formation energy from alloy composition (v1.1)."""
+    result = predict_energy_from_composition(payload.composition)
+
+    if result is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Energy predictor model is not available. "
+                   "Ensure the model artifact is deployed at models/energy_predictor_v11.joblib.",
+        )
+
+    return ApiResponse(
+        success=True,
+        data=EnergyPredictResponse(
+            predicted_energy=result["predicted_energy"],
             confidence=result["confidence"],
             warnings=[
                 PredictionWarningItem(code=w["code"], message=w["message"])
