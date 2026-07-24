@@ -18,10 +18,15 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create users table with blog role support."""
-    # Create enum via raw SQL to avoid duplicate CREATE TYPE in async migrations
-    op.execute("""
-        CREATE TYPE IF NOT EXISTS blog_role_enum AS ENUM ('admin', 'editor', 'reviewer')
-    """)
+    # CREATE TYPE does not support IF NOT EXISTS in PostgreSQL (any version).
+    # Use DO block with pg_type check for idempotent enum creation (PG 14/15/16).
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'blog_role_enum') THEN "
+        "CREATE TYPE blog_role_enum AS ENUM ('admin', 'editor', 'reviewer'); "
+        "END IF; "
+        "END $$;"
+    )
 
 
     op.execute("""

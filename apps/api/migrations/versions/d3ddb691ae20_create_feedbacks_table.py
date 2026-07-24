@@ -18,22 +18,29 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create feedbacks table with enums - all via raw SQL (idempotent)."""
-    op.execute("""
-        CREATE TYPE IF NOT EXISTS feedback_type_enum AS ENUM (
-            'bug_report', 'feature_request', 'data_correction', 'usage_inquiry'
-        )
-    """)
-    op.execute("""
-        CREATE TYPE IF NOT EXISTS priority_enum AS ENUM (
-            'urgent', 'high', 'medium', 'low'
-        )
-    """)
-    op.execute("""
-        CREATE TYPE IF NOT EXISTS feedback_status_enum AS ENUM (
-            'open', 'classified', 'assigned', 'in_progress',
-            'resolved', 'closed'
-        )
-    """)
+    # CREATE TYPE does not support IF NOT EXISTS in PostgreSQL (any version).
+    # Use DO block with pg_type check for idempotent enum creation (PG 14/15/16).
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'feedback_type_enum') THEN "
+        "CREATE TYPE feedback_type_enum AS ENUM ('bug_report', 'feature_request', 'data_correction', 'usage_inquiry'); "
+        "END IF; "
+        "END $$;"
+    )
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'priority_enum') THEN "
+        "CREATE TYPE priority_enum AS ENUM ('urgent', 'high', 'medium', 'low'); "
+        "END IF; "
+        "END $$;"
+    )
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'feedback_status_enum') THEN "
+        "CREATE TYPE feedback_status_enum AS ENUM ('open', 'classified', 'assigned', 'in_progress', 'resolved', 'closed'); "
+        "END IF; "
+        "END $$;"
+    )
     op.execute("""
         CREATE TABLE IF NOT EXISTS feedbacks (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
