@@ -133,9 +133,20 @@ services:
       LLM_BINDING_HOST: ${PROD_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
       LLM_BINDING_API_KEY: ${PROD_LIGHTRAG_LLM_API_KEY:?Set PROD_LIGHTRAG_LLM_API_KEY}
       EMBEDDING_BINDING: ${PROD_LIGHTRAG_EMBEDDING_BINDING:-openai}
-      EMBEDDING_MODEL: ${PROD_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-3-small}
-      EMBEDDING_BINDING_HOST: ${PROD_LIGHTRAG_EMBEDDING_HOST:-https://api.openai.com/v1}
+      EMBEDDING_MODEL: ${PROD_LIGHTRAG_EMBEDDING_MODEL:-qwen3-embedding:4b}
+      EMBEDDING_BINDING_HOST: ${PROD_LIGHTRAG_EMBEDDING_HOST:-http://host.docker.internal:11434/v1}
       EMBEDDING_BINDING_API_KEY: ${PROD_LIGHTRAG_EMBEDDING_API_KEY:-${PROD_LIGHTRAG_LLM_API_KEY}}
+      EMBEDDING_DIM: ${PROD_LIGHTRAG_EMBEDDING_DIM:-2560}
+      # NFM-1764: pgvector storage backend (CTO ADR Option C — hybrid)
+      LIGHTRAG_VECTOR_STORAGE: ${PROD_LIGHTRAG_VECTOR_STORAGE:-PGVectorStorage}
+      LIGHTRAG_GRAPH_STORAGE: ${PROD_LIGHTRAG_GRAPH_STORAGE:-NetworkXStorage}
+      LIGHTRAG_KV_STORAGE: ${PROD_LIGHTRAG_KV_STORAGE:-JsonKVStorage}
+      LIGHTRAG_DOC_STATUS_STORAGE: ${PROD_LIGHTRAG_DOC_STATUS_STORAGE:-JsonDocStatusStorage}
+      POSTGRES_HOST: ${PROD_LIGHTRAG_POSTGRES_HOST:-nucpot-prod-db}
+      POSTGRES_PORT: ${PROD_LIGHTRAG_POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${PROD_LIGHTRAG_POSTGRES_USER:-${PROD_POSTGRES_USER:-nfm}}
+      POSTGRES_PASSWORD: ${PROD_LIGHTRAG_POSTGRES_PASSWORD:-${PROD_POSTGRES_PASSWORD}}
+      POSTGRES_DATABASE: ${PROD_LIGHTRAG_POSTGRES_DATABASE:-${PROD_POSTGRES_DB:-nfm_db}}
       # NFM-1763: LightRAG uses WORKING_DIR (default ./rag_storage) for the
       # absolute storage path; WORKSPACE only supplies a sub-namespace name.
       # Without this, LightRAG writes to /app/rag_storage (image-baked,
@@ -150,8 +161,8 @@ services:
       # host.docker.internal, so Ollama calls (host.docker.internal:11434)
       # get routed through the host proxy (host.docker.internal:7892) and
       # return HTTP 502. Safe global addition — does not change LLM behavior.
-      NO_PROXY: ${PROD_LIGHTRAG_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-api,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
-      no_proxy: ${PROD_LIGHTRAG_no_proxy:-localhost,127.0.0.1,nucpot-prod-api,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
+      NO_PROXY: ${PROD_LIGHTRAG_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-api,nucpot-prod-web,nucpot-prod-lightrag,nucpot-prod-redis,nucpot-prod-worker,host.docker.internal}
+      no_proxy: ${PROD_LIGHTRAG_no_proxy:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-api,nucpot-prod-web,nucpot-prod-lightrag,nucpot-prod-redis,nucpot-prod-worker,host.docker.internal}
       # NFM-1763: Qwen3 thinking models emit `reasoning_content` blocks that
       # OpenAI-compatible clients must explicitly suppress, otherwise
       # entity extraction produces zero content. Pass through when set.
