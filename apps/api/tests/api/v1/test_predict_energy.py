@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Sample feature dict matching PredictionFeatures.to_feature_dict()
 # ---------------------------------------------------------------------------
