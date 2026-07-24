@@ -30,7 +30,10 @@ services:
       LLM_MODEL: ${NFM1763_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
       LLM_BINDING_HOST: ${NFM1763_LLM_HOST:-http://host.docker.internal:11434/v1}
       LLM_BINDING_API_KEY: ${NFM1763_LLM_API_KEY:-ollama}
-      LLM_TIMEOUT: ${NFM1763_LLM_TIMEOUT:-240}
+      LLM_TIMEOUT: ${NFM1763_LLM_TIMEOUT:-600}
+      # Single-threaded LLM calls: Mac GPU (Metal) has limited VRAM and cannot
+      # parallelise nvfp4 inference.  Setting >1 causes OOM or cascade timeouts.
+      MAX_ASYNC_LLM: ${NFM1763_MAX_ASYNC_LLM:-1}
 
       # Switch embedding to local nomic-embed-text at 768 dims.
       EMBEDDING_BINDING: openai
