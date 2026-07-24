@@ -87,6 +87,11 @@ celery_app.conf.task_routes = {
     },
 }
 
+# Register the literature dispatcher module so the worker imports it at startup
+# and the @celery_app.task decorator in it actually executes. Without this,
+# send_task() dispatches to the queue but the worker has no handler registered.
+celery_app.conf.include = ["nfm_db.services.literature_dispatcher"]
+
 
 @celery_app.task(
     bind=True,
