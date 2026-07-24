@@ -40,9 +40,18 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create entity_merge_log table, enum, and lookup indexes."""
-    op.execute("CREATE TYPE IF NOT EXISTS match_method_enum AS ENUM ('exact', 'fuzzy', 'semantic')")
+    # CREATE TYPE does not support IF NOT EXISTS in PostgreSQL (any version).
+    # Use DO block with pg_type check for idempotent enum creation (PG 14/15/16).
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'match_method_enum') THEN "
+        "CREATE TYPE match_method_enum AS ENUM ('exact', 'fuzzy', 'semantic'); "
+        "END IF; "
+        "END $$;"
+    )
 
-    op.execute("""
+    op.execute(
+        """
         CREATE TABLE entity_merge_log (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             canonical_id UUID NOT NULL
