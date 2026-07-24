@@ -1,0 +1,51 @@
+# =============================================================================
+# NFM-1763: Local LightRAG override for E2E pipeline testing
+# =============================================================================
+# Auto-loaded by `docker compose` (any file named `docker-compose.override.yml`
+# or `docker-compose.local.yml` is merged on top of the base compose file).
+#
+# This file switches LightRAG from the production gpt-4o-mini / text-embedding-3
+# -small defaults to the local Ollama endpoints used by the NFM-1763 E2E
+# pipeline (qwen3.6:35b-a3b-coding-nvfp4 + nomic-embed-text at 768 dims).
+#
+# It is *not* a deployment artifact — production keeps gpt-4o-mini /
+# text-embedding-3-small. To run the E2E pipeline locally:
+#
+#   docker compose -f docker-compose.prod.yml \
+#     -f docker-compose.override.yml \
+#     --env-file docker/.env.prod \
+#     up -d --build lightrag
+#
+# Parent issue: NFM-1763 (E2E Phase A: LightRAG pipeline 10-paper verification)
+# =============================================================================
+
+services:
+  lightrag:
+    environment:
+      # Switch LLM to local non-thinking Qwen3.6 (the 35b coding variant emits
+      # `content` strings when reasoning_effort is `none`; the 4b variant
+      # drains its budget on internal thinking for LightRAG's 12k-token
+      # ontology-extraction prompt).
+      LLM_BINDING: openai
+      LLM_MODEL: ${NFM1763_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
+      LLM_BINDING_HOST: ${NFM1763_LLM_HOST:-http://host.docker.internal:11434/v1}
+      LLM_BINDING_API_KEY: ${NFM1763_LLM_API_KEY:-ollama}
+      LLM_TIMEOUT: ${NFM1763_LLM_TIMEOUT:-240}
+
+      # Switch embedding to local nomic-embed-text at 768 dims.
+      EMBEDDING_BINDING: openai
+      EMBEDDING_MODEL: ${NFM1763_EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIM: "${NFM1763_EMBEDDING_DIM:-768}"
+      EMBEDDING_BINDING_HOST: ${NFM1763_EMBEDDING_HOST:-http://host.docker.internal:11434/v1}
+      EMBEDDING_BINDING_API_KEY: ${NFM1763_EMBEDDING_API_KEY:-ollama}
+
+      # Force LightRAG storage onto the mounted /app/data volume (see
+      # docker-compose.prod.yml comment). Without this override the
+      # prod defaults win and local E2E writes to the un-persisted
+      # image-baked /app/rag_storage.
+      WORKING_DIR: ${NFM1763_WORKING_DIR:-/app/data}
+      INPUT_DIR: ${NFM1763_INPUT_DIR:-/app/data/inputs}
+      WORKSPACE: ${NFM1763_WORKSPACE:-_app_data}
+
+      # Qwen3 thinking suppression (relied on by the OpenAI shim layer).
+      OPENAI_LLM_REASONING_EFFORT: none
