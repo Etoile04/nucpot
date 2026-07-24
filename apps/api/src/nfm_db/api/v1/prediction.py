@@ -22,7 +22,9 @@ from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.prediction import (
     CompositionPredictRequest,
     EnergyPredictRequest,
+    EnergyPredictRequest,
     EnergyPredictResponse,
+    EnergyPredictV11Request,
     PhasePredictRequest,
     PhasePredictResponse,
     PhaseProbabilityItem,
@@ -135,11 +137,10 @@ async def predict_temperature_endpoint(
     ),
 )
 async def predict_energy_endpoint(
-    payload: EnergyPredictRequest,
+    payload: EnergyPredictV11Request,
 ) -> ApiResponse[EnergyPredictResponse]:
-    """Predict formation energy from 8 physical features."""
-    features = payload.to_feature_dict()
-    result = predict_energy_from_composition(payload.to_composition_dict())
+    """Predict formation energy from alloy composition (v1.1)."""
+    result = predict_energy_from_composition(payload.composition)
 
     if result is None:
         raise HTTPException(

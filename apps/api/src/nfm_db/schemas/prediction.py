@@ -229,6 +229,18 @@ class TempPredictResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class EnergyPredictV11Request(BaseModel):
+    """Request body for POST /api/v1/predict/energy (v1.1).
+
+    Accepts raw composition dict instead of pre-computed features.
+    """
+
+    composition: dict[str, float] = Field(
+        ...,
+        description="Element to atomic fraction mapping, e.g. {'U': 0.7, 'Mo': 0.2, 'Ti': 0.1}",
+    )
+
+
 class EnergyPredictRequest(PredictionFeatures):
     """Request body for POST /api/v1/predict/energy."""
 

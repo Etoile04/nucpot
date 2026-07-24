@@ -1,0 +1,44 @@
+{
+  "model_version": "v1.1",
+  "description": "EnergyPredictor v1.1 expanded feature set (20D)",
+  "baseline_version": "v1.0",
+  "baseline_r2": 0.8293,
+  "total_features": 20,
+  "feature_groups": {
+    "v1.0_miedema_baseline": {
+      "count": 8,
+      "features": [
+        {"name": "mo_equivalent", "description": "Mo equivalent parameter", "unit": "at.%"},
+        {"name": "lattice_distortion", "description": "Atomic size mismatch parameter (delta)", "unit": "dimensionless"},
+        {"name": "allen_chi_diff", "description": "Allen electronegativity difference from U", "unit": "dimensionless"},
+        {"name": "vec", "description": "Valence electron concentration", "unit": "e/atom"},
+        {"name": "cluster_I", "description": "Cluster type I fraction (negative H_mix, same period)", "unit": "dimensionless"},
+        {"name": "cluster_II", "description": "Cluster type II fraction (negative H_mix, diff period)", "unit": "dimensionless"},
+        {"name": "cluster_III", "description": "Cluster type III fraction (positive H_mix, same period)", "unit": "dimensionless"},
+        {"name": "cluster_IV", "description": "Cluster type IV fraction (positive H_mix, diff period)", "unit": "dimensionless"}
+      ]
+    },
+    "v1.1_element_resolved": {
+      "count": 5,
+      "features": [
+        {"name": "avg_allen_chi", "description": "Weighted average Allen electronegativity", "unit": "dimensionless"},
+        {"name": "avg_atomic_volume", "description": "Weighted average atomic volume", "unit": "cm3/mol"},
+        {"name": "avg_d_electron", "description": "Weighted average d-electron count (d-band filling proxy)", "unit": "e/atom"},
+        {"name": "avg_work_function", "description": "Weighted average work function (charge transfer proxy)", "unit": "eV"},
+        {"name": "avg_bulk_modulus", "description": "Weighted average bulk modulus", "unit": "GPa"}
+      ]
+    },
+    "v1.1_pairwise_interaction": {
+      "count": 7,
+      "features": [
+        {"name": "hr_valence_diff", "description": "Hume-Rothery max valence electron difference", "unit": "e/atom"},
+        {"name": "dg_en_radius_distance", "description": "Darken-Gurry avg 2D distance (EN vs radius)", "unit": "dimensionless"},
+        {"name": "max_pair_en_diff", "description": "Maximum pairwise Allen electronegativity difference", "unit": "dimensionless"},
+        {"name": "en_variance", "description": "Variance of per-element Allen electronegativities", "unit": "dimensionless^2"},
+        {"name": "volume_variance", "description": "Variance of per-element atomic volumes", "unit": "(cm3/mol)^2"},
+        {"name": "d_electron_variance", "description": "Variance of per-element d-electron counts", "unit": "(e/atom)^2"},
+        {"name": "bulk_modulus_variance", "description": "Variance of per-element bulk moduli", "unit": "GPa^2"}
+      ]
+    }
+  }
+}
