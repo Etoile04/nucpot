@@ -1,8 +1,8 @@
 {
   "model_version": "v1.1",
-  "n_samples": 1400,
-  "n_train": 1120,
-  "n_test": 280,
+  "n_samples": 855,
+  "n_train": 684,
+  "n_test": 171,
   "n_features": 20,
   "random_state": 42,
   "feature_names": [
@@ -27,92 +27,103 @@
     "d_electron_variance",
     "bulk_modulus_variance"
   ],
-  "r2": 0.8214,
-  "rmse": 0.567193,
-  "mae": 0.330606,
-  "r2_train": 0.9052,
-  "rmse_train": 0.427865,
-  "mae_train": 0.249096,
+  "r2": 0.7828,
+  "rmse": 0.628234,
+  "mae": 0.394545,
+  "r2_train": 0.9631,
+  "rmse_train": 0.253542,
+  "mae_train": 0.139426,
+  "best_params": {
+    "max_depth": 8,
+    "learning_rate": 0.01,
+    "n_estimators": 1000,
+    "subsample": 0.7,
+    "colsample_bytree": 0.7,
+    "reg_alpha": 0.5,
+    "reg_lambda": 3.0,
+    "min_child_weight": 5
+  },
+  "r2_cv_5fold": 0.7629,
   "feature_importance": [
     {
-      "name": "en_variance",
-      "importance": 0.2152
-    },
-    {
-      "name": "dg_en_radius_distance",
-      "importance": 0.1492
-    },
-    {
       "name": "max_pair_en_diff",
-      "importance": 0.1316
+      "importance": 0.3401
     },
     {
       "name": "cluster_III",
-      "importance": 0.0897
-    },
-    {
-      "name": "cluster_I",
-      "importance": 0.0621
+      "importance": 0.123
     },
     {
       "name": "avg_work_function",
-      "importance": 0.0596
+      "importance": 0.0958
     },
     {
-      "name": "cluster_II",
-      "importance": 0.0391
-    },
-    {
-      "name": "allen_chi_diff",
-      "importance": 0.0299
+      "name": "en_variance",
+      "importance": 0.0641
     },
     {
       "name": "avg_atomic_volume",
-      "importance": 0.0296
+      "importance": 0.051
+    },
+    {
+      "name": "dg_en_radius_distance",
+      "importance": 0.0436
     },
     {
       "name": "lattice_distortion",
-      "importance": 0.0288
+      "importance": 0.0404
     },
     {
-      "name": "cluster_IV",
-      "importance": 0.0272
-    },
-    {
-      "name": "avg_allen_chi",
-      "importance": 0.0225
-    },
-    {
-      "name": "hr_valence_diff",
-      "importance": 0.0195
-    },
-    {
-      "name": "avg_d_electron",
-      "importance": 0.0189
-    },
-    {
-      "name": "bulk_modulus_variance",
-      "importance": 0.0173
+      "name": "cluster_I",
+      "importance": 0.0399
     },
     {
       "name": "d_electron_variance",
-      "importance": 0.0141
+      "importance": 0.0277
+    },
+    {
+      "name": "allen_chi_diff",
+      "importance": 0.0229
     },
     {
       "name": "mo_equivalent",
-      "importance": 0.0127
+      "importance": 0.0217
     },
     {
-      "name": "vec",
-      "importance": 0.012
+      "name": "avg_allen_chi",
+      "importance": 0.0204
     },
     {
-      "name": "volume_variance",
-      "importance": 0.0115
+      "name": "bulk_modulus_variance",
+      "importance": 0.0185
     },
     {
       "name": "avg_bulk_modulus",
-      "importance": 0.0096
+      "importance": 0.0164
+    },
+    {
+      "name": "vec",
+      "importance": 0.0153
+    },
+    {
+      "name": "volume_variance",
+      "importance": 0.0151
+    },
+    {
+      "name": "hr_valence_diff",
+      "importance": 0.0149
+    },
+    {
+      "name": "avg_d_electron",
+      "importance": 0.0127
+    },
+    {
+      "name": "cluster_II",
+      "importance": 0.0109
+    },
+    {
+      "name": "cluster_IV",
+      "importance": 0.0057
     }
   ]
 }
