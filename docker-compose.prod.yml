@@ -128,6 +128,13 @@ services:
     volumes:
       - prod-lightrag-data:/app/data
     environment:
+      # --- PostgreSQL (shared with NFM API) ---
+      POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-prod-db}
+      POSTGRES_PORT: ${LIGHTRAG_PG_PORT:-5432}
+      POSTGRES_USER: ${LIGHTRAG_PG_USER:-${PROD_POSTGRES_USER:-nfm}}
+      POSTGRES_PASSWORD: ${LIGHTRAG_PG_PASSWORD:-${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}}
+      POSTGRES_DATABASE: ${LIGHTRAG_PG_DB:-${PROD_POSTGRES_DB:-nfm_db}}
+      # --- LLM Configuration ---
       LLM_BINDING: ${PROD_LIGHTRAG_LLM_BINDING:-openai}
       LLM_MODEL: ${PROD_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
       LLM_BINDING_HOST: ${PROD_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
