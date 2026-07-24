@@ -20,6 +20,7 @@ Reference: Roadmap v1.6 section 5.2.3
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 import numpy as np
 
@@ -116,12 +117,12 @@ _EXPERIMENTAL_DATA = [
 ]
 
 
-def load_experimental_records():
+def load_experimental_records() -> list[dict[str, object]]:
     """Return the full list of experimental data records."""
     return list(_EXPERIMENTAL_DATA)
 
 
-def load_compositions_and_temperatures():
+def load_compositions_and_temperatures() -> tuple[list[dict[str, float]], np.ndarray]:
     """Return (compositions, temperatures) for ML training.
 
     Returns:
@@ -130,6 +131,6 @@ def load_compositions_and_temperatures():
             - temperatures: 1D array of transition temperatures in deg C
     """
     records = _EXPERIMENTAL_DATA
-    compositions = [dict(r["composition"]) for r in records]
-    temperatures = np.array([r["T"] for r in records], dtype=np.float64)
+    compositions: list[dict[str, float]] = [dict(cast(dict[str, float], r["composition"])) for r in records]
+    temperatures = np.array([cast(float, r["T"]) for r in records], dtype=np.float64)
     return compositions, temperatures
