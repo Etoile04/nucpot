@@ -140,7 +140,7 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
       setState({
         status: "success",
         graphData,
-        focalId: response.focal.id,
+        focalId: response.focal?.id ?? null,
         errorMessage: null,
       })
     } catch (err) {

@@ -17,33 +17,33 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create feedbacks table with enums - all via raw SQL."""
+    """Create feedbacks table with enums - all via raw SQL (idempotent)."""
     op.execute("""
-        CREATE TYPE feedback_type_enum AS ENUM (
-            \'bug_report\', \'feature_request\', \'data_correction\', \'usage_inquiry\'
+        CREATE TYPE IF NOT EXISTS feedback_type_enum AS ENUM (
+            'bug_report', 'feature_request', 'data_correction', 'usage_inquiry'
         )
     """)
     op.execute("""
-        CREATE TYPE priority_enum AS ENUM (
-            \'urgent\', \'high\', \'medium\', \'low\'
+        CREATE TYPE IF NOT EXISTS priority_enum AS ENUM (
+            'urgent', 'high', 'medium', 'low'
         )
     """)
     op.execute("""
-        CREATE TYPE feedback_status_enum AS ENUM (
-            \'open\', \'classified\', \'assigned\', \'in_progress\',
-            \'resolved\', \'closed\'
+        CREATE TYPE IF NOT EXISTS feedback_status_enum AS ENUM (
+            'open', 'classified', 'assigned', 'in_progress',
+            'resolved', 'closed'
         )
     """)
     op.execute("""
-        CREATE TABLE feedbacks (
+        CREATE TABLE IF NOT EXISTS feedbacks (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             feedback_type feedback_type_enum NOT NULL,
             title VARCHAR(100) NOT NULL,
             description TEXT NOT NULL,
             page_url VARCHAR(500),
             contact_email VARCHAR(255),
-            priority priority_enum NOT NULL DEFAULT \'medium\',
-            status feedback_status_enum NOT NULL DEFAULT \'open\',
+            priority priority_enum NOT NULL DEFAULT 'medium',
+            status feedback_status_enum NOT NULL DEFAULT 'open',
             assignee VARCHAR(100),
             resolution TEXT,
             resolved_at TIMESTAMPTZ,
