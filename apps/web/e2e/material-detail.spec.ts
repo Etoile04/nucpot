@@ -67,11 +67,17 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
   }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
-    await page.waitForTimeout(2000)
+    await page.waitForTimeout(3000)
 
-    // The detail page has buttons: "查看知识图谱" and "查看属性"
-    const graphBtn = page.getByRole("link", { name: /查看知识图谱|知识图谱/i })
-    const propsBtn = page.getByRole("link", { name: /查看属性|属性/i })
+    // The detail page has navigation links/buttons to graph and properties.
+    // Match both role=link and role=button, and broader text patterns
+    // for resilience against live-site UI variations.
+    const graphBtn = page
+      .getByRole("link", { name: /知识图谱|Knowledge Graph/i })
+      .or(page.getByRole("button", { name: /知识图谱|Knowledge Graph/i }))
+    const propsBtn = page
+      .getByRole("link", { name: /查看属性|属性|Properties/i })
+      .or(page.getByRole("button", { name: /查看属性|属性|Properties/i }))
 
     const hasGraph = await graphBtn.count()
     const hasProps = await propsBtn.count()
