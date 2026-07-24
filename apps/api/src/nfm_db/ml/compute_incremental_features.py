@@ -45,7 +45,12 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
+# Resolve project root robustly across local + Docker layouts:
+#   Local layout:  parents[5] = <repo>/nucpot/ (where `data/` lives)
+#   Docker layout: file is at /app/src/nfm_db/ml/ — only 4 parents above, so
+#                  parents[5] raises IndexError.  Use parents[3] (= /app).
+_PARENTS = Path(__file__).resolve().parents
+PROJECT_ROOT: Path = _PARENTS[5] if len(_PARENTS) >= 6 else _PARENTS[3]
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_CSV_PATH = DATA_DIR / "dft_incremental_200.csv"
 
