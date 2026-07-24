@@ -210,21 +210,30 @@ EXPECTED_RELATION_TYPES = [
     "performedAt",
 ]
 
-# Key nuclear materials terms that should appear in extracted entities
+# Key nuclear materials terms that should appear in extracted entities.
+# Calibrated against the real 10-paper corpus (5 zh + 5 en) extracted from
+# the NFM-1786 Zotero deliverable. Terms NOT in any paper (e.g. UN, MOX,
+# uranium nitride, plutonium dioxide, mixed oxide, 二氧化铀, 氮化铀,
+# 混合氧化物) were dropped because the Zotero library does not contain
+# papers on those topics. Thorium fuel is also not present.
 EXPECTED_MATERIAL_TERMS = [
-    "UO2",
-    "UN",
-    "MOX",
-    "U-Zr",
-    "ZrO2",
-    "uranium dioxide",
-    "uranium nitride",
-    "mixed oxide",
-    "plutonium dioxide",
-    "zirconium dioxide",
-    "二氧化铀",
-    "氮化铀",
-    "混合氧化物",
+    # English
+    "UO2",          # UO2 fission-gas phase field + MD simulation
+    "U-Zr",         # U-Zr metallic fuel
+    "ZrO2",         # Zr-alloy corrosion oxidation product
+    "zirconium",    # Zr-alloy cladding (Hu, Motta, Sabol)
+    "Zircaloy",     # Zircaloy-4 (Sabol)
+    "SiC",          # SiC/SiC composite cladding (Terrani ATF)
+    "ATF",          # Accident tolerant fuel (Li FCM, Terrani)
+    "LBE",          # Lead-bismuth eutectic cladding (QianBi)
+    "metallic fuel",  # U-Zr metallic fuel
+    # Chinese
+    "锆",           # zirconium — Hu_2024 corrosion review
+    "铅铋",         # lead-bismuth — QianBi LBE cladding
+    "碳化硅",       # silicon carbide — Li_2018 FCM ATF
+    "热导率",       # thermal conductivity
+    "辐照",         # irradiation
+    "腐蚀",         # corrosion (very frequent in Chinese papers)
 ]
 
 # =============================================================================
@@ -723,24 +732,34 @@ def check_ontology_extraction(query_results: list[QueryResult]) -> CheckResult:
     ]
     material_quality = len(found_materials) / len(EXPECTED_MATERIAL_TERMS)
 
-    # Check for domain concepts (broader ontology validation)
+    # Check for domain concepts (broader ontology validation).
+    # Calibrated against the real 10-paper corpus (NFM-1786). Terms NOT
+    # in any paper (melting point, CALPHAD, crystal structure, lattice
+    # parameter, oxygen potential, 熔点, 相图, 裂变气体, 晶体结构) were
+    # dropped. Added terms reflect topics present in the corpus.
     domain_concepts = [
+        # English
         "thermal conductivity",
-        "melting point",
         "phase diagram",
-        "CALPHAD",
         "fission gas",
         "irradiation",
-        "crystal structure",
-        "lattice parameter",
-        "oxygen potential",
         "burnup",
+        "corrosion",
+        "oxidation",
+        "phase field",
+        "molecular dynamics",
+        "dendrite",
+        # Chinese
         "热导率",
-        "熔点",
-        "相图",
-        "裂变气体",
         "辐照",
-        "晶体结构",
+        "腐蚀",
+        "氧化",
+        "相场",
+        "包壳",
+        "燃料",
+        "全陶瓷",
+        "锆",
+        "铅铋",
     ]
     found_concepts = [
         c for c in domain_concepts
