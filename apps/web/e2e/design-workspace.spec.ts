@@ -17,15 +17,20 @@ import { test, expect } from "@playwright/test"
  *
  * All API calls are mocked via Playwright route interception
  * (follows project convention from md-verification-mock-server.ts).
+ *
+ * These tests require route interception (mock API) and are only valid
+ * against the local dev server. They are skipped in live E2E target.
  */
 
 import { setupDesignMockApi } from "./fixtures/design-workspace-mock-server"
+
+const isLive = process.env.E2E_TARGET === "live"
 
 // =============================================================================
 // Full optimization flow
 // =============================================================================
 
-test.describe("Design Workspace", () => {
+test.describe.skip(isLive, "Design Workspace", () => {
   test("design workspace full optimization flow", async ({ page }) => {
     // 1. Mock all backend API calls
     await setupDesignMockApi(page, "normal")
@@ -199,7 +204,7 @@ test.describe("Design Workspace", () => {
 // Error handling
 // =============================================================================
 
-test.describe("Design Workspace Error Handling", () => {
+test.describe.skip(isLive, "Design Workspace Error Handling", () => {
   test("design workspace error handling", async ({ page }) => {
     // 1. Navigate to /design
     await page.goto("/design")
