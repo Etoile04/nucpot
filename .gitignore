@@ -39,3 +39,4 @@ test-results/
 # Auto-generated blog content (not source material)
 apps/api/content/blog/
 .paperclip/
+*.bak.json
