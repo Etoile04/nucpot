@@ -17,7 +17,7 @@ test.describe("Design Workspace Responsive Layout", () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await setupDesignMockApi(page, "normal")
     await page.goto("/design")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // The inline left panel must be present and visible
     const leftPanel = page.locator("[data-testid='design-left-panel']")
@@ -37,7 +37,7 @@ test.describe("Design Workspace Responsive Layout", () => {
     await page.setViewportSize({ width: 375, height: 812 })
     await setupDesignMockApi(page, "normal")
     await page.goto("/design")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // The inline left panel must NOT be visible on mobile
     const leftPanel = page.locator("[data-testid='design-left-panel']")
@@ -57,7 +57,7 @@ test.describe("Design Workspace Responsive Layout", () => {
     await page.setViewportSize({ width: 375, height: 812 })
     await setupDesignMockApi(page, "normal")
     await page.goto("/design")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     const toggle = page.locator("[data-testid='design-left-panel-toggle']")
     await toggle.click()
@@ -84,7 +84,7 @@ test.describe("Design Workspace Responsive Layout", () => {
     await page.setViewportSize({ width: 375, height: 812 })
     await setupDesignMockApi(page, "normal")
     await page.goto("/design")
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     // The inline left panel must not visually cover the center chart
     const leftPanel = page.locator("[data-testid='design-left-panel']")

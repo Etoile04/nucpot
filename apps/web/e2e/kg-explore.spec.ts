@@ -77,7 +77,7 @@ test.describe("KG Explorer — 1440px viewport", { tag: "@integration" }, () => 
     await expect(page.getByTestId("kg-explorer")).toBeVisible()
 
     // Wait for D3 simulation to settle
-    await page.waitForLoadState("networkidle")
+    await page.waitForLoadState("domcontentloaded")
 
     const realErrors = consoleErrors.filter((t) =>
       FAILURE_SIGNATURES.some((re) => re.test(t)),
