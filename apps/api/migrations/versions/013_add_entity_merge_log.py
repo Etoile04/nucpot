@@ -40,7 +40,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create entity_merge_log table, enum, and lookup indexes."""
-    op.execute("CREATE TYPE match_method_enum AS ENUM ('exact', 'fuzzy', 'semantic')")
+    op.execute("CREATE TYPE IF NOT EXISTS match_method_enum AS ENUM ('exact', 'fuzzy', 'semantic')")
 
     op.execute("""
         CREATE TABLE entity_merge_log (

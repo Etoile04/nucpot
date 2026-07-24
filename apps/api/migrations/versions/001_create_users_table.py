@@ -20,8 +20,9 @@ def upgrade() -> None:
     """Create users table with blog role support."""
     # Create enum via raw SQL to avoid duplicate CREATE TYPE in async migrations
     op.execute("""
-        CREATE TYPE blog_role_enum AS ENUM ('admin', 'editor', 'reviewer')
+        CREATE TYPE IF NOT EXISTS blog_role_enum AS ENUM ('admin', 'editor', 'reviewer')
     """)
+
 
     op.execute("""
         CREATE TABLE users (
