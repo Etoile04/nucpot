@@ -4,10 +4,11 @@
 Extends the v1.0 8D Miedema-style baseline with 12 new features
 (element-resolved electronic structure + pairwise interactions).
 
-Achieved R²≈0.83 on 80/20 hold-out (1400 DFT samples, CV mean ± std).
-The R²≥0.90 target requires additional training data beyond the
-current 1400 samples — 20D features improve over 8D but the dataset
-size limits further gains (curse of dimensionality).
+Targets the same 1512 DFT records as the v1.0 baseline (12 export
+batches + 2 supplementary + dft_incremental_200.csv), random_state=42.
+
+AC R² goal ≥ 0.80 (relaxed from ≥ 0.90 per CPO disposition); plus a
+hard floor at v1.0's 0.8293 — otherwise v1.0 remains default.
 
 Usage:
     cd apps/api && python -m nfm_db.ml.train_energy_v11
@@ -75,13 +76,17 @@ def _parse_composition(comp_str: str) -> dict[str, float] | None:
 def load_dft_data(data_dir: Path) -> pd.DataFrame:
     """Load all DFT records into a single DataFrame.
 
-    Combines the 12 dft-export batch CSVs and dft_incremental_200.csv.
-    Returns rows with valid composition and formation_energy.
+    Combines the 12 dft-export batch CSVs (dft-export/), the 2 supplementary
+    CSVs (dft-export/supplementary/), and dft_incremental_200.csv. Returns
+    rows with valid composition and formation_energy.
+
+    Total expected: 12*100 + 100 + 12 + 200 = 1512 records (v1.0 baseline).
     """
     frames: list[pd.DataFrame] = []
 
     batch_dir = data_dir / "dft-export"
     if batch_dir.exists():
+        # Main batches: dft_export_batch_*.csv (12 files, 1200 records)
         for csv_path in sorted(batch_dir.glob("dft_export_batch_*.csv")):
             try:
                 df = pd.read_csv(csv_path)
@@ -90,6 +95,18 @@ def load_dft_data(data_dir: Path) -> pd.DataFrame:
                     logger.info("Loaded %d rows from %s", len(df), csv_path.name)
             except Exception:
                 logger.exception("Failed to load %s", csv_path)
+
+        # Supplementary batches: supplementary_dft_batch_*.csv (2 files, 112 records)
+        supp_dir = batch_dir / "supplementary"
+        if supp_dir.exists():
+            for csv_path in sorted(supp_dir.glob("supplementary_dft_batch_*.csv")):
+                try:
+                    df = pd.read_csv(csv_path)
+                    if "formation_energy" in df.columns and "composition" in df.columns:
+                        frames.append(df[["composition", "formation_energy"]])
+                        logger.info("Loaded %d rows from %s", len(df), csv_path.name)
+                except Exception:
+                    logger.exception("Failed to load %s", csv_path)
 
     inc_path = data_dir / "dft_incremental_200.csv"
     if inc_path.exists():
@@ -288,9 +305,13 @@ def main() -> None:
     logger.info("Metrics saved to %s", metrics_path)
 
     logger.info("Model training complete. R^2=%.4f on hold-out test set.", metrics["r2"])
+    # CPO disposition (NFM-1802): AC relaxed to R^2 >= 0.80 with hard floor at
+    # v1.0's 0.8293. Current 1512 samples yield R^2 ~ 0.83 with 20D features;
+    # v1.1 will become default only when this beats the v1.0 baseline.
     logger.info(
-        "NOTE: R^2 >= 0.90 requires additional DFT training data. "
-        "Current 1400 samples yield R^2 ~ 0.83 with 20D features."
+        "AC: R^2 >= 0.80 (relaxed per CPO disposition); hard floor = v1.0 R^2=0.8293. "
+        "Current 1512 samples yield R^2 ~ %.4f with 20D features.",
+        metrics["r2"],
     )
     sys.exit(0)
 
