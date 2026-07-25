@@ -81,6 +81,7 @@ describe("next.config.ts rewrites", () => {
       {
         source: "/api/:path*",
         destination: "http://nucpot-prod-api:8000/api/:path*",
+        phase: "afterFiles",
       },
     ])
   })
@@ -97,6 +98,7 @@ describe("next.config.ts rewrites", () => {
       {
         source: "/api/:path*",
         destination: "http://localhost:8100/api/:path*",
+        phase: "afterFiles",
       },
     ])
   })
@@ -121,6 +123,7 @@ describe("next.config.ts rewrites", () => {
       {
         source: "/api/:path*",
         destination: "http://localhost:8000/api/:path*",
+        phase: "afterFiles",
       },
     ])
   })

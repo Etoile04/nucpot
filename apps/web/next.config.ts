@@ -59,10 +59,14 @@ const nextConfig: NextConfig = {
       {
         // Proxy /api/* requests to the backend, eliminating CORS for
         // same-origin browser requests in local dev and preview builds.
-        // App Router route handlers (e.g. /api/proxy/*) naturally match
-        // before this catch-all rewrite, so no phase ordering is needed.
+        // phase: "afterFiles" ensures App Router route handlers (e.g.
+        // /api/proxy/ontology/data at route.ts) match BEFORE this
+        // catch-all rewrite. Without this, the rewrite intercepts
+        // requests intended for route handlers, making them unreachable
+        // (NFM-1837/NFM-1839 regression — empirically verified).
         source: "/api/:path*",
         destination: `${API_SERVER_FALLBACK}/api/:path*`,
+        phase: "afterFiles",
       },
     ]
   },
