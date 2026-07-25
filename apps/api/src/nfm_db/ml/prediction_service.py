@@ -529,7 +529,11 @@ def predict_energy(
     # v1.1 (default + fallback): back-fill missing v1.1 keys with 0.0 so
     # legacy v1.0 callers don't crash on the new schema (AC #3 backward compat).
     v11_input = {n: features.get(n, 0.0) for n in ENERGY_V11_FEATURE_NAMES}
-    return predict_energy_v11(v11_input)
+    try:
+        return predict_energy_v11(v11_input)
+    except Exception:
+        logger.exception("v1.1 energy prediction failed")
+        return None
 
 
 def predict_energy_from_composition(

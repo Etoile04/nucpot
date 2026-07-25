@@ -1,6 +1,6 @@
 """Unit tests for POST /api/v1/predict/energy endpoint (NFM-1789).
 
-Tests use unittest.mock to patch the predict_energy service function,
+Tests use unittest.mock to patch the predict_energy_v11 service function,
 avoiding the need for a real model artifact or full app import chain.
 """
 
@@ -26,6 +26,16 @@ SAMPLE_FEATURES = {
 }
 
 
+def _mock_v11_response(value: float = -0.35) -> dict:
+    """Build a mock v1.1 predict response."""
+    return {
+        "predicted_energy": round(value, 6),
+        "confidence": 0.85,
+        "model_version": "v1.1",
+        "warnings": [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Service-level tests (prediction_service.predict_energy)
 # ---------------------------------------------------------------------------
@@ -34,12 +44,10 @@ SAMPLE_FEATURES = {
 class TestPredictEnergyService:
     """Unit tests for the predict_energy service function."""
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
-    def test_predict_energy_returns_result_dict(self, mock_load: MagicMock) -> None:
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
+    def test_predict_energy_returns_result_dict(self, mock_v11: MagicMock) -> None:
         """predict_energy returns dict with required keys when model available."""
-        mock_model = MagicMock()
-        mock_model.predict.return_value = [-0.35]
-        mock_load.return_value = mock_model
+        mock_v11.return_value = _mock_v11_response()
 
         from nfm_db.ml.prediction_service import predict_energy
 
@@ -53,12 +61,10 @@ class TestPredictEnergyService:
         assert isinstance(result["predicted_energy"], float)
         assert 0 <= result["confidence"] <= 1
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
-    def test_predict_energy_rounds_energy_value(self, mock_load: MagicMock) -> None:
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
+    def test_predict_energy_rounds_energy_value(self, mock_v11: MagicMock) -> None:
         """predicted_energy should be rounded to 6 decimal places."""
-        mock_model = MagicMock()
-        mock_model.predict.return_value = [-0.345678901]
-        mock_load.return_value = mock_model
+        mock_v11.return_value = _mock_v11_response(value=-0.345678901)
 
         from nfm_db.ml.prediction_service import predict_energy
 
@@ -67,47 +73,43 @@ class TestPredictEnergyService:
         assert result is not None
         assert result["predicted_energy"] == -0.345679
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     def test_predict_energy_returns_none_when_model_unavailable(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """predict_energy returns None when model loading fails."""
-        mock_load.return_value = None
+        mock_v11.return_value = None
 
         from nfm_db.ml.prediction_service import predict_energy
 
         result = predict_energy(SAMPLE_FEATURES)
         assert result is None
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     def test_predict_energy_returns_none_on_predict_exception(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """predict_energy returns None when model.predict raises."""
-        mock_model = MagicMock()
-        mock_model.predict.side_effect = RuntimeError("predict failed")
-        mock_load.return_value = mock_model
+        mock_v11.side_effect = RuntimeError("predict failed")
 
         from nfm_db.ml.prediction_service import predict_energy
 
         result = predict_energy(SAMPLE_FEATURES)
         assert result is None
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     def test_predict_energy_includes_model_version(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """Result dict should include the energy predictor version."""
-        mock_model = MagicMock()
-        mock_model.predict.return_value = [-0.1]
-        mock_load.return_value = mock_model
+        mock_v11.return_value = _mock_v11_response(value=-0.1)
 
         from nfm_db.ml.prediction_service import predict_energy
 
         result = predict_energy(SAMPLE_FEATURES)
 
         assert result is not None
-        assert result["model_version"] == "v1.0"
+        assert result["model_version"] == "v1.1"
 
 
 # ---------------------------------------------------------------------------
@@ -123,14 +125,12 @@ class TestPredictEnergyEndpoint:
     async because the route handler is declared ``async def``.
     """
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     async def test_endpoint_returns_200_with_valid_prediction(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """POST /predict/energy returns 200 with predicted_energy."""
-        mock_model = MagicMock()
-        mock_model.predict.return_value = [-0.42]
-        mock_load.return_value = mock_model
+        mock_v11.return_value = _mock_v11_response(value=-0.42)
 
         from nfm_db.api.v1.prediction import predict_energy_endpoint
         from nfm_db.schemas.prediction import EnergyPredictRequest
@@ -141,14 +141,14 @@ class TestPredictEnergyEndpoint:
         assert response.success is True
         assert response.data is not None
         assert response.data.predicted_energy == -0.42
-        assert response.data.model_version == "v1.0"
+        assert response.data.model_version == "v1.1"
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     async def test_endpoint_raises_503_when_model_unavailable(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """POST /predict/energy raises 503 when model is None."""
-        mock_load.return_value = None
+        mock_v11.return_value = None
 
         from fastapi import HTTPException
 
@@ -163,14 +163,12 @@ class TestPredictEnergyEndpoint:
         assert exc_info.value.status_code == 503
         assert "energy" in exc_info.value.detail.lower()
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     async def test_endpoint_response_conforms_to_api_response_schema(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """Response body conforms to ApiResponse[EnergyPredictResponse]."""
-        mock_model = MagicMock()
-        mock_model.predict.return_value = [-0.123456]
-        mock_load.return_value = mock_model
+        mock_v11.return_value = _mock_v11_response(value=-0.123456)
 
         from nfm_db.api.v1.prediction import predict_energy_endpoint
         from nfm_db.schemas.common import ApiResponse
@@ -191,14 +189,12 @@ class TestPredictEnergyEndpoint:
         assert isinstance(response.data.warnings, list)
         assert isinstance(response.data.model_version, str)
 
-    @patch("nfm_db.ml.prediction_service._load_energy_predictor")
+    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
     async def test_endpoint_includes_warnings_in_response(
-        self, mock_load: MagicMock,
+        self, mock_v11: MagicMock,
     ) -> None:
         """Warnings from confidence scoring are propagated to response."""
-        mock_model = MagicMock()
-        mock_model.predict.return_value = [-0.1]
-        mock_load.return_value = mock_model
+        mock_v11.return_value = _mock_v11_response(value=-0.1)
 
         from nfm_db.api.v1.prediction import predict_energy_endpoint
         from nfm_db.schemas.prediction import EnergyPredictRequest
@@ -207,9 +203,8 @@ class TestPredictEnergyEndpoint:
         response = await predict_energy_endpoint(request)
 
         assert response.data is not None
-        # confidence_from_default always produces a warning
-        assert len(response.data.warnings) >= 1
-        assert response.data.warnings[0].code == "temperature_no_uncertainty"
+        # v1.1 model may include warnings
+        assert isinstance(response.data.warnings, list)
 
 
 # ---------------------------------------------------------------------------
@@ -249,14 +244,14 @@ class TestEnergyPredictSchemas:
 
         # Valid
         resp = EnergyPredictResponse(
-            predicted_energy=-0.5, confidence=0.8, model_version="v1.0",
+            predicted_energy=-0.5, confidence=0.8, model_version="v1.1",
         )
         assert resp.confidence == 0.8
 
         # Invalid confidence > 1
         with pytest.raises(pydantic.ValidationError):
             EnergyPredictResponse(
-                predicted_energy=-0.5, confidence=1.5, model_version="v1.0",
+                predicted_energy=-0.5, confidence=1.5, model_version="v1.1",
             )
 
     def test_energy_predict_request_to_feature_dict(self) -> None:

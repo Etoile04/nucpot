@@ -341,15 +341,16 @@ _V11_CALCULATORS: list[tuple[str, object]] = [
 
 # Full 20D feature names: 8 from v1.0 + 12 new
 ENERGY_V11_FEATURE_NAMES: list[str] = [
-    # v1.0 baseline (8D)
+    # v1.0 baseline (8D) — mirrors ML_FEATURE_NAMES (NFM-1753 removed
+    # cluster_I-IV as data-leakage sources; replaced with physical features).
     "mo_equivalent",
-    "lattice_distortion",
     "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
     "vec",
-    "cluster_I",
-    "cluster_II",
-    "cluster_III",
-    "cluster_IV",
     # v1.1 additions (12D)
     *V11_ADDITIONAL_FEATURE_NAMES,
 ]
