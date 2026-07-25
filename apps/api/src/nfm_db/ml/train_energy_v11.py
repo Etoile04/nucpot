@@ -252,7 +252,7 @@ def main() -> None:
 
     # Train
     model = train_model(X_train, y_train, X_test, y_test)
-    metrics = evaluate(model, X_test, y_test)
+    metrics: dict[str, object] = evaluate(model, X_test, y_test)
 
     # Also compute train metrics for overfitting check
     train_metrics = evaluate(model, X_train, y_train)

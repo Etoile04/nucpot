@@ -24,7 +24,9 @@ from __future__ import annotations
 import logging
 import math
 import os
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -324,7 +326,7 @@ V11_ADDITIONAL_FEATURE_NAMES: list[str] = [
     "bulk_modulus_variance",
 ]
 
-_V11_CALCULATORS: list[tuple[str, object]] = [
+_V11_CALCULATORS: list[tuple[str, Callable[[dict[str, float]], dict[str, float]]]] = [
     ("avg_allen_chi", calculate_avg_allen_chi),
     ("avg_atomic_volume", calculate_avg_atomic_volume),
     ("avg_d_electron", calculate_avg_d_electron),
@@ -384,10 +386,10 @@ logger = logging.getLogger(__name__)
 _V11_MODELS_DIR = Path(__file__).resolve().parents[5] / "apps" / "api" / "models"
 _V11_MODEL_PATH = _V11_MODELS_DIR / "energy_predictor_v11.joblib"
 
-_v11_model_cache: dict | None = None
+_v11_model_cache: dict[str, Any] | None = None
 
 
-def load_v11_model() -> dict | None:
+def load_v11_model() -> dict[str, Any] | None:
     """Load the v1.1 energy predictor artifact (lazy).
 
     The artifact is a dict with keys:
@@ -424,7 +426,7 @@ def load_v11_model() -> dict | None:
         return None
 
 
-def predict_energy_v11(features: dict[str, float]) -> dict | None:
+def predict_energy_v11(features: dict[str, float]) -> dict[str, Any] | None:
     """Predict formation energy using the v1.1 20D model.
 
     Args:
@@ -458,7 +460,7 @@ def predict_energy_v11(features: dict[str, float]) -> dict | None:
 
 def predict_energy_from_composition(
     composition: dict[str, float],
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Predict formation energy from a raw composition dict.
 
     Computes the full 20D feature vector, then runs v1.1 prediction.
