@@ -269,7 +269,7 @@ def main() -> None:
     # Feature importance (top 10)
     importance = model.feature_importances_
     paired = sorted(
-        zip(ENERGY_V11_FEATURE_NAMES, importance),
+        zip(ENERGY_V11_FEATURE_NAMES, importance, strict=True),
         key=lambda x: -x[1],
     )
     metrics["feature_importance"] = [
