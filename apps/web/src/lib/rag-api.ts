@@ -98,6 +98,12 @@ export const ragApi = {
    * QueryResponse fields to the frontend RagQueryResponse shape.
    * Throws if `success === false` (preserves the throw-on-error contract
    * that `request()` already establishes for non-2xx responses).
+   *
+   * A 60-second AbortController timeout prevents the UI from hanging
+   * indefinitely if LightRAG's LLM backend stalls. The median query
+   * completes in ~25s; 60s gives ample headroom for complex multi-hop
+   * graph traversals while still surfacing problems before the user
+   * gives up and navigates away.
    */
   query: async (payload: RagQueryRequest): Promise<RagQueryResponse> => {
     const backendPayload = {
@@ -106,28 +112,44 @@ export const ragApi = {
       mode: payload.mode ?? "mix",
       include_references: true,
     }
-    const envelope = await request<ApiResponse<BackendQueryResponse>>(
-      "/api/v1/lightrag/query",
-      {
-        method: "POST",
-        body: JSON.stringify(backendPayload),
-      },
-    )
-    if (!envelope.success || !envelope.data) {
-      // The frontend ApiResponse type omits the backend's `error` field,
-      // so read it defensively.  `request()` already throws on non-2xx, so
-      // reaching here means a 2xx with success=false — unusual but possible.
-      const errMsg = (envelope as { error?: string }).error
-      throw new Error(errMsg ?? "LightRAG 查询失败")
-    }
-    const data = envelope.data
-    const citations = (data.references ?? []).map(mapReferenceToCitation)
-    return {
-      answer: data.response,
-      citations,
-      // Backend is stateless; let the caller pass a stable conversationId
-      // or we mint one per call (single-shot search has no continuity).
-      conversationId: payload.conversationId ?? crypto.randomUUID(),
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 60_000)
+    try {
+      const envelope = await request<ApiResponse<BackendQueryResponse>>(
+        "/api/v1/lightrag/query",
+        {
+          method: "POST",
+          body: JSON.stringify(backendPayload),
+          signal: controller.signal,
+        },
+      )
+      if (!envelope.success || !envelope.data) {
+        // The frontend ApiResponse type omits the backend's `error` field,
+        // so read it defensively.  `request()` already throws on non-2xx, so
+        // reaching here means a 2xx with success=false — unusual but possible.
+        const errMsg = (envelope as { error?: string }).error
+        throw new Error(errMsg ?? "LightRAG 查询失败")
+      }
+      const data = envelope.data
+      const citations = (data.references ?? []).map(mapReferenceToCitation)
+      return {
+        answer: data.response,
+        citations,
+        // Backend is stateless; let the caller pass a stable conversationId
+        // or we mint one per call (single-shot search has no continuity).
+        conversationId: payload.conversationId ?? crypto.randomUUID(),
+      }
+    } catch (err: unknown) {
+      // Translate AbortError into a user-facing Chinese message so the
+      // ErrorBanner in RagChatPanel / RagSearchView shows something helpful
+      // instead of a raw "The operation was aborted" string.
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error("查询超时（60秒），请缩短问题后重试")
+      }
+      throw err
+    } finally {
+      clearTimeout(timeoutId)
     }
   },
 } as const
