@@ -343,15 +343,15 @@ _V11_CALCULATORS: list[tuple[str, Callable[[dict[str, float]], dict[str, float]]
 
 # Full 20D feature names: 8 from v1.0 + 12 new
 ENERGY_V11_FEATURE_NAMES: list[str] = [
-    # v1.0 baseline (8D)
+    # v1.0 baseline (8D) — canonical physical features from compute_ml_features
     "mo_equivalent",
-    "lattice_distortion",
     "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
     "vec",
-    "cluster_I",
-    "cluster_II",
-    "cluster_III",
-    "cluster_IV",
     # v1.1 additions (12D)
     *V11_ADDITIONAL_FEATURE_NAMES,
 ]
