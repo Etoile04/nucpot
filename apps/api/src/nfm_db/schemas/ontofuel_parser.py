@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nfm_db.schemas.ontology import OntologyGraphResponse
 from nfm_db.schemas.ontofuel_ontology import MaterialOntologyDocument
+from nfm_db.schemas.ontology import OntologyGraphResponse
 
 
 def parse_material_ontology(path: Path) -> MaterialOntologyDocument:

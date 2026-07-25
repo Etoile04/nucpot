@@ -18,6 +18,19 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from nfm_db.schemas.ontofuel_ontology import (
+    MaterialOntologyDocument,
+    OntologyClass,
+    OntologyIndividual,
+    OntologyMetadata,
+)
+from nfm_db.schemas.ontofuel_parser import (
+    parse_material_ontology,
+    parse_nvl_ontology,
+    validate_ontology_stats,
+)
+from nfm_db.schemas.ontology import OntologyGraphResponse
+
 # Source data paths (relative to project root)
 ONTOFUEL_JSON = (
     Path(__file__).resolve().parent.parent
@@ -34,22 +47,6 @@ NVL_JSON = (
     / "data"
     / "nvl_ontology_data.json"
 )
-
-from nfm_db.schemas.ontofuel_ontology import (
-    DataProperty,
-    MaterialOntologyDocument,
-    ObjectProperty,
-    OntologyClass,
-    OntologyIndividual,
-    OntologyMetadata,
-    RdfsLabel,
-)
-from nfm_db.schemas.ontofuel_parser import (
-    parse_material_ontology,
-    parse_nvl_ontology,
-    validate_ontology_stats,
-)
-from nfm_db.schemas.ontology import OntologyGraphResponse
 
 
 @pytest.fixture
