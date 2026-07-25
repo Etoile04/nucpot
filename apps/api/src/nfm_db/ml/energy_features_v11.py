@@ -383,7 +383,13 @@ def compute_energy_features_v11(composition: dict[str, float]) -> dict[str, floa
 
 logger = logging.getLogger(__name__)
 
-_V11_MODELS_DIR = Path(__file__).resolve().parents[5] / "apps" / "api" / "models"
+# Local:  parents[5] = <repo>/nucpot/   Docker: parents[3] = /app
+_FILE_PARENTS = Path(__file__).resolve().parents
+_V11_MODELS_DIR = (
+    _FILE_PARENTS[5] / "apps" / "api" / "models"
+    if len(_FILE_PARENTS) >= 6
+    else _FILE_PARENTS[3] / "models"
+)
 _V11_MODEL_PATH = _V11_MODELS_DIR / "energy_predictor_v11.joblib"
 
 _v11_model_cache: dict[str, Any] | None = None
