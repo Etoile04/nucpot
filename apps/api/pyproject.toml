@@ -241,6 +241,8 @@ module = [
     "nfm_db.ml.feature_engineering",
     "nfm_db.ml.prediction_service",
     "nfm_db.ml.train_v11",
+    "nfm_db.ml.train_v20",
+    "nfm_db.ml.group_kfold_cv",
     "nfm_db.ml",
 ]
 ignore_errors = true
