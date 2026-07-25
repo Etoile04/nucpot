@@ -19,10 +19,10 @@ import numpy as np
 
 from nfm_db.ml.energy_features_v11 import (
     ENERGY_V11_FEATURE_NAMES,
-    compute_energy_features_v11,
-    load_v11_model,
-    predict_energy_from_composition as _predict_energy_v11_from_composition,
     predict_energy_v11,
+)
+from nfm_db.ml.energy_features_v11 import (
+    predict_energy_from_composition as _predict_energy_v11_from_composition,
 )
 from nfm_db.ml.model_version import (
     ENERGY_PREDICTOR_VERSION,

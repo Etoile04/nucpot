@@ -21,7 +21,12 @@ References:
 
 from __future__ import annotations
 
+import logging
 import math
+import os
+from pathlib import Path
+
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # D-electron count (number of d electrons in neutral atom)
@@ -370,15 +375,7 @@ def compute_energy_features_v11(composition: dict[str, float]) -> dict[str, floa
     return result
 
 
-# ---------------------------------------------------------------------------
 # v1.1 Model Loading and Inference (NFM-1802)
-# ---------------------------------------------------------------------------
-
-import logging
-import os
-from pathlib import Path
-
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
