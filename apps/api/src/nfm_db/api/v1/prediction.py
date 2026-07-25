@@ -19,7 +19,6 @@ from nfm_db.ml.prediction_service import (
     predict_phase,
     predict_temperature,
 )
-)
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.prediction import (
     CompositionPredictRequest,

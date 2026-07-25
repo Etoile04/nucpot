@@ -21,7 +21,12 @@ References:
 
 from __future__ import annotations
 
+import logging
 import math
+import os
+from pathlib import Path
+
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # D-electron count (number of d electrons in neutral atom)
@@ -336,15 +341,15 @@ _V11_CALCULATORS: list[tuple[str, object]] = [
 
 # Full 20D feature names: 8 from v1.0 + 12 new
 ENERGY_V11_FEATURE_NAMES: list[str] = [
-    # v1.0 baseline (8D)
+    # v1.0 baseline (8D) — matches ML_FEATURE_NAMES in feature_engineering.py
     "mo_equivalent",
-    "lattice_distortion",
     "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
     "vec",
-    "cluster_I",
-    "cluster_II",
-    "cluster_III",
-    "cluster_IV",
     # v1.1 additions (12D)
     *V11_ADDITIONAL_FEATURE_NAMES,
 ]
@@ -373,12 +378,6 @@ def compute_energy_features_v11(composition: dict[str, float]) -> dict[str, floa
 # ---------------------------------------------------------------------------
 # v1.1 Model Loading and Inference (NFM-1802)
 # ---------------------------------------------------------------------------
-
-import logging
-import os
-from pathlib import Path
-
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

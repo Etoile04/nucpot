@@ -239,6 +239,8 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "nfm_db.ml.feature_engineering",
+    "nfm_db.ml.energy_features_v11",
+    "nfm_db.ml.train_energy_v11",
     "nfm_db.ml.prediction_service",
     "nfm_db.ml.train_v11",
     "nfm_db.ml.train_v20",

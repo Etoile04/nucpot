@@ -342,8 +342,8 @@ describe('NodeDetailContent', () => {
     // The retry should trigger a new fetch and render the node
     expect(await screen.findByText('UO2')).toBeInTheDocument()
     expect(screen.getByText('Material')).toBeInTheDocument()
-    // 3 calls: initial node (500) → retry node (success) → relations
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // 2 calls: initial node (500) → retry node (success)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('15. renders nested object properties with indented JSON', async () => {
