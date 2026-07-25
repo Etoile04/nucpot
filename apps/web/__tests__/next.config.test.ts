@@ -79,7 +79,6 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual([
       {
-        phase: "afterFiles",
         source: "/api/:path*",
         destination: "http://nucpot-prod-api:8000/api/:path*",
       },
@@ -96,7 +95,6 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual([
       {
-        phase: "afterFiles",
         source: "/api/:path*",
         destination: "http://localhost:8100/api/:path*",
       },
@@ -121,7 +119,6 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual([
       {
-        phase: "afterFiles",
         source: "/api/:path*",
         destination: "http://localhost:8000/api/:path*",
       },
