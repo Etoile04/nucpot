@@ -30,7 +30,11 @@ const isLive = process.env.E2E_TARGET === "live"
 // Full optimization flow
 // =============================================================================
 
-test.describe.skip(isLive, "Design Workspace", () => {
+test.describe("Design Workspace", () => {
+  test.beforeEach(async () => {
+    test.skip(isLive, "Design Workspace uses route interception (mock API); only valid against local dev server")
+  })
+
   test("design workspace full optimization flow", async ({ page }) => {
     // 1. Mock all backend API calls
     await setupDesignMockApi(page, "normal")
@@ -204,7 +208,11 @@ test.describe.skip(isLive, "Design Workspace", () => {
 // Error handling
 // =============================================================================
 
-test.describe.skip(isLive, "Design Workspace Error Handling", () => {
+test.describe("Design Workspace Error Handling", () => {
+  test.beforeEach(async () => {
+    test.skip(isLive, "Design Workspace uses route interception (mock API); only valid against local dev server")
+  })
+
   test("design workspace error handling", async ({ page }) => {
     // 1. Navigate to /design
     await page.goto("/design")
