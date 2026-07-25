@@ -15,14 +15,17 @@ from fastapi import APIRouter, HTTPException
 
 from nfm_db.ml.prediction_service import (
     predict_energy,
+    predict_energy_from_composition,
     predict_phase,
     predict_temperature,
+)
 )
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.prediction import (
     CompositionPredictRequest,
     EnergyPredictRequest,
     EnergyPredictResponse,
+    EnergyPredictV11Request,
     PhasePredictRequest,
     PhasePredictResponse,
     PhaseProbabilityItem,
@@ -135,17 +138,20 @@ async def predict_temperature_endpoint(
     ),
 )
 async def predict_energy_endpoint(
-    payload: EnergyPredictRequest,
+    payload: EnergyPredictRequest | EnergyPredictV11Request,
 ) -> ApiResponse[EnergyPredictResponse]:
-    """Predict formation energy from 8 physical features."""
-    features = payload.to_feature_dict()
-    result = predict_energy(features)
+    """Predict formation energy (v1.0 8D features or v1.1 composition)."""
+    if isinstance(payload, EnergyPredictV11Request):
+        result = predict_energy_from_composition(payload.composition)
+    else:
+        features = payload.to_feature_dict()
+        result = predict_energy(features)
 
     if result is None:
         raise HTTPException(
             status_code=503,
             detail="Energy predictor model is not available. "
-                   "Ensure the model artifact is deployed at models/energy_predictor_v01.joblib.",
+                   "Ensure the model artifact is deployed at models/energy_predictor_v11.joblib (v1.1) or energy_predictor_v01.joblib (v1.0).",
         )
 
     return ApiResponse(

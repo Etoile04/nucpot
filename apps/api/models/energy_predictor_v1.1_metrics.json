@@ -1,0 +1,118 @@
+{
+  "model_version": "v1.1",
+  "n_samples": 1512,
+  "n_train": 1209,
+  "n_test": 303,
+  "n_features": 20,
+  "random_state": 42,
+  "feature_names": [
+    "mo_equivalent",
+    "lattice_distortion",
+    "allen_chi_diff",
+    "vec",
+    "cluster_I",
+    "cluster_II",
+    "cluster_III",
+    "cluster_IV",
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus",
+    "hr_valence_diff",
+    "dg_en_radius_distance",
+    "max_pair_en_diff",
+    "en_variance",
+    "volume_variance",
+    "d_electron_variance",
+    "bulk_modulus_variance"
+  ],
+  "r2": 0.8333,
+  "rmse": 0.562836,
+  "mae": 0.349531,
+  "r2_train": 0.8641,
+  "rmse_train": 0.519028,
+  "mae_train": 0.303334,
+  "feature_importance": [
+    {
+      "name": "max_pair_en_diff",
+      "importance": 0.197
+    },
+    {
+      "name": "en_variance",
+      "importance": 0.1759
+    },
+    {
+      "name": "cluster_III",
+      "importance": 0.1452
+    },
+    {
+      "name": "dg_en_radius_distance",
+      "importance": 0.0995
+    },
+    {
+      "name": "avg_work_function",
+      "importance": 0.0698
+    },
+    {
+      "name": "cluster_I",
+      "importance": 0.049
+    },
+    {
+      "name": "lattice_distortion",
+      "importance": 0.0359
+    },
+    {
+      "name": "vec",
+      "importance": 0.0271
+    },
+    {
+      "name": "allen_chi_diff",
+      "importance": 0.0268
+    },
+    {
+      "name": "avg_atomic_volume",
+      "importance": 0.0244
+    },
+    {
+      "name": "bulk_modulus_variance",
+      "importance": 0.0217
+    },
+    {
+      "name": "avg_allen_chi",
+      "importance": 0.0188
+    },
+    {
+      "name": "mo_equivalent",
+      "importance": 0.0184
+    },
+    {
+      "name": "cluster_II",
+      "importance": 0.0182
+    },
+    {
+      "name": "volume_variance",
+      "importance": 0.0161
+    },
+    {
+      "name": "hr_valence_diff",
+      "importance": 0.0153
+    },
+    {
+      "name": "d_electron_variance",
+      "importance": 0.0149
+    },
+    {
+      "name": "avg_bulk_modulus",
+      "importance": 0.0128
+    },
+    {
+      "name": "avg_d_electron",
+      "importance": 0.0108
+    },
+    {
+      "name": "cluster_IV",
+      "importance": 0.0024
+    }
+  ]
+}

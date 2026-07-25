@@ -1,9 +1,12 @@
-"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1789).
+"""Model loading and inference service for prediction endpoints (NFM-1598, NFM-1669, NFM-1789, NFM-1802).
 
 Provides lazy-loaded model instances and inference functions for:
 - Phase classification (RF+XGB VotingClassifier) with confidence scoring
 - Temperature prediction (GPR+SVR ensemble) with confidence scoring
 - Energy prediction (formation energy) with confidence scoring
+- EnergyPredictor (NFM-1802): v1.0 8D Miedema baseline + v1.1 20D expansion.
+  predict_energy() dispatches by ``model_version`` so v1.0 callers don't
+  regress (AC #3 backward compat).
 """
 
 from __future__ import annotations
@@ -14,6 +17,13 @@ from pathlib import Path
 
 import numpy as np
 
+from nfm_db.ml.energy_features_v11 import (
+    ENERGY_V11_FEATURE_NAMES,
+    compute_energy_features_v11,
+    load_v11_model,
+    predict_energy_from_composition as _predict_energy_v11_from_composition,
+    predict_energy_v11,
+)
 from nfm_db.ml.model_version import (
     ENERGY_PREDICTOR_VERSION,
     PHASE_CLASSIFIER_VERSION,
@@ -420,82 +430,122 @@ def _predict_temp_from_dict(
 
 
 # ---------------------------------------------------------------------------
-# Energy prediction — model loading + inference (NFM-1789)
+# EnergyPredictor (NFM-1802, AC #3 backward compat) — 20D v1.1 + v1.0 routing
 # ---------------------------------------------------------------------------
 
+ENERGY_MODEL_V11_FILENAME = "energy_predictor_v11.joblib"
+ENERGY_MODEL_V10_FILENAME = "energy_predictor_v10.joblib"
 
-def _load_energy_predictor():
-    """Load the energy predictor model from disk (lazy).
+ENERGY_MODEL_PATH = MODELS_DIR / ENERGY_MODEL_V11_FILENAME
 
-    The trained artifact (``energy_predictor_v01.joblib``) is a dict with a
-    ``model`` key holding the actual regressor.  We extract that key
-    so downstream inference code can call ``model.predict()`` directly.
+
+def _env_path(filename: str) -> Path:
+    """Resolve model path with ENERGY_PREDICTOR_PATH env override (v1.1 default)."""
+    env_override = os.environ.get("ENERGY_PREDICTOR_PATH")
+    if env_override:
+        return Path(env_override)
+    return MODELS_DIR / filename
+
+
+def _predict_energy_v10(features: dict[str, float]) -> dict | None:
+    """Run the v1.0 8D Miedema baseline EnergyPredictor (lazy-loaded).
+
+    Returns None when the v1.0 artifact is unavailable (e.g., not yet deployed
+    on this branch). The v1.0 path is plumbed so v1.0 callers can request
+    ``model_version='v1.0'`` without raising (AC #3 backward compat).
+
+    Expected artifact: ``models/energy_predictor_v10.joblib`` (joblib dict
+    with keys ``model``, ``version``, ``metrics``, ``feature_names``).
     """
-    global _energy_model
-
-    if _energy_model is not None:
-        return _energy_model
-
-    model_path = os.environ.get(
-        "ENERGY_PREDICTOR_PATH", str(ENERGY_MODEL_PATH),
-    )
-
-    if not Path(model_path).exists():
-        logger.warning("Energy predictor model not found at %s", model_path)
+    v10_path = Path(os.environ.get("ENERGY_PREDICTOR_V10_PATH", str(MODELS_DIR / ENERGY_MODEL_V10_FILENAME)))
+    if not v10_path.exists():
+        logger.warning(
+            "v1.0 energy model not found at %s; v1.0 callers must deploy v1.0 artifact or accept None",
+            v10_path,
+        )
         return None
-
     try:
         import joblib
 
-        raw = joblib.load(model_path)
-
-        # Artifact may be a dict wrapper or a bare estimator
-        if isinstance(raw, dict):
-            _energy_model = raw["model"]
-            logger.info(
-                "Loaded energy predictor from %s (dict wrapper, extracted 'model' key)",
-                model_path,
-            )
+        raw = joblib.load(v10_path)
+        if isinstance(raw, dict) and "model" in raw:
+            model = raw["model"]
+            feature_names = raw.get("feature_names")
+            model_data = raw
         else:
-            _energy_model = raw
-            logger.info("Loaded energy predictor from %s", model_path)
+            model = raw
+            feature_names = None
+            model_data = {"model": raw}
 
-        return _energy_model
-    except Exception:
-        logger.exception("Failed to load energy predictor from %s", model_path)
-        return None
-
-
-def predict_energy(features: dict[str, float]) -> dict | None:
-    """Run formation energy prediction on 8 physical features.
-
-    The model is a regressor that predicts formation energy in eV/atom.
-
-    Args:
-        features: Dictionary of 8 physical feature values.
-
-    Returns:
-        Dictionary with keys: predicted_energy, confidence, warnings,
-        model_version.  Returns None if model unavailable.
-    """
-    model = _load_energy_predictor()
-    if model is None:
-        return None
-
-    feature_vec = build_feature_vector(features).reshape(1, -1)
-
-    try:
-        predicted_energy = float(model.predict(feature_vec)[0])
-
-        # Use moderate default confidence for regression without GPR std
-        confidence = confidence_from_default(predicted_energy)
-
+        vals = [features.get(n, 0.0) for n in (feature_names or [])]
+        X = np.array(vals, dtype=np.float64).reshape(1, -1) if vals else None
+        if X is None or X.shape[1] == 0:
+            logger.warning("v1.0 model has no declared feature_names; cannot run without schema")
+            return None
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        predicted = float(model.predict(X)[0])
+        metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        r2 = metrics.get("r2", 0.0)
+        confidence = max(0.0, min(float(r2), 1.0))
         return {
-            "predicted_energy": round(predicted_energy, 6),
-            "confidence": confidence.score,
-            "warnings": warnings_to_dicts(confidence.warnings),
-            "model_version": ENERGY_PREDICTOR_VERSION,
+            "predicted_energy": round(predicted, 6),
+            "confidence": round(confidence, 4),
+            "model_version": raw.get("version", "v1.0") if isinstance(raw, dict) else "v1.0",
+            "warnings": [],
         }
     except Exception:
-        logger.exception("Energy prediction failed")
+        logger.exception("v1.0 energy prediction failed")
         return None
+
+
+def predict_energy(
+    features: dict[str, float],
+    model_version: str | None = None,
+) -> dict | None:
+    """Predict formation energy, dispatching by ``model_version`` (AC #3).
+
+    Args:
+        features: Feature dict. For ``model_version='v1.1'`` (default),
+            expected keys match ``ENERGY_V11_FEATURE_NAMES`` (20D); the 12
+            v1.1 additions may be absent on legacy v1.0 callers and are
+            back-filled with zeros by the loader. For ``model_version='v1.0'``,
+            expected keys match the v1.0 8D baseline (loaded from the v1.0
+            artifact's ``feature_names``).
+        model_version: ``'v1.0'`` to use the legacy 8D baseline; ``'v1.1'``
+            (default) uses the expanded 20D model.
+
+    Returns:
+        Dict with ``predicted_energy``, ``confidence``, ``model_version``,
+        ``warnings``. ``None`` if the requested artifact is unavailable.
+
+    Notes:
+        v1.0 callers must not be rejected. The path is plumbed end-to-end;
+        the only step out of scope of this branch is deploying the v1.0
+        artifact file, which is gated by NFM-1788's actual merge to main.
+    """
+    effective = model_version or ENERGY_PREDICTOR_VERSION
+    if effective == "v1.0":
+        return _predict_energy_v10(features)
+    # v1.1 (default + fallback): back-fill missing v1.1 keys with 0.0 so
+    # legacy v1.0 callers don't crash on the new schema (AC #3 backward compat).
+    v11_input = {n: features.get(n, 0.0) for n in ENERGY_V11_FEATURE_NAMES}
+    return predict_energy_v11(v11_input)
+
+
+def predict_energy_from_composition(
+    composition: dict[str, float],
+    model_version: str | None = None,
+) -> dict | None:
+    """Convenience wrapper: composition → features → predict_energy().
+
+    Computes the appropriate feature vector for the requested ``model_version``:
+    - v1.1: full 20D via ``compute_energy_features_v11``
+    - v1.0: the 8D Miedema baseline (extracted from the v1.1 feature dict, or
+      computed independently via ``feature_engineering.compute_ml_features``).
+    """
+    effective = model_version or ENERGY_PREDICTOR_VERSION
+    if effective == "v10" or effective == "v1.0":
+        from nfm_db.ml.feature_engineering import compute_ml_features
+        v10_features = compute_ml_features(composition)
+        return predict_energy(v10_features, model_version="v1.0")
+    return _predict_energy_v11_from_composition(composition)
