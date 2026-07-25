@@ -59,6 +59,9 @@ const nextConfig: NextConfig = {
       {
         // Proxy /api/* requests to the backend, eliminating CORS for
         // same-origin browser requests in local dev and preview builds.
+        // Uses afterFiles phase so that Next.js route handlers (e.g.
+        // /api/proxy/*) take precedence over the catch-all rewrite.
+        phase: "afterFiles",
         source: "/api/:path*",
         destination: `${API_SERVER_FALLBACK}/api/:path*`,
       },
