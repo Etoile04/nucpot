@@ -25,7 +25,6 @@ from nfm_db.ml.energy_features_v11 import ENERGY_V11_FEATURE_NAMES
 from nfm_db.ml.model_version import ENERGY_PREDICTOR_VERSION
 from nfm_db.ml.prediction_service import predict_energy
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
