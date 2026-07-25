@@ -4,29 +4,27 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pytest
 
 from nfm_db.ml.energy_features_v11 import (
     ENERGY_V11_FEATURE_NAMES,
     V11_ADDITIONAL_FEATURE_NAMES,
-    compute_energy_features_v11,
     calculate_avg_allen_chi,
     calculate_avg_atomic_volume,
+    calculate_avg_bulk_modulus,
     calculate_avg_d_electron,
     calculate_avg_work_function,
-    calculate_avg_bulk_modulus,
-    calculate_hr_valence_diff,
-    calculate_dg_en_radius_distance,
-    calculate_max_pair_en_diff,
-    calculate_en_variance,
-    calculate_volume_variance,
-    calculate_d_electron_variance,
     calculate_bulk_modulus_variance,
-    predict_energy_from_composition,
+    calculate_d_electron_variance,
+    calculate_dg_en_radius_distance,
+    calculate_en_variance,
+    calculate_hr_valence_diff,
+    calculate_max_pair_en_diff,
+    calculate_volume_variance,
+    compute_energy_features_v11,
     load_v11_model,
+    predict_energy_from_composition,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

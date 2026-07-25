@@ -252,7 +252,7 @@ def main() -> None:
 
     # Train
     model = train_model(X_train, y_train, X_test, y_test)
-    metrics = evaluate(model, X_test, y_test)
+    metrics: dict[str, object] = evaluate(model, X_test, y_test)
 
     # Also compute train metrics for overfitting check
     train_metrics = evaluate(model, X_train, y_train)
@@ -269,7 +269,7 @@ def main() -> None:
     # Feature importance (top 10)
     importance = model.feature_importances_
     paired = sorted(
-        zip(ENERGY_V11_FEATURE_NAMES, importance),
+        zip(ENERGY_V11_FEATURE_NAMES, importance, strict=True),
         key=lambda x: -x[1],
     )
     metrics["feature_importance"] = [
