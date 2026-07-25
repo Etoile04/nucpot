@@ -1,1 +1,32 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#000000"/><meta name="description" content="OntoFuel 本体可视化 - Neo4j NVL"/><title>OntoFuel NVL Visualization</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,'Fira Sans','Droid Sans','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}</style><script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#000000"/><meta name="description" content="OntoFuel 本体可视化 - Neo4j NVL"/><title>OntoFuel NVL Visualization</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,'Fira Sans','Droid Sans','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}</style><script>
+/* NFM-1838: Intercept fetch to handle proxy 503 -> fallback_url transparently.
+ * When /api/proxy/ontology/data returns 503 with { fallback_url: "..." },
+ * transparently re-fetch from the fallback URL so the viewer sees a normal 200.
+ * This runs before the bundled app and wraps window.fetch once. */
+(function () {
+  var PROXY_PATH = '/api/proxy/ontology/data';
+  var originalFetch = window.fetch;
+  window.fetch = function (input, init) {
+    return originalFetch.call(this, input, init).then(function (response) {
+      if (response.status === 503) {
+        var url = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
+        if (url.indexOf(PROXY_PATH) !== -1) {
+          return response.json().then(function (body) {
+            var fallbackUrl = body && body.fallback_url;
+            if (!fallbackUrl) {
+              throw new Error('Proxy returned 503 without fallback_url');
+            }
+            return originalFetch.call(window, fallbackUrl, init);
+          }).catch(function (parseErr) {
+            if (parseErr && parseErr.message && parseErr.message.indexOf('Proxy returned') === 0) {
+              throw parseErr;
+            }
+            throw new Error('Failed to parse 503 response body');
+          });
+        }
+      }
+      return response;
+    });
+  };
+})();
+</script><script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>

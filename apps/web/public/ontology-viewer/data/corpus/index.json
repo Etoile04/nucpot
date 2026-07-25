@@ -7,6 +7,14 @@
       "asset_url": "./data/nvl_ontology_data.json",
       "source_digest": "static",
       "schema_version": "1.0"
+    },
+    {
+      "id": "nuclear",
+      "name": "OntoFuel Nuclear Materials (Dynamic)",
+      "description": "通过代理 API 动态获取的本体数据",
+      "asset_url": "/api/proxy/ontology/data?corpus=nuclear",
+      "source_digest": "dynamic",
+      "schema_version": "1.0"
     }
   ],
   "default_corpus": "default"
