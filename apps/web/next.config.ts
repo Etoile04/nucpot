@@ -59,6 +59,8 @@ const nextConfig: NextConfig = {
       {
         // Proxy /api/* requests to the backend, eliminating CORS for
         // same-origin browser requests in local dev and preview builds.
+        // App Router route handlers (e.g. /api/proxy/*) naturally match
+        // before this catch-all rewrite, so no phase ordering is needed.
         source: "/api/:path*",
         destination: `${API_SERVER_FALLBACK}/api/:path*`,
       },
