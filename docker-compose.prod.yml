@@ -154,11 +154,6 @@ services:
       LIGHTRAG_GRAPH_STORAGE: ${PROD_LIGHTRAG_GRAPH_STORAGE:-NetworkXStorage}
       LIGHTRAG_KV_STORAGE: ${PROD_LIGHTRAG_KV_STORAGE:-JsonKVStorage}
       LIGHTRAG_DOC_STATUS_STORAGE: ${PROD_LIGHTRAG_DOC_STATUS_STORAGE:-JsonDocStatusStorage}
-      POSTGRES_HOST: ${PROD_LIGHTRAG_POSTGRES_HOST:-nucpot-prod-db}
-      POSTGRES_PORT: ${PROD_LIGHTRAG_POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${PROD_LIGHTRAG_POSTGRES_USER:-${PROD_POSTGRES_USER:-nfm}}
-      POSTGRES_PASSWORD: ${PROD_LIGHTRAG_POSTGRES_PASSWORD:-${PROD_POSTGRES_PASSWORD}}
-      POSTGRES_DATABASE: ${PROD_LIGHTRAG_POSTGRES_DATABASE:-${PROD_POSTGRES_DB:-nfm_db}}
       # NFM-1763: LightRAG uses WORKING_DIR (default ./rag_storage) for the
       # absolute storage path; WORKSPACE only supplies a sub-namespace name.
       # Without this, LightRAG writes to /app/rag_storage (image-baked,
