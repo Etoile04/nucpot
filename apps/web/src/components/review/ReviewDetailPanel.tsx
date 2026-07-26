@@ -55,12 +55,15 @@ export function ReviewDetailPanel({ item, loading, onAction, onClose }: ReviewDe
   const [pendingAction, setPendingAction] = useState<'approve' | 'reject' | 'needs_revision' | null>(null)
 
   const handleAction = useCallback(
-    (action: 'approve' | 'reject' | 'needs_revision') => {
+    async (action: 'approve' | 'reject' | 'needs_revision') => {
       if (!item) return
       setPendingAction(action)
-      onAction(item.id, action, note || undefined)
-      setNote('')
-      setPendingAction(null)
+      try {
+        await onAction(item.id, action, note || undefined)
+      } finally {
+        setNote('')
+        setPendingAction(null)
+      }
     },
     [item, note, onAction],
   )
