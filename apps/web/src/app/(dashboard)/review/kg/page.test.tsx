@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for KgReviewPage — migrated to canonical review-api.
  *
@@ -63,7 +62,7 @@ const mockedBatchKgAction = vi.mocked(batchKgAction)
 describe('KgReviewPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockedGetKgReviewQueue.mockResolvedValue(MOCK_QUEUE_RESPONSE)
+    mockedGetKgReviewQueue.mockResolvedValue(MOCK_QUEUE_RESPONSE as any)
   })
 
   it('1. renders page title 知识图谱审核', async () => {
@@ -160,7 +159,7 @@ describe('KgReviewPage', () => {
     mockedGetKgReviewQueue.mockResolvedValue({
       ...MOCK_QUEUE_RESPONSE,
       page: 2,
-    })
+    } as any)
 
     // Click page 2 button rendered by ReviewQueueTable
     const page2Button = screen.getByText('2')

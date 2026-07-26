@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, it, expect, afterEach } from "vitest"
 
 /**
@@ -31,7 +30,7 @@ describe("API Contract: review endpoints", () => {
   /** True if `path` matches any known backend route (path params as regex). */
   function matchesBackendRoute(path: string): boolean {
     return BACKEND_ROUTES.some((r) => {
-      const routePath = r.split(" ")[1]
+      const routePath = r.split(" ")[1] ?? ""
       // Escape regex specials, then turn {param} into a capture segment.
       const re = routePath
         .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
@@ -53,7 +52,7 @@ describe("API Contract: review endpoints", () => {
         ok: true,
         status: 200,
         json: async () => ENVELOPE,
-      }) as unknown as Response) as typeof fetch
+      }) as unknown as Response) as unknown as typeof fetch
     global.fetch = stub
     return stub
   }
@@ -63,7 +62,7 @@ describe("API Contract: review endpoints", () => {
     global.fetch = (((url: string, init?: RequestInit) => {
       calls.push(url)
       return impl(url, init)
-    }) as typeof fetch)
+    }) as unknown as typeof fetch)
     return calls
   }
 
@@ -85,7 +84,7 @@ describe("API Contract: review endpoints", () => {
     // Every URL the frontend built must be a known backend route.
     expect(calls.length).toBeGreaterThanOrEqual(3)
     for (const url of calls) {
-      const path = url.split("?")[0]
+      const path = url.split("?")[0] ?? ""
       expect(
         matchesBackendRoute(path),
         `frontend called unknown route: ${path}`,
@@ -105,7 +104,7 @@ describe("API Contract: review endpoints", () => {
     await mod.fetchConflicts("pending", 1, 20)
 
     for (const url of calls) {
-      const path = url.split("?")[0]
+      const path = url.split("?")[0] ?? ""
       expect(
         matchesBackendRoute(path),
         `frontend called unknown route: ${path}`,
