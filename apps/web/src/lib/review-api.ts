@@ -1,23 +1,39 @@
 /**
- * Review API client for KG review queue and conflict resolution.
+ * Review API client for review queue and batch operations.
  *
  * Uses the shared `request()` helper from api-client for JWT auth.
- * Types are shared with review components.
+ * Backend endpoints (Phase 3 review system):
+ *   GET  /api/v1/review/pending?page=1&limit=20&item_type=node
+ *   GET  /api/v1/review/{id}/source
+ *   PATCH /api/v1/review/{id} — { status, note }
+ *   POST /api/v1/review/batch — { items: [{ id, status, note }] }
+ *   GET  /api/v1/review/stats
  *
- * Spec: NFM-1004
+ * Spec: NFM-1004, updated NFM-1872
  */
 
 import { request } from "@/lib/api-client"
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+export interface ReviewSourceInfo {
+  readonly paragraph: string | null
+  readonly page: number | null
+  readonly doi: string | null
+}
+
 export interface ReviewItem {
   readonly id: string
+  readonly item_type: string // 'extraction' | 'node' | 'edge' | 'measurement'
+  readonly item_data: Record<string, unknown>
+  readonly confidence: number
+  readonly review_status: string // 'pending' | 'approved' | 'rejected' | 'needs_revision' | 'corrected'
+  readonly source: ReviewSourceInfo | null
+  readonly created_at: string
+  // Derived convenience fields for backwards-compatible component props
   readonly title: string
   readonly type: string
-  readonly source: string
-  readonly confidence: number
-  readonly status: "pending" | "approved" | "rejected"
+  readonly status: string
   readonly createdAt: string
 }
 
@@ -33,10 +49,49 @@ export interface BatchActionRequest {
   readonly ids: ReadonlyArray<string>
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────
+
+interface BackendReviewItem {
+  readonly id: string
+  readonly item_type: string
+  readonly item_data: Record<string, unknown>
+  readonly confidence: number
+  readonly review_status: string
+  readonly source: ReviewSourceInfo | null
+  readonly created_at: string
+}
+
+function mapBackendItem(raw: BackendReviewItem): ReviewItem {
+  const itemData = raw.item_data ?? {}
+  const title =
+    (itemData.property_name as string | undefined) ??
+    (itemData.label as string | undefined) ??
+    raw.item_type
+  return {
+    ...raw,
+    title,
+    type: raw.item_type,
+    status: raw.review_status,
+    createdAt: raw.created_at,
+  }
+}
+
+interface BackendPendingResponse {
+  readonly success: boolean
+  readonly data: {
+    readonly items: ReadonlyArray<BackendReviewItem>
+    readonly total: number
+    readonly page: number
+    readonly limit: number
+    readonly pages: number
+  }
+}
+
 // ── API functions ─────────────────────────────────────────────────────
 
 /**
- * Fetch paginated KG review queue.
+ * Fetch paginated review queue filtered by item_type.
+ * Defaults to item_type=node (KG nodes).
  */
 export async function getKgReviewQueue(
   status: string = "pending",
@@ -44,36 +99,52 @@ export async function getKgReviewQueue(
   limit: number = 20,
 ): Promise<ReviewListResponse> {
   const params = new URLSearchParams({
-    status,
     page: String(page),
     limit: String(limit),
   })
-  return request<ReviewListResponse>(
-    `/api/v1/review/kg?${params.toString()}`,
+  // The backend always returns pending items from /review/pending.
+  // If status is not "pending", we still fetch pending but the status
+  // param maps to item_type filtering for the KG review page.
+  if (status !== "pending") {
+    // For non-pending status views, use item_type=node to get KG items
+    params.set("item_type", "node")
+  } else {
+    params.set("item_type", "node")
+  }
+  const resp = await request<BackendPendingResponse>(
+    `/api/v1/review/pending?${params.toString()}`,
   )
+  return {
+    items: resp.data.items.map(mapBackendItem),
+    total: resp.data.total,
+    page: resp.data.page,
+    pageSize: resp.data.limit,
+  }
 }
 
 /**
- * Batch approve or reject KG review items.
+ * Batch approve or reject review items.
  */
 export async function batchKgAction(
   action: BatchActionRequest["action"],
   ids: ReadonlyArray<string>,
 ): Promise<void> {
-  return request<void>("/api/v1/review/kg/batch", {
+  const status = action === "approve" ? "approved" : "rejected"
+  const items = ids.map((id) => ({ id, status }))
+  await request("/api/v1/review/batch", {
     method: "POST",
-    body: JSON.stringify({ action, ids }),
+    body: JSON.stringify({ items }),
   })
 }
 
 /**
- * Fetch conflict review queue filtered by status.
+ * Fetch conflict review queue (KG edges with discrepancies).
  */
 export async function getConflictQueue(
-  status: string = "pending",
+  _status: string = "pending",
 ): Promise<ReadonlyArray<ReviewItem>> {
-  const params = new URLSearchParams({ status })
-  return request<ReadonlyArray<ReviewItem>>(
-    `/api/v1/review/conflicts?${params.toString()}`,
+  const resp = await request<BackendPendingResponse>(
+    `/api/v1/review/pending?item_type=edge&limit=100`,
   )
+  return resp.data.items.map(mapBackendItem)
 }
