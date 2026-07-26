@@ -163,6 +163,11 @@ services:
       WORKING_DIR: ${PROD_LIGHTRAG_WORKING_DIR:-/app/data}
       INPUT_DIR: ${PROD_LIGHTRAG_INPUT_DIR:-/app/data/inputs}
       WORKSPACE: ${PROD_LIGHTRAG_WORKSPACE:-_app_data}
+      # NFM-741: Chinese summary language for entity extraction and KG
+      # summarisation. AC-4 requires Chinese-language paper processing;
+      # default is English which produces English summaries even for
+      # Chinese input text.
+      SUMMARY_LANGUAGE: ${PROD_LIGHTRAG_SUMMARY_LANGUAGE:-Chinese}
       # NFM-1763: keep LightRAG container's host.docker.internal traffic off
       # the Docker Desktop user-level proxy. The default noProxy list omits
       # host.docker.internal, so Ollama calls (host.docker.internal:11434)
