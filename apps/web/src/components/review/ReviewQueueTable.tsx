@@ -31,8 +31,8 @@ interface ReviewQueueTableProps {
   readonly selectedIds: ReadonlySet<string>
   readonly onSelect: (id: string, selected: boolean) => void
   readonly onSelectAll: (selected: boolean) => void
-  readonly onBatchAction: (action: 'approve' | 'reject', ids: ReadonlyArray<string>) => void
-  readonly onItemAction: (id: string, action: 'approve' | 'reject') => void
+  readonly onBatchAction: (action: 'approve' | 'reject' | 'reset', ids: ReadonlyArray<string>) => void
+  readonly onItemAction: (id: string, action: 'approve' | 'reject' | 'reset') => void
   readonly loading?: boolean
   readonly pagination?: PaginationConfig
 }
@@ -88,6 +88,10 @@ export function ReviewQueueTable({
 
   const handleBatchReject = useCallback(() => {
     setConfirmAction('reject')
+  }, [])
+
+  const handleBatchReset = useCallback(() => {
+    setConfirmAction('reset')
   }, [])
 
   const handleConfirm = useCallback(() => {
@@ -271,6 +275,14 @@ export function ReviewQueueTable({
               aria-label={`批量拒绝 ${selectedIds.size} 项`}
             >
               批量拒绝
+            </button>
+            <button
+              type="button"
+              onClick={handleBatchReset}
+              className="inline-flex items-center rounded px-3 py-1.5 text-sm font-medium bg-gray-600 hover:bg-gray-500 text-white transition-colors"
+              aria-label={`重置 ${selectedIds.size} 项为待审`}
+            >
+              重置为待审
             </button>
           </div>
         </div>

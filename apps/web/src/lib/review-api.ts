@@ -45,7 +45,7 @@ export interface ReviewListResponse {
 }
 
 export interface BatchActionRequest {
-  readonly action: "approve" | "reject"
+  readonly action: "approve" | "reject" | "reset"
   readonly ids: ReadonlyArray<string>
 }
 
@@ -123,13 +123,14 @@ export async function getKgReviewQueue(
 }
 
 /**
- * Batch approve or reject review items.
+ * Batch approve, reject, or reset review items.
  */
 export async function batchKgAction(
   action: BatchActionRequest["action"],
   ids: ReadonlyArray<string>,
 ): Promise<void> {
-  const status = action === "approve" ? "approved" : "rejected"
+  const statusMap = { approve: "approved", reject: "rejected", reset: "pending" }
+  const status = statusMap[action]
   const items = ids.map((id) => ({ id, status }))
   await request("/api/v1/review/batch", {
     method: "POST",
