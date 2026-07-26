@@ -193,9 +193,18 @@ async def get_pending_reviews(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     item_type: str | None = Query(None),
+    status: str = Query("pending", description="Review status filter"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[ReviewItemResponse]]:
-    """Return pending review items across all 4 tables with pagination."""
+    """Return review items across all 4 tables with pagination, filtered by status."""
+    try:
+        status_value = ReviewStatus(status).value
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status: {status}. Must be one of: {VALID_STATUSES}",
+        )
+
     tables_to_query: list[tuple[Any, str]] = [
         (ExtractionResult, "extraction_results"),
         (KGNode, "kg_nodes"),
@@ -213,11 +222,11 @@ async def get_pending_reviews(
             )
         tables_to_query = [(m, t) for m, t in tables_to_query if t == table_name]
 
-    # Count total pending items across queried tables.
+    # Count total items matching the status filter across queried tables.
     total = 0
     for model, _ in tables_to_query:
         count_stmt = select(func.count()).where(
-            model.review_status == ReviewStatus.PENDING.value,
+            model.review_status == status_value,
         )
         count_result = await db.execute(count_stmt)
         total += count_result.scalar() or 0
@@ -231,7 +240,7 @@ async def get_pending_reviews(
     for model, table_name in tables_to_query:
         stmt = (
             select(model)
-            .where(model.review_status == ReviewStatus.PENDING.value)
+            .where(model.review_status == status_value)
             .order_by(model.created_at.desc())
             .limit(fetch_per_table)
         )

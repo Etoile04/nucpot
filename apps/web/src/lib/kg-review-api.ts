@@ -51,6 +51,7 @@ export interface ConflictItem {
   readonly sourceA: ConflictSource
   readonly sourceB: ConflictSource
   readonly conflictNumber: number
+  readonly createdAt?: string
 }
 
 export type ConflictResolutionAction = 'keep_a' | 'keep_b' | 'not_conflict' | 'skip'
@@ -170,6 +171,7 @@ export async function fetchConflicts(
       id: raw.id,
       entityName: (itemData.label as string) ?? 'Unknown',
       property: (raw.item_data?.relation_type as string) ?? 'relation',
+      createdAt: raw.created_at,
       sourceA: {
         id: raw.id,
         sourceTitle: raw.source?.doi ?? 'Source A',

@@ -39,7 +39,7 @@ function mapToReviewItem(conflict: ConflictItem): ReviewItem {
       conflict.sourceB.confidence,
     ),
     status: 'pending',
-    createdAt: '',
+    createdAt: conflict.createdAt || '—',
   }
 }
 
