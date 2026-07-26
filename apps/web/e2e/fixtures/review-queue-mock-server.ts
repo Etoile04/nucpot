@@ -51,43 +51,30 @@ function handleAuthRoute(route: Route, authenticated: boolean): void {
 
 let batchActionCount = 0
 
-function handleKgReviewRoute(route: Route, url: string): void {
+function handleReviewRoute(route: Route, url: string): void {
   const method = route.request().method()
 
-  // POST /api/v1/review/kg/batch — batch approve/reject
-  if (url.includes("/api/v1/review/kg/batch") && method === "POST") {
+  // POST /api/v1/review/batch — batch approve/reject
+  if (url.includes("/api/v1/review/batch") && method === "POST") {
     batchActionCount++
     jsonResponse(
       route,
-      batchActionCount % 2 === 1 ? MOCK_BATCH_APPROVE_RESPONSE : MOCK_BATCH_REJECT_RESPONSE,
+      // Wrap in envelope to match backend response shape
+      { success: true, data: batchActionCount % 2 === 1 ? MOCK_BATCH_APPROVE_RESPONSE : MOCK_BATCH_REJECT_RESPONSE },
     )
     return
   }
 
-  // GET /api/v1/review/kg — list review queue
-  if (url.includes("/api/v1/review/kg") && method === "GET") {
-    jsonResponse(route, MOCK_KG_REVIEW_PENDING_RESPONSE)
+  // GET /api/v1/review/pending — list review queue (item_type=node or edge)
+  if (url.includes("/api/v1/review/pending") && method === "GET") {
+    // Return envelope-wrapped response to match backend
+    jsonResponse(route, { success: true, data: MOCK_KG_REVIEW_PENDING_RESPONSE })
     return
   }
 
-  // Fallback
-  jsonResponse(route, { detail: "Not found" }, 404)
-}
-
-// ── Conflict route handler ────────────────────────────────────────────────
-
-function handleConflictRoute(route: Route, url: string): void {
-  const method = route.request().method()
-
-  // POST /api/v1/review/conflicts/:id/resolve
-  if (url.includes("/api/v1/review/conflicts/") && url.includes("/resolve") && method === "POST") {
-    jsonResponse(route, MOCK_RESOLVE_CONFLICT_RESPONSE)
-    return
-  }
-
-  // GET /api/v1/review/conflicts — list conflicts
-  if (url.includes("/api/v1/review/conflicts") && method === "GET") {
-    jsonResponse(route, MOCK_CONFLICTS_RESPONSE)
+  // PATCH /api/v1/review/{id} — resolve single item (conflict resolution)
+  if (url.match(/\/api\/v1\/review\/[0-9a-f-]+/) && method === "PATCH") {
+    jsonResponse(route, { success: true, data: MOCK_RESOLVE_CONFLICT_RESPONSE })
     return
   }
 
@@ -115,15 +102,9 @@ export async function setupReviewMocks(
     handleAuthRoute(route, authenticated)
   })
 
-  // Intercept /api/v1/review/kg** (list + batch — no trailing slash needed
-  // because the list endpoint is /api/v1/review/kg?status=pending&page=1&limit=20)
-  await page.route("**/api/v1/review/kg**", (route: Route) => {
-    handleKgReviewRoute(route, route.request().url())
-  })
-
-  // Intercept /api/v1/review/conflicts** (list + resolve)
-  await page.route("**/api/v1/review/conflicts**", (route: Route) => {
-    handleConflictRoute(route, route.request().url())
+  // Intercept /api/v1/review/** (pending, batch, and PATCH {id})
+  await page.route("**/api/v1/review/**", (route: Route) => {
+    handleReviewRoute(route, route.request().url())
   })
 }
 
