@@ -172,6 +172,13 @@ class PhasePredictResponse(BaseModel):
         ...,
         description="Model artifact version identifier",
     )
+    feature_importance: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per-feature permutation importance scores. Present only when "
+            "importance=true is requested; null otherwise (NFM-1790)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +228,13 @@ class TempPredictResponse(BaseModel):
     model_version: str = Field(
         ...,
         description="Model artifact version identifier",
+    )
+    feature_importance: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per-feature permutation importance scores. Present only when "
+            "importance=true is requested; null otherwise (NFM-1790)."
+        ),
     )
 
 
