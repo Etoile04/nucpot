@@ -103,4 +103,4 @@ class ReviewStatsResponse(BaseModel):
     # New adoption rate fields
     total_reviewed: int = 0
     adoption_rate: float | None = None  # corrected / (corrected + rejected)
-    by_type: dict[str, dict] = {}  # {'extraction': {'total': 10, 'corrected': 8, 'rejected': 2, 'adoption_rate': 0.8}, ...}
+    by_type: dict[str, dict[str, object]] = {}  # {'extraction': {'total': 10, 'corrected': 8, 'rejected': 2, 'adoption_rate': 0.8}, ...}
