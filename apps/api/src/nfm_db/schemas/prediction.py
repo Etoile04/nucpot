@@ -282,3 +282,7 @@ class EnergyPredictResponse(BaseModel):
         ...,
         description="Model artifact version identifier",
     )
+    feature_importance: dict[str, float] | None = Field(
+        default=None,
+        description="Feature importance scores when ?importance=true",
+    )

@@ -212,6 +212,31 @@ TEMP_MODEL_RESULT_WITH_IMPORTANCE = {
     },
 }
 
+ENERGY_MODEL_RESULT_WITH_IMPORTANCE = {
+    "predicted_energy": -0.35,
+    "confidence": 0.85,
+    "warnings": [],
+    "model_version": "v1.1",
+    "feature_importance": {
+        "config_entropy": 0.1542,
+        "bv_ratio": 0.2215,
+        "mo_equivalent": 0.18,
+        "pauling_chi_diff": 0.09,
+        "allen_chi_diff": 0.07,
+        "u_density": 0.10,
+        "mixing_enthalpy": 0.10,
+        "lattice_distortion": 0.07,
+    },
+}
+
+ENERGY_MODEL_RESULT_WITHOUT_IMPORTANCE = {
+    "predicted_energy": -0.35,
+    "confidence": 0.85,
+    "warnings": [],
+    "model_version": "v1.1",
+    "feature_importance": None,
+}
+
 TEMP_MODEL_RESULT_WITHOUT_IMPORTANCE = {
     "predicted_temp_c": 620.5,
     "confidence_lower_c": 595.0,
@@ -364,3 +389,82 @@ class TestTemperatureEndpointImportance:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["feature_importance"] is None
+
+
+class TestEnergyEndpointImportance:
+    """Tests for POST /api/v1/predict/energy with importance parameter (NFM-1791 AC-3)."""
+
+    @pytest.mark.asyncio
+    async def test_energy_importance_true_returns_importance(
+        self, client: AsyncClient
+    ) -> None:
+        """?importance=true includes feature_importance in energy response."""
+        with patch(
+            "nfm_db.api.v1.prediction.predict_energy_from_composition",
+            return_value=ENERGY_MODEL_RESULT_WITH_IMPORTANCE,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/energy?importance=true",
+                json={"composition": {"U": 0.7, "Mo": 0.2, "Ti": 0.1}},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["feature_importance"] is not None
+        assert "config_entropy" in data["feature_importance"]
+        assert isinstance(data["feature_importance"]["config_entropy"], float)
+
+    @pytest.mark.asyncio
+    async def test_energy_no_importance_param_returns_null(
+        self, client: AsyncClient
+    ) -> None:
+        """Without ?importance param, feature_importance is null."""
+        with patch(
+            "nfm_db.api.v1.prediction.predict_energy_from_composition",
+            return_value=ENERGY_MODEL_RESULT_WITHOUT_IMPORTANCE,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/energy",
+                json={"composition": {"U": 0.7, "Mo": 0.2, "Ti": 0.1}},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["feature_importance"] is None
+
+    @pytest.mark.asyncio
+    async def test_energy_importance_false_returns_null(
+        self, client: AsyncClient
+    ) -> None:
+        """?importance=false returns null feature_importance."""
+        with patch(
+            "nfm_db.api.v1.prediction.predict_energy_from_composition",
+            return_value=ENERGY_MODEL_RESULT_WITHOUT_IMPORTANCE,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/energy?importance=false",
+                json={"composition": {"U": 0.7, "Mo": 0.2, "Ti": 0.1}},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["feature_importance"] is None
+
+    @pytest.mark.asyncio
+    async def test_energy_importance_values_are_floats(
+        self, client: AsyncClient
+    ) -> None:
+        """All feature_importance values are floats within reasonable range."""
+        with patch(
+            "nfm_db.api.v1.prediction.predict_energy_from_composition",
+            return_value=ENERGY_MODEL_RESULT_WITH_IMPORTANCE,
+        ):
+            resp = await client.post(
+                "/api/v1/predict/energy?importance=true",
+                json={"composition": {"U": 0.7, "Mo": 0.2, "Ti": 0.1}},
+            )
+
+        data = resp.json()["data"]
+        for feature_name, value in data["feature_importance"].items():
+            assert isinstance(value, float), f"{feature_name}: {type(value)}"
+            assert 0.0 <= value <= 1.0, f"{feature_name}: {value}"
