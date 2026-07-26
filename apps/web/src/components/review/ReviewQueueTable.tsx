@@ -6,6 +6,7 @@
 
 import { useState, useCallback } from 'react'
 import { ConfidenceBadge } from '@/components/shared/ConfidenceBadge'
+import { SourceProvenancePanel } from '@/components/review/SourceProvenancePanel'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ export function ReviewQueueTable({
   pagination,
 }: ReviewQueueTableProps) {
   const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | null>(null)
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
   const allSelected = items.length > 0 && items.every(
     (item) => selectedIds.has(item.id),
@@ -101,6 +103,18 @@ export function ReviewQueueTable({
     setConfirmAction(null)
   }, [])
 
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
   return (
     <div className="relative">
       {/* Table container */}
@@ -121,6 +135,9 @@ export function ReviewQueueTable({
                 </th>
                 <th scope="col" className="px-4 py-3 text-left text-xs uppercase tracking-wider text-gray-400">
                   标题
+                </th>
+                <th scope="col" className="px-2 py-3 w-8">
+                  {/* Expand column */}
                 </th>
                 <th scope="col" className="px-4 py-3 text-left text-xs uppercase tracking-wider text-gray-400">
                   类型
@@ -169,6 +186,24 @@ export function ReviewQueueTable({
                     <td className="px-4 py-3 text-sm text-gray-200 font-medium">
                       {item.title}
                     </td>
+                    <td className="px-2 py-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(item.id)}
+                        className="text-gray-500 hover:text-gray-300 transition-colors"
+                        aria-label={expandedRows.has(item.id) ? `收起 ${item.title}` : `展开溯源 ${item.title}`}
+                      >
+                        <svg
+                          className={`w-4 h-4 transition-transform ${expandedRows.has(item.id) ? 'rotate-90' : ''}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-400">
                       {item.type}
                     </td>
@@ -209,6 +244,17 @@ export function ReviewQueueTable({
                   </tr>
                 )
               })}
+              {/* Expanded source provenance row */}
+              {expandedRows.size > 0 && items.filter((item) => expandedRows.has(item.id)).map((item) => (
+                <tr key={`expanded-${item.id}`} className="bg-gray-800/50">
+                  <td colSpan={9} className="px-4 py-2">
+                    <SourceProvenancePanel
+                      source={(item as any).source ?? null}
+                      extractedValue={(item as any).item_data?.value != null ? String((item as any).item_data.value) : (item as any).item_data?.property_name}
+                    />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
