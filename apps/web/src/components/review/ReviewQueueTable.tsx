@@ -47,7 +47,9 @@ const STATUS_CONFIG: Record<ReviewItem['status'], { label: string; className: st
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('zh-CN', {
+  if (!iso || iso === '—') return '—'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

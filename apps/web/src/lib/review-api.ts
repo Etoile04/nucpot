@@ -101,16 +101,9 @@ export async function getKgReviewQueue(
   const params = new URLSearchParams({
     page: String(page),
     limit: String(limit),
+    status,
+    item_type: "node",
   })
-  // The backend always returns pending items from /review/pending.
-  // If status is not "pending", we still fetch pending but the status
-  // param maps to item_type filtering for the KG review page.
-  if (status !== "pending") {
-    // For non-pending status views, use item_type=node to get KG items
-    params.set("item_type", "node")
-  } else {
-    params.set("item_type", "node")
-  }
   const resp = await request<BackendPendingResponse>(
     `/api/v1/review/pending?${params.toString()}`,
   )
