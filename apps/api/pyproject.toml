@@ -142,6 +142,23 @@ ignore_missing_imports = true
 module = "jose.*"
 ignore_missing_imports = true
 
+# ML libraries lack type stubs — ignore missing-imports only (strict on our code)
+[[tool.mypy.overrides]]
+module = "pandas.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "xgboost.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sklearn.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "joblib.*"
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = "passlib.context.*"
 ignore_missing_imports = true
@@ -239,7 +256,9 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "nfm_db.ml.feature_engineering",
+    "nfm_db.ml.energy_features_v11",
     "nfm_db.ml.prediction_service",
+    "nfm_db.ml.train_energy_v11",
     "nfm_db.ml.train_v11",
     "nfm_db.ml.train_v20",
     "nfm_db.ml.group_kfold_cv",

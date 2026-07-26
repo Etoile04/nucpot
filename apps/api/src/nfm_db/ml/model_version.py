@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 
 PHASE_CLASSIFIER_VERSION: str = "v1.0"
 TEMP_PREDICTOR_VERSION: str = "v1.0"
-ENERGY_PREDICTOR_VERSION: str = "v1.0"
 
 # EnergyPredictor (NFM-1802): v1.1 expands 8D Miedema baseline → 20D
 # (8D original + 12 element-resolved electronic structure + pairwise terms).

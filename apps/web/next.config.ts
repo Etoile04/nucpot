@@ -19,6 +19,14 @@ const DISABLE_API_REWRITE =
 
 const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://localhost:8100"
 
+// LightRAG WebUI reverse-proxy target. In Docker prod this is the
+// LightRAG sidecar's built-in React SPA; in local dev it falls back
+// to localhost:9621.  The rewrite is independent of DISABLE_API_REWRITE
+// (which only gates the /api/* catch-all) so the LightRAG WebUI remains
+// accessible even in production where nginx handles /api/* routing.
+const LIGHTRAG_WEBUI_URL =
+  process.env.LIGHTRAG_WEBUI_URL ?? "http://localhost:9621"
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
@@ -37,12 +45,40 @@ const nextConfig: NextConfig = {
     ]
   },
   async rewrites() {
+    // LightRAG WebUI reverse proxy — always active regardless of
+    // DISABLE_API_REWRITE (which only gates /api/*). Mounts the LightRAG
+    // sidecar's full stack (React SPA + API endpoints) under /lightrag/*
+    // so users can ingest documents, browse the KG graph, and run queries
+    // without exposing port 9621 to the public internet.
+    //
+    // The LightRAG container runs with LIGHTRAG_API_PREFIX=/lightrag-api
+    // (set in docker-compose.prod.yml) so its SPA config becomes:
+    //   window.__LIGHTRAG_CONFIG__ = {apiPrefix: "/lightrag-api", webuiPrefix: "/lightrag-api/webui/"}
+    // This means:
+    //   - SPA assets load from /lightrag-api/webui/assets/...   → rule 1
+    //   - SPA API calls go to /lightrag-api/documents, /query etc → rule 2
+    const lightragRewrites = [
+      {
+        // SPA HTML/JS/CSS assets — LightRAG serves them at /webui/*.
+        // The SPA's webuiPrefix is /lightrag-api/webui/ but we strip
+        // /lightrag-api and let LightRAG's root_path handle the rest.
+        source: "/lightrag-api/webui/:path*",
+        destination: `${LIGHTRAG_WEBUI_URL}/webui/:path*`,
+      },
+      {
+        // SPA API calls (/lightrag-api/documents, /lightrag-api/query, etc.)
+        // Keep the prefix in the destination so LightRAG's root_path matches.
+        source: "/lightrag-api/:path*",
+        destination: `${LIGHTRAG_WEBUI_URL}/lightrag-api/:path*`,
+      },
+    ]
+
     // Explicit disable: production deployments with nginx (or another
     // upstream proxy) handling /api/* must set DISABLE_API_REWRITE=true.
     // Without this, the rewrite below would proxy /api/* back through
     // Next.js and either hang or fail (NFM-1407).
     if (DISABLE_API_REWRITE) {
-      return []
+      return lightragRewrites
     }
 
     // Skip rewrite when API_SERVER_URL matches the public domain — nginx
@@ -52,7 +88,7 @@ const nextConfig: NextConfig = {
       new URL(API_SERVER_URL).host === new URL(publicUrl).host
 
     if (wouldLoop) {
-      return []
+      return lightragRewrites
     }
 
     return [
@@ -64,6 +100,7 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: `${API_SERVER_FALLBACK}/api/:path*`,
       },
+      ...lightragRewrites,
     ]
   },
 }

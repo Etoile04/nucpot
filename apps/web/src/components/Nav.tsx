@@ -219,6 +219,15 @@ export default function Nav() {
                           V4 提取系统
                         </Link>
                       )}
+                      {isAdmin && (
+                        <Link
+                          href="/admin/lightrag"
+                          onClick={() => setDropdownOpen(false)}
+                          className="block px-4 py-2 hover:bg-gray-700/60 text-yellow-400 hover:text-yellow-300 transition"
+                        >
+                          知识图谱管理
+                        </Link>
+                      )}
                       <div className="border-t border-gray-700 my-1" />
                       <button
                         onClick={handleSignOut}
@@ -369,6 +378,15 @@ export default function Nav() {
                       className="text-yellow-400 hover:text-yellow-300 transition"
                     >
                       V4 提取系统
+                    </Link>
+                  )}
+                  {isAdmin && (
+                    <Link
+                      href="/admin/lightrag"
+                      onClick={() => setMobileOpen(false)}
+                      className="text-yellow-400 hover:text-yellow-300 transition"
+                    >
+                      知识图谱管理
                     </Link>
                   )}
                   <button
