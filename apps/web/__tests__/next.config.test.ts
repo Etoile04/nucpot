@@ -37,7 +37,7 @@ function lightragRewrites(baseUrl = "http://localhost:9621") {
     },
     {
       source: "/lightrag-api/:path*",
-      destination: `${baseUrl}/:path*`,
+      destination: `${baseUrl}/lightrag-api/:path*`,
     },
   ]
 }

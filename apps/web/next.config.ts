@@ -59,12 +59,17 @@ const nextConfig: NextConfig = {
     //   - SPA API calls go to /lightrag-api/documents, /query etc → rule 2
     const lightragRewrites = [
       {
+        // SPA HTML/JS/CSS assets — LightRAG serves them at /webui/*.
+        // The SPA's webuiPrefix is /lightrag-api/webui/ but we strip
+        // /lightrag-api and let LightRAG's root_path handle the rest.
         source: "/lightrag-api/webui/:path*",
         destination: `${LIGHTRAG_WEBUI_URL}/webui/:path*`,
       },
       {
+        // SPA API calls (/lightrag-api/documents, /lightrag-api/query, etc.)
+        // Keep the prefix in the destination so LightRAG's root_path matches.
         source: "/lightrag-api/:path*",
-        destination: `${LIGHTRAG_WEBUI_URL}/:path*`,
+        destination: `${LIGHTRAG_WEBUI_URL}/lightrag-api/:path*`,
       },
     ]
 
