@@ -100,3 +100,7 @@ class ReviewStatsResponse(BaseModel):
     rejected: int = 0
     needs_revision: int = 0
     corrected: int = 0
+    # New adoption rate fields
+    total_reviewed: int = 0
+    adoption_rate: float | None = None  # corrected / (corrected + rejected)
+    by_type: dict[str, dict] = {}  # {'extraction': {'total': 10, 'corrected': 8, 'rejected': 2, 'adoption_rate': 0.8}, ...}

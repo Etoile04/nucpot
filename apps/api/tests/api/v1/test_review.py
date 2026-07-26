@@ -433,3 +433,83 @@ async def test_review_stats_reflects_changes(async_client, db_session) -> None:
     data = response.json()["data"]
     assert data["pending"] == 0
     assert data["approved"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Adoption rate statistics (NFM-1876)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stats_includes_adoption_rate(async_client, db_session) -> None:
+    """Adoption rate = corrected / (corrected + rejected)."""
+    # 3 corrected, 1 rejected → adoption_rate = 0.75
+    for _ in range(3):
+        await _seed_extraction_result(
+            db_session,
+            review_status=ReviewStatus.CORRECTED.value,
+        )
+    await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.REJECTED.value,
+    )
+    await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.APPROVED.value,
+    )
+
+    response = await async_client.get("/api/v1/review/stats")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["corrected"] == 3
+    assert data["rejected"] == 1
+    assert data["approved"] == 1
+    # total_reviewed = approved + rejected + needs_revision + corrected = 5
+    assert data["total_reviewed"] == 5
+    # adoption_rate = 3 / (3 + 1) = 0.75
+    assert data["adoption_rate"] is not None
+    assert abs(data["adoption_rate"] - 0.75) < 1e-9
+
+
+@pytest.mark.asyncio
+async def test_stats_adoption_rate_zero_division(async_client) -> None:
+    """No reviewed items → adoption_rate should be None (not crash)."""
+    response = await async_client.get("/api/v1/review/stats")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["corrected"] == 0
+    assert data["rejected"] == 0
+    assert data["adoption_rate"] is None
+    assert data["total_reviewed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stats_by_type_breakdown(async_client, db_session) -> None:
+    """Per-type breakdown includes adoption rate for extraction items."""
+    # Seed only ExtractionResult rows (other tables have FK constraints in SQLite).
+    # 2 corrected + 1 rejected in extraction → adoption_rate = 2/3
+    for _ in range(2):
+        await _seed_extraction_result(
+            db_session,
+            review_status=ReviewStatus.CORRECTED.value,
+        )
+    await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.REJECTED.value,
+    )
+
+    response = await async_client.get("/api/v1/review/stats")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    by_type = data["by_type"]
+    assert "extraction" in by_type
+    ext = by_type["extraction"]
+    assert ext["corrected"] == 2
+    assert ext["rejected"] == 1
+    assert ext["approved"] == 0
+    assert ext["total"] == 3
+    assert ext["adoption_rate"] is not None
+    assert abs(ext["adoption_rate"] - (2 / 3)) < 1e-9
+    # All four type labels should be present
+    for label in ("extraction", "node", "edge", "measurement"):
+        assert label in by_type

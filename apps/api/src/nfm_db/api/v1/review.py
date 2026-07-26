@@ -372,4 +372,52 @@ async def get_review_stats(
             count = result.scalar() or 0
             setattr(stats, status.value, getattr(stats, status.value) + count)
 
+    # Calculate overall adoption rate: corrected / (corrected + rejected)
+    total_reviewed = (
+        stats.approved
+        + stats.rejected
+        + stats.needs_revision
+        + stats.corrected
+    )
+    corrected_or_rejected = stats.corrected + stats.rejected
+    stats.total_reviewed = total_reviewed
+    stats.adoption_rate = (
+        (stats.corrected / corrected_or_rejected)
+        if corrected_or_rejected > 0
+        else None
+    )
+
+    # Build per-type stats (adoption rate per item_type)
+    type_map_reverse = {
+        "extraction_results": "extraction",
+        "kg_nodes": "node",
+        "kg_edges": "edge",
+        "property_measurements": "measurement",
+    }
+    by_type: dict[str, dict] = {}
+    for model, tbl in [
+        (ExtractionResult, "extraction_results"),
+        (KGNode, "kg_nodes"),
+        (KGEdge, "kg_edges"),
+        (PropertyMeasurement, "property_measurements"),
+    ]:
+        type_label = type_map_reverse[tbl]
+        if type_label not in by_type:
+            by_type[type_label] = {"total": 0, "corrected": 0, "rejected": 0, "approved": 0}
+        for status_val in ["approved", "rejected", "corrected"]:
+            stmt = select(func.count()).where(
+                model.review_status == status_val,
+            )
+            result = await db.execute(stmt)
+            count = result.scalar() or 0
+            by_type[type_label][status_val] = count
+            by_type[type_label]["total"] += count
+        # Calculate adoption rate for this type
+        cr = by_type[type_label]["corrected"] + by_type[type_label]["rejected"]
+        by_type[type_label]["adoption_rate"] = (
+            (by_type[type_label]["corrected"] / cr) if cr > 0 else None
+        )
+
+    stats.by_type = by_type
+
     return ApiResponse(success=True, data=stats)
