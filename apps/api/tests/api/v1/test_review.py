@@ -10,6 +10,7 @@ which provides sufficient code-path coverage for the cross-table union logic.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -433,3 +434,125 @@ async def test_review_stats_reflects_changes(async_client, db_session) -> None:
     data = response.json()["data"]
     assert data["pending"] == 0
     assert data["approved"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Feedback loop: corrected transitions write audit records + metrics endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_corrected_writes_audit_record(async_client, db_session) -> None:
+    """needs_revision → corrected writes a Review audit record with loop_time_seconds."""
+    from sqlalchemy import select
+
+    from nfm_db.models.review import Review
+
+    # Seed item in needs_revision with a prior reviewed_at so loop_time is non-null.
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.NEEDS_REVISION.value,
+        reviewed_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "corrected", "note": "Fixed value"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["review_status"] == "corrected"
+
+    # Verify exactly one audit record exists for this item.
+    stmt = select(Review).where(Review.result_id == er.id)
+    result = await db_session.execute(stmt)
+    audits = result.scalars().all()
+    assert len(audits) == 1
+    audit = audits[0]
+    assert audit.action == ReviewStatus.CORRECTED.value
+    assert audit.comment == "Fixed value"
+    assert audit.data["previous_status"] == ReviewStatus.NEEDS_REVISION.value
+    assert audit.data["table"] == "extraction_results"
+    assert audit.data["loop_time_seconds"] is not None
+    assert audit.data["loop_time_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_feedback_metrics_endpoint(async_client, db_session) -> None:
+    """GET /review/feedback-metrics aggregates loop_time from audit records."""
+    from nfm_db.models.review import Review
+
+    # Seed two corrected audit records directly.
+    db_session.add(
+        Review(
+            result_id=uuid.uuid4(),
+            reviewer_id="test-reviewer",
+            action=ReviewStatus.CORRECTED.value,
+            comment="",
+            data={"loop_time_seconds": 3600.0},  # 1 hour
+        )
+    )
+    db_session.add(
+        Review(
+            result_id=uuid.uuid4(),
+            reviewer_id="test-reviewer",
+            action=ReviewStatus.CORRECTED.value,
+            comment="",
+            data={"loop_time_seconds": 7200.0},  # 2 hours
+        )
+    )
+    await db_session.commit()
+
+    response = await async_client.get("/api/v1/review/feedback-metrics")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    data = body["data"]
+    assert data["total_corrections"] == 2
+    # avg of 1h and 2h = 1.5h
+    assert data["avg_loop_time_hours"] == pytest.approx(1.5, rel=1e-6)
+    assert data["max_loop_time_hours"] == pytest.approx(2.0, rel=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_batch_corrected_writes_audit(async_client, db_session) -> None:
+    """Batch review with corrected status writes an audit record per item."""
+    from sqlalchemy import select
+
+    from nfm_db.models.review import Review
+
+    er1 = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.NEEDS_REVISION.value,
+        reviewed_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    er2 = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.NEEDS_REVISION.value,
+        reviewed_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+
+    response = await async_client.post(
+        "/api/v1/review/batch",
+        json={
+            "items": [
+                {"id": str(er1.id), "status": "corrected", "note": "fix1"},
+                {"id": str(er2.id), "status": "corrected", "note": "fix2"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["succeeded"] == 2
+    assert data["failed"] == 0
+
+    # Two audit records should now exist.
+    stmt = select(Review).where(Review.action == ReviewStatus.CORRECTED.value)
+    result = await db_session.execute(stmt)
+    audits = result.scalars().all()
+    assert len(audits) == 2
+    result_ids = {a.result_id for a in audits}
+    assert er1.id in result_ids
+    assert er2.id in result_ids
+    for a in audits:
+        assert a.data["loop_time_seconds"] is not None
+        assert a.data["loop_time_seconds"] > 0

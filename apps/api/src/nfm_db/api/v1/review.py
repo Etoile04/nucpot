@@ -28,7 +28,7 @@ from nfm_db.database import get_db
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.property import PropertyMeasurement
-from nfm_db.models.review import VALID_TRANSITIONS, ReviewStatus
+from nfm_db.models.review import VALID_TRANSITIONS, Review, ReviewStatus
 from nfm_db.models.source import DataSource
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
@@ -80,6 +80,13 @@ def _validate_transition(current_status: str, new_status: str) -> None:
             detail=f"Cannot transition from {current_status} to {new_status}. "
             f"Allowed: {[s.value for s in allowed]}",
         )
+
+
+def _as_aware(dt: datetime) -> datetime:
+    """Attach UTC tzinfo to a naive datetime (SQLite round-trip safety)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
 
 
 async def _find_review_item(
@@ -277,10 +284,34 @@ async def update_review_status(
     # Validate state machine transition.
     _validate_transition(row.review_status, body.status)
 
+    previous_status = row.review_status
+    previous_reviewed_at = row.reviewed_at
     row.review_status = body.status
     row.review_note = body.note
     row.reviewed_by = str(current_user.id) if current_user else None
     row.reviewed_at = datetime.now(UTC)
+
+    # If transitioning to 'corrected', write a Review audit record
+    # with the feedback loop time (from the previous reviewed_at to now).
+    if body.status == ReviewStatus.CORRECTED.value:
+        loop_time = (
+            datetime.now(UTC) - _as_aware(previous_reviewed_at)
+            if previous_reviewed_at is not None
+            else None
+        )
+        review_audit = Review(
+            result_id=item_id,
+            reviewer_id=str(current_user.id) if current_user else None,
+            action=ReviewStatus.CORRECTED.value,
+            comment=body.note or "",
+            data={
+                "table": table_name,
+                "loop_time_seconds": loop_time.total_seconds() if loop_time else None,
+                "previous_status": previous_status,
+            },
+        )
+        db.add(review_audit)
+
     await db.commit()
     await db.refresh(row)
 
@@ -315,7 +346,7 @@ async def batch_review(
             continue
 
         try:
-            row, _ = await _find_review_item(item.id, db)
+            row, item_table_name = await _find_review_item(item.id, db)
         except HTTPException as exc:
             failed += 1
             errors.append({"id": str(item.id), "error": exc.detail})
@@ -328,11 +359,34 @@ async def batch_review(
             errors.append({"id": str(item.id), "error": exc.detail})
             continue
 
+        previous_status = row.review_status
+        previous_reviewed_at = row.reviewed_at
         row.review_status = item.status
         row.review_note = item.note
         row.reviewed_by = str(current_user.id) if current_user else None
         row.reviewed_at = datetime.now(UTC)
         succeeded += 1
+
+        # Audit record for corrections (feedback loop metrics).
+        if item.status == ReviewStatus.CORRECTED.value:
+            loop_time = (
+                datetime.now(UTC) - _as_aware(previous_reviewed_at)
+                if previous_reviewed_at is not None
+                else None
+            )
+            db.add(
+                Review(
+                    result_id=item.id,
+                    reviewer_id=str(current_user.id) if current_user else None,
+                    action=ReviewStatus.CORRECTED.value,
+                    comment=item.note or "",
+                    data={
+                        "table": item_table_name,
+                        "loop_time_seconds": loop_time.total_seconds() if loop_time else None,
+                        "previous_status": previous_status,
+                    },
+                )
+            )
 
     await db.commit()
 
@@ -343,6 +397,38 @@ async def batch_review(
             failed=failed,
             errors=errors,
         ),
+    )
+
+
+@router.get(
+    "/feedback-metrics",
+    response_model=ApiResponse[dict],
+    summary="获取反馈闭环指标",
+    description="Return average feedback loop time and correction count from audit records.",
+)
+async def get_feedback_metrics(
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict]:
+    """Return feedback loop metrics computed from Review audit records."""
+    stmt = select(Review).where(Review.action == ReviewStatus.CORRECTED.value)
+    result = await db.execute(stmt)
+    reviews = result.scalars().all()
+
+    loop_times: list[float] = []
+    for r in reviews:
+        lt = r.data.get("loop_time_seconds") if r.data else None
+        if lt is not None:
+            loop_times.append(float(lt))
+
+    return ApiResponse(
+        success=True,
+        data={
+            "total_corrections": len(reviews),
+            "avg_loop_time_hours": (
+                sum(loop_times) / len(loop_times) / 3600 if loop_times else None
+            ),
+            "max_loop_time_hours": max(loop_times) / 3600 if loop_times else None,
+        },
     )
 
 
