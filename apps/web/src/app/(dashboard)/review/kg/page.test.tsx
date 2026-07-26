@@ -9,35 +9,43 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // ── Mock data ──────────────────────────────────────────────────────────
 
-const MOCK_ITEMS = [
+const MOCK_ITEMS: ReadonlyArray<ReviewItem> = [
   {
     id: 'kg1',
+    item_type: 'node',
+    item_data: { label: 'UO2 密度属性' },
+    confidence: 0.92,
+    review_status: 'pending',
+    source: null,
+    created_at: '2025-01-15T00:00:00Z',
     title: 'UO2 密度属性',
     type: '实体',
-    source: '文献A',
-    confidence: 0.92,
-    status: 'pending' as const,
+    status: 'pending',
     createdAt: '2025-01-15T00:00:00Z',
   },
   {
     id: 'kg2',
+    item_type: 'node',
+    item_data: { label: 'UO2 熔点属性' },
+    confidence: 0.85,
+    review_status: 'pending',
+    source: null,
+    created_at: '2025-01-16T00:00:00Z',
     title: 'UO2 熔点属性',
     type: '实体',
-    source: '文献B',
-    confidence: 0.85,
-    status: 'pending' as const,
+    status: 'pending',
     createdAt: '2025-01-16T00:00:00Z',
   },
-] as const
+]
 
-const MOCK_QUEUE_RESPONSE = {
-  items: [...MOCK_ITEMS],
+const MOCK_QUEUE_RESPONSE: ReviewListResponse = {
+  items: MOCK_ITEMS,
   total: 25,
   page: 1,
   pageSize: 20,
 }
 
-const EMPTY_RESPONSE = {
+const EMPTY_RESPONSE: ReviewListResponse = {
   items: [],
   total: 0,
   page: 1,
@@ -51,7 +59,7 @@ vi.mock('@/lib/review-api', () => ({
   batchKgAction: vi.fn().mockResolvedValue(undefined),
 }))
 
-import { getKgReviewQueue, batchKgAction } from '@/lib/review-api'
+import { getKgReviewQueue, batchKgAction, type ReviewItem, type ReviewListResponse } from '@/lib/review-api'
 import KgReviewPage from '@/app/(dashboard)/review/kg/page'
 
 const mockedGetKgReviewQueue = vi.mocked(getKgReviewQueue)
