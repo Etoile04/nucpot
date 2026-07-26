@@ -14,9 +14,13 @@ COPY apps/api/src/ ./src/
 COPY apps/api/migrations/ ./migrations/
 
 # Install the package (retry logic for flaky PyPI networks in CN region)
-RUN pip install --no-cache-dir --default-timeout=120 --retries=10 . || \
-    (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 .) || \
-    (sleep 20 && pip install --no-cache-dir --default-timeout=180 --retries=15 .)
+# Use Tsinghua mirror for reliable access in CN region
+RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple . || \
+    (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple .) || \
+    (sleep 20 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple .)
 
 # Bake in alembic config so the entrypoint can auto-migrate (matches staging-api.Dockerfile).
 # Without this, new migrations shipped in code are never applied to the production DB,
