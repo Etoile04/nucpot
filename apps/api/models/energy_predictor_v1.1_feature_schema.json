@@ -9,13 +9,13 @@
       "count": 8,
       "features": [
         {"name": "mo_equivalent", "description": "Mo equivalent parameter", "unit": "at.%"},
-        {"name": "lattice_distortion", "description": "Atomic size mismatch parameter (delta)", "unit": "dimensionless"},
         {"name": "allen_chi_diff", "description": "Allen electronegativity difference from U", "unit": "dimensionless"},
-        {"name": "vec", "description": "Valence electron concentration", "unit": "e/atom"},
-        {"name": "cluster_I", "description": "Cluster type I fraction (negative H_mix, same period)", "unit": "dimensionless"},
-        {"name": "cluster_II", "description": "Cluster type II fraction (negative H_mix, diff period)", "unit": "dimensionless"},
-        {"name": "cluster_III", "description": "Cluster type III fraction (positive H_mix, same period)", "unit": "dimensionless"},
-        {"name": "cluster_IV", "description": "Cluster type IV fraction (positive H_mix, diff period)", "unit": "dimensionless"}
+        {"name": "config_entropy", "description": "Configuration entropy (ideal mixing)", "unit": "J/(mol·K)"},
+        {"name": "bv_ratio", "description": "Bulk-modulus-to-volume ratio", "unit": "GPa/(cm³/mol)"},
+        {"name": "u_density", "description": "Uranium atomic density", "unit": "g/cm³"},
+        {"name": "mixing_enthalpy", "description": "Miedema mixing enthalpy (pairwise weighted)", "unit": "kJ/mol"},
+        {"name": "lattice_distortion", "description": "Atomic size mismatch parameter (delta)", "unit": "dimensionless"},
+        {"name": "vec", "description": "Valence electron concentration", "unit": "e/atom"}
       ]
     },
     "v1.1_element_resolved": {
