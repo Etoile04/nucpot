@@ -151,6 +151,33 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
     )
 
 
+def _create_correction_audit(
+    item_id: uuid.UUID,
+    table_name: str,
+    previous_status: str,
+    previous_reviewed_at: datetime | None,
+    reviewer_id: str | None,
+    note: str,
+) -> Review:
+    """Create a Review audit record for a corrected item with loop time."""
+    loop_time = (
+        datetime.now(UTC) - _as_aware(previous_reviewed_at)
+        if previous_reviewed_at is not None
+        else None
+    )
+    return Review(
+        result_id=item_id,
+        reviewer_id=reviewer_id,
+        action=ReviewStatus.CORRECTED.value,
+        comment=note,
+        data={
+            "table": table_name,
+            "loop_time_seconds": loop_time.total_seconds() if loop_time else None,
+            "previous_status": previous_status,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -186,12 +213,27 @@ async def get_pending_reviews(
             )
         tables_to_query = [(m, t) for m, t in tables_to_query if t == table_name]
 
+    # Count total pending items across queried tables.
+    total = 0
+    for model, _ in tables_to_query:
+        count_stmt = select(func.count()).where(
+            model.review_status == ReviewStatus.PENDING.value,
+        )
+        count_result = await db.execute(count_stmt)
+        total += count_result.scalar() or 0
+
+    pages = max(1, math.ceil(total / limit))
+    # DB-level pagination: fetch at most `limit * 2` rows from each table
+    # (overscan to handle cross-table ordering), then merge-sort in Python.
+    # This avoids loading ALL rows into memory for large datasets.
+    fetch_per_table = min(limit * 2, 100) if len(tables_to_query) > 1 else limit
     all_items: list[ReviewItemResponse] = []
     for model, table_name in tables_to_query:
         stmt = (
             select(model)
             .where(model.review_status == ReviewStatus.PENDING.value)
             .order_by(model.created_at.desc())
+            .limit(fetch_per_table)
         )
         result = await db.execute(stmt)
         rows = result.scalars().all()
@@ -201,8 +243,6 @@ async def get_pending_reviews(
     # Sort by created_at desc (stable across tables).
     all_items.sort(key=lambda x: x.created_at, reverse=True)
 
-    total = len(all_items)
-    pages = max(1, math.ceil(total / limit))
     start = (page - 1) * limit
     page_items = all_items[start : start + limit]
 
@@ -294,23 +334,11 @@ async def update_review_status(
     # If transitioning to 'corrected', write a Review audit record
     # with the feedback loop time (from the previous reviewed_at to now).
     if body.status == ReviewStatus.CORRECTED.value:
-        loop_time = (
-            datetime.now(UTC) - _as_aware(previous_reviewed_at)
-            if previous_reviewed_at is not None
-            else None
-        )
-        review_audit = Review(
-            result_id=item_id,
-            reviewer_id=str(current_user.id) if current_user else None,
-            action=ReviewStatus.CORRECTED.value,
-            comment=body.note or "",
-            data={
-                "table": table_name,
-                "loop_time_seconds": loop_time.total_seconds() if loop_time else None,
-                "previous_status": previous_status,
-            },
-        )
-        db.add(review_audit)
+        db.add(_create_correction_audit(
+            item_id, table_name, previous_status, previous_reviewed_at,
+            str(current_user.id) if current_user else None,
+            body.note or "",
+        ))
 
     await db.commit()
     await db.refresh(row)
@@ -369,24 +397,11 @@ async def batch_review(
 
         # Audit record for corrections (feedback loop metrics).
         if item.status == ReviewStatus.CORRECTED.value:
-            loop_time = (
-                datetime.now(UTC) - _as_aware(previous_reviewed_at)
-                if previous_reviewed_at is not None
-                else None
-            )
-            db.add(
-                Review(
-                    result_id=item.id,
-                    reviewer_id=str(current_user.id) if current_user else None,
-                    action=ReviewStatus.CORRECTED.value,
-                    comment=item.note or "",
-                    data={
-                        "table": item_table_name,
-                        "loop_time_seconds": loop_time.total_seconds() if loop_time else None,
-                        "previous_status": previous_status,
-                    },
-                )
-            )
+            db.add(_create_correction_audit(
+                item.id, item_table_name, previous_status, previous_reviewed_at,
+                str(current_user.id) if current_user else None,
+                item.note or "",
+            ))
 
     await db.commit()
 
@@ -480,7 +495,7 @@ async def get_review_stats(
         "kg_edges": "edge",
         "property_measurements": "measurement",
     }
-    by_type: dict[str, dict] = {}
+    by_type: dict[str, dict[str, object]] = {}
     for model, tbl in [
         (ExtractionResult, "extraction_results"),
         (KGNode, "kg_nodes"),
@@ -490,18 +505,20 @@ async def get_review_stats(
         type_label = type_map_reverse[tbl]
         if type_label not in by_type:
             by_type[type_label] = {"total": 0, "corrected": 0, "rejected": 0, "approved": 0}
-        for status_val in ["approved", "rejected", "corrected"]:
-            stmt = select(func.count()).where(
-                model.review_status == status_val,
-            )
-            result = await db.execute(stmt)
-            count = result.scalar() or 0
-            by_type[type_label][status_val] = count
-            by_type[type_label]["total"] += count
+        # Single GROUP BY query instead of 3 separate count queries
+        group_stmt = (
+            select(model.review_status, func.count())
+            .where(model.review_status.in_(["approved", "rejected", "corrected"]))
+            .group_by(model.review_status)
+        )
+        group_result = await db.execute(group_stmt)
+        for status_val, count in group_result:
+            by_type[type_label][status_val] = count  # type: ignore[literal-required]
+            by_type[type_label]["total"] += count  # type: ignore[operator]
         # Calculate adoption rate for this type
-        cr = by_type[type_label]["corrected"] + by_type[type_label]["rejected"]
+        cr = by_type[type_label]["corrected"] + by_type[type_label]["rejected"]  # type: ignore[operator]
         by_type[type_label]["adoption_rate"] = (
-            (by_type[type_label]["corrected"] / cr) if cr > 0 else None
+            (by_type[type_label]["corrected"] / cr) if cr > 0 else None  # type: ignore[operator]
         )
 
     stats.by_type = by_type
