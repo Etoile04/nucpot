@@ -7,6 +7,12 @@ FROM node:22-slim AS builder
 ARG API_SERVER_URL=http://nucpot-prod-api:8000
 ENV API_SERVER_URL=$API_SERVER_URL
 
+# NFM-741: LightRAG WebUI reverse-proxy target, read at build time by
+# next.config.ts rewrites. The LightRAG sidecar's built-in SPA + API
+# are proxied under /lightrag-api/* so port 9621 stays internal.
+ARG LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621
+ENV LIGHTRAG_WEBUI_URL=$LIGHTRAG_WEBUI_URL
+
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
