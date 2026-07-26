@@ -50,8 +50,13 @@ router = APIRouter(prefix="/predict", tags=["ML预测"])
 )
 async def predict_phase_endpoint(
     payload: PhasePredictRequest,
+    importance: bool = False,
 ) -> ApiResponse[PhasePredictResponse]:
-    """Predict phase type from 8 physical features."""
+    """Predict phase type from 8 physical features.
+
+    When ``importance=true`` is passed, ``feature_importance`` is populated
+    from the model result (NFM-1790); otherwise it is null.
+    """
     features = payload.to_feature_dict()
     result = predict_phase(features)
 
@@ -61,6 +66,10 @@ async def predict_phase_endpoint(
             detail="Phase classifier model is not available. "
                    "Ensure the model artifact is deployed at models/phase_classifier_v01.joblib.",
         )
+
+    feature_importance = (
+        result.get("feature_importance") if importance else None
+    )
 
     return ApiResponse(
         success=True,
@@ -80,6 +89,7 @@ async def predict_phase_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            feature_importance=feature_importance,
         ),
     )
 
@@ -96,8 +106,13 @@ async def predict_phase_endpoint(
 )
 async def predict_temperature_endpoint(
     payload: TempPredictRequest,
+    importance: bool = False,
 ) -> ApiResponse[TempPredictResponse]:
-    """Predict phase transition temperature from 8 physical features."""
+    """Predict phase transition temperature from 8 physical features.
+
+    When ``importance=true`` is passed, ``feature_importance`` is populated
+    from the model result (NFM-1790); otherwise it is null.
+    """
     features = payload.to_feature_dict()
     result = predict_temperature(features)
 
@@ -107,6 +122,10 @@ async def predict_temperature_endpoint(
             detail="Temperature predictor model is not available. "
                    "Ensure the model artifact is deployed at models/temp_predictor_v01.joblib.",
         )
+
+    feature_importance = (
+        result.get("feature_importance") if importance else None
+    )
 
     return ApiResponse(
         success=True,
@@ -122,6 +141,7 @@ async def predict_temperature_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            feature_importance=feature_importance,
         ),
     )
 
@@ -179,11 +199,13 @@ async def predict_energy_endpoint(
 )
 async def predict_phase_from_composition_endpoint(
     payload: CompositionPredictRequest,
+    importance: bool = False,
 ) -> ApiResponse[PhasePredictResponse]:
     """Predict phase type from raw alloy composition.
 
     Computes physical features via ``compute_all_features()``, then
-    delegates to ``predict_phase()``.
+    delegates to ``predict_phase()``. When ``importance=true`` is passed,
+    ``feature_importance`` is populated (NFM-1790).
     """
     from nfm_db.ml.feature_engineering import compute_all_features
 
@@ -199,6 +221,10 @@ async def predict_phase_from_composition_endpoint(
                 "models/phase_classifier_v01.joblib."
             ),
         )
+
+    feature_importance = (
+        result.get("feature_importance") if importance else None
+    )
 
     return ApiResponse(
         success=True,
@@ -218,5 +244,6 @@ async def predict_phase_from_composition_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            feature_importance=feature_importance,
         ),
     )
