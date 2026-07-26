@@ -14,10 +14,12 @@ import {
   ReviewQueueTable,
   type ReviewItem,
 } from '@/components/review/ReviewQueueTable'
+import { ReviewDetailPanel, type ReviewDetailData } from '@/components/review/ReviewDetailPanel'
 import {
   getKgReviewQueue,
   batchKgAction,
 } from '@/lib/review-api'
+import { request } from '@/lib/api-client'
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -106,6 +108,10 @@ function KgReviewContent() {
   const [total, setTotal] = useState(0)
   const [statusFilter, setStatusFilter] = useState('pending')
 
+  // Detail panel state (NFM-1874)
+  const [activeDetailItem, setActiveDetailItem] = useState<ReviewDetailData | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+
   // Aggregate counts (fetched separately for all statuses)
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0 })
 
@@ -184,14 +190,65 @@ function KgReviewContent() {
   )
 
   const handleItemAction = useCallback(
-    async (_id: string, action: 'approve' | 'reject') => {
+    async (_id: string, action: 'approve' | 'reject' | 'reset') => {
+      if (action === 'reset') {
+        try {
+          await batchKgAction('reset', [_id])
+          await loadQueue()
+          await loadStats()
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : '操作失败'
+          alert(message)
+        }
+        return
+      }
+      // For approve/reject, open the detail panel instead of direct action
+      // Fetch full item data + source for the detail panel
+      setDetailLoading(true)
       try {
+        const detail = await request<ReviewDetailData>(`/api/v1/review/${_id}/source`)
+        // Also fetch the item itself (combine source + item data)
+        const item = items.find((i) => i.id === _id)
+        if (item) {
+          setActiveDetailItem({
+            id: item.id,
+            item_type: item.type,
+            item_data: (item as any).item_data ?? {},
+            confidence: item.confidence,
+            review_status: item.status,
+            source: (item as any).source ?? detail,
+            created_at: item.createdAt,
+          })
+        }
+      } catch {
+        // Fallback: just do direct action
         await batchKgAction(action, [_id])
+        await loadQueue()
+        await loadStats()
+      } finally {
+        setDetailLoading(false)
+      }
+    },
+    [loadQueue, loadStats, items],
+  )
+
+  const handleDetailAction = useCallback(
+    async (id: string, action: 'approve' | 'reject' | 'needs_revision', note?: string) => {
+      setDetailLoading(true)
+      try {
+        const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'needs_revision'
+        await request(`/api/v1/review/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status, note: note || undefined }),
+        })
+        setActiveDetailItem(null)
         await loadQueue()
         await loadStats()
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : '操作失败'
         alert(message)
+      } finally {
+        setDetailLoading(false)
       }
     },
     [loadQueue, loadStats],
@@ -235,6 +292,14 @@ function KgReviewContent() {
         <div className="mt-4">
           <StatusBar {...stats} />
         </div>
+
+        {/* Review detail panel (NFM-1874) */}
+        <ReviewDetailPanel
+          item={activeDetailItem}
+          loading={detailLoading}
+          onAction={handleDetailAction}
+          onClose={() => setActiveDetailItem(null)}
+        />
       </div>
   )
 }
