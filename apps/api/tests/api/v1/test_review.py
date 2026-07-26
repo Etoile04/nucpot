@@ -243,7 +243,7 @@ async def test_update_review_status_needs_revision(async_client, db_session) -> 
 
 @pytest.mark.asyncio
 async def test_update_review_status_invalid_transition(async_client, db_session) -> None:
-    """Cannot transition from approved back to pending (409 Conflict)."""
+    """Cannot transition approved → rejected (409 Conflict)."""
     er = await _seed_extraction_result(
         db_session,
         review_status=ReviewStatus.APPROVED.value,
@@ -251,7 +251,7 @@ async def test_update_review_status_invalid_transition(async_client, db_session)
 
     response = await async_client.patch(
         f"/api/v1/review/{er.id}",
-        json={"status": "pending"},
+        json={"status": "rejected"},
     )
     assert response.status_code == 409
 
@@ -272,6 +272,49 @@ async def test_update_review_status_corrected_from_needs_revision(
     )
     assert response.status_code == 200
     assert response.json()["data"]["review_status"] == "corrected"
+
+
+@pytest.mark.asyncio
+async def test_reset_approved_to_pending(async_client, db_session) -> None:
+    """Approved item can be reset back to pending."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.APPROVED.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "pending", "note": "Reset for re-review"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["review_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_reset_rejected_to_pending(async_client, db_session) -> None:
+    """Rejected item can be reset back to pending."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.REJECTED.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "pending"},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pending_to_pending_rejected(async_client, db_session) -> None:
+    """Cannot transition pending → pending (no-op)."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.PENDING.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "pending"},
+    )
+    assert response.status_code == 409
 
 
 # ---------------------------------------------------------------------------

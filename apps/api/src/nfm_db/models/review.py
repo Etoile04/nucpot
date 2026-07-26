@@ -21,7 +21,8 @@ class ReviewStatus(str, enum.Enum):
 
     Transitions:
         pending       → approved | rejected | needs_revision
-        needs_revision → corrected
+        needs_revision → corrected | approved | rejected
+        approved | rejected | corrected → pending  (reset)
     """
 
     PENDING = "pending"
@@ -43,6 +44,10 @@ VALID_TRANSITIONS: dict[ReviewStatus, frozenset[ReviewStatus]] = {
         ReviewStatus.APPROVED,
         ReviewStatus.REJECTED,
     }),
+    # Reset: allow returning from terminal states to pending.
+    ReviewStatus.APPROVED: frozenset({ReviewStatus.PENDING}),
+    ReviewStatus.REJECTED: frozenset({ReviewStatus.PENDING}),
+    ReviewStatus.CORRECTED: frozenset({ReviewStatus.PENDING}),
 }
 
 
