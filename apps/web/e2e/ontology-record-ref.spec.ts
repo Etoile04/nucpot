@@ -57,7 +57,7 @@ test.describe("Ontology page — record_ref deep link (Phase 1)", { tag: "@unit"
   }) => {
     await page.route(GRAPH_URL, (route) => fulfillGraph(route, GRAPH_FIXTURE))
 
-    await page.goto("/ontology?node=mat:UO2&corpus=smirnov2014")
+    await page.goto("/ontology?node=mat:UO2&corpus=smirnov2014", { waitUntil: "domcontentloaded" })
 
     const link = page.locator(".ontology-record-ref-link")
     await expect(link).toBeVisible()
@@ -75,7 +75,7 @@ test.describe("Ontology page — record_ref deep link (Phase 1)", { tag: "@unit"
   }) => {
     await page.route(GRAPH_URL, (route) => fulfillGraph(route, GRAPH_FIXTURE))
 
-    await page.goto("/ontology?node=prop:lattice_constant&corpus=smirnov2014")
+    await page.goto("/ontology?node=prop:lattice_constant&corpus=smirnov2014", { waitUntil: "domcontentloaded" })
     await expect(page.locator(".ontology-record-ref-link")).toHaveCount(0)
   })
 
@@ -84,7 +84,7 @@ test.describe("Ontology page — record_ref deep link (Phase 1)", { tag: "@unit"
   }) => {
     await page.route(GRAPH_URL, (route) => route.fulfill({ status: 500 }))
 
-    await page.goto("/ontology?node=mat:UO2&corpus=smirnov2014")
+    await page.goto("/ontology?node=mat:UO2&corpus=smirnov2014", { waitUntil: "domcontentloaded" })
     // Static-embed iframe still renders; only the records link is absent.
     await expect(
       page.locator('iframe[title="OntoFuel 本体可视化"]'),
