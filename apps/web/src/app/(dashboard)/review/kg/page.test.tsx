@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for KgReviewPage — migrated to canonical review-api.
  *

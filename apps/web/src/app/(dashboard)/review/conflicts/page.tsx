@@ -107,14 +107,15 @@ function ConflictsContent() {
 
   // ── Row action → open detail panel ─────────────────────────────────
 
-  const handleItemAction = useCallback((_id: string, _action: 'approve' | 'reject') => {
+  const handleItemAction = useCallback((_id: string, _action: 'approve' | 'reject' | 'reset') => {
     setActiveConflictId(_id)
   }, [])
 
   // ── Batch action → bulk skip ────────────────────────────────────────
 
-  const handleBatchAction = useCallback(
-    async (action: 'approve' | 'reject', ids: ReadonlyArray<string>) => {
+  const handleBatchActionTyped = useCallback(
+    async (action: 'approve' | 'reject' | 'reset', ids: ReadonlyArray<string>) => {
+      if (action === 'reset') return  // Not applicable for conflicts
       const bulkAction: ConflictResolutionAction =
         action === 'approve' ? 'keep_a' : 'skip'
       try {
@@ -181,7 +182,7 @@ function ConflictsContent() {
         selectedIds={selectedIds}
         onSelect={handleSelect}
         onSelectAll={handleSelectAll}
-        onBatchAction={handleBatchAction}
+        onBatchAction={handleBatchActionTyped}
         onItemAction={handleItemAction}
         loading={loading}
         pagination={

@@ -73,7 +73,7 @@ export function ReviewQueueTable({
   loading = false,
   pagination,
 }: ReviewQueueTableProps) {
-  const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | null>(null)
+  const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | 'reset' | null>(null)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
   const allSelected = items.length > 0 && items.every(

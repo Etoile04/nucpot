@@ -21,9 +21,6 @@ function mockOkJson(data: unknown) {
   }
 }
 
-function mockOkNoContent() {
-  return { ok: true, status: 204, json: async () => null }
-}
 
 // Backend envelope wrapper
 function envelope(data: unknown) {

@@ -121,7 +121,7 @@ function KgReviewContent() {
     try {
       const queryParams = statusFilter === 'all' ? 'pending' : statusFilter
       const data = await getKgReviewQueue(queryParams, page, PAGE_SIZE)
-      setItems(data.items)
+      setItems(data.items as unknown as ReadonlyArray<ReviewItem>)
       setTotal(data.total)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '加载失败'
@@ -175,7 +175,7 @@ function KgReviewContent() {
   }, [items])
 
   const handleBatchAction = useCallback(
-    async (action: 'approve' | 'reject', ids: ReadonlyArray<string>) => {
+    async (action: 'approve' | 'reject' | 'reset', ids: ReadonlyArray<string>) => {
       try {
         await batchKgAction(action, ids)
         setSelectedIds(new Set())
