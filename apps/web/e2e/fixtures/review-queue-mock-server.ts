@@ -72,6 +72,31 @@ function handleReviewRoute(route: Route, url: string): void {
     return
   }
 
+  // Legacy: /api/v1/review/kg (old frontend path, still on production)
+  if (url.includes("/api/v1/review/kg") && method === "GET") {
+    jsonResponse(route, MOCK_KG_REVIEW_PENDING_RESPONSE)
+    return
+  }
+  // Legacy: /api/v1/review/kg/batch (old frontend path)
+  if (url.includes("/api/v1/review/kg/batch") && method === "POST") {
+    batchActionCount++
+    jsonResponse(
+      route,
+      batchActionCount % 2 === 1 ? MOCK_BATCH_APPROVE_RESPONSE : MOCK_BATCH_REJECT_RESPONSE,
+    )
+    return
+  }
+  // Legacy: /api/v1/review/conflicts (old frontend path)
+  if (url.includes("/api/v1/review/conflicts") && method === "GET") {
+    jsonResponse(route, MOCK_CONFLICTS_RESPONSE)
+    return
+  }
+  // Legacy: /api/v1/review/conflicts/*/resolve (old frontend path)
+  if (url.includes("/api/v1/review/conflicts/") && url.includes("/resolve") && method === "POST") {
+    jsonResponse(route, MOCK_RESOLVE_CONFLICT_RESPONSE)
+    return
+  }
+
   // PATCH /api/v1/review/{id} — resolve single item (conflict resolution)
   if (url.match(/\/api\/v1\/review\/[0-9a-f-]+/) && method === "PATCH") {
     jsonResponse(route, { success: true, data: MOCK_RESOLVE_CONFLICT_RESPONSE })
