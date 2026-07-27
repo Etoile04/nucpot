@@ -32,6 +32,11 @@ dependencies = [
     "scikit-learn>=1.5.0",
     "joblib>=1.4.0",
     "pymoo>=0.6.0",
+    # xgboost: used by train_v11.py:325, train_v20.py:222, train_energy_v11.py:28
+    # and required to unpickle the deployed .joblib artifacts
+    # (phase_classifier_v01, phase_classifier_v2.0, energy_predictor_v11).
+    # Pin 3.x to match the training-time major version.
+    "xgboost>=3.0,<4",
 ]
 
 [project.optional-dependencies]
