@@ -255,7 +255,7 @@ export function ReviewQueueTable({
                 <tr key={`expanded-${item.id}`} className="bg-gray-800/50">
                   <td colSpan={9} className="px-4 py-2">
                     <SourceProvenancePanel
-                      source={(item as any).source ?? null}
+                      itemId={item.id}
                       extractedValue={(item as any).item_data?.value != null ? String((item as any).item_data.value) : (item as any).item_data?.property_name}
                     />
                   </td>
