@@ -21,7 +21,6 @@ from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
     ExtractionTriggerRequest,
-    ExtractionTriggerResponse,
 )
 from nfm_db.services.extraction_pipeline import (
     get_job,
@@ -29,6 +28,11 @@ from nfm_db.services.extraction_pipeline import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Module-level set of in-flight background extraction tasks. Used so the
+# FastAPI request handler doesn't lose the task reference (RUF006) and
+# to allow graceful shutdown via ``_bg_tasks.clear()``.
+_bg_tasks: set[asyncio.Task[None]] = set()
 
 router = APIRouter(tags=["提取管理"])
 
@@ -85,7 +89,9 @@ async def trigger_extraction_job(
             except Exception:
                 logger.exception("Background extraction failed")
 
-    asyncio.create_task(_bg_extraction())
+    task = asyncio.create_task(_bg_extraction())
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
     return {
         "success": True,

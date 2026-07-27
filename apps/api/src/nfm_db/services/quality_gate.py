@@ -35,15 +35,18 @@ logger = logging.getLogger(__name__)
 
 def _safe_float(raw: Any) -> float:
     """Convert a value to float, handling LLM-extracted strings with
-    uncertainty (e.g. '0.30 ± 0.05') and scientific notation variants
-    (e.g. '3.32 × 10^-8', '1.5e-7')."""
+    uncertainty (e.g. '0.30 +/- 0.05') and scientific notation variants
+    (e.g. '3.32 x 10^-8', '1.5e-7')."""
     try:
         return float(raw)
     except (ValueError, TypeError):
         pass
     s = str(raw).strip()
-    # Normalise × 10^ / x10^ / *10^ → e notation
-    s = re.sub(r"[×x*]\s*10\^?", "e", s)
+    # Normalise x 10^ / x10^ / *10^ -> e notation. The first char in the
+    # character class is the Unicode MULTIPLICATION SIGN (\u00d7) so we
+    # can also strip it from LLM output like "3.32 \u00d7 10^-8". The
+    # duplicate 'x' / '*' are intentional. (noqa: RUF001)
+    s = re.sub(r"[×x*]\s*10\^?", "e", s)  # noqa: RUF001 (x char in pattern is intentional)
     try:
         return float(s)
     except (ValueError, TypeError):
