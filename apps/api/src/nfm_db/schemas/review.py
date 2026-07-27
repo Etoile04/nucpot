@@ -23,6 +23,8 @@ class ReviewSourceInfo(BaseModel):
     paragraph: str | None = None
     page: int | None = None
     doi: str | None = None
+    source_id: str | None = None
+    source_title: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +98,7 @@ class ReviewStatsResponse(BaseModel):
     """Review statistics summary across all 4 reviewable tables."""
 
     pending: int = 0
+    pending_review: int = 0  # KG model uses "pending_review" instead of "pending"
     approved: int = 0
     rejected: int = 0
     needs_revision: int = 0
