@@ -69,6 +69,11 @@ function mapBackendItem(raw: BackendReviewItem): ReviewItem {
     raw.item_type
   return {
     ...raw,
+    source: typeof raw.source === "object" && raw.source != null
+      ? { paragraph: (raw.source as any).paragraph ?? null,
+          page: (raw.source as any).page ?? null,
+          doi: (raw.source as any).doi ?? null }
+      : null,
     title,
     type: raw.item_type,
     status: raw.review_status,
