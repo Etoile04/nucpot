@@ -536,13 +536,38 @@ async def reextract_literature(
     """触发文献项的重新提取流程。
 
     Trigger a re-extraction of the literature item.
+
+    For now this flips ``parse_status`` back to ``uploaded`` and
+    schedules a new Celery task via :func:`schedule_literature_processing`.
     """
-    await _get_source_or_404(literature_id, db)
+    source = await _get_source_or_404(literature_id, db)
+
+    # Only allow re-extraction on items that already have parsed content
+    # OR on items that previously failed to parse — items with no
+    # content_md will be skipped from heuristic fallback.
+    source.parse_status = "uploaded"
+    source.parse_error = None
     await db.commit()
+
+    # Schedule background processing.
+    try:
+        from nfm_db.services.literature_dispatcher import (
+            schedule_literature_processing,
+        )
+
+        task_id = schedule_literature_processing(source.id)
+        logger.info(
+            "reextract_literature: scheduled task_id=%s for %s",
+            task_id,
+            source.id,
+        )
+    except Exception:  # pragma: no cover — broker errors are non-fatal here
+        logger.exception("reextract_literature: broker scheduling failed")
 
     return ApiResponse(
         success=True,
         data=LiteratureReextractResponse(
+            id=source.id,
             message="Re-extraction triggered",
             status="extracting",
         ),
