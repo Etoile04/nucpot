@@ -412,31 +412,6 @@ async def get_literature_detail(
     source = await _get_source_or_404(literature_id, db)
 
     # Count extraction figures if the model supports it (graceful fallback).
-    # Note: the schema for this endpoint uses LiteratureDetailResponse which
-    # only carries high-level metadata; full figures/tables extraction is
-    # surfaced via the v4 extraction pipeline.
-    figures_count = 0
-    tables_count = 0
-    try:
-        if hasattr(ExtractionFigure, "__tablename__") and hasattr(
-            ExtractionFigure, "job_id"
-        ):
-            # Match figures via the extraction_jobs table when available.
-            from nfm_db.models.extraction_result import ExtractionResult as _ER
-            if hasattr(_ER, "job_id"):
-                fig_stmt = (
-                    select(func.count())
-                    .select_from(ExtractionFigure)
-                    .join(_ER, _ER.job_id == ExtractionFigure.job_id)
-                    .where(_ER.source_id == literature_id)
-                )
-            else:
-                fig_stmt = select(func.count()).select_from(ExtractionFigure)
-            fig_result = await db.execute(fig_stmt)
-            figures_count = fig_result.scalar() or 0
-    except Exception:
-        logger.debug("Figure count skipped: schema mismatch (%s)", literature_id)
-
     detail = _source_to_detail(source)
     return ApiResponse(
         success=True,
