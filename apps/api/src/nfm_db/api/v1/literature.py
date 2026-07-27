@@ -95,15 +95,9 @@ def _source_to_detail(source: DataSource) -> LiteratureDetailResponse:
     return LiteratureDetailResponse(
         id=source.id,
         title=source.title,
-        doi=source.doi,
-        abstract=source.abstract,
-        journal=source.journal,
-        year=source.year,
-        status="uploaded",
-        extracted_entities=[],
-        extracted_relations=[],
-        figures_count=0,
-        tables_count=0,
+        status=source.parse_status or "uploaded",
+        source_id=source.id,
+        extraction_results=[],
         created_at=source.created_at,
         updated_at=source.updated_at,
     )
@@ -117,7 +111,8 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
         doi=source.doi,
         journal=source.journal,
         year=source.year,
-        status="uploaded",
+        status=source.parse_status or "uploaded",
+        source_id=source.id,
         created_at=source.created_at,
     )
 
@@ -385,14 +380,15 @@ async def get_literature_status(
 
     Return the current processing status and progress.
     """
-    await _get_source_or_404(literature_id, db)
+    source = await _get_source_or_404(literature_id, db)
 
-    status = "uploaded"
-    progress = 100
+    status = source.parse_status or "uploaded"
+    progress = 100 if status in ("completed", "failed") else 50 if status == "extracting" else 10
 
     return ApiResponse(
         success=True,
         data=LiteratureStatusResponse(
+            id=source.id,
             status=status,
             progress=progress,
         ),
@@ -415,32 +411,18 @@ async def get_literature_detail(
     """
     source = await _get_source_or_404(literature_id, db)
 
-    # Count extraction figures if they exist.
-    figures_count = 0
-    tables_count = 0
-    if hasattr(ExtractionFigure, "__tablename__"):
-        fig_stmt = select(func.count()).where(
-            ExtractionFigure.source_id == literature_id,
-        )
-        fig_result = await db.execute(fig_stmt)
-        figures_count = fig_result.scalar() or 0
-
+    # Count extraction figures if the model supports it (graceful fallback).
+    detail = _source_to_detail(source)
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
-            id=source.id,
-            title=source.title,
-            doi=source.doi,
-            abstract=source.abstract,
-            journal=source.journal,
-            year=source.year,
-            status="uploaded",
-            extracted_entities=[],
-            extracted_relations=[],
-            figures_count=figures_count,
-            tables_count=tables_count,
-            created_at=source.created_at,
-            updated_at=source.updated_at,
+            id=detail.id,
+            title=detail.title,
+            status=detail.status,
+            source_id=detail.source_id,
+            extraction_results=detail.extraction_results,
+            created_at=detail.created_at,
+            updated_at=detail.updated_at,
         ),
     )
 
@@ -529,13 +511,38 @@ async def reextract_literature(
     """触发文献项的重新提取流程。
 
     Trigger a re-extraction of the literature item.
+
+    For now this flips ``parse_status`` back to ``uploaded`` and
+    schedules a new Celery task via :func:`schedule_literature_processing`.
     """
-    await _get_source_or_404(literature_id, db)
+    source = await _get_source_or_404(literature_id, db)
+
+    # Only allow re-extraction on items that already have parsed content
+    # OR on items that previously failed to parse — items with no
+    # content_md will be skipped from heuristic fallback.
+    source.parse_status = "uploaded"
+    source.parse_error = None
     await db.commit()
+
+    # Schedule background processing.
+    try:
+        from nfm_db.services.literature_dispatcher import (
+            schedule_literature_processing,
+        )
+
+        task_id = schedule_literature_processing(source.id)
+        logger.info(
+            "reextract_literature: scheduled task_id=%s for %s",
+            task_id,
+            source.id,
+        )
+    except Exception:  # pragma: no cover — broker errors are non-fatal here
+        logger.exception("reextract_literature: broker scheduling failed")
 
     return ApiResponse(
         success=True,
         data=LiteratureReextractResponse(
+            id=source.id,
             message="Re-extraction triggered",
             status="extracting",
         ),

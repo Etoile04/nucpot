@@ -213,6 +213,30 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             db=db,
         )
 
+        # --- Step 3b: heuristic fallback when LLM unavailable ----------
+        # If the LLM extractor returned nothing (offline / 502 / etc.) but
+        # the markdown is plausible, run the regex extractor so reviewers
+        # still see candidate materials+properties in the review queue.
+        if not raw_properties and ds.content_md:
+            try:
+                from nfm_db.services.heuristic_extractor import heuristic_extract
+
+                raw_properties = heuristic_extract(
+                    ds.content_md,
+                    source_reference=str(ds.id),
+                )
+                logger.info(
+                    "process_literature: datasource_id=%s heuristic fallback "
+                    "produced %d candidate properties",
+                    ds.id,
+                    len(raw_properties),
+                )
+            except Exception:  # pragma: no cover — defensive
+                logger.exception(
+                    "Heuristic extractor failed for %s; leaving raw_properties=[]",
+                    ds.id,
+                )
+
         logger.info(
             "process_literature: datasource_id=%s extracted %d properties",
             ds.id,
