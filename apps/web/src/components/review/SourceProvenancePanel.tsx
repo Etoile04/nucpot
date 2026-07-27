@@ -55,8 +55,9 @@ function renderLatex(text: string): string {
   // Simple LaTeX → Unicode/HTML conversion for common patterns
   return text
     // $\mathrm{...}$ → just strip the wrapper, keep content
-    .replace(/\$\\mathrm\{([^}]*)\}\$/g, '$1')
-    .replace(/\$\\text\{([^}]*)\}\$/g, '$1')
+    // Handle \mathrm{} inside $...$ blocks: $\mathrm{UO}_2$ → UO_2
+    .replace(/\\mathrm\{([^}]*)\}/g, '$1')
+    .replace(/\\text\{([^}]*)\}/g, '$1')
     // $\times$ → ×
     .replace(/\$\\times\$/g, '×')
     .replace(/\$\\pm\$/g, '±')
@@ -73,6 +74,11 @@ function renderLatex(text: string): string {
     .replace(/\$([^$]*)_(\d+)\$/g, '$1<sub>$2</sub>')
     // Strip any remaining $...$ wrappers
     .replace(/\$([^$]{1,50})\$/g, '$1')
+    // Fix scientific notation: "10-2" → "10⁻²", "10-7" → "10⁻⁷"
+    .replace(/10\^?(-?\d+)/g, (_m: string, exp: string) => {
+      const sup: Record<string, string> = {'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','-':'⁻'}
+      return '10' + exp.split('').map((c: string) => sup[c] || c).join('')
+    })
 }
 
 function highlightInHtml(html: string, highlight: string | null | undefined): string {
