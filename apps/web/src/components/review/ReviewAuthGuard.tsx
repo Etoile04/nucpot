@@ -87,7 +87,14 @@ export default function ReviewAuthGuard({
     )
   }
 
+  // If we are not loading but have no profile, ensure we redirect to login.
+  // Previously this returned `null` leaving the spinner indefinitely if the
+  // navigation hadn't completed yet.  Force a redirect via window.location
+  // as a safety net.
   if (!profile) {
+    if (typeof window !== "undefined") {
+      window.location.replace("/login")
+    }
     return null
   }
 
