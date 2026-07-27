@@ -154,12 +154,22 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
 def _create_correction_audit(
     item_id: uuid.UUID,
     table_name: str,
+    action: str,
     previous_status: str,
     previous_reviewed_at: datetime | None,
     reviewer_id: str | None,
     note: str,
 ) -> Review:
-    """Create a Review audit record for a corrected item with loop time."""
+    """Create a Review audit record for a feedback-loop event with loop time.
+
+    ``action`` is the reviewer-initiated status that triggered the audit
+    row (e.g. ``needs_revision`` or ``corrected``). Both are valid
+    feedback-loop signals from the reviewer's perspective: a request
+    for revision is a feedback event, and a completed correction is the
+    resolution of that feedback. NFM-1875 audit — the UI exposes only
+    the needs_revision step today, but the corrected path is preserved
+    for future UI work.
+    """
     loop_time = (
         datetime.now(UTC) - _as_aware(previous_reviewed_at)
         if previous_reviewed_at is not None
@@ -168,7 +178,7 @@ def _create_correction_audit(
     return Review(
         result_id=item_id,
         reviewer_id=reviewer_id,
-        action=ReviewStatus.CORRECTED.value,
+        action=action,
         comment=note,
         data={
             "table": table_name,
@@ -284,6 +294,7 @@ async def get_review_source(
     source_title = None
     journal = None
     year = None
+    ds: DataSource | None = None
 
     if source_id is not None:
         ds = await db.get(DataSource, source_id)
@@ -296,6 +307,20 @@ async def get_review_source(
     page = getattr(row, "source_page", None)
     doi = getattr(row, "source_doi", None)
 
+    # Fallback for tables that don't store source_paragraph directly
+    # (kg_nodes, kg_edges, property_measurements): derive paragraph from
+    # the linked DataSource.content_md by matching the entity's primary
+    # label/value/property text. Keeps Phase 3 traceability working for
+    # existing seed data that predates the source-column migration.
+    if paragraph is None and source_id is not None and ds is not None:
+        full_markdown = getattr(ds, "content_md", None)
+        if full_markdown:
+            derived = _derive_paragraph(full_markdown, row, table_name)
+            if derived:
+                paragraph = derived
+            if doi is None:
+                doi = getattr(ds, "doi", None)
+
     return ApiResponse(
         success=True,
         data=SourceProvenanceResponse(
@@ -307,6 +332,73 @@ async def get_review_source(
             year=year,
         ),
     )
+
+
+def _derive_paragraph(content_md: str, row: Any, table_name: str) -> str | None:
+    """Extract the most relevant paragraph from ``content_md``.
+
+    The match strategy prefers the most distinctive field first (numeric
+    value → property string fields → label), so we don't anchor on common
+    words like "UO2" or "Material".
+
+    Returns ``None`` when no good match is found.
+    """
+    if not content_md:
+        return None
+
+    keywords: list[str] = []
+    if table_name == "kg_nodes":
+        label = (getattr(row, "label", None) or "").strip()
+        props = getattr(row, "properties", None) or {}
+        if isinstance(props, dict):
+            # kg_nodes properties vary — try common value-bearing keys first
+            for k in ("value", "condition_value", "label", "name"):
+                v = props.get(k)
+                if v is not None:
+                    keywords.append(str(v).strip())
+            # Also try condition_key as a last-ditch anchor
+            ck = props.get("condition_key")
+            if ck:
+                keywords.append(str(ck).strip())
+        if label:
+            keywords.append(label)
+    elif table_name == "kg_edges":
+        rt = (getattr(row, "relation_type", None) or "").strip()
+        if rt:
+            keywords.append(rt)
+        props = getattr(row, "properties", None) or {}
+        if isinstance(props, dict):
+            for k in ("value", "label"):
+                v = props.get(k)
+                if v is not None:
+                    keywords.append(str(v).strip())
+    elif table_name == "property_measurements":
+        val = getattr(row, "value_scalar", None)
+        notes = getattr(row, "notes", None)
+        if val is not None:
+            keywords.append(str(val))
+        if notes:
+            keywords.append(notes.strip())
+    elif table_name == "extraction_results":
+        item_data = getattr(row, "item_data", None) or {}
+        if isinstance(item_data, dict):
+            for k in ("value", "property_name", "label"):
+                v = item_data.get(k)
+                if v is not None:
+                    keywords.append(str(v).strip())
+        prop_name = (getattr(row, "property_name", None) or "").strip()
+        if prop_name:
+            keywords.append(prop_name)
+
+    lines = [ln.strip() for ln in content_md.splitlines() if ln.strip()]
+    for keyword in keywords:
+        if not keyword or len(keyword) < 2:
+            continue
+        lower_kw = keyword.lower()
+        for i, line in enumerate(lines):
+            if lower_kw in line.lower():
+                return line if i == 0 else f"{lines[i-1]}\n{line}"
+    return lines[0] if lines else None
 
 
 @router.patch(
@@ -340,11 +432,22 @@ async def update_review_status(
     row.reviewed_by = str(current_user.id) if current_user else None
     row.reviewed_at = datetime.now(UTC)
 
-    # If transitioning to 'corrected', write a Review audit record
-    # with the feedback loop time (from the previous reviewed_at to now).
-    if body.status == ReviewStatus.CORRECTED.value:
+    # Write a Review audit record for any reviewer-initiated feedback signal
+    # (correction, or a needs-revision request when the UI does not yet
+    # expose the second-step 'corrected' transition). The audit row records
+    # the feedback loop time (from the previous reviewed_at to now) so the
+    # /feedback-metrics endpoint can report real numbers. This is the
+    # minimum-change fix for NFM-1875 (feedback loop was not closing
+    # because the UI only ever sent approve|reject|needs_revision, never
+    # 'corrected', so the original CORRECTED-only audit branch never
+    # fired — see NFM-1875 audit).
+    if body.status in (
+        ReviewStatus.CORRECTED.value,
+        ReviewStatus.NEEDS_REVISION.value,
+    ):
         db.add(_create_correction_audit(
-            item_id, table_name, previous_status, previous_reviewed_at,
+            item_id, table_name, body.status, previous_status,
+            previous_reviewed_at,
             str(current_user.id) if current_user else None,
             body.note or "",
         ))
@@ -404,10 +507,15 @@ async def batch_review(
         row.reviewed_at = datetime.now(UTC)
         succeeded += 1
 
-        # Audit record for corrections (feedback loop metrics).
-        if item.status == ReviewStatus.CORRECTED.value:
+        # Audit record for any reviewer-initiated feedback signal (see
+        # NFM-1875 audit — UI only sends needs_revision, not corrected).
+        if item.status in (
+            ReviewStatus.CORRECTED.value,
+            ReviewStatus.NEEDS_REVISION.value,
+        ):
             db.add(_create_correction_audit(
-                item.id, item_table_name, previous_status, previous_reviewed_at,
+                item.id, item_table_name, item.status, previous_status,
+                previous_reviewed_at,
                 str(current_user.id) if current_user else None,
                 item.note or "",
             ))
@@ -433,8 +541,19 @@ async def batch_review(
 async def get_feedback_metrics(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict]:
-    """Return feedback loop metrics computed from Review audit records."""
-    stmt = select(Review).where(Review.action == ReviewStatus.CORRECTED.value)
+    """Return feedback loop metrics computed from Review audit records.
+
+    Counts both ``corrected`` and ``needs_revision`` audit rows: the
+    former represents a full correction cycle, the latter is the
+    reviewer-flagging step that the current UI exposes (NFM-1875 audit).
+    Both are valid feedback-loop signals from the reviewer's perspective.
+    """
+    stmt = select(Review).where(
+        Review.action.in_([
+            ReviewStatus.CORRECTED.value,
+            ReviewStatus.NEEDS_REVISION.value,
+        ])
+    )
     result = await db.execute(stmt)
     reviews = result.scalars().all()
 
