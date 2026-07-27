@@ -95,15 +95,9 @@ def _source_to_detail(source: DataSource) -> LiteratureDetailResponse:
     return LiteratureDetailResponse(
         id=source.id,
         title=source.title,
-        doi=source.doi,
-        abstract=source.abstract,
-        journal=source.journal,
-        year=source.year,
-        status="uploaded",
-        extracted_entities=[],
-        extracted_relations=[],
-        figures_count=0,
-        tables_count=0,
+        status=source.parse_status or "uploaded",
+        source_id=source.id,
+        extraction_results=[],
         created_at=source.created_at,
         updated_at=source.updated_at,
     )
@@ -117,7 +111,8 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
         doi=source.doi,
         journal=source.journal,
         year=source.year,
-        status="uploaded",
+        status=source.parse_status or "uploaded",
+        source_id=source.id,
         created_at=source.created_at,
     )
 
@@ -385,14 +380,15 @@ async def get_literature_status(
 
     Return the current processing status and progress.
     """
-    await _get_source_or_404(literature_id, db)
+    source = await _get_source_or_404(literature_id, db)
 
-    status = "uploaded"
-    progress = 100
+    status = source.parse_status or "uploaded"
+    progress = 100 if status in ("completed", "failed") else 50 if status == "extracting" else 10
 
     return ApiResponse(
         success=True,
         data=LiteratureStatusResponse(
+            id=source.id,
             status=status,
             progress=progress,
         ),
@@ -415,32 +411,43 @@ async def get_literature_detail(
     """
     source = await _get_source_or_404(literature_id, db)
 
-    # Count extraction figures if they exist.
+    # Count extraction figures if the model supports it (graceful fallback).
+    # Note: the schema for this endpoint uses LiteratureDetailResponse which
+    # only carries high-level metadata; full figures/tables extraction is
+    # surfaced via the v4 extraction pipeline.
     figures_count = 0
     tables_count = 0
-    if hasattr(ExtractionFigure, "__tablename__"):
-        fig_stmt = select(func.count()).where(
-            ExtractionFigure.source_id == literature_id,
-        )
-        fig_result = await db.execute(fig_stmt)
-        figures_count = fig_result.scalar() or 0
+    try:
+        if hasattr(ExtractionFigure, "__tablename__") and hasattr(
+            ExtractionFigure, "job_id"
+        ):
+            # Match figures via the extraction_jobs table when available.
+            from nfm_db.models.extraction_result import ExtractionResult as _ER
+            if hasattr(_ER, "job_id"):
+                fig_stmt = (
+                    select(func.count())
+                    .select_from(ExtractionFigure)
+                    .join(_ER, _ER.job_id == ExtractionFigure.job_id)
+                    .where(_ER.source_id == literature_id)
+                )
+            else:
+                fig_stmt = select(func.count()).select_from(ExtractionFigure)
+            fig_result = await db.execute(fig_stmt)
+            figures_count = fig_result.scalar() or 0
+    except Exception:
+        logger.debug("Figure count skipped: schema mismatch (%s)", literature_id)
 
+    detail = _source_to_detail(source)
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
-            id=source.id,
-            title=source.title,
-            doi=source.doi,
-            abstract=source.abstract,
-            journal=source.journal,
-            year=source.year,
-            status="uploaded",
-            extracted_entities=[],
-            extracted_relations=[],
-            figures_count=figures_count,
-            tables_count=tables_count,
-            created_at=source.created_at,
-            updated_at=source.updated_at,
+            id=detail.id,
+            title=detail.title,
+            status=detail.status,
+            source_id=detail.source_id,
+            extraction_results=detail.extraction_results,
+            created_at=detail.created_at,
+            updated_at=detail.updated_at,
         ),
     )
 
