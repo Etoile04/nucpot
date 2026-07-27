@@ -220,8 +220,8 @@ export function ReviewQueueTable({
                       <ConfidenceBadge value={item.confidence} size="sm" />
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-sm ${statusCfg.className}`}>
-                        {statusCfg.label}
+                      <span className={`text-sm ${statusCfg?.className ?? ''}`}>
+                        {statusCfg?.label ?? item.status}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400">

@@ -26,6 +26,7 @@ class ReviewStatus(str, enum.Enum):
     """
 
     PENDING = "pending"
+    PENDING_REVIEW = "pending_review"
     APPROVED = "approved"
     REJECTED = "rejected"
     NEEDS_REVISION = "needs_revision"
