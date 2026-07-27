@@ -115,6 +115,8 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
             page=row.source_page,
             doi=row.source_doi,
         )
+    elif getattr(row, "source_id", None):
+        source_info = ReviewSourceInfo(source_id=str(row.source_id))
 
     item_data: dict[str, Any] = {}
     if table_name == "kg_nodes":

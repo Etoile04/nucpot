@@ -109,7 +109,7 @@ export function ReviewDetailPanel({ item, loading, onAction, onClose }: ReviewDe
               原文段落
             </h3>
             <SourceProvenancePanel
-              source={item.source}
+              itemId={item.id}
               extractedValue={extractedValue}
             />
           </div>
