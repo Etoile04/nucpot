@@ -232,3 +232,16 @@ body {
     max-width: 900px !important;
   }
 }
+
+/* Review provenance table styling */
+.provenance-table td, .provenance-table th {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #374151;
+}
+.provenance-table thead {
+  background-color: #1f2937;
+}
+.provenance-table tr:nth-child(even) {
+  background-color: #111827;
+}
+
