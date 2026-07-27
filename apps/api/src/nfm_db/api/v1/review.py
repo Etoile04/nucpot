@@ -62,6 +62,24 @@ _TABLE_TYPE_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+def _is_feedback_loop_closure(previous_status: str, new_status: str) -> bool:
+    """Return True when a feedback loop has closed.
+
+    A feedback loop closes when:
+    1. The item is explicitly marked 'corrected', OR
+    2. The item was previously 'needs_revision' and is now 'approved'
+       (the real production path — UI has no 'corrected' button).
+    """
+    if new_status == ReviewStatus.CORRECTED.value:
+        return True
+    if (
+        previous_status == ReviewStatus.NEEDS_REVISION.value
+        and new_status == ReviewStatus.APPROVED.value
+    ):
+        return True
+    return False
+
+
 def _validate_transition(current_status: str, new_status: str) -> None:
     """Validate that the status transition is allowed."""
     try:
@@ -340,9 +358,10 @@ async def update_review_status(
     row.reviewed_by = str(current_user.id) if current_user else None
     row.reviewed_at = datetime.now(UTC)
 
-    # If transitioning to 'corrected', write a Review audit record
-    # with the feedback loop time (from the previous reviewed_at to now).
-    if body.status == ReviewStatus.CORRECTED.value:
+    # Write a Review audit record when the feedback loop closes.
+    # The loop closes either by an explicit 'corrected' transition or
+    # by approving an item that was previously sent back (needs_revision → approved).
+    if _is_feedback_loop_closure(previous_status, body.status):
         db.add(_create_correction_audit(
             item_id, table_name, previous_status, previous_reviewed_at,
             str(current_user.id) if current_user else None,
@@ -404,8 +423,8 @@ async def batch_review(
         row.reviewed_at = datetime.now(UTC)
         succeeded += 1
 
-        # Audit record for corrections (feedback loop metrics).
-        if item.status == ReviewStatus.CORRECTED.value:
+        # Audit record for feedback loop closure.
+        if _is_feedback_loop_closure(previous_status, item.status):
             db.add(_create_correction_audit(
                 item.id, item_table_name, previous_status, previous_reviewed_at,
                 str(current_user.id) if current_user else None,

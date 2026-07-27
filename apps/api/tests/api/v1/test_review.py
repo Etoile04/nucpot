@@ -601,6 +601,45 @@ async def test_batch_corrected_writes_audit(async_client, db_session) -> None:
         assert a.data["loop_time_seconds"] > 0
 
 
+
+@pytest.mark.asyncio
+async def test_needs_revision_to_approved_writes_audit(async_client, db_session) -> None:
+    """NFM-1915: needs_revision -> approved also writes a correction audit record.
+
+    The UI has no corrected button, so the real feedback-loop closure
+    path is needs_revision -> approved. This must still create the
+    Review audit row so feedback-metrics are populated.
+    """
+    from sqlalchemy import select
+
+    from nfm_db.models.review import Review
+
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.NEEDS_REVISION.value,
+        reviewed_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "approved", "note": "Looks good now"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["review_status"] == "approved"
+
+    # Verify exactly one audit record exists for this item.
+    stmt = select(Review).where(Review.result_id == er.id)
+    result = await db_session.execute(stmt)
+    audits = result.scalars().all()
+    assert len(audits) == 1
+    audit = audits[0]
+    assert audit.action == ReviewStatus.CORRECTED.value
+    assert audit.data["previous_status"] == "needs_revision"
+    assert audit.data["loop_time_seconds"] is not None
+    assert audit.data["loop_time_seconds"] > 0
+    assert audit.comment == "Looks good now"
+
+
 @pytest.mark.asyncio
 async def test_stats_includes_adoption_rate(async_client, db_session) -> None:
     """Adoption rate = corrected / (corrected + rejected)."""
