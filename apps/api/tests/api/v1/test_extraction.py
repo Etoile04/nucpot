@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -21,24 +22,17 @@ from nfm_db.services.extraction_pipeline import (
 
 @pytest.mark.asyncio
 async def test_trigger_extraction_success(async_client) -> None:
-    """Happy path: valid DOI source triggers extraction and returns 202."""
-    fake_job = ExtractionJob(
-        job_id=str(uuid.uuid4()),
-        source_reference="10.1016/j.nucengdes.2020.110756",
-        source_type="doi",
-        status=JobStatus.COMPLETED,
-        extracted_count=3,
-        staged_count=2,
-        rejected_count=1,
-        created_at=datetime.now(UTC),
-        started_at=datetime.now(UTC),
-        completed_at=datetime.now(UTC),
-    )
+    """Happy path: valid DOI source triggers extraction and returns 202.
 
+    Note: the production handler runs ``trigger_extraction`` in a
+    background asyncio task (see NFM-948 — needed to avoid Cloudflare
+    Tunnel 100s timeouts while waiting for LLM). This test therefore
+    asserts the queued response contract only and lets the background
+    task complete (or be cancelled) at event-loop teardown.
+    """
     with patch(
         "nfm_db.api.v1.extraction.trigger_extraction",
         new_callable=AsyncMock,
-        return_value=fake_job,
     ) as mock_trigger:
         response = await async_client.post(
             "/api/v1/extraction/trigger",
@@ -47,16 +41,18 @@ async def test_trigger_extraction_success(async_client) -> None:
                 "source_type": "doi",
             },
         )
+        # Pump the event loop so the background asyncio task (which
+        # calls ``await trigger_extraction``) gets a chance to start.
+        await asyncio.sleep(0.05)
+        mock_trigger.assert_awaited_once()
 
-    mock_trigger.assert_awaited_once()
     assert response.status_code == 202
     body = response.json()
     assert body["success"] is True
     data = body["data"]
-    assert data["job_id"] == fake_job.job_id
     assert data["source_reference"] == "10.1016/j.nucengdes.2020.110756"
     assert data["source_type"] == "doi"
-    assert data["status"] == "completed"
+    assert data["status"] == "queued"
     assert "message" in data
 
 
@@ -89,11 +85,16 @@ async def test_trigger_extraction_with_element_systems(async_client) -> None:
                 "max_confidence": "high",
             },
         )
+        # Pump the event loop so the background task (which calls
+        # ``await trigger_extraction``) gets a chance to run before
+        # we inspect ``mock_trigger.call_args`` after the ``with`` block.
+        await asyncio.sleep(0.05)
 
     assert response.status_code == 202
     body = response.json()
     assert body["success"] is True
 
+    assert mock_trigger.call_count > 0
     call_kwargs = mock_trigger.call_args[1]
     assert call_kwargs["element_systems"] == ["U", "Zr"]
     assert call_kwargs["cache_level"] == "L1"
@@ -244,7 +245,7 @@ async def test_trigger_extraction_pipeline_error(async_client) -> None:
         "nfm_db.api.v1.extraction.trigger_extraction",
         new_callable=AsyncMock,
         return_value=fake_job,
-    ):
+    ) as mock_trigger:
         response = await async_client.post(
             "/api/v1/extraction/trigger",
             json={
@@ -252,10 +253,15 @@ async def test_trigger_extraction_pipeline_error(async_client) -> None:
                 "source_type": "doi",
             },
         )
+        # The handler runs trigger_extraction in a background asyncio
+        # task; wait briefly for it to start so we can confirm it was
+        # invoked even though the pipeline itself raises.
+        await asyncio.sleep(0.05)
+        mock_trigger.assert_awaited_once()
 
     assert response.status_code == 202
     data = response.json()["data"]
-    assert data["status"] == "failed"
+    assert data["status"] == "queued"
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@ Tests for POST /trigger and GET /status/{job_id}.
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -39,7 +41,14 @@ def _override_get_db(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_trigger_extraction_success(db_session: AsyncSession) -> None:
-    """Extraction trigger endpoint accepts a valid request and returns job_id."""
+    """Extraction trigger endpoint accepts a valid request.
+
+    The production handler runs ``trigger_extraction`` in a background
+    asyncio task (see apps/api/src/nfm_db/api/v1/extraction.py — needed
+    to avoid Cloudflare Tunnel 100s timeouts during LLM calls). The
+    response therefore returns 202 immediately with ``status="queued"``
+    and no ``job_id`` (poll ``/extraction/status/{job_id}`` for that).
+    """
     payload = {
         "source_reference": "test_paper.md",
         "source_type": "file",
@@ -47,11 +56,18 @@ async def test_trigger_extraction_success(db_session: AsyncSession) -> None:
 
     app.dependency_overrides[get_db] = _override_get_db(db_session)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/extraction/trigger",
-            json=payload,
-        )
+    with patch(
+        "nfm_db.api.v1.extraction.trigger_extraction",
+        new_callable=AsyncMock,
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/extraction/trigger",
+                json=payload,
+            )
+            # Pump the event loop so the background task starts before
+            # the ``with patch`` block exits.
+            await asyncio.sleep(0.05)
 
     app.dependency_overrides.pop(get_db, None)
 
@@ -59,8 +75,7 @@ async def test_trigger_extraction_success(db_session: AsyncSession) -> None:
     body = response.json()
     assert body["success"] is True
     data = body["data"]
-    assert "job_id" in data
-    assert data["status"] in ("completed", "partial", "queued")
+    assert data["status"] == "queued"
     assert data["source_reference"] == "test_paper.md"
 
 
@@ -76,17 +91,22 @@ async def test_trigger_with_optional_filters(db_session: AsyncSession) -> None:
 
     app.dependency_overrides[get_db] = _override_get_db(db_session)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/extraction/trigger",
-            json=payload,
-        )
+    with patch(
+        "nfm_db.api.v1.extraction.trigger_extraction",
+        new_callable=AsyncMock,
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/extraction/trigger",
+                json=payload,
+            )
+            await asyncio.sleep(0.05)
 
     app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 202
     data = response.json()["data"]
-    assert data["status"] in ("completed", "partial", "queued")
+    assert data["status"] == "queued"
 
 
 @pytest.mark.asyncio
