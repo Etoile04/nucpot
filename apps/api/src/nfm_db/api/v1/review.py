@@ -217,6 +217,11 @@ async def get_pending_reviews(
             detail=f"Invalid status: {status}. Must be one of: {VALID_STATUSES}",
         )
 
+    # Expand 'pending' to also match 'pending_review' (KG model default)
+    _status_values = [status_value]
+    if status_value == "pending":
+        _status_values.append("pending_review")
+
     tables_to_query: list[tuple[Any, str]] = [
         (ExtractionResult, "extraction_results"),
         (KGNode, "kg_nodes"),
@@ -238,7 +243,7 @@ async def get_pending_reviews(
     total = 0
     for model, _ in tables_to_query:
         count_stmt = select(func.count()).where(
-            model.review_status == status_value,
+            model.review_status.in_(_status_values),
         )
         count_result = await db.execute(count_stmt)
         total += count_result.scalar() or 0
@@ -252,7 +257,7 @@ async def get_pending_reviews(
     for model, table_name in tables_to_query:
         stmt = (
             select(model)
-            .where(model.review_status == status_value)
+            .where(model.review_status.in_(_status_values))
             .order_by(model.created_at.desc())
             .limit(fetch_per_table)
         )
