@@ -59,7 +59,7 @@ def _validate_password_strength(password: str) -> None:
     summary="用户登录",
     description="用户登录并获取访问令牌。\n\nLogin with username/password and receive an access token.",
 )
-@limiter.limit("5/minute")
+@limiter.limit("20/minute")
 async def login(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -91,12 +91,18 @@ async def login(
         expires_delta=access_token_expires,
     )
 
-    # Set HttpOnly cookie for browser security (XSS-proof)
+    # Set HttpOnly cookie for browser security (XSS-proof).
+    # ``secure=True`` because the public endpoint is always served over
+    # HTTPS via the Cloudflare Tunnel; ``secure=False`` would let the
+    # token leak over plain HTTP and is rejected by modern browsers
+    # when the page is HTTPS (CHIPS / PCT cookie policy). The browser
+    # only sends the cookie back over HTTPS regardless, which is what
+    # we want.
     response.set_cookie(
         COOKIE_NAME,
         access_token,
         httponly=True,
-        secure=False,
+        secure=True,
         samesite="lax",
         path="/",
         max_age=COOKIE_MAX_AGE,

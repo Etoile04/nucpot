@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from nfm_db.api.v1 import (
     blog,
@@ -62,6 +63,57 @@ from nfm_db.schemas.errors import (
 )
 from nfm_db.services.lightrag_lifecycle import close_lightrag_client
 from nfm_db.services.upload_service import PotentialUploadError
+
+
+class ProxyHeadersMiddleware:
+    """Re-implementation of Starlette's removed ProxyHeadersMiddleware.
+
+    Trust the Cloudflare Tunnel proxy chain so ``request.client.host``
+    reflects the real visitor IP (CF edge) instead of ``127.0.0.1``
+    (local tunnel). Without this, slowapi's per-IP rate-limit
+    collides on the single 127.0.0.1 socket and a single misbehaving
+    visitor locks out every other user behind the tunnel for a full
+    minute. See NFM-2087.
+
+    In our deployment the API container is *only* reachable through the
+    Cloudflare Tunnel (no public bind), so we can safely trust all
+    upstream hosts (X-Forwarded-For from CF edge).
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Decode the headers once (ASGI passes them as bytes).
+        headers = {
+            k.decode("latin-1", errors="ignore").lower(): v.decode("latin-1", errors="ignore")
+            for k, v in (scope.get("headers") or [])
+        }
+        xff = headers.get("x-forwarded-for", "")
+        xfp = headers.get("x-forwarded-proto", "")
+        xfh = headers.get("x-forwarded-host", "")
+
+        # Pick the original client (left-most XFF entry).
+        if xff:
+            client_ip = xff.split(",")[0].strip() or (scope.get("client") or ("127.0.0.1", 0))[0]
+        else:
+            client_ip = (scope.get("client") or ("127.0.0.1", 0))[0]
+
+        # Patch the scope so downstream ASGI apps see the real client /
+        # scheme / host. Starlette's request.url_for() and slowapi's
+        # ``get_remote_address`` both read from ``scope``.
+        new_scope = dict(scope)
+        new_scope["client"] = (client_ip, (scope.get("client") or ("", 0))[1])
+        if xfp:
+            new_scope["scheme"] = xfp
+        if xfh:
+            new_scope["server"] = (xfh, new_scope.get("server", ("", 0))[1])
+
+        await self.app(new_scope, receive, send)
 
 
 @asynccontextmanager
@@ -178,6 +230,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trust the Cloudflare Tunnel proxy chain (X-Forwarded-For from CF
+# edge) so request.client.host reflects the real visitor IP. Without
+# this slowapi collides on the single 127.0.0.1 socket — see
+# ProxyHeadersMiddleware class above. NFM-2087.
+app.add_middleware(ProxyHeadersMiddleware)
 
 # Global rate limiting (NFM-1087): per-IP limits via slowapi on all /api/ routes.
 # Health endpoint is exempt. Configurable via RATE_LIMIT_* env vars.
