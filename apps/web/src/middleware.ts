@@ -45,7 +45,11 @@ export function middleware(request: NextRequest) {
     request.cookies.get("auth_token")?.value
 
   if (!token) {
-    const loginUrl = new URL("/admin/login", request.url)
+    // Redirect unauthenticated users on protected routes to the public
+    // /login page (used by domain experts + admin), NOT /admin/login
+    // (which is reserved for the legacy blog admin flow).
+    // Spec: NFM-1557 (P3.2 front-end review UI + source provenance).
+    const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("redirect", pathname)
     return NextResponse.redirect(loginUrl)
   }
