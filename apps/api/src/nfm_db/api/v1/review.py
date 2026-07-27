@@ -315,7 +315,37 @@ async def get_review_source(
     if paragraph is None and source_id is not None and ds is not None:
         full_markdown = getattr(ds, "content_md", None)
         if full_markdown:
-            derived = _derive_paragraph(full_markdown, row, table_name)
+            # For kg_edges, the row alone lacks value-bearing fields:
+            # - ``relation_type`` ("hasProperty") is a generic ontology
+            #   label that never appears in real literature text
+            # - ``properties.value`` / ``properties.label`` are usually empty
+            #   for edges (they only carry metadata like extraction_method)
+            # So we look up the labels of the connected source/target nodes
+            # and use those as the keywords (e.g. "UO2", "Melting Point")
+            # which DO appear in the source text.
+            extra_keywords: list[str] | None = None
+            if table_name == "kg_edges":
+                src_id = getattr(row, "source_node_id", None)
+                tgt_id = getattr(row, "target_node_id", None)
+                edge_labels: list[str] = []
+                if src_id is not None:
+                    src_node = await db.get(KGNode, src_id)
+                    if src_node is not None and src_node.label:
+                        edge_labels.append(src_node.label.strip())
+                if tgt_id is not None:
+                    tgt_node = await db.get(KGNode, tgt_id)
+                    if tgt_node is not None and tgt_node.label:
+                        edge_labels.append(tgt_node.label.strip())
+                if edge_labels:
+                    # Order: target (usually the specific property) first,
+                    # then source (usually the generic material). This way
+                    # the more distinctive keyword has a chance to match
+                    # before the more generic one triggers a Figure caption
+                    # hit.
+                    extra_keywords = list(reversed(edge_labels))
+            derived = _derive_paragraph(
+                full_markdown, row, table_name, extra_keywords=extra_keywords,
+            )
             if derived:
                 paragraph = derived
             if doi is None:
@@ -334,18 +364,36 @@ async def get_review_source(
     )
 
 
-def _derive_paragraph(content_md: str, row: Any, table_name: str) -> str | None:
+def _derive_paragraph(
+    content_md: str,
+    row: Any,
+    table_name: str,
+    extra_keywords: list[str] | None = None,
+) -> str | None:
     """Extract the most relevant paragraph from ``content_md``.
 
     The match strategy prefers the most distinctive field first (numeric
     value → property string fields → label), so we don't anchor on common
     words like "UO2" or "Material".
 
+    ``extra_keywords`` are prepended to the keyword list, so they are tried
+    first. Used to pass labels of related entities (e.g. for ``kg_edges``,
+    the labels of the connected source/target nodes) when the row itself
+    lacks distinctive value-bearing fields.
+
     Returns ``None`` when no good match is found.
     """
     if not content_md:
         return None
 
+    # ``extra_keywords`` are APPENDED to the keyword list (tried last) so
+    # that the row's own value-bearing fields — which are usually more
+    # distinctive — are tried first. Without this ordering, a generic
+    # label like "UO2" or "Material" can hit a Figure caption or table
+    # header before the precise keyword (e.g. "activation_energy") ever
+    # has a chance to match. Used to pass labels of related entities
+    # (e.g. for ``kg_edges``, the labels of the connected source/target
+    # nodes) when the row itself lacks distinctive value-bearing fields.
     keywords: list[str] = []
     if table_name == "kg_nodes":
         label = (getattr(row, "label", None) or "").strip()
@@ -391,6 +439,10 @@ def _derive_paragraph(content_md: str, row: Any, table_name: str) -> str | None:
             keywords.append(prop_name)
 
     lines = [ln.strip() for ln in content_md.splitlines() if ln.strip()]
+    # Append caller-provided extra keywords last (tried after the row's
+    # own fields, which are usually more distinctive — see note above).
+    if extra_keywords:
+        keywords.extend(k for k in extra_keywords if k and len(k) >= 2)
     for keyword in keywords:
         if not keyword or len(keyword) < 2:
             continue
