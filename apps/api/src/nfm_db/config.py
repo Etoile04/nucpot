@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
 
-    model_config = {"env_file": ".env", "env_prefix": "NFM_"}
+    model_config = {"env_file": ".env", "env_prefix": "NFM_", "extra": "ignore"}
 
 
 def get_settings() -> Settings:

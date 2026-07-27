@@ -324,7 +324,7 @@ async def call_llm(
     system_prompt: str,
     user_message: str,
     temperature: float = 0.1,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     config: dict[str, str] | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Send a chat completion request and parse the JSON response (legacy API)."""
@@ -356,7 +356,7 @@ async def call_llm(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -376,6 +376,21 @@ async def call_llm(
         raise RuntimeError("LLM returned empty choices")
 
     content = choices[0].get("message", {}).get("content", "")
+
+    # Qwen3 thinking models: when finish_reason='length', thinking consumed
+    # all max_tokens and content is empty.  Log diagnostic and raise.
+    finish_reason = choices[0].get("finish_reason", "")
+    if not content and finish_reason == "length":
+        logger.error(
+            "LLM returned empty content with finish_reason=length "
+            "(thinking consumed all %d tokens). Increase max_tokens.",
+            max_tokens,
+        )
+        raise RuntimeError(
+            f"LLM thinking consumed all {max_tokens} tokens "
+            "(finish_reason=length). Content is empty."
+        )
+
     if not content:
         raise RuntimeError("LLM returned empty content")
 

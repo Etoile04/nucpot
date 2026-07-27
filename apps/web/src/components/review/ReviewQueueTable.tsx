@@ -214,7 +214,9 @@ export function ReviewQueueTable({
                       {item.type}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400 truncate max-w-[150px]">
-                      {item.source}
+                      {typeof item.source === 'object' && item.source != null
+                        ? String((item.source as any).doi || (item.source as any).source_title || '-')
+                        : String(item.source || '-')}
                     </td>
                     <td className="px-4 py-3">
                       <ConfidenceBadge value={item.confidence} size="sm" />

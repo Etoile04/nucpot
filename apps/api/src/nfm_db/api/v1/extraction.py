@@ -7,6 +7,7 @@ Trigger and monitor OntoFuel extraction jobs:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated
 from uuid import UUID
@@ -15,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
-from nfm_db.database import get_db
+from nfm_db.database import async_session_factory, get_db
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
@@ -56,7 +57,7 @@ async def trigger_extraction_job(
 
     Accepted source_type values: 'doi', 'url', 'file', 'internal_id'.
     """
-    valid_source_types = {"doi", "url", "file", "internal_id"}
+    valid_source_types = {"doi", "url", "file", "internal_id", "datasource"}
     if payload.source_type not in valid_source_types:
         raise HTTPException(
             status_code=400,
@@ -66,24 +67,34 @@ async def trigger_extraction_job(
             ),
         )
 
-    job = await trigger_extraction(
-        session=session,
-        source_reference=payload.source_reference,
-        source_type=payload.source_type,
-        element_systems=payload.element_systems,
-        cache_level=payload.cache_level,
-        max_confidence=payload.max_confidence,
-    )
+    # Run extraction in the background with its own DB session to avoid
+    # Cloudflare Tunnel 100s timeout (Qwen3 thinking mode: 60-120s).
+    # The pipeline creates its own job in _job_store; poll GET
+    # /extraction/status/{job_id} or watch _ref_gap_fill_staging for results.
+    async def _bg_extraction() -> None:
+        async with async_session_factory() as bg:
+            try:
+                await trigger_extraction(
+                    session=bg,
+                    source_reference=payload.source_reference,
+                    source_type=payload.source_type,
+                    element_systems=payload.element_systems,
+                    cache_level=payload.cache_level,
+                    max_confidence=payload.max_confidence,
+                )
+            except Exception:
+                logger.exception("Background extraction failed")
+
+    asyncio.create_task(_bg_extraction())
 
     return {
         "success": True,
-        "data": ExtractionTriggerResponse(
-            job_id=job.job_id,
-            source_reference=job.source_reference,
-            source_type=job.source_type,
-            status=job.status.value,
-            message="Extraction job queued successfully.",
-        ).model_dump(),
+        "data": {
+            "source_reference": payload.source_reference,
+            "source_type": payload.source_type,
+            "status": "queued",
+            "message": "Extraction job queued. Check review queue for results.",
+        },
     }
 
 

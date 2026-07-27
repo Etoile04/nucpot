@@ -465,6 +465,7 @@ async def trigger_extraction(
             source_reference=source_reference,
             source_type=source_type,
             element_systems=element_systems,
+            db=session,
         )
         _update_job(job, extracted_count=len(raw_properties))
 

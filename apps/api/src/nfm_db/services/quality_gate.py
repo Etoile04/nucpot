@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -30,6 +31,26 @@ from nfm_db.models.ref_gap_fill import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_float(raw: Any) -> float:
+    """Convert a value to float, handling LLM-extracted strings with
+    uncertainty (e.g. '0.30 ± 0.05') and scientific notation variants
+    (e.g. '3.32 × 10^-8', '1.5e-7')."""
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        pass
+    s = str(raw).strip()
+    # Normalise × 10^ / x10^ / *10^ → e notation
+    s = re.sub(r"[×x*]\s*10\^?", "e", s)
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        pass
+    # Fall back to first numeric token
+    m = re.search(r"[-+]?\d*\.?\d+", str(raw))
+    return float(m.group()) if m else 0.0
 
 # Default path to property-mapping.json (bundled with nfm-ref-gapfill)
 _DEFAULT_PROPERTY_MAPPING_PATH = (
@@ -300,7 +321,7 @@ class QualityGateService:
 
         # Step 3: Range validation
         ranges = self._mapping_loader.load()
-        value = float(ref_data.get("value", 0))
+        value = _safe_float(ref_data.get("value", 0))
         range_result = validate_range(property_name, value, ranges)
 
         # Step 4: Confidence routing
@@ -364,7 +385,7 @@ class QualityGateService:
             element_system=str(ref_data.get("element_system", "")),
             phase=ref_data.get("phase"),
             property_name=str(ref_data.get("property", ref_data.get("property_name", ""))),
-            value=float(ref_data.get("value", 0)),
+            value=_safe_float(ref_data.get("value", 0)),
             unit=str(ref_data.get("unit", "")),
             method=ref_data.get("method"),
             source=str(ref_data.get("source", "")),

@@ -96,7 +96,7 @@ async def login(
         COOKIE_NAME,
         access_token,
         httponly=True,
-        secure=True,
+        secure=False,
         samesite="lax",
         path="/",
         max_age=COOKIE_MAX_AGE,
