@@ -77,6 +77,18 @@ from celery import Celery  # noqa: E402
 
 celery_app = Celery("nfm_tasks")
 
+# ---- Force module registration ----------------------------------------
+# Importing these modules here (AFTER celery_app exists) ensures their
+# ``@celery_app.task(...)`` decorators fire and register the task with
+# this Celery app.  Without this, the worker raises
+# ``Received unregistered task of type '...process_literature_task'``.
+#
+# Order matters: celery_app must exist before the decorator runs, so
+# ``from celery_app import celery_app`` in those modules is the source
+# of the circular import — we resolve it here by importing the side-
+# effect modules AFTER celery_app is created.
+from nfm_db.services import literature_dispatcher  # noqa: F401,E402
+
 # Route literature-processing tasks to their own queue so the MD worker
 # (--queues=md_verification) and the literature worker
 # (--queues=literature_processing) can scale independently. See

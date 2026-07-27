@@ -56,7 +56,17 @@ _MATERIAL_PATTERN = re.compile(
 
 def _is_real_compound(formula: str) -> bool:
     """Filter rule: every symbol must be in _KNOWN_ELEMENTS AND we must
-    have evidence this isn't prose (digit, separator, or multi-element).
+    have evidence this isn't prose (multi-element OR separator OR ≥2-digit
+    stoichiometric suffix that can't plausibly be oxidation state).
+
+    Single-element + single-digit forms like "Cr3", "O2", "Fe2" are
+    chemistry oxidation-state notation, NOT materials — they're noisy
+    and should be rejected so they don't pollute the review queue.
+    Allowed forms:
+      * Multi-element formulas (UO2, U3Si2, Cr2O3, Al2O3)
+      * Alloy conventions with separator (U-10Mo, Zr-4)
+      * Bare element name with no digit (U, Cr, Mo) — accepted as
+        element-only when it's ≥2 chars and not a common English word.
     """
     formula = formula.strip().strip("()")
     if not formula or len(formula) > 30:
@@ -67,9 +77,17 @@ def _is_real_compound(formula: str) -> bool:
     has_digit = bool(re.search(r"\d", formula))
     has_separator = "-" in formula or "\u2013" in formula
     multi_elem = len(syms) >= 2
-    if multi_elem or has_digit or has_separator:
+    # 2+ digit suffix like "U235" or "Si28" is fine — too long for oxidation
+    two_digit = bool(re.fullmatch(r"[A-Z][a-z]?\d{2,}.*", formula))
+    if multi_elem or has_separator or two_digit:
         return True
-    return False
+    if has_digit:
+        # Reject single-element + single-digit (Cr3, O2, Fe2 etc.)
+        return False
+    # Single bare element symbol — accept iff not a common English word.
+    if formula in _FALSE_FRIENDS:
+        return False
+    return False  # bare single symbol, almost always prose
 
 
 def _collapse_spaced_formula(text: str) -> str:
@@ -182,13 +200,25 @@ _PROPERTY_RULES: list[tuple[re.Pattern[str], str, str]] = [
 
 
 def _match_property(text: str, idx: int) -> tuple[str, str] | None:
-    """Walk back from idx to find a property name."""
-    start = max(0, idx - 100)
+    """Walk back from idx to find a property name. Returns (name, family).
+
+    Search up to 250 chars back so distant headers/captions like
+    "Lattice parameter measured using X-ray diffraction ... 5.47 angstrom"
+    still match even when the property label sits a sentence or two
+    earlier in the paragraph.
+    """
+    start = max(0, idx - 250)
     section = text[start:idx]
+    # Prefer the LAST (closest) match in the walk-back window.
+    best: tuple[str, str] | None = None
     for pattern, name, family in _PROPERTY_RULES:
-        if pattern.search(section):
-            return name, family
-    return None
+        last = None
+        for m in pattern.finditer(section):
+            last = m
+        if last is not None:
+            best = (name, family)
+            break  # first match in _PROPERTY_RULES order wins
+    return best
 
 
 _UNIT_FAMILIES: dict[str, frozenset[str]] = {
@@ -220,12 +250,14 @@ def _nearest_material(
     materials: list[tuple[int, int, str]],
     idx: int,
     *,
-    max_distance: int = 250,
+    max_distance: int = 400,
 ) -> str | None:
     """Pick the material (start,end,formula) closest to *idx*.
 
     Prefer materials that END before *idx* so we look at preceding context.
     Falls back to materials that start after *idx*.
+    Wider max_distance default (400 chars) so distant captions/tables
+    still get a sensible attribution.
     """
     if not materials:
         return None
