@@ -23,9 +23,6 @@ class ExtractionFigure(Base):
     source_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("data_sources.id"), nullable=True
     )
-    job_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("extraction_jobs.id"), nullable=True
-    )
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     figure_type: Mapped[str | None] = mapped_column(String, nullable=True)
     file_path: Mapped[str] = mapped_column(String, default="")
