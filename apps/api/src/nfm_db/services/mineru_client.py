@@ -510,19 +510,20 @@ class MinerUClient:
         ``cdn-mineru.openxlab.org.cn``.
         """
         # 1) pycurl (libcurl bindings) — most reliable
-        try:
-            import pycurl  # type: ignore[import-not-found]
+        import importlib.util
 
-            return await asyncio.to_thread(_pycurl_get, url, 120.0)
-        except ImportError:
+        if importlib.util.find_spec("pycurl") is None:
             pycurl_err = "pycurl not installed"
-        except Exception as exc:  # noqa: BLE001
-            pycurl_err = f"pycurl={exc!r}"
+        else:
+            try:
+                return await asyncio.to_thread(_pycurl_get, url, 120.0)
+            except Exception as exc:
+                pycurl_err = f"pycurl={exc!r}"
 
         # 2) urllib fallback
         try:
-            import urllib.request
             import ssl
+            import urllib.request
 
             ctx = ssl.create_default_context()
             req = urllib.request.Request(
@@ -530,7 +531,7 @@ class MinerUClient:
             )
             with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
                 return resp.read()
-        except Exception as urllib_exc:  # noqa: BLE001
+        except Exception as urllib_exc:
             urllib_err = f"urllib={urllib_exc!r}"
 
         # 3) httpx last resort
@@ -542,7 +543,7 @@ class MinerUClient:
                         f"Failed to download MinerU result zip: HTTP {resp.status_code}"
                     )
                 return resp.content
-        except Exception as httpx_exc:  # noqa: BLE001
+        except Exception as httpx_exc:
             raise MinerUAPIError(
                 f"Failed to download MinerU result zip from {url}: "
                 f"pycurl={pycurl_err!r}, urllib={urllib_err!r}, httpx={httpx_exc!r}"
@@ -575,8 +576,9 @@ def _pycurl_get(url: str, timeout: float = 120.0) -> bytes:
 
     Returns the body as bytes. Raises ``pycurl.error`` on failure.
     """
-    import pycurl  # type: ignore[import-not-found]
     import io as _io
+
+    import pycurl  # type: ignore[import-not-found]
 
     buf = _io.BytesIO()
     c = pycurl.Curl()
