@@ -22,6 +22,16 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
     (sleep 20 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple .)
 
+# Explicitly install xgboost as a defensive layer. The dependency is also
+# declared in apps/api/pyproject.toml, but pinning here ensures the package
+# is present in this image layer even if the pyproject deps list is ever
+# pruned. xgboost is required to unpickle phase_classifier_v*.joblib and
+# energy_predictor_v*.joblib artifacts at API startup (PHASE3-LIGHTRAG-PHASECLASSIFIER-FIX).
+RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple || \
+    (sleep 5 && pip install --no-cache-dir 'xgboost>=3.0,<4' \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple)
+
 # Bake in alembic config so the entrypoint can auto-migrate (matches staging-api.Dockerfile).
 # Without this, new migrations shipped in code are never applied to the production DB,
 # causing UndefinedColumnError at runtime (schema drift incident, 2026-07-20).
