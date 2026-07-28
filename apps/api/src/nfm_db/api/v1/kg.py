@@ -35,8 +35,6 @@ from nfm_db.schemas.kg import (
     SemanticQueryResponse,
 )
 from nfm_db.services.kg_utils import parse_aliases
-# Legacy review queue service imports removed — Phase 3 unified review
-# model uses api/v1/review.py which queries kg_nodes.review_status directly.
 
 logger = logging.getLogger(__name__)
 
