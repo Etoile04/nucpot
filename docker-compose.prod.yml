@@ -92,8 +92,8 @@ services:
       # requests bypass the host proxy and go directly over the
       # Docker bridge network.  Without this, API→LightRAG traffic
       # is forwarded to host.docker.internal:7892 → 502.
-      NO_PROXY: ${PROD_API_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
-      no_proxy: ${PROD_API_no_proxy:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
+      NO_PROXY: ${PROD_API_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      no_proxy: ${PROD_API_no_proxy:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
       # NFM-MINERU-1: MinerU PDF parsing (literature pipeline primary parser)
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
       MINERU_API_KEY: ${MINERU_API_KEY:-}
