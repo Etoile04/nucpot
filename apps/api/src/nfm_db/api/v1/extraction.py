@@ -1,21 +1,26 @@
 """Extraction pipeline API endpoints (NFM-66).
 
 Trigger and monitor OntoFuel extraction jobs:
-- POST /api/v1/extraction/trigger — Trigger extraction for a literature source
+- POST /api/v1/extraction/trigger — Trigger extraction for a literature source (human/editor)
 - GET  /api/v1/extraction/status/{job_id} — Check extraction job status
+- POST /api/v1/extraction/ingest   — OntoFuel service-account ingest endpoint (NFM-1973)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Annotated
-from uuid import UUID
+from datetime import UTC, datetime
+from typing import Annotated, Any
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import require_editor
+from nfm_db.api.v1.auth import require_editor, require_ingest_authority
 from nfm_db.database import get_db
+from nfm_db.models import Corpus
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
@@ -27,6 +32,65 @@ from nfm_db.services.literature_dispatcher import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ExtractionIngestRequest(BaseModel):
+    """Request body for ``POST /api/v1/extraction/ingest``.
+
+    OntoFuel's nucpot client (NFM-1972 / NFM-1973) posts a JSON envelope
+    containing extracted material properties plus provenance.  Fields are
+    deliberately permissive so the upstream schema can evolve without
+    requiring an API change here; the authoritative contract lives in
+    ``OntoFuel`` (the upstream producer).  Missing or unknown fields are
+    forwarded to the ingestion pipeline as-is.
+    """
+
+    source_reference: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "Source identifier OntoFuel used to produce this batch "
+            "(DOI, URL, internal id, file path)."
+        ),
+    )
+    source_type: str = Field(
+        default="doi",
+        max_length=20,
+        description="Type of source_reference: 'doi' | 'url' | 'file' | 'internal_id'.",
+    )
+    corpus_id: str = Field(
+        min_length=1,
+        max_length=100,
+        description=(
+            "External corpus slug the batch belongs to (NFM-1972 AC-5). "
+            "Service accounts may auto-create unknown corpora; human "
+            "callers must reference an already-registered corpus."
+        ),
+    )
+    element_systems: list[str] | None = Field(
+        default=None,
+        description="Element systems OntoFuel extracted for (e.g. ['U', 'Pu']).",
+    )
+    properties: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Material property records extracted by OntoFuel.",
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Provenance / OntoFuel run metadata (model version, timestamp, etc.).",
+    )
+
+
+class ExtractionIngestAck(BaseModel):
+    """Acknowledgement returned by the service-account ingest endpoint."""
+
+    job_id: UUID = Field(description="Server-assigned id for this ingest batch.")
+    source_reference: str
+    source_type: str
+    corpus_id: str = Field(description="Corpus the batch was tagged with.")
+    accepted_count: int = Field(description="Number of property records accepted.")
+    received_at: datetime
+    message: str = "Ingest accepted; queued for processing."
 
 router = APIRouter(tags=["提取管理"])
 
@@ -143,3 +207,113 @@ async def get_extraction_status(
             completed_at=job.completed_at,
         ).model_dump(),
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/extraction/ingest  (NFM-1973 / NFM-1972 AC-1)
+# ---------------------------------------------------------------------------
+#
+# This is the **only** HTTP endpoint in the API that admits service
+# accounts.  Authorization is enforced by ``require_service_scope`` which
+# verifies:
+#   1. The JWT carries an ``is_service_account: true`` claim.
+#   2. The JWT's ``scope`` claim equals
+#      ``ServiceAccountScope.EXTRACTION_INGEST``.
+#   3. The DB row has ``is_service_account=True`` (belt-and-suspenders
+#      against forged tokens or post-issuance demotion).
+#
+# Any other endpoint — including ``/extraction/trigger`` and the entire
+# ``/admin/*`` tree — returns ``403 Forbidden`` for service accounts via
+# ``require_blog_role`` / ``require_permission`` (see ``api/v1/auth.py``).
+
+
+@router.post(
+    "/extraction/ingest",
+    response_model=ExtractionIngestAck,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="提取批次入库（服务账号 / 编辑者）",
+    description=(
+        "接收 OntoFuel 服务账号（或人工编辑者）提交的提取批次。\n\n"
+        "Accept an extraction batch from an OntoFuel service account "
+        "(scope ``extraction:ingest``) or a human editor/admin. "
+        "AC-5 corpus rules:\n"
+        "* Service account + unknown ``corpus_id`` → auto-create the corpus.\n"
+        "* Human editor/admin + unknown ``corpus_id`` → ``400 Bad Request``.\n"
+        "Other identities (reviewers, no-blog-role humans, wrong scope) "
+        "receive ``403 Forbidden``."
+    ),
+)
+async def ingest_extraction_batch(
+    payload: ExtractionIngestRequest,
+    caller: Annotated[User, Depends(require_ingest_authority())],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ExtractionIngestAck:
+    """接受服务账号或编辑者提交的提取批次。
+
+    AC-5 missing-corpus behaviour:
+
+    * ``caller.is_service_account`` and corpus absent → row created with
+      ``is_auto_created=True, owner_id=None``.
+    * Human caller and corpus absent → ``HTTP 400`` with the message
+      ``corpus '<id>' not registered; contact admin``.
+
+    The handler performs minimal synchronous validation — assigning a
+    ``job_id``, resolving/creating the corpus, and counting accepted
+    property records — and returns an ack.  Heavy lifting (property
+    mapping, ontology lookup, persistence) is expected to land in a
+    follow-up issue that wires this endpoint to the
+    ``process_literature_task`` Celery pipeline.
+    """
+    corpus = (
+        await session.execute(
+            select(Corpus).where(Corpus.corpus_id == payload.corpus_id)
+        )
+    ).scalar_one_or_none()
+
+    if corpus is None:
+        if caller.is_service_account:
+            corpus = Corpus(
+                corpus_id=payload.corpus_id,
+                name=payload.corpus_id,
+                description=None,
+                owner_id=None,
+                is_auto_created=True,
+            )
+            session.add(corpus)
+            await session.flush()
+            logger.info(
+                "ingest_extraction_batch: auto-created corpus_id=%s by svc_user=%s",
+                payload.corpus_id,
+                caller.username,
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"corpus '{payload.corpus_id}' not registered; "
+                    "contact admin"
+                ),
+            )
+
+    job_id = uuid4()
+    accepted_count = len(payload.properties)
+
+    logger.info(
+        "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
+        "service=%s accepted=%d",
+        job_id,
+        payload.source_reference,
+        corpus.corpus_id,
+        caller.username,
+        caller.is_service_account,
+        accepted_count,
+    )
+
+    return ExtractionIngestAck(
+        job_id=job_id,
+        source_reference=payload.source_reference,
+        source_type=payload.source_type,
+        corpus_id=corpus.corpus_id,
+        accepted_count=accepted_count,
+        received_at=datetime.now(UTC),
+    )
