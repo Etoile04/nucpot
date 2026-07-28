@@ -13,7 +13,6 @@ Review queue endpoints have been migrated to /api/v1/review/*
 from __future__ import annotations
 
 import logging
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
