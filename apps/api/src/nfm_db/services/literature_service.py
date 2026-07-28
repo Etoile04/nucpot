@@ -188,10 +188,28 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
             # Step 2b: if still empty, parse the PDF.
             if ds.content_md is None:
+                if not ds.file_path:
+                    # No upload artifact — cannot parse. Mark the datasource
+                    # as failed and return cleanly instead of crashing in
+                    # storage.read() (was IsADirectoryError, 2026-07-28).
+                    logger.warning(
+                        "process_literature: datasource_id=%s has no file_path "
+                        "(no PDF upload recorded) — marking failed and skipping",
+                        ds.id,
+                    )
+                    ds.parse_status = "failed"
+                    ds.parse_error = "no file_path recorded for this datasource"
+                    await db.commit()
+                    return {
+                        "datasource_id": str(ds.id),
+                        "status": "skipped",
+                        "reason": "no_file_path",
+                    }
+
                 ds.parse_status = PARSE_STATUS_PARSING
                 await db.commit()
 
-                pdf_bytes = _get_storage().read(ds.file_path or "")
+                pdf_bytes = _get_storage().read(ds.file_path)
                 ds.content_md = _parse_pdf_to_markdown(pdf_bytes)
 
             logger.info(
