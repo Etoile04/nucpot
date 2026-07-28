@@ -306,6 +306,7 @@ export interface LiteratureListItem {
   readonly doi: string | null
   readonly journal: string | null
   readonly year: number | null
+  readonly abstract?: string | null
   readonly status: LiteratureStatus
   readonly source_id: string | null
   readonly created_at: string
