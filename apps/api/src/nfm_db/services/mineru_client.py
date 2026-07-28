@@ -529,8 +529,9 @@ class MinerUClient:
             req = urllib.request.Request(
                 url, headers={"User-Agent": "nucpot/1.0"}
             )
-            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
-                return resp.read()
+            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:  # type: ignore[no-any-return]
+                body: bytes = resp.read()
+                return body
         except Exception as urllib_exc:
             urllib_err = f"urllib={urllib_exc!r}"
 
@@ -578,7 +579,7 @@ def _pycurl_get(url: str, timeout: float = 120.0) -> bytes:
     """
     import io as _io
 
-    import pycurl  # type: ignore[import-not-found]
+    import pycurl  # type: ignore[import-not-found,import-untyped]
 
     buf = _io.BytesIO()
     c = pycurl.Curl()
