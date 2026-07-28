@@ -489,3 +489,111 @@ class TestGraphBuilderUUIDAssignment:
         msg = str(excinfo.value)
         assert "FAKE_SOURCE" in msg, f"Fail-fast error must name the source label, got: {msg!r}"
         assert "FAKE_TARGET" in msg, f"Fail-fast error must name the target label, got: {msg!r}"
+
+
+class TestGraphBuilderEdgeDedup:
+    """Verify that _create_edge skips duplicate edges (same source, target,
+    relation_type) instead of raising a UNIQUE constraint violation.
+
+    Regression: the extraction pipeline Stage 5 (NFM-1945) calls
+    build_from_extraction on every submit. Re-processing overlapping content
+    previously caused IntegrityError on kg_edges UNIQUE constraint.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_edge_skips_duplicate_and_returns_existing(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Calling _create_edge twice with the same triple returns the
+        existing edge on the second call (no IntegrityError)."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        source_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+
+        # Create source and target nodes so FK references resolve.
+        source_node = KGNode(
+            id=source_id,
+            label="UO2",
+            node_type="Material",
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        target_node = KGNode(
+            id=target_id,
+            label="density",
+            node_type="Property",
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        db_session.add(source_node)
+        db_session.add(target_node)
+        await db_session.flush()
+
+        relation = ExtractedRelation(
+            source_label="UO2",
+            source_type="Material",
+            target_label="density",
+            target_type="Property",
+            relation_type="has_property",
+            confidence=0.95,
+            properties={},
+            source_id=None,
+        )
+
+        edge1 = await builder._create_edge(relation, source_id, target_id)
+        await db_session.flush()
+
+        assert edge1.source_node_id == source_id
+        assert edge1.target_node_id == target_id
+
+        # Same triple again — should return the existing edge, not raise.
+        edge2 = await builder._create_edge(relation, source_id, target_id)
+        assert edge2.id == edge1.id, "Expected the same edge, not a new one"
+
+        # Only one row in the table.
+        rows = list(
+            (await db_session.execute(select(KGEdge))).scalars().all()
+        )
+        assert len(rows) == 1
+
+    @pytest.mark.asyncio
+    async def test_build_from_extraction_idempotent_on_reprocess(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Calling build_from_extraction twice with the same extracted
+        properties should not raise — duplicate edges are skipped."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "property": "density",
+                "confidence": 0.95,
+            },
+            {
+                "material_name": "UO2",
+                "property": "melting_point",
+                "confidence": 0.85,
+            },
+        ]
+
+        result1 = await builder.build_from_extraction(extracted)
+        await db_session.flush()
+        assert result1.edges_created >= 1
+
+        # Re-process the same extraction — should succeed without error.
+        result2 = await builder.build_from_extraction(extracted)
+        await db_session.flush()
+        # On second pass at least some nodes are matched (linked).
+        assert result2.nodes_matched >= 1
