@@ -31,8 +31,8 @@ test.describe("Review Conflicts — Unauthenticated", { tag: "@smoke" }, () => {
   }) => {
     await page.goto("/review/conflicts", { waitUntil: "domcontentloaded" })
 
-    // Dashboard routes require auth — should redirect to /admin/login
-    await expect(page).toHaveURL(/\/admin\/login/, { timeout: 10_000 })
+    // Dashboard routes require auth — should redirect to /login
+    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
   })
 })
 
