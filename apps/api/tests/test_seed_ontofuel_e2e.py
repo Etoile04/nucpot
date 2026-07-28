@@ -57,7 +57,7 @@ class TestIdempotency:
 
     async def test_double_seed_same_counts(self, db_session: AsyncSession):
         """Running seed twice produces the same DB counts."""
-        stats1 = await seed_ontofuel(db_session, json_path=NVL_JSON)
+        await seed_ontofuel(db_session, json_path=NVL_JSON)
         await db_session.commit()
 
         stats2 = await seed_ontofuel(db_session, json_path=NVL_JSON, force=True)
