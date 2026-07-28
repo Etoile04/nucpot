@@ -45,21 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
 async def _run_seed(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     json_path = Path(args.json) if args.json else None
 
-    # Import database URL from settings
-    try:
-        from nfm_db.database import SQLALCHEMY_DATABASE_URL
-    except ImportError:
-        # Fallback for direct invocation outside the app
-        SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./test_seed.db"
-
-    engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=False)
-    async_session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    # Use the app's existing session factory
+    from nfm_db.database import async_session_factory
 
     async with async_session_factory() as session:
         from nfm_db.services.seed_ontofuel import seed_ontofuel
