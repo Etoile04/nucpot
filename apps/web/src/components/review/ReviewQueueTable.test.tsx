@@ -146,7 +146,7 @@ describe('ReviewQueueTable', () => {
   it('batch bar has correct aria-labels', () => {
     const selectedIds = new Set(['item-1'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds })} />)
-    expect(screen.getByLabelText('批量通过 1 项')).toBeDefined()
+    expect(screen.getByLabelText('批量审核 1 项')).toBeDefined()
     expect(screen.getByLabelText('批量拒绝 1 项')).toBeDefined()
   })
 
@@ -155,9 +155,9 @@ describe('ReviewQueueTable', () => {
   it('opens confirmation modal on batch approve click', () => {
     const selectedIds = new Set(['item-1'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds })} />)
-    fireEvent.click(screen.getByLabelText('批量通过 1 项'))
+    fireEvent.click(screen.getByLabelText('批量审核 1 项'))
     // Use heading role to disambiguate from batch bar button text
-    expect(screen.getByRole('heading', { name: '批量通过' })).toBeDefined()
+    expect(screen.getByRole('heading', { name: '批量审核' })).toBeDefined()
     expect(screen.getByText(/确定通过选中的 1 项吗/)).toBeDefined()
   })
 
@@ -175,7 +175,7 @@ describe('ReviewQueueTable', () => {
     const selectedIds = new Set(['item-1', 'item-2'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds, onBatchAction })} />)
 
-    fireEvent.click(screen.getByLabelText('批量通过 2 项'))
+    fireEvent.click(screen.getByLabelText('批量审核 2 项'))
     fireEvent.click(screen.getByText('确认通过'))
 
     expect(onBatchAction).toHaveBeenCalledWith('approve', ['item-1', 'item-2'])
@@ -187,7 +187,7 @@ describe('ReviewQueueTable', () => {
     const selectedIds = new Set(['item-1'])
     render(<ReviewQueueTable {...defaultProps({ selectedIds })} />)
 
-    fireEvent.click(screen.getByLabelText('批量通过 1 项'))
+    fireEvent.click(screen.getByLabelText('批量审核 1 项'))
     fireEvent.click(screen.getByText('取消'))
 
     // Modal is gone — check dialog role, not text (batch bar button text persists)
