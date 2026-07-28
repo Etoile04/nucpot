@@ -20,6 +20,10 @@ dependencies = [
     "celery[redis]>=5.4.0",
     "redis>=5.2.0",
     "httpx>=0.28.0",
+    # pycurl (libcurl bindings) for MinerU result zip download — httpx/urllib
+    # both fail TLS 1.3 handshake against cdn-mineru.openxlab.org.cn on some
+    # egress networks (SSLEOFError), libcurl handles it reliably.
+    "pycurl>=7.45.0",
     "python-frontmatter>=1.1.0",
     "slowapi>=0.1.9",
     "PyMuPDF>=1.24.0",

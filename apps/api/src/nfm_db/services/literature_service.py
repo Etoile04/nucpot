@@ -74,17 +74,55 @@ def _get_storage() -> StorageBackend:
 
 
 def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
-    """Convert PDF bytes to plain-text Markdown via PyMuPDF.
+    """Convert PDF bytes to Markdown.
 
-    Each page's text is concatenated with a blank-line separator.  Section
-    headings and tables are intentionally *not* re-flowed: the downstream
-    LLM in :func:`ontofuel_extract` is robust to plain text and we want
-    a stable, reproducible transformation here.
+    Prefers MinerU (NFM-MINERU-1) for structured output with formula
+    LaTeX and table recognition. Falls back to PyMuPDF raw text extraction
+    when MinerU is disabled, the API key is missing, or the request fails.
+    Both code paths are deliberately tolerant: a failure in the primary
+    path must not block extraction — the downstream LLM is robust to
+    plain text.
 
-    Raises whatever ``fitz`` raises on malformed PDFs (typically
-    ``RuntimeError``) so the caller can capture and re-raise with the
-    truncated error message.
+    Raises whatever ``fitz`` raises on malformed PDFs when the fallback
+    is used so the caller can capture and re-raise with the truncated
+    error message.
     """
+    markdown: str | None = None
+    parser_used = "pymupdf"
+
+    # ---- Primary: MinerU (v4 精准解析 API) -----------------------------
+    try:
+        from nfm_db.services.mineru_client import (
+            MinerUError,
+            mineru_enabled,
+            parse_pdf_to_markdown,
+        )
+
+        if mineru_enabled():
+            try:
+                markdown = parse_pdf_to_markdown(pdf_bytes, filename="upload.pdf")
+                parser_used = "mineru"
+                logger.info(
+                    "_parse_pdf_to_markdown: mineru OK chars=%d (file=%d bytes)",
+                    len(markdown or ""),
+                    len(pdf_bytes),
+                )
+            except MinerUError as exc:
+                # Config / API / timeout / network — all recoverable.
+                # Log and fall through to PyMuPDF rather than crashing
+                # the Celery pipeline.
+                logger.warning(
+                    "_parse_pdf_to_markdown: mineru failed (%s) — falling back to PyMuPDF",
+                    exc,
+                )
+    except ImportError:
+        # mineru_client module missing — treat as "MinerU not configured".
+        pass
+
+    if markdown:
+        return markdown
+
+    # ---- Fallback: PyMuPDF raw text ------------------------------------
     import fitz  # type: ignore[import-untyped]
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -92,7 +130,13 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
         parts: list[str] = []
         for page in doc:
             parts.append(page.get_text())
-        return "\n\n".join(parts)
+        result = "\n\n".join(parts)
+        if parser_used != "pymupdf":
+            logger.warning(
+                "_parse_pdf_to_markdown: using PyMuPDF fallback (%d chars)",
+                len(result),
+            )
+        return result
     finally:
         doc.close()
 
