@@ -210,9 +210,9 @@ async def find_duplicates(
             b_aliases = await _material_aliases(session, b)
             overlap = [
                 alias
-                for alias in a_aliases + [a.name]
+                for alias in [*a_aliases, a.name]
                 if alias and alias.lower() in {
-                    x.lower() for x in (b_aliases + [b.name])
+                    x.lower() for x in [*b_aliases, b.name]
                 }
             ]
             if overlap:

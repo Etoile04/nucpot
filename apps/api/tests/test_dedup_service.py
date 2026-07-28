@@ -25,11 +25,10 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from nfm_db.models import Base
-from nfm_db.models.entity_merge import EntityMergeLog, MatchMethod
+from nfm_db.models.entity_merge import MatchMethod
 from nfm_db.models.material import Material, MaterialCategory
 from nfm_db.services.dedup_service import (
     DEFAULT_FUZZY_THRESHOLD,
-    DuplicateCandidate,
     MergeResult,
     _normalize_formula,
     execute_merge,
@@ -38,7 +37,6 @@ from nfm_db.services.dedup_service import (
     levenshtein_ratio,
     list_merge_logs,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
