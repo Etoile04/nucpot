@@ -38,6 +38,24 @@ logger = logging.getLogger(__name__)
 # DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
 _DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 
+
+class EmptyExtractionError(Exception):
+    """Raised when extraction cannot produce results for a known, structural reason.
+
+    Distinguishes "we have no data to extract" (this exception) from "the
+    extractor failed unexpectedly" (any other exception). Callers should
+    mark the job as FAILED with the message so the operator can see why
+    the pipeline produced nothing — without this, the previous
+    "return [] and complete" behavior masked missing-DataSource and
+    missing-content bugs behind a green COMPLETED status (D1 fix,
+    2026-07-28).
+    """
+
+    def __init__(self, reason: str, *, source_reference: str = ""):
+        self.reason = reason
+        self.source_reference = source_reference
+        super().__init__(reason)
+
 # ---------------------------------------------------------------------------
 # In-memory job store
 # ---------------------------------------------------------------------------
@@ -249,27 +267,36 @@ async def ontofuel_extract(
         ds = await db.get(DataSource, UUID(source_reference))
         if ds is None:
             logger.warning(
-                "ontofuel_extract: DataSource %s not found — returning empty",
+                "ontofuel_extract: DataSource %s not found",
                 source_reference,
             )
-            return []
+            raise EmptyExtractionError(
+                f"DataSource {source_reference} not found in database",
+                source_reference=source_reference,
+            )
         if ds.content_md is None:
             logger.warning(
-                "ontofuel_extract: DataSource %s has no content_md — returning empty",
+                "ontofuel_extract: DataSource %s has no content_md",
                 source_reference,
             )
-            return []
+            raise EmptyExtractionError(
+                f"DataSource {source_reference} has no content_md (PDF not yet parsed)",
+                source_reference=source_reference,
+            )
         # Pre-load content; fall through to LLM extraction below.
         content = ds.content_md
         source_reference = ds.title or source_reference
 
-    # Stub mode + DOI: return empty (DOI content not available in stub) (NFM-636)
+    # Stub mode + DOI: cannot resolve DOI content in stub (NFM-636)
     if _is_stub_mode() and source_type == "doi":
         logger.info(
-            "OntoFuel stub mode: DOI content not available for %s — returning empty",
+            "OntoFuel stub mode: DOI content not available for %s",
             source_reference,
         )
-        return []
+        raise EmptyExtractionError(
+            "DOI content not available in stub mode (set EXTRACTION_STUB_MODE=0)",
+            source_reference=source_reference,
+        )
 
     # Stub mode: return demo data for CI/testing
     if _is_stub_mode():
@@ -287,7 +314,10 @@ async def ontofuel_extract(
                 "LLM not configured — DOI content not available for %s",
                 source_reference,
             )
-            return []
+            raise EmptyExtractionError(
+                "DOI content not available: LLM not configured",
+                source_reference=source_reference,
+            )
         logger.warning(
             "LLM not configured (LLM_API_KEY not set) — falling back to stub mode for %s",
             source_reference,
@@ -461,12 +491,72 @@ async def trigger_extraction(
         _update_job(job, status=JobStatus.RUNNING, started_at=datetime.now(UTC))
         _update_job(job, status=JobStatus.EXTRACTING)
 
-        raw_properties = await ontofuel_extract(
-            source_reference=source_reference,
-            source_type=source_type,
-            element_systems=element_systems,
-            db=session,
-        )
+        try:
+            raw_properties = await ontofuel_extract(
+                source_reference=source_reference,
+                source_type=source_type,
+                element_systems=element_systems,
+                db=session,
+            )
+        except EmptyExtractionError as exc:
+            # D1 fix (2026-07-28): structural failures (missing DataSource,
+            # missing content_md, etc.) now surface as FAILED with a clear
+            # error message instead of silently completing with zero results.
+            logger.warning(
+                "Job %s: EmptyExtractionError for %s — %s",
+                job_id,
+                source_reference,
+                exc.reason,
+            )
+
+            # Pipeline-fusion fallback (D2 fix, 2026-07-28): if the issue is
+            # simply that the PDF hasn't been parsed yet (content_md is None),
+            # kick off the full literature processing pipeline which handles
+            # PDF parsing + extraction + KG build in one Celery task. This
+            # closes the long-standing disconnect between the two pipelines
+            # (trigger_extraction vs process_literature).
+            fallback_scheduled = False
+            if (
+                source_type == "datasource"
+                and "no content_md" in exc.reason
+            ):
+                try:
+                    from uuid import UUID
+
+                    from nfm_db.services.literature_dispatcher import (
+                        process_literature_task,
+                    )
+
+                    ds_uuid = UUID(source_reference)
+                    # Celery @task adds .delay() at runtime; mypy sees the
+                    # underlying function type. (Compare md_tasks.py:10
+                    # which calls .delay() without any type ignore.)
+                    process_literature_task.delay(str(ds_uuid))
+                    fallback_scheduled = True
+                    logger.info(
+                        "Job %s: scheduled process_literature_task for %s",
+                        job_id,
+                        ds_uuid,
+                    )
+                except Exception as fallback_exc:
+                    logger.warning(
+                        "Job %s: process_literature_task fallback failed: %s",
+                        job_id,
+                        fallback_exc,
+                    )
+
+            error_msg = f"Extraction produced no results: {exc.reason}"
+            if fallback_scheduled:
+                error_msg += " — process_literature_task scheduled as fallback"
+
+            _update_job(
+                job,
+                status=JobStatus.FAILED,
+                error_message=error_msg,
+                completed_at=datetime.now(UTC),
+            )
+            await session.commit()
+            return job
         _update_job(job, extracted_count=len(raw_properties))
 
         logger.info(
@@ -477,20 +567,16 @@ async def trigger_extraction(
         )
 
         if not raw_properties:
-            # DOI in stub/no-LLM mode → FAILED (NFM-636)
-            if source_type == "doi":
-                _update_job(
-                    job,
-                    status=JobStatus.FAILED,
-                    error_message="DOI content not available in stub mode",
-                    completed_at=datetime.now(UTC),
-                )
-            else:
-                _update_job(
-                    job,
-                    status=JobStatus.COMPLETED,
-                    completed_at=datetime.now(UTC),
-                )
+            # D1 fix (2026-07-28): ontofuel_extract() raises EmptyExtractionError
+            # for structural failures (missing DataSource, missing content_md,
+            # etc.) so we should never reach here with an empty list. Defensive
+            # COMPLETED path remains for legitimate "source had no extractable
+            # properties" cases.
+            _update_job(
+                job,
+                status=JobStatus.COMPLETED,
+                completed_at=datetime.now(UTC),
+            )
             return job
 
         # Stage 2: Property mapping (normalize names)
