@@ -354,6 +354,29 @@ class TestEdgeCases:
         assert result["reason"] == "placeholder"
         assert result["datasource_id"] == str(ds.id)
 
+    async def test_no_file_path_marks_failed(self, db_session: AsyncSession) -> None:
+        """DataSource with no file_path and no content_md is marked failed."""
+        ds = DataSource(
+            title="No File",
+            source_type="uploaded_pdf",
+            parse_status="uploaded",
+            file_path=None,
+            content_md=None,
+        )
+        db_session.add(ds)
+        await db_session.commit()
+        await db_session.refresh(ds)
+
+        result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "no_file_path"
+        assert result["datasource_id"] == str(ds.id)
+
+        await db_session.refresh(ds)
+        assert ds.parse_status == "failed"
+        assert ds.parse_error == "no file_path recorded for this datasource"
+
     async def test_empty_extraction_marks_completed_without_mapping(
         self, db_session: AsyncSession
     ) -> None:
