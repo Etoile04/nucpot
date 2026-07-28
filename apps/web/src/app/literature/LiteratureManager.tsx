@@ -125,6 +125,36 @@ const INITIAL_STATE: ListState = {
   error: null,
 }
 
+/**
+ * Translate raw DOI-fetch errors into user-friendly Chinese messages.
+ *
+ * The backend propagates the underlying upstream error verbatim, which
+ * exposes technical detail like "Client error '404 Not Found' for url
+ * ...". End users don't care about the HTTP method or the URL — they
+ * care that the DOI was wrong.
+ */
+function mapDoiError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "")
+
+  if (/400|Invalid DOI format/i.test(raw)) {
+    return "DOI 格式不正确，期望格式如 10.1016/j.example.2020.001"
+  }
+  if (/404|Not Found/i.test(raw)) {
+    return "DOI 不存在或无法访问，请检查 DOI 是否正确"
+  }
+  if (/502|DOI fetch failed/i.test(raw)) {
+    return "远程文献服务暂时不可用，请稍后重试"
+  }
+  if (/network|fetch|timeout/i.test(raw)) {
+    return "网络错误，请检查连接后重试"
+  }
+  if (/401|403|login|权限/i.test(raw)) {
+    return "请先登录后再提交 DOI"
+  }
+  // Fallback: surface the raw message but don't leak the upstream URL.
+  return raw.replace(/https?:\/\/\S+/g, "[URL]") || "DOI 提取失败，请稍后重试"
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 
 export default function LiteratureManager() {
@@ -214,7 +244,7 @@ export default function LiteratureManager() {
       setDetail(full)
     } catch (err) {
       const msg = err instanceof Error ? err.message : "加载文献详情失败"
-      message.error(msg)
+      message.error(msg, 8)
     } finally {
       setDetailLoading(false)
     }
@@ -267,7 +297,7 @@ export default function LiteratureManager() {
           key,
           type: "error",
           content: `上传失败：${msg}`,
-          duration: 5,
+          duration: 8,
         })
       } finally {
         setUploading(false)
@@ -290,8 +320,7 @@ export default function LiteratureManager() {
         await fetchList(1, filters)
         void openDetail(resp.literature_id)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "DOI 提取失败"
-        message.error(msg)
+        message.error(mapDoiError(err), 8)
       } finally {
         setIngestingDoi(false)
       }
@@ -311,7 +340,7 @@ export default function LiteratureManager() {
         await fetchList(state.page, filters)
       } catch (err) {
         const msg = err instanceof Error ? err.message : "重新提取失败"
-        message.error(msg)
+        message.error(msg, 8)
       }
     },
     [detail?.id, fetchList, filters, state.page],
@@ -329,7 +358,7 @@ export default function LiteratureManager() {
         await fetchList(state.page, filters)
       } catch (err) {
         const msg = err instanceof Error ? err.message : "删除失败"
-        message.error(msg)
+        message.error(msg, 8)
       }
     },
     [detail?.id, fetchList, filters, state.page],
@@ -709,10 +738,24 @@ function DetailPanel({ detail }: DetailPanelProps) {
         items={[
           { key: "id", label: "ID", children: <Text copyable>{detail.id}</Text> },
           { key: "status", label: "状态", children: detail.status },
+          { key: "doi", label: "DOI", children: detail.doi ?? "—" },
+          { key: "journal", label: "期刊", children: detail.journal ?? "—" },
+          { key: "year", label: "年份", children: detail.year ?? "—" },
           { key: "created", label: "创建时间", children: detail.created_at ?? "—" },
           { key: "updated", label: "更新时间", children: detail.updated_at ?? "—" },
         ]}
       />
+
+      {detail.abstract && (
+        <Card size="small" title="摘要">
+          <Paragraph
+            ellipsis={{ rows: 6, expandable: true, symbol: "展开/收起" }}
+            className="!mb-0 text-sm"
+          >
+            {detail.abstract}
+          </Paragraph>
+        </Card>
+      )}
 
       <Card size="small" title={`提取结果（${extractionResults.length}）`}>
         {extractionResults.length === 0 ? (
@@ -721,9 +764,37 @@ function DetailPanel({ detail }: DetailPanelProps) {
             description="暂无提取结果"
           />
         ) : (
-          <pre className="text-xs overflow-x-auto bg-gray-900 text-gray-100 p-3 rounded">
-            {JSON.stringify(extractionResults, null, 2)}
-          </pre>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {extractionResults.map((er) => (
+              <div
+                key={er.id as string}
+                className="border border-gray-200 rounded p-2 text-xs"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Tag color="blue">{er.item_type as string}</Tag>
+                  <span className="font-medium">{er.property_name as string}</span>
+                  {er.confidence != null && (
+                    <Tag color="default">
+                      置信度 {((er.confidence as number) * 100).toFixed(0)}%
+                    </Tag>
+                  )}
+                  {er.review_status != null && (
+                    <Tag>{String(er.review_status)}</Tag>
+                  )}
+                </div>
+                {er.value != null && (
+                  <pre className="bg-gray-50 p-2 rounded text-xs overflow-x-auto">
+                    {JSON.stringify(er.value, null, 2)}
+                  </pre>
+                )}
+                {er.source_paragraph != null && (
+                  <div className="text-gray-500 italic mt-1">
+                    「{(er.source_paragraph as string).substring(0, 200)}」
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </Card>
     </div>

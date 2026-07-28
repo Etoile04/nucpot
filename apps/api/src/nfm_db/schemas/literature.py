@@ -33,6 +33,10 @@ class LiteratureListItem(BaseModel):
 
     id: UUID
     title: str = ""
+    doi: str | None = None
+    journal: str | None = None
+    year: int | None = None
+    abstract: str | None = None
     status: str = "uploaded"
     source_id: UUID | None = None
     created_at: datetime
@@ -43,6 +47,10 @@ class LiteratureDetailResponse(BaseModel):
 
     id: UUID
     title: str = ""
+    doi: str | None = None
+    journal: str | None = None
+    year: int | None = None
+    abstract: str | None = None
     status: str = "uploaded"
     source_id: UUID | None = None
     extraction_results: list[dict[str, Any]] = Field(default_factory=list)

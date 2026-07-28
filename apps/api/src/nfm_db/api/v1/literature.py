@@ -95,6 +95,10 @@ def _source_to_detail(source: DataSource) -> LiteratureDetailResponse:
     return LiteratureDetailResponse(
         id=source.id,
         title=source.title,
+        doi=source.doi,
+        journal=source.journal,
+        year=source.year,
+        abstract=source.abstract,
         status=source.parse_status or "uploaded",
         source_id=source.id,
         extraction_results=[],
@@ -111,6 +115,7 @@ def _source_to_list_item(source: DataSource) -> LiteratureListItem:
         doi=source.doi,
         journal=source.journal,
         year=source.year,
+        abstract=source.abstract,
         status=source.parse_status or "uploaded",
         source_id=source.id,
         created_at=source.created_at,
@@ -411,18 +416,45 @@ async def get_literature_detail(
     """
     source = await _get_source_or_404(literature_id, db)
 
-    # Count extraction figures if the model supports it (graceful fallback).
-    detail = _source_to_detail(source)
+    # Load extraction results linked to this source via source_id.
+    er_stmt = (
+        select(ExtractionResult)
+        .where(ExtractionResult.source_id == literature_id)
+        .order_by(ExtractionResult.created_at.desc())
+        .limit(200)  # cap for response size; UI can paginate client-side
+    )
+    er_result = await db.execute(er_stmt)
+    extraction_results = [
+        {
+            "id": str(er.id),
+            "property_name": er.property_name,
+            "item_type": er.item_type,
+            "item_data": er.item_data,
+            "value": er.value,
+            "confidence": er.confidence,
+            "review_status": er.review_status,
+            "source_page": er.source_page,
+            "source_paragraph": er.source_paragraph,
+            "created_at": er.created_at.isoformat() if er.created_at else None,
+        }
+        for er in er_result.scalars().all()
+    ]
+
+    # Build full detail with the populated extraction_results.
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
-            id=detail.id,
-            title=detail.title,
-            status=detail.status,
-            source_id=detail.source_id,
-            extraction_results=detail.extraction_results,
-            created_at=detail.created_at,
-            updated_at=detail.updated_at,
+            id=source.id,
+            title=source.title,
+            doi=source.doi,
+            journal=source.journal,
+            year=source.year,
+            abstract=source.abstract,
+            status=source.parse_status or "uploaded",
+            source_id=source.id,
+            extraction_results=extraction_results,
+            created_at=source.created_at,
+            updated_at=source.updated_at,
         ),
     )
 
