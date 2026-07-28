@@ -437,6 +437,10 @@ async def list_literature(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
+    status: str | None = Query(
+        None,
+        description="按状态过滤 (uploaded / parsing / extracting / completed / failed / placeholder / parsed)",
+    ),
     year_min: int | None = Query(None),
     year_max: int | None = Query(None),
     sort_by: str = Query("created_at"),
@@ -460,6 +464,8 @@ async def list_literature(
                 DataSource.doi.ilike(f"%{search}%"),
             )
         )
+    if status:
+        stmt = stmt.where(DataSource.parse_status == status)
     if year_min is not None:
         stmt = stmt.where(DataSource.year >= year_min)
     if year_max is not None:

@@ -373,6 +373,7 @@ interface LiteratureListParams {
   readonly page?: number
   readonly limit?: number
   readonly search?: string
+  readonly status?: string
   readonly yearMin?: number
   readonly yearMax?: number
 }
@@ -382,6 +383,7 @@ function buildLiteratureListQuery(p: LiteratureListParams): string {
   if (p.page) qs.set("page", String(p.page))
   if (p.limit) qs.set("limit", String(p.limit))
   if (p.search) qs.set("search", p.search)
+  if (p.status) qs.set("status", p.status)
   if (p.yearMin !== undefined) qs.set("year_min", String(p.yearMin))
   if (p.yearMax !== undefined) qs.set("year_max", String(p.yearMax))
   const s = qs.toString()

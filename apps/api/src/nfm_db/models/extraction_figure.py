@@ -15,17 +15,24 @@ from nfm_db.models import Base
 
 
 class ExtractionFigure(Base):
-    """A figure extracted from a document during extraction pipeline."""
+    """A figure extracted from a document during extraction pipeline.
+
+    Model fields mirror the production `extraction_figures` table schema
+    (see alembic migration that created it). Columns in the DB but not in
+    the model (bounding_box, caption, image_path, confidence,
+    extraction_method) are not selected by SQLAlchemy core unless a column
+    is added here — for SELECT on delete we only need the fields the model
+    declares so we never SELECT a missing column.
+    """
 
     __tablename__ = "extraction_figures"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    job_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("extraction_jobs.id"), nullable=True
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("data_sources.id"), nullable=True
     )
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     figure_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    file_path: Mapped[str] = mapped_column(String, default="")
     extracted_data: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, default=None
     )
