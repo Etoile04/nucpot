@@ -25,9 +25,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-_ilu_ = _ilu
-_orig_find_spec = _ilu.find_spec
-
 from nfm_db.services import mineru_client as mc
 from nfm_db.services.mineru_client import (
     MAX_FILE_SIZE_BYTES,
@@ -37,14 +34,13 @@ from nfm_db.services.mineru_client import (
     MinerUError,
     MinerUResult,
     MinerUTimeoutError,
-    _PollResult,
     _env_bool,
     _env_str,
+    _PollResult,
     mineru_api_key,
     mineru_enabled,
     parse_pdf_to_markdown,
 )
-
 
 # ---------------------------------------------------------------------------
 # Settings helpers
@@ -777,7 +773,7 @@ class TestZipFallback:
         # (looked up by attribute in the inner function's enclosing
         # scope), so patching the module attribute affects the call.
         monkeypatch.setattr(
-            _ilu, "find_spec", lambda name: None if name == "pycurl" else _orig_find_spec(name)
+            _ilu, "find_spec", lambda name: None if name == "pycurl" else _ilu.find_spec(name)
         )
 
         client = MinerUClient(api_key="k", poll_interval=0.01, timeout_seconds=2.0)
