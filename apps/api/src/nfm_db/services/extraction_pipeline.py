@@ -541,6 +541,46 @@ async def trigger_extraction(
             except Exception:
                 logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
 
+        # Stage 5: Build KG nodes/edges from extracted properties
+        # This bridges the gap between the extraction pipeline and the
+        # knowledge graph review system. Without this stage, extracted
+        # properties remain only in _ref_gap_fill_staging and never appear
+        # in the KG review queue (kg_nodes with review_status='pending').
+        if mapped:
+            try:
+                from nfm_db.services.kg_re import GraphBuilder
+
+                builder = GraphBuilder(session, sync_to_age=False)
+
+                # Resolve source_id for provenance tracking
+                kg_source_id = None
+                if source_type == "datasource":
+                    try:
+                        kg_source_id = uuid.UUID(source_reference)
+                    except (ValueError, AttributeError):
+                        pass
+
+                build_result = await builder.build_from_extraction(
+                    mapped,
+                    source_id=kg_source_id,
+                )
+                logger.info(
+                    "Job %s: KG build completed — nodes_created=%d nodes_matched=%d "
+                    "edges_created=%d review_queued=%d",
+                    job_id,
+                    build_result.nodes_created,
+                    build_result.nodes_matched,
+                    build_result.edges_created,
+                    build_result.review_queue_items,
+                )
+                _update_job(job, staged_count=staged)
+            except Exception:
+                logger.warning(
+                    "Job %s: KG build failed (non-fatal, staged data preserved)",
+                    job_id,
+                    exc_info=True,
+                )
+
         final_status = JobStatus.PARTIAL if rejected > 0 else JobStatus.COMPLETED
         _update_job(
             job,
