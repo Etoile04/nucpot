@@ -17,15 +17,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from nfm_db.api.v1.auth import require_reviewer
 from nfm_db.database import get_db
 from nfm_db.models.kg import VALID_NODE_TYPES, KGEdge, KGNode
-from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.kg import (
     KGGraphEdge,
