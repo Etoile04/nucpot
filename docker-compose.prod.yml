@@ -94,6 +94,9 @@ services:
       # is forwarded to host.docker.internal:7892 → 502.
       NO_PROXY: ${PROD_API_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
       no_proxy: ${PROD_API_no_proxy:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal}
+      # NFM-MINERU-1: MinerU PDF parsing (literature pipeline primary parser)
+      MINERU_ENABLED: ${MINERU_ENABLED:-true}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
     volumes:
       # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
       # from the same path.  Distinct from the potentials / LightRAG volumes.
@@ -236,6 +239,10 @@ services:
       LLM_API_KEY: ollama
       LLM_BASE_URL: http://192.168.3.200:11434/v1
       LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
+      # NFM-MINERU-1: MinerU env must mirror the api service — the worker
+      # runs ``process_literature_task`` which calls parse_pdf_to_markdown.
+      MINERU_ENABLED: ${MINERU_ENABLED:-true}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
     volumes:
       # NFM-1489: the worker reads PDFs from the same upload volume the
       # api service writes to.  Without this mount the worker sees an
