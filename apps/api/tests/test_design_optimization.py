@@ -74,9 +74,13 @@ def _mock_empty_result():
 
 
 def _mock_problem(ml_available: bool = True):
-    """Create a mock NuclearFuelOptimizationProblem."""
+    """Create a mock NuclearFuelOptimizationProblem.
+
+    The real class stores its ML surrogate status in ``_ml_evaluator``
+    (None = fallback to synthetic). The mock mirrors that contract.
+    """
     problem = MagicMock()
-    problem._use_ml_surrogate = ml_available
+    problem._ml_evaluator = MagicMock() if ml_available else None
     return problem
 
 
