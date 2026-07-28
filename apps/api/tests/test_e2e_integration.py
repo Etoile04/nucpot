@@ -539,13 +539,16 @@ class TestKGQueryAPI:
             review_reason="Low confidence: 0.4",
         )
         db_session.add(review_item)
+        # Also set review_status on the node itself (Phase 3 unified model)
+        low_conf_node.review_status = "pending"
         await db_session.flush()
 
         app.dependency_overrides[get_db] = _override_get_db(db_session)
         transport = ASGITransport(app=app)
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/v1/kg/review/queue")
+            # Phase 3 unified review API (legacy /kg/review/queue removed)
+            response = await client.get("/api/v1/review/pending?limit=10")
             assert response.status_code == 200
             data = response.json()
             assert data.get("success") is True
