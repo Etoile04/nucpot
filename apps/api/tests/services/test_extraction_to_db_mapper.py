@@ -325,9 +325,13 @@ class TestMapAndPersistMapping:
         assert conditions[0].environment == "argon atmosphere"
 
     async def test_skips_unknown_property_type(self, db_session: AsyncSession):
-        """Properties with unknown category/name should not create measurements."""
+        """Properties with unknown category/name should not create measurements.
+
+        Uses a valid Literal value ("other") but does NOT seed any matching
+        PropertyType row, so the mapper hits the lookup miss path.
+        """
         # Don't seed any PropertyType
-        inputs = [_make_extracted_property(property_category="unknown_cat")]
+        inputs = [_make_extracted_property(property_category="other")]
 
         result = await map_and_persist(db_session, inputs)
 
@@ -491,3 +495,184 @@ class TestMapAndPersistIntegration:
         # Verify specific condition mapping
         temp_conditions = [c for c in conditions if c.temperature is not None]
         assert len(temp_conditions) == 2  # 500K and 298K
+
+
+# ---------------------------------------------------------------------------
+# AC-4 (NFM-1979): value float-conversion + raw-string fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestValueFloatConversion:
+    """Mapper must float-parse value, falling back to value_text + warning."""
+
+    async def test_valid_float_writes_value_scalar(
+        self, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A numeric `value` is parsed into value_scalar (Numeric column)."""
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        inputs = [_make_extracted_property(value="8.5")]
+
+        with caplog.at_level("WARNING", logger="nfm_db.services.extraction_to_db_mapper"):
+            result = await map_and_persist(db_session, inputs)
+
+        assert result.created_measurements == 1
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        assert len(measurements) == 1
+        assert float(measurements[0].value_scalar) == 8.5
+        assert measurements[0].value_text is None
+
+    async def test_non_parseable_value_falls_back_to_value_text(
+        self, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-parseable `value` ("3 to 4") must NOT crash the batch.
+
+        Behavior (NFM-1979 AC-4):
+        - mapper writes raw string into `value_text`
+        - logs a WARNING
+        - the rest of the batch continues
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        inputs = [_make_extracted_property(value="3 to 4")]
+
+        with caplog.at_level("WARNING", logger="nfm_db.services.extraction_to_db_mapper"):
+            result = await map_and_persist(db_session, inputs)
+
+        assert result.created_measurements == 1
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        assert len(measurements) == 1
+        assert measurements[0].value_scalar is None
+        assert measurements[0].value_text == "3 to 4"
+        # Warning emitted with the raw value so we can diagnose upstream
+        warning_records = [
+            r for r in caplog.records if r.levelname == "WARNING"
+        ]
+        assert any("3 to 4" in r.getMessage() for r in warning_records), (
+            f"expected WARNING mentioning '3 to 4', got: {[r.getMessage() for r in warning_records]}"
+        )
+
+    async def test_non_parseable_value_does_not_block_batch(
+        self, db_session: AsyncSession
+    ) -> None:
+        """One bad value must NOT block other items in the same batch."""
+        await _seed_property_type(
+            db_session,
+            category_name="thermal",
+            category_slug="thermal",
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+        await _seed_property_type(
+            db_session,
+            category_name="physical",
+            category_slug="physical",
+            property_name="Density",
+            property_slug="density",
+        )
+
+        inputs = [
+            _make_extracted_property(
+                value="not a number",
+                source_doi="10.1000/bad",
+                property_category="thermal",
+                property_name="Thermal Conductivity",
+            ),
+            _make_extracted_property(
+                value="10.97",
+                source_doi="10.1000/good",
+                property_category="physical",
+                property_name="Density",
+                unit="g/cm³",
+            ),
+        ]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.validation_errors == 0
+        assert result.created_measurements == 2
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        text_only = [m for m in measurements if m.value_text is not None]
+        scalar_only = [m for m in measurements if m.value_scalar is not None]
+        assert len(text_only) == 1
+        assert text_only[0].value_text == "not a number"
+        assert len(scalar_only) == 1
+        assert float(scalar_only[0].value_scalar) == 10.97
+
+
+@pytest.mark.unit
+class TestConditionsStandardKeysRoundTrip:
+    """Mapper must preserve all 5 standard conditions keys (NFM-1979 AC-4).
+
+    Standard keys: temperature, pressure, neutron_flux, dose, strain_rate.
+    Unknown keys are captured in `notes`.
+    """
+
+    async def test_standard_conditions_round_trip(
+        self, db_session: AsyncSession
+    ) -> None:
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        inputs = [
+            _make_extracted_property(
+                conditions={
+                    "temperature": 600,
+                    "pressure": 0.1,
+                    "neutron_flux": 1.0e18,
+                    "dose": 5.0,
+                    "strain_rate": 1.0e-6,
+                }
+            )
+        ]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.created_measurements == 1
+        conds = (await db_session.execute(select(MeasurementCondition))).scalars().all()
+        assert len(conds) == 1
+        c = conds[0]
+        # temperature + pressure have direct DB columns
+        assert float(c.temperature) == 600.0
+        assert float(c.pressure) == 0.1
+        # dose key maps to irradiation_dose column
+        assert float(c.irradiation_dose) == 5.0
+        # neutron_flux and strain_rate are NOT in DB columns → captured in notes
+        assert c.notes is not None
+        assert "neutron_flux" in c.notes
+        assert "strain_rate" in c.notes
+
+    async def test_unknown_conditions_key_captured_in_notes(
+        self, db_session: AsyncSession
+    ) -> None:
+        """An unknown conditions key (e.g., 'humidity') is preserved in notes."""
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        inputs = [
+            _make_extracted_property(
+                conditions={"temperature": 300, "humidity": 0.65}
+            )
+        ]
+
+        await map_and_persist(db_session, inputs)
+
+        conds = (await db_session.execute(select(MeasurementCondition))).scalars().all()
+        assert len(conds) == 1
+        assert conds[0].notes is not None
+        assert "humidity" in conds[0].notes

@@ -55,7 +55,7 @@ def sample_properties() -> list[dict]:
         {
             "material_name": "UO2",
             "composition": "UO2",
-            "property_category": "thermophysical",
+            "property_category": "thermal",
             "property": "thermal_conductivity",
             "value": "7.5",
             "unit": "W/(m·K)",

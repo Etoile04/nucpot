@@ -311,13 +311,23 @@ async def map_and_persist(
 
         # --- PropertyMeasurement ---
         condition_kwargs = _build_condition_kwargs(item.conditions)
+        value_kwargs, fallback_raw = _measurement_value_kwargs(item.value)
+        if fallback_raw is not None:
+            # NFM-1979 AC-4: float parse failed; persist raw string + warn, do
+            # NOT crash the batch.
+            logger.warning(
+                "Could not parse value %r as float for property %s; "
+                "storing raw string in value_text.",
+                fallback_raw,
+                item.property,
+            )
         measurement = PropertyMeasurement(
             dataset_id=dataset.id,
             property_type_id=property_type.id,
-            value_scalar=_parse_float(item.value),
             uncertainty=item.uncertainty,
             notes=item.context,
             review_status="pending",
+            **value_kwargs,
         )
         db.add(measurement)
         await db.flush()
@@ -371,8 +381,29 @@ async def _find_material_by_formula(
 
 
 def _parse_float(value: str) -> float | None:
-    """Safely parse a string value to float. Returns None if not parseable."""
+    """Safely parse a string value to float.
+
+    Returns None if not parseable. Callers must decide what to do with None
+    (e.g., fall back to ``value_text`` so the batch is not lost).
+    """
     try:
         return float(value)
     except (ValueError, TypeError):
         return None
+
+
+def _measurement_value_kwargs(raw_value: str) -> tuple[dict[str, Any], str | None]:
+    """Build PropertyMeasurement value kwargs from a raw string ``value``.
+
+    Returns a tuple of (kwargs_for_measurement, raw_value_if_fallback).
+
+    Behavior (NFM-1979 AC-4):
+    - On successful float parse: ``value_scalar`` is set, raw_value is None.
+    - On parse failure: ``value_text`` is set to the original raw string
+      (preserving precision/range like ``"3 to 4"``) and the raw_value is
+      returned so the caller can log a WARNING. The batch is never aborted.
+    """
+    parsed = _parse_float(raw_value)
+    if parsed is not None:
+        return {"value_scalar": parsed}, None
+    return {"value_text": raw_value}, raw_value
