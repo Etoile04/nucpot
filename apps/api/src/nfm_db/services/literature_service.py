@@ -154,7 +154,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
     Returns a small status dict for the Celery task body to log.
     """
-    # --- Step 1: load the DataSource row ------------------------------
+    # --- Step 1: load the DataSource row ----------------------------
     ds = await db.get(DataSource, datasource_id)
     if ds is None:
         logger.warning(
@@ -165,6 +165,21 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             "datasource_id": str(datasource_id),
             "status": "skipped",
             "reason": "not_found",
+        }
+
+    # --- Step 1b: short-circuit known placeholder/fixture datasources
+    # (no real PDF artifact, no extractable content). These should be
+    # silently skipped so the operator can see clean parse_status in
+    # the UI without us running LLM extraction on test data (2026-07-28).
+    if ds.parse_status == "placeholder":
+        logger.info(
+            "process_literature: datasource_id=%s is marked placeholder — skipping",
+            ds.id,
+        )
+        return {
+            "datasource_id": str(ds.id),
+            "status": "skipped",
+            "reason": "placeholder",
         }
 
     try:

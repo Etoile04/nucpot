@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid as _uuid_module
 from typing import Annotated
 from uuid import UUID
 
@@ -53,7 +54,7 @@ async def trigger_extraction_job(
     payload: ExtractionTriggerRequest,
     _current_user: Annotated[User, Depends(require_editor)],
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, object]:
     """触发文献数据提取任务。
 
     The pipeline runs: source → OntoFuel extraction → property mapping
@@ -73,23 +74,41 @@ async def trigger_extraction_job(
 
     # Run extraction in the background with its own DB session to avoid
     # Cloudflare Tunnel 100s timeout (Qwen3 thinking mode: 60-120s).
-    # The pipeline creates its own job in _job_store; poll GET
-    # /extraction/status/{job_id} or watch _ref_gap_fill_staging for results.
-    async def _bg_extraction() -> None:
+    # Pre-generate a job_id so the caller can poll the status endpoint
+    # immediately instead of guessing (2026-07-28 follow-up).
+    async def _bg_extraction(
+        source_reference: str,
+        source_type: str,
+        element_systems: list[str] | None,
+        cache_level: str | None,
+        max_confidence: str | None,
+        bg_job_id: str,
+    ) -> None:
         async with async_session_factory() as bg:
             try:
                 await trigger_extraction(
                     session=bg,
-                    source_reference=payload.source_reference,
-                    source_type=payload.source_type,
-                    element_systems=payload.element_systems,
-                    cache_level=payload.cache_level,
-                    max_confidence=payload.max_confidence,
+                    source_reference=source_reference,
+                    source_type=source_type,
+                    element_systems=element_systems,
+                    cache_level=cache_level,
+                    max_confidence=max_confidence,
+                    job_id=bg_job_id,
                 )
             except Exception:
                 logger.exception("Background extraction failed")
 
-    task = asyncio.create_task(_bg_extraction())
+    job_id = str(_uuid_module.uuid4())
+    task = asyncio.create_task(
+        _bg_extraction(
+            payload.source_reference,
+            payload.source_type,
+            payload.element_systems,
+            payload.cache_level,
+            payload.max_confidence,
+            job_id,
+        )
+    )
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
 
@@ -99,6 +118,12 @@ async def trigger_extraction_job(
             "source_reference": payload.source_reference,
             "source_type": payload.source_type,
             "status": "queued",
+            # Surface the job_id from _job_store so callers can poll
+            # /api/v1/extraction/status/{job_id} for progress. Previously
+            # only the background pipeline knew the job_id, which made
+            # it impossible to watch a single trigger's outcome (D1
+            # follow-up, 2026-07-28).
+            "job_id": job_id,
             "message": "Extraction job queued. Check review queue for results.",
         },
     }
@@ -116,7 +141,7 @@ async def trigger_extraction_job(
 )
 async def get_extraction_status(
     job_id: UUID,
-) -> dict:
+) -> dict[str, object]:
     """查询提取任务执行状态。
 
     Returns current status, counts of extracted/staged/rejected properties,

@@ -446,6 +446,7 @@ async def trigger_extraction(
     max_confidence: str | None = None,
     extract_figures: bool = False,
     extract_tables: bool = False,
+    job_id: str | None = None,
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -456,9 +457,13 @@ async def trigger_extraction(
     4. Stage passing values to _ref_gap_fill_staging
     5. Optional: gap re-scan to close the loop
 
-    Returns the job tracker with current status.
+    Returns the job tracker with current status.  If *job_id* is
+    provided, the new job reuses it — letting the HTTP trigger
+    endpoint hand out a job_id immediately for status polling
+    (2026-07-28 follow-up).
     """
-    job_id = _generate_job_id()
+    if job_id is None:
+        job_id = _generate_job_id()
     fill_batch_id = str(uuid.uuid4())
 
     job = ExtractionJob(
