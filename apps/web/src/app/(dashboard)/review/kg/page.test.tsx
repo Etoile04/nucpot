@@ -218,7 +218,7 @@ describe('KgReviewPage', () => {
       expect(mockedBatchKgAction).toHaveBeenCalled()
     })
 
-    // Selection should be cleared
+    // After batch action, the batch bar disappears (selection cleared)
     expect(screen.queryByLabelText(/批量审核/)).toBeNull()
   })
 })

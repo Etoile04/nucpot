@@ -595,37 +595,38 @@ class GraphBuilder:
         relation: ExtractedRelation,
         source_node_id: uuid.UUID,
         target_node_id: uuid.UUID,
-    ) -> KGEdge | None:
+    ) -> KGEdge:
         """Create a new KGEdge from an extracted relation.
 
-        Returns None if a duplicate edge already exists (same source,
-        target, and relation_type), which can happen when multiple
-        extracted properties produce the same entity pair.
+        Deduplicates against existing edges with the same (source, target,
+        relation_type) to avoid UNIQUE constraint violations when the
+        extraction pipeline re-processes overlapping content.
         """
-        # Check for existing edge to avoid UniqueViolationError on
-        # uq_kg_edges_source_target_relation constraint.
-        from sqlalchemy import select as sa_select
-
-        existing = await self._session.execute(
-            sa_select(KGEdge).where(
-                KGEdge.source_node_id == source_node_id,
-                KGEdge.target_node_id == target_node_id,
-                KGEdge.relation_type == relation.relation_type,
-            ).limit(1)
-        )
-        if existing.scalars().first() is not None:
-            logger.debug(
-                "Skipping duplicate edge: %s -> %s (%s)",
-                source_node_id,
-                target_node_id,
-                relation.relation_type,
-            )
-            return None
         # NFM-1499 fix: assign a concrete UUID to the edge itself so that
         # downstream consumers (_queue_for_review for low-confidence
         # relations, sync_edge) always see a real edge.id before the
         # final flush. source_node_id and target_node_id are guaranteed
         # non-None by the fail-fast guard in build_from_extraction.
+
+        # Dedup: skip if an identical edge already exists.
+        existing = (
+            await self._session.execute(
+                select(KGEdge).where(
+                    KGEdge.source_node_id == source_node_id,
+                    KGEdge.target_node_id == target_node_id,
+                    KGEdge.relation_type == relation.relation_type,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            logger.debug(
+                "Skipping duplicate edge %s -[%s]-> %s",
+                source_node_id,
+                relation.relation_type,
+                target_node_id,
+            )
+            return existing
+
         edge = KGEdge(
             id=uuid.uuid4(),
             source_node_id=source_node_id,
