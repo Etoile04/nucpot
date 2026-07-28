@@ -11,11 +11,11 @@ WORKDIR /app
 # fall back to default debian mirror if that fails.
 RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
-    apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && \
+    apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* || \
     (sed -i 's|https://mirrors.tuna.tsinghua.edu.cn/debian|http://deb.debian.org/debian|g' /etc/apt/sources.list.d/debian.sources && \
      apt-get update && \
-     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && \
+     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
      rm -rf /var/lib/apt/lists/*)
 
 # Copy project definition, source, and migrations together so pip can find the package
