@@ -45,8 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
 async def _run_seed(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     json_path = Path(args.json) if args.json else None
 
     # Use the app's existing session factory
