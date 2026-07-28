@@ -332,6 +332,28 @@ class TestEdgeCases:
         assert result["status"] == "skipped"
         assert result["reason"] == "not_found"
 
+    async def test_placeholder_datasource_returns_skipped(self, db_session: AsyncSession) -> None:
+        """DataSource with parse_status='placeholder' is silently skipped
+        without invoking LLM extraction or PDF parsing."""
+        ds = DataSource(
+            title="Fixture Row",
+            source_type="uploaded_pdf",
+            parse_status="placeholder",
+        )
+        db_session.add(ds)
+        await db_session.commit()
+        await db_session.refresh(ds)
+
+        with patch(
+            "nfm_db.services.extraction_pipeline.ontofuel_extract",
+            new=AsyncMock(side_effect=AssertionError("ontofuel_extract should NOT run")),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "placeholder"
+        assert result["datasource_id"] == str(ds.id)
+
     async def test_empty_extraction_marks_completed_without_mapping(
         self, db_session: AsyncSession
     ) -> None:
