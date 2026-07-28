@@ -238,6 +238,7 @@ module = [
     "nfm_db.services.md_verification",
     "nfm_db.services.md_tasks",
     "monitoring.prometheus",
+    "monitoring.*",
 ]
 ignore_errors = true
 
