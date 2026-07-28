@@ -1,6 +1,6 @@
 """Backfill review_status: auto-approve high-confidence items.
 
-Revision ID: 028_backfill_review_status_confidence
+Revision ID: 028_review_backfill
 Revises: 027_merge_heads_011_and_026
 Create Date: 2026-07-28
 
@@ -24,7 +24,7 @@ Context:
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "028_backfill_review_status_confidence"
+revision = "028_review_backfill"
 down_revision = "027"
 branch_labels = None
 depends_on = None
@@ -63,14 +63,27 @@ def upgrade() -> None:
     # property_measurements: auto-approve items with confidence >= threshold.
     # (property_measurements has reviewed_at but uses kg_review_queue for
     # status — leave as-is if no review_status column exists.)
-    # NOTE: property_measurements.review_status may not exist on all DBs;
-    # the IF EXISTS clause makes this safe.
+    # NOTE: property_measurements may not have a `confidence` column on
+    # databases where migration 014_sync_phase2_schema_drift was skipped
+    # (e.g. via manual alembic_version stamping after a hot-patch merge
+    # head from 011). Wrap the UPDATE in an IF EXISTS guard so the
+    # migration is idempotent across both schema states (2026-07-28).
     op.execute(
         f"""
-        UPDATE property_measurements
-        SET reviewed_at = COALESCE(reviewed_at, NOW())
-        WHERE reviewed_at IS NULL
-          AND confidence >= {REVIEW_THRESHOLD}
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'property_measurements'
+              AND column_name = 'confidence'
+          ) THEN
+            UPDATE property_measurements
+            SET reviewed_at = COALESCE(reviewed_at, NOW())
+            WHERE reviewed_at IS NULL
+              AND confidence >= {REVIEW_THRESHOLD};
+          END IF;
+        END $$;
         """
     )
 
