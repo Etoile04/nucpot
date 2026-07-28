@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.kg import KGEdge, KGNode, KGReviewQueue
+from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_re import ExtractedEntity, ExtractedRelation, GraphBuilder
 
 # ---------------------------------------------------------------------------
@@ -445,19 +445,15 @@ class TestGraphBuilderUUIDAssignment:
                 f"node set {sorted(str(x) for x in node_ids)}"
             )
 
-        # --- review queue item_id invariants ---
-        queue = (await db_session.execute(select(KGReviewQueue))).scalars().all()
-        assert len(queue) >= 1
-        all_ids = node_ids | {e.id for e in edges}
-        for q in queue:
-            assert q.item_id is not None, (
-                "Persisted KGReviewQueue entry has null item_id; pre-fix "
-                "code would have inserted None here from a pre-flush node."
-            )
-            assert q.item_id in all_ids, (
-                f"Review queue item_id={q.item_id} does not resolve to "
-                f"any node or edge in the same transaction"
-            )
+        # --- Phase 3 unified review model: check review_status on nodes ---
+        # (replaces old kg_review_queue assertions)
+        pending_nodes = [n for n in nodes if n.review_status == "pending"]
+        assert len(pending_nodes) >= 1, (
+            "Expected at least 1 node with review_status='pending' "
+            "(low-confidence items should be flagged for review)"
+        )
+        for n in pending_nodes:
+            assert n.id is not None, "Pending KGNode has null id"
 
     @pytest.mark.asyncio
     async def test_fail_fast_when_source_or_target_node_id_is_none(
@@ -583,9 +579,7 @@ class TestGraphBuilderEdgeDedup:
         assert edge2.id == edge1.id, "Expected the same edge, not a new one"
 
         # Only one row in the table.
-        rows = list(
-            (await db_session.execute(select(KGEdge))).scalars().all()
-        )
+        rows = list((await db_session.execute(select(KGEdge))).scalars().all())
         assert len(rows) == 1
 
     @pytest.mark.asyncio

@@ -668,162 +668,65 @@ class TestAutoRouteToReview:
 
 
 class TestReviewQueueAPI:
-    """Integration tests for review queue API endpoints."""
+    """Integration tests for review queue API endpoints.
+
+    Updated for Phase 3 unified review model: legacy /kg/review/queue
+    endpoints have been removed. All review operations now go through
+    /api/v1/review/* which queries kg_nodes.review_status directly.
+    """
 
     @pytest.mark.asyncio
     async def test_get_empty_queue(self, async_client) -> None:
-        response = await async_client.get("/api/v1/kg/review/queue")
+        # New API: GET /api/v1/review/pending returns paginated items
+        response = await async_client.get("/api/v1/review/pending?limit=1")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["data"]["total"] == 0
-        assert data["data"]["items"] == []
 
     @pytest.mark.asyncio
     async def test_get_queue_with_items(self, async_client, db_session: AsyncSession) -> None:
+        # In the unified model, a KGNode with review_status='pending'
+        # automatically appears in the review queue — no separate
+        # kg_review_queue entry needed.
         node = KGNode(
             node_type="Material",
-            label="UO2",
+            label="UO2_test_queue",
             confidence=0.4,
             status="pending_review",
+            review_status="pending",
         )
         db_session.add(node)
-        await db_session.flush()
-
-        await add_to_review_queue(
-            db_session,
-            item_type="entity",
-            item_id=node.id,
-            review_reason="Low confidence (0.40)",
-        )
         await db_session.commit()
 
+        response = await async_client.get("/api/v1/review/pending?limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["total"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_approve_via_new_api(self, async_client, db_session: AsyncSession) -> None:
+        # PATCH /api/v1/review/{id} is the new approve path
+        node = KGNode(
+            node_type="Material",
+            label="UO2_test_approve",
+            confidence=0.4,
+            status="pending_review",
+            review_status="pending",
+        )
+        db_session.add(node)
+        await db_session.commit()
+
+        response = await async_client.patch(
+            f"/api/v1/review/{node.id}",
+            json={"status": "approved", "note": "Valid material"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["review_status"] == "approved"
+
+    @pytest.mark.asyncio
+    async def test_legacy_kg_review_queue_returns_404(self, async_client) -> None:
+        """Legacy /kg/review/queue endpoint has been removed (Phase 3)."""
         response = await async_client.get("/api/v1/kg/review/queue")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["data"]["total"] == 1
-        assert data["data"]["items"][0]["item_type"] == "entity"
-
-    @pytest.mark.asyncio
-    async def test_approve_endpoint(self, async_client, db_session: AsyncSession) -> None:
-        node = KGNode(
-            node_type="Material",
-            label="UO2",
-            confidence=0.4,
-            status="pending_review",
-        )
-        db_session.add(node)
-        await db_session.flush()
-
-        item = await add_to_review_queue(
-            db_session,
-            item_type="entity",
-            item_id=node.id,
-            review_reason="Low confidence",
-        )
-        await db_session.commit()
-
-        response = await async_client.post(
-            f"/api/v1/kg/review/{item.id}/approve",
-            json={"reviewer_notes": "Valid material"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["data"]["status"] == "approved"
-
-    @pytest.mark.asyncio
-    async def test_reject_endpoint(self, async_client, db_session: AsyncSession) -> None:
-        node = KGNode(
-            node_type="Material",
-            label="UO2",
-            confidence=0.3,
-            status="pending_review",
-        )
-        db_session.add(node)
-        await db_session.flush()
-
-        item = await add_to_review_queue(
-            db_session,
-            item_type="entity",
-            item_id=node.id,
-            review_reason="Low confidence",
-        )
-        await db_session.commit()
-
-        response = await async_client.post(
-            f"/api/v1/kg/review/{item.id}/reject",
-            json={"reason": "Invalid material name"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["data"]["status"] == "rejected"
-
-    @pytest.mark.asyncio
-    async def test_approve_nonexistent_returns_404(self, async_client) -> None:
-        import uuid
-
-        response = await async_client.post(
-            f"/api/v1/kg/review/{uuid.uuid4()}/approve",
-            json={},
-        )
         assert response.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_reject_nonexistent_returns_404(self, async_client) -> None:
-        import uuid
-
-        response = await async_client.post(
-            f"/api/v1/kg/review/{uuid.uuid4()}/reject",
-            json={"reason": "Not found"},
-        )
-        assert response.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_filter_queue_by_entity_type(
-        self,
-        async_client,
-        db_session: AsyncSession,
-    ) -> None:
-        node = KGNode(
-            node_type="Material",
-            label="Mat-A",
-            confidence=0.4,
-            status="pending_review",
-        )
-        source = KGNode(node_type="Material", label="UO2")
-        target = KGNode(node_type="Property", label="Density")
-        db_session.add_all([node, source, target])
-        await db_session.flush()
-
-        await add_to_review_queue(
-            db_session,
-            item_type="entity",
-            item_id=node.id,
-            review_reason="Low confidence entity",
-        )
-
-        edge = KGEdge(
-            source_node_id=source.id,
-            target_node_id=target.id,
-            relation_type="hasProperty",
-            confidence=0.3,
-        )
-        db_session.add(edge)
-        await db_session.flush()
-        await add_to_review_queue(
-            db_session,
-            item_type="relation",
-            item_id=edge.id,
-            review_reason="Low confidence relation",
-        )
-        await db_session.commit()
-
-        response = await async_client.get(
-            "/api/v1/kg/review/queue?item_type=entity",
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["data"]["total"] == 1
-        assert data["data"]["items"][0]["item_type"] == "entity"

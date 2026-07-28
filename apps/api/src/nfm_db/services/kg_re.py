@@ -384,12 +384,11 @@ class GraphBuilder:
                 nodes_created += 1
 
                 if entity.confidence < REVIEW_CONFIDENCE_THRESHOLD:
-                    await self._queue_for_review(
-                        new_node.id,
-                        "entity",
-                        f"Low confidence entity: {entity.label} "
-                        f"(confidence={entity.confidence:.2f})",
-                    )
+                    # Phase 3 unified review model (ADR-NFM-796):
+                    # review_status is now set directly on the KGNode in
+                    # _create_node, so we no longer need to duplicate the
+                    # item into kg_review_queue. The /api/v1/review/pending
+                    # endpoint queries kg_nodes.review_status directly.
                     review_count += 1
 
         # Flush all nodes so their server-side ids are populated before
@@ -437,14 +436,9 @@ class GraphBuilder:
                 edges_created += 1
 
                 if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
-                    await self._queue_for_review(
-                        edge.id,
-                        "relation",
-                        f"Low confidence relation: "
-                        f"{relation.source_label} -[{relation.relation_type}]-> "
-                        f"{relation.target_label} (confidence={relation.confidence:.2f})",
-                    )
-                review_count += 1
+                    # Phase 3 unified review model: review_status set in
+                    # _create_edge, no kg_review_queue duplication needed.
+                    review_count += 1
 
         await self._session.flush()
 
@@ -561,6 +555,7 @@ class GraphBuilder:
         # node.id is None, producing IntegrityError on the NOT NULL FK
         # columns kg_review_queue.item_id, kg_edges.source_node_id /
         # target_node_id.
+        needs_review = entity.confidence < REVIEW_CONFIDENCE_THRESHOLD
         node = KGNode(
             id=uuid.uuid4(),
             node_type=entity.entity_type,
@@ -570,9 +565,13 @@ class GraphBuilder:
             confidence=entity.confidence,
             source_id=entity.source_id,
             corpus_id=self._corpus_id,
-            status="active"
-            if entity.confidence >= REVIEW_CONFIDENCE_THRESHOLD
-            else "pending_review",
+            status="active" if not needs_review else "pending_review",
+            # Phase 3 unified review model: set review_status explicitly
+            # instead of relying on DB DEFAULT 'pending'. High-confidence
+            # items are auto-approved; low-confidence items stay pending
+            # for human review. This replaces the old dual-write pattern
+            # that also inserted into kg_review_queue (ADR-NFM-796).
+            review_status="pending" if needs_review else "approved",
         )
         self._session.add(node)
 
@@ -636,6 +635,11 @@ class GraphBuilder:
             confidence=relation.confidence,
             source_id=relation.source_id,
             corpus_id=self._corpus_id,
+            # Phase 3 unified review model (ADR-NFM-796):
+            # Same logic as _create_node — set review_status explicitly.
+            review_status="pending"
+            if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD
+            else "approved",
         )
         self._session.add(edge)
 

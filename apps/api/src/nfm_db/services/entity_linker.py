@@ -611,6 +611,10 @@ class EntityLinker:
             source_id=entity.source_id,
             figure_id=None,
             status=initial_status,
+            # Phase 3 unified review model (ADR-NFM-796):
+            # Set review_status explicitly — high-confidence items are
+            # auto-approved, low-confidence items stay pending.
+            review_status="pending" if needs_review else "approved",
             corpus_id=corpus_id,
             synced_to_graph=False,
             graph_synced_at=None,
