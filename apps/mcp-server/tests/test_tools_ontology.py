@@ -198,6 +198,7 @@ class TestBrowseOntologyInput:
 
     def test_limit_ge_1(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.ontology import BrowseOntologyInput
 
         with pytest.raises(ValidationError):
@@ -205,6 +206,7 @@ class TestBrowseOntologyInput:
 
     def test_limit_le_200(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.ontology import BrowseOntologyInput
 
         with pytest.raises(ValidationError):
@@ -212,6 +214,7 @@ class TestBrowseOntologyInput:
 
     def test_extra_fields_forbidden(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.ontology import BrowseOntologyInput
 
         with pytest.raises(ValidationError):

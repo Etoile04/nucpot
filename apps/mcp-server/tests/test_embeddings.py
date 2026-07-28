@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import os
 import tempfile
+import typing
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from nfm_mcp import embeddings as emb_module
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -47,45 +47,42 @@ class TestInitEmbeddingFunction:
     """Test embedding function initialization."""
 
     def test_returns_none_when_not_installed(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.object(
-                emb_module._ef_module,
-                "SentenceTransformerEmbeddingFunction",
-                side_effect=ImportError("not installed"),
-                create=True,
-            ):
-                result = emb_module._init_embedding_function()
-                assert result is None
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            emb_module._ef_module,
+            "SentenceTransformerEmbeddingFunction",
+            side_effect=ImportError("not installed"),
+            create=True,
+        ):
+            result = emb_module._init_embedding_function()
+            assert result is None
 
     def test_returns_function_when_installed(self) -> None:
         mock_cls = MagicMock()
         mock_instance = MagicMock()
         mock_cls.return_value = mock_instance
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.object(
-                emb_module._ef_module,
-                "SentenceTransformerEmbeddingFunction",
-                mock_cls,
-                create=True,
-            ):
-                result = emb_module._init_embedding_function()
-                assert result is mock_instance
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            emb_module._ef_module,
+            "SentenceTransformerEmbeddingFunction",
+            mock_cls,
+            create=True,
+        ):
+            result = emb_module._init_embedding_function()
+            assert result is mock_instance
 
     def test_singleton_behavior(self) -> None:
         mock_cls = MagicMock()
         mock_instance = MagicMock()
         mock_cls.return_value = mock_instance
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.object(
-                emb_module._ef_module,
-                "SentenceTransformerEmbeddingFunction",
-                mock_cls,
-                create=True,
-            ):
-                first = emb_module._init_embedding_function()
-                second = emb_module._init_embedding_function()
-                assert first is second
-                assert mock_cls.call_count == 1
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            emb_module._ef_module,
+            "SentenceTransformerEmbeddingFunction",
+            mock_cls,
+            create=True,
+        ):
+            first = emb_module._init_embedding_function()
+            second = emb_module._init_embedding_function()
+            assert first is second
+            assert mock_cls.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -97,24 +94,22 @@ class TestGetCollection:
     """Test ChromaDB collection creation."""
 
     def test_creates_persistent_collection(self, persist_dir: str) -> None:
-        with patch.dict(os.environ, {"CHROMA_PERSIST_DIR": persist_dir}):
-            with patch(
-                "nfm_mcp.embeddings.SentenceTransformerEmbeddingFunction",
-                side_effect=ImportError("not installed"),
-                create=True,
-            ):
-                with patch("nfm_mcp.embeddings.chromadb") as mock_chroma:
-                    mock_client = MagicMock()
-                    mock_collection = MagicMock()
-                    mock_collection.count.return_value = 0
-                    mock_client.get_or_create_collection.return_value = mock_collection
-                    mock_chroma.PersistentClient.return_value = mock_client
+        with patch.dict(os.environ, {"CHROMA_PERSIST_DIR": persist_dir}), patch(
+            "nfm_mcp.embeddings.SentenceTransformerEmbeddingFunction",
+            side_effect=ImportError("not installed"),
+            create=True,
+        ), patch("nfm_mcp.embeddings.chromadb") as mock_chroma:
+            mock_client = MagicMock()
+            mock_collection = MagicMock()
+            mock_collection.count.return_value = 0
+            mock_client.get_or_create_collection.return_value = mock_collection
+            mock_chroma.PersistentClient.return_value = mock_client
 
-                    result = emb_module.get_collection()
+            result = emb_module.get_collection()
 
-                    mock_chroma.PersistentClient.assert_called_once_with(path=persist_dir)
-                    mock_client.get_or_create_collection.assert_called_once()
-                    assert result is mock_collection
+            mock_chroma.PersistentClient.assert_called_once_with(path=persist_dir)
+            mock_client.get_or_create_collection.assert_called_once()
+            assert result is mock_collection
 
     def test_returns_cached_collection(self, persist_dir: str) -> None:
         emb_module._collection = MagicMock()
@@ -130,7 +125,7 @@ class TestGetCollection:
 class TestBuildSemanticIndex:
     """Test building the semantic index."""
 
-    SAMPLE_SOURCES: list[dict[str, Any]] = [
+    SAMPLE_SOURCES: typing.ClassVar[list[dict[str, Any]]] = [
         {
             "id": 1,
             "title": "Paper on UO2",

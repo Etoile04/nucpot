@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_mcp.server import create_mcp_server
 from nfm_mcp.tools.mock_data import EXTRACTION_JOBS, generate_job_id
 
-
 # ── Helpers ──────────────────────────────────────────────────────
 
 
@@ -111,7 +110,7 @@ class TestExtractionTools:
 
     @pytest.mark.asyncio
     async def test_get_extraction_status_existing(self, tool_map: dict) -> None:
-        existing_id = list(EXTRACTION_JOBS.keys())[0]
+        existing_id = next(iter(EXTRACTION_JOBS.keys()))
         handler = tool_map["get_extraction_status"]
         result = json.loads(await handler(job_id=existing_id))
         assert result["job_id"] == existing_id

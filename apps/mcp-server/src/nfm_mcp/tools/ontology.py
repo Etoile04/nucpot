@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -19,15 +19,15 @@ class BrowseOntologyInput(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    query: Optional[str] = Field(
+    query: str | None = Field(
         default=None,
         description="Search term within the ontology (e.g., 'fuel', 'thermal')",
     )
-    entity_type: Optional[str] = Field(
+    entity_type: str | None = Field(
         default=None,
         description="Filter by entity type (e.g., 'material', 'property', 'source')",
     )
-    parent_id: Optional[str] = Field(
+    parent_id: str | None = Field(
         default=None,
         description="Start browsing from this ontology node ID",
     )
@@ -44,13 +44,13 @@ def register_ontology_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="browse_ontology",
-        annotations={
-            "title": "Browse NFM Ontology",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Browse NFM Ontology",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def browse_ontology(
         *,
@@ -117,6 +117,8 @@ def register_ontology_tools(mcp: FastMCP) -> None:
                     "stats": result.stats.model_dump(mode="json"),
                 }
                 return json.dumps(response, default=str)
+
+            return json.dumps({"error": "No database session available"})
 
         except Exception as exc:
             logger.exception("browse_ontology failed")

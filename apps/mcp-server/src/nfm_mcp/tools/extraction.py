@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -49,13 +49,13 @@ def register_extraction_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="trigger_extraction",
-        annotations={
-            "title": "Trigger Document Extraction",
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,
-            "openWorldHint": True,
-        },
+        annotations=ToolAnnotations(
+            title="Trigger Document Extraction",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=True,
+        ),
     )
     async def trigger_extraction(
         *,
@@ -93,6 +93,8 @@ def register_extraction_tools(mcp: FastMCP) -> None:
                     "message": "Document queued for extraction",
                 })
 
+            return json.dumps({"error": "No database session available"})
+
         except FileNotFoundError as exc:
             logger.warning("trigger_extraction: source not found: %s", exc)
             return json.dumps({
@@ -104,13 +106,13 @@ def register_extraction_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="get_extraction_status",
-        annotations={
-            "title": "Get Extraction Job Status",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Get Extraction Job Status",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def get_extraction_status(*, job_id: str) -> str:
         """Check the status of a document extraction job.

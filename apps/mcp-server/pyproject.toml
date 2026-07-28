@@ -8,6 +8,9 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "httpx>=0.28.0",
+    # Zotero integration (NFM-829) -- optional but enabled when credentials
+    # are configured via NFM_MCP_ZOTERO_API_KEY / NFM_MCP_ZOTERO_USER_ID.
+    "pyzotero>=1.5.0",
     "nfm-db-api",
 ]
 
@@ -58,6 +61,12 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = "nfm_db.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# chromadb is an optional runtime dependency (semantic search).  It is
+# not installed in CI or test environments, so suppress import errors.
+module = "chromadb.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
