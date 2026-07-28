@@ -289,6 +289,193 @@ export const extractionApi = {
   },
 } as const
 
+// ─── Literature Management API (V1 extraction pipeline entry) ────────
+
+/** Lifecycle states for a literature item (mirrors backend parse_status). */
+export type LiteratureStatus =
+  | "uploaded"
+  | "parsing"
+  | "extracting"
+  | "completed"
+  | "failed"
+  | (string & {})
+
+export interface LiteratureListItem {
+  readonly id: string
+  readonly title: string
+  readonly doi: string | null
+  readonly journal: string | null
+  readonly year: number | null
+  readonly status: LiteratureStatus
+  readonly source_id: string | null
+  readonly created_at: string
+}
+
+export interface LiteratureDetail extends LiteratureListItem {
+  readonly extraction_results?: readonly Record<string, unknown>[]
+  readonly updated_at?: string | null
+}
+
+export interface LiteratureUploadResponse {
+  readonly literature_id: string
+  readonly status: LiteratureStatus
+}
+
+export interface LiteratureStatusResponse {
+  readonly id: string
+  readonly status: LiteratureStatus
+  readonly progress: number
+  readonly error?: string | null
+}
+
+export interface LiteratureReextractResponse {
+  readonly id: string
+  readonly status: LiteratureStatus
+  readonly message?: string
+}
+
+interface LiteratureListEnvelope {
+  readonly success: boolean
+  readonly data: {
+    readonly items: readonly LiteratureListItem[]
+    readonly total: number
+    readonly page: number
+    readonly limit: number
+    readonly pages: number
+  }
+}
+
+interface LiteratureDetailEnvelope {
+  readonly success: boolean
+  readonly data: LiteratureDetail
+}
+
+interface LiteratureUploadEnvelope {
+  readonly success: boolean
+  readonly data: LiteratureUploadResponse
+}
+
+interface LiteratureReextractEnvelope {
+  readonly success: boolean
+  readonly data: LiteratureReextractResponse
+}
+
+interface LiteratureDeleteEnvelope {
+  readonly success: boolean
+  readonly data: { readonly message: string }
+}
+
+interface DoiRequest {
+  readonly doi: string
+}
+
+interface LiteratureListParams {
+  readonly page?: number
+  readonly limit?: number
+  readonly search?: string
+  readonly yearMin?: number
+  readonly yearMax?: number
+}
+
+function buildLiteratureListQuery(p: LiteratureListParams): string {
+  const qs = new URLSearchParams()
+  if (p.page) qs.set("page", String(p.page))
+  if (p.limit) qs.set("limit", String(p.limit))
+  if (p.search) qs.set("search", p.search)
+  if (p.yearMin !== undefined) qs.set("year_min", String(p.yearMin))
+  if (p.yearMax !== undefined) qs.set("year_max", String(p.yearMax))
+  const s = qs.toString()
+  return s ? `?${s}` : ""
+}
+
+export const literatureApi = {
+  /** GET /api/v1/literature — paginated list with filters */
+  list: async (params: LiteratureListParams = {}): Promise<{
+    readonly items: readonly LiteratureListItem[]
+    readonly total: number
+  }> => {
+    const qs = buildLiteratureListQuery(params)
+    const env = await request<LiteratureListEnvelope>(`/api/v1/literature${qs}`)
+    return { items: env.data.items, total: env.data.total }
+  },
+
+  /** GET /api/v1/literature/search?q= — full-text search */
+  search: async (
+    q: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<LiteratureListItem[]> => {
+    const env = await request<LiteratureListEnvelope>(
+      `/api/v1/literature/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`,
+    )
+    return env.data.items as LiteratureListItem[]
+  },
+
+  /** GET /api/v1/literature/{id} — full detail + extraction results */
+  get: async (id: string): Promise<LiteratureDetail> => {
+    const env = await request<LiteratureDetailEnvelope>(`/api/v1/literature/${id}`)
+    return env.data
+  },
+
+  /** GET /api/v1/literature/{id}/status — processing status */
+  getStatus: async (id: string): Promise<LiteratureStatusResponse> => {
+    const env = await request<{
+      success: boolean
+      data: LiteratureStatusResponse
+    }>(`/api/v1/literature/${id}/status`)
+    return env.data
+  },
+
+  /** POST /api/v1/literature/upload — multipart upload of a PDF file */
+  upload: async (file: File): Promise<LiteratureUploadResponse> => {
+    const formData = new FormData()
+    formData.append("file", file)
+    const response = await fetch("/api/v1/literature/upload", {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    })
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as
+        | { detail?: string }
+        | null
+      throw new Error(body?.detail ?? `上传失败 (${response.status})`)
+    }
+    const env = (await response.json()) as LiteratureUploadEnvelope
+    return env.data
+  },
+
+  /** POST /api/v1/literature/from-doi — fetch paper by DOI */
+  fromDoi: async (doi: string): Promise<LiteratureUploadResponse> => {
+    const env = await request<LiteratureUploadEnvelope>(
+      "/api/v1/literature/from-doi",
+      {
+        method: "POST",
+        body: JSON.stringify({ doi } satisfies DoiRequest),
+      },
+    )
+    return env.data
+  },
+
+  /** POST /api/v1/literature/{id}/reextract — trigger re-extraction */
+  reextract: async (id: string): Promise<LiteratureReextractResponse> => {
+    const env = await request<LiteratureReextractEnvelope>(
+      `/api/v1/literature/${id}/reextract`,
+      { method: "POST" },
+    )
+    return env.data
+  },
+
+  /** DELETE /api/v1/literature/{id} — delete literature + associated data */
+  delete: async (id: string): Promise<{ readonly message: string }> => {
+    const env = await request<LiteratureDeleteEnvelope>(
+      `/api/v1/literature/${id}`,
+      { method: "DELETE" },
+    )
+    return env.data
+  },
+} as const
+
 // ─── V4 Extraction API re-exports ───────────────────────────────
 
 export {
