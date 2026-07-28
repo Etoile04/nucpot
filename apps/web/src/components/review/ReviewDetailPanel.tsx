@@ -83,7 +83,7 @@ export function ReviewDetailPanel({ item, loading, onAction, onClose }: ReviewDe
       />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 bottom-0 w-full max-w-3xl bg-gray-900 border-l border-gray-700 z-50 overflow-y-auto shadow-2xl">
+      <div className="fixed right-0 top-0 bottom-0 w-full max-w-5xl bg-gray-900 border-l border-gray-700 z-50 overflow-y-auto shadow-2xl">
         {/* Header */}
         <div className="sticky top-0 bg-gray-900 border-b border-gray-700 px-6 py-4 flex items-center justify-between z-10">
           <h2 className="text-lg font-semibold text-gray-100">
@@ -101,8 +101,8 @@ export function ReviewDetailPanel({ item, loading, onAction, onClose }: ReviewDe
           </button>
         </div>
 
-        {/* Split view */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
+        {/* Split view — stacked vertically for full-width readability */}
+        <div className="grid grid-cols-1 gap-6 p-6">
           {/* Left: Source */}
           <div>
             <h3 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">
@@ -127,7 +127,7 @@ export function ReviewDetailPanel({ item, loading, onAction, onClose }: ReviewDe
               {dataEntries.map(({ key, value }) => (
                 <div key={key} className="flex justify-between text-sm">
                   <span className="text-gray-500">{key}</span>
-                  <span className="text-gray-200 font-medium text-right max-w-[200px] truncate">
+                  <span className="text-gray-200 font-medium text-right break-all">
                     {value}
                   </span>
                 </div>
@@ -185,7 +185,7 @@ export function ReviewDetailPanel({ item, loading, onAction, onClose }: ReviewDe
             disabled={loading || pendingAction !== null}
             className="inline-flex items-center rounded-lg px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            通过
+            审核
           </button>
         </div>
       </div>

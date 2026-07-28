@@ -237,7 +237,7 @@ export function ReviewQueueTable({
                         className="inline-flex items-center rounded px-2 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         aria-label={`通过 ${item.title}`}
                       >
-                        通过
+                        审核
                       </button>
                       <button
                         type="button"
@@ -314,9 +314,9 @@ export function ReviewQueueTable({
               type="button"
               onClick={handleBatchApprove}
               className="inline-flex items-center rounded px-3 py-1.5 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
-              aria-label={`批量通过 ${selectedIds.size} 项`}
+              aria-label={`批量审核 ${selectedIds.size} 项`}
             >
-              批量通过
+              批量审核
             </button>
             <button
               type="button"
@@ -394,7 +394,7 @@ export function ReviewQueueTable({
         >
           <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 max-w-sm w-full mx-4 shadow-xl">
             <h3 className="text-lg font-medium text-gray-100 mb-2">
-              {confirmAction === 'approve' ? '批量通过' : '批量拒绝'}
+              {confirmAction === 'approve' ? '批量审核' : '批量拒绝'}
             </h3>
             <p className="text-sm text-gray-400 mb-6">
               确定{confirmAction === 'approve' ? '通过' : '拒绝'}选中的 {selectedIds.size} 项吗？此操作不可撤销。
