@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.kg import KGEdge, KGNode, KGReviewQueue
+from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_re import ExtractedEntity, ExtractedRelation, GraphBuilder
 
 # ---------------------------------------------------------------------------
