@@ -432,17 +432,18 @@ class GraphBuilder:
                 )
 
             edge = await self._create_edge(relation, source_node.id, target_node.id)
-            new_edges.append(edge)
-            edges_created += 1
+            if edge is not None:
+                new_edges.append(edge)
+                edges_created += 1
 
-            if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
-                await self._queue_for_review(
-                    edge.id,
-                    "relation",
-                    f"Low confidence relation: "
-                    f"{relation.source_label} -[{relation.relation_type}]-> "
-                    f"{relation.target_label} (confidence={relation.confidence:.2f})",
-                )
+                if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
+                    await self._queue_for_review(
+                        edge.id,
+                        "relation",
+                        f"Low confidence relation: "
+                        f"{relation.source_label} -[{relation.relation_type}]-> "
+                        f"{relation.target_label} (confidence={relation.confidence:.2f})",
+                    )
                 review_count += 1
 
         await self._session.flush()
@@ -594,8 +595,32 @@ class GraphBuilder:
         relation: ExtractedRelation,
         source_node_id: uuid.UUID,
         target_node_id: uuid.UUID,
-    ) -> KGEdge:
-        """Create a new KGEdge from an extracted relation."""
+    ) -> KGEdge | None:
+        """Create a new KGEdge from an extracted relation.
+
+        Returns None if a duplicate edge already exists (same source,
+        target, and relation_type), which can happen when multiple
+        extracted properties produce the same entity pair.
+        """
+        # Check for existing edge to avoid UniqueViolationError on
+        # uq_kg_edges_source_target_relation constraint.
+        from sqlalchemy import select as sa_select
+
+        existing = await self._session.execute(
+            sa_select(KGEdge).where(
+                KGEdge.source_node_id == source_node_id,
+                KGEdge.target_node_id == target_node_id,
+                KGEdge.relation_type == relation.relation_type,
+            ).limit(1)
+        )
+        if existing.scalars().first() is not None:
+            logger.debug(
+                "Skipping duplicate edge: %s -> %s (%s)",
+                source_node_id,
+                target_node_id,
+                relation.relation_type,
+            )
+            return None
         # NFM-1499 fix: assign a concrete UUID to the edge itself so that
         # downstream consumers (_queue_for_review for low-confidence
         # relations, sync_edge) always see a real edge.id before the
