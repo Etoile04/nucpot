@@ -180,7 +180,7 @@ def register_zotero_tools(
             }
             resp = client.add_article(meta, collection_key=collection_key)
             if resp and resp.get("successful"):
-                key = list(resp["successful"].values())[0].get("key", "?")
+                key = next(iter(resp["successful"].values())).get("key", "?")
                 return f"Added to Zotero: \"{title}\"\n  Item key: {key}"
             return f"Failed to add item.\nResponse: {json.dumps(resp)}"
         except Exception as exc:
@@ -243,7 +243,7 @@ def register_zotero_tools(
         try:
             resp = client.create_collection(name, parent_key=parent_key)
             if resp and resp.get("successful"):
-                key = list(resp["successful"].values())[0].get("key", "?")
+                key = next(iter(resp["successful"].values())).get("key", "?")
                 return f"Collection \"{name}\" created.\n  Collection key: {key}"
             return f"Failed to create collection.\nResponse: {json.dumps(resp)}"
         except Exception as exc:

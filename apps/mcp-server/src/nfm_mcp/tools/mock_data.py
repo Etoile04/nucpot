@@ -331,14 +331,14 @@ POTENTIALS: list[dict[str, object]] = [
         "material_id": "Zircaloy-4",
         "model_name": "ZRY-PHASE",
         "potential_type": "Gibbs_energy",
-        "expression": "G(T) = G_α(T)·(1-x) + G_β(T)·x + Gₘ(x, T)",
+        "expression": "G(T) = G_α(T)·(1-x) + G_β(T)·x + Gₘ(x, T)",  # noqa: RUF001
         "valid_range_k": [298.15, 2123],
         "coefficients": {
             "G_alpha0": -7050.0,
             "G_beta0": -7020.0,
             "G_excess": 4500.0,
         },
-        "description": "α-β phase equilibrium for Zircaloy-4",
+        "description": "α-β phase equilibrium for Zircaloy-4",  # noqa: RUF001
     },
 ]
 

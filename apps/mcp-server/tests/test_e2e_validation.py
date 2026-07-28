@@ -21,7 +21,6 @@ import pytest
 
 from nfm_mcp.server import EXPECTED_TOOL_NAMES, create_mcp_server
 
-
 # ── Fixture ───────────────────────────────────────────────────────
 
 

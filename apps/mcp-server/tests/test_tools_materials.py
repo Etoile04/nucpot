@@ -14,7 +14,6 @@ import pytest
 
 from nfm_mcp.server import create_mcp_server
 
-
 # ── Helpers ──────────────────────────────────────────────────────
 
 

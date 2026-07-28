@@ -211,6 +211,7 @@ class TestTriggerExtractionInput:
 
     def test_file_url_required(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.extraction import TriggerExtractionInput
 
         with pytest.raises(ValidationError):
@@ -218,6 +219,7 @@ class TestTriggerExtractionInput:
 
     def test_file_url_max_length(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.extraction import TriggerExtractionInput
 
         long_url = "https://example.com/" + "a" * 2000
@@ -226,6 +228,7 @@ class TestTriggerExtractionInput:
 
     def test_extra_fields_forbidden(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.extraction import TriggerExtractionInput
 
         with pytest.raises(ValidationError):
@@ -243,6 +246,7 @@ class TestGetExtractionStatusInput:
 
     def test_job_id_required(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.extraction import GetExtractionStatusInput
 
         with pytest.raises(ValidationError):
@@ -250,6 +254,7 @@ class TestGetExtractionStatusInput:
 
     def test_job_id_max_length(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.extraction import GetExtractionStatusInput
 
         long_id = "job-" + "x" * 200
@@ -258,6 +263,7 @@ class TestGetExtractionStatusInput:
 
     def test_extra_fields_forbidden(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.extraction import GetExtractionStatusInput
 
         with pytest.raises(ValidationError):

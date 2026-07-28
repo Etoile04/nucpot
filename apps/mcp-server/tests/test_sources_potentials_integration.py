@@ -10,12 +10,11 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -37,7 +36,7 @@ def _make_session_gen():
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── search_sources ───────────────────────────────────────────────
