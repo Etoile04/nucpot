@@ -202,7 +202,7 @@ def clear_metrics() -> None:
     for collector in list(REGISTRY._collector_to_names.keys()):
         try:
             REGISTRY.unregister(collector)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     logger.info("All metrics cleared")
 
