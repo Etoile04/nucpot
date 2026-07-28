@@ -68,6 +68,35 @@ _STATE_CONVERTING = "converting"
 # Quota warning thresholds (page count per account per day)
 DAILY_HIGH_PRIORITY_PAGE_LIMIT: Final = 1000
 
+# --------------------------------------------------------------------------- #
+# Proxy bypass for MinerU CDN downloads
+# --------------------------------------------------------------------------- #
+# The MinerU result-zip CDN (cdn-mineru.openxlab.org.cn) and the Aliyun OSS
+# upload endpoints cannot complete TLS through the deployment's HTTP proxy
+# (host.docker.internal:7892).  The proxy's CONNECT tunnel establishes, but
+# the subsequent TLS handshake aborts with ``unexpected eof while reading``
+# because the proxy's TLS stack is incompatible with Tengine's edge config.
+# Direct (proxy-less) connections succeed, so we explicitly bypass the proxy
+# for these hosts in every download path.  Keep the list broad enough to
+# cover future CDN bucket migrations.
+_NO_PROXY_HOSTS: Final = (
+    "cdn-mineru.openxlab.org.cn",
+    ".openxlab.org.cn",
+    ".aliyuncs.com",
+    "mineru.net",
+)
+
+
+def _should_bypass_proxy(url: str) -> bool:
+    """Return True if *url*'s host matches a CDN/OSS domain that must not go through the HTTP proxy."""
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname or ""
+    return any(
+        host == h or host.endswith(h) if h.startswith(".") else host == h
+        for h in _NO_PROXY_HOSTS
+    )
+
 
 # ---------------------------------------------------------------------------
 # Settings helpers (read env directly, no pydantic — matches vision_client)
@@ -520,7 +549,7 @@ class MinerUClient:
             except Exception as exc:
                 pycurl_err = f"pycurl={exc!r}"
 
-        # 2) urllib fallback
+        # 2) urllib fallback — bypass proxy for CDN hosts (see _NO_PROXY_HOSTS)
         try:
             import ssl
             import urllib.request
@@ -529,15 +558,25 @@ class MinerUClient:
             req = urllib.request.Request(
                 url, headers={"User-Agent": "nucpot/1.0"}
             )
-            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
-                body: bytes = resp.read()
-                return body
+            if _should_bypass_proxy(url):
+                # ProxyHandler({}) = no proxy; the default opener inherits
+                # HTTP_PROXY/HTTPS_PROXY from the environment, which breaks
+                # the CDN TLS handshake.
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with opener.open(req, timeout=120) as resp:
+                    body: bytes = resp.read()
+                    return body
+            else:
+                with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+                    body = resp.read()
+                    return body
         except Exception as urllib_exc:
             urllib_err = f"urllib={urllib_exc!r}"
 
-        # 3) httpx last resort
+        # 3) httpx last resort — trust_env=False to skip proxy env vars
         try:
-            async with httpx.AsyncClient(timeout=120) as c:
+            bypass = _should_bypass_proxy(url)
+            async with httpx.AsyncClient(timeout=120, trust_env=not bypass) as c:
                 resp = await c.get(url)
                 if resp.status_code != 200:
                     raise MinerUAPIError(
@@ -576,6 +615,15 @@ def _pycurl_get(url: str, timeout: float = 120.0) -> bytes:
     """Sync helper that performs a GET via libcurl/pycurl.
 
     Returns the body as bytes. Raises ``pycurl.error`` on failure.
+
+    The MinerU result-zip CDN (``cdn-mineru.openxlab.org.cn``) sits behind
+    a Tengine edge that refuses the TLS ClientHello issued by some HTTP
+    proxies during CONNECT tunnelling — the proxy completes CONNECT but
+    the subsequent TLS handshake aborts with ``unexpected eof while
+    reading``.  Bypassing the proxy (direct connection from the container)
+    lets libcurl negotiate TLS directly with the origin, which succeeds.
+    We therefore force ``CURLOPT PROXY`` to an empty string for any URL
+    whose host is in :data:`_NO_PROXY_HOSTS`.
     """
     import io as _io
 
@@ -592,6 +640,8 @@ def _pycurl_get(url: str, timeout: float = 120.0) -> bytes:
         c.setopt(c.SSL_VERIFYPEER, 1)
         c.setopt(c.SSL_VERIFYHOST, 2)
         c.setopt(c.USERAGENT, "nucpot/1.0")
+        if _should_bypass_proxy(url):
+            c.setopt(c.PROXY, "")
         c.perform()
         status = c.getinfo(c.RESPONSE_CODE)
         if status != 200:

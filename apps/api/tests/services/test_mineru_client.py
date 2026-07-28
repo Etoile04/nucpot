@@ -233,6 +233,33 @@ class TestClientInit:
 # ---------------------------------------------------------------------------
 
 
+class TestShouldBypassProxy:
+    """Proxy bypass logic for MinerU CDN / OSS hosts."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://cdn-mineru.openxlab.org.cn/pdf/x.zip",
+            "https://foo.openxlab.org.cn/x.zip",
+            "https://bucket.oss-cn-beijing.aliyuncs.com/upload",
+            "https://mineru.net/api/v4/file-urls/batch",
+        ],
+    )
+    def test_bypasses_cdn_and_oss(self, url: str) -> None:
+        assert mc._should_bypass_proxy(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/file.zip",
+            "https://github.com/repo",
+            "http://localhost:8000",
+        ],
+    )
+    def test_does_not_bypass_other_hosts(self, url: str) -> None:
+        assert mc._should_bypass_proxy(url) is False
+
+
 class TestRaiseForStatus:
     def test_passes_on_2xx(self) -> None:
         resp = MagicMock(spec=httpx.Response, status_code=200)
@@ -366,7 +393,7 @@ def _patch_async_client(monkeypatch: pytest.MonkeyPatch, *, zip_bytes: bytes) ->
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+    monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
     return mock_client
 
 
@@ -439,7 +466,7 @@ class TestParsePdfFailures:
         mock_client.put = AsyncMock(return_value=upload_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k")
         import asyncio
@@ -483,7 +510,7 @@ class TestParsePdfFailures:
         mock_client.get = AsyncMock(return_value=poll_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k", poll_interval=0.01, timeout_seconds=1.0)
         import asyncio
@@ -523,7 +550,7 @@ class TestParsePdfFailures:
         mock_client.get = AsyncMock(return_value=poll_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k", poll_interval=0.01, timeout_seconds=1.0)
         import asyncio
@@ -563,7 +590,7 @@ class TestParsePdfFailures:
         mock_client.get = AsyncMock(return_value=poll_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(
             api_key="k", poll_interval=0.01, timeout_seconds=0.05
@@ -581,7 +608,7 @@ class TestParsePdfFailures:
         mock_client.post = AsyncMock(return_value=bad_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k")
         import asyncio
@@ -597,7 +624,7 @@ class TestParsePdfFailures:
         mock_client.post = AsyncMock(return_value=bad_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k")
         import asyncio
@@ -645,7 +672,7 @@ class TestParsePdfFailures:
         mock_client.get = AsyncMock(side_effect=[poll_resp, bad_zip])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k", poll_interval=0.01, timeout_seconds=1.0)
         import asyncio
@@ -695,7 +722,7 @@ class TestParsePdfFailures:
         mock_client.get = AsyncMock(side_effect=[poll_resp, zip_resp])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda timeout: mock_client)
+        monkeypatch.setattr(mc.httpx, "AsyncClient", lambda *args, **kwargs: mock_client)
 
         client = MinerUClient(api_key="k", poll_interval=0.01, timeout_seconds=1.0)
         import asyncio
@@ -764,7 +791,7 @@ class TestZipFallback:
         # based on call order.
         clients = iter([outer_client, zip_async_client])
         monkeypatch.setattr(
-            mc.httpx, "AsyncClient", lambda timeout: next(clients)
+            mc.httpx, "AsyncClient", lambda *args, **kwargs: next(clients)
         )
 
         # Pretend pycurl is not installed by patching
