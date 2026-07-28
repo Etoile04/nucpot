@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models.entity_merge import MatchMethod
+from nfm_db.models.entity_merge import EntityMergeLog, MatchMethod
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.services.dedup_service import (
     DuplicateCandidate,
@@ -75,7 +75,7 @@ class MergeLogResponse(BaseModel):
     match_score: float
     match_method: MatchMethod
     merged_at: datetime
-    details: dict | None = None
+    details: dict[str, object] | None = None
 
 
 def _candidate_to_response(c: DuplicateCandidate) -> DuplicateCandidateResponse:
@@ -90,7 +90,7 @@ def _candidate_to_response(c: DuplicateCandidate) -> DuplicateCandidateResponse:
     )
 
 
-def _log_to_response(row) -> MergeLogResponse:
+def _log_to_response(row: EntityMergeLog) -> MergeLogResponse:
     return MergeLogResponse(
         id=row.id,
         canonical_id=row.canonical_id,

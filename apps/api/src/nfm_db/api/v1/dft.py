@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -63,7 +63,7 @@ class DFTCalculationResponse(BaseModel):
     source: str | None = None
     status: str
     notes: str | None = None
-    computation_metadata: dict | None = None
+    computation_metadata: dict[str, object] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -325,7 +325,7 @@ async def stats(
     """Aggregate stats: total + by source/functional/status."""
     total = (await db.execute(select(func.count(DFTCalculation.id)))).scalar_one()
 
-    async def _bucket(col) -> list[DFTStatsBucket]:
+    async def _bucket(col: Any) -> list[DFTStatsBucket]:
         stmt = select(col, func.count(DFTCalculation.id)).group_by(col)
         rows = (await db.execute(stmt)).all()
         return [

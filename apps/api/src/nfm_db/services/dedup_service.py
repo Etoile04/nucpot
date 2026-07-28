@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -348,7 +348,7 @@ async def get_merge_log(
     return result.scalar_one_or_none()
 
 
-__all__: Iterable[str] = (
+__all__: tuple[str, ...] = (
     "DEFAULT_FUZZY_THRESHOLD",
     "DuplicateCandidate",
     "MatchMethod",
