@@ -237,6 +237,7 @@ module = [
     "nfm_db.models.hpc_failover_event",
     "nfm_db.services.md_verification",
     "nfm_db.services.md_tasks",
+    "monitoring.prometheus",
 ]
 ignore_errors = true
 
