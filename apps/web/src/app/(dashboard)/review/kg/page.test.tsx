@@ -127,7 +127,7 @@ describe('KgReviewPage', () => {
     fireEvent.click(selectAllCheckbox)
 
     // Click batch approve button (appears when items are selected)
-    const batchApproveBtn = screen.getByLabelText(/批量通过/)
+    const batchApproveBtn = screen.getByLabelText(/批量审核/)
     fireEvent.click(batchApproveBtn)
 
     // Confirm in the modal
@@ -209,7 +209,7 @@ describe('KgReviewPage', () => {
     fireEvent.click(selectAllCheckbox)
 
     // Open confirmation modal and confirm
-    const batchApproveBtn = screen.getByLabelText(/批量通过/)
+    const batchApproveBtn = screen.getByLabelText(/批量审核/)
     fireEvent.click(batchApproveBtn)
     const confirmBtn = screen.getByText('确认通过')
     fireEvent.click(confirmBtn)
@@ -219,6 +219,6 @@ describe('KgReviewPage', () => {
     })
 
     // After batch action, the batch bar disappears (selection cleared)
-    expect(screen.queryByLabelText(/批量通过/)).toBeNull()
+    expect(screen.queryByLabelText(/批量审核/)).toBeNull()
   })
 })
