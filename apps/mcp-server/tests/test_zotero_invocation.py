@@ -6,14 +6,12 @@ them through the FastMCP server with a mocked ZoteroClient.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from mcp.server import FastMCP
 
 from nfm_mcp.tools.zotero import register_zotero_tools
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

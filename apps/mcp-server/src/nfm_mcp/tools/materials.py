@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -26,7 +26,7 @@ class SearchMaterialsInput(BaseModel):
         min_length=1,
         max_length=500,
     )
-    material_type: Optional[str] = Field(
+    material_type: str | None = Field(
         default=None,
         description="Filter by material type (e.g., 'fuel', 'cladding', 'coolant')",
     )
@@ -77,13 +77,13 @@ def register_material_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="search_materials",
-        annotations={
-            "title": "Search Nuclear Materials",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Search Nuclear Materials",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def search_materials(
         *,
@@ -113,7 +113,9 @@ def register_material_tools(mcp: FastMCP) -> None:
                     page=page,
                     limit=limit,
                 )
-                return result.model_dump_json(indent=2)
+                return str(result.model_dump_json(indent=2))
+
+            return json.dumps({"error": "No database session available"})
 
         except ValueError:
             return json.dumps({"error": "Invalid material identifier format"})
@@ -123,13 +125,13 @@ def register_material_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="get_material",
-        annotations={
-            "title": "Get Material Details",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Get Material Details",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def get_material(*, material_id: str) -> str:
         """Retrieve detailed information about a specific nuclear material.
@@ -160,7 +162,9 @@ def register_material_tools(mcp: FastMCP) -> None:
                     return json.dumps({
                         "error": f"Material '{material_id}' not found",
                     })
-                return result.model_dump_json(indent=2)
+                return str(result.model_dump_json(indent=2))
+
+            return json.dumps({"error": "No database session available"})
 
         except Exception as exc:
             logger.exception("get_material failed")

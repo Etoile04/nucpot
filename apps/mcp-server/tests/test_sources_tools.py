@@ -6,10 +6,10 @@ and nfm_batch_import_from_zotero tool registration and behavior.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import typing
+from unittest.mock import MagicMock
 
 import pytest
-
 from mcp.server import FastMCP
 
 from nfm_mcp.tools.sources import (
@@ -17,7 +17,6 @@ from nfm_mcp.tools.sources import (
     _item_to_source_data,
     register_source_tools,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -42,7 +41,7 @@ def mcp_server() -> FastMCP:
 class TestSourceToolRegistration:
     """Verify NFM source tools are registered."""
 
-    EXPECTED_TOOLS = [
+    EXPECTED_TOOLS: typing.ClassVar[list[str]] = [
         "nfm_search_sources",
         "nfm_import_from_zotero",
         "nfm_batch_import_from_zotero",

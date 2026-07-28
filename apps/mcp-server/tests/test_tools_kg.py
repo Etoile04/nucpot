@@ -178,6 +178,7 @@ class TestQueryKnowledgeGraphInput:
 
     def test_query_required(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.knowledge_graph import QueryKnowledgeGraphInput
 
         with pytest.raises(ValidationError):
@@ -185,6 +186,7 @@ class TestQueryKnowledgeGraphInput:
 
     def test_limit_ge_1(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.knowledge_graph import QueryKnowledgeGraphInput
 
         with pytest.raises(ValidationError):
@@ -192,6 +194,7 @@ class TestQueryKnowledgeGraphInput:
 
     def test_limit_le_100(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.knowledge_graph import QueryKnowledgeGraphInput
 
         with pytest.raises(ValidationError):
@@ -205,6 +208,7 @@ class TestQueryKnowledgeGraphInput:
 
     def test_extra_fields_forbidden(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.knowledge_graph import QueryKnowledgeGraphInput
 
         with pytest.raises(ValidationError):

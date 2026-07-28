@@ -6,7 +6,6 @@ sentence-transformers embeddings stored in a persistent ChromaDB collection.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -21,9 +20,9 @@ _DEFAULT_PERSIST_DIR = "data/chroma"
 _COLLECTION_NAME = "nfm_sources"
 
 # Module-level singleton
-_client = None
-_collection = None
-_embedding_fn = None
+_client: Any = None
+_collection: Any = None
+_embedding_fn: Any = None
 
 
 def _get_persist_dir() -> str:
@@ -31,7 +30,7 @@ def _get_persist_dir() -> str:
     return os.environ.get("CHROMA_PERSIST_DIR", _DEFAULT_PERSIST_DIR)
 
 
-def _init_embedding_function():
+def _init_embedding_function() -> Any:
     """Lazy-initialize the sentence-transformers embedding function.
 
     Returns a callable that takes a list of strings and returns
@@ -42,15 +41,15 @@ def _init_embedding_function():
         return _embedding_fn
 
     try:
-        SentenceTransformerEmbeddingFunction = getattr(
+        st_embedding_fn = getattr(
             _ef_module, "SentenceTransformerEmbeddingFunction", None
         )
-        if SentenceTransformerEmbeddingFunction is None:
+        if st_embedding_fn is None:
             logger.info("SentenceTransformerEmbeddingFunction not available")
             return None
 
         model_name = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-        _embedding_fn = SentenceTransformerEmbeddingFunction(model_name=model_name)
+        _embedding_fn = st_embedding_fn(model_name=model_name)
         logger.info("Initialized embedding function: %s", model_name)
         return _embedding_fn
     except (ImportError, Exception):
@@ -61,7 +60,7 @@ def _init_embedding_function():
         return None
 
 
-def get_collection():
+def get_collection() -> Any:
     """Get or create the ChromaDB collection for NFM sources.
 
     Lazy-initializes the client and collection on first access.
@@ -78,7 +77,7 @@ def get_collection():
     _collection = _client.get_or_create_collection(
         name=_COLLECTION_NAME,
         metadata={"description": "NFM data sources semantic index"},
-        embedding_function=embedding_fn,  # type: ignore[arg-type]
+        embedding_function=embedding_fn,
     )
     logger.info(
         "ChromaDB collection '%s' ready (%d documents)",

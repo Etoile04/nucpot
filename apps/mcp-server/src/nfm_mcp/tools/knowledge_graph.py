@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -49,7 +49,7 @@ class QueryKnowledgeGraphInput(BaseModel):
         min_length=1,
         max_length=1000,
     )
-    entity_types: Optional[list[str]] = Field(
+    entity_types: list[str] | None = Field(
         default=None,
         description=(
             "Filter by entity types "
@@ -84,13 +84,13 @@ def register_kg_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="query_knowledge_graph",
-        annotations={
-            "title": "Query Knowledge Graph",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Query Knowledge Graph",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def query_knowledge_graph(
         *,
@@ -128,6 +128,8 @@ def register_kg_tools(mcp: FastMCP) -> None:
                     {"nodes": nodes, "edges": edges},
                     default=str,
                 )
+            return json.dumps({"error": "No database session available"})
+
         except Exception as exc:
             logger.exception("query_knowledge_graph failed")
             return json.dumps({"error": f"Query failed: {exc}"})

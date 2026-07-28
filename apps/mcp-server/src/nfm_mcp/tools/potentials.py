@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -25,15 +25,15 @@ class QueryPotentialsInput(BaseModel):
         min_length=1,
         max_length=200,
     )
-    potential_type: Optional[str] = Field(
+    potential_type: str | None = Field(
         default=None,
         description="Potential type filter (e.g., 'Gibbs', 'enthalpy', 'Cp')",
     )
-    model_name: Optional[str] = Field(
+    model_name: str | None = Field(
         default=None,
         description="Specific model name (e.g., 'FINK-LUCUTA2')",
     )
-    temperature_range: Optional[str] = Field(
+    temperature_range: str | None = Field(
         default=None,
         description="Temperature range filter (e.g., '300-3000 K')",
     )
@@ -44,13 +44,13 @@ def register_potential_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="query_potentials",
-        annotations={
-            "title": "Query Thermodynamic Potentials",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Query Thermodynamic Potentials",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def query_potentials(
         *,
@@ -94,7 +94,9 @@ def register_potential_tools(mcp: FastMCP) -> None:
                         or name_lower in (p.display_name or "").lower()
                     ]
 
-                return result.model_dump_json(indent=2)
+                return str(result.model_dump_json(indent=2))
+
+            return json.dumps({"error": "No database session available"})
 
         except Exception as exc:
             logger.exception("query_potentials failed")

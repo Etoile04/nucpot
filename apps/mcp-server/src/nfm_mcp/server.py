@@ -108,17 +108,33 @@ def create_mcp_server() -> FastMCP:
 
 
 def main() -> None:
-    """CLI entry-point -- starts the server with the configured transport."""
+    """CLI entry-point -- starts the server with the configured transport.
+
+    The host/port settings are passed to the MCP runtime via environment
+    variables (``MCP_SERVER_HOST`` / ``MCP_SERVER_PORT``) since newer
+    versions of ``FastMCP.run()`` no longer accept them as keyword
+    arguments.
+    """
+    import os
+
     settings = get_settings()
     mcp = create_mcp_server()
+
+    # Newer FastMCP.run() reads host/port from its own settings layer
+    # rather than kwargs.  Propagate our NFM_MCP_* settings there.
+    os.environ.setdefault("MCP_SERVER_HOST", settings.host)
+    os.environ.setdefault("MCP_SERVER_PORT", str(settings.port))
 
     transport = settings.transport.lower()
     if transport == "stdio":
         mcp.run()
-    elif transport in ("streamable_http", "http"):
-        mcp.run(transport="streamable_http", host=settings.host, port=settings.port)
+    elif transport in ("streamable_http", "streamable-http", "http"):
+        mcp.run(transport="streamable-http")
     elif transport == "sse":
-        mcp.run(transport="sse", host=settings.host, port=settings.port)
+        mcp.run(transport="sse")
     else:
-        msg = f"Unknown transport: {transport!r}. Use 'stdio', 'streamable_http', or 'sse'."
+        msg = (
+            f"Unknown transport: {transport!r}. "
+            "Use 'stdio', 'streamable_http', or 'sse'."
+        )
         raise ValueError(msg)

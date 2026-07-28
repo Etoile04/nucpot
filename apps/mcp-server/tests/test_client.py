@@ -10,8 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nfm_mcp.zotero.client import ZoteroClient, _build_template, format_item
-
+from nfm_mcp.zotero.client import ZoteroClient, _build_template
 
 # ---------------------------------------------------------------------------
 # Fixtures

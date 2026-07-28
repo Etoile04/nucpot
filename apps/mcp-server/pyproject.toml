@@ -63,6 +63,12 @@ plugins = ["pydantic.mypy"]
 module = "nfm_db.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# chromadb is an optional runtime dependency (semantic search).  It is
+# not installed in CI or test environments, so suppress import errors.
+module = "chromadb.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

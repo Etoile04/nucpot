@@ -6,15 +6,14 @@ names, descriptions, and annotations.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import typing
+from unittest.mock import MagicMock
 
 import pytest
-
 from mcp.server import FastMCP
 
 from nfm_mcp.tools.zotero import register_zotero_tools
 from nfm_mcp.zotero.client import ZoteroClient, format_item
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,7 +40,7 @@ def mcp_server() -> FastMCP:
 class TestZoteroToolRegistration:
     """Verify all 9 Zotero tools are registered correctly."""
 
-    EXPECTED_TOOLS = [
+    EXPECTED_TOOLS: typing.ClassVar[list[str]] = [
         "zotero_search_library",
         "zotero_get_collections",
         "zotero_get_collection_items",
