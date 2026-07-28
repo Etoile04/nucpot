@@ -20,6 +20,9 @@ class ExtractionFigure(Base):
     __tablename__ = "extraction_figures"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("data_sources.id"), nullable=True
+    )
     job_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("extraction_jobs.id"), nullable=True
     )

@@ -148,6 +148,7 @@ export default function LiteratureManager() {
           page,
           limit: PAGE_SIZE,
           search: f.search || undefined,
+          status: f.status || undefined,
           yearMin: f.yearMin ?? undefined,
           yearMax: f.yearMax ?? undefined,
         })
