@@ -140,7 +140,22 @@ class LocalDiskStorage:
         return f"{datasource_id}/{safe}"
 
     def read(self, relative_path: str) -> bytes:
-        """Read the bytes previously written to *relative_path*."""
+        """Read the bytes previously written to *relative_path*.
+
+        Raises:
+            FileNotFoundError: when *relative_path* is empty/None, when the
+                file does not exist, or when *relative_path* points to a
+                directory instead of a file.  Previously an empty string
+                silently resolved to the storage root and raised
+                ``IsADirectoryError`` deep in ``read_bytes()`` — opaque
+                to callers.  We now raise a clear ``FileNotFoundError``
+                with a helpful message (2026-07-28, fallback fix).
+        """
+        if not relative_path:
+            raise FileNotFoundError(
+                "storage.read() called with empty relative_path "
+                "(datasource has no file_path set — was the upload step skipped?)"
+            )
         return self._resolve(relative_path).read_bytes()
 
     def delete(self, relative_path: str) -> None:
