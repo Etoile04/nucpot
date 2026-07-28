@@ -50,7 +50,10 @@ IMPORT_NAME_OVERRIDES: set[str] = {
     "prometheus_client",
     # PyYAML is imported as "yaml"
     "yaml",
-    # shap (declared as "shap>=0.45")
+    # shap: lazy-imported inside try/except in train_v11.py (line 773).
+    # Declaring it as a hard dep pulls in numba, which only supports Python
+    # <3.10 and breaks our 3.12 CI. Kept optional — users who want SHAP
+    # feature-importance plots install it separately (pip install shap).
     "shap",
     # pytesseract (declared as "pytesseract>=0.3.10")
     "pytesseract",
