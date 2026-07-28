@@ -32,10 +32,36 @@ from nfm_db.services.kg_re import ExtractedEntity, ExtractedRelation, GraphBuild
 
 
 def _make_mock_session() -> AsyncMock:
-    """Create a mock SQLAlchemy AsyncSession."""
+    """Create a mock SQLAlchemy AsyncSession.
+
+    The mock returns a properly-shaped Result object for ``execute``
+    calls so that ``result.scalars().first()`` and
+    ``result.scalars().all()`` don't blow up with
+    ``'coroutine' object has no attribute 'first'``.
+    """
     session = AsyncMock()
     session.add = MagicMock()
     session.flush = AsyncMock()
+
+    # Build a Result-like mock that supports .scalars().first() and .all()
+    def _make_result(items=None):
+        """Return a mock Result whose .scalars() chain works."""
+        result = MagicMock()
+        scalars_mock = MagicMock()
+        if items is None:
+            scalars_mock.first.return_value = None
+            scalars_mock.all.return_value = []
+        else:
+            scalars_mock.first.return_value = items[0] if items else None
+            scalars_mock.all.return_value = items
+        result.scalars.return_value = scalars_mock
+        return result
+
+    # session.execute is an AsyncMock that returns a Result-like mock.
+    session.execute = AsyncMock(return_value=_make_result())
+    # Some code paths call session.execute(stmt) then use .first() directly.
+    session.execute.return_value.first = MagicMock(return_value=None)
+
     return session
 
 

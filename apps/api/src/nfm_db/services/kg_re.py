@@ -432,17 +432,18 @@ class GraphBuilder:
                 )
 
             edge = await self._create_edge(relation, source_node.id, target_node.id)
-            new_edges.append(edge)
-            edges_created += 1
+            if edge is not None:
+                new_edges.append(edge)
+                edges_created += 1
 
-            if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
-                await self._queue_for_review(
-                    edge.id,
-                    "relation",
-                    f"Low confidence relation: "
-                    f"{relation.source_label} -[{relation.relation_type}]-> "
-                    f"{relation.target_label} (confidence={relation.confidence:.2f})",
-                )
+                if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD:
+                    await self._queue_for_review(
+                        edge.id,
+                        "relation",
+                        f"Low confidence relation: "
+                        f"{relation.source_label} -[{relation.relation_type}]-> "
+                        f"{relation.target_label} (confidence={relation.confidence:.2f})",
+                    )
                 review_count += 1
 
         await self._session.flush()
