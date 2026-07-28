@@ -29,8 +29,8 @@ test.describe("RAG Chat — Unauthenticated", { tag: "@smoke" }, () => {
   test("redirects /rag/chat to login when unauthenticated", async ({ page }) => {
     await page.goto("/rag/chat", { waitUntil: "domcontentloaded" })
 
-    // Dashboard routes require auth — should redirect to /admin/login
-    await expect(page).toHaveURL(/\/admin\/login/, { timeout: 10_000 })
+    // Dashboard routes require auth — should redirect to /login
+    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
   })
 })
 
