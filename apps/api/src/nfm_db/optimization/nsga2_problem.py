@@ -248,6 +248,8 @@ class NuclearFuelOptimizationProblem(Problem):
         if use_ml_surrogate:
             self._init_ml_models()
 
+        self._use_ml_surrogate = self._ml_evaluator is not None
+
     def _init_ml_models(self) -> None:
         """Lazy-initialize ML surrogate evaluator for vectorized batching."""
         try:
