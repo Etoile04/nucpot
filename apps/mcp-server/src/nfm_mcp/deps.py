@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     # LLM service (for extraction pipeline)
     llm_service_url: str = "http://localhost:8003"
 
+    # Zotero integration (NFM-829)
+    # When ``zotero_api_key`` is empty the Zotero tools are NOT registered
+    # so the server can run without Zotero credentials.  Set NFM_MCP_ZOTERO_API_KEY,
+    # NFM_MCP_ZOTERO_USER_ID, and optionally NFM_MCP_ZOTERO_LIBRARY_TYPE
+    # to enable them.
+    zotero_api_key: str = ""
+    zotero_user_id: str = ""
+    zotero_library_type: str = "user"
+
 
 def get_settings() -> Settings:
     """Return a cached ``Settings`` singleton."""
