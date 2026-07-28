@@ -7,9 +7,7 @@ Trigger and monitor OntoFuel extraction jobs:
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import uuid as _uuid_module
 from typing import Annotated
 from uuid import UUID
 
@@ -17,23 +15,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
-from nfm_db.database import async_session_factory, get_db
+from nfm_db.database import get_db
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
     ExtractionTriggerRequest,
 )
-from nfm_db.services.extraction_pipeline import (
-    get_job,
-    trigger_extraction,
+from nfm_db.services.extraction_pipeline import get_job
+from nfm_db.services.literature_dispatcher import (
+    process_literature_task,
 )
 
 logger = logging.getLogger(__name__)
-
-# Module-level set of in-flight background extraction tasks. Used so the
-# FastAPI request handler doesn't lose the task reference (RUF006) and
-# to allow graceful shutdown via ``_bg_tasks.clear()``.
-_bg_tasks: set[asyncio.Task[None]] = set()
 
 router = APIRouter(tags=["提取管理"])
 
@@ -58,9 +51,18 @@ async def trigger_extraction_job(
     """触发文献数据提取任务。
 
     The pipeline runs: source → OntoFuel extraction → property mapping
-    → quality gate → staging. Returns a job_id for status polling.
+    → quality gate → staging.
 
-    Accepted source_type values: 'doi', 'url', 'file', 'internal_id'.
+    Dispatches to Celery via :func:`process_literature_task` instead of
+    an asyncio.create_task background coroutine. The asyncio approach
+    silently died under uvicorn ``--workers N > 1`` because each worker
+    has its own event loop and module-level ``_job_store`` (the dict is
+    per-process).  Celery tasks run in the dedicated worker process and
+    persist to the broker queue — they survive uvicorn worker recycling
+    (D1 monitor caught this regression on 2026-07-28, see PR #423).
+
+    Accepted source_type values: 'doi', 'url', 'file', 'internal_id',
+    'datasource'.
     """
     valid_source_types = {"doi", "url", "file", "internal_id", "datasource"}
     if payload.source_type not in valid_source_types:
@@ -72,45 +74,16 @@ async def trigger_extraction_job(
             ),
         )
 
-    # Run extraction in the background with its own DB session to avoid
-    # Cloudflare Tunnel 100s timeout (Qwen3 thinking mode: 60-120s).
-    # Pre-generate a job_id so the caller can poll the status endpoint
-    # immediately instead of guessing (2026-07-28 follow-up).
-    async def _bg_extraction(
-        source_reference: str,
-        source_type: str,
-        element_systems: list[str] | None,
-        cache_level: str | None,
-        max_confidence: str | None,
-        bg_job_id: str,
-    ) -> None:
-        async with async_session_factory() as bg:
-            try:
-                await trigger_extraction(
-                    session=bg,
-                    source_reference=source_reference,
-                    source_type=source_type,
-                    element_systems=element_systems,
-                    cache_level=cache_level,
-                    max_confidence=max_confidence,
-                    job_id=bg_job_id,
-                )
-            except Exception:
-                logger.exception("Background extraction failed")
-
-    job_id = str(_uuid_module.uuid4())
-    task = asyncio.create_task(
-        _bg_extraction(
-            payload.source_reference,
-            payload.source_type,
-            payload.element_systems,
-            payload.cache_level,
-            payload.max_confidence,
-            job_id,
-        )
+    # Dispatch via Celery. For 'datasource' source_type this maps 1:1
+    # to process_literature_task. For 'doi' / 'url' / 'file' types the
+    # worker still handles them via the same dispatcher (it'll
+    # fetch-from-DOI / fetch-from-URL / copy-from-upload accordingly).
+    celery_async = process_literature_task.delay(payload.source_reference)
+    logger.info(
+        "trigger_extraction: dispatched source_reference=%s to celery task_id=%s",
+        payload.source_reference,
+        celery_async.id,
     )
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
 
     return {
         "success": True,
@@ -118,13 +91,12 @@ async def trigger_extraction_job(
             "source_reference": payload.source_reference,
             "source_type": payload.source_type,
             "status": "queued",
-            # Surface the job_id from _job_store so callers can poll
-            # /api/v1/extraction/status/{job_id} for progress. Previously
-            # only the background pipeline knew the job_id, which made
-            # it impossible to watch a single trigger's outcome (D1
-            # follow-up, 2026-07-28).
-            "job_id": job_id,
-            "message": "Extraction job queued. Check review queue for results.",
+            # Surface the Celery task_id so callers can correlate the
+            # Celery log entry. The legacy /api/v1/extraction/status/
+            # endpoint is no longer used for these jobs — operators
+            # should watch the Celery worker log instead.
+            "job_id": celery_async.id,
+            "message": "Extraction job queued. Celery worker will process asynchronously.",
         },
     }
 
