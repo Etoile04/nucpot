@@ -199,9 +199,9 @@ def clear_metrics() -> None:
 
     # REGISTRY.clear() — prometheus_client CollectorRegistry has no public
     # clear() method in the typed stubs; use unregister for each collector.
-    for collector in list(REGISTRY._collector_to_names.keys()):
+    for c in list(REGISTRY._collector_to_names.keys()):
         try:
-            REGISTRY.unregister(collector)
+            REGISTRY.unregister(c)
         except Exception:
             pass
     logger.info("All metrics cleared")
