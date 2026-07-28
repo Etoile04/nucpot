@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Application Info
 # =============================================================================
-info = Info("nucpot_api", version="1.0.0")
+info = Info("nucpot_api", "NucPot API application info")
 info.info({"environment": os.getenv("ENVIRONMENT", "development")})
 
 # =============================================================================
@@ -197,7 +197,13 @@ def clear_metrics() -> None:
     ]:
         collector.clear()
 
-    REGISTRY.clear()
+    # REGISTRY.clear() — prometheus_client CollectorRegistry has no public
+    # clear() method in the typed stubs; use unregister for each collector.
+    for collector in list(REGISTRY._collector_to_names.keys()):
+        try:
+            REGISTRY.unregister(collector)
+        except Exception:  # noqa: BLE001
+            pass
     logger.info("All metrics cleared")
 
 
