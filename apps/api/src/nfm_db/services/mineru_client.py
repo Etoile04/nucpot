@@ -532,7 +532,7 @@ class MinerUClient:
             with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
                 body: bytes = resp.read()
                 return body
-        except Exception as urllib_exc:  # noqa: BLE001
+        except Exception as urllib_exc:
             urllib_err = f"urllib={urllib_exc!r}"
 
         # 3) httpx last resort
