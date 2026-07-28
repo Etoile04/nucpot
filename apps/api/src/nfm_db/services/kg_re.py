@@ -637,7 +637,9 @@ class GraphBuilder:
             corpus_id=self._corpus_id,
             # Phase 3 unified review model (ADR-NFM-796):
             # Same logic as _create_node — set review_status explicitly.
-            review_status="pending" if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD else "approved",
+            review_status="pending"
+            if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD
+            else "approved",
         )
         self._session.add(edge)
 
