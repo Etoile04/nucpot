@@ -7,11 +7,16 @@ WORKDIR /app
 # nfm_db.services.mineru_client (NFM-MINERU-1) — pycurl uses libcurl
 # because httpx/urllib fail the TLS 1.3 handshake against
 # cdn-mineru.openxlab.org.cn on some egress networks, while libcurl handles
-# it reliably.
-RUN apt-get update && \
+# it reliably. Use Tsinghua mirror first for reliability in CN region,
+# fall back to default debian mirror if that fails.
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && \
     rm -rf /var/lib/apt/lists/* || \
-    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*)
+    (sed -i 's|https://mirrors.tuna.tsinghua.edu.cn/debian|http://deb.debian.org/debian|g' /etc/apt/sources.list.d/debian.sources && \
+     apt-get update && \
+     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && \
+     rm -rf /var/lib/apt/lists/*)
 
 # Copy project definition, source, and migrations together so pip can find the package
 COPY apps/api/pyproject.toml ./
