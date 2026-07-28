@@ -19,7 +19,10 @@ from nfm_db.api.v1.auth import (
 from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.middleware.rate_limit import limiter
-from nfm_db.models.user import User
+from nfm_db.models.user import (
+    ServiceAccountScope,
+    User,
+)
 from nfm_db.schemas.auth import (
     ApiResponse,
     BlogRoleResponse,
@@ -33,6 +36,7 @@ from nfm_db.schemas.auth import (
 from nfm_db.services.auth_service import (
     authenticate_user,
     create_access_token,
+    create_service_account_token,
     get_password_hash,
 )
 
@@ -85,11 +89,21 @@ async def login(
     user.last_login = datetime.now(UTC)
     await db.commit()
 
-    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": str(user.id)},
-        expires_delta=access_token_expires,
-    )
+    # Service accounts get a token carrying ``is_service_account`` + ``scope``
+    # claims so downstream ``require_service_scope`` guards let them past the
+    # ``/api/v1/extraction/ingest`` gate (and only that gate).  Human users
+    # keep the plain ``{"sub": ...}`` payload — no behavioral change for them.
+    if user.is_service_account:
+        access_token = create_service_account_token(
+            user,
+            ServiceAccountScope.EXTRACTION_INGEST,
+        )
+    else:
+        access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+        access_token = create_access_token(
+            data={"sub": str(user.id)},
+            expires_delta=access_token_expires,
+        )
 
     # Set HttpOnly cookie for browser security (XSS-proof).
     # ``secure=True`` because the public endpoint is always served over

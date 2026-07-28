@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, String, Uuid
+from sqlalchemy import Boolean, CheckConstraint, DateTime, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
@@ -34,8 +34,34 @@ class Permission(str, enum.Enum):
     ASSIGN_ROLES = "assign_roles"
 
 
+class ServiceAccountScope(str, enum.Enum):
+    """Authorized scopes for service accounts (NFM-1973 / NFM-1972 AC-1).
+
+    Service accounts are machine-to-machine identities that authenticate via
+    the standard ``/auth/login`` endpoint but must be authorized against a
+    single, narrow scope.  Any HTTP handler that wishes to admit a service
+    account must declare the required scope via the
+    ``require_service_scope`` dependency; otherwise the request is denied
+    with ``403 Forbidden``.
+
+    Adding a new scope is a two-step process:
+    1. Add the enum member below.
+    2. Decorate the target endpoint with
+       ``Depends(require_service_scope(ServiceAccountScope.<NEW>))``.
+    """
+
+    EXTRACTION_INGEST = "extraction:ingest"
+
+
 class User(TimestampMixin, Base):
-    """User model with blog role support for role-based access control."""
+    """User model with blog role support for role-based access control.
+
+    The same table holds both human users (with a ``blog_role``) and
+    service accounts (with ``is_service_account=True`` and zero
+    ``blog_role``).  The two populations are disjoint — service accounts
+    authenticate via ``/auth/login`` like everyone else but are gated
+    by ``ServiceAccountScope`` instead of ``BlogRole``.
+    """
 
     __tablename__ = "users"
     __table_args__ = (
@@ -61,13 +87,19 @@ class User(TimestampMixin, Base):
         default=None,
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_service_account: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     last_login: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
     # Profile fields (migrated from Supabase profiles table)
     affiliation: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(64), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     @property
@@ -84,8 +116,13 @@ class User(TimestampMixin, Base):
 
     @property
     def permissions(self) -> set[Permission]:
-        """Get user permissions based on blog role."""
-        if not self.blog_role:
+        """Get user permissions based on blog role.
+
+        Service accounts have **no** blog permissions by design; their
+        access is governed exclusively by ``ServiceAccountScope`` checks
+        on the endpoints they are permitted to call.
+        """
+        if self.is_service_account or not self.blog_role:
             return set()
 
         role_permissions = {
@@ -114,8 +151,10 @@ class User(TimestampMixin, Base):
         return permission in self.permissions
 
     def __repr__(self) -> str:
+        kind = "service" if self.is_service_account else "user"
+        role = self.blog_role.value if self.blog_role else None
         return (
-            f"<User id={self.id!s} "
+            f"<{kind} id={self.id!s} "
             f"username={self.username!r} "
-            f"role={self.blog_role.value if self.blog_role else None}>"
+            f"role={role}>"
         )
