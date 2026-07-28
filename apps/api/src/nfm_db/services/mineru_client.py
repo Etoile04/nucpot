@@ -278,64 +278,64 @@ class MinerUClient:
     # ----- public API ----------------------------------------------------
 
     async def parse_pdf(
-            self,
-            pdf_bytes: bytes,
-            *,
-            filename: str = "upload.pdf",
-            data_id: str | None = None,
-        ) -> MinerUResult:
-            """Parse a PDF and return Markdown content.
+        self,
+        pdf_bytes: bytes,
+        *,
+        filename: str = "upload.pdf",
+        data_id: str | None = None,
+    ) -> MinerUResult:
+        """Parse a PDF and return Markdown content.
 
-            Steps (MinerU 精准解析 v4 file-upload-batch flow):
-                1. POST /api/v4/file-urls/batch  → 获取 batch_id + file_urls (signed OSS PUT URLs)
-                2. PUT  <signed_url>             → 上传 PDF 字节
-                3. GET  /api/v4/extract-results/batch/{batch_id}  → 轮询直到 done/failed
-                4. GET  <full_zip_url>           → 下载结果 zip
-                5. 解压取 full.md
+        Steps (MinerU 精准解析 v4 file-upload-batch flow):
+            1. POST /api/v4/file-urls/batch  → 获取 batch_id + file_urls (signed OSS PUT URLs)
+            2. PUT  <signed_url>             → 上传 PDF 字节
+            3. GET  /api/v4/extract-results/batch/{batch_id}  → 轮询直到 done/failed
+            4. GET  <full_zip_url>           → 下载结果 zip
+            5. 解压取 full.md
 
-            Raises :class:`MinerUError` on any failure path.
-            """
-            if len(pdf_bytes) > MAX_FILE_SIZE_BYTES:
-                raise MinerUConfigError(
-                    f"PDF size {len(pdf_bytes)} bytes exceeds MinerU limit "
-                    f"({MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB)"
+        Raises :class:`MinerUError` on any failure path.
+        """
+        if len(pdf_bytes) > MAX_FILE_SIZE_BYTES:
+            raise MinerUConfigError(
+                f"PDF size {len(pdf_bytes)} bytes exceeds MinerU limit "
+                f"({MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB)"
+            )
+
+        started = time.monotonic()
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            upload_urls, batch_id = await self._apply_upload_urls(
+                client, filename=filename, data_id=data_id
+            )
+            await self._upload_pdf(client, upload_urls[0], pdf_bytes)
+
+            poll_result = await self._poll_until_done(client, batch_id)
+            if poll_result.state != _STATE_DONE:
+                raise MinerUAPIError(
+                    f"MinerU batch {batch_id} ended in state={poll_result.state}"
+                )
+            if not poll_result.full_zip_url:
+                raise MinerUAPIError(
+                    f"MinerU batch {batch_id} returned state=done but no full_zip_url"
                 )
 
-            started = time.monotonic()
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                upload_urls, batch_id = await self._apply_upload_urls(
-                    client, filename=filename, data_id=data_id
-                )
-                await self._upload_pdf(client, upload_urls[0], pdf_bytes)
+            markdown = await self._download_markdown(client, poll_result.full_zip_url)
 
-                poll_result = await self._poll_until_done(client, batch_id)
-                if poll_result.state != _STATE_DONE:
-                    raise MinerUAPIError(
-                        f"MinerU batch {batch_id} ended in state={poll_result.state}"
-                    )
-                if not poll_result.full_zip_url:
-                    raise MinerUAPIError(
-                        f"MinerU batch {batch_id} returned state=done but no full_zip_url"
-                    )
-
-                markdown = await self._download_markdown(client, poll_result.full_zip_url)
-
-            elapsed = time.monotonic() - started
-            logger.info(
-                "MinerU parsed PDF: filename=%s batch_id=%s pages=%s chars=%d elapsed=%.1fs",
-                filename,
-                batch_id,
-                poll_result.pages,
-                len(markdown),
-                elapsed,
-            )
-            return MinerUResult(
-                markdown=markdown,
-                task_id=batch_id,
-                state=poll_result.state,
-                pages=poll_result.pages,
-                elapsed_seconds=elapsed,
-            )
+        elapsed = time.monotonic() - started
+        logger.info(
+            "MinerU parsed PDF: filename=%s batch_id=%s pages=%s chars=%d elapsed=%.1fs",
+            filename,
+            batch_id,
+            poll_result.pages,
+            len(markdown),
+            elapsed,
+        )
+        return MinerUResult(
+            markdown=markdown,
+            task_id=batch_id,
+            state=poll_result.state,
+            pages=poll_result.pages,
+            elapsed_seconds=elapsed,
+        )
 
     # ----- internal helpers ---------------------------------------------
 
@@ -479,11 +479,12 @@ class MinerUClient:
     ) -> str:
         """Download the result zip and extract full.md.
 
-        Some egress networks fail the TLS 1.3 handshake with
+        Uses ``pycurl`` (libcurl bindings) as the primary transport because
+        some egress networks fail the TLS 1.3 handshake with
         ``cdn-mineru.openxlab.org.cn`` when using Python's ``httpx`` or
-        ``urllib`` (ClientHello parsing edge case). ``curl`` handles it
-        reliably, so we shell out to it as the primary path; if ``curl``
-        is missing we fall back to ``urllib`` and finally ``httpx``.
+        ``urllib`` (ClientHello parsing edge case). libcurl handles it
+        reliably. Falls back to ``urllib`` then ``httpx`` if pycurl is
+        unavailable.
         """
         zip_bytes = await self._fetch_zip_bytes(full_zip_url)
 
@@ -501,31 +502,24 @@ class MinerUClient:
             raise MinerUAPIError(f"MinerU returned non-zip body: {exc}") from exc
 
     async def _fetch_zip_bytes(self, url: str) -> bytes:
-        """Download zip bytes via curl (most reliable), urllib, then httpx."""
-        # 1) curl subprocess
-        import asyncio
-        import shutil
+        """Download zip bytes via pycurl (most reliable), then urllib, then httpx.
 
-        curl_err: str = "(curl not available)"
+        ``pycurl`` uses the system libcurl — same TLS stack as the working
+        ``curl`` binary — so it succeeds where Python's ``httpx`` and
+        ``urllib`` hit ``SSL: UNEXPECTED_EOF_WHILE_READING`` against
+        ``cdn-mineru.openxlab.org.cn``.
+        """
+        # 1) pycurl (libcurl bindings) — most reliable
+        try:
+            import pycurl  # type: ignore[import-not-found]
 
-        if shutil.which("curl"):
-            proc = await asyncio.create_subprocess_exec(
-                "curl",
-                "-sSL",
-                "--fail",
-                "--max-time",
-                "120",
-                url,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode == 0 and stdout:
-                return stdout
-            curl_err = stderr.decode("utf-8", errors="replace")[:200]
+            return await asyncio.to_thread(_pycurl_get, url, 120.0)
+        except ImportError:
+            pycurl_err = "pycurl not installed"
+        except Exception as exc:  # noqa: BLE001
+            pycurl_err = f"pycurl={exc!r}"
 
         # 2) urllib fallback
-        urllib_err = "(unreachable)"
         try:
             import urllib.request
             import ssl
@@ -541,8 +535,8 @@ class MinerUClient:
 
         # 3) httpx last resort
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.get(url)
+            async with httpx.AsyncClient(timeout=120) as c:
+                resp = await c.get(url)
                 if resp.status_code != 200:
                     raise MinerUAPIError(
                         f"Failed to download MinerU result zip: HTTP {resp.status_code}"
@@ -551,10 +545,8 @@ class MinerUClient:
         except Exception as httpx_exc:  # noqa: BLE001
             raise MinerUAPIError(
                 f"Failed to download MinerU result zip from {url}: "
-                f"curl={curl_err!r}, urllib={urllib_err!r}, httpx={httpx_exc!r}"
+                f"pycurl={pycurl_err!r}, urllib={urllib_err!r}, httpx={httpx_exc!r}"
             ) from httpx_exc
-
-    # ----- low-level helpers --------------------------------------------
 
     def _auth_headers(self) -> dict[str, str]:
         return {
@@ -576,6 +568,36 @@ class MinerUClient:
                 f"MinerU {endpoint} returned code={body.get('code')} "
                 f"msg={body.get('msg')!r}"
             )
+
+
+def _pycurl_get(url: str, timeout: float = 120.0) -> bytes:
+    """Sync helper that performs a GET via libcurl/pycurl.
+
+    Returns the body as bytes. Raises ``pycurl.error`` on failure.
+    """
+    import pycurl  # type: ignore[import-not-found]
+    import io as _io
+
+    buf = _io.BytesIO()
+    c = pycurl.Curl()
+    try:
+        c.setopt(c.URL, url)
+        c.setopt(c.WRITEDATA, buf)
+        c.setopt(c.TIMEOUT, int(timeout))
+        c.setopt(c.CONNECTTIMEOUT, 15)
+        c.setopt(c.FOLLOWLOCATION, True)
+        c.setopt(c.SSL_VERIFYPEER, 1)
+        c.setopt(c.SSL_VERIFYHOST, 2)
+        c.setopt(c.USERAGENT, "nucpot/1.0")
+        c.perform()
+        status = c.getinfo(c.RESPONSE_CODE)
+        if status != 200:
+            raise pycurl.error(
+                f"HTTP {status} for {url}",
+            )
+        return buf.getvalue()
+    finally:
+        c.close()
 
 
 @dataclass(frozen=True)

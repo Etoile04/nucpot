@@ -2,15 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install build dependencies (with retry for flaky networks)
-# curl is needed at runtime by nfm_db.services.mineru_client (NFM-MINERU-1)
-# as the primary download transport for MinerU result zips — Python's
-# httpx/urllib fail the TLS 1.3 handshake against cdn-mineru.openxlab.org.cn
-# on some egress networks, while curl handles it reliably.
+# Install build dependencies (with retry for flaky networks).
+# libcurl4-openssl-dev is needed to build the pycurl wheel used by
+# nfm_db.services.mineru_client (NFM-MINERU-1) — pycurl uses libcurl
+# because httpx/urllib fail the TLS 1.3 handshake against
+# cdn-mineru.openxlab.org.cn on some egress networks, while libcurl handles
+# it reliably.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev curl && \
+    apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && \
     rm -rf /var/lib/apt/lists/* || \
-    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev curl && rm -rf /var/lib/apt/lists/*)
+    (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*)
 
 # Copy project definition, source, and migrations together so pip can find the package
 COPY apps/api/pyproject.toml ./
