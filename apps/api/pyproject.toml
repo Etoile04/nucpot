@@ -41,6 +41,12 @@ dependencies = [
     # (phase_classifier_v01, phase_classifier_v2.0, energy_predictor_v11).
     # Pin 3.x to match the training-time major version.
     "xgboost>=3.0,<4",
+    # Additional imports referenced in src/ but not previously declared.
+    # Found by scripts/check_imports_in_deps.py (NFM-2089 follow-up).
+    "PyYAML>=6.0",              # blog_post.py imports yaml
+    "prometheus-client>=0.20",   # hpc_metrics.py, monitoring/prometheus.py
+    "pytesseract>=0.3.10",       # ocr_fallback.py (system tesseract binary also needed)
+    "shap>=0.45",               # train_v11.py (SHAP feature importance, lazy import)
 ]
 
 [project.optional-dependencies]

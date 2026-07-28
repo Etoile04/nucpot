@@ -118,6 +118,10 @@ jobs:
           fi
           echo "OK: all Python files under 1500 lines"
 
+      - name: Import-deps consistency check
+        run: python scripts/check_imports_in_deps.py
+        working-directory: ${{ github.workspace }}
+
   # ===========================================================================
   # Docker Build Verification — catches missing deps before production deploy
   # ===========================================================================

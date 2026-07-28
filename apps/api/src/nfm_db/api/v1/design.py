@@ -92,7 +92,11 @@ async def optimize_endpoint(
 
     # 4. Verify ML surrogates actually loaded (the problem silently falls
     #    back to synthetic evaluators when model artifacts are missing).
-    if not problem._use_ml_surrogate:
+    # NuclearFuelOptimizationProblem stores its surrogate status in
+    # _ml_evaluator (None = fallback to synthetic). Checking the private
+    # _use_ml_surrogate attribute was a bug — that attribute lives on the
+    # inner MLSurrogateEvaluator, not on the Problem itself (NFM-2090).
+    if problem._ml_evaluator is None:
         raise HTTPException(
             status_code=503,
             detail=(
