@@ -93,7 +93,6 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
     # ---- Primary: MinerU (v4 精准解析 API) -----------------------------
     try:
         from nfm_db.services.mineru_client import (
-            MinerUConfigError,
             MinerUError,
             mineru_enabled,
             parse_pdf_to_markdown,
