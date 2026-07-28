@@ -221,25 +221,53 @@ export default function LiteratureManager() {
 
   const handleUpload = useCallback(
     async (file: File) => {
+      // Surface the filename up front so the user can see "we got the file"
+      const key = `upload-${Date.now()}-${file.name}`
+      message.open({
+        key,
+        type: "loading",
+        content: `正在上传 ${file.name}…`,
+        duration: 0,
+      })
+
       if (file.type !== "application/pdf") {
-        message.error("仅支持 PDF 文件")
+        message.open({
+          key,
+          type: "error",
+          content: "仅支持 PDF 文件",
+          duration: 4,
+        })
         return false
       }
       if (file.size > 50 * 1024 * 1024) {
-        message.error("PDF 文件超过 50 MB 上限")
+        message.open({
+          key,
+          type: "error",
+          content: "PDF 文件超过 50 MB 上限",
+          duration: 4,
+        })
         return false
       }
       setUploading(true)
       try {
         const resp = await literatureApi.upload(file)
-        message.success(
-          `上传成功（${STATUS_LABELS[resp.status as LiteratureStatus] ?? resp.status}）`,
-        )
+        message.open({
+          key,
+          type: "success",
+          content: `上传成功：${file.name}（${STATUS_LABELS[resp.status as LiteratureStatus] ?? resp.status}）`,
+          duration: 3,
+        })
         await fetchList(1, filters)
-        void openDetail(resp.literature_id)
+        // Defer drawer open so the user sees the success message first
+        setTimeout(() => void openDetail(resp.literature_id), 600)
       } catch (err) {
         const msg = err instanceof Error ? err.message : "上传失败"
-        message.error(msg)
+        message.open({
+          key,
+          type: "error",
+          content: `上传失败：${msg}`,
+          duration: 5,
+        })
       } finally {
         setUploading(false)
       }
