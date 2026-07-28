@@ -36,6 +36,12 @@ def _make_mock_session() -> AsyncMock:
     session = AsyncMock()
     session.add = MagicMock()
     session.flush = AsyncMock()
+    # execute() must resolve to a plain MagicMock (not AsyncMock) so that
+    # .scalars().first() works without returning a coroutine.  This supports
+    # the duplicate-edge guard in GraphBuilder._create_edge.
+    _mock_result = MagicMock()
+    _mock_result.scalars.return_value.first.return_value = None
+    session.execute.return_value = _mock_result
     return session
 
 
@@ -206,6 +212,57 @@ class TestGraphBuilderFireLightRAGIngest:
         assert result.edges_created == 0
 
         mock_fire.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_edge_skipped_without_error(
+        self,
+    ) -> None:
+        """When an edge with the same (source, target, relation) already
+        exists, _create_edge should return None and NOT raise a
+        UniqueViolationError.  This exercises the duplicate guard added
+        in the KG UniqueViolationError fix (d2c657d)."""
+        session = _make_mock_session()
+
+        # Make execute return a result that looks like an existing edge,
+        # so the duplicate guard fires.
+        existing_edge = MagicMock()
+        session.execute.return_value.scalars.return_value.first.return_value = existing_edge
+
+        builder = GraphBuilder(
+            session=session,  # type: ignore[arg-type]
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {"material_name": "UO2", "confidence": 0.9, "source_file": "p.pdf"},
+            {"material_name": "ZrO2", "confidence": 0.9, "source_file": "p.pdf"},
+        ]
+
+        with (
+            patch.object(
+                builder._linker,
+                "find_matching_node",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_fire_lightrag_ingest",
+            ) as mock_fire,
+        ):
+            result = await builder.build_from_extraction(extracted)
+
+        # Nodes should still be created, but edges should be 0 because
+        # every edge attempt hits the duplicate guard.
+        assert result.nodes_created == 2
+        assert result.edges_created == 0
+        # _fire_lightrag_ingest is still called because nodes_created > 0
+        # (the trigger is nodes OR edges, see build_from_extraction L467).
+        mock_fire.assert_called_once()
+        nodes_arg, edges_arg = mock_fire.call_args[0]
+        assert len(nodes_arg) == 2
+        assert len(edges_arg) == 0
 
     @pytest.mark.asyncio
     async def test_fire_lightrag_ingest_survives_import_error(

@@ -607,11 +607,13 @@ class GraphBuilder:
         from sqlalchemy import select as sa_select
 
         existing = await self._session.execute(
-            sa_select(KGEdge).where(
+            sa_select(KGEdge)
+            .where(
                 KGEdge.source_node_id == source_node_id,
                 KGEdge.target_node_id == target_node_id,
                 KGEdge.relation_type == relation.relation_type,
-            ).limit(1)
+            )
+            .limit(1)
         )
         if existing.scalars().first() is not None:
             logger.debug(
