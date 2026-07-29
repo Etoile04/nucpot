@@ -152,6 +152,9 @@ export function ReviewQueueTable({
                   来源
                 </th>
                 <th scope="col" className="px-4 py-3 text-left text-xs uppercase tracking-wider text-gray-400">
+                  提取源
+                </th>
+                <th scope="col" className="px-4 py-3 text-left text-xs uppercase tracking-wider text-gray-400">
                   置信度
                 </th>
                 <th scope="col" className="px-4 py-3 text-left text-xs uppercase tracking-wider text-gray-400">
@@ -218,6 +221,23 @@ export function ReviewQueueTable({
                         ? String((item.source as any).doi || (item.source as any).source_title || '-')
                         : String(item.source || '-')}
                     </td>
+                    <td className="px-4 py-3 text-sm">
+                      {typeof item.source === 'object' && item.source != null && (item.source as any).doi ? (
+                        <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300" title={`来源文献: ${(item.source as any).source_title || (item.source as any).doi}`}>
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          文献提取
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400" title="无溯源信息，可能是手动录入或数据源未关联">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          手动/无源
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <ConfidenceBadge value={item.confidence} size="sm" />
                     </td>
@@ -255,7 +275,7 @@ export function ReviewQueueTable({
               {/* Expanded source provenance row */}
               {expandedRows.size > 0 && items.filter((item) => expandedRows.has(item.id)).map((item) => (
                 <tr key={`expanded-${item.id}`} className="bg-gray-800/50">
-                  <td colSpan={9} className="px-4 py-2">
+                  <td colSpan={10} className="px-4 py-2">
                     <SourceProvenancePanel
                       itemId={item.id}
                       extractedValue={(item as any).item_data?.value != null ? String((item as any).item_data.value) : (item as any).item_data?.property_name}
