@@ -344,13 +344,14 @@ async def test_heartbeat_requires_node_id() -> None:
 @pytest.mark.unit
 async def test_heartbeat_remembers_node_id_after_register() -> None:
     """Once registered, heartbeat() can be called without explicit node_id."""
-    handler = httpx.MockTransport(
-        lambda req: httpx.Response(
-            201 if req.method == "POST" else 200,
-            json=_register_payload() if req.method == "POST" else _heartbeat_payload(),
-        )
-    )
-    client = make_client(transport=handler)
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "/register" in req.url.path:
+            return httpx.Response(201, json=_register_payload())
+        if "/heartbeat" in req.url.path:
+            return httpx.Response(200, json=_heartbeat_payload())
+        return httpx.Response(404, json={"detail": "not found"})
+
+    client = make_client(transport=httpx.MockTransport(handler))
     try:
         await client.register(
             name="obs-1",
@@ -392,10 +393,26 @@ async def test_heartbeat_raises_heartbeat_error_on_5xx() -> None:
 async def test_upload_returns_session_result() -> None:
     """upload() returns UploadResult with session_id from the hub."""
     sid = uuid.uuid4()
-    handler = httpx.MockTransport(
-        lambda req: httpx.Response(201, json=_upload_payload(sid))
-    )
-    client = make_client(transport=handler)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content.decode("utf-8"))
+        payload = {
+            "id": str(sid),
+            "resource_node_id": body["resource_node_id"],
+            "file_name": body["file_name"],
+            "total_size": body["total_size"],
+            "chunk_size": body["chunk_size"],
+            "total_chunks": body["total_chunks"],
+            "uploaded_chunks": 0,
+            "resume_token": None,
+            "sha256_full": None,
+            "status": "pending",
+            "created_at": "2026-07-01T00:00:00Z",
+            "updated_at": "2026-07-01T00:00:00Z",
+        }
+        return httpx.Response(201, json=payload)
+
+    client = make_client(transport=httpx.MockTransport(handler))
     try:
         result = await client.upload(
             node_id=NODE_ID,

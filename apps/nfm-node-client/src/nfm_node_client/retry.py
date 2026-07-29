@@ -16,6 +16,7 @@ import httpx
 
 from nfm_node_client.exceptions import (
     HeartbeatError,
+    RegistrationError,
     RetriesExhaustedError,
     SyncStatusError,
     UploadError,
@@ -73,7 +74,7 @@ def _default_retryable(exc: BaseException) -> bool:
         return True
     if isinstance(
         exc,
-        (HeartbeatError, SyncStatusError, UploadError),
+        (RegistrationError, HeartbeatError, SyncStatusError, UploadError),
     ):
         status = getattr(exc, "status_code", None)
         if status is None or status >= 500:
@@ -104,7 +105,7 @@ async def retry_async(
             last_exception = exc
             if attempt >= policy.max_retries:
                 break
-            sleep(
+            await sleep(
                 compute_backoff_delay(
                     attempt,
                     base=policy.backoff_base,
@@ -112,11 +113,17 @@ async def retry_async(
                 )
             )
 
-    raise RetriesExhaustedError(
-        f"retries exhausted after {policy.max_retries + 1} attempts",
-        attempts=policy.max_retries + 1,
+    # All attempts exhausted — re-raise the last underlying exception so
+    # callers see the typed error (e.g. HeartbeatError, UploadError).
+    # The RetriesExhaustedError diagnostic is preserved via __cause__.
+    assert last_exception is not None  # for type-checkers
+    attempts = policy.max_retries + 1
+    diagnostic = RetriesExhaustedError(
+        f"retries exhausted after {attempts} attempts",
+        attempts=attempts,
         last_exception=last_exception,
     )
+    raise last_exception from diagnostic
 
 
 __all__ = [

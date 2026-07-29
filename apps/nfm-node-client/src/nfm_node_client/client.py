@@ -254,6 +254,13 @@ class NfmNodeClient:
         ``register()`` call is used. Raises ``ValueError`` if no node_id
         is available.
         """
+        return await self._heartbeat(node_id=node_id)
+
+    async def _heartbeat(
+        self,
+        node_id: uuid.UUID | None = None,
+    ) -> HeartbeatResponse:
+        """Internal heartbeat routine; the loop and tests override this point."""
         effective_node_id = node_id or self._node_id
         if effective_node_id is None:
             raise ValueError(
@@ -295,7 +302,7 @@ class NfmNodeClient:
             assert stop_event is not None
             while not stop_event.is_set():
                 try:
-                    await self.heartbeat()
+                    await self._heartbeat()
                 except Exception as exc:  # noqa: BLE001 - heartbeat is best-effort
                     _LOGGER.warning("heartbeat failed (will retry): %s", exc)
                 try:

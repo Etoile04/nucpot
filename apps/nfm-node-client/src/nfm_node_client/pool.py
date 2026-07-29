@@ -23,6 +23,7 @@ class ConnectionPool:
             raise ValueError(f"pool_size must be > 0, got {pool_size}")
         self._pool_size = pool_size
         self._client: httpx.AsyncClient | None = None
+        self._closed = False
 
     @property
     def pool_size(self) -> int:
@@ -46,13 +47,16 @@ class ConnectionPool:
     @property
     def is_closed(self) -> bool:
         """Whether the underlying client has been closed."""
-        return self._client is not None and self._client.is_closed
+        return self._closed
 
     async def close(self) -> None:
         """Close the underlying httpx client. Idempotent."""
+        if self._closed:
+            return
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
-            self._client = None
+        self._client = None
+        self._closed = True
 
 
 __all__ = ["ConnectionPool"]

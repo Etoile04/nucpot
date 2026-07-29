@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -133,7 +134,7 @@ async def test_retry_async_eventually_succeeds() -> None:
 
 @pytest.mark.unit
 async def test_retry_async_raises_retries_exhausted() -> None:
-    """All calls fail → raises RetriesExhaustedError with last exception."""
+    """All calls fail → re-raises the underlying exception (cause = RetriesExhaustedError)."""
     calls = 0
 
     async def op() -> str:
@@ -142,10 +143,13 @@ async def test_retry_async_raises_retries_exhausted() -> None:
         raise httpx.ConnectError(f"attempt {calls}")
 
     policy = RetryPolicy(max_retries=2, backoff_base=0.01, backoff_max=0.05)
-    with pytest.raises(RetriesExhaustedError) as exc_info:
+    with pytest.raises(httpx.ConnectError) as exc_info:
         await retry_async(op, policy)
-    assert exc_info.value.attempts == 3  # 1 initial + 2 retries
-    assert isinstance(exc_info.value.last_exception, httpx.ConnectError)
+    assert calls == 3  # 1 initial + 2 retries
+    # RetriesExhaustedError is preserved as the chained cause.
+    assert isinstance(exc_info.value.__cause__, RetriesExhaustedError)
+    assert exc_info.value.__cause__.attempts == 3
+    assert exc_info.value.__cause__.last_exception is exc_info.value
 
 
 @pytest.mark.unit
@@ -176,10 +180,11 @@ async def test_retry_async_custom_retryable() -> None:
 
     policy = RetryPolicy(max_retries=3, backoff_base=0.01, backoff_max=0.05)
     retryable = lambda exc: isinstance(exc, UploadError)
-    with pytest.raises(RetriesExhaustedError) as exc_info:
+    with pytest.raises(UploadError) as exc_info:
         await retry_async(op, policy, retryable=retryable)
-    assert exc_info.value.attempts == 4
-    assert isinstance(exc_info.value.last_exception, UploadError)
+    assert calls == 4
+    assert isinstance(exc_info.value.__cause__, RetriesExhaustedError)
+    assert exc_info.value.__cause__.attempts == 4
 
 
 @pytest.mark.unit
@@ -214,7 +219,7 @@ async def test_retry_async_sleeps_between_attempts() -> None:
         return "ok"
 
     policy = RetryPolicy(max_retries=3, backoff_base=0.05, backoff_max=1.0)
-    await retry_async(op, policy, sleep=time.sleep)
+    await retry_async(op, policy, sleep=asyncio.sleep)
     elapsed = time.monotonic() - start
     # Two sleeps: 0.05 + 0.10 = 0.15s minimum
     assert elapsed >= 0.14
@@ -225,14 +230,14 @@ async def test_retry_async_injectable_sleep(monkeypatch: pytest.MonkeyPatch) -> 
     """Sleep function is injectable for testing."""
     sleeps: list[float] = []
 
-    def fake_sleep(seconds: float) -> None:
+    async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
     async def op() -> None:
         raise httpx.ConnectError("fail")
 
     policy = RetryPolicy(max_retries=2, backoff_base=0.5, backoff_max=10.0)
-    with pytest.raises(RetriesExhaustedError):
+    with pytest.raises(httpx.ConnectError):
         await retry_async(op, policy, sleep=fake_sleep)
     # Two retries → two sleeps
     assert sleeps == [pytest.approx(0.5), pytest.approx(1.0)]

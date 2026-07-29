@@ -25,16 +25,18 @@ def make_credentials() -> Credentials:
 
 def make_client(
     transport: httpx.MockTransport | None = None,
+    *,
+    hub_url: str = HUB_URL,
     **kwargs: Any,
 ) -> NfmNodeClient:
     """Build a NfmNodeClient with optional mock transport."""
     http_client = httpx.AsyncClient(
-        base_url=HUB_URL,
+        base_url=hub_url,
         transport=transport,
         timeout=2.0,
     )
     return NfmNodeClient(
-        hub_url=HUB_URL,
+        hub_url=hub_url,
         credentials=make_credentials(),
         http_client=http_client,
         **kwargs,
