@@ -31,7 +31,7 @@ def _try_sentry_capture(event: dict[str, Any]) -> None:
     without any other code changes.
     """
     try:
-        import sentry_sdk  # type: ignore[import-untyped]
+        import sentry_sdk  # type: ignore[import-not-found]
 
         sentry_sdk.capture_event(event)
     except ImportError:
