@@ -48,6 +48,7 @@ from nfm_db.api.v1.batch import (
 from nfm_db.api.v1.batch import (
     reference_values_router as batch_reference_values_router,
 )
+from nfm_db.api.v1.hub_nodes import router as hub_nodes_router
 from nfm_db.api.v1.profile import (
     contributions_router,
     profile_router,
@@ -321,3 +322,6 @@ app.include_router(design.router, prefix="/api/v1", tags=["设计优化"])
 app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
 app.include_router(dedup.router, prefix="/api/v1", tags=["实体去重"])
 app.include_router(dft.router, prefix="/api/v1", tags=["DFT 计算"])
+app.include_router(
+    hub_nodes_router, prefix="/api/v1", tags=["Hub 节点管理"]
+)

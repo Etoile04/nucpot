@@ -13,7 +13,7 @@ Target: >= 80% coverage on data_submission.py
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -39,13 +39,12 @@ from nfm_db.schemas.data_submission import (
     UploadSessionStatus,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
-NOW = datetime(2026, 7, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 30, tzinfo=UTC)
 HUB_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 RESOURCE_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
 RECORD_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")

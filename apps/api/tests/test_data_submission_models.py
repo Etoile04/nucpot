@@ -16,7 +16,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +28,6 @@ from nfm_db.models import (
     ResourceNode,
     UploadSession,
 )
-
 
 # ---------------------------------------------------------------------------
 # Metadata registration
