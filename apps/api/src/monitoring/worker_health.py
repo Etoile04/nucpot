@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ class WorkerHealthTracker:
         """Reset the failure counter and record the success timestamp."""
         with self._lock:
             self._consecutive_failures = 0
-            self._last_success_at = datetime.now(timezone.utc).isoformat()
+            self._last_success_at = datetime.now(UTC).isoformat()
             self._alerted_at_count = None
 
     def record_failure(self, error: str) -> None:
