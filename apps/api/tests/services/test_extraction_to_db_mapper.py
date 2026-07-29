@@ -24,6 +24,8 @@ from nfm_db.models import (
 from nfm_db.services.extraction_to_db_mapper import (
     MappingError,
     MappingResult,
+    _normalize_category_slug,
+    ONTOFUEL_CATEGORY_TO_SLUG,
     map_and_persist,
 )
 
@@ -412,6 +414,223 @@ class TestMappingError:
         err = MappingError("test error", item_index=3)
         assert "test error" in str(err)
         assert "3" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# NFM-1994: OntoFuel category literal → DB slug normalisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestOntofuelCategoryNormalization:
+    """OntoFuel category literals must resolve to DB property_types via slug.
+
+    The DB ``property_categories`` table stores English ``name`` (e.g.
+    "Thermal properties") and a short ``slug`` (e.g. "thermal").
+    OntoFuel emits lowercase literals that match the slug, not the name.
+    """
+
+    async def test_thermal_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'thermal' resolves via slug, not name."""
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",  # production-style name
+            category_slug="thermal",
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="Thermal Conductivity",
+                value="8.5",
+                unit="W/(m·K)",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    async def test_mechanical_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'mechanical' resolves via slug."""
+        await _seed_property_type(
+            db_session,
+            category_name="Mechanical properties",
+            category_slug="mechanical",
+            property_name="Density",
+            property_slug="density",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="mechanical",
+                property_name="Density",
+                value="10.97",
+                unit="g/cm3",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+
+    async def test_nuclear_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'nuclear' resolves via slug."""
+        await _seed_property_type(
+            db_session,
+            category_name="Nuclear properties",
+            category_slug="nuclear",
+            property_name="fission_cross_section",
+            property_slug="fission-cross-section",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="nuclear",
+                property_name="fission_cross_section",
+                value="2.7",
+                unit="barn",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+
+    async def test_physical_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'physical' resolves via slug."""
+        await _seed_property_type(
+            db_session,
+            category_name="Physical properties",
+            category_slug="physical",
+            property_name="Melting Point",
+            property_slug="melting-point",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="physical",
+                property_name="Melting Point",
+                value="3138",
+                unit="K",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+
+    async def test_diffusion_literal_falls_back_to_physical(self, db_session: AsyncSession):
+        """OntoFuel 'diffusion' has no DB category; falls back to 'physical'."""
+        await _seed_property_type(
+            db_session,
+            category_name="Physical properties",
+            category_slug="physical",
+            property_name="diffusion_coefficient",
+            property_slug="diffusion-coefficient",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="diffusion",
+                property_name="diffusion_coefficient",
+                value="1.2e-10",
+                unit="m2/s",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    async def test_irradiation_literal_falls_back_to_nuclear(self, db_session: AsyncSession):
+        """OntoFuel 'irradiation' has no DB category; falls back to 'nuclear'."""
+        await _seed_property_type(
+            db_session,
+            category_name="Nuclear properties",
+            category_slug="nuclear",
+            property_name="swelling_rate",
+            property_slug="swelling-rate",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="irradiation",
+                property_name="swelling_rate",
+                value="0.5",
+                unit="%/dpa",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    async def test_none_category_skips_unknown(self, db_session: AsyncSession):
+        """A None property_category is skipped (skipped_unknown_properties)."""
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",
+            category_slug="thermal",
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category=None,
+                property_name="Thermal Conductivity",
+                value="8.5",
+                unit="W/(m·K)",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 0
+        assert result.skipped_unknown_properties == 1
+
+    async def test_other_literal_falls_back_to_thermal(self, db_session: AsyncSession):
+        """OntoFuel 'other' has no DB category; falls back to 'thermal'."""
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",
+            category_slug="thermal",
+            property_name="custom_value",
+            property_slug="custom-value",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="other",
+                property_name="custom_value",
+                value="42",
+                unit="unitless",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    def test_normalize_category_slug_direct_matches(self):
+        """The four OntoFuel literals with direct DB slugs map 1:1."""
+        assert _normalize_category_slug("thermal") == "thermal"
+        assert _normalize_category_slug("mechanical") == "mechanical"
+        assert _normalize_category_slug("nuclear") == "nuclear"
+        assert _normalize_category_slug("physical") == "physical"
+
+    def test_normalize_category_slug_fallbacks(self):
+        """OntoFuel literals without dedicated DB categories fall back."""
+        assert _normalize_category_slug("diffusion") == "physical"
+        assert _normalize_category_slug("irradiation") == "nuclear"
+        assert _normalize_category_slug("other") == "thermal"
+
+    def test_normalize_category_slug_unknown_returns_none(self):
+        """Unrecognised literals return None."""
+        assert _normalize_category_slug("nonexistent") is None
+        assert _normalize_category_slug("") is None
+
+    def test_mapping_covers_all_ontofuel_literals(self):
+        """Every PropertyCategoryLiteral has an entry in the mapping."""
+        from nfm_db.schemas.extraction import PropertyCategoryLiteral
+
+        # PropertyCategoryLiteral is a Literal type; inspect its __args__
+        literals = PropertyCategoryLiteral.__args__  # type: ignore[attr-defined]
+        for lit in literals:
+            assert lit in ONTOFUEL_CATEGORY_TO_SLUG, (
+                f"OntoFuel literal {lit!r} missing from ONTOFUEL_CATEGORY_TO_SLUG"
+            )
 
 
 # ---------------------------------------------------------------------------

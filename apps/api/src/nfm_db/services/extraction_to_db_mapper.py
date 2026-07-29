@@ -205,6 +205,30 @@ def _build_condition_kwargs(
 # PropertyType lookup
 # ---------------------------------------------------------------------------
 
+# OntoFuel emits lowercase English literals (PropertyCategoryLiteral in
+# schemas/extraction.py).  The DB ``property_categories`` table stores
+# English ``name`` (e.g. "Thermal properties") and a short ``slug``
+# (e.g. "thermal").  The four OntoFuel literals that have a matching DB
+# slug map 1:1.  The remaining three fall back to broader categories.
+ONTOFUEL_CATEGORY_TO_SLUG: dict[str, str] = {
+    "mechanical": "mechanical",
+    "thermal": "thermal",
+    "physical": "physical",
+    "nuclear": "nuclear",
+    # --- fallbacks (no dedicated DB category yet) ---
+    "diffusion": "physical",
+    "irradiation": "nuclear",
+    "other": "thermal",  # least-bad default; revisit when 'other' category is added
+}
+
+
+def _normalize_category_slug(category_name: str) -> str | None:
+    """Translate an OntoFuel category literal to a DB ``property_categories.slug``.
+
+    Returns ``None`` if the literal is not recognised.
+    """
+    return ONTOFUEL_CATEGORY_TO_SLUG.get(category_name)
+
 
 async def _lookup_property_type(
     db: AsyncSession,
@@ -212,18 +236,28 @@ async def _lookup_property_type(
     category_name: str | None,
     property_name: str,
 ) -> PropertyType | None:
-    """Find PropertyType by category name + property name.
+    """Find PropertyType by OntoFuel category literal + property name.
+
+    Normalises the OntoFuel category literal to a DB ``slug`` via
+    ``_normalize_category_slug`` before querying.
 
     Returns None if not found (caller should skip measurement).
     """
     if not category_name:
         return None
 
+    category_slug = _normalize_category_slug(category_name)
+    if category_slug is None:
+        logger.debug(
+            "Unknown OntoFuel category literal: %r", category_name,
+        )
+        return None
+
     stmt = (
         select(PropertyType)
         .join(PropertyCategory)
         .where(
-            PropertyCategory.name == category_name,
+            PropertyCategory.slug == category_slug,
             PropertyType.name == property_name,
         )
     )
