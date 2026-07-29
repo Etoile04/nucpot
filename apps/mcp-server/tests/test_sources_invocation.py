@@ -6,14 +6,13 @@ and nfm_batch_import_from_zotero through the FastMCP server.
 
 from __future__ import annotations
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from mcp.server import FastMCP
 
 from nfm_mcp.tools.sources import register_source_tools
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -104,7 +103,7 @@ class TestSearchSourcesInvocation:
 class TestImportFromZoteroInvocation:
     """Test nfm_import_from_zotero tool behavior."""
 
-    SAMPLE_ITEM = {
+    SAMPLE_ITEM: typing.ClassVar[dict] = {
         "key": "Z1",
         "data": {
             "title": "Import Test Paper",
@@ -153,7 +152,7 @@ class TestImportFromZoteroInvocation:
 class TestBatchImportInvocation:
     """Test nfm_batch_import_from_zotero tool behavior."""
 
-    SAMPLE_ITEMS = [
+    SAMPLE_ITEMS: typing.ClassVar[list] = [
         {
             "key": "B1",
             "data": {

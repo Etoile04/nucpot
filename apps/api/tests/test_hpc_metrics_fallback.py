@@ -313,14 +313,31 @@ class TestMockMetricFallback:
 
 
 class TestModuleMockMetricWhenUnavailable:
-    """Test the actual module-level MockMetric instances."""
+    """Test the actual module-level metric instances.
+
+    These tests verify the module exports metric objects with the right
+    surface area (inc/observe/set/collect/labels). They branch on
+    PROMETHEUS_AVAILABLE because the real prometheus_client requires
+    .labels(...) before mutating state (counters, histograms, gauges), while
+    MockMetric accepts the calls directly. Without this branch, CI (which has
+    prometheus_client installed) would raise
+    "ValueError: <type> metric is missing label values".
+    """
 
     @pytest.mark.unit
     def test_module_metrics_inc(self) -> None:
         """Module-level metrics should support inc()."""
-        from nfm_db.services.hpc_metrics import hpc_job_submissions
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            hpc_job_submissions,
+        )
 
-        hpc_job_submissions.inc()
+        if PROMETHEUS_AVAILABLE:
+            hpc_job_submissions.labels(
+                cluster="primary", status="success"
+            ).inc()
+        else:
+            hpc_job_submissions.inc()
         # Just verify it doesn't raise
 
     @pytest.mark.unit
@@ -334,47 +351,96 @@ class TestModuleMockMetricWhenUnavailable:
     @pytest.mark.unit
     def test_module_metrics_observe(self) -> None:
         """Module-level histogram should support observe()."""
-        from nfm_db.services.hpc_metrics import hpc_job_duration
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            hpc_job_duration,
+        )
 
-        hpc_job_duration.observe(1.5)
+        if PROMETHEUS_AVAILABLE:
+            hpc_job_duration.labels(cluster="primary").observe(1.5)
+        else:
+            hpc_job_duration.observe(1.5)
         # Just verify it doesn't raise
 
     @pytest.mark.unit
     def test_module_metrics_set(self) -> None:
         """Module-level gauge should support set()."""
-        from nfm_db.services.hpc_metrics import hpc_active_connections
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            hpc_active_connections,
+        )
 
-        hpc_active_connections.set(5)
+        if PROMETHEUS_AVAILABLE:
+            hpc_active_connections.labels(cluster="primary").set(5)
+        else:
+            hpc_active_connections.set(5)
         # Just verify it doesn't raise
 
     @pytest.mark.unit
     def test_module_metrics_collect(self) -> None:
-        """Module-level metrics should return empty from collect()."""
-        from nfm_db.services.hpc_metrics import hpc_job_submissions
+        """Module-level metrics should be collect()-able.
+
+        MockMetric.collect() returns [] by design. Real prometheus_client
+        returns the metric family descriptor (>=1 entry). Both are valid;
+        we just verify the call works.
+        """
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            hpc_job_submissions,
+        )
 
         result = hpc_job_submissions.collect()
-        assert result == []
+        if PROMETHEUS_AVAILABLE:
+            # Real Counter returns its Metric family descriptor.
+            assert len(result) >= 1
+        else:
+            # MockMetric returns empty list by design.
+            assert result == []
 
     @pytest.mark.unit
     def test_module_failover_metrics_inc(self) -> None:
         """Failover metrics should support inc()."""
-        from nfm_db.services.hpc_metrics import failover_total
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            failover_total,
+        )
 
-        failover_total.inc()
+        if PROMETHEUS_AVAILABLE:
+            failover_total.labels(
+                source_cluster="primary",
+                target_cluster="backup",
+                reason="test",
+            ).inc()
+        else:
+            failover_total.inc()
         # Just verify it doesn't raise
 
     @pytest.mark.unit
     def test_module_failover_metrics_observe(self) -> None:
         """Failover histogram should support observe()."""
-        from nfm_db.services.hpc_metrics import failover_duration_seconds
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            failover_duration_seconds,
+        )
 
-        failover_duration_seconds.observe(10.0)
+        if PROMETHEUS_AVAILABLE:
+            failover_duration_seconds.labels(
+                source_cluster="primary", target_cluster="backup"
+            ).observe(10.0)
+        else:
+            failover_duration_seconds.observe(10.0)
         # Just verify it doesn't raise
 
     @pytest.mark.unit
     def test_module_failover_metrics_set(self) -> None:
         """Health check gauge should support set()."""
-        from nfm_db.services.hpc_metrics import health_check_success
+        from nfm_db.services.hpc_metrics import (
+            PROMETHEUS_AVAILABLE,
+            health_check_success,
+        )
 
-        health_check_success.set(1)
+        if PROMETHEUS_AVAILABLE:
+            health_check_success.labels(cluster="primary").set(1)
+        else:
+            health_check_success.set(1)
         # Just verify it doesn't raise

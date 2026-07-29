@@ -20,6 +20,10 @@ dependencies = [
     "celery[redis]>=5.4.0",
     "redis>=5.2.0",
     "httpx>=0.28.0",
+    # pycurl (libcurl bindings) for MinerU result zip download — httpx/urllib
+    # both fail TLS 1.3 handshake against cdn-mineru.openxlab.org.cn on some
+    # egress networks (SSLEOFError), libcurl handles it reliably.
+    "pycurl>=7.45.0",
     "python-frontmatter>=1.1.0",
     "slowapi>=0.1.9",
     "PyMuPDF>=1.24.0",
@@ -37,7 +41,24 @@ dependencies = [
     # (phase_classifier_v01, phase_classifier_v2.0, energy_predictor_v11).
     # Pin 3.x to match the training-time major version.
     "xgboost>=3.0,<4",
+    # Additional imports referenced in src/ but not previously declared.
+    # Found by scripts/check_imports_in_deps.py (NFM-2089 follow-up).
+    "PyYAML>=6.0",              # blog_post.py imports yaml
+    "prometheus-client>=0.20",   # hpc_metrics.py, monitoring/prometheus.py
+    "pytesseract>=0.3.10",       # ocr_fallback.py (system tesseract binary also needed)
+    # NFM-1973: operator CLI (nucpot create-service-account) — Click
+    # was already pulled in transitively but we declare it explicitly so
+    # `pip install nfm-db-api` and `uv sync` both expose the
+    # ``nucpot`` console script.
+    "click>=8.1",
 ]
+
+[project.scripts]
+# NFM-1973 / NFM-1972 AC-1: operator CLI for provisioning service
+# accounts.  Install via ``uv sync`` or ``pip install -e .``; then
+# ``nucpot create-service-account --username ontofuel-svc --role service``
+# emits a one-time password to stdout.
+nucpot = "nfm_db.cli.main:cli"
 
 [project.optional-dependencies]
 dev = [
@@ -228,6 +249,7 @@ module = [
     "nfm_db.models.hpc_failover_event",
     "nfm_db.services.md_verification",
     "nfm_db.services.md_tasks",
+    "monitoring.prometheus",
 ]
 ignore_errors = true
 

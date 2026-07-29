@@ -74,9 +74,16 @@ def _mock_empty_result():
 
 
 def _mock_problem(ml_available: bool = True):
-    """Create a mock NuclearFuelOptimizationProblem."""
+    """Create a mock NuclearFuelOptimizationProblem.
+
+    design.py:99 checks `problem._ml_evaluator is None` to decide whether to
+    raise 503 (NFM-1969). The mock must reflect this real behavior:
+      - ml_available=True  → _ml_evaluator is a non-None sentinel
+      - ml_available=False → _ml_evaluator is None
+    """
     problem = MagicMock()
     problem._use_ml_surrogate = ml_available
+    problem._ml_evaluator = None if not ml_available else MagicMock()
     return problem
 
 
@@ -372,6 +379,57 @@ def test_optimize_response_schema():
     )
     assert resp.n_solutions == 1
     assert len(resp.convergence.gd_history) == 3
+
+
+# ---------------------------------------------------------------------------
+# Integration: Real NuclearFuelOptimizationProblem (no MagicMock)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_real_problem_exposes_use_ml_surrogate():
+    """Real problem instance must have _use_ml_surrogate attribute.
+
+    Addresses NFM-1969: design.py:95 checks problem._use_ml_surrogate
+    which previously did not exist, causing 500 on every request.
+    """
+    from nfm_db.optimization.nsga2_problem import NuclearFuelOptimizationProblem
+
+    # With use_ml_surrogate=False, the attribute should be False
+    # (no attempt to load ML models).
+    problem_no_ml = NuclearFuelOptimizationProblem(use_ml_surrogate=False)
+    assert hasattr(problem_no_ml, "_use_ml_surrogate")
+    assert problem_no_ml._use_ml_surrogate is False
+    assert problem_no_ml._ml_evaluator is None
+
+    # With use_ml_surrogate=True but no model artifacts, the attribute
+    # should be False (graceful fallback).
+    problem_ml_unavailable = NuclearFuelOptimizationProblem(use_ml_surrogate=True)
+    assert hasattr(problem_ml_unavailable, "_use_ml_surrogate")
+    # In CI, model artifacts are absent so evaluator will be None
+    assert problem_ml_unavailable._use_ml_surrogate == (
+        problem_ml_unavailable._ml_evaluator is not None
+    )
+
+
+@pytest.mark.unit
+def test_real_problem_evaluate_produces_correct_shapes():
+    """Real problem._evaluate should produce valid F and G matrices."""
+    import numpy as np
+
+    from nfm_db.optimization.nsga2_problem import NuclearFuelOptimizationProblem
+
+    problem = NuclearFuelOptimizationProblem(use_ml_surrogate=False)
+    n_pop = 10
+
+    X = np.random.rand(n_pop, 6) * 0.1  # small fractions
+    out: dict = {}
+    problem._evaluate(X, out)
+
+    assert "F" in out
+    assert "G" in out
+    assert out["F"].shape == (n_pop, 3)  # 3 objectives
+    assert out["G"].shape == (n_pop, 4)  # 4 constraints
 
 
 @pytest.mark.unit

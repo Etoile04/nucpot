@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -26,11 +26,11 @@ class QueryPropertiesInput(BaseModel):
         min_length=1,
         max_length=200,
     )
-    property_name: Optional[str] = Field(
+    property_name: str | None = Field(
         default=None,
         description="Specific property name filter (e.g., 'thermal_conductivity')",
     )
-    temperature_range: Optional[str] = Field(
+    temperature_range: str | None = Field(
         default=None,
         description="Temperature range filter (e.g., '300-1500 K')",
     )
@@ -47,13 +47,13 @@ def register_property_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="query_properties",
-        annotations={
-            "title": "Query Material Properties",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Query Material Properties",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def query_properties(
         *,
@@ -96,7 +96,11 @@ def register_property_tools(mcp: FastMCP) -> None:
                     per_page=per_page,
                     material_id=material_uuid,
                 )
-                return result.model_dump_json(indent=2)
+                return str(result.model_dump_json(indent=2))
+
+            # Fallback: get_db_session always yields once, but mypy needs
+            # an explicit return on all paths.
+            return json.dumps({"error": "No database session available"})
 
         except Exception as exc:
             logger.exception("query_properties failed")

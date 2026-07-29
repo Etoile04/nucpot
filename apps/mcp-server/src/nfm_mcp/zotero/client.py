@@ -7,9 +7,8 @@ All methods return new data structures (immutable pattern).
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from pyzotero import zotero as zotero_lib
 
@@ -62,7 +61,8 @@ class ZoteroClient:
 
     def get_item(self, item_key: str) -> dict[str, Any]:
         """Return the full metadata record for a single item."""
-        return self._zot.item(item_key)
+        result: Any = self._zot.item(item_key)
+        return cast("dict[str, Any]", result)
 
     def get_recent_items(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return the most recently added items."""
@@ -86,7 +86,8 @@ class ZoteroClient:
         template = _build_template(self._zot, meta)
         if collection_key:
             template["collections"] = [collection_key]
-        return self._zot.create_items([template])
+        result: Any = self._zot.create_items([template])
+        return cast("dict[str, Any]", result)
 
     def add_multiple_articles(
         self,
@@ -125,7 +126,8 @@ class ZoteroClient:
         data: dict[str, Any] = {"name": name}
         if parent_key:
             data["parentCollection"] = parent_key
-        return self._zot.create_collections([data])
+        result: Any = self._zot.create_collections([data])
+        return cast("dict[str, Any]", result)
 
     def add_item_to_collection(
         self,
@@ -179,7 +181,7 @@ def _build_template(
     meta: dict[str, Any],
 ) -> dict[str, Any]:
     """Convert flat article metadata dict → Zotero journalArticle template."""
-    t = zot.item_template("journalArticle")
+    t: dict[str, Any] = dict(zot.item_template("journalArticle"))
     t["title"] = meta.get("title", "")
 
     authors = meta.get("authors", [])

@@ -185,6 +185,7 @@ class TestSearchSourcesInput:
 
     def test_query_min_length(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.sources import SearchSourcesInput
 
         with pytest.raises(ValidationError):
@@ -192,6 +193,7 @@ class TestSearchSourcesInput:
 
     def test_limit_ge_1(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.sources import SearchSourcesInput
 
         with pytest.raises(ValidationError):
@@ -199,6 +201,7 @@ class TestSearchSourcesInput:
 
     def test_limit_le_100(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.sources import SearchSourcesInput
 
         with pytest.raises(ValidationError):
@@ -206,6 +209,7 @@ class TestSearchSourcesInput:
 
     def test_extra_fields_forbidden(self) -> None:
         from pydantic import ValidationError
+
         from nfm_mcp.tools.sources import SearchSourcesInput
 
         with pytest.raises(ValidationError):

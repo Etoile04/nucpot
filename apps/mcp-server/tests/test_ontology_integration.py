@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -33,7 +32,7 @@ def _make_session_gen():
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_graph(
@@ -155,9 +154,8 @@ class TestBrowseOntologyTool:
     @pytest.mark.asyncio
     async def test_handles_corpus_not_found(self) -> None:
         """browse_ontology should return error when corpus has no staging rows."""
-        from nfm_mcp.server import create_mcp_server
-
         from nfm_db.services.ontology_service import CorpusNotFoundError
+        from nfm_mcp.server import create_mcp_server
 
         mock_session_gen = _make_session_gen()
 

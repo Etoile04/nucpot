@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -260,7 +261,7 @@ class TestQueryKnowledgeGraphTool:
         """knowledge_graph.py must not import from mock_data anymore."""
         import nfm_mcp.tools.knowledge_graph as kg_module
 
-        source = open(kg_module.__file__, encoding="utf-8").read()
+        source = Path(kg_module.__file__).read_text(encoding="utf-8")
         assert "mock_data" not in source, (
             "knowledge_graph.py still imports from mock_data"
         )

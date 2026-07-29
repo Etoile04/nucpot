@@ -11,7 +11,7 @@
  * browser presents a valid `access_token` (or legacy `blog_admin_token`)
  * cookie. The middleware does a presence check and lets the request through,
  * but every authenticated API call goes through `apps/web/src/lib/api-client.ts`
- * which hard-redirects to `/admin/login` on any 401 (see `request()` lines
+ * which hard-redirects to `/login` on any 401 (see `request()` lines
  * 37-42). Hardcoded mock cookies (e.g. `e2e-mock-token`) therefore cannot be
  * used to reach the V4 pages against production — the API rejects the token,
  * the client forces a redirect, and any post-redirect selector assertion
@@ -54,7 +54,7 @@ const VIEWPORTS = [
 
 /**
  * Navigate to a protected route and assert the auth middleware redirects
- * to `/admin/login`. Uses `domcontentloaded` (not `networkidle`) because
+ * to `/login`. Uses `domcontentloaded` (not `networkidle`) because
  * the live site streams sub-resources for the login page indefinitely
  * (analytics, font fallbacks, etc.) and `networkidle` times out.
  *

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_mcp.deps import get_db_session
@@ -25,7 +25,7 @@ class SearchSourcesInput(BaseModel):
         min_length=1,
         max_length=500,
     )
-    source_type: Optional[str] = Field(
+    source_type: str | None = Field(
         default=None,
         description="Filter by source type (e.g., 'journal', 'report', 'handbook')",
     )
@@ -47,13 +47,13 @@ def register_source_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="search_sources",
-        annotations={
-            "title": "Search Literature Sources",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
+        annotations=ToolAnnotations(
+            title="Search Literature Sources",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
     )
     async def search_sources(
         *,
@@ -107,6 +107,10 @@ def register_source_tools(mcp: FastMCP) -> None:
                     "limit": limit,
                 }
                 return json.dumps(filtered_result, default=str)
+
+            # Unreachable in practice (get_db_session always yields once),
+            # but satisfies mypy's exhaustiveness check.
+            return json.dumps({"error": "No database session available"})
 
         except Exception as exc:
             logger.exception("search_sources failed")

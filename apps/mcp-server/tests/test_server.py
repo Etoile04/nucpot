@@ -12,7 +12,6 @@ from pydantic import ValidationError
 from nfm_mcp.deps import Settings, get_settings
 from nfm_mcp.server import EXPECTED_TOOL_NAMES, create_mcp_server
 
-
 # ── Settings ────────────────────────────────────────────────────
 
 

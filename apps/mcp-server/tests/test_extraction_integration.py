@@ -11,12 +11,11 @@ import json
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ class FakeExtractionJob:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_job(**overrides: object) -> FakeExtractionJob:

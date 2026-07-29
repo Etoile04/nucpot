@@ -342,7 +342,7 @@ class TestToolCalls:
             {"file_url": "https://example.com/status-test.pdf"},
         )
         create_data = json.loads(
-            [p["text"] for p in create_resp["result"]["content"] if p.get("type") == "text"][0]
+            next(p["text"] for p in create_resp["result"]["content"] if p.get("type") == "text")
         )
         job_id = create_data["job_id"]
 

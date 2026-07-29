@@ -191,7 +191,7 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
         })
       })
 
-      await page.goto("/admin/login")
+      await page.goto("/login")
 
       // Fill credentials — must be valid email for HTML5 type="email" validation
       await page.getByPlaceholder("请输入邮箱").fill("test@example.com")

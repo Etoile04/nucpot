@@ -14,7 +14,9 @@ from nfm_db.api.v1 import (
     blog,
     composition,
     conflict,
+    dedup,
     design,
+    dft,
     extraction,
     feedback,
     health,
@@ -206,6 +208,20 @@ app = FastAPI(
             "name": "设计优化",
             "description": "NSGA-II多目标合金成分优化设计与帕累托前沿搜索。",
         },
+        {
+            "name": "实体去重",
+            "description": (
+                "材料去重引擎：扫描重复候选、记录合并决策、查询审计日志 "  # noqa: RUF001
+                "(NFM-1391, B3.1.1)。"
+            ),
+        },
+        {
+            "name": "DFT 计算",
+            "description": (
+                "密度泛函计算记录管理：列表、详情、JSON/CSV 批量导入、"  # noqa: RUF001
+                "聚合统计 (NFM-1678)。"
+            ),
+        },
     ],
     lifespan=lifespan,
 )
@@ -303,3 +319,5 @@ app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批�
 app.include_router(prediction.router, prefix="/api/v1", tags=["ML预测"])
 app.include_router(design.router, prefix="/api/v1", tags=["设计优化"])
 app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
+app.include_router(dedup.router, prefix="/api/v1", tags=["实体去重"])
+app.include_router(dft.router, prefix="/api/v1", tags=["DFT 计算"])
