@@ -1,0 +1,241 @@
+"""Tests for coverage_kr3.py — KR-COMPANY-3 deployment success rate.
+
+NFM-2042. Reads the append-only deploy-event JSONL written by
+``scripts/lib/deploy_event.sh`` and computes
+
+    value = first_pass_success_count / total_events
+
+The critical property (issue constraint C1): when the file is absent or empty
+the metric is ``None`` with ``n == 0`` — never a fabricated 1.0, never a
+ZeroDivisionError.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts.okr.coverage_kr3 import (
+    KR3_TARGET,
+    build_report,
+    compute_value,
+    filter_window,
+    load_events,
+    main,
+)
+
+
+def event(
+    *,
+    first_pass_success: bool = True,
+    ts: str = "2026-07-20T12:00:00Z",
+    environment: str = "staging",
+) -> dict:
+    """A schema-complete synthetic deploy event."""
+    return {
+        "event_id": "3f2a1c88-9d4e-4b17-a0c3-5e6f7a8b9c01",
+        "ts": ts,
+        "environment": environment,
+        "triggered_by": "alice",
+        "commit_sha": "abc1234",
+        "first_pass_success": first_pass_success,
+        "health_gate_first_poll_passed": first_pass_success,
+        "rollback_triggered": not first_pass_success,
+        "skip_flag_used": False,
+        "duration_ms": 4321,
+    }
+
+
+def write_jsonl(path: Path, events: list[dict]) -> Path:
+    path.write_text("".join(json.dumps(e) + "\n" for e in events))
+    return path
+
+
+# ---------------------------------------------------------------------------
+# load_events
+# ---------------------------------------------------------------------------
+
+class TestLoadEvents:
+    def test_missing_file_yields_empty_list(self, tmp_path: Path) -> None:
+        assert load_events(tmp_path / "nope.jsonl") == []
+
+    def test_empty_file_yields_empty_list(self, tmp_path: Path) -> None:
+        path = tmp_path / "events.jsonl"
+        path.write_text("")
+        assert load_events(path) == []
+
+    def test_reads_each_line_as_one_event(self, tmp_path: Path) -> None:
+        path = write_jsonl(tmp_path / "e.jsonl", [event(), event(first_pass_success=False)])
+        assert len(load_events(path)) == 2
+
+    def test_skips_blank_lines(self, tmp_path: Path) -> None:
+        path = tmp_path / "e.jsonl"
+        path.write_text(json.dumps(event()) + "\n\n   \n" + json.dumps(event()) + "\n")
+        assert len(load_events(path)) == 2
+
+    def test_skips_malformed_json_without_raising(self, tmp_path: Path) -> None:
+        path = tmp_path / "e.jsonl"
+        path.write_text(json.dumps(event()) + "\n{not json\n")
+        assert len(load_events(path)) == 1
+
+    def test_skips_events_missing_first_pass_success(self, tmp_path: Path) -> None:
+        incomplete = {k: v for k, v in event().items() if k != "first_pass_success"}
+        path = write_jsonl(tmp_path / "e.jsonl", [event(), incomplete])
+        assert len(load_events(path)) == 1
+
+    def test_skips_json_scalars_that_are_not_objects(self, tmp_path: Path) -> None:
+        path = tmp_path / "e.jsonl"
+        path.write_text('"a string"\n42\n' + json.dumps(event()) + "\n")
+        assert len(load_events(path)) == 1
+
+
+# ---------------------------------------------------------------------------
+# compute_value
+# ---------------------------------------------------------------------------
+
+class TestComputeValue:
+    def test_no_events_is_none_not_one(self) -> None:
+        """The whole point of the KR: absence of data must not read as success."""
+        assert compute_value([]) is None
+
+    def test_all_successes(self) -> None:
+        assert compute_value([event(), event()]) == 1.0
+
+    def test_all_failures(self) -> None:
+        assert compute_value([event(first_pass_success=False)] * 3) == 0.0
+
+    def test_half_and_half(self) -> None:
+        assert compute_value([event(), event(first_pass_success=False)]) == 0.5
+
+    def test_one_of_three(self) -> None:
+        events = [
+            event(),
+            event(first_pass_success=False),
+            event(first_pass_success=False),
+        ]
+        assert compute_value(events) == 1 / 3
+
+    def test_truthy_non_boolean_is_not_counted_as_success(self) -> None:
+        """Only a real JSON ``true`` counts — no coercion of "true" strings."""
+        sloppy = {**event(), "first_pass_success": "true"}
+        assert compute_value([sloppy]) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# filter_window
+# ---------------------------------------------------------------------------
+
+class TestFilterWindow:
+    def test_unbounded_window_keeps_everything(self) -> None:
+        events = [event(ts="2020-01-01T00:00:00Z"), event(ts="2030-01-01T00:00:00Z")]
+        assert filter_window(events, None, None) == events
+
+    def test_since_is_inclusive(self) -> None:
+        assert len(filter_window([event(ts="2026-07-20T00:00:00Z")], "2026-07-20", None)) == 1
+
+    def test_drops_events_before_since(self) -> None:
+        events = [event(ts="2026-07-19T23:59:59Z"), event(ts="2026-07-20T00:00:00Z")]
+        kept = filter_window(events, "2026-07-20", None)
+        assert [e["ts"] for e in kept] == ["2026-07-20T00:00:00Z"]
+
+    def test_until_is_inclusive_of_the_whole_day(self) -> None:
+        assert len(filter_window([event(ts="2026-07-20T23:59:59Z")], None, "2026-07-20")) == 1
+
+    def test_drops_events_after_until(self) -> None:
+        assert filter_window([event(ts="2026-07-21T00:00:00Z")], None, "2026-07-20") == []
+
+    def test_unparseable_ts_is_dropped_when_window_is_bounded(self) -> None:
+        assert filter_window([{**event(), "ts": "not-a-date"}], "2026-07-01", None) == []
+
+    def test_unparseable_ts_is_kept_when_window_is_unbounded(self) -> None:
+        assert len(filter_window([{**event(), "ts": "not-a-date"}], None, None)) == 1
+
+    def test_does_not_mutate_input(self) -> None:
+        events = [event(ts="2026-07-20T12:00:00Z"), event(ts="2026-07-01T12:00:00Z")]
+        before = json.dumps(events)
+        filter_window(events, "2026-07-10", None)
+        assert json.dumps(events) == before
+
+
+# ---------------------------------------------------------------------------
+# build_report
+# ---------------------------------------------------------------------------
+
+class TestBuildReport:
+    def test_shape_is_exactly_the_five_spec_keys(self, tmp_path: Path) -> None:
+        path = write_jsonl(tmp_path / "e.jsonl", [event()])
+        assert set(build_report(path, None, None)) == {
+            "value",
+            "target",
+            "n",
+            "computed_at",
+            "source_window",
+        }
+
+    def test_target_is_the_kr3_threshold(self, tmp_path: Path) -> None:
+        assert build_report(tmp_path / "absent.jsonl", None, None)["target"] == KR3_TARGET
+        assert KR3_TARGET == 0.90
+
+    def test_absent_file_reports_null_value_and_zero_n(self, tmp_path: Path) -> None:
+        report = build_report(tmp_path / "absent.jsonl", None, None)
+        assert report["value"] is None
+        assert report["n"] == 0
+
+    def test_two_event_file_reports_half(self, tmp_path: Path) -> None:
+        path = write_jsonl(tmp_path / "e.jsonl", [event(), event(first_pass_success=False)])
+        report = build_report(path, None, None)
+        assert report["value"] == 0.5
+        assert report["n"] == 2
+
+    def test_computed_at_is_iso8601_utc(self, tmp_path: Path) -> None:
+        computed_at = build_report(tmp_path / "absent.jsonl", None, None)["computed_at"]
+        assert computed_at.endswith("Z")
+        assert len(computed_at) == 20
+
+    def test_source_window_echoes_the_bounds(self, tmp_path: Path) -> None:
+        report = build_report(tmp_path / "absent.jsonl", "2026-07-01", "2026-07-30")
+        assert report["source_window"] == {"since": "2026-07-01", "until": "2026-07-30"}
+
+    def test_source_window_bounds_are_null_when_unbounded(self, tmp_path: Path) -> None:
+        report = build_report(tmp_path / "absent.jsonl", None, None)
+        assert report["source_window"] == {"since": None, "until": None}
+
+    def test_n_counts_only_in_window_events(self, tmp_path: Path) -> None:
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [event(ts="2026-01-01T00:00:00Z"), event(ts="2026-07-20T00:00:00Z")],
+        )
+        report = build_report(path, "2026-07-01", None)
+        assert report["n"] == 1
+        assert report["value"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+class TestMain:
+    def test_prints_json_and_exits_zero(self, tmp_path: Path, capsys) -> None:
+        path = write_jsonl(tmp_path / "e.jsonl", [event(), event(first_pass_success=False)])
+        assert main(["--path", str(path)]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["value"] == 0.5
+        assert payload["n"] == 2
+
+    def test_absent_file_is_not_an_error(self, tmp_path: Path, capsys) -> None:
+        assert main(["--path", str(tmp_path / "absent.jsonl")]) == 0
+        assert json.loads(capsys.readouterr().out)["value"] is None
+
+    def test_reads_path_from_env_when_flag_omitted(
+        self, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        path = write_jsonl(tmp_path / "e.jsonl", [event()])
+        monkeypatch.setenv("NFMD_DEPLOY_EVENTS_PATH", str(path))
+        assert main([]) == 0
+        assert json.loads(capsys.readouterr().out)["n"] == 1
+
+    def test_rejects_malformed_since(self) -> None:
+        with pytest.raises(SystemExit):
+            main(["--since", "20-07-2026"])

@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<coverage version="apps-web-stub" timestamp="0" lines-valid="0" lines-covered="0" line-rate="0" branches-covered="0" branches-valid="0" branch-rate="0" complexity="0">
+	<!-- n/a: no core web paths per spec ADR-KR5-1 -->
+	<!-- apps/web has no core paths under NFM-2035 §2 ADR-KR5-1. The aggregator
+	     (scripts/okr/coverage.py) MUST skip this file by matching STUB_MARKER. -->
+	<sources>
+		<source>apps/web</source>
+	</sources>
+	<packages>
+		<package name="n/a: no core web paths per spec ADR-KR5-1" line-rate="0" branch-rate="0" complexity="0">
+			<classes/>
+		</package>
+	</packages>
+</coverage>

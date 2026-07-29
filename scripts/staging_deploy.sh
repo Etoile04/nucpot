@@ -29,11 +29,24 @@ STAGING_API_HOST_PORT="${STAGING_API_HOST_PORT:-8001}"
 STAGING_HEALTH_PATH="${STAGING_HEALTH_PATH:-/api/v1/health}"
 STAGING_HEALTH_TIMEOUT="${STAGING_HEALTH_TIMEOUT:-120}"
 
+# KR-3 instrumentation (NFM-2042) — source the shared event writer so both
+# staging and production deploy to the same append-only JSONL.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/deploy_event.sh"
+
 # ---- helpers ----------------------------------------------------------------
 log()  { printf '\033[1;34m[staging]\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m[staging]\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m[staging]\033[0m %s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
+
+# KR-3 instrumentation (NFM-2042): the deploy event is assembled on EXIT so
+# every terminal path in cmd_deploy emits exactly one line (constraint C1).
+# These globals are reset at the entry of every cmd_deploy.
+_DEPLOY_EVENT_ARMED="false"
+_DEPLOY_EVENT_FIRST_POLL=""
+_DEPLOY_EVENT_ROLLBACK="false"
+_DEPLOY_EVENT_DURATION_START_MS=""
 
 require_env_file() {
   [ -f "$ENV_FILE" ] || die "docker/.env.staging not found. Run: cp docker/.env.staging.example docker/.env.staging  (then fill in secrets)"
@@ -66,13 +79,21 @@ wait_for_health() {
   local label="${1:-stack}"
   local deadline=$(( SECONDS + STAGING_HEALTH_TIMEOUT ))
   log "Waiting for staging API health at $(api_url) (timeout ${STAGING_HEALTH_TIMEOUT}s)..."
+  local poll_count=0
   until check_health_once; do
+    poll_count=$((poll_count + 1))
     if [ "$SECONDS" -ge "$deadline" ]; then
       err "Health gate FAILED for $label after ${STAGING_HEALTH_TIMEOUT}s."
       return 1
     fi
     sleep 3
   done
+  # NFM-2042 constraint C2: "first poll passed" == the loop body never ran.
+  if [ "$poll_count" -eq 0 ] && [ "${_DEPLOY_EVENT_ARMED}" = "true" ]; then
+    _DEPLOY_EVENT_FIRST_POLL="true"
+  elif [ "${_DEPLOY_EVENT_ARMED}" = "true" ]; then
+    _DEPLOY_EVENT_FIRST_POLL="false"
+  fi
   log "Health gate PASSED for $label."
   return 0
 }
@@ -80,6 +101,57 @@ wait_for_health() {
 record_good() {
   local tag="${STAGING_IMAGE_TAG:-latest}"
   printf 'last_good=%s\n' "$tag" > "$STATE_FILE"
+}
+
+# KR-3 instrumentation (NFM-2042): the EXIT trap arming happens inside
+# cmd_deploy; this is the body that runs at function-exit time. The exit
+# status we observe here is cmd_deploy's own return code, not the trap's.
+#
+# The trap fires on every terminal path of cmd_deploy (record_good return 0,
+# rollback return 1, die). To keep the event-writer contract we never
+# propagate a write failure (deploy_event_emit already returns 0).
+_emit_staging_deploy_event() {
+  if [ "${_DEPLOY_EVENT_ARMED}" != "true" ]; then
+    return 0
+  fi
+  # Disarm so nested commands (eg. another deploy invocation inside the same
+  # shell) cannot double-emit.
+  _DEPLOY_EVENT_ARMED="false"
+  trap - EXIT
+
+  local rc=$?
+  local now_ms
+  now_ms="$(deploy_event_now_ms)"
+  local duration_ms=0
+  if [ -n "${_DEPLOY_EVENT_DURATION_START_MS}" ]; then
+    duration_ms=$(( now_ms - _DEPLOY_EVENT_DURATION_START_MS ))
+  fi
+
+  # first_pass_success: the deploy command returned zero AND no rollback
+  # ran AND no override was used. Per CPO ruling D2, skip-flag-used forces
+  # the metric to false so the team cannot game KR-3 by setting the flag.
+  local first_pass="false"
+  if [ "$rc" -eq 0 ] && [ "${_DEPLOY_EVENT_ROLLBACK}" = "false" ] \
+       && [ "${SKIP_HEALTH_GATE:-}" != "1" ] \
+       && [ "${SKIP_HEALTH_GATE:-}" != "true" ]; then
+    first_pass="true"
+  fi
+  local skip_used="false"
+  if [ "${SKIP_HEALTH_GATE:-}" = "1" ] || [ "${SKIP_HEALTH_GATE:-}" = "true" ]; then
+    skip_used="true"
+  fi
+
+  deploy_event_emit \
+    --environment staging \
+    --triggered-by "${USER:-unknown}" \
+    --commit-sha "${GIT_COMMIT_SHA:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}" \
+    --first-pass-success "$first_pass" \
+    --health-gate-first-poll-passed "${_DEPLOY_EVENT_FIRST_POLL:-false}" \
+    --rollback-triggered "$_DEPLOY_EVENT_ROLLBACK" \
+    --skip-flag-used "$skip_used" \
+    --duration-ms "$duration_ms"
+
+  return 0
 }
 
 snapshot_rollback_target() {
@@ -96,6 +168,16 @@ snapshot_rollback_target() {
 # ---- commands ---------------------------------------------------------------
 cmd_deploy() {
   load_env_file
+  # KR-3 instrumentation (NFM-2042): reset event state, then arm a single
+  # EXIT trap that runs regardless of which terminal path the deploy takes.
+  # The trap runs after the function returns, so the local return code of
+  # cmd_deploy is what determines first_pass_success.
+  _DEPLOY_EVENT_ARMED="true"
+  _DEPLOY_EVENT_FIRST_POLL=""
+  _DEPLOY_EVENT_ROLLBACK="false"
+  _DEPLOY_EVENT_DURATION_START_MS="$(deploy_event_now_ms)"
+  trap _emit_staging_deploy_event EXIT
+
   log "Deploying NFM-DB staging stack (tag=${STAGING_IMAGE_TAG:-latest})..."
 
   snapshot_rollback_target
@@ -116,6 +198,7 @@ cmd_deploy() {
   fi
 
   err "Health gate failed — auto-rolling back to tag '$ROLLBACK_TAG'."
+  _DEPLOY_EVENT_ROLLBACK="true"
   local prev_tag="$ROLLBACK_TAG"
   if ! docker image inspect "nucpot-staging-api:$prev_tag" >/dev/null 2>&1; then
     err "No rollback image 'nucpot-staging-api:$prev_tag' — leaving failed stack up for inspection."
