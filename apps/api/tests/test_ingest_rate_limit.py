@@ -115,7 +115,9 @@ async def test_batch_size_500_returns_202(
     response = await async_client.post(INGEST_URL, headers=headers, json=payload)
 
     assert response.status_code == 202, response.text
-    assert response.json()["accepted_count"] == 500
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["total_received"] == 500
 
 
 @pytest.mark.no_auto_auth
@@ -132,7 +134,9 @@ async def test_batch_size_1_returns_202(
     response = await async_client.post(INGEST_URL, headers=headers, json=payload)
 
     assert response.status_code == 202, response.text
-    assert response.json()["accepted_count"] == 1
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["total_received"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -143,8 +143,10 @@ class TestIngestFullFlow:
             headers=svc_headers,
         )
         assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
-        data = resp.json()
-        assert data["accepted_count"] == 1
+        body = resp.json()
+        assert body["success"] is True
+        data = body["data"]
+        assert data["ingested"] == 1
         assert data["created_measurements"] == 1
         assert data["skipped_duplicates"] == 0
         assert data["corpus_id"] == "flow-test"
@@ -169,7 +171,9 @@ class TestIngestFullFlow:
             headers=svc_headers,
         )
         assert resp2.status_code == 202
-        data2 = resp2.json()
+        body2 = resp2.json()
+        assert body2["success"] is True
+        data2 = body2["data"]
         assert data2["skipped_duplicates"] >= 1, (
             "Second POST with identical 5-tuple should skip duplicates"
         )
@@ -224,6 +228,8 @@ class TestIngestKGBuildFailureIsolated:
             headers=svc_headers,
         )
         assert good_resp.status_code == 202
+        good_body = good_resp.json()
+        assert good_body["success"] is True
         measurements_before = (await db_session.execute(
             select(PropertyMeasurement)
         )).scalars().all()
@@ -254,7 +260,9 @@ class TestIngestKGBuildFailureIsolated:
         assert fail_resp.status_code == 202, (
             f"Expected 202 even on persist failure, got {fail_resp.status_code}"
         )
-        fail_data = fail_resp.json()
+        fail_body = fail_resp.json()
+        assert fail_body["success"] is True
+        fail_data = fail_body["data"]
         assert fail_data["created_measurements"] == 0
 
         # Prior measurements must still be in the DB
@@ -289,7 +297,9 @@ class TestIngestWithConditions:
             headers=svc_headers,
         )
         assert resp.status_code == 202
-        data = resp.json()
+        cond_body = resp.json()
+        assert cond_body["success"] is True
+        data = cond_body["data"]
         assert data["created_measurements"] == 1
 
         # Verify MeasurementCondition row
@@ -352,7 +362,9 @@ class TestIngestDuplicateDetection:
             headers=svc_headers,
         )
         assert resp1.status_code == 202
-        data1 = resp1.json()
+        body1 = resp1.json()
+        assert body1["success"] is True
+        data1 = body1["data"]
         assert data1["created_measurements"] == 2
         assert data1["skipped_duplicates"] == 0
 
@@ -367,7 +379,9 @@ class TestIngestDuplicateDetection:
             headers=svc_headers,
         )
         assert resp2.status_code == 202
-        data2 = resp2.json()
+        body2 = resp2.json()
+        assert body2["success"] is True
+        data2 = body2["data"]
         assert data2["skipped_duplicates"] >= 1, (
             f"Expected skipped_duplicates >= 1, got {data2['skipped_duplicates']}"
         )

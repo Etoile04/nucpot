@@ -230,15 +230,17 @@ async def test_ingest_endpoint_accepts_correctly_scoped_service_token(
             "source_type": "doi",
             "corpus_id": "ceramics",
             "element_systems": ["U", "O"],
-            "properties": [{"property_name": "lattice_constant", "value": 5.47}],
+            "properties": [{"property": "lattice_constant", "value": "5.47", "unit": "angstrom"}],
             "metadata": {"model_version": "ontofuel-1.0.0"},
         },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 202, response.text
-    body = response.json()
+    envelope = response.json()
+    assert envelope["success"] is True
+    body = envelope["data"]
     assert body["source_reference"] == "10.1016/j.jnucmat.2024.01.001"
-    assert body["accepted_count"] == 1
+    assert body["total_received"] == 1
     assert body["corpus_id"] == "ceramics"
     assert body["message"] == "Ingest accepted; queued for processing."
     assert "job_id" in body
@@ -303,7 +305,7 @@ async def test_e2e_service_account_login_then_ingest(
        mirror the OntoFuel header-based client).
     3. ``POST /api/v1/extraction/ingest`` with the bearer token.
     4. Assert a 202 with the expected ``job_id``, ``source_reference``,
-       and ``accepted_count`` fields.
+       and ``ingested`` fields.
 
     No mocks, no skips — every layer (auth, RBAC, ingest handler, DB)
     runs end-to-end against the in-memory engine.
@@ -334,10 +336,12 @@ async def test_e2e_service_account_login_then_ingest(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert ingest_response.status_code == 202, ingest_response.text
-    ack = ingest_response.json()
+    envelope = ingest_response.json()
+    assert envelope["success"] is True
+    ack = envelope["data"]
     assert ack["source_reference"] == "e2e-ontofuel-doi-001"
     assert ack["source_type"] == "doi"
-    assert ack["accepted_count"] == 3
+    assert ack["total_received"] == 3
     assert ack["corpus_id"] == "ceramics"
     assert ack["message"] == "Ingest accepted; queued for processing."
     # job_id should be a valid UUID — sanity check.

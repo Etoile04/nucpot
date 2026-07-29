@@ -9,6 +9,7 @@ Trigger and monitor OntoFuel extraction jobs:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -83,15 +84,25 @@ class ExtractionIngestRequest(BaseModel):
 
 
 class ExtractionIngestAck(BaseModel):
-    """Acknowledgement returned by the service-account ingest endpoint."""
+    """Acknowledgement returned by the service-account ingest endpoint.
+
+    Conforms to the OntoFuel integration handoff contract (NFM-1972):
+    the outer envelope is ``{success, data}`` so the OntoFuel client
+    can call ``body.get("data", {}).get("ingested")`` etc.  Field names
+    match the handoff doc exactly (``ingested`` not ``accepted_count``).
+    """
 
     job_id: UUID = Field(description="Server-assigned id for this ingest batch.")
     source_reference: str
     source_type: str
     corpus_id: str = Field(description="Corpus the batch was tagged with.")
-    accepted_count: int = Field(description="Number of property records accepted.")
+    ingested: int = Field(description="Number of property records ingested (new).")
     created_measurements: int = Field(default=0, description="Property measurements persisted.")
     skipped_duplicates: int = Field(default=0, description="Duplicate records skipped (5-tuple dedup).")
+    validation_errors: int = Field(default=0, description="Records that failed validation.")
+    total_received: int = Field(default=0, description="Total property records in the request.")
+    processing_time_ms: float = Field(default=0, description="Server-side processing time in milliseconds.")
+    errors: list[str] = Field(default_factory=list, description="Error details for failed records.")
     received_at: datetime
     message: str = "Ingest accepted; queued for processing."
 
@@ -232,7 +243,7 @@ async def get_extraction_status(
 
 @router.post(
     "/extraction/ingest",
-    response_model=ExtractionIngestAck,
+    response_model=dict,
     status_code=status.HTTP_202_ACCEPTED,
     summary="提取批次入库（服务账号 / 编辑者）",
     description=(
@@ -243,7 +254,9 @@ async def get_extraction_status(
         "* Service account + unknown ``corpus_id`` → auto-create the corpus.\n"
         "* Human editor/admin + unknown ``corpus_id`` → ``400 Bad Request``.\n"
         "Other identities (reviewers, no-blog-role humans, wrong scope) "
-        "receive ``403 Forbidden``."
+        "receive ``403 Forbidden``.\n\n"
+        "Response conforms to the OntoFuel integration handoff contract: "
+        "``{success: true, data: {ingested, skipped_duplicates, ...}}``."
     ),
 )
 async def ingest_extraction_batch(
@@ -251,7 +264,7 @@ async def ingest_extraction_batch(
     caller: Annotated[User, Depends(require_ingest_authority())],
     _rate_limit: Annotated[None, Depends(ingest_rate_limit)],
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> ExtractionIngestAck:
+) -> dict[str, object]:
     """接受服务账号或编辑者提交的提取批次。
 
     AC-5 missing-corpus behaviour:
@@ -310,11 +323,14 @@ async def ingest_extraction_batch(
         )
 
     job_id = uuid4()
-    accepted_count = len(payload.properties)
+    total_received = len(payload.properties)
+    t_start = time.monotonic()
 
     # --- Persist properties via map_and_persist (NFM-1983 AC-3) ---
     created_measurements = 0
     skipped_duplicates = 0
+    validation_errors = 0
+    errors: list[str] = []
 
     if payload.properties:
         try:
@@ -328,35 +344,48 @@ async def ingest_extraction_batch(
             )
             created_measurements = mapping_result.created_measurements
             skipped_duplicates = mapping_result.skipped_duplicates
+            validation_errors = mapping_result.validation_errors
         except Exception:
-            # Log but do not fail — the ack is already committed.
+            # Log but do not fail — the ack is always returned.
             # Future: GraphBuilder isolation (NFM-1972-D) will add KG
             # node/edge creation here, isolated from measurement writes.
             logger.exception(
                 "ingest_extraction_batch: map_and_persist failed for job_id=%s",
                 job_id,
             )
+            errors.append("map_and_persist raised an unexpected error")
+
+    elapsed_ms = (time.monotonic() - t_start) * 1000
 
     logger.info(
         "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
-        "service=%s accepted=%d measurements=%d skipped=%d",
+        "service=%s total=%d ingested=%d measurements=%d skipped=%d errors=%d",
         job_id,
         payload.source_reference,
         corpus.corpus_id,
         caller.username,
         caller.is_service_account,
-        accepted_count,
+        total_received,
+        created_measurements,
         created_measurements,
         skipped_duplicates,
+        len(errors),
     )
 
-    return ExtractionIngestAck(
-        job_id=job_id,
-        source_reference=payload.source_reference,
-        source_type=payload.source_type,
-        corpus_id=corpus.corpus_id,
-        accepted_count=accepted_count,
-        created_measurements=created_measurements,
-        skipped_duplicates=skipped_duplicates,
-        received_at=datetime.now(UTC),
-    )
+    return {
+        "success": True,
+        "data": ExtractionIngestAck(
+            job_id=job_id,
+            source_reference=payload.source_reference,
+            source_type=payload.source_type,
+            corpus_id=corpus.corpus_id,
+            ingested=created_measurements,
+            created_measurements=created_measurements,
+            skipped_duplicates=skipped_duplicates,
+            validation_errors=validation_errors,
+            total_received=total_received,
+            processing_time_ms=round(elapsed_ms, 1),
+            errors=errors,
+            received_at=datetime.now(UTC),
+        ).model_dump(),
+    }
