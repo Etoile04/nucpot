@@ -30,6 +30,7 @@ from nfm_db.services.extraction_pipeline import get_job
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
+from nfm_db.services.rate_limit import ingest_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,7 @@ async def get_extraction_status(
 async def ingest_extraction_batch(
     payload: ExtractionIngestRequest,
     caller: Annotated[User, Depends(require_ingest_authority())],
+    _rate_limit: Annotated[None, Depends(ingest_rate_limit)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ExtractionIngestAck:
     """接受服务账号或编辑者提交的提取批次。
@@ -294,6 +296,16 @@ async def ingest_extraction_batch(
                     "contact admin"
                 ),
             )
+
+    # AC-6 (NFM-1982): batch-size cap.
+    if len(payload.properties) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Batch size {len(payload.properties)} exceeds the "
+                f"maximum of 500 properties per request."
+            ),
+        )
 
     job_id = uuid4()
     accepted_count = len(payload.properties)

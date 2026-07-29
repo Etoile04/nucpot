@@ -97,6 +97,51 @@ def make_rate_limit_dependency(
 # Production dependency — enforces the per-IP limit on the ontology route.
 ontology_rate_limit = make_rate_limit_dependency(ontology_limiter)
 
+# ---------------------------------------------------------------------------
+# Ingest rate limiter (NFM-1982 / NFM-1972 AC-6)
+# ---------------------------------------------------------------------------
+# 10 requests per minute per service-account user_id.  Keyed on the
+# authenticated user's ``id`` (UUID string) rather than IP, so different
+# service accounts have independent quotas even from the same host.
+
+INGEST_MAX_REQUESTS = 10
+INGEST_WINDOW_SECONDS = 60
+
+ingest_rate_limiter = InProcessRateLimiter(
+    max_requests=INGEST_MAX_REQUESTS,
+    window_seconds=INGEST_WINDOW_SECONDS,
+)
+
+
+def ingest_user_key(request: Request) -> str:
+    """Key the ingest limiter on the authenticated user's id.
+
+    This runs *after* ``require_ingest_authority`` has validated the
+    JWT and resolved the ``User`` object.  We pull the user_id from
+    ``request.state`` which is set by FastAPI's dependency injection.
+    Falls back to ``anonymous`` only for defensive coding; in practice
+    the auth dependency always runs first.
+    """
+    user = getattr(request.state, "user", None)
+    if user is not None and hasattr(user, "id"):
+        return f"ingest:{user.id}"
+    return "ingest:anonymous"
+
+
+async def _ingest_rate_limit(request: Request) -> None:
+    """Check the per-service-account rate limit for /extraction/ingest.
+
+    Reads the authenticated ``User`` from ``request.state.user`` which
+    is set by ``require_ingest_authority``.  If no user is found
+    (shouldn't happen in production), the check is skipped.
+    """
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        ingest_rate_limiter.check(ingest_user_key(request))
+
+
+ingest_rate_limit = _ingest_rate_limit
+
 # Production dependency — enforces the per-IP limit on MD verification job
 # submission (NFM-401). Tighter than ontology because each request dispatches
 # an SSH+SLURM job on shared HPC hardware.

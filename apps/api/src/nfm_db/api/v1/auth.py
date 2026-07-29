@@ -267,6 +267,10 @@ def require_ingest_authority():
         user: Annotated[User, Depends(get_current_active_user)],
         request: Request,
     ) -> User:
+        # Store on request.state so downstream dependencies (e.g.
+        # ingest rate limiter) can key on user.id without re-resolving.
+        request.state.user = user
+
         if user.is_service_account:
             token = _extract_bearer_token(request)
             payload = decode_access_token(token) if token else None
