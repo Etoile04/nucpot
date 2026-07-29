@@ -1,0 +1,22 @@
+{
+  "mo_equivalent": 0.0184,
+  "lattice_distortion": 0.0359,
+  "allen_chi_diff": 0.0268,
+  "vec": 0.0271,
+  "cluster_I": 0.049,
+  "cluster_II": 0.0182,
+  "cluster_III": 0.1452,
+  "cluster_IV": 0.0024,
+  "avg_allen_chi": 0.0188,
+  "avg_atomic_volume": 0.0244,
+  "avg_d_electron": 0.0108,
+  "avg_work_function": 0.0698,
+  "avg_bulk_modulus": 0.0128,
+  "hr_valence_diff": 0.0153,
+  "dg_en_radius_distance": 0.0995,
+  "max_pair_en_diff": 0.197,
+  "en_variance": 0.1759,
+  "volume_variance": 0.0161,
+  "d_electron_variance": 0.0149,
+  "bulk_modulus_variance": 0.0217
+}
