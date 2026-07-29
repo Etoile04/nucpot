@@ -7,6 +7,25 @@
 
 ---
 
+## Status (as of NFM-2086)
+
+What is enforced right now versus what is still in flight:
+
+| Control                            | Where it lives                                | Status (2026-07-30)                                                                                                |
+| ---------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **CI gate** on `pull_request`      | `.github/workflows/commit-ref-gate.yml` ([NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`) | **Live on `main`.** The gate validates every non-merge commit subject in the PR range. Non-compliant PRs go red.    |
+| **Local `commit-msg` hook**        | `.githooks/commit-msg` ([NFM-2084](/NFM/issues/NFM-2084), commit `6c42aea3`)                       | **Branch-only, not yet on `main`.** Do not claim a hook is "already enabled" in this repo; it is not.               |
+| **KR-2 metric** (`commit_efficiency.py`) | `scripts/okr/commit_efficiency.py` (`_ISSUE_REF_PATTERN`)                              | **Live.** Counts `[no-issue]` as structural waste.                                                                  |
+
+**What this means for you:** rely on the CI gate for compliance; do not assume
+`core.hooksPath .githooks` does anything until NFM-2084 lands. If you want
+local pre-commit validation, check out the [NFM-2084](/NFM/issues/NFM-2084)
+branch or wait for the merge.
+
+---
+
+---
+
 ## The rule
 
 Every commit **subject** on every branch merged into `main` must contain **either**:
@@ -56,10 +75,11 @@ with no trace in history; CI will still catch the offending commit on the PR.
 (`.github/workflows/ci.yml`). It cannot be skipped by an unconfigured clone and
 cannot be bypassed with `--no-verify`.
 
-**Local hook (opt-in, fast feedback):** a `commit-msg` hook is shipped in
-`.githooks/`. It moves the failure from "10 minutes later in CI" to "instantly
-at commit time". It is a convenience — not the control. Without configuration,
-it does nothing and CI rejects later. That is intentional.
+**Local hook (opt-in, fast feedback):** a `commit-msg` hook will ship in
+`.githooks/` once [NFM-2084](/NFM/issues/NFM-2084) lands on `main`. The intent,
+once it lands, is that it moves the failure from "10 minutes later in CI" to
+"instantly at commit time". It is a convenience — not the control. Without
+configuration, it does nothing and CI rejects later. That is intentional.
 
 ### Enable the local hook (one line)
 

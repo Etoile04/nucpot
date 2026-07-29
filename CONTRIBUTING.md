@@ -9,6 +9,26 @@ For the full rationale, scope, and the KR-1 re-baseline discussion, see
 
 ---
 
+## Status (as of NFM-2086)
+
+This section tracks what is live right now versus what is still in flight, so
+contributors do not assume a control exists when it does not.
+
+| Control                            | Where it lives                                | Status (2026-07-30)                                                                                                |
+| ---------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **CI gate** on `pull_request`      | `.github/workflows/commit-ref-gate.yml` ([NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`) | **Live on `main`.** A non-compliant PR (missing `NFM-###` and missing `[no-issue]`) will be red.                   |
+| **Local `commit-msg` hook**        | `.githooks/commit-msg` ([NFM-2084](/NFM/issues/NFM-2084), commit `6c42aea3`)                       | **Branch-only, not yet on `main`.** The hook ships on the [NFM-2084](/NFM/issues/NFM-2084) feature branch and is not yet merged. `git config core.hooksPath .githooks` will be a no-op until NFM-2084 lands. |
+| **KR-2 metric** (`commit_efficiency.py`) | `scripts/okr/commit_efficiency.py` (`_ISSUE_REF_PATTERN`)                              | **Live.** Counts `[no-issue]` as structural waste per ADR-NFM-2081 §D2.                                            |
+
+**Practical consequence today:** rely on the CI gate; treat the local hook as
+"coming soon". The CI gate alone is sufficient to enforce the rule on merged
+PRs. If you want to test the hook locally before NFM-2084 lands, check out the
+[NFM-2084](/NFM/issues/NFM-2084) branch.
+
+---
+
+---
+
 ## The rule (one line)
 
 Every commit **subject** on every branch merged into `main` must contain **either**:
@@ -55,9 +75,11 @@ with no trace in history; CI will still catch the offending commit on the PR.
 (`.github/workflows/ci.yml`). It cannot be skipped by failing to configure
 anything and cannot be bypassed with `--no-verify`. The PR records the result.
 
-**Local hook (opt-in, fast feedback):** a `commit-msg` hook is shipped in
-`.githooks/`. It moves the failure from "10 minutes later in CI" to "instantly
-at commit time", but it is a convenience — not the control. Until it is
+**Local hook (opt-in, fast feedback):** a `commit-msg` hook will ship in
+`.githooks/` once [NFM-2084](/NFM/issues/NFM-2084) lands on `main`. Until then,
+the hook is not present in `main`-based clones. The intent, once it lands,
+is that it moves the failure from "10 minutes later in CI" to "instantly at
+commit time", but it is a convenience — not the control. Until it is
 enabled, `git commit` will succeed locally and CI will reject later. This is
 acceptable, and it is the intended design: a hook cannot satisfy the
 "lazy path is the compliant path" criterion on its own, because the lazy path
