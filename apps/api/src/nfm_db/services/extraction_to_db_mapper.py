@@ -14,6 +14,8 @@ All operations run within a single DB transaction.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -94,6 +96,55 @@ def _material_key(item: ExtractedProperty) -> str:
 def _dataset_key(source_key: str, material_key: str) -> str:
     """Composite key for Dataset dedup."""
     return f"{source_key}||{material_key}"
+
+
+# ---------------------------------------------------------------------------
+# Measurement dedup (NFM-1981 AC-2)
+# ---------------------------------------------------------------------------
+# CPO Decision 1: Dedup key = (material_name, property_name, source_reference,
+#   conditions_hash, measurement_method).
+#   - conditions_hash included because different temperature/pressure under
+#     the same property are *different* measurements (e.g. U-10Mo thermal
+#     conductivity at 25°C vs 400°C).
+#   - measurement_method included to distinguish techniques (tensile vs
+#     nanoindentation, etc.).
+# CPO Decision 2: Strategy C (keep all) — only skip when the 5-tuple is
+#   identical.  Different method/conditions/material/property → separate
+#   measurements.  Materials-science correctness over storage minimization.
+# ---------------------------------------------------------------------------
+
+
+def _conditions_hash(conditions: dict[str, Any] | None) -> str:
+    """Stable SHA1 hex digest of a conditions dict.
+
+    Uses ``sort_keys=True`` so key order does not affect the hash.
+    ``None`` and empty ``{}`` both hash to the same value ("no conditions").
+
+    SHA1 chosen over MD5: 160-bit collision resistance is more than
+    sufficient for dedup keys and avoids known MD5 collision classes.
+    """
+    if not conditions:
+        return hashlib.sha1(b"{}").hexdigest()
+    serialised = json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(serialised.encode("utf-8")).hexdigest()
+
+
+def _measurement_dedup_key(item: ExtractedProperty) -> str:
+    """Build the 5-tuple dedup key for a PropertyMeasurement.
+
+    Key components:
+    1. material_name (normalised: lowercased, stripped)
+    2. property name (from the ``property`` field)
+    3. source_reference (DOI or reference or source_file)
+    4. conditions_hash (stable SHA1 of the conditions dict)
+    5. measurement_method (from the ``method`` field, or empty string)
+    """
+    material = (item.material_name or "").strip().lower()
+    prop = item.property
+    source_ref = item.source_doi or item.reference or item.source_file or ""
+    cond_h = _conditions_hash(item.conditions)
+    method = (item.method or "").strip()
+    return f"{material}|{prop}|{source_ref}|{cond_h}|{method}"
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +263,8 @@ async def map_and_persist(
     source_map: dict[str, DataSource] = {}
     material_map: dict[str, Material] = {}
     dataset_map: dict[str, Dataset] = {}
+    # NFM-1981 AC-2: track seen 5-tuple keys to skip exact duplicates
+    seen_measurement_keys: set[str] = set()
     skipped = 0
 
     created_sources = 0
@@ -309,7 +362,14 @@ async def map_and_persist(
             skipped += 1
             continue
 
-        # --- PropertyMeasurement ---
+        # --- PropertyMeasurement (NFM-1981 AC-2: 5-tuple dedup) ---
+        meas_key = _measurement_dedup_key(item)
+        if meas_key in seen_measurement_keys:
+            logger.debug("Skipping duplicate measurement: %s", meas_key)
+            skipped += 1
+            continue
+        seen_measurement_keys.add(meas_key)
+
         condition_kwargs = _build_condition_kwargs(item.conditions)
         value_kwargs, fallback_raw = _measurement_value_kwargs(item.value)
         if fallback_raw is not None:
