@@ -1,5 +1,7 @@
 """Tests for health check endpoint."""
 
+"""Tests for health check endpoint."""
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -9,9 +11,15 @@ from nfm_db.main import app
 @pytest.mark.asyncio
 async def test_health_check_returns_ok() -> None:
     """Health endpoint returns status ok."""
+    from monitoring.worker_health import worker_health
+
+    worker_health.reset()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/v1/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
+    assert data["consecutive_failures"] == 0
+
+    worker_health.reset()
