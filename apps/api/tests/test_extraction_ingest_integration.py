@@ -149,6 +149,8 @@ class TestIngestFullFlow:
         assert data["ingested"] == 1
         assert data["created_measurements"] == 1
         assert data["skipped_duplicates"] == 0
+        assert data["reused_entities"] == 0
+        assert data["skipped_duplicate_measurements"] == 0
         assert data["corpus_id"] == "flow-test"
 
         # Verify property_measurements row exists
@@ -177,6 +179,67 @@ class TestIngestFullFlow:
         assert data2["skipped_duplicates"] >= 1, (
             "Second POST with identical 5-tuple should skip duplicates"
         )
+        # NFM-1996: split counters must be present
+        assert "reused_entities" in data2
+        assert "skipped_duplicate_measurements" in data2
+        assert "skipped_unknown_properties" in data2
+        assert data2["skipped_duplicates"] == (
+            data2["reused_entities"]
+            + data2["skipped_duplicate_measurements"]
+            + data2["skipped_unknown_properties"]
+        )
+
+
+class TestSkippedCounterReconciliation:
+    """NFM-1996 AC-3: every term of the ``skipped_duplicates`` alias must be
+    visible in the response.
+
+    ``MappingResult.skipped_duplicates`` sums three counters.  If the response
+    exposes only two of them, a caller reconciling
+    ``skipped_duplicates == reused_entities + skipped_duplicate_measurements``
+    silently breaks the moment a property name is not yet seeded in
+    ``property_types``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unknown_property_is_visible_in_response(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+    ) -> None:
+        """One seeded + one unseeded property -> the alias fully reconciles."""
+        payload = _ingest_payload(
+            properties=[
+                _sample_property(),
+                _sample_property({"property": "totally_unseeded_property"}),
+            ],
+            corpus_id="counter-reconciliation",
+        )
+
+        resp = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload,
+            headers=svc_headers,
+        )
+        assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+        data = resp.json()["data"]
+
+        assert data["skipped_unknown_properties"] == 1, (
+            "The unseeded property must be reported under its own counter"
+        )
+        assert data["skipped_duplicates"] == (
+            data["reused_entities"]
+            + data["skipped_duplicate_measurements"]
+            + data["skipped_unknown_properties"]
+        ), (
+            "skipped_duplicates must reconcile against every counter the "
+            f"response exposes; got {data['skipped_duplicates']} vs "
+            f"{data['reused_entities']} + {data['skipped_duplicate_measurements']} "
+            f"+ {data['skipped_unknown_properties']}"
+        )
+        # The seeded property still lands.
+        assert data["created_measurements"] == 1
 
 
 class TestIngestKGBuildFailureIsolated:
@@ -366,6 +429,9 @@ class TestIngestDuplicateDetection:
         data1 = body1["data"]
         assert data1["created_measurements"] == 2
         assert data1["skipped_duplicates"] == 0
+        # NFM-1996: split counters must be present
+        assert "reused_entities" in data1
+        assert "skipped_duplicate_measurements" in data1
 
         # Second POST (identical 5-tuples).
         # NOTE: map_and_persist 5-tuple dedup is per-call (within a single
@@ -383,4 +449,8 @@ class TestIngestDuplicateDetection:
         data2 = body2["data"]
         assert data2["skipped_duplicates"] >= 1, (
             f"Expected skipped_duplicates >= 1, got {data2['skipped_duplicates']}"
+        )
+        # NFM-1996: backward-compat alias must equal sum of split counters
+        assert data2["skipped_duplicates"] == (
+            data2["reused_entities"] + data2["skipped_duplicate_measurements"]
         )

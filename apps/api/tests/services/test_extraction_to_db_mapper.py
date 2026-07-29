@@ -24,6 +24,8 @@ from nfm_db.models import (
 from nfm_db.services.extraction_to_db_mapper import (
     MappingError,
     MappingResult,
+    _normalize_category_slug,
+    ONTOFUEL_CATEGORY_TO_SLUG,
     map_and_persist,
 )
 
@@ -373,18 +375,35 @@ class TestMappingResult:
             created_materials=2,
             created_datasets=3,
             created_measurements=4,
-            skipped_duplicates=5,
+            reused_entities=5,
+            skipped_duplicate_measurements=3,
             validation_errors=1,
         )
         assert result.created_sources == 1
         assert result.created_materials == 2
         assert result.total_created == 10  # 1+2+3+4
+        assert result.reused_entities == 5
+        assert result.skipped_duplicate_measurements == 3
 
     def test_result_defaults(self):
         result = MappingResult()
         assert result.created_sources == 0
         assert result.validation_errors == 0
         assert result.total_created == 0
+        assert result.reused_entities == 0
+        assert result.skipped_duplicate_measurements == 0
+
+    def test_skipped_duplicates_backward_compat_alias(self):
+        """skipped_duplicates must be a backward-compat alias summing all skip reasons."""
+        result = MappingResult(
+            reused_entities=2,
+            skipped_duplicate_measurements=3,
+        )
+        assert result.skipped_duplicates == 5  # 2 + 3
+
+    def test_skipped_duplicates_zero_when_no_skips(self):
+        result = MappingResult()
+        assert result.skipped_duplicates == 0
 
 
 @pytest.mark.unit
@@ -395,6 +414,358 @@ class TestMappingError:
         err = MappingError("test error", item_index=3)
         assert "test error" in str(err)
         assert "3" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# NFM-1994: OntoFuel category literal → DB slug normalisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestOntofuelCategoryNormalization:
+    """OntoFuel category literals must resolve to DB property_types via slug.
+
+    The DB ``property_categories`` table stores English ``name`` (e.g.
+    "Thermal properties") and a short ``slug`` (e.g. "thermal").
+    OntoFuel emits lowercase literals that match the slug, not the name.
+    """
+
+    async def test_thermal_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'thermal' resolves via slug, not name."""
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",  # production-style name
+            category_slug="thermal",
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="Thermal Conductivity",
+                value="8.5",
+                unit="W/(m·K)",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    async def test_mechanical_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'mechanical' resolves via slug."""
+        await _seed_property_type(
+            db_session,
+            category_name="Mechanical properties",
+            category_slug="mechanical",
+            property_name="Density",
+            property_slug="density",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="mechanical",
+                property_name="Density",
+                value="10.97",
+                unit="g/cm3",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+
+    async def test_nuclear_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'nuclear' resolves via slug."""
+        await _seed_property_type(
+            db_session,
+            category_name="Nuclear properties",
+            category_slug="nuclear",
+            property_name="fission_cross_section",
+            property_slug="fission-cross-section",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="nuclear",
+                property_name="fission_cross_section",
+                value="2.7",
+                unit="barn",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+
+    async def test_physical_literal_matches_slug(self, db_session: AsyncSession):
+        """OntoFuel 'physical' resolves via slug."""
+        await _seed_property_type(
+            db_session,
+            category_name="Physical properties",
+            category_slug="physical",
+            property_name="Melting Point",
+            property_slug="melting-point",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="physical",
+                property_name="Melting Point",
+                value="3138",
+                unit="K",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+
+    async def test_diffusion_literal_falls_back_to_physical(self, db_session: AsyncSession):
+        """OntoFuel 'diffusion' has no DB category; falls back to 'physical'."""
+        await _seed_property_type(
+            db_session,
+            category_name="Physical properties",
+            category_slug="physical",
+            property_name="diffusion_coefficient",
+            property_slug="diffusion-coefficient",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="diffusion",
+                property_name="diffusion_coefficient",
+                value="1.2e-10",
+                unit="m2/s",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    async def test_irradiation_literal_falls_back_to_nuclear(self, db_session: AsyncSession):
+        """OntoFuel 'irradiation' has no DB category; falls back to 'nuclear'."""
+        await _seed_property_type(
+            db_session,
+            category_name="Nuclear properties",
+            category_slug="nuclear",
+            property_name="swelling_rate",
+            property_slug="swelling-rate",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="irradiation",
+                property_name="swelling_rate",
+                value="0.5",
+                unit="%/dpa",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    async def test_none_category_skips_unknown(self, db_session: AsyncSession):
+        """A None property_category is skipped (skipped_unknown_properties)."""
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",
+            category_slug="thermal",
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category=None,
+                property_name="Thermal Conductivity",
+                value="8.5",
+                unit="W/(m·K)",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 0
+        assert result.skipped_unknown_properties == 1
+
+    async def test_other_literal_falls_back_to_thermal(self, db_session: AsyncSession):
+        """OntoFuel 'other' has no DB category; falls back to 'thermal'."""
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",
+            category_slug="thermal",
+            property_name="custom_value",
+            property_slug="custom-value",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="other",
+                property_name="custom_value",
+                value="42",
+                unit="unitless",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+
+    def test_normalize_category_slug_direct_matches(self):
+        """The four OntoFuel literals with direct DB slugs map 1:1."""
+        assert _normalize_category_slug("thermal") == "thermal"
+        assert _normalize_category_slug("mechanical") == "mechanical"
+        assert _normalize_category_slug("nuclear") == "nuclear"
+        assert _normalize_category_slug("physical") == "physical"
+
+    def test_normalize_category_slug_fallbacks(self):
+        """OntoFuel literals without dedicated DB categories fall back."""
+        assert _normalize_category_slug("diffusion") == "physical"
+        assert _normalize_category_slug("irradiation") == "nuclear"
+        assert _normalize_category_slug("other") == "thermal"
+
+    def test_normalize_category_slug_unknown_returns_none(self):
+        """Unrecognised literals return None."""
+        assert _normalize_category_slug("nonexistent") is None
+        assert _normalize_category_slug("") is None
+
+    def test_mapping_covers_all_ontofuel_literals(self):
+        """Every PropertyCategoryLiteral has an entry in the mapping."""
+        from nfm_db.schemas.extraction import PropertyCategoryLiteral
+
+        # PropertyCategoryLiteral is a Literal type; inspect its __args__
+        literals = PropertyCategoryLiteral.__args__  # type: ignore[attr-defined]
+        for lit in literals:
+            assert lit in ONTOFUEL_CATEGORY_TO_SLUG, (
+                f"OntoFuel literal {lit!r} missing from ONTOFUEL_CATEGORY_TO_SLUG"
+            )
+
+
+# ---------------------------------------------------------------------------
+# NFM-1996: split counter separation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSplitCounterSeparation:
+    """NFM-1996: reused_entities vs skipped_duplicate_measurements.
+
+    Entity reuse (DataSource/Material found in DB) → reused_entities.
+    5-tuple measurement dedup → skipped_duplicate_measurements.
+    Unknown property type → neither (tracked internally only).
+    """
+
+    async def test_entity_reuse_increments_reused_entities(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Pre-seeded DataSource in DB + same DOI → reused_entities incremented.
+
+        Entity reuse only fires when _find_source_by_doi finds an existing
+        row in the DB. Same-batch dedup uses in-memory maps, not reused_entities.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+        # Pre-seed a DataSource in the DB
+        existing_source = DataSource(
+            doi="10.1000/reuse-test",
+            title="Pre-existing Paper",
+            source_type="journal_article",
+        )
+        db_session.add(existing_source)
+        await db_session.commit()
+
+        inputs = [
+            _make_extracted_property(source_doi="10.1000/reuse-test"),
+        ]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.reused_entities == 1, (
+            "DataSource found by DOI in DB → entity reuse"
+        )
+        assert result.skipped_duplicate_measurements == 0, (
+            "No measurement dedup — single unique item"
+        )
+        assert result.skipped_duplicates == result.reused_entities + result.skipped_duplicate_measurements
+
+    async def test_material_reuse_increments_reused_entities(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Pre-seeded Material in DB + same formula → reused_entities incremented.
+
+        Uses different DOI so DataSource is NOT reused — only Material reuse.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+        # Pre-seed a Material in the DB
+        existing_material = Material(
+            name="UO2",
+            formula="UO2",
+            is_active=True,
+        )
+        db_session.add(existing_material)
+        await db_session.commit()
+
+        inputs = [
+            _make_extracted_property(
+                material_name="UO2",
+                composition="UO2",
+                source_doi="10.1000/mat-a",
+            ),
+        ]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.reused_entities >= 1, (
+            "Material found by formula in DB → entity reuse"
+        )
+
+    async def test_measurement_dedup_increments_skipped_duplicate_measurements(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Two items with identical 5-tuple → second is measurement dedup.
+
+        skipped_duplicate_measurements must be incremented.
+        reused_entities may also be incremented (same DOI/material).
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        item = _make_extracted_property(
+            material_name="UO2",
+            property_name="Thermal Conductivity",
+            source_doi="10.1000/dedup-test",
+        )
+        dup = dict(item)
+
+        result = await map_and_persist(db_session, [item, dup])
+
+        assert result.skipped_duplicate_measurements == 1, (
+            "Exact 5-tuple duplicate → skipped_duplicate_measurements"
+        )
+        assert result.skipped_duplicates == (
+            result.reused_entities + result.skipped_duplicate_measurements
+        )
+
+    async def test_unknown_property_not_in_split_counters(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Unknown PropertyType should NOT increment reused_entities or
+        skipped_duplicate_measurements — it's a separate skip reason.
+        """
+        # Don't seed any PropertyType
+        inputs = [_make_extracted_property(property_category="other")]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.created_measurements == 0
+        assert result.reused_entities == 0, (
+            "Unknown property skip is not entity reuse"
+        )
+        assert result.skipped_duplicate_measurements == 0, (
+            "Unknown property skip is not measurement dedup"
+        )
 
 
 @pytest.mark.integration
