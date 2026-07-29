@@ -355,16 +355,65 @@ async def call_llm(
         len(user_message),
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        logger.error("LLM HTTP error: %s %s", exc.response.status_code, exc.response.text)
-        raise RuntimeError(f"LLM API returned {exc.response.status_code}") from exc
-    except httpx.RequestError as exc:
-        logger.error("LLM request error: %s", exc)
-        raise RuntimeError(f"LLM request failed: {exc}") from exc
+    # Retry loop for transient server errors (502, 503, 429).
+    # The LLMClient class has its own _call_with_retry, but the legacy
+    # call_llm function used by extraction_pipeline.py had none —
+    # causing silent data loss on transient LLM 502s (NFM-2013).
+    _CALL_LLM_MAX_RETRIES = 3
+    _CALL_LLM_BASE_BACKOFF = 2.0  # seconds
+    last_exc: Exception | None = None
+    response: httpx.Response | None = None
+
+    for attempt in range(1, _CALL_LLM_MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+            break  # success — exit retry loop
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            is_retryable = (
+                exc.response.status_code >= 500
+                or exc.response.status_code == 429
+            )
+            if not is_retryable or attempt == _CALL_LLM_MAX_RETRIES:
+                logger.error(
+                    "LLM HTTP error (attempt %d/%d): %s %s",
+                    attempt,
+                    _CALL_LLM_MAX_RETRIES,
+                    exc.response.status_code,
+                    exc.response.text[:200],
+                )
+                raise RuntimeError(
+                    f"LLM API returned {exc.response.status_code}"
+                ) from exc
+            backoff = _CALL_LLM_BASE_BACKOFF * (2 ** (attempt - 1))
+            logger.warning(
+                "LLM HTTP %d (attempt %d/%d), retrying in %.1fs",
+                exc.response.status_code,
+                attempt,
+                _CALL_LLM_MAX_RETRIES,
+                backoff,
+            )
+            await asyncio.sleep(backoff)
+        except httpx.RequestError as exc:
+            last_exc = exc
+            if attempt == _CALL_LLM_MAX_RETRIES:
+                logger.error("LLM request error (attempt %d/%d): %s", attempt, _CALL_LLM_MAX_RETRIES, exc)
+                raise RuntimeError(f"LLM request failed: {exc}") from exc
+            backoff = _CALL_LLM_BASE_BACKOFF * (2 ** (attempt - 1))
+            logger.warning(
+                "LLM request error (attempt %d/%d), retrying in %.1fs: %s",
+                attempt,
+                _CALL_LLM_MAX_RETRIES,
+                backoff,
+                exc,
+            )
+            await asyncio.sleep(backoff)
+
+    # Check if we got a valid response (retries exhausted without success)
+    if response is None:
+        raise RuntimeError("LLM call failed after retries") from last_exc
 
     try:
         body = response.json()

@@ -159,6 +159,7 @@ def process_literature_task(self: Any, datasource_id: str) -> dict[str, Any]:
     (NFM-1485-2 / NFM-1487).  We import lazily so a partial deploy that has
     the dispatcher but not yet the service still imports cleanly.
     """
+    from monitoring.worker_health import worker_health
     from nfm_db.services.literature_service import process_literature_sync
 
     logger.info(
@@ -166,7 +167,13 @@ def process_literature_task(self: Any, datasource_id: str) -> dict[str, Any]:
         datasource_id,
         self.request.id,
     )
-    return process_literature_sync(datasource_id)
+    try:
+        result = process_literature_sync(datasource_id)
+        worker_health.record_success()
+        return result
+    except Exception as exc:
+        worker_health.record_failure(str(exc)[:500])
+        raise
 
 
 __all__ = [

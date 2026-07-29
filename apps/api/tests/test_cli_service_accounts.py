@@ -309,3 +309,92 @@ async def test_create_service_account_token_carries_required_claims(
     issued_at = _dt.datetime.now(tz=_dt.UTC).timestamp()
     assert exp - issued_at > 240  # >4 min remaining of a 5-min TTL
     assert exp - issued_at < 360  # <6 min (5 min + slack)
+
+# ---------------------------------------------------------------------------
+# 5. --save-password-to flag (NFM-2012)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_save_password_to_file(
+    cli_db_session: AsyncSession,
+    tmp_path: Any,
+) -> None:
+    """--save-password-to <path> writes the plaintext password to a file with mode 600."""
+    pw_file = tmp_path / "svc-pw.txt"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "create-service-account",
+            "--username", "save-svc",
+            "--role", "service",
+            "--save-password-to", str(pw_file),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert pw_file.exists(), "Password file was not created"
+
+    # File should be mode 600 (owner read/write only).
+    stat_info = pw_file.stat()
+    file_mode = stat_info.st_mode & 0o777
+    assert file_mode == 0o600, (
+        f"Expected mode 0o600, got 0o{file_mode:03o}"
+    )
+
+    # The file content should be the password that verifies against the DB.
+    written_password = pw_file.read_text().strip()
+    assert len(written_password) >= 32
+
+    loaded = (
+        await cli_db_session.execute(select(User).where(User.username == "save-svc"))
+    ).scalar_one()
+    assert verify_password(written_password, loaded.hashed_password) is True
+
+
+@pytest.mark.unit
+async def test_save_password_to_stdout_dash(
+    cli_db_session: AsyncSession,
+) -> None:
+    """--save-password-to - prints the password to stdout (current behavior)."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "create-service-account",
+            "--username", "dash-svc",
+            "--role", "service",
+            "--save-password-to", "-",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "ONE-TIME PASSWORD" in result.output
+    match = re.search(
+        r"ONE-TIME PASSWORD.*?\n\n\s+(\S+)\s*\n",
+        result.output,
+        re.DOTALL,
+    )
+    assert match is not None, f"Could not locate password in output:\n{result.output}"
+    emitted_password = match.group(1)
+    loaded = (
+        await cli_db_session.execute(select(User).where(User.username == "dash-svc"))
+    ).scalar_one()
+    assert verify_password(emitted_password, loaded.hashed_password) is True
+
+
+@pytest.mark.unit
+async def test_default_no_flag_prints_to_stdout(
+    cli_db_session: AsyncSession,
+) -> None:
+    """Without --save-password-to, password still prints to stdout (backward compat)."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "create-service-account",
+            "--username", "default-svc",
+            "--role", "service",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "ONE-TIME PASSWORD" in result.output

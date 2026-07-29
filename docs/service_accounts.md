@@ -62,7 +62,8 @@ The command:
    `secrets.token_urlsafe(32)` (43 URL-safe characters).
 2. Inserts a `users` row with `is_service_account=true`,
    `is_active=true`, `blog_role=NULL`, and the bcrypt-hashed password.
-3. Prints the plaintext password **once** to stdout, framed by a banner
+3. Prints the plaintext password **once** to stdout (or saves to a
+   file via ``--save-password-to``, see below), framed by a banner
    that tells the operator to save it to a password manager.
 4. Refuses to overwrite an existing username (so JWTs issued against the
    old hash stay valid until their TTL expires — no silent
@@ -95,6 +96,48 @@ The `nucpot` console script requires `NFM_DATABASE_URL` to point at the
 target database (Pydantic settings prefix; see `apps/api/src/nfm_db/config.py`).
 The command bypasses the running FastAPI server — it talks to the
 database directly through SQLAlchemy.
+
+### Password persistence (NFM-2012)
+
+> **WARNING — PASSWORD IS NOT STORED:**
+>
+> The `create-service-account` command prints the plaintext password
+> to stdout **exactly once**. It is **never** written to the database,
+> application logs, or any persistent file (unless you opt in with
+> ``--save-password-to``).
+>
+> **You MUST use ``--save-password-to <path>`` in all automated
+> contexts** (agent runs, CI pipelines, scripts) where terminal
+> scrollback may be lost.
+>
+> **If the password is lost, there is no recovery mechanism**
+> other than deleting the user row via SQL and re-running
+> ``create-service-account`` to generate a new credential:
+>
+> ```sql
+> DELETE FROM users WHERE username = '<account-name>';
+> ```
+>
+> Any in-flight JWTs issued against the old row remain valid
+> until their TTL expires.
+
+To save the password to a file with owner-only permissions (mode 0600):
+
+```bash
+uv run nucpot create-service-account \
+    --username ontofuel-svc \
+    --role service \
+    --save-password-to /tmp/ontofuel-svc-password.txt
+```
+
+To explicitly print to stdout (equivalent to omitting the flag):
+
+```bash
+uv run nucpot create-service-account \
+    --username ontofuel-svc \
+    --role service \
+    --save-password-to -
+```
 
 ### Idempotency
 
