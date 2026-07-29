@@ -44,6 +44,10 @@ def _sample_property(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         "unit": "angstrom",
         "conditions": {"temperature": 298},
         "confidence": "high",
+        # NFM-2032: set source_doi so the mapper's _find_source_by_doi
+        # actually fires (without it every POST mints a new DataSource
+        # UUID and the cross-request measurement dedup never matches).
+        "source_doi": "10.1234/test",
     }
     if overrides:
         base = {**base, **overrides}
@@ -56,12 +60,28 @@ def _ingest_payload(
     source_reference: str = "10.1234/test",
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build the JSON body for POST /extraction/ingest."""
+    """Build the JSON body for POST /extraction/ingest.
+
+    NFM-2032: propagate ``source_reference`` into each property's
+    ``source_doi`` so that the mapper's ``_find_source_by_doi`` lookup
+    matches across requests — without this, every POST creates a new
+    DataSource and the dedup chain never collapses.
+    """
+    props = properties or [_sample_property()]
+    # Ensure every property has source_doi set to the wrapper source_reference
+    # unless the caller explicitly overrode it.  This mirrors the OntoFuel
+    # production payload shape.
+    props_with_doi = []
+    for p in props:
+        if "source_doi" not in p:
+            p = {**p, "source_doi": source_reference}
+        props_with_doi.append(p)
+
     body: dict[str, Any] = {
         "source_reference": source_reference,
         "source_type": "doi",
         "corpus_id": corpus_id,
-        "properties": properties or [_sample_property()],
+        "properties": props_with_doi,
         **overrides,
     }
     return body
@@ -376,11 +396,11 @@ class TestIngestWithConditions:
 
 
 class TestIngestDuplicateDetection:
-    """AC-3: 5-tuple dedup within and across POSTs.
+    """AC-3: 5-tuple dedup within and across POSTs (NFM-2032).
 
     Within a single POST, map_and_persist skips exact 5-tuple duplicates.
-    Across POSTs, DataSource/Material find-or-create produces skip counts.
-    Full cross-call measurement dedup is a future enhancement.
+    Across POSTs, a DB query checks for existing measurements with the same
+    (dataset_id, property_type_id, conditions_hash) before inserting.
     """
 
     @pytest.mark.asyncio
@@ -434,10 +454,8 @@ class TestIngestDuplicateDetection:
         assert "skipped_duplicate_measurements" in data1
 
         # Second POST (identical 5-tuples).
-        # NOTE: map_and_persist 5-tuple dedup is per-call (within a single
-        # batch).  Cross-call dedup (same 5-tuple across separate POSTs) is a
-        # future enhancement.  For now, DataSource/Material find-or-create
-        # produces skipped counts >= 1.
+        # NFM-2032: cross-request dedup now queries DB for existing
+        # measurements with matching (dataset, property_type, conditions_hash).
         resp2 = await async_client.post(
             "/api/v1/extraction/ingest",
             json=payload,
@@ -450,7 +468,127 @@ class TestIngestDuplicateDetection:
         assert data2["skipped_duplicates"] >= 1, (
             f"Expected skipped_duplicates >= 1, got {data2['skipped_duplicates']}"
         )
+        assert data2["skipped_duplicate_measurements"] >= 1, (
+            "NFM-2032: cross-request dedup must skip duplicate measurements"
+        )
+        assert data2["created_measurements"] == 0, (
+            "NFM-2032: no new measurements should be created for duplicates"
+        )
         # NFM-1996: backward-compat alias must equal sum of split counters
         assert data2["skipped_duplicates"] == (
             data2["reused_entities"] + data2["skipped_duplicate_measurements"]
+        )
+
+
+class TestCrossRequestMeasurementDedup:
+    """NFM-2032: verify identical payload POSTed N times produces 1 row.
+
+    This tests the specific bug: seen_measurement_keys was a local set that
+    did not query the DB, so cross-request dedup was broken.
+    """
+
+    @pytest.mark.asyncio
+    async def test_three_posts_one_measurement_row(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+        db_session: AsyncSession,
+    ) -> None:
+        """POST identical payload 3 times -> exactly 1 PropertyMeasurement row."""
+        payload = _ingest_payload(
+            properties=[_sample_property()],
+            corpus_id="cross-dedup-test",
+        )
+
+        # First POST
+        resp1 = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload,
+            headers=svc_headers,
+        )
+        assert resp1.status_code == 202
+        data1 = resp1.json()["data"]
+        assert data1["created_measurements"] == 1
+        assert data1["skipped_duplicate_measurements"] == 0
+
+        # Second POST (same payload)
+        resp2 = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload,
+            headers=svc_headers,
+        )
+        assert resp2.status_code == 202
+        data2 = resp2.json()["data"]
+        assert data2["created_measurements"] == 0, (
+            "NFM-2032: 2nd POST should create 0 measurements"
+        )
+        assert data2["skipped_duplicate_measurements"] >= 1, (
+            "NFM-2032: 2nd POST should skip duplicate measurement"
+        )
+
+        # Third POST (same payload)
+        resp3 = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload,
+            headers=svc_headers,
+        )
+        assert resp3.status_code == 202
+        data3 = resp3.json()["data"]
+        assert data3["created_measurements"] == 0, (
+            "NFM-2032: 3rd POST should create 0 measurements"
+        )
+        assert data3["skipped_duplicate_measurements"] >= 1, (
+            "NFM-2032: 3rd POST should skip duplicate measurement"
+        )
+
+        # Verify exactly 1 PropertyMeasurement row in DB
+        rows = (await db_session.execute(
+            select(PropertyMeasurement)
+        )).scalars().all()
+        assert len(rows) == 1, (
+            f"NFM-2032: expected exactly 1 measurement row, got {len(rows)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_different_conditions_creates_new_measurement(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+        db_session: AsyncSession,
+    ) -> None:
+        """Same source+material+property but different conditions -> 2 rows."""
+        payload_a = _ingest_payload(
+            properties=[_sample_property({"conditions": {"temperature": 298}})],
+            corpus_id="cond-dedup-test",
+        )
+        payload_b = _ingest_payload(
+            properties=[_sample_property({"conditions": {"temperature": 800}})],
+            corpus_id="cond-dedup-test",
+        )
+
+        resp_a = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload_a,
+            headers=svc_headers,
+        )
+        assert resp_a.status_code == 202
+        assert resp_a.json()["data"]["created_measurements"] == 1
+
+        resp_b = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload_b,
+            headers=svc_headers,
+        )
+        assert resp_b.status_code == 202
+        assert resp_b.json()["data"]["created_measurements"] == 1, (
+            "Different conditions should create a new measurement"
+        )
+
+        rows = (await db_session.execute(
+            select(PropertyMeasurement)
+        )).scalars().all()
+        assert len(rows) == 2, (
+            f"Expected 2 measurement rows (different conditions), got {len(rows)}"
         )

@@ -157,6 +157,7 @@ class PropertyMeasurement(TimestampMixin, Base):
         ),
         Index("idx_pm_dataset", "dataset_id"),
         Index("idx_pm_property_type", "property_type_id"),
+        Index("idx_pm_conditions_hash", "conditions_hash"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -205,6 +206,11 @@ class PropertyMeasurement(TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
         comment="Timestamp of last review action",
+    )
+    conditions_hash: Mapped[str | None] = mapped_column(
+        String(40),
+        nullable=True,
+        comment="SHA1 hash of measurement conditions for dedup (NFM-2032)",
     )
 
     # -- relationships --

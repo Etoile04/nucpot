@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -380,17 +381,29 @@ async def map_and_persist(
 
         # --- Dataset (find or create for this source+material pair) ---
         if d_key not in dataset_map:
-            dataset_title = f"{material.name} - {source.title}"
-            dataset = Dataset(
-                material_id=material.id,
+            # NFM-2032: cross-request Dataset dedup.  Without this lookup,
+            # each POST would mint a fresh Dataset UUID and the measurement
+            # dedup key would never match across requests.
+            existing_ds = await _find_dataset_by_source_and_material(
+                db,
                 source_id=source.id,
-                title=dataset_title,
-                is_verified=False,
+                material_id=material.id,
             )
-            db.add(dataset)
-            await db.flush()
-            dataset_map[d_key] = dataset
-            created_datasets += 1
+            if existing_ds is not None:
+                dataset_map[d_key] = existing_ds
+                reused_entities += 1
+            else:
+                dataset_title = f"{material.name} - {source.title}"
+                dataset = Dataset(
+                    material_id=material.id,
+                    source_id=source.id,
+                    title=dataset_title,
+                    is_verified=False,
+                )
+                db.add(dataset)
+                await db.flush()
+                dataset_map[d_key] = dataset
+                created_datasets += 1
 
         dataset = dataset_map[d_key]
 
@@ -409,13 +422,35 @@ async def map_and_persist(
             skipped_unknown_properties += 1
             continue
 
-        # --- PropertyMeasurement (NFM-1981 AC-2: 5-tuple dedup) ---
+        # --- PropertyMeasurement (NFM-1981 AC-2 + NFM-2032 cross-request) ---
+        # The 5-tuple dedup key collapses to
+        # (dataset_id, property_type_id, conditions_hash) once dataset is
+        # resolved.  Within a single request the in-memory set is a cheap
+        # short-circuit; cross-request dedup is the DB query below.
+        cond_h = _conditions_hash(item.conditions)
         meas_key = _measurement_dedup_key(item)
         if meas_key in seen_measurement_keys:
-            logger.debug("Skipping duplicate measurement: %s", meas_key)
+            logger.debug("Skipping duplicate measurement within request: %s", meas_key)
             skipped_duplicate_measurements += 1
             continue
         seen_measurement_keys.add(meas_key)
+
+        existing_meas = await _find_measurement_by_dedup_key(
+            db,
+            dataset_id=dataset.id,
+            property_type_id=property_type.id,
+            conditions_hash=cond_h,
+        )
+        if existing_meas is not None:
+            logger.debug(
+                "Skipping duplicate measurement across requests: dataset=%s "
+                "property_type=%s conditions_hash=%s",
+                dataset.id,
+                property_type.id,
+                cond_h,
+            )
+            skipped_duplicate_measurements += 1
+            continue
 
         condition_kwargs = _build_condition_kwargs(item.conditions)
         value_kwargs, fallback_raw = _measurement_value_kwargs(item.value)
@@ -434,6 +469,7 @@ async def map_and_persist(
             uncertainty=item.uncertainty,
             notes=item.context,
             review_status="pending",
+            conditions_hash=cond_h,
             **value_kwargs,
         )
         db.add(measurement)
@@ -486,6 +522,59 @@ async def _find_material_by_formula(
     if not formula:
         return None
     stmt = select(Material).where(Material.formula == formula)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _find_measurement_by_dedup_key(
+    db: AsyncSession,
+    *,
+    dataset_id: uuid.UUID,
+    property_type_id: uuid.UUID,
+    conditions_hash: str,
+) -> PropertyMeasurement | None:
+    """Find an existing PropertyMeasurement matching the dedup key.
+
+    NFM-2032 (NFM-1972 AC-2): cross-request dedup was broken because
+    ``seen_measurement_keys`` was an in-memory set that reset per request.
+    The 5-tuple dedup key (material, property, source, conditions, method)
+    collapses to ``(dataset_id, property_type_id, conditions_hash)`` once
+    ``dataset_id`` is resolved (it is uniquely determined by
+    source+material).  Different ``method`` values are not yet a column
+    on ``property_measurements``, so this 3-tuple is what we can query
+    against today; an extra ``method`` distinction would require a
+    follow-up column.
+
+    Returns the first matching row, or ``None`` if no duplicate exists.
+    """
+    stmt = select(PropertyMeasurement).where(
+        PropertyMeasurement.dataset_id == dataset_id,
+        PropertyMeasurement.property_type_id == property_type_id,
+        PropertyMeasurement.conditions_hash == conditions_hash,
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _find_dataset_by_source_and_material(
+    db: AsyncSession,
+    *,
+    source_id: uuid.UUID,
+    material_id: uuid.UUID,
+) -> Dataset | None:
+    """Find existing Dataset for a (source, material) pair.
+
+    NFM-2032: Dataset dedup is also per-request (the ``dataset_map``
+    cache resets).  Without this lookup, every POST creates a new Dataset
+    row with a fresh UUID, and the
+    ``(dataset_id, property_type_id, conditions_hash)`` measurement
+    dedup key never matches across requests.  This helper closes that
+    gap.
+
+    Returns the first matching row, or ``None`` if no dataset exists.
+    """
+    stmt = select(Dataset).where(
+        Dataset.source_id == source_id,
+        Dataset.material_id == material_id,
+    )
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
