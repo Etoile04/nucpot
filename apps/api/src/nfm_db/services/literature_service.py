@@ -88,12 +88,9 @@ def _parse_pdf_to_markdown(
     path must not block extraction — the downstream LLM is robust to
     plain text.
 
-    When *ds_id* is provided and the MinerU path succeeded, the call also
-    persists the extracted images via the supplied *storage* backend
-    (a :class:`StorageBackend` like ``LocalDiskStorage``) and rewrites the
-    markdown's ``images/<hash>`` references to
-    ``data_sources/{ds_id}/images/<hash>`` so the saved ``content_md`` no
-    longer has broken links.
+    Raises whatever ``fitz`` raises on malformed PDFs when the fallback
+    is used so the caller can capture and re-raise with the truncated
+    error message.
     """
     markdown: str | None = None
     parser_used = "pymupdf"
@@ -156,11 +153,15 @@ def _parse_pdf_to_markdown(
                             ds_id,
                         )
             except MinerUError as exc:
+                # Config / API / timeout / network — all recoverable.
+                # Log and fall through to PyMuPDF rather than crashing
+                # the Celery pipeline.
                 logger.warning(
                     "_parse_pdf_to_markdown: mineru failed (%s) — falling back to PyMuPDF",
                     exc,
                 )
     except ImportError:
+        # mineru_client module missing — treat as "MinerU not configured".
         pass
 
     if markdown:
@@ -352,11 +353,16 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 ds.parse_status = PARSE_STATUS_PARSING
                 await db.commit()
 
-                pdf_bytes = _get_storage().read(ds.file_path)
+                storage = _get_storage()
+                pdf_bytes = storage.read(ds.file_path)
+                # Pass ds.id + storage so the MinerU happy path can persist
+                # its extracted images and rewrite the markdown references
+                # (otherwise the saved ``content_md`` keeps broken
+                # ``images/<hash>`` links because the zip is discarded).
                 ds.content_md = _parse_pdf_to_markdown(
                     pdf_bytes,
                     ds_id=ds.id,
-                    storage=_get_storage(),
+                    storage=storage,
                 )
 
             logger.info(
