@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Application Info
 # =============================================================================
-info = Info("nucpot_api", "NucPot API application info")  # type: ignore[call-arg]  # prometheus_client stub omits 'documentation' arg
+info = Info("nucpot_api", "NucPot API application info")
 info.info({
     "version": "1.0.0",
     "environment": os.getenv("ENVIRONMENT", "development"),
@@ -201,9 +201,9 @@ def clear_metrics() -> None:
         collector.clear()
 
     # REGISTRY.clear() — prometheus_client CollectorRegistry has no public
-    # clear() method (mypy stubs report it but the runtime class doesn't
-    # have it in prometheus_client<1.0). Use unregister for each collector.
-    for c in list(REGISTRY._collector_to_names.keys()):  # type: ignore[attr-defined]
+    # clear() method at runtime in prometheus_client<1.0 (mypy stubs lie
+    # here). Use unregister in a loop instead.
+    for c in list(REGISTRY._collector_to_names.keys()):
         try:
             REGISTRY.unregister(c)
         except Exception:
