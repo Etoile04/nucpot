@@ -90,6 +90,8 @@ class ExtractionIngestAck(BaseModel):
     source_type: str
     corpus_id: str = Field(description="Corpus the batch was tagged with.")
     accepted_count: int = Field(description="Number of property records accepted.")
+    created_measurements: int = Field(default=0, description="Property measurements persisted.")
+    skipped_duplicates: int = Field(default=0, description="Duplicate records skipped (5-tuple dedup).")
     received_at: datetime
     message: str = "Ingest accepted; queued for processing."
 
@@ -310,15 +312,42 @@ async def ingest_extraction_batch(
     job_id = uuid4()
     accepted_count = len(payload.properties)
 
+    # --- Persist properties via map_and_persist (NFM-1983 AC-3) ---
+    created_measurements = 0
+    skipped_duplicates = 0
+
+    if payload.properties:
+        try:
+            from nfm_db.services.extraction_to_db_mapper import (
+                MappingResult,
+                map_and_persist,
+            )
+
+            mapping_result = await map_and_persist(
+                session, payload.properties
+            )
+            created_measurements = mapping_result.created_measurements
+            skipped_duplicates = mapping_result.skipped_duplicates
+        except Exception:
+            # Log but do not fail — the ack is already committed.
+            # Future: GraphBuilder isolation (NFM-1972-D) will add KG
+            # node/edge creation here, isolated from measurement writes.
+            logger.exception(
+                "ingest_extraction_batch: map_and_persist failed for job_id=%s",
+                job_id,
+            )
+
     logger.info(
         "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
-        "service=%s accepted=%d",
+        "service=%s accepted=%d measurements=%d skipped=%d",
         job_id,
         payload.source_reference,
         corpus.corpus_id,
         caller.username,
         caller.is_service_account,
         accepted_count,
+        created_measurements,
+        skipped_duplicates,
     )
 
     return ExtractionIngestAck(
@@ -327,5 +356,7 @@ async def ingest_extraction_batch(
         source_type=payload.source_type,
         corpus_id=corpus.corpus_id,
         accepted_count=accepted_count,
+        created_measurements=created_measurements,
+        skipped_duplicates=skipped_duplicates,
         received_at=datetime.now(UTC),
     )
