@@ -130,6 +130,48 @@ def test_local_disk_storage_rejects_absolute_path_filename(tmp_path: Path) -> No
         storage.save(ds_id, "/etc/passwd", b"x")
 
 
+
+
+def test_local_disk_storage_save_preserves_subdirectory_layout(tmp_path: Path) -> None:
+    """``images/abc.jpg`` must end up at ``{root}/{id}/images/abc.jpg``,
+    not flattened to ``{root}/{id}/images_abc.jpg``.  This shape is what
+    MinerU image-persistence expects (see
+    ``TestPersistMinUAssets`` in test_literature_service.py).
+    """
+    ds_id = uuid.uuid4()
+    storage = LocalDiskStorage(root=tmp_path)
+
+    returned = storage.save(ds_id, "images/abc.jpg", b"x")
+
+    assert returned == f"{ds_id}/images/abc.jpg"
+    expected_file = tmp_path / returned
+    assert expected_file.is_file(), f"expected {expected_file} to exist on disk"
+    assert expected_file.parent.name == "images"
+    assert expected_file.parent.parent.name == str(ds_id)
+
+
+def test_local_disk_storage_save_nested_subdirectories(tmp_path: Path) -> None:
+    """Two-level nesting (e.g. ``figures/page1/img.jpg``) is supported."""
+    ds_id = uuid.uuid4()
+    storage = LocalDiskStorage(root=tmp_path)
+
+    returned = storage.save(ds_id, "figures/page1/img.jpg", b"x")
+
+    assert returned == f"{ds_id}/figures/page1/img.jpg"
+    assert (tmp_path / returned).is_file()
+
+
+def test_local_disk_storage_save_rejects_traversal_in_subdir(tmp_path: Path) -> None:
+    """``..`` segments must still be rejected even when nested inside
+    a sub-directory path (defense against escape via the new
+    sub-directory support)."""
+    ds_id = uuid.uuid4()
+    storage = LocalDiskStorage(root=tmp_path)
+
+    with pytest.raises(ValueError, match="Unsafe filename"):
+        storage.save(ds_id, "images/../../etc/passwd", b"x")
+
+
 def test_local_disk_storage_protocol_satisfaction(tmp_path: Path) -> None:
     """LocalDiskStorage must satisfy the StorageBackend Protocol."""
     storage = LocalDiskStorage(root=tmp_path)

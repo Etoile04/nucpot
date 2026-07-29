@@ -121,20 +121,37 @@ class LocalDiskStorage:
         return candidate
 
     def _sanitize_for(self, datasource_id: UUID, filename: str) -> str:
-        """Validate, sanitize, and (if needed) fall back to ``{id}.pdf``."""
+        """Validate, sanitize, and (if needed) fall back to ``{id}.pdf``.
+
+        *filename* may include sub-directory components (``images/abc.jpg``);
+        each path segment is individually sanitized and re-joined so the
+        resulting layout is ``{root}/{datasource_id}/<sub>/<basename>`` rather
+        than ``{root}/{datasource_id}/<flat>``. Traversal segments (``..``)
+        are still rejected by :func:`_validate_safe_filename`.
+        """
         _validate_safe_filename(filename)
-        safe = _sanitize_filename(filename)
-        if not safe:
-            safe = f"{datasource_id}.pdf"
-        return safe
+        parts = filename.replace("\\", "/").split("/")
+        safe_parts = [_sanitize_filename(p) for p in parts]
+        safe_parts = [p for p in safe_parts if p]
+        if not safe_parts:
+            safe_parts = [f"{datasource_id}.pdf"]
+        return "/".join(safe_parts)
 
     # ---- StorageBackend surface ------------------------------------------
 
     def save(self, datasource_id: UUID, filename: str, data: bytes) -> str:
-        """Write *data* under ``{root}/{datasource_id}/{sanitized}``."""
+        """Write *data* under ``{root}/{datasource_id}/{sanitized}``.
+
+        *filename* may include sub-directory components (``images/abc.jpg``);
+        each path segment is sanitized individually so the layout becomes
+        ``{root}/{datasource_id}/images/abc.jpg`` rather than the previous
+        flattened ``{root}/{datasource_id}/images_abc.jpg`` form.
+        """
         safe = self._sanitize_for(datasource_id, filename)
         dest_dir = self.root / str(datasource_id)
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        # Create any intermediate sub-directories that the safe path implies.
+        full_dir = (dest_dir / safe).parent
+        full_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / safe
         dest_path.write_bytes(data)
         return f"{datasource_id}/{safe}"
