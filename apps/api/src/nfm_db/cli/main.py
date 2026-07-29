@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import click
 
+from nfm_db.cli.seed_ontofuel import seed_ontofuel_cmd
 from nfm_db.cli.service_accounts import create_service_account
 
 
@@ -25,9 +26,9 @@ def cli() -> None:
     """Top-level CLI entry point."""
 
 
-# Register subcommands.  Importing the module binds the command object
-# against ``@cli.command`` below.
+# Register subcommands.
 cli.add_command(create_service_account)
+cli.add_command(seed_ontofuel_cmd)
 
 
 __all__ = ["cli"]
