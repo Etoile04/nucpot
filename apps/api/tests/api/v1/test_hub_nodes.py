@@ -12,13 +12,14 @@ Coverage target: >= 80% on ``nfm_db.api.v1.hub_nodes`` and
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import HubNode, ResourceNode
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -171,7 +172,7 @@ class TestRegisterNode:
         )
         assert second.status_code == 409, second.text
         # The global HTTPException handler wraps the error string in
-        # an i18n message ("资源冲突, 操作无法完成"); the original
+        # an i18n message ("资源冲突，操作无法完成"); the original
         # 409 detail is preserved as the structured "detail" field.
         body = second.json()
         assert "already exists" in (body.get("detail") or body.get("error", "")).lower()
@@ -418,11 +419,11 @@ class TestHeartbeat:
         node_id = reg.json()["data"]["id"]
         assert reg.json()["data"]["last_heartbeat"] is None
 
-        before = datetime.now(UTC)
+        before = datetime.now(timezone.utc)
         response = await async_client.post(
             f"/api/v1/hub/nodes/{node_id}/heartbeat", json={}
         )
-        after = datetime.now(UTC)
+        after = datetime.now(timezone.utc)
 
         assert response.status_code == 200, response.text
         ts = response.json()["data"]["last_heartbeat"]

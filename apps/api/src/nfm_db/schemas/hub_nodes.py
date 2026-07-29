@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
