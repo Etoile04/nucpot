@@ -35,6 +35,22 @@ jobs:
       - name: Unit tests
         run: pnpm run test
 
+      # Web half of the KR-5 coverage artifact pair (NFM-2047). apps/web
+      # emits an n/a stub Cobertura via scripts/emit-coverage-stub.mjs
+      # (NFM-2045, ADR-KR5-1: no core web paths). The KR-5 aggregator
+      # (NFM-2046) reads this file and treats the stub package as a zero-data
+      # marker — see the exported `STUB_MARKER` constant in
+      # apps/web/scripts/emit-coverage-stub.mjs. Now that KR-5.2 is in,
+      # a missing file is a real failure and must redden CI.
+      - name: Upload web coverage.xml artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-web-cobertura
+          path: apps/web/coverage.xml
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Build
         run: pnpm run build
 
@@ -106,6 +122,19 @@ jobs:
 
       - name: Tests (pytest) with coverage (≥80%)
         run: uv run pytest
+
+      # API half of the KR-5 coverage artifact pair (NFM-2047). ci.yml is the
+      # canonical producer: one run emits both halves from the same commit, so
+      # the aggregator can pair them without cross-run skew. `--cov-report=xml`
+      # in apps/api/pyproject.toml guarantees the file, hence `error`.
+      - name: Upload API coverage.xml artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-api-cobertura
+          path: apps/api/coverage.xml
+          if-no-files-found: error
+          retention-days: 90
 
       - name: File size guard (≤1500 lines)
         run: |

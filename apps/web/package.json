@@ -9,8 +9,9 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && node scripts/emit-coverage-stub.mjs",
     "test:watch": "vitest",
+    "coverage:emit": "node scripts/emit-coverage-stub.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {

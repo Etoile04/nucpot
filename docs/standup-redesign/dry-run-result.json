@@ -1,0 +1,123 @@
+{
+  "meta": {
+    "issue": "NFM-2049",
+    "executedBy": "Strategy Director (46be9587-18bb-45d5-9512-370a6adbd6eb)",
+    "executedAt": "2026-07-29T17:50:47Z",
+    "localDate": "2026-07-30 01:50 Asia/Shanghai",
+    "actorRunId": "87f031bd-2b60-4e9a-9aa9-f2b2be17f77e"
+  },
+  "step1_revision_published": {
+    "result": "PASS",
+    "routineId": "ef3be54d-b43c-4b3b-a0cb-0b79a755fb27",
+    "latestRevisionNumber": 3,
+    "latestRevisionId": "dff84ecd-ff8a-49f9-b750-7eef93ba4080",
+    "patchHttpStatus": 200,
+    "descriptionChars": 6031,
+    "verification": "Independent GET after PATCH: description starts '# OKR Weekly Standup — Revision 3'; old revision-2 placeholders {N} and {date range} absent.",
+    "note": "PATCH /api/routines/{id} accepted `description` and bumped the revision, even though the published OpenAPI schema for that endpoint does not list `description` among its properties. Spec is incomplete; behaviour verified empirically.",
+    "descriptionDocumentFieldSkipped": "patch-payload.json also carried a `descriptionDocument` object. It is not a field the routine GET returns and is not in the PATCH schema, so it was omitted. Its `body` was byte-identical to `description`, so no content was lost."
+  },
+  "step2_dry_run": {
+    "result": "PASS (dispatch)",
+    "endpoint": "POST /api/routines/{id}/run",
+    "httpStatus": 202,
+    "routineRunId": "c7f33040-fd7a-4f4d-8043-ea8ecf16d8f4",
+    "idempotencyKey": "nfm2049-dryrun-rev3-20260730",
+    "source": "manual",
+    "boundRevisionId": "dff84ecd-ff8a-49f9-b750-7eef93ba4080",
+    "boundRevisionIsRevision3": true,
+    "routineRunStatus": "issue_created",
+    "linkedIssue": {
+      "id": "f1b08410-6f34-4f73-b4ef-9378f9c90d3c",
+      "identifier": "NFM-2050",
+      "title": "OKR Weekly Standup",
+      "status": "in_progress",
+      "assigneeAgentId": "46be9587-18bb-45d5-9512-370a6adbd6eb"
+    },
+    "dispatchedToExecutionRun": "a0d3ad59-1682-4e0f-a147-d6c5b451617f",
+    "finding": "The dispatcher created a NEW execution run (a0d3ad59) of the assignee and checked NFM-2050 out to it. This is the per-agent wake mechanism working at the platform level: routine fire -> issue created -> issue checked out to a fresh run of the assignee -> that run wakes with the issue as its payload."
+  },
+  "step3_template_fill": {
+    "result": "FAIL — engine does not substitute placeholders",
+    "expectation": "NFM-2049 step 4 expected the dry run to 'produce a filled template (not the raw {N} / {date range} placeholders)'.",
+    "actual": "The engine copies routine.description into issue.description byte-for-byte. Generated issue description is 6031 chars, identical to the routine description.",
+    "generatedIssueTitle": "OKR Weekly Standup",
+    "titleNotFilled": "The routine's `title` field is static text; the engine did not inject week/date into it either.",
+    "unsubstitutedPlaceholderCount": 16,
+    "unsubstitutedPlaceholders": [
+      "{Department}",
+      "{NUMBER}",
+      "{Name}",
+      "{ROLE}",
+      "{current_value}",
+      "{expected}",
+      "{filed}",
+      "{fri_date}",
+      "{generation_timestamp}",
+      "{iso_week}",
+      "{iso_year}",
+      "{mon}",
+      "{names}",
+      "{pct}",
+      "{sun}",
+      "{target}"
+    ],
+    "revision2PlaceholdersGone": true,
+    "interpretation": "Revision 3 removed the *revision-2* placeholders ({N}, {date range}) but introduced its own ({iso_week}, {mon}, {sun}, ...). Filling them is a PROCEDURAL step that revision 3 assigns to the assignee's execution run (description steps 1-3), not an engine feature. Therefore the NFM-2034 acceptance criterion 'routine revision published that fills week/date/roster automatically' is NOT met in the automatic sense — it is assignee-executed, which is the same fragility class as original defect #2.",
+    "canItBeAutomated": "Undetermined. The routine model does expose a `variables` array ({name,label,type,defaultValue,required,options}) and POST /run accepts a `variables` object, so an interpolation feature plausibly exists. But no substitution syntax is documented anywhere in the OpenAPI spec, all 8 routines in this company have `variables: []`, and bare {x} demonstrably does NOT interpolate. The platform does use Handlebars-style {{...}} elsewhere (project workspaceStrategy.branchTemplate = '{{issue.identifier}}-{{slug}}'), which is the most promising lead. Escalated as a follow-up."
+  },
+  "step4_fanout": {
+    "result": "NOT PROVEN in this run",
+    "reason": "NFM-2050 is checked out to execution run a0d3ad59, not to this run (87f031bd). PATCH /api/issues/f1b08410... returned HTTP 409 with checkoutRunId=a0d3ad59 vs actorRunId=87f031bd. The fill and the 16-child fan-out are that run's work, driven by revision 3's 7-step instructions.",
+    "whatIsProven": "The wake path (routine -> issue -> fresh assignee run) is confirmed. The child-issue creation loop itself is unexecuted.",
+    "deliberateScopeDecision": "Even with write access, a full 16-reporter fan-out was NOT the right action here. NFM-2050 is an ISO week 31 issue created Thursday 2026-07-30 01:50 Asia/Shanghai; week 31's window (Mon 09:30 -> Fri 17:00) had ~1.6 days left. Fanning out 16 reporters into a near-closed window would produce an artificially poor first cycle and burn 16 agent runs on a validation artifact, three days before the real Monday 2026-08-03 (ISO week 32) cycle. First full production cycle is deliberately week 32."
+  },
+  "step5_roster_validation": {
+    "result": "PASS",
+    "liveAgentCount": 23,
+    "reporters": 16,
+    "excluded": 7,
+    "allReporterIdsResolve": true,
+    "unclassifiedLiveAgents": [],
+    "verification": "Every one of the 16 reporter UUIDs in revision 3 resolves to a live agent and the names match the spec. 16 reporters + 7 excluded = 23 = full live roster, so the partition is exhaustive with no agent unaccounted for."
+  },
+  "step6_iso_week_check": {
+    "result": "PASS — spec's defect #3 premise confirmed",
+    "claim": "NFM-1909 labelled 2026-07-20 -> 2026-07-26 as 'Week 31'; correct ISO label is Week 30.",
+    "computed": "datetime.date(2026,7,20).isocalendar() = (2026, 30, 1)",
+    "specClaimCorrect": true,
+    "currentCycle": {
+      "monday": "2026-07-27",
+      "sunday": "2026-08-02",
+      "isoWeek": 31,
+      "isoYear": 2026
+    },
+    "nextScheduledCycle": {
+      "monday": "2026-08-03",
+      "isoWeek": 32
+    }
+  },
+  "acceptanceCriteria": [
+    {
+      "criterion": "Routine revision published that fills week/date/roster automatically",
+      "status": "PARTIAL",
+      "detail": "Revision 3 published and live. 'Automatically' is not satisfied: the engine does verbatim copy; fill is assignee-executed. See step3."
+    },
+    {
+      "criterion": "Documented, implemented fan-out path proven on at least one dry run",
+      "status": "PARTIAL",
+      "detail": "Documented in revision 3 and spec.md. Dispatch/wake half proven by this dry run. Child-issue creation loop not yet executed — belongs to run a0d3ad59 / the week-32 cycle."
+    },
+    {
+      "criterion": "Written definition of responder set, window, and close-out owner",
+      "status": "PASS",
+      "detail": "Revision 3 defines all three, and the responder set is now validated against the live roster."
+    },
+    {
+      "criterion": "Next generated standup shows >1 responder",
+      "status": "PENDING",
+      "detail": "Cannot be observed until a cycle runs its fan-out. Target: Monday 2026-08-03 (ISO week 32)."
+    }
+  ],
+  "residualRisk": "The single point of failure is unchanged in kind: if the assignee's execution run does not perform steps 1-4 of revision 3, the cycle again emits a raw-placeholder issue with no fan-out. Revision 3 makes the procedure explicit and auditable, but does not make it mechanical."
+}

@@ -286,6 +286,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Deploy via Docker Compose (loopback SSH)
+        id: deploy
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             cd ~/Projects/nucpot
@@ -310,15 +311,24 @@ jobs:
               fi
             done
 
-            # Internal health checks
+            # Internal health checks — the first curl-f is the production
+            # equivalent of staging's first-poll gate (constraint C4). We
+            # record its outcome in a marker file so the "Emit KR-3 deploy
+            # event" step can read it without re-parsing the heredoc.
             echo "Checking API health..."
-            curl -f http://localhost:8001/api/v1/health || exit 1
+            rm -f /tmp/nfmd_prod_health_passed
+            if curl -f http://localhost:8001/api/v1/health; then
+              touch /tmp/nfmd_prod_health_passed
+            else
+              exit 1
+            fi
 
             echo "Checking Web health..."
             curl -f http://localhost:3000/ || exit 1
           ENDSSH
 
       - name: External smoke tests
+        id: external-smoke-tests
         env:
           # Bypass the deploy proxy — these are public URLs accessible directly
           # GitHub Actions env var names are case-insensitive; do NOT add
@@ -346,6 +356,43 @@ jobs:
           curl -sf https://verify.nucpot.dpdns.org/api/v1/reference-values/pending-review -o /dev/null || exit 1
 
           echo "=== All external smoke tests passed ==="
+
+      # NFM-2042: emit a KR-3 deploy event for production.
+      # Per C3: write to a host-absolute path (NOT the runner's ephemeral
+      # workspace checkout). The job's `runs-on: [self-hosted, production]`
+      # means the file persists across jobs.
+      # Per C4: production has no poll loop, so health_gate_first_poll_passed
+      # == the first curl-f inside the SSH heredoc succeeded. We use a marker
+      # file written by the deploy step to avoid parsing the heredoc output.
+      - name: Emit KR-3 deploy event
+        if: always()
+        env:
+          NFMD_DEPLOY_EVENTS_PATH: /Users/lwj04/Projects/nucpot/docker/.deploy-events.jsonl
+          SKIP_HEALTH_GATE: ${{ vars.SKIP_HEALTH_GATE || '' }}
+        run: |
+          mkdir -p "$(dirname "$NFMD_DEPLOY_EVENTS_PATH")"
+          COMMIT_SHA="${{ github.sha }}"
+          USER_LOGIN="${{ github.actor }}"
+          SUCCESS="false"
+          if [ "${{ steps.deploy.outcome }}" = "success" ] \
+              && [ "${{ steps.external-smoke-tests.outcome }}" = "success" ]; then
+            SUCCESS="true"
+          fi
+          FIRST_POLL="false"
+          if [ -f /tmp/nfmd_prod_health_passed ]; then
+            FIRST_POLL="true"
+          fi
+          DURATION_MS=$(( $(date +%s%3N) - ${NFMD_DEPLOY_START_MS:-$(date +%s%3N)} ))
+          . "$GITHUB_WORKSPACE/scripts/lib/deploy_event.sh"
+          deploy_event_emit \
+            --environment production \
+            --triggered-by "$USER_LOGIN" \
+            --commit-sha "$COMMIT_SHA" \
+            --first-pass-success "$SUCCESS" \
+            --health-gate-first-poll-passed "$FIRST_POLL" \
+            --rollback-triggered false \
+            --skip-flag-used "$([ "$SKIP_HEALTH_GATE" = "1" ] || [ "$SKIP_HEALTH_GATE" = "true" ] && echo true || echo false)" \
+            --duration-ms "$DURATION_MS"
 
       - name: Verify Celery workers
         run: |
