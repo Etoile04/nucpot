@@ -74,9 +74,16 @@ def _mock_empty_result():
 
 
 def _mock_problem(ml_available: bool = True):
-    """Create a mock NuclearFuelOptimizationProblem."""
+    """Create a mock NuclearFuelOptimizationProblem.
+
+    design.py:99 checks `problem._ml_evaluator is None` to decide whether to
+    raise 503 (NFM-1969). The mock must reflect this real behavior:
+      - ml_available=True  → _ml_evaluator is a non-None sentinel
+      - ml_available=False → _ml_evaluator is None
+    """
     problem = MagicMock()
     problem._use_ml_surrogate = ml_available
+    problem._ml_evaluator = None if not ml_available else MagicMock()
     return problem
 
 
