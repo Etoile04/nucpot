@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from nfm_db.schemas.extraction import ExtractedProperty
 
-
 # ---------------------------------------------------------------------------
 # property_category Literal validation
 # ---------------------------------------------------------------------------
