@@ -1,0 +1,131 @@
+# AGENTS.md — rules for coding agents working in the nucpot repo
+
+> **Read this file before committing in this repo.** It mirrors the contributor
+> rule in [`CONTRIBUTING.md`](CONTRIBUTING.md) so the rule is in your context on
+> load. For full rationale and the KR-1 metric discussion, see
+> [`docs/architecture/ADR-NFM-2081-commit-issue-reference-enforcement.md`](docs/architecture/ADR-NFM-2081-commit-issue-reference-enforcement.md).
+
+---
+
+## The rule
+
+Every commit **subject** on every branch merged into `main` must contain **either**:
+
+- an `NFM-###` issue reference (e.g. `NFM-2081`), **or**
+- the literal token `[no-issue]`.
+
+PRs whose commit subjects contain neither will fail CI on `pull_request` and
+cannot merge. The check runs against commit **subjects**; body and footers are
+not inspected.
+
+When you produce a commit message in this repo, you must do one of these two
+things explicitly. Do not assume "no instruction" defaults to a passing build.
+
+---
+
+## The escape hatch — and what it actually costs
+
+`[no-issue]` is a deliberate, **typed** opt-out for genuine chores (dependency
+bumps, generated-file syncs, merge/revert commits). It is auditable in
+`git log --oneline`.
+
+It is **not** a free pass. Per ADR-NFM-2081 §D2:
+
+- `[no-issue]` commits **still count as structural waste** in
+  `scripts/okr/commit_efficiency.py` (KR-COMPANY-2).
+- It buys you a passing CI check.
+- It does **not** buy you a better KR-2 number.
+
+| Path                                  | CI         | KR-2 impact         |
+| ------------------------------------- | ---------- | ------------------- |
+| Reference an issue (`NFM-###`)        | pass       | improves            |
+| Use escape hatch (`[no-issue]`)       | pass       | **counts as waste** |
+| Neither                               | **fail**   | counts as waste     |
+
+If you can type an `NFM-###` reference, type it. The escape hatch is not a
+shortcut — it is a record.
+
+`git commit --no-verify` is **not** an escape hatch. It bypasses hooks silently
+with no trace in history; CI will still catch the offending commit on the PR.
+
+---
+
+## The control: CI is the gate, the local hook is a convenience
+
+**Authoritative check:** GitHub Actions on `pull_request`
+(`.github/workflows/ci.yml`). It cannot be skipped by an unconfigured clone and
+cannot be bypassed with `--no-verify`.
+
+**Local hook (opt-in, fast feedback):** a `commit-msg` hook is shipped in
+`.githooks/`. It moves the failure from "10 minutes later in CI" to "instantly
+at commit time". It is a convenience — not the control. Without configuration,
+it does nothing and CI rejects later. That is intentional.
+
+### Enable the local hook (one line)
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Run this once per clone and once per worktree (`core.hooksPath` is per-repo
+state). If you skip it, commits will still succeed locally — CI catches the
+non-compliance when the PR opens.
+
+---
+
+## Exemptions (structural, not discretionary)
+
+The following commit subjects are exempt without the `[no-issue]` token because
+they cannot meaningfully carry one:
+
+- **Merge commits** (more than one parent).
+- **`Revert "…"`** commits — the reverted subject usually carries the original
+  reference anyway.
+
+Everything else — including TDD-cycle commits (`test: …`, `feat: …`,
+`refactor: …`), drive-by refactors, and "fix typo" commits — needs a reference
+or the token.
+
+---
+
+## Examples
+
+### ✅ Pass — issue reference
+
+```
+fix(NFM-2013): silent ingestion failure fixes
+```
+
+```
+feat: wire coverage emission + CI artifact upload + aggregator (NFM-2047)
+```
+
+### ✅ Pass — escape hatch (CI passes; KR-2 still counts it as waste)
+
+```
+chore: bump ruff to 0.14 [no-issue]
+```
+
+### ❌ Fail — neither reference nor token
+
+```
+chore: bump ruff to 0.14
+```
+
+```
+fix: typo in service_accounts.md
+```
+
+A commit that looks like the "fail" row will be rejected by CI on the PR.
+A commit that looks like the middle row will pass CI; the KR-2 dashboard will
+show it as waste.
+
+---
+
+## See also
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — the same rule written for human readers.
+- [`docs/architecture/ADR-NFM-2081-commit-issue-reference-enforcement.md`](docs/architecture/ADR-NFM-2081-commit-issue-reference-enforcement.md)
+  — accepted decision, full rationale, KR-1 metric discussion.
+- `scripts/okr/commit_efficiency.py` — the metric implementation; `_ISSUE_REF_PATTERN`
+  defines what counts as a reference.
