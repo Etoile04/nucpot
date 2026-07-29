@@ -28,6 +28,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +48,7 @@ from nfm_db.schemas.literature import (
     LiteratureStatusResponse,
     LiteratureUploadResponse,
 )
+from nfm_db.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -651,3 +653,53 @@ async def delete_literature(
         success=True,
         data={"message": f"Literature {literature_id} deleted"},
     )
+
+
+@router.get(
+    "/{literature_id}/files/{file_path:path}",
+    summary="Serve a stored file (image, asset) for this literature",
+    description="Read and serve a file from the literature's storage directory. "
+    "Used by the detail panel to render extracted images referenced in content_md.",
+)
+async def get_literature_file(
+    literature_id: uuid.UUID,
+    file_path: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Serve a file (e.g. extracted image) from storage.
+
+    The ``file_path`` is a relative path within the literature's storage
+    directory, e.g. ``images/<hash>.jpg``.  Path traversal (``..``) is
+    rejected by the storage layer's safety validator.
+    """
+    # Verify the literature exists (raises 404 if not).
+    await _get_source_or_404(literature_id, db)
+
+    storage = get_storage()
+    full_path = f"{literature_id}/{file_path}"
+    try:
+        data = storage.read(full_path)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found: {file_path}",
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not accessible: {file_path}",
+        )
+
+    # Guess content type from extension.
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    content_type = {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "svg": "image/svg+xml",
+        "pdf": "application/pdf",
+    }.get(ext, "application/octet-stream")
+
+    return Response(content=data, media_type=content_type)
