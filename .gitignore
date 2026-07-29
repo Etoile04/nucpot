@@ -29,6 +29,7 @@ docker/.env.*
 *.swo
 *~
 docker/postgres-data/
+docker/.deploy-events.jsonl
 .worktrees/
 .claude/
 CLAUDE.md
