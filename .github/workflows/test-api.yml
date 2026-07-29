@@ -45,7 +45,31 @@ jobs:
         run: uv run python ../../scripts/check_schema_compat.py --schema src/nfm_db/schemas/ontology.py --baseline ../../.schema-baseline.json
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=json --cov-fail-under=80
+
+      # Publishes the Cobertura XML for the KR-5 coverage aggregator (NFM-2047).
+      # `always()` keeps a red run measurable: a run that fails the 80% gate
+      # still has a real coverage number worth reporting.
+      - name: Upload coverage.xml artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-api-cobertura
+          path: apps/api/coverage.xml
+          if-no-files-found: error
+          retention-days: 90
+
+      # Companion JSON (NFM-2044) — same data, machines prefer JSON. The XML
+      # is the aggregator's primary input; JSON is kept for downstream tools
+      # that consume the coverage.py JSON form.
+      - name: Upload coverage.json artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-api-json
+          path: apps/api/coverage.json
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v7
