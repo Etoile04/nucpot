@@ -35,6 +35,11 @@ interface KgReviewItem {
   readonly confidence: number
   readonly status: "pending" | "approved" | "rejected"
   readonly createdAt: string
+  // Backend-shaped fields consumed by getKgReviewQueue → mapBackendItem()
+  readonly item_type?: string
+  readonly item_data?: Record<string, unknown>
+  readonly review_status?: string
+  readonly created_at?: string
 }
 
 export const MOCK_KG_REVIEW_ITEMS: ReadonlyArray<KgReviewItem> = [
@@ -46,6 +51,12 @@ export const MOCK_KG_REVIEW_ITEMS: ReadonlyArray<KgReviewItem> = [
     confidence: 0.92,
     status: "pending",
     createdAt: "2026-07-14T08:30:00Z",
+    // Backend-shaped fields consumed by mapBackendItem() in review-api.ts.
+    // Without these, the mapped ReviewItem.title falls back to item_type.
+    item_type: "node",
+    item_data: { property_name: "Uranium-235 半经验势", label: "Uranium-235 半经验势" },
+    review_status: "pending",
+    created_at: "2026-07-14T08:30:00Z",
   },
   {
     id: "kg-item-002",
@@ -55,6 +66,10 @@ export const MOCK_KG_REVIEW_ITEMS: ReadonlyArray<KgReviewItem> = [
     confidence: 0.87,
     status: "pending",
     createdAt: "2026-07-14T07:15:00Z",
+    item_type: "node",
+    item_data: { property_name: "BCC铁 EAM势函数", label: "BCC铁 EAM势函数" },
+    review_status: "pending",
+    created_at: "2026-07-14T07:15:00Z",
   },
   {
     id: "kg-item-003",
@@ -64,6 +79,10 @@ export const MOCK_KG_REVIEW_ITEMS: ReadonlyArray<KgReviewItem> = [
     confidence: 0.95,
     status: "pending",
     createdAt: "2026-07-14T06:00:00Z",
+    item_type: "node",
+    item_data: { property_name: "SiO2 Tersoff势", label: "SiO2 Tersoff势" },
+    review_status: "pending",
+    created_at: "2026-07-14T06:00:00Z",
   },
 ]
 

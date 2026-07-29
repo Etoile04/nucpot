@@ -150,18 +150,18 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
       const actionBar = page.getByText(/已选择.*3.*项/)
       await expect(actionBar).toBeVisible({ timeout: HYDRATION_TIMEOUT })
 
-      // Click batch approve button
+      // Click batch approve button (label is "批量审核" in the actual component)
       const batchApproveButton = page.getByRole("button", {
-        name: /批量通过/,
+        name: /批量审核/,
       })
       await batchApproveButton.click()
 
       // Confirmation dialog should appear
       const confirmDialog = page.getByRole("dialog")
       await expect(confirmDialog).toBeVisible()
-      await expect(confirmDialog).toContainText("批量通过")
+      await expect(confirmDialog).toContainText("批量审核")
 
-      // Confirm the action
+      // Confirm the action (button text: "确认通过")
       const confirmButton = confirmDialog.getByRole("button", {
         name: /确认通过/,
       })
@@ -193,12 +193,12 @@ test.describe("Review Queue Auth Flow", { tag: "@e2e" }, () => {
 
       await page.goto("/login")
 
-      // Fill credentials — must be valid email for HTML5 type="email" validation
-      await page.getByPlaceholder("请输入邮箱").fill("test@example.com")
-      await page.getByPlaceholder("请输入密码").fill("test_password")
+      // Fill credentials — placeholders match the actual login page component
+      await page.getByPlaceholder("your@email.com").fill("test@example.com")
+      await page.getByPlaceholder("••••••••").fill("test_password")
 
-      // Submit
-      await page.getByRole("button", { name: "登录" }).click()
+      // Submit — scope to the form's submit button (there's also a tab button "登录")
+      await page.locator("form").getByRole("button", { name: "登录" }).click()
 
       // Wait for navigation away from login page
       await page.waitForURL((url) => !url.pathname.includes("login"), { timeout: 10_000 })

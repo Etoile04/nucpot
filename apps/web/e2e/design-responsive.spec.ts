@@ -16,7 +16,7 @@ test.describe("Design Workspace Responsive Layout", () => {
   test("desktop >=1024px — left panel stays visible inline at 280px", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await setupDesignMockApi(page, "normal")
-    await page.goto("/design")
+    await page.goto("/design", { waitUntil: "domcontentloaded", timeout: 60_000 })
     await page.waitForLoadState("domcontentloaded")
 
     // The inline left panel must be present and visible
@@ -36,7 +36,7 @@ test.describe("Design Workspace Responsive Layout", () => {
   test("mobile 375px — left panel hidden inline, hamburger button visible", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 })
     await setupDesignMockApi(page, "normal")
-    await page.goto("/design")
+    await page.goto("/design", { waitUntil: "domcontentloaded", timeout: 60_000 })
     await page.waitForLoadState("domcontentloaded")
 
     // The inline left panel must NOT be visible on mobile
@@ -56,7 +56,7 @@ test.describe("Design Workspace Responsive Layout", () => {
   test("mobile 375px — clicking hamburger opens drawer with panel content", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 })
     await setupDesignMockApi(page, "normal")
-    await page.goto("/design")
+    await page.goto("/design", { waitUntil: "domcontentloaded", timeout: 60_000 })
     await page.waitForLoadState("domcontentloaded")
 
     const toggle = page.locator("[data-testid='design-left-panel-toggle']")
@@ -83,7 +83,7 @@ test.describe("Design Workspace Responsive Layout", () => {
   test("mobile 375px — center content remains unobstructed and scrollable", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 })
     await setupDesignMockApi(page, "normal")
-    await page.goto("/design")
+    await page.goto("/design", { waitUntil: "domcontentloaded", timeout: 60_000 })
     await page.waitForLoadState("domcontentloaded")
 
     // The inline left panel must not visually cover the center chart

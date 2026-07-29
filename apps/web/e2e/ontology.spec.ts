@@ -30,6 +30,9 @@ const FAILURE_SIGNATURES = [
 // assets) below.
 
 test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => {
+  // Live site loads heavy iframe resources; give each test 60s.
+  test.setTimeout(60_000)
+
   test("AC#1/#3: renders the embedded viewer from the same-origin vendored corpus with no errors", async ({
     page,
   }) => {
@@ -54,7 +57,7 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
       }
     })
 
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
 
     // AC#1 surface: iframe present, pointing at the chromeless embedded viewer
     // with the determinate vendored corpus.
@@ -89,7 +92,7 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
   test("AC#2: iframe height contract — never collapses below 600px", async ({
     page,
   }) => {
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
     const frame = page.locator(IFRAME)
     await expect(frame).toBeVisible()
     const box = await frame.boundingBox()
@@ -100,7 +103,7 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
   test("AC#2: ?node= deep link is passed through to the viewer", async ({
     page,
   }) => {
-    await page.goto("/ontology?node=Material", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology?node=Material", { waitUntil: "domcontentloaded", timeout: 60_000 })
     const frame = page.locator(IFRAME)
     await expect(frame).toBeVisible()
     const src = (await frame.getAttribute("src")) ?? ""
@@ -115,7 +118,7 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
     await expect(page.locator(IFRAME)).toBeVisible()
     await page.waitForTimeout(2500)
     // Capture (not baseline-gated) so the artifact is reproducible and can be
@@ -124,6 +127,7 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
     await page.screenshot({
       path: "test-results/ontology-desktop-1440.png",
       animations: "disabled",
+      timeout: 30_000,
     })
   })
 })
@@ -132,11 +136,12 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
 // project (independent of the mobile-chrome naming convention).
 test.describe("Ontology page — mobile", { tag: "@unit" }, () => {
   test.use({ viewport: { width: 375, height: 667 } })
+  test.setTimeout(60_000)
 
   test("AC#4: captures the mobile visual-regression screenshot (375px) and no height collapse", async ({
     page,
   }) => {
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
     const frame = page.locator(IFRAME)
     await expect(frame).toBeVisible()
     const box = await frame.boundingBox()
@@ -146,6 +151,7 @@ test.describe("Ontology page — mobile", { tag: "@unit" }, () => {
     await page.screenshot({
       path: "test-results/ontology-mobile-375.png",
       animations: "disabled",
+      timeout: 30_000,
     })
   })
 })
@@ -153,6 +159,7 @@ test.describe("Ontology page — mobile", { tag: "@unit" }, () => {
 // Phase 2 enhancements (NFM-1426): 768px tablet viewport + no-overlap assertion
 test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
   test.use({ viewport: { width: 768, height: 1024 } })
+  test.setTimeout(60_000)
 
   test("iframe height contract at 768px — never collapses below 600px", async ({
     page,
@@ -164,7 +171,7 @@ test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
       if (m.type() === "error") consoleErrors.push(m.text())
     })
 
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
     const frame = page.locator(IFRAME)
     await expect(frame).toBeVisible()
 
@@ -183,7 +190,7 @@ test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
   test("no iframe content overlap with page elements at 768px", async ({
     page,
   }) => {
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
     const frame = page.locator(IFRAME)
     await expect(frame).toBeVisible()
     await page.waitForTimeout(2500)
@@ -209,13 +216,14 @@ test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
   })
 
   test("screenshot at 768px tablet viewport", async ({ page }) => {
-    await page.goto("/ontology", { waitUntil: "domcontentloaded" })
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
     const frame = page.locator(IFRAME)
     await expect(frame).toBeVisible()
     await page.waitForTimeout(2500)
     await page.screenshot({
       path: "test-results/ontology-tablet-768.png",
       animations: "disabled",
+      timeout: 30_000,
     })
   })
 })
