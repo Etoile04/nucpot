@@ -1,7 +1,5 @@
 """Tests for health check endpoint."""
 
-"""Tests for health check endpoint."""
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
