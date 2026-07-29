@@ -113,6 +113,13 @@ class Dataset(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_datasets_material", "material_id"),
         Index("idx_datasets_source", "source_id"),
+        # NFM-2032: DB-enforced uniqueness on (source, material) so the
+        # mapper's dataset-dedup lookup is not a check-then-insert race.
+        # The DB-level invariant catches both the legacy duplicate-state
+        # reported in NFM-2009 and any concurrent-rerun duplicate creation.
+        UniqueConstraint(
+            "source_id", "material_id", name="uq_datasets_source_material"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -157,7 +164,18 @@ class PropertyMeasurement(TimestampMixin, Base):
         ),
         Index("idx_pm_dataset", "dataset_id"),
         Index("idx_pm_property_type", "property_type_id"),
-        Index("idx_pm_conditions_hash", "conditions_hash"),
+        # NFM-2032 (NFM-1972 AC-2): composite UNIQUE INDEX that enforces
+        # the 5-tuple dedup key (NFM-1981 AC-2) at the DB level.  This
+        # replaces the previous non-unique single-column index from the
+        # rejected 032 migration; the prior best-effort SELECT-then-INSERT
+        # was racy and the lookup was missing ``method``.
+        UniqueConstraint(
+            "dataset_id",
+            "property_type_id",
+            "conditions_hash",
+            "method",
+            name="uq_pm_dedup",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -207,10 +225,16 @@ class PropertyMeasurement(TimestampMixin, Base):
         nullable=True,
         comment="Timestamp of last review action",
     )
-    conditions_hash: Mapped[str | None] = mapped_column(
+    conditions_hash: Mapped[str] = mapped_column(
         String(40),
-        nullable=True,
+        nullable=False,
         comment="SHA1 hash of measurement conditions for dedup (NFM-2032)",
+    )
+    method: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        server_default="",
+        comment="Measurement method (NFM-2032 5-tuple dedup).",
     )
 
     # -- relationships --

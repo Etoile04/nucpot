@@ -34,7 +34,14 @@ pytestmark = pytest.mark.no_auto_auth
 
 
 def _sample_property(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return a minimal property dict that passes ExtractedProperty validation."""
+    """Return a minimal property dict that passes ExtractedProperty validation.
+
+    NFM-2032 (CR Finding #6): the wrapper-level ``source_reference`` is
+    the authoritative provenance; the endpoint now normalises it into
+    each property's ``source_doi`` automatically.  We omit ``source_doi``
+    from the base sample so the integration tests exercise the
+    envelope-only path the way the OntoFuel production client does.
+    """
     base: dict[str, Any] = {
         "material_name": "UO2",
         "composition": "UO2",
@@ -44,10 +51,6 @@ def _sample_property(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         "unit": "angstrom",
         "conditions": {"temperature": 298},
         "confidence": "high",
-        # NFM-2032: set source_doi so the mapper's _find_source_by_doi
-        # actually fires (without it every POST mints a new DataSource
-        # UUID and the cross-request measurement dedup never matches).
-        "source_doi": "10.1234/test",
     }
     if overrides:
         base = {**base, **overrides}
@@ -62,26 +65,19 @@ def _ingest_payload(
 ) -> dict[str, Any]:
     """Build the JSON body for POST /extraction/ingest.
 
-    NFM-2032: propagate ``source_reference`` into each property's
-    ``source_doi`` so that the mapper's ``_find_source_by_doi`` lookup
-    matches across requests — without this, every POST creates a new
-    DataSource and the dedup chain never collapses.
+    NFM-2032: the endpoint now propagates ``source_reference`` into
+    each property's ``source_doi`` when ``source_type == "doi"``.  We
+    therefore honour the OntoFuel production payload shape and let
+    the endpoint do the normalisation.  Tests that exercise the
+    explicit per-property provenance path can still pass
+    ``source_doi`` through ``_sample_property``.
     """
     props = properties or [_sample_property()]
-    # Ensure every property has source_doi set to the wrapper source_reference
-    # unless the caller explicitly overrode it.  This mirrors the OntoFuel
-    # production payload shape.
-    props_with_doi = []
-    for p in props:
-        if "source_doi" not in p:
-            p = {**p, "source_doi": source_reference}
-        props_with_doi.append(p)
-
     body: dict[str, Any] = {
         "source_reference": source_reference,
         "source_type": "doi",
         "corpus_id": corpus_id,
-        "properties": props_with_doi,
+        "properties": props,
         **overrides,
     }
     return body

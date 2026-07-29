@@ -1150,24 +1150,14 @@ class TestFiveTupleMeasurementDedup:
     async def test_different_method_two_measurements(
         self, db_session: AsyncSession,
     ) -> None:
-        """Same material+property+source+conditions but different method → 1 row.
+        """Same material+property+source+conditions but different method → 2 rows.
 
-        NFM-2032 limitation: ``method`` is NOT a column on
-        ``property_measurements``, so the DB-side dedup query
-        ``(dataset_id, property_type_id, conditions_hash)`` cannot
-        distinguish items that differ only by ``method``.  Within a
-        single request the in-memory 5-tuple short-circuit still
-        skips an exact match, but two items that differ *only* in
-        ``method`` share the same ``conditions_hash`` and the
-        authoritative DB query collapses them.
-
-        This is documented as a known limitation.  Adding a
-        ``method`` column to ``property_measurements`` (and to the
-        DB dedup query) is a follow-up migration.
-
-        Original NFM-1981 expectation (when 5-tuple dedup was
-        in-memory only) was 2 rows — see class docstring for the
-        narrowed scope.
+        NFM-2032 (NFM-1972 AC-2): the 5-tuple dedup key includes
+        ``measurement_method`` (NFM-1981 AC-2).  Migration 033 persists
+        ``method`` on ``property_measurements`` and the composite UNIQUE
+        INDEX ``uq_pm_dedup`` includes it in the dedup predicate.  Two
+        measurements that differ only in ``method`` therefore create
+        distinct rows.
         """
         await _seed_property_type(
             db_session,
@@ -1197,14 +1187,27 @@ class TestFiveTupleMeasurementDedup:
 
         result = await map_and_persist(db_session, [item_a, item_b])
 
-        # NFM-2032: same conditions_hash collapses both rows; the second
-        # is skipped via the DB-backed dedup query.  Different
-        # method → currently no separate row.
-        assert result.created_measurements == 1, (
-            "NFM-2032 known limitation: method is not in the DB-side "
-            "dedup key.  See class docstring."
+        # NFM-2032: method is now part of the DB-side 5-tuple dedup key.
+        # Different method → exactly 2 rows (the original NFM-1981 AC-2
+        # expectation, restored after the rejected `11eef99` test was
+        # incorrectly inverted to accept data loss).
+        assert result.created_measurements == 2, (
+            "NFM-2032: different measurement methods must produce 2 "
+            "distinct rows (5-tuple dedup)."
         )
-        assert result.skipped_duplicate_measurements == 1
+        assert result.skipped_duplicate_measurements == 0
+
+        # Verify two rows actually exist on disk.
+        from sqlalchemy import func, select
+
+        from nfm_db.models.property import PropertyMeasurement
+
+        count = (
+            await db_session.execute(
+                select(func.count(PropertyMeasurement.id))
+            )
+        ).scalar_one()
+        assert count == 2
 
     async def test_different_material_two_measurements(
         self, db_session: AsyncSession,
