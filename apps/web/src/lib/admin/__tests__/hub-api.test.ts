@@ -42,12 +42,12 @@ describe("listHubNodes", () => {
     const { listHubNodes } = await import("@/lib/admin/hub-api")
     const result = await listHubNodes({ page: 2, per_page: 50 })
 
-    const [url] = mockFetch.mock.calls[0]
+    const [url] = mockFetch.mock.calls[0]!
     expect(url).toContain("/api/v1/hub/nodes/")
     expect(url).toContain("page=2")
     expect(url).toContain("per_page=50")
     expect(result.items).toHaveLength(1)
-    expect(result.items[0].name).toBe("西南所-计算节点")
+    expect(result.items[0]!.name).toBe("西南所-计算节点")
   })
 
   it("throws the envelope error on success:false", async () => {
@@ -77,7 +77,7 @@ describe("registerHubNode", () => {
       api_endpoint: NODE.api_endpoint,
     })
 
-    const [url, init] = mockFetch.mock.calls[0]
+    const [url, init] = mockFetch.mock.calls[0]!
     expect(url).toContain("/api/v1/hub/nodes/register")
     expect(init.method).toBe("POST")
     expect(JSON.parse(init.body).name).toBe(NODE.name)
@@ -117,7 +117,7 @@ describe("updateHubNodeStatus", () => {
     const { updateHubNodeStatus } = await import("@/lib/admin/hub-api")
     const updated = await updateHubNodeStatus(NODE.id, "suspended")
 
-    const [url, init] = mockFetch.mock.calls[0]
+    const [url, init] = mockFetch.mock.calls[0]!
     expect(url).toContain(`/api/v1/hub/nodes/${NODE.id}/status`)
     expect(init.method).toBe("PUT")
     expect(updated.status).toBe("suspended")
@@ -134,7 +134,7 @@ describe("deregisterHubNode", () => {
     const { deregisterHubNode } = await import("@/lib/admin/hub-api")
     await deregisterHubNode(NODE.id)
 
-    const [url, init] = mockFetch.mock.calls[0]
+    const [url, init] = mockFetch.mock.calls[0]!
     expect(url).toContain(`/api/v1/hub/nodes/${NODE.id}`)
     expect(init.method).toBe("DELETE")
   })
