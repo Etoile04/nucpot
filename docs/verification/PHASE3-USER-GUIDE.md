@@ -89,7 +89,15 @@ https://nucpot.dpdns.org/review/kg
 
 点击行第一列的 **「展开溯源」** 按钮（▶ 图标）。展开后会显示：
 
-![展开溯源面板 - 同时展示列表与文献段落](screenshots/03-source-expanded-merged.png)
+![步骤 4 - 查看数据溯源: UO2 K1 = 296.7 与 FRAPCON Table 2.1 精确匹配](screenshots/04-case1-k1-296-7-provenance.png)
+
+**图示要点**：
+- 红色箭头指向正在展开的「UO2 K1 (Heat Capacity Coefficient)」行
+- **底部面板**显示：
+  1. 📗 **文献标题**：`Material Property Correlations: Comparisons between FRAPCON-4.0, FRAPTRAN-2.0, and MATPRO (PNNL 2015)`
+  2. **期刊元数据**：`PNNL Technical Report (2015)`
+  3. 📊 **HTML 表格**：`Table 2.1. Constants Used in UO₂, Gd₂O₃, and PuO₂ Heat Capacity and Enthalpy Correlations`，5×5 布局
+- ✅ **数据对位**：节点值 `K1 = 296.7` 在表格 UO2 列精确出现
 
 **展开面板包含**：
 
@@ -122,9 +130,21 @@ https://nucpot.dpdns.org/review/kg
 ### 批量审核
 
 需要一次审核多条数据时：
-1. 勾选多行的复选框
-2. 点击表格上方 **「批量审核」** 或 **「批量拒绝」** 按钮
-3. 在确认对话框中点击"确定"
+
+1. 勾选多行的复选框（✓ 标记蓝色高亮）
+2. 表格下方出现 **「批量操作栏」**：
+   - "已选择 N 项"
+   - **「批量审核」**（绿色）
+   - **「批量拒绝」**（红色）
+   - **「重置为待审」**（灰色）
+3. 点击 **「批量审核」** 或 **「批量拒绝」**
+4. 弹出确认对话框，点击「确认通过」/「确认拒绝」或「取消」
+
+![步骤 5 - 批量审核: 5 项选中后批量操作栏出现](screenshots/05-batch-operations.png)
+
+![步骤 5 - 批量审核确认对话框](screenshots/06-batch-confirm-dialog.png)
+
+**确认对话框显示**："确定通过选中的 5 项吗？此操作不可撤销。"
 
 ---
 
@@ -136,20 +156,32 @@ https://nucpot.dpdns.org/review/kg
 
 **目标**：确认 K1 = 296.7 J/kg·K 在原文中精确匹配
 
-1. 切换筛选器为 **"全部"**（查看通过 + 待审数据）
-2. 在列表中找到 `K1` 相关节点（来自 PNNL FRAPCON Table 2.1）
-3. **展开溯源** → 显示完整 HTML 表格（已在 screenshot 03 中展示）
-4. **核对**：节点值与表格中 UO2 列 K1 行的值是否一致
-   - ✅ 一致 → 点击 **审核**
-   - ❌ 不一致 → 点击 **拒绝** 并注明原因
+**步骤**：
 
-**实测数据**：
+1. 在待审核列表中找到 **`UO2 K1 (Heat Capacity Coefficient)`** 行（来自 PNNL FRAPCON Table 2.1）
+2. 点击该行的 **「展开溯源」** 按钮
+3. 底部展开面板会显示：
 
-| 材料 | K1 常数值 (来自 PNNL Table 2.1) |
-|------|------------------------------|
-| UO2 | **296.7** J/kg·K |
-| PuO2 | 347.4 J/kg·K |
-| Gd₂O₃ | 315.86 J/kg·K |
+![案例 1 - UO2 K1=296.7 与 FRAPCON Table 2.1 验证](screenshots/04-case1-k1-296-7-provenance.png)
+
+4. **核对步骤**：
+   - 看展开面板中的 **"Table 2.1." 标题**
+   - 找到 K1 行（表格第二行）
+   - 确认 UO2 列的数值 **= 296.7**（与节点数据一致）
+
+5. **决策**：
+   - ✅ **值匹配** → 点击右侧 **「审核」**（绿色）
+   - ❌ **不匹配** → 点击 **「拒绝」**（红色）并填写原因
+
+**实测数据**（FRAPCON Table 2.1）：
+
+| 材料 | K1 常数值 | K2 | K3 | θ (Debye) | ED |
+|------|----------|-----|-----|---------|-----|
+| UO2 | **296.7 J/kg·K** | 2.43×10⁻² | 8.745×10⁻⁷ | 535.285 K | 1.577×10⁻⁵ J/mol |
+| PuO2 | 347.4 J/kg·K | 3.95×10⁻⁴ | 3.860×10⁻⁷ | 571.000 K | 1.967×10⁻⁵ J/mol |
+| Gd₂O₃ | 315.86 J/kg·K | 4.044×10⁻² | 0.0 | 348.0 K | 0.0 J/mol |
+
+> **图示**：案例 1 的截图（`04-case1-k1-296-7-provenance.png`）同时展示了完整的 16 行待审核列表和 K1 节点的展开面板，是验证流程的最直观示例。
 
 ### 案例 2：检查低置信度节点（重点：核查溯源）
 
@@ -226,9 +258,12 @@ A: 可能是登录过期或 CF Tunnel 间歇性问题（HTTP 502）。重新登�
 
 | # | 文件 | 说明 |
 |---|------|------|
-| 01 | `screenshots/01-login.png` | 登录页面（邮箱 + 密码 + 登录按钮） |
-| 02 | `screenshots/02-review-list.png` | 审核列表（含「提取源」列徽章、统计行） |
-| 03 | `screenshots/03-source-expanded-merged.png` | 展开溯源面板（含文献标题 + 段落） |
+| 01 | `screenshots/01-login.png` | 第一步：登录页面（邮箱 + 密码 + 登录按钮） |
+| 02 | `screenshots/02-review-list.png` | 第二步：审核列表（含「提取源」列徽章、9 列数据、统计行） |
+| 03 | `screenshots/03-source-expanded-merged.png` | 第三步辅助：审核列表 + 展开面板视图 |
+| 04 | `screenshots/04-case1-k1-296-7-provenance.png` | **第四步 + 案例 1 复用**：UO2 K1=296.7 节点展开，FRAPCON Table 2.1 完整渲染 |
+| 05 | `screenshots/05-batch-operations.png` | 第五步：批量操作（5 行选中，批量审核/拒绝按钮出现） |
+| 06 | `screenshots/06-batch-confirm-dialog.png` | 第五步：批量审核确认对话框 |
 
 ## 附录 B：核心 API 端点
 
