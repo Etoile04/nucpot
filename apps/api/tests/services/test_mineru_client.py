@@ -808,3 +808,107 @@ class TestZipFallback:
 
         result = asyncio.run(client.parse_pdf(b"%PDF-1.4\nbody"))
         assert result.markdown == markdown
+
+
+# ---------------------------------------------------------------------------
+# parse_zip_assets + remap_image_paths
+# ---------------------------------------------------------------------------
+
+
+def _make_zip_with_images(
+    images: dict[str, bytes],
+    full_md: str = "# title\n\n![](images/abc.jpg)\n",
+    layout_bytes: bytes | None = None,
+    include_origin_pdf: bool = True,
+) -> bytes:
+    """Build a synthetic MinerU-style zip in memory."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("full.md", full_md)
+        if include_origin_pdf:
+            zf.writestr("ee9c895b-2249-4286-a547-cb72ab9ee278_origin.pdf", b"%PDF-1.4\n")
+        for name, data in images.items():
+            zf.writestr(f"images/{name}", data)
+        if layout_bytes is not None:
+            zf.writestr("layout.json", layout_bytes)
+    return buf.getvalue()
+
+
+class TestParseZipAssets:
+    """Tests for MinerUClient.parse_zip_assets (image persistence enablement)."""
+
+    def test_extracts_markdown_and_images(self) -> None:
+        images = {"abc.jpg": b"fake-abc-jpg", "def.png": b"fake-def-png"}
+        zip_bytes = _make_zip_with_images(images)
+        assets = MinerUClient.parse_zip_assets(zip_bytes)
+        assert len(assets.images) == 2
+        assert assets.images["abc.jpg"] == b"fake-abc-jpg"
+        assert assets.images["def.png"] == b"fake-def-png"
+        assert assets.markdown.startswith("# title")
+        assert "abc.jpg" in assets.media_root or assets.media_root  # non-empty when present
+        assert assets.layout_json is None
+
+    def test_layout_json_is_optional(self) -> None:
+        layout = b'{"page": 1}'
+        zip_bytes = _make_zip_with_images(
+            {"x.jpg": b"x"}, layout_bytes=layout
+        )
+        assets = MinerUClient.parse_zip_assets(zip_bytes)
+        assert assets.layout_json == layout
+
+    def test_no_images_returns_empty_dict(self) -> None:
+        zip_bytes = _make_zip_with_images({})
+        assets = MinerUClient.parse_zip_assets(zip_bytes)
+        assert assets.images == {}
+        assert assets.markdown  # full.md still parsed
+
+    def test_malformed_zip_raises(self) -> None:
+        with pytest.raises(MinerUAPIError, match="non-zip body"):
+            MinerUClient.parse_zip_assets(b"not a zip")
+
+    def test_missing_full_md_raises(self) -> None:
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("junk.txt", "no markdown here")
+        with pytest.raises(MinerUAPIError, match="no full.md"):
+            MinerUClient.parse_zip_assets(buf.getvalue())
+
+
+class TestMinUZipAssetsRemap:
+    """Tests for MinerUZipAssets.remap_image_paths."""
+
+    def test_remap_substitutes_image_paths(self) -> None:
+        zip_bytes = _make_zip_with_images(
+            {"abc.jpg": b"fake"},
+            full_md="before ![](images/abc.jpg) after",
+        )
+        assets = MinerUClient.parse_zip_assets(zip_bytes)
+        remapped = assets.remap_image_paths("data_sources/ds-1/images")
+        assert remapped == "before ![](data_sources/ds-1/images/abc.jpg) after"
+        # The remap string still contains the substring images/abc.jpg
+        # (as part of the new path), so we only confirm the original
+        # images/abc.jpg segment is no longer present at the start
+        # of the image link.
+        assert remapped.startswith("before ![](data_sources/ds-1/images/abc.jpg)")
+
+    def test_remap_no_images_is_identity(self) -> None:
+        zip_bytes = _make_zip_with_images({})
+        assets = MinerUClient.parse_zip_assets(zip_bytes)
+        original = assets.markdown
+        assert assets.remap_image_paths("anything") == original
+
+    def test_remap_multiple_distinct_hashes(self) -> None:
+        zip_bytes = _make_zip_with_images(
+            {"a.jpg": b"a", "b.jpg": b"b", "c.jpg": b"c"},
+            full_md="![](images/a.jpg) ![](images/b.jpg) ![](images/c.jpg)",
+        )
+        assets = MinerUClient.parse_zip_assets(zip_bytes)
+        remapped = assets.remap_image_paths("ds_root")
+        for h in ("a.jpg", "b.jpg", "c.jpg"):
+            assert f"ds_root/{h}" in remapped

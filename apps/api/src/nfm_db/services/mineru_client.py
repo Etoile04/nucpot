@@ -245,7 +245,22 @@ class MinerUTimeoutError(MinerUError):
 
 @dataclass(frozen=True)
 class MinerUResult:
-    """Successful parse result."""
+    """Successful parse result.
+
+    Attributes:
+        markdown:    The full Markdown content of ``full.md``.
+        task_id:     MinerU batch identifier (useful for support tickets).
+        state:       Final state from the batch poll — normally ``done``.
+        pages:       Page count returned by MinerU, or ``None`` if the
+                     API omitted it.
+        elapsed_seconds: Wall-clock time spent on the whole pipeline.
+        used_fallback: True when the PyMuPDF fallback path produced the
+                       markdown (i.e. MinerU failed or wasn't enabled).
+        zip_bytes:   Optional raw bytes of the result zip. Populated
+                     by :meth:`MinerUClient.parse_pdf` when ``return_zip=True``
+                     so the caller can persist images and layout.json.
+                     ``None`` when the caller only asked for the markdown.
+    """
 
     markdown: str
     task_id: str
@@ -253,6 +268,63 @@ class MinerUResult:
     pages: int | None = None
     elapsed_seconds: float = 0.0
     used_fallback: bool = False
+    zip_bytes: bytes | None = None
+
+
+@dataclass(frozen=True)
+class MinerUZipAssets:
+    """Assets extracted from a MinerU result zip.
+
+    The v4 MinerU zip layout is::
+
+        <uuid>_origin.pdf
+        <uuid>_model.json
+        <uuid>_content_list.json
+        layout.json
+        full.md
+        images/<hash>.jpg
+        images/<hash>.jpg
+        ...
+
+    Attributes:
+        markdown:     The ``full.md`` content (with ``images/<hash>``
+                      references that resolve to *images*).
+        images:       Mapping of image filename → bytes for every file
+                      under the zip's ``images/`` directory. The keys
+                      are the bare filenames (e.g.
+                      ``3e56d8c4...3f4d6.jpg``); callers remap them to
+                      storage-friendly paths before persisting.
+        layout_json:  Raw bytes of ``layout.json`` (PyMuPDF layout
+                      information) or ``None`` if the zip didn't
+                      include one.
+        media_root:   The zip's top-level directory name (typically a
+                      ``<uuid>``); useful when remapping relative
+                      markdown references.
+
+    Use :meth:`remap_image_paths` to rewrite the markdown's
+    ``images/<hash>`` references to wherever the caller stored the
+    images (e.g. ``data_sources/{uuid}/images/<hash>``).
+    """
+
+    markdown: str
+    images: dict[str, bytes]
+    layout_json: bytes | None = None
+    media_root: str = ""
+
+    def remap_image_paths(self, prefix: str) -> str:
+        """Return *markdown* with every ``images/<hash>`` rewritten to ``<prefix>/<hash>``.
+
+        *prefix* is the storage root the caller will use, e.g.
+        ``f"data_sources/{ds.id}/images"``. The rewrite is a single
+        string-substitution so it works even for markdown that
+        contains regex-conflicting characters.
+        """
+        if not self.images:
+            return self.markdown
+        out = self.markdown
+        for name in self.images:
+            out = out.replace(f"images/{name}", f"{prefix}/{name}")
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +403,7 @@ class MinerUClient:
         *,
         filename: str = "upload.pdf",
         data_id: str | None = None,
+        return_zip: bool = False,
     ) -> MinerUResult:
         """Parse a PDF and return Markdown content.
 
@@ -339,7 +412,11 @@ class MinerUClient:
             2. PUT  <signed_url>             → 上传 PDF 字节
             3. GET  /api/v4/extract-results/batch/{batch_id}  → 轮询直到 done/failed
             4. GET  <full_zip_url>           → 下载结果 zip
-            5. 解压取 full.md
+            5. 解压 full.md (and return zip_bytes if return_zip=True)
+
+        Set ``return_zip=True`` to keep the raw zip bytes in the returned
+        result so the caller can persist images and layout.json via
+        :func:`parse_zip_assets`.
 
         Raises :class:`MinerUError` on any failure path.
         """
@@ -366,16 +443,18 @@ class MinerUClient:
                     f"MinerU batch {batch_id} returned state=done but no full_zip_url"
                 )
 
-            markdown = await self._download_markdown(client, poll_result.full_zip_url)
+            zip_bytes = await self._fetch_zip_bytes(poll_result.full_zip_url)
+            markdown = self._extract_markdown(zip_bytes)
 
         elapsed = time.monotonic() - started
         logger.info(
-            "MinerU parsed PDF: filename=%s batch_id=%s pages=%s chars=%d elapsed=%.1fs",
+            "MinerU parsed PDF: filename=%s batch_id=%s pages=%s chars=%d elapsed=%.1fs zip=%d bytes",
             filename,
             batch_id,
             poll_result.pages,
             len(markdown),
             elapsed,
+            len(zip_bytes),
         )
         return MinerUResult(
             markdown=markdown,
@@ -383,6 +462,7 @@ class MinerUClient:
             state=poll_result.state,
             pages=poll_result.pages,
             elapsed_seconds=elapsed,
+            zip_bytes=zip_bytes if return_zip else None,
         )
 
     # ----- internal helpers ---------------------------------------------
@@ -525,20 +605,37 @@ class MinerUClient:
         client: httpx.AsyncClient,
         full_zip_url: str,
     ) -> str:
-        """Download the result zip and extract full.md.
+        """Backwards-compatibility wrapper: download the zip and return just full.md.
 
-        Uses ``pycurl`` (libcurl bindings) as the primary transport because
-        some egress networks fail the TLS 1.3 handshake with
-        ``cdn-mineru.openxlab.org.cn`` when using Python's ``httpx`` or
-        ``urllib`` (ClientHello parsing edge case). libcurl handles it
-        reliably. Falls back to ``urllib`` then ``httpx`` if pycurl is
-        unavailable.
+        Equivalent to ``self._extract_markdown(await self._fetch_zip_bytes(url))``.
+        Kept around because external callers (e.g. :func:`parse_pdf_to_markdown`)
+        used to call this directly; the new :meth:`parse_pdf` now goes via
+        :meth:`_extract_markdown` directly without paying the cost of an
+        extra ``_download_markdown`` call.
         """
         zip_bytes = await self._fetch_zip_bytes(full_zip_url)
+        return self._extract_markdown(zip_bytes)
 
+    @staticmethod
+    def _extract_markdown(zip_bytes: bytes) -> str:
+        """Extract just the ``full.md`` content from a MinerU result zip.
+
+        The v4 zip layout is::
+
+            <uuid>_origin.pdf
+            <uuid>_model.json
+            <uuid>_content_list.json
+            layout.json
+            full.md
+            images/<hash>.jpg
+            ...
+
+        so we look for any entry whose basename is ``full.md``. Raises
+        :class:`MinerUAPIError` if the zip is malformed or missing
+        ``full.md``.
+        """
         try:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                # v4 zip layout: <basename>/full.md, layout.json, model.json, ...
                 md_names = [n for n in zf.namelist() if n.endswith("full.md")]
                 if not md_names:
                     raise MinerUAPIError(
@@ -546,6 +643,73 @@ class MinerUClient:
                     )
                 with zf.open(md_names[0]) as fh:
                     return fh.read().decode("utf-8", errors="replace")
+        except zipfile.BadZipFile as exc:
+            raise MinerUAPIError(f"MinerU returned non-zip body: {exc}") from exc
+
+    @staticmethod
+    def parse_zip_assets(zip_bytes: bytes) -> MinerUZipAssets:
+        """Pull markdown, images, and layout.json out of a MinerU result zip.
+
+        Returns a :class:`MinerUZipAssets` whose ``images`` dict maps
+        bare filenames (e.g. ``3e56d8c4111e8463efeebb9c13307a6a05d6d8b31c5a5367384c7c9d3911f4d6.jpg``)
+        to their bytes. The markdown still references ``images/<bare>``;
+        use :meth:`MinerUZipAssets.remap_image_paths` to rewrite those to
+        wherever the caller persists the image bytes (e.g.
+        ``data_sources/{uuid}/images/<bare>``).
+
+        Missing ``layout.json`` or no ``images/`` directory is non-fatal —
+        the corresponding fields are returned as ``None`` / empty dict.
+        """
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                names = zf.namelist()
+                # Discover the top-level directory (e.g. ``<uuid>``).
+                # The v4 zip sometimes nests entries under that prefix,
+                # sometimes not; we cover both layouts.
+                media_root = ""
+                for n in names:
+                    if n.endswith("_origin.pdf"):
+                        media_root = n[: -len("_origin.pdf")]
+                        break
+                    if "/" in n:
+                        media_root = n.split("/", 1)[0]
+                        break
+
+                # Markdown — first entry whose basename is full.md.
+                md_text = ""
+                for n in names:
+                    if n.endswith("full.md"):
+                        with zf.open(n) as fh:
+                            md_text = fh.read().decode("utf-8", errors="replace")
+                        break
+                if not md_text:
+                    raise MinerUAPIError(
+                        f"MinerU result zip has no full.md (entries: {names[:5]})"
+                    )
+
+                # Images — every entry whose parent directory is ``images/``.
+                images: dict[str, bytes] = {}
+                for n in names:
+                    base = n.rsplit("/", 1)[-1]
+                    if "/" in n and n.split("/")[-2] == "images" and base:
+                        with zf.open(n) as fh:
+                            images[base] = fh.read()
+
+                # Layout.json — optional big file. Stored at the zip root
+                # (not under images/ or a subdir).
+                layout_bytes: bytes | None = None
+                for n in names:
+                    if n.endswith("layout.json") and "/" not in n:
+                        with zf.open(n) as fh:
+                            layout_bytes = fh.read()
+                        break
+
+                return MinerUZipAssets(
+                    markdown=md_text,
+                    images=images,
+                    layout_json=layout_bytes,
+                    media_root=media_root,
+                )
         except zipfile.BadZipFile as exc:
             raise MinerUAPIError(f"MinerU returned non-zip body: {exc}") from exc
 
