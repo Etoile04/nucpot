@@ -242,6 +242,12 @@ services:
       # NFM-MINERU-1: MinerU env must mirror the api service — the worker
       # runs ``process_literature_task`` which calls parse_pdf_to_markdown.
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
+      # NFM-MINERU-bridge: bypass the HTTP proxy for host.docker.internal
+      # so urllib reaches the launchd-launched bridge at port 9630.
+      # Without this, urllib sends the bridge request through the
+      # Clash proxy at host.docker.internal:7892 and gets a 502.
+      NO_PROXY: ${PROD_WORKER_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-redis,nucpot-prod-api,nucpot-prod-lightrag,nucpot-prod-worker,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      no_proxy: ${PROD_WORKER_no_proxy:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-redis,nucpot-prod-api,nucpot-prod-lightrag,nucpot-prod-worker,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
       MINERU_API_KEY: ${MINERU_API_KEY:-}
     volumes:
       # NFM-1489: the worker reads PDFs from the same upload volume the
