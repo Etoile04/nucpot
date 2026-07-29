@@ -44,6 +44,7 @@ def _sample_property(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         "unit": "angstrom",
         "conditions": {"temperature": 298},
         "confidence": "high",
+        "source_doi": "10.1234/test",  # AC-R3 (NFM-2009): required for sync-verification
     }
     if overrides:
         base = {**base, **overrides}
@@ -64,6 +65,12 @@ def _ingest_payload(
         "properties": properties or [_sample_property()],
         **overrides,
     }
+    # AC-R3: stamp source_doi on every property so the mapper persists a
+    # DataSource row with doi=source_reference. Without this the mapper
+    # creates an "Unknown Source" row and sync-verification cannot match
+    # by DOI.
+    for prop in body["properties"]:
+        prop.setdefault("source_doi", source_reference)
     return body
 
 
@@ -152,6 +159,13 @@ class TestIngestFullFlow:
         assert data["reused_entities"] == 0
         assert data["skipped_duplicate_measurements"] == 0
         assert data["corpus_id"] == "flow-test"
+        # AC-R3 (NFM-2009): sync-verification must be True on the happy path.
+        assert data["verified"] is True, (
+            f"sync-verification failed: claimed created_measurements=1 but "
+            f"db_measurement_count={data['db_measurement_count']}; "
+            f"errors={data['errors']}"
+        )
+        assert data["db_measurement_count"] == 1
 
         # Verify property_measurements row exists
         measurements = (await db_session.execute(

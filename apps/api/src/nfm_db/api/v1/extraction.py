@@ -16,12 +16,12 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
 from nfm_db.database import get_db
-from nfm_db.models import Corpus
+from nfm_db.models import Corpus, Dataset, DataSource, PropertyMeasurement
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
@@ -105,6 +105,8 @@ class ExtractionIngestAck(BaseModel):
     validation_errors: int = Field(default=0, description="Records that failed validation.")
     total_received: int = Field(default=0, description="Total property records in the request.")
     processing_time_ms: float = Field(default=0, description="Server-side processing time in milliseconds.")
+    verified: bool = Field(default=False, description="AC-R3: True iff post-insert SELECT count of property_measurements for this source_reference matches created_measurements. Catches silent D1 dead-mode failures.")
+    db_measurement_count: int = Field(default=0, description="AC-R3: actual DB count of property_measurements tied to source_reference after map_and_persist. Compare to created_measurements to detect drift.")
     errors: list[str] = Field(default_factory=list, description="Error details for failed records.")
     received_at: datetime
     message: str = "Ingest accepted; queued for processing."
@@ -365,9 +367,52 @@ async def ingest_extraction_batch(
 
     elapsed_ms = (time.monotonic() - t_start) * 1000
 
+    # AC-R3 (NFM-2009): sync verification — re-query DB to confirm
+    # map_and_persist actually wrote the rows it claimed. Catches silent
+    # D1 dead-mode failures where the mapper silently drops writes
+    # (e.g. async LLM 502, validator returning early, transaction rolled
+    # back by a later exception). Without this gate, the API returns
+    # `created_measurements=1` while the row never lands.
+    db_measurement_count = 0
+    verified = False
+    try:
+        # Match by source_reference (DOI / file path / internal id) — the
+        # same source_reference OntoFuel uses in the request body.
+        source_ref = payload.source_reference or ""
+        if source_ref:
+            count_q = (
+                select(func.count(PropertyMeasurement.id))
+                .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
+                .join(DataSource, Dataset.source_id == DataSource.id)
+                .where(DataSource.doi == source_ref)
+            )
+            db_measurement_count = (await session.execute(count_q)).scalar_one()
+            verified = db_measurement_count == created_measurements
+            if not verified:
+                drift_msg = (
+                    f"sync-verification MISMATCH: claimed created_measurements="
+                    f"{created_measurements} but DB count for source_reference="
+                    f"{source_ref!r} is {db_measurement_count}"
+                )
+                logger.error(
+                    "ingest_extraction_batch: %s job_id=%s", drift_msg, job_id
+                )
+                errors.append(drift_msg)
+        else:
+            # No source_reference → cannot verify by DOI; flag as unverified.
+            verified = False
+            errors.append("sync-verification SKIPPED: no source_reference")
+    except Exception:
+        logger.exception(
+            "ingest_extraction_batch: sync-verification query failed job_id=%s",
+            job_id,
+        )
+        errors.append("sync-verification query raised an unexpected error")
+
     logger.info(
         "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
-        "service=%s total=%d ingested=%d measurements=%d skipped=%d errors=%d",
+        "service=%s total=%d ingested=%d measurements=%d skipped=%d errors=%d "
+        "verified=%s db_count=%d",
         job_id,
         payload.source_reference,
         corpus.corpus_id,
@@ -378,6 +423,8 @@ async def ingest_extraction_batch(
         created_measurements,
         skipped_duplicates,
         len(errors),
+        verified,
+        db_measurement_count,
     )
 
     return {
@@ -396,6 +443,8 @@ async def ingest_extraction_batch(
             validation_errors=validation_errors,
             total_received=total_received,
             processing_time_ms=round(elapsed_ms, 1),
+            verified=verified,
+            db_measurement_count=db_measurement_count,
             errors=errors,
             received_at=datetime.now(UTC),
         ).model_dump(),
