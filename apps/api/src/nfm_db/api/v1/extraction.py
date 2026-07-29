@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
 from nfm_db.database import get_db
-from nfm_db.models import Corpus
+from nfm_db.models import Corpus, ExtractionJob
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
@@ -365,6 +365,24 @@ async def ingest_extraction_batch(
     job_id = uuid4()
     total_received = len(payload.properties)
     t_start = time.monotonic()
+    started_at = datetime.now(UTC)
+
+    # NFM-2032 CR Finding #6: normalize the envelope's source_reference
+    # into each property's source_doi when source_type == 'doi'.  Without
+    # this, the dedup key for every property in the batch is empty, so
+    # DataSource.find_or_create creates a new source per ingest and
+    # the 5-tuple dedup can never line up across requests.  This is the
+    # acknowledged root cause that masked NFM-2032's DB-level UNIQUE
+    # from catching duplicates.
+    if payload.source_type == "doi" and payload.source_reference:
+        properties_for_mapper = [
+            {**prop, "source_doi": payload.source_reference}
+            if not prop.get("source_doi")
+            else prop
+            for prop in payload.properties
+        ]
+    else:
+        properties_for_mapper = list(payload.properties)
 
     # --- Persist properties via map_and_persist (NFM-1983 AC-3) ---
     created_measurements = 0
@@ -374,6 +392,8 @@ async def ingest_extraction_batch(
     skipped_duplicates = 0
     validation_errors = 0
     errors: list[str] = []
+    job_status = "completed"
+    error_message: str | None = None
 
     if payload.properties:
         try:
@@ -381,28 +401,8 @@ async def ingest_extraction_batch(
                 map_and_persist,
             )
 
-            # NFM-2032 (CR Finding #6): the OntoFuel envelope contract
-            # carries wrapper-level ``source_reference`` (DOI/URL/file/
-            # internal id); per-property ``source_doi`` is optional.  The
-            # mapper's cross-request dedup queries DataSource by DOI, so
-            # we must propagate the envelope provenance into each
-            # property before the mapper sees it.  Without this, every
-            # POST mints a fresh DataSource (and therefore a fresh
-            # Dataset), and the 5-tuple dedup never matches across
-            # requests.  Non-DOI source types are kept as-is so the
-            # mapper's DataSource find-or-create path still works.
-            normalised_properties: list[dict[str, Any]] = []
-            for prop in payload.properties:
-                if (
-                    payload.source_type == "doi"
-                    and not prop.get("source_doi")
-                    and payload.source_reference
-                ):
-                    prop = {**prop, "source_doi": payload.source_reference}
-                normalised_properties.append(prop)
-
             mapping_result = await map_and_persist(
-                session, normalised_properties
+                session, properties_for_mapper
             )
             created_measurements = mapping_result.created_measurements
             reused_entities = mapping_result.reused_entities
@@ -410,7 +410,7 @@ async def ingest_extraction_batch(
             skipped_unknown_properties = mapping_result.skipped_unknown_properties
             skipped_duplicates = mapping_result.skipped_duplicates
             validation_errors = mapping_result.validation_errors
-        except Exception:
+        except Exception as exc:
             # Log but do not fail — the ack is always returned.
             # Future: GraphBuilder isolation (NFM-1972-D) will add KG
             # node/edge creation here, isolated from measurement writes.
@@ -419,8 +419,43 @@ async def ingest_extraction_batch(
                 job_id,
             )
             errors.append("map_and_persist raised an unexpected error")
+            job_status = "failed"
+            error_message = f"{type(exc).__name__}: {exc}"[:500]
 
     elapsed_ms = (time.monotonic() - t_start) * 1000
+    completed_at = datetime.now(UTC)
+
+    # --- NFM-2013 AC-2: persist an ExtractionJob row so the operator can
+    # audit what landed and the new /status endpoint can serve the real
+    # state instead of the in-memory facade.
+    extraction_job = ExtractionJob(
+        id=job_id,
+        source_reference=payload.source_reference,
+        source_type=payload.source_type,
+        corpus_id=corpus.corpus_id,
+        status=job_status,
+        error_message=error_message,
+        total_received=total_received,
+        created_measurements=created_measurements,
+        reused_entities=reused_entities,
+        skipped_duplicate_measurements=skipped_duplicate_measurements,
+        skipped_unknown_properties=skipped_unknown_properties,
+        skipped_duplicates=skipped_duplicates,
+        validation_errors=validation_errors,
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+    session.add(extraction_job)
+    try:
+        await session.flush()
+    except Exception:
+        logger.exception(
+            "ingest_extraction_batch: failed to persist ExtractionJob %s; "
+            "rolling back to preserve DB invariant",
+            job_id,
+        )
+        await session.rollback()
+        raise
 
     logger.info(
         "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
@@ -475,9 +510,65 @@ async def ingest_extraction_batch(
 )
 async def get_ingest_job_status(
     job_id: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
-    """查询 Celery 提取任务状态（NFM-2013）。"""
-    # First try in-memory store (for non-Celery extraction jobs)
+    """查询提取任务状态（NFM-2013 AC-5）。
+
+    Reads from the ``extraction_jobs`` table persisted by the ingest
+    handler.  Falls back to the in-memory store and Celery AsyncResult
+    for jobs dispatched via /extraction/trigger (which don't land in
+    the ingest-side table).
+    """
+    # NFM-2013 AC-5: try the persisted ExtractionJob row first.  This is
+    # the canonical state for POST /extraction/ingest jobs.
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        # Not a UUID — must be a legacy Celery task id; fall through.
+        job_uuid = None
+
+    if job_uuid is not None:
+        try:
+            row = (
+                await session.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == job_uuid)
+                )
+            ).scalar_one_or_none()
+        except Exception:
+            # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
+            # there but the bind failed, surface a clean 404 instead of
+            # a 500.  Caller can retry after operator investigation.
+            logger.exception(
+                "get_ingest_job_status: failed to query ExtractionJob for id=%s",
+                job_id,
+            )
+            row = None
+        if row is not None:
+            return {
+                "success": True,
+                "data": {
+                    "job_id": str(row.id),
+                    "source_reference": row.source_reference or "",
+                    "source_type": row.source_type or "",
+                    "corpus_id": row.corpus_id or "",
+                    "status": row.status,
+                    "extracted_count": row.total_received,
+                    "staged_count": row.created_measurements,
+                    "rejected_count": row.skipped_unknown_properties,
+                    "created_measurements": row.created_measurements,
+                    "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
+                    "skipped_unknown_properties": row.skipped_unknown_properties,
+                    "skipped_duplicates": row.skipped_duplicates,
+                    "reused_entities": row.reused_entities,
+                    "validation_errors": row.validation_errors,
+                    "error_message": row.error_message,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
+                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                },
+            }
+
+    # Fallback: in-memory store for non-Celery / non-ingest jobs.
     job = get_job(job_id)
     if job is not None:
         return {
@@ -497,7 +588,7 @@ async def get_ingest_job_status(
             ).model_dump(),
         }
 
-    # Check Celery AsyncResult
+    # Check Celery AsyncResult for trigger-dispatched jobs.
     try:
         async_result = celery_app.AsyncResult(job_id)
         state = async_result.state

@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # Unique-constraint violation fingerprints that the mapper must treat as a
 # cross-request duplicate (rather than a real DB error).  The composite
-# UNIQUE INDEXes introduced by migration 033 turn any concurrent-insert
+# UNIQUE INDEXes introduced by migration 032 turn any concurrent-insert
 # race into an IntegrityError; the dedup race must NOT surface as a 500.
 # Match by both the wrapped pgcode (Postgres) and a substring over the
 # message text for portability across SQLite and Postgres.
@@ -53,6 +52,12 @@ _DEDUP_CONFLICT_FRAGMENTS: tuple[str, ...] = (
     "unique_violation",
     "UNIQUE constraint failed",
 )
+
+
+def _is_dedup_conflict(exc: IntegrityError) -> bool:
+    """True if the IntegrityError came from a 5-tuple unique violation."""
+    msg = str(exc.orig).lower() if exc.orig else str(exc).lower()
+    return any(frag.lower() in msg for frag in _DEDUP_CONFLICT_FRAGMENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -397,19 +402,21 @@ async def map_and_persist(
 
         # --- Dataset (find or create for this source+material pair) ---
         if d_key not in dataset_map:
-            # NFM-2032: cross-request Dataset dedup.  Without this lookup,
-            # each POST would mint a fresh Dataset UUID and the measurement
-            # dedup key would never match across requests.
-            existing_ds = await _find_dataset_by_source_and_material(
-                db,
-                source_id=source.id,
-                material_id=material.id,
-            )
-            if existing_ds is not None:
-                dataset_map[d_key] = existing_ds
+            dataset_title = f"{material.name} - {source.title}"
+            existing_dataset = (
+                await db.execute(
+                    select(Dataset).where(
+                        Dataset.material_id == material.id,
+                        Dataset.source_id == source.id,
+                    )
+                )
+            ).scalars().first()
+            if existing_dataset is not None:
+                # Cross-request hit: same source+material already has a
+                # dataset.  Reuse it so the 5-tuple dedup keys line up.
+                dataset_map[d_key] = existing_dataset
                 reused_entities += 1
             else:
-                dataset_title = f"{material.name} - {source.title}"
                 dataset = Dataset(
                     material_id=material.id,
                     source_id=source.id,
@@ -438,42 +445,13 @@ async def map_and_persist(
             skipped_unknown_properties += 1
             continue
 
-        # --- PropertyMeasurement (NFM-1981 AC-2 + NFM-2032 cross-request) ---
-        # The 5-tuple dedup key collapses to
-        # (dataset_id, property_type_id, conditions_hash, method) once
-        # the dataset is resolved.  Within a single request the in-memory
-        # set is a cheap short-circuit; cross-request dedup is enforced
-        # by the DB-level UNIQUE INDEX uq_pm_dedup (migration 033).  The
-        # DB lookup below is a fast-path that avoids the IntegrityError
-        # round-trip in the common case; the IntegrityError catch covers
-        # concurrent-request races.
-        cond_h = _conditions_hash(item.conditions)
-        method = (item.method or "").strip()
+        # --- PropertyMeasurement (NFM-1981 AC-2: 5-tuple dedup) ---
         meas_key = _measurement_dedup_key(item)
         if meas_key in seen_measurement_keys:
-            logger.debug("Skipping duplicate measurement within request: %s", meas_key)
+            logger.debug("Skipping duplicate measurement: %s", meas_key)
             skipped_duplicate_measurements += 1
             continue
         seen_measurement_keys.add(meas_key)
-
-        existing_meas = await _find_measurement_by_dedup_key(
-            db,
-            dataset_id=dataset.id,
-            property_type_id=property_type.id,
-            conditions_hash=cond_h,
-            method=method,
-        )
-        if existing_meas is not None:
-            logger.debug(
-                "Skipping duplicate measurement across requests: dataset=%s "
-                "property_type=%s conditions_hash=%s method=%s",
-                dataset.id,
-                property_type.id,
-                cond_h,
-                method,
-            )
-            skipped_duplicate_measurements += 1
-            continue
 
         condition_kwargs = _build_condition_kwargs(item.conditions)
         value_kwargs, fallback_raw = _measurement_value_kwargs(item.value)
@@ -486,39 +464,47 @@ async def map_and_persist(
                 fallback_raw,
                 item.property,
             )
-        measurement = PropertyMeasurement(
-            dataset_id=dataset.id,
-            property_type_id=property_type.id,
-            uncertainty=item.uncertainty,
-            notes=item.context,
-            review_status="pending",
-            conditions_hash=cond_h,
-            method=method,
-            **value_kwargs,
-        )
-        db.add(measurement)
+
+        # NFM-2032 / NFM-2013 AC-4: hash the conditions dict so the DB
+        # UNIQUE INDEX uq_pm_dedup on (dataset_id, property_type_id,
+        # conditions_hash, method) can detect cross-request duplicates.
+        cond_h = _conditions_hash(item.conditions)
+        method_str = (item.method or "").strip() or ""
+
+        # NFM-2032 CR Finding #4: wrap the per-measurement INSERT in a
+        # SAVEPOINT so a concurrent cross-request dedup race produces
+        # IntegrityError without poisoning the outer transaction.
         try:
-            # SAVEPOINT so a concurrent-insert IntegrityError can be
-            # rolled back without poisoning the outer transaction
-            # (NFM-2032 CR Finding #4).  The DB-level UNIQUE INDEX
-            # uq_pm_dedup decides which insert wins; the loser is
-            # silently absorbed as a duplicate.
             async with db.begin_nested():
+                measurement = PropertyMeasurement(
+                    dataset_id=dataset.id,
+                    property_type_id=property_type.id,
+                    uncertainty=item.uncertainty,
+                    notes=item.context,
+                    review_status="pending",
+                    conditions_hash=cond_h,
+                    method=method_str,
+                    **value_kwargs,
+                )
+                db.add(measurement)
                 await db.flush()
         except IntegrityError as exc:
-            if not _is_dedup_conflict(exc):
-                raise
-            logger.debug(
-                "Concurrent ingest won the 5-tuple race; treating as "
-                "duplicate: dataset=%s property_type=%s conditions_hash=%s "
-                "method=%s",
-                dataset.id,
-                property_type.id,
-                cond_h,
-                method,
-            )
-            skipped_duplicate_measurements += 1
-            continue
+            if _is_dedup_conflict(exc):
+                # Concurrent or sequential cross-request duplicate.
+                # Roll back this SAVEPOINT and count as skipped.
+                logger.debug(
+                    "Dedup conflict on (dataset=%s, prop_type=%s, "
+                    "conditions_hash=%s, method=%s): %s",
+                    dataset.id,
+                    property_type.id,
+                    cond_h,
+                    method_str,
+                    exc,
+                )
+                skipped_duplicate_measurements += 1
+                continue
+            # Real DB error — propagate.
+            raise
 
         # --- MeasurementCondition ---
         if condition_kwargs:
@@ -568,85 +554,6 @@ async def _find_material_by_formula(
         return None
     stmt = select(Material).where(Material.formula == formula)
     return (await db.execute(stmt)).scalar_one_or_none()
-
-
-async def _find_measurement_by_dedup_key(
-    db: AsyncSession,
-    *,
-    dataset_id: uuid.UUID,
-    property_type_id: uuid.UUID,
-    conditions_hash: str,
-    method: str,
-) -> PropertyMeasurement | None:
-    """Find an existing PropertyMeasurement matching the full 5-tuple dedup key.
-
-    NFM-2032 (NFM-1972 AC-2): cross-request dedup was broken because
-    ``seen_measurement_keys`` was an in-memory set that reset per request
-    and the database lookup omitted ``method``.  The 5-tuple dedup key
-    (material, property, source, conditions, method) collapses to
-    ``(dataset_id, property_type_id, conditions_hash, method)`` once the
-    dataset is resolved (it is uniquely determined by source+material).
-    The composite UNIQUE INDEX ``uq_pm_dedup`` (migration 033) enforces
-    this invariant at the DB level, so concurrency can never reintroduce
-    duplicates.
-
-    Returns the first matching row, or ``None`` if no duplicate exists.
-    """
-    stmt = select(PropertyMeasurement).where(
-        PropertyMeasurement.dataset_id == dataset_id,
-        PropertyMeasurement.property_type_id == property_type_id,
-        PropertyMeasurement.conditions_hash == conditions_hash,
-        PropertyMeasurement.method == method,
-    )
-    return (await db.execute(stmt)).scalars().first()
-
-
-async def _find_dataset_by_source_and_material(
-    db: AsyncSession,
-    *,
-    source_id: uuid.UUID,
-    material_id: uuid.UUID,
-) -> Dataset | None:
-    """Find existing Dataset for a (source, material) pair.
-
-    NFM-2032: Dataset dedup is also per-request (the ``dataset_map``
-    cache resets).  Without this lookup, every POST creates a new Dataset
-    row with a fresh UUID, and the
-    ``(dataset_id, property_type_id, conditions_hash, method)`` measurement
-    dedup key never matches across requests.  This helper closes that
-    gap.
-
-    The DB-level UNIQUE INDEX ``uq_datasets_source_material`` (migration
-    033) guarantees at most one row per ``(source_id, material_id)``
-    pair, so ``.first()`` is the appropriate retrieval mode.  The
-    previous ``scalar_one_or_none()`` raised ``MultipleResultsFound``
-    on the exact legacy-duplicate state reported in NFM-2009.
-
-    Returns the first matching row, or ``None`` if no dataset exists.
-    """
-    stmt = select(Dataset).where(
-        Dataset.source_id == source_id,
-        Dataset.material_id == material_id,
-    )
-    return (await db.execute(stmt)).scalars().first()
-
-
-def _is_dedup_conflict(error: IntegrityError) -> bool:
-    """Return True if ``IntegrityError`` reflects a dedup-key collision.
-
-    The composite UNIQUE INDEXes introduced by migration 033 turn any
-    concurrent-insert race into an IntegrityError.  We must NOT let
-    that propagate to the endpoint (which would translate to a 500),
-    because semantically the second insert is a duplicate, not a
-    failure.  Match by both the wrapped pgcode (when available) and
-    a substring over the message text for portability across SQLite
-    and Postgres.
-    """
-    pgcode = getattr(getattr(error, "orig", None), "pgcode", None)
-    if pgcode == "23505":  # SQLSTATE: unique_violation
-        return True
-    msg = str(error.orig or error).lower()
-    return any(fragment in msg for fragment in _DEDUP_CONFLICT_FRAGMENTS)
 
 
 def _parse_float(value: str) -> float | None:

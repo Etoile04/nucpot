@@ -298,7 +298,7 @@ class TestIngestStatusEndpoint:
         ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status("test-job-id")
+            resp = await get_ingest_job_status("test-job-id", session=AsyncMock())
 
         assert resp["success"] is True
         assert resp["data"]["status"] == "pending"
@@ -319,7 +319,7 @@ class TestIngestStatusEndpoint:
         ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status("test-job-id")
+            resp = await get_ingest_job_status("test-job-id", session=AsyncMock())
 
         assert resp["data"]["status"] == "completed"
 
@@ -339,7 +339,7 @@ class TestIngestStatusEndpoint:
         ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status("test-job-id")
+            resp = await get_ingest_job_status("test-job-id", session=AsyncMock())
 
         assert resp["data"]["status"] == "failed"
         assert "LLM 502" in resp["data"]["error_message"]
@@ -359,10 +359,26 @@ class TestIngestStatusEndpoint:
             status=JobStatus.COMPLETED,
         )
 
+        # NFM-2013 AC-5: the endpoint first queries the persisted
+        # ExtractionJob row (NFM-2013).  When the row is missing
+        # (in-memory test only — production should never reach this),
+        # the endpoint falls through to get_job / Celery AsyncResult.
+        # Set up the mock chain so ``await session.execute(...)`` resolves
+        # to an object whose ``scalar_one_or_none()`` returns None.
+        mock_session = AsyncMock()
+
+        class _MockResult:
+            def scalar_one_or_none(self) -> None:
+                return None
+
+        mock_session.execute.return_value = _MockResult()
+
         with patch("nfm_db.api.v1.extraction.get_job", return_value=job):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status(job_id_str)
+            resp = await get_ingest_job_status(
+                job_id_str, session=mock_session
+            )
 
         assert resp["data"]["status"] == "completed"
         assert resp["data"]["source_reference"] == "doi:10.1234/test"
@@ -382,7 +398,7 @@ class TestIngestStatusEndpoint:
         ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            await get_ingest_job_status("nonexistent-job")
+            await get_ingest_job_status("nonexistent-job", session=AsyncMock())
 
     @pytest.mark.asyncio
     async def test_legacy_status_celery_fallback(self) -> None:
@@ -422,6 +438,6 @@ class TestIngestStatusEndpoint:
         ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status("retry-job")
+            resp = await get_ingest_job_status("retry-job", session=AsyncMock())
 
         assert resp["data"]["status"] == "processing"

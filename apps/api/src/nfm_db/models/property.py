@@ -113,10 +113,11 @@ class Dataset(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_datasets_material", "material_id"),
         Index("idx_datasets_source", "source_id"),
-        # NFM-2032: DB-enforced uniqueness on (source, material) so the
-        # mapper's dataset-dedup lookup is not a check-then-insert race.
-        # The DB-level invariant catches both the legacy duplicate-state
-        # reported in NFM-2009 and any concurrent-rerun duplicate creation.
+        # NFM-2032 / NFM-2013 AC-4: DB-enforced uniqueness on
+        # (source, material) so the mapper's dataset-dedup lookup is
+        # not a check-then-insert race.  The DB-level invariant catches
+        # both the legacy duplicate-state reported in NFM-2009 and any
+        # concurrent-rerun duplicate creation.
         UniqueConstraint(
             "source_id", "material_id", name="uq_datasets_source_material"
         ),
@@ -164,11 +165,14 @@ class PropertyMeasurement(TimestampMixin, Base):
         ),
         Index("idx_pm_dataset", "dataset_id"),
         Index("idx_pm_property_type", "property_type_id"),
-        # NFM-2032 (NFM-1972 AC-2): composite UNIQUE INDEX that enforces
-        # the 5-tuple dedup key (NFM-1981 AC-2) at the DB level.  This
-        # replaces the previous non-unique single-column index from the
-        # rejected 032 migration; the prior best-effort SELECT-then-INSERT
-        # was racy and the lookup was missing ``method``.
+        # NFM-2032 / NFM-2013 AC-4: composite UNIQUE INDEX that enforces
+        # the 5-tuple dedup key (NFM-1981 AC-2) at the DB level.
+        # The in-memory set + check-then-INSERT was racy and omitted
+        # ``method``, so a tensile test and a nanoindentation test on
+        # the same conditions collapsed to one row.  This DB-level
+        # constraint turns concurrent-rerun races into IntegrityError,
+        # which the mapper catches and counts as
+        # skipped_duplicate_measurements.
         UniqueConstraint(
             "dataset_id",
             "property_type_id",
@@ -225,10 +229,14 @@ class PropertyMeasurement(TimestampMixin, Base):
         nullable=True,
         comment="Timestamp of last review action",
     )
-    conditions_hash: Mapped[str] = mapped_column(
+    conditions_hash: Mapped[str | None] = mapped_column(
         String(40),
-        nullable=False,
-        comment="SHA1 hash of measurement conditions for dedup (NFM-2032)",
+        nullable=True,
+        comment=(
+            "SHA1 hash of measurement conditions for dedup "
+            "(NFM-2032 5-tuple). Nullable in ORM for legacy rows; "
+            "migration 032 backfills + sets NOT NULL."
+        ),
     )
     method: Mapped[str] = mapped_column(
         String(100),
