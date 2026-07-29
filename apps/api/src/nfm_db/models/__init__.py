@@ -104,12 +104,16 @@ from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
 )
+from nfm_db.models.classification_level import (  # noqa: E402
+    ClassificationLevel,
+)
 from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
     ConflictRecord,
     ConflictStatus,
     ResolutionStrategy,
 )
 from nfm_db.models.corpus import Corpus  # noqa: E402
+from nfm_db.models.data_dna import DataDna  # noqa: E402
 from nfm_db.models.dft_calculation import DFTCalculation  # noqa: E402
 from nfm_db.models.entity_merge import (  # noqa: E402
     EntityMergeLog,
@@ -133,6 +137,8 @@ from nfm_db.models.feedback import (  # noqa: E402
 from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
+from nfm_db.models.hub_node import HubNode  # noqa: E402
+from nfm_db.models.ingest_log import IngestLog  # noqa: E402
 from nfm_db.models.kg import (  # noqa: E402
     VALID_NODE_TYPES,
     VALID_RELATION_TYPES,
@@ -179,6 +185,7 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.models.resource_node import ResourceNode  # noqa: E402
 from nfm_db.models.review import (  # noqa: E402
     VALID_TRANSITIONS,
     ReviewMixin,
@@ -193,6 +200,7 @@ from nfm_db.models.unit import (  # noqa: E402
     Unit,
     UnitConversion,
 )
+from nfm_db.models.upload_session import UploadSession  # noqa: E402
 from nfm_db.models.user import (  # noqa: E402
     BlogRole,
     Permission,
@@ -212,12 +220,14 @@ __all__ = [
     "BlogPostMetadata",
     "BlogRole",
     "CacheLevel",
+    "ClassificationLevel",
     "CompatJSONB",
     "Confidence",
     "ConflictRecord",
     "ConflictStatus",
     "Corpus",
     "DFTCalculation",
+    "DataDna",
     "DataSource",
     "DataSourceAuthor",
     "Dataset",
@@ -235,6 +245,8 @@ __all__ = [
     "HPCFailoverEvent",
     "HpcJob",
     "HpcJobStatus",
+    "HubNode",
+    "IngestLog",
     "JSONArray",
     "JobStatus",
     "JobType",
@@ -262,6 +274,7 @@ __all__ = [
     "PropertyType",
     "RefGapFillStaging",
     "ResolutionStrategy",
+    "ResourceNode",
     "ReviewMixin",
     "ReviewStatus",
     "StagingStatus",
@@ -269,6 +282,7 @@ __all__ = [
     "TimestampMixin",
     "Unit",
     "UnitConversion",
+    "UploadSession",
     "User",
     "VerificationResultMD",
     "VerificationTask",
