@@ -8,9 +8,6 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "httpx>=0.28.0",
-    # Zotero integration (NFM-829) -- optional but enabled when credentials
-    # are configured via NFM_MCP_ZOTERO_API_KEY / NFM_MCP_ZOTERO_USER_ID.
-    "pyzotero>=1.5.0",
     "nfm-db-api",
 ]
 
