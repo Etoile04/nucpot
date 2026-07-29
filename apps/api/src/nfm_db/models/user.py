@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, String, Uuid
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
@@ -82,7 +82,19 @@ class User(TimestampMixin, Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     _blog_role: Mapped[str | None] = mapped_column(
         "blog_role",
-        String(20),
+        # NFM-1997: the live DB column is the native PostgreSQL enum
+        # ``blog_role_enum`` (created by migration 001_create_users_table),
+        # NOT a varchar.  Declaring it ``String`` made asyncpg send the
+        # INSERT parameter typed as ``character varying`` while the column
+        # is the enum type, so Postgres raised ``DatatypeMismatchError`` and
+        # ``create-service-account`` crashed (E2E QA NFM-1985, run 09ee4597).
+        # ``values_callable`` yields the lowercase labels the type was
+        # created with, matching the DB enum (admin/editor/reviewer).
+        Enum(
+            BlogRole,
+            name="blog_role_enum",
+            values_callable=lambda e: [x.value for x in e],
+        ),
         nullable=True,
         default=None,
     )
@@ -153,8 +165,4 @@ class User(TimestampMixin, Base):
     def __repr__(self) -> str:
         kind = "service" if self.is_service_account else "user"
         role = self.blog_role.value if self.blog_role else None
-        return (
-            f"<{kind} id={self.id!s} "
-            f"username={self.username!r} "
-            f"role={role}>"
-        )
+        return f"<{kind} id={self.id!s} username={self.username!r} role={role}>"
