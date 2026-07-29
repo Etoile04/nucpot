@@ -98,6 +98,25 @@ def _should_bypass_proxy(url: str) -> bool:
     )
 
 
+#: Host-side curl bridge. Set ``MINERU_BRIDGE_URL`` to override (e.g. for
+#: a deployment behind a remote bridge exposed via Cloudflare Tunnel).
+DEFAULT_BRIDGE_URL: Final = "http://host.docker.internal:9630"
+
+
+def _build_bridge_url(cdn_url: str) -> str:
+    """Wrap *cdn_url* into a download call to the host-side bridge.
+
+    The bridge is a small stdlib HTTP server (see
+    ``~/.local/bin/mineru-bridge.py``) that runs ``/usr/bin/curl`` on
+    the host so the TLS handshake uses macOS LibreSSL/SecureTransport
+    instead of the broken OpenSSL 3.x bundled with the container.
+    """
+    import urllib.parse
+
+    base = os.environ.get("MINERU_BRIDGE_URL", DEFAULT_BRIDGE_URL).rstrip("/")
+    return f"{base}/download?url={urllib.parse.quote(cdn_url, safe='')}"
+
+
 # ---------------------------------------------------------------------------
 # Settings helpers (read env directly, no pydantic — matches vision_client)
 # ---------------------------------------------------------------------------
@@ -531,14 +550,45 @@ class MinerUClient:
             raise MinerUAPIError(f"MinerU returned non-zip body: {exc}") from exc
 
     async def _fetch_zip_bytes(self, url: str) -> bytes:
-        """Download zip bytes via pycurl (most reliable), then urllib, then httpx.
+        """Download zip bytes via host-side bridge, then pycurl, then urllib, then httpx.
 
-        ``pycurl`` uses the system libcurl — same TLS stack as the working
-        ``curl`` binary — so it succeeds where Python's ``httpx`` and
-        ``urllib`` hit ``SSL: UNEXPECTED_EOF_WHILE_READING`` against
-        ``cdn-mineru.openxlab.org.cn``.
+        The MinerU result-zip CDN (cdn-mineru.openxlab.org.cn) sits behind a
+        Tengine edge that refuses the TLS ClientHello issued by OpenSSL 3.x
+        (the default in python:3.12-slim and hence every production container),
+        causing::
+
+            SSL routines::unexpected eof while reading
+
+        The host machine (macOS) carries ``/usr/bin/curl`` linked against
+        LibreSSL/SecureTransport, which produces a ClientHello the CDN
+        accepts.  The host-side bridge (``~/.local/bin/mineru-bridge.py``,
+        launched via ``launchd``) exposes that curl as a plain HTTP endpoint
+        at ``http://host.docker.internal:9630/download``.
+
+        This method tries the bridge first when the host is in the bypass
+        list; otherwise it falls through to in-container pycurl / urllib /
+        httpx with proxy bypass (see :data:`_NO_PROXY_HOSTS`).
         """
-        # 1) pycurl (libcurl bindings) — most reliable
+        # 0) Host-side curl bridge — most reliable for the MinerU CDN.
+        if _should_bypass_proxy(url):
+            try:
+                bridge_url = _build_bridge_url(url)
+                async with httpx.AsyncClient(timeout=120) as c:
+                    resp = await c.get(bridge_url)
+                    if resp.status_code == 200:
+                        return resp.content
+                    raise MinerUAPIError(
+                        f"bridge HTTP {resp.status_code}: {resp.text[:200]}"
+                    )
+            except Exception as bridge_exc:
+                bridge_err = f"bridge={bridge_exc!r}"
+                logger.debug("bridge fetch failed, falling through: %s", bridge_err)
+            else:
+                bridge_err = ""
+        else:
+            bridge_err = "bridge=skipped (host not in _NO_PROXY_HOSTS)"
+
+        # 1) pycurl (libcurl bindings) — next most reliable
         import importlib.util
 
         if importlib.util.find_spec("pycurl") is None:
@@ -586,7 +636,7 @@ class MinerUClient:
         except Exception as httpx_exc:
             raise MinerUAPIError(
                 f"Failed to download MinerU result zip from {url}: "
-                f"pycurl={pycurl_err!r}, urllib={urllib_err!r}, httpx={httpx_exc!r}"
+                f"{bridge_err}, pycurl={pycurl_err!r}, urllib={urllib_err!r}, httpx={httpx_exc!r}"
             ) from httpx_exc
 
     def _auth_headers(self) -> dict[str, str]:

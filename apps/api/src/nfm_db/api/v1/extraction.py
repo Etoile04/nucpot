@@ -339,7 +339,6 @@ async def ingest_extraction_batch(
     if payload.properties:
         try:
             from nfm_db.services.extraction_to_db_mapper import (
-                MappingResult,
                 map_and_persist,
             )
 

@@ -210,14 +210,13 @@ class TestIngestKGBuildFailureIsolated:
         Property measurements from a prior successful call should
         still be in the DB after the failed call.
         """
-        from unittest.mock import AsyncMock
 
         # First: do a successful ingest to seed measurements
-        from nfm_db.models.property import PropertyCategory, PropertyType as PT
+        from nfm_db.models.property import PropertyCategory, PropertyType
         cat = PropertyCategory(name="thermal", slug="thermal-iso")
         db_session.add(cat)
         await db_session.flush()
-        pt = PT(
+        pt = PropertyType(
             category_id=cat.id,
             name="lattice_constant",
             slug="lattice_constant_iso",

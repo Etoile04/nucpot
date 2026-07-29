@@ -32,7 +32,6 @@ from nfm_db.models import Corpus, User
 from nfm_db.models.user import ServiceAccountScope
 from nfm_db.services.auth_service import create_service_account_token
 
-
 SERVICE_USER_ID = uuid.UUID("b0000000-0000-0000-0000-000000000099")
 ONTOFUEL_CORPUS_ID = "ontofuel"
 HUMAN_MISSING_CORPUS_ID = "human-missing"
