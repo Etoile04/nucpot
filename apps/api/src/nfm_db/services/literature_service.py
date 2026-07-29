@@ -73,7 +73,12 @@ def _get_storage() -> StorageBackend:
 # ---------------------------------------------------------------------------
 
 
-def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
+def _parse_pdf_to_markdown(
+    pdf_bytes: bytes,
+    *,
+    ds_id: Any | None = None,
+    storage: Any | None = None,
+) -> str:
     """Convert PDF bytes to Markdown.
 
     Prefers MinerU (NFM-MINERU-1) for structured output with formula
@@ -93,20 +98,60 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
     # ---- Primary: MinerU (v4 精准解析 API) -----------------------------
     try:
         from nfm_db.services.mineru_client import (
+            MinerUClient,
             MinerUError,
+            mineru_api_key,
             mineru_enabled,
-            parse_pdf_to_markdown,
         )
 
         if mineru_enabled():
             try:
-                markdown = parse_pdf_to_markdown(pdf_bytes, filename="upload.pdf")
+                client = MinerUClient(
+                    api_key=mineru_api_key(),
+                    poll_interval=0.5,
+                    timeout_seconds=300,
+                )
+                zip_bytes_for_assets: bytes | None = None
+                if ds_id is not None and storage is not None:
+                    result = asyncio.run(
+                        client.parse_pdf(
+                            pdf_bytes, filename="upload.pdf", return_zip=True
+                        )
+                    )
+                    markdown = result.markdown
+                    zip_bytes_for_assets = result.zip_bytes
+                else:
+                    from nfm_db.services.mineru_client import (
+                        parse_pdf_to_markdown as _md_only,
+                    )
+
+                    markdown = _md_only(pdf_bytes, filename="upload.pdf")
+
                 parser_used = "mineru"
                 logger.info(
                     "_parse_pdf_to_markdown: mineru OK chars=%d (file=%d bytes)",
                     len(markdown or ""),
                     len(pdf_bytes),
                 )
+
+                if (
+                    ds_id is not None
+                    and storage is not None
+                    and zip_bytes_for_assets is not None
+                ):
+                    try:
+                        markdown = _persist_mineru_assets(
+                            storage=storage,
+                            ds_id=ds_id,
+                            zip_bytes=zip_bytes_for_assets,
+                            markdown=markdown or "",
+                        )
+                    except Exception:  # pragma: no cover — defensive
+                        logger.exception(
+                            "Failed to persist MinerU images for %s; "
+                            "leaving markdown with bare ``images/`` refs.",
+                            ds_id,
+                        )
             except MinerUError as exc:
                 # Config / API / timeout / network — all recoverable.
                 # Log and fall through to PyMuPDF rather than crashing
@@ -130,15 +175,55 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes) -> str:
         parts: list[str] = []
         for page in doc:
             parts.append(page.get_text())
-        result = "\n\n".join(parts)
+        md_text = "\n\n".join(parts)
         if parser_used != "pymupdf":
             logger.warning(
                 "_parse_pdf_to_markdown: using PyMuPDF fallback (%d chars)",
-                len(result),
+                len(md_text),
             )
-        return result
+        return md_text
     finally:
         doc.close()
+
+
+def _persist_mineru_assets(
+    *,
+    storage: Any,
+    ds_id: Any,
+    zip_bytes: bytes,
+    markdown: str,
+) -> str:
+    """Save the MinerU zip's images and rewrite ``images/<hash>`` references.
+
+    Returns the markdown with ``images/<hash>.jpg`` references rewritten
+    to ``data_sources/{ds_id}/images/<hash>.jpg`` so consumers can
+    resolve the links without ad-hoc remapping.
+    """
+    from nfm_db.services.mineru_client import MinerUClient
+
+    assets = MinerUClient.parse_zip_assets(zip_bytes)
+    if not assets.images:
+        logger.info(
+            "_persist_mineru_assets: no images in zip for %s (markdown=%d chars)",
+            ds_id,
+            len(markdown),
+        )
+        return markdown
+
+    saved = 0
+    for name, data in assets.images.items():
+        storage.save(ds_id, f"images/{name}", data)
+        saved += 1
+    logger.info(
+        "_persist_mineru_assets: saved %d images for %s (markdown=%d chars)",
+        saved,
+        ds_id,
+        len(markdown),
+    )
+
+    remap_prefix = f"data_sources/{ds_id}/images"
+    markdown = assets.remap_image_paths(remap_prefix)
+    return markdown
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +353,17 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 ds.parse_status = PARSE_STATUS_PARSING
                 await db.commit()
 
-                pdf_bytes = _get_storage().read(ds.file_path)
-                ds.content_md = _parse_pdf_to_markdown(pdf_bytes)
+                storage = _get_storage()
+                pdf_bytes = storage.read(ds.file_path)
+                # Pass ds.id + storage so the MinerU happy path can persist
+                # its extracted images and rewrite the markdown references
+                # (otherwise the saved ``content_md`` keeps broken
+                # ``images/<hash>`` links because the zip is discarded).
+                ds.content_md = _parse_pdf_to_markdown(
+                    pdf_bytes,
+                    ds_id=ds.id,
+                    storage=storage,
+                )
 
             logger.info(
                 "process_literature: datasource_id=%s parsed content_md_chars=%d reused_from=%s",

@@ -178,7 +178,11 @@ class TestHappyPathPdfParse:
             result = await lit_svc.process_literature(db_session, ds.id)
 
         mock_storage.assert_called_once()
-        mock_parse.assert_called_once_with(mock_bytes)
+        mock_parse.assert_called_once_with(
+            mock_bytes,
+            ds_id=ds.id,
+            storage=mock_storage.return_value,
+        )
         mock_extract.assert_awaited_once()
         assert result["status"] == "completed"
 
@@ -548,3 +552,85 @@ def test_schedule_literature_processing_propagates_broker_error() -> None:
     ):
         with pytest.raises(ConnectionError, match="broker unreachable"):
             schedule_literature_processing(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# 7. MinerU image persistence — exercises _persist_mineru_assets directly
+# ---------------------------------------------------------------------------
+
+
+class TestPersistMinUAssets:
+    """Cover the new image-persistence helper without going through the
+    real MinerU client (which would require network and credentials).
+
+    The helper takes a zip bytes blob and a storage mock; we just need
+    to confirm that:
+      * every image in the zip is written via storage.save(...)
+      * the returned markdown's ``images/<hash>`` references get rewritten
+      * an empty zip yields the original markdown unchanged
+    """
+
+    def _make_zip(
+        self,
+        md_text: str,
+        images: dict[str, bytes],
+        origin_pdf: bool = True,
+    ) -> bytes:
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("full.md", md_text)
+            if origin_pdf:
+                zf.writestr("ee9c895b-2249-4286-a547-cb72ab9ee278_origin.pdf", b"%PDF-1.4")
+            for name, data in images.items():
+                zf.writestr(f"images/{name}", data)
+        return buf.getvalue()
+
+    def test_persists_every_image_and_rewrites_paths(self) -> None:
+        import uuid
+
+        ds_id = uuid.uuid4()
+        storage = MagicMock()
+        md_text = "# Title\n\n![](images/abc.jpg) ![](images/def.jpg)\n"
+        zip_bytes = self._make_zip(
+            md_text,
+            {"abc.jpg": b"x", "def.jpg": b"y"},
+        )
+
+        from nfm_db.services.literature_service import _persist_mineru_assets
+
+        rewritten = _persist_mineru_assets(
+            storage=storage, ds_id=ds_id, zip_bytes=zip_bytes, markdown=md_text
+        )
+
+        # Both images persisted via storage.save with the same ds_id and
+        # an ``images/<name>`` key.
+        saved_calls = storage.save.call_args_list
+        assert len(saved_calls) == 2
+        for c in saved_calls:
+            assert c.args[0] == ds_id
+            assert c.args[1].startswith("images/")
+            assert c.args[1].endswith((".jpg", ".png"))
+
+        # Markdown references rewritten to the data-sources path.
+        assert f"data_sources/{ds_id}/images/abc.jpg" in rewritten
+        assert f"data_sources/{ds_id}/images/def.jpg" in rewritten
+
+    def test_empty_images_returns_markdown_unchanged(self) -> None:
+        import uuid
+
+        ds_id = uuid.uuid4()
+        storage = MagicMock()
+        md_text = "# no images here\n"
+        zip_bytes = self._make_zip(md_text, {})
+
+        from nfm_db.services.literature_service import _persist_mineru_assets
+
+        result = _persist_mineru_assets(
+            storage=storage, ds_id=ds_id, zip_bytes=zip_bytes, markdown=md_text
+        )
+
+        assert result == md_text
+        storage.save.assert_not_called()
