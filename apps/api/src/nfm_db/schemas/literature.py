@@ -42,6 +42,17 @@ class LiteratureListItem(BaseModel):
     created_at: datetime
 
 
+class LiteratureFigure(BaseModel):
+    """A single extracted figure from a literature source."""
+
+    id: UUID
+    page_number: int | None = None
+    figure_type: str | None = None
+    image_path: str | None = None
+    caption: str | None = None
+    confidence: float = 0.0
+
+
 class LiteratureDetailResponse(BaseModel):
     """Full literature detail with extraction results."""
 
@@ -53,6 +64,8 @@ class LiteratureDetailResponse(BaseModel):
     abstract: str | None = None
     status: str = "uploaded"
     source_id: UUID | None = None
+    content_md: str | None = None
+    figures: list[LiteratureFigure] = Field(default_factory=list)
     extraction_results: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

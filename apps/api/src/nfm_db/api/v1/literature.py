@@ -41,6 +41,7 @@ from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.literature import (
     LiteratureDetailResponse,
+    LiteratureFigure,
     LiteratureListItem,
     LiteratureReextractResponse,
     LiteratureStatusResponse,
@@ -440,7 +441,27 @@ async def get_literature_detail(
         for er in er_result.scalars().all()
     ]
 
-    # Build full detail with the populated extraction_results.
+    # Load extracted figures linked to this source.
+    fig_stmt = (
+        select(ExtractionFigure)
+        .where(ExtractionFigure.source_id == literature_id)
+        .order_by(ExtractionFigure.page_number.asc())
+        .limit(200)
+    )
+    fig_result = await db.execute(fig_stmt)
+    figures = [
+        LiteratureFigure(
+            id=fig.id,
+            page_number=fig.page_number,
+            figure_type=fig.figure_type,
+            image_path=fig.image_path,
+            caption=fig.caption,
+            confidence=fig.confidence,
+        )
+        for fig in fig_result.scalars().all()
+    ]
+
+    # Build full detail with the populated extraction_results + content_md + figures.
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
@@ -452,6 +473,8 @@ async def get_literature_detail(
             abstract=source.abstract,
             status=source.parse_status or "uploaded",
             source_id=source.id,
+            content_md=source.content_md,
+            figures=figures,
             extraction_results=extraction_results,
             created_at=source.created_at,
             updated_at=source.updated_at,
