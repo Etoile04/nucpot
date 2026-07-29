@@ -51,7 +51,9 @@ class MappingResult:
     created_materials: int = 0
     created_datasets: int = 0
     created_measurements: int = 0
-    skipped_duplicates: int = 0
+    reused_entities: int = 0
+    skipped_duplicate_measurements: int = 0
+    skipped_unknown_properties: int = 0
     validation_errors: int = 0
 
     @property
@@ -61,6 +63,15 @@ class MappingResult:
             + self.created_materials
             + self.created_datasets
             + self.created_measurements
+        )
+
+    @property
+    def skipped_duplicates(self) -> int:
+        """Backward-compat alias: sum of all skip reasons."""
+        return (
+            self.reused_entities
+            + self.skipped_duplicate_measurements
+            + self.skipped_unknown_properties
         )
 
 
@@ -265,12 +276,14 @@ async def map_and_persist(
     dataset_map: dict[str, Dataset] = {}
     # NFM-1981 AC-2: track seen 5-tuple keys to skip exact duplicates
     seen_measurement_keys: set[str] = set()
-    skipped = 0
 
     created_sources = 0
     created_materials = 0
     created_datasets = 0
     created_measurements = 0
+    reused_entities = 0
+    skipped_duplicate_measurements = 0
+    skipped_unknown_properties = 0
 
     for item in validated:
         s_key = _source_key(item)
@@ -286,7 +299,7 @@ async def map_and_persist(
                 existing = await _find_source_by_doi(db, doi)
                 if existing:
                     source_map[s_key] = existing
-                    skipped += 1
+                    reused_entities += 1
                 else:
                     source = DataSource(
                         doi=doi,
@@ -317,7 +330,7 @@ async def map_and_persist(
             existing_mat = await _find_material_by_formula(db, formula)
             if existing_mat:
                 material_map[m_key] = existing_mat
-                skipped += 1
+                reused_entities += 1
             else:
                 material = Material(
                     name=material_name,
@@ -359,14 +372,14 @@ async def map_and_persist(
                 item.property_category,
                 item.property,
             )
-            skipped += 1
+            skipped_unknown_properties += 1
             continue
 
         # --- PropertyMeasurement (NFM-1981 AC-2: 5-tuple dedup) ---
         meas_key = _measurement_dedup_key(item)
         if meas_key in seen_measurement_keys:
             logger.debug("Skipping duplicate measurement: %s", meas_key)
-            skipped += 1
+            skipped_duplicate_measurements += 1
             continue
         seen_measurement_keys.add(meas_key)
 
@@ -410,7 +423,9 @@ async def map_and_persist(
         created_materials=created_materials,
         created_datasets=created_datasets,
         created_measurements=created_measurements,
-        skipped_duplicates=skipped,
+        reused_entities=reused_entities,
+        skipped_duplicate_measurements=skipped_duplicate_measurements,
+        skipped_unknown_properties=skipped_unknown_properties,
         validation_errors=0,
     )
 

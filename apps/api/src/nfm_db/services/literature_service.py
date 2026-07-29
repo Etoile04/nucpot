@@ -327,13 +327,15 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             mapping = await map_and_persist(db, raw_properties)
             logger.info(
                 "process_literature: datasource_id=%s mapped "
-                "sources=%d materials=%d datasets=%d measurements=%d skipped=%d",
+                "sources=%d materials=%d datasets=%d measurements=%d "
+                "reused=%d dedup_meas=%d",
                 ds.id,
                 mapping.created_sources,
                 mapping.created_materials,
                 mapping.created_datasets,
                 mapping.created_measurements,
-                mapping.skipped_duplicates,
+                mapping.reused_entities,
+                mapping.skipped_duplicate_measurements,
             )
 
             # --- Step 5: build KG nodes/edges -------------------------

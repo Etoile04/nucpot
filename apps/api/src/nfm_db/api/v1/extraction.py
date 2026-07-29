@@ -98,7 +98,9 @@ class ExtractionIngestAck(BaseModel):
     corpus_id: str = Field(description="Corpus the batch was tagged with.")
     ingested: int = Field(description="Number of property records ingested (new).")
     created_measurements: int = Field(default=0, description="Property measurements persisted.")
-    skipped_duplicates: int = Field(default=0, description="Duplicate records skipped (5-tuple dedup).")
+    reused_entities: int = Field(default=0, description="Existing DB entities reused (DataSource/Material already in DB).")
+    skipped_duplicate_measurements: int = Field(default=0, description="Duplicate measurements skipped (5-tuple dedup).")
+    skipped_duplicates: int = Field(default=0, description="[Deprecated] Total skipped. Use reused_entities + skipped_duplicate_measurements.")
     validation_errors: int = Field(default=0, description="Records that failed validation.")
     total_received: int = Field(default=0, description="Total property records in the request.")
     processing_time_ms: float = Field(default=0, description="Server-side processing time in milliseconds.")
@@ -328,6 +330,8 @@ async def ingest_extraction_batch(
 
     # --- Persist properties via map_and_persist (NFM-1983 AC-3) ---
     created_measurements = 0
+    reused_entities = 0
+    skipped_duplicate_measurements = 0
     skipped_duplicates = 0
     validation_errors = 0
     errors: list[str] = []
@@ -343,6 +347,8 @@ async def ingest_extraction_batch(
                 session, payload.properties
             )
             created_measurements = mapping_result.created_measurements
+            reused_entities = mapping_result.reused_entities
+            skipped_duplicate_measurements = mapping_result.skipped_duplicate_measurements
             skipped_duplicates = mapping_result.skipped_duplicates
             validation_errors = mapping_result.validation_errors
         except Exception:
@@ -381,6 +387,8 @@ async def ingest_extraction_batch(
             corpus_id=corpus.corpus_id,
             ingested=created_measurements,
             created_measurements=created_measurements,
+            reused_entities=reused_entities,
+            skipped_duplicate_measurements=skipped_duplicate_measurements,
             skipped_duplicates=skipped_duplicates,
             validation_errors=validation_errors,
             total_received=total_received,

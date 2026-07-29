@@ -373,18 +373,35 @@ class TestMappingResult:
             created_materials=2,
             created_datasets=3,
             created_measurements=4,
-            skipped_duplicates=5,
+            reused_entities=5,
+            skipped_duplicate_measurements=3,
             validation_errors=1,
         )
         assert result.created_sources == 1
         assert result.created_materials == 2
         assert result.total_created == 10  # 1+2+3+4
+        assert result.reused_entities == 5
+        assert result.skipped_duplicate_measurements == 3
 
     def test_result_defaults(self):
         result = MappingResult()
         assert result.created_sources == 0
         assert result.validation_errors == 0
         assert result.total_created == 0
+        assert result.reused_entities == 0
+        assert result.skipped_duplicate_measurements == 0
+
+    def test_skipped_duplicates_backward_compat_alias(self):
+        """skipped_duplicates must be a backward-compat alias summing all skip reasons."""
+        result = MappingResult(
+            reused_entities=2,
+            skipped_duplicate_measurements=3,
+        )
+        assert result.skipped_duplicates == 5  # 2 + 3
+
+    def test_skipped_duplicates_zero_when_no_skips(self):
+        result = MappingResult()
+        assert result.skipped_duplicates == 0
 
 
 @pytest.mark.unit
@@ -395,6 +412,141 @@ class TestMappingError:
         err = MappingError("test error", item_index=3)
         assert "test error" in str(err)
         assert "3" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# NFM-1996: split counter separation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSplitCounterSeparation:
+    """NFM-1996: reused_entities vs skipped_duplicate_measurements.
+
+    Entity reuse (DataSource/Material found in DB) → reused_entities.
+    5-tuple measurement dedup → skipped_duplicate_measurements.
+    Unknown property type → neither (tracked internally only).
+    """
+
+    async def test_entity_reuse_increments_reused_entities(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Pre-seeded DataSource in DB + same DOI → reused_entities incremented.
+
+        Entity reuse only fires when _find_source_by_doi finds an existing
+        row in the DB. Same-batch dedup uses in-memory maps, not reused_entities.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+        # Pre-seed a DataSource in the DB
+        existing_source = DataSource(
+            doi="10.1000/reuse-test",
+            title="Pre-existing Paper",
+            source_type="journal_article",
+        )
+        db_session.add(existing_source)
+        await db_session.commit()
+
+        inputs = [
+            _make_extracted_property(source_doi="10.1000/reuse-test"),
+        ]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.reused_entities == 1, (
+            "DataSource found by DOI in DB → entity reuse"
+        )
+        assert result.skipped_duplicate_measurements == 0, (
+            "No measurement dedup — single unique item"
+        )
+        assert result.skipped_duplicates == result.reused_entities + result.skipped_duplicate_measurements
+
+    async def test_material_reuse_increments_reused_entities(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Pre-seeded Material in DB + same formula → reused_entities incremented.
+
+        Uses different DOI so DataSource is NOT reused — only Material reuse.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+        # Pre-seed a Material in the DB
+        existing_material = Material(
+            name="UO2",
+            formula="UO2",
+            is_active=True,
+        )
+        db_session.add(existing_material)
+        await db_session.commit()
+
+        inputs = [
+            _make_extracted_property(
+                material_name="UO2",
+                composition="UO2",
+                source_doi="10.1000/mat-a",
+            ),
+        ]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.reused_entities >= 1, (
+            "Material found by formula in DB → entity reuse"
+        )
+
+    async def test_measurement_dedup_increments_skipped_duplicate_measurements(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Two items with identical 5-tuple → second is measurement dedup.
+
+        skipped_duplicate_measurements must be incremented.
+        reused_entities may also be incremented (same DOI/material).
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        item = _make_extracted_property(
+            material_name="UO2",
+            property_name="Thermal Conductivity",
+            source_doi="10.1000/dedup-test",
+        )
+        dup = dict(item)
+
+        result = await map_and_persist(db_session, [item, dup])
+
+        assert result.skipped_duplicate_measurements == 1, (
+            "Exact 5-tuple duplicate → skipped_duplicate_measurements"
+        )
+        assert result.skipped_duplicates == (
+            result.reused_entities + result.skipped_duplicate_measurements
+        )
+
+    async def test_unknown_property_not_in_split_counters(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Unknown PropertyType should NOT increment reused_entities or
+        skipped_duplicate_measurements — it's a separate skip reason.
+        """
+        # Don't seed any PropertyType
+        inputs = [_make_extracted_property(property_category="other")]
+
+        result = await map_and_persist(db_session, inputs)
+
+        assert result.created_measurements == 0
+        assert result.reused_entities == 0, (
+            "Unknown property skip is not entity reuse"
+        )
+        assert result.skipped_duplicate_measurements == 0, (
+            "Unknown property skip is not measurement dedup"
+        )
 
 
 @pytest.mark.integration

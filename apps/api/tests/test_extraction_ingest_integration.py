@@ -149,6 +149,8 @@ class TestIngestFullFlow:
         assert data["ingested"] == 1
         assert data["created_measurements"] == 1
         assert data["skipped_duplicates"] == 0
+        assert data["reused_entities"] == 0
+        assert data["skipped_duplicate_measurements"] == 0
         assert data["corpus_id"] == "flow-test"
 
         # Verify property_measurements row exists
@@ -176,6 +178,12 @@ class TestIngestFullFlow:
         data2 = body2["data"]
         assert data2["skipped_duplicates"] >= 1, (
             "Second POST with identical 5-tuple should skip duplicates"
+        )
+        # NFM-1996: split counters must be present
+        assert "reused_entities" in data2
+        assert "skipped_duplicate_measurements" in data2
+        assert data2["skipped_duplicates"] == (
+            data2["reused_entities"] + data2["skipped_duplicate_measurements"]
         )
 
 
@@ -367,6 +375,9 @@ class TestIngestDuplicateDetection:
         data1 = body1["data"]
         assert data1["created_measurements"] == 2
         assert data1["skipped_duplicates"] == 0
+        # NFM-1996: split counters must be present
+        assert "reused_entities" in data1
+        assert "skipped_duplicate_measurements" in data1
 
         # Second POST (identical 5-tuples).
         # NOTE: map_and_persist 5-tuple dedup is per-call (within a single
@@ -384,4 +395,8 @@ class TestIngestDuplicateDetection:
         data2 = body2["data"]
         assert data2["skipped_duplicates"] >= 1, (
             f"Expected skipped_duplicates >= 1, got {data2['skipped_duplicates']}"
+        )
+        # NFM-1996: backward-compat alias must equal sum of split counters
+        assert data2["skipped_duplicates"] == (
+            data2["reused_entities"] + data2["skipped_duplicate_measurements"]
         )
