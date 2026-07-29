@@ -133,11 +133,30 @@ def _env_bool(name: str, default: bool) -> bool:
 def mineru_enabled() -> bool:
     """Whether the MinerU backend is enabled.
 
-    Defaults to True so production picks it up automatically; set
-    ``MINERU_ENABLED=false`` to force PyMuPDF fallback only (useful in
-    dev or when MinerU is unreachable).
+    Returns False if ``MINERU_ENABLED`` is explicitly ``false`` OR if
+    no ``MINERU_API_KEY`` is configured (prevents confusing failed
+    attempts and warning logs when the key is missing — NFM-2013).
+
+    Set ``MINERU_ENABLED=true`` to force-enable even without a key
+    (not recommended).
     """
-    return _env_bool("MINERU_ENABLED", True)
+    explicit = os.environ.get("MINERU_ENABLED", "").strip().lower()
+    if explicit in ("false", "0", "no", "off"):
+        return False
+    if explicit in ("true", "1", "yes", "on"):
+        return True
+    # Not explicitly set — auto-detect based on API key presence.
+    _load_dotenv_into_environ()
+    has_key = any(
+        os.environ.get(v)
+        for v in ("MINERU_API_KEY", "MinerU_API_KEY", "NFM_MINERU_API_KEY")
+    )
+    if not has_key:
+        logger.info(
+            "mineru_enabled: no MINERU_API_KEY set — disabling MinerU "
+            "(set MINERU_ENABLED=true to override)"
+        )
+    return has_key
 
 
 def _load_dotenv_into_environ() -> None:
