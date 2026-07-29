@@ -322,13 +322,70 @@ asyncio_mode = "auto"
 # CWD on sys.path (unlike `python -m pytest`), which broke the ontology tests'
 # `from tests.<helper> import ...` collection in CI (NFM-275).
 pythonpath = ["src", "."]
-addopts = "-m 'not integration' --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
+# NFM-2044 / KR-5.1: coverage emission is now driven by [tool.coverage.run] below.
+# `--cov` (no path) tells pytest-cov to honor the configured `source` list;
+# `--cov-fail-under` is intentionally NOT set (AC-4: surface the number, not a
+# hard gate). `--cov-report=json` keeps the existing apps/api/coverage.json
+# artifact in sync for any downstream consumer (AC-3).
+addopts = "-m 'not integration' --cov --cov-report=term-missing --cov-report=xml --cov-report=json"
 markers = [
     "e2e: End-to-end tests that exercise the full system",
     "unit: Unit tests (isolated, no external dependencies)",
     "integration: Integration tests (require external services)",
     "golden: Golden regression tests",
     "performance: Performance benchmark tests",
+]
+
+# NFM-2044 / KR-5.1: Core-module coverage emission (Cobertura XML at
+# apps/api/coverage.xml + JSON at apps/api/coverage.json). See NFM-2040 §1 and
+# NFM-2035 §2 ADR-KR5-1, §3.2 for the spec.
+[tool.coverage.run]
+# Core module set per NFM-2040 / NFM-2035 §2 ADR-KR5-1:
+#   include: apps/api/src/, apps/api/src/models/, apps/api/alembic_migrations/, packages/
+#   - apps/api/src/models/ does not exist as a Python source directory (Python
+#     models live under apps/api/src/nfm_db/models/). It is listed for spec
+#     completeness; no files match.
+#   - packages/ lives at the repo root and contains TypeScript only; coverage.py
+#     instruments only Python, so listing it here has no measurable effect but
+#     documents the intended core-module set.
+# Coverage is measured for everything pytest imports whose file is under one of
+# these roots; non-matching imports are silently skipped.
+source = [
+    "src",                # apps/api/src/ — nfm_db, monitoring packages
+    "alembic_migrations", # apps/api/alembic_migrations/ — operational migration scripts
+]
+branch = false
+omit = [
+    # Standard Python / Node build & cache artifacts
+    "*/__pycache__/*",
+    "*/.next/*",
+    "*/dist/*",
+    "*/node_modules/*",
+    # Out-of-scope apps per NFM-2040 / NFM-2035 §2 ADR-KR5-1
+    "../apps/web/src/components/ui/*",
+    "../apps/mcp-server/*",
+    "../apps/nfm-md-runner/*",
+    # Alembic version scripts and migration test fixtures
+    "*/migrations/versions/*",
+    # Tests aren't part of the core module set
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+# AC-4: --fail-under is NOT a gate; we surface the number, not a hard threshold.
+# Reporter outputs:
+#   - coverage.xml (Cobertura schema) at apps/api/coverage.xml — AC-1 / AC-2
+#   - coverage.json (coverage.py native format 3) at apps/api/coverage.json — AC-3
+#   - term-missing to stdout for interactive use
+precision = 2
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+    "pass",
 ]
 
 [build-system]
