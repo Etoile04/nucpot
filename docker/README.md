@@ -46,9 +46,28 @@ docker compose -f docker-compose.prod.yml \
 ### Development (local)
 
 ```bash
-# Minimal stack (PostgreSQL only)
+# 1. Start the local stack (PostgreSQL only — the API runs on the host)
 docker compose -f docker/docker-compose.yml up -d
+
+# 2. Apply migrations to seed the schema + reference data
+#    (property_types, property_categories, etc. — required for OntoFuel ingest).
+cd apps/api && alembic upgrade head
+
+# 3. Run the API on the host with hot-reload
+cd apps/api && uvicorn nfm_db.main:app --reload --port 8000
 ```
+
+Without step 2, `property_types` will be empty and the OntoFuel ingest
+endpoint will silently record `created_measurements=0`. Migration 031
+seeds the canonical property_types rows so the lookup in
+`extraction_to_db_mapper._lookup_property_type` resolves every property
+name emitted by the v4 extraction pipeline.
+
+The dev workflow deliberately runs migrations on the host (not in the
+container) so the dev loop is fast and idempotent — `alembic upgrade
+head` is safe to re-run. Production runs migrations in the container
+image via `docker/prod-api.Dockerfile` (`alembic upgrade head && exec
+uvicorn …`).
 
 ## Dockerfiles
 
