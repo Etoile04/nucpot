@@ -174,13 +174,13 @@ def _parse_pdf_to_markdown(
         parts: list[str] = []
         for page in doc:
             parts.append(page.get_text())
-        result = "\n\n".join(parts)
+        md_text = "\n\n".join(parts)
         if parser_used != "pymupdf":
             logger.warning(
                 "_parse_pdf_to_markdown: using PyMuPDF fallback (%d chars)",
-                len(result),
+                len(md_text),
             )
-        return result
+        return md_text
     finally:
         doc.close()
 
