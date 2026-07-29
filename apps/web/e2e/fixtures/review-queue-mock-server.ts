@@ -23,6 +23,7 @@ import {
   MOCK_BATCH_APPROVE_RESPONSE,
   MOCK_BATCH_REJECT_RESPONSE,
   MOCK_CONFLICTS_RESPONSE,
+  MOCK_CONFLICT_ITEMS,
   MOCK_RESOLVE_CONFLICT_RESPONSE,
 } from "./review-queue-mock-data"
 
@@ -67,7 +68,30 @@ function handleReviewRoute(route: Route, url: string): void {
 
   // GET /api/v1/review/pending — list review queue (item_type=node or edge)
   if (url.includes("/api/v1/review/pending") && method === "GET") {
-    // Return envelope-wrapped response to match backend
+    // Return envelope-wrapped response to match backend shape.
+    // For item_type=edge, return edge-shaped items that fetchConflicts()
+    // maps into ConflictItem (needs item_data.label + item_data.relation_type).
+    if (url.includes("item_type=edge")) {
+      const edgeItems = MOCK_CONFLICT_ITEMS.map((c) => ({
+        id: c.id,
+        item_type: "edge",
+        item_data: {
+          label: c.entityName,
+          relation_type: c.property,
+          value: c.sourceA.value,
+        },
+        confidence: c.sourceA.confidence,
+        review_status: "pending",
+        source: { paragraph: null, page: null, doi: c.sourceA.sourceTitle },
+        created_at: "2026-07-14T08:00:00Z",
+      }))
+      jsonResponse(route, {
+        success: true,
+        data: { items: edgeItems, total: edgeItems.length, page: 1, limit: 20, pages: 1 },
+      })
+      return
+    }
+    // Default: item_type=node (KG review queue)
     jsonResponse(route, { success: true, data: MOCK_KG_REVIEW_PENDING_RESPONSE })
     return
   }

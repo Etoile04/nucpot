@@ -36,7 +36,10 @@ export async function request<T>(
 
   if (response.status === 401) {
     if (typeof window !== "undefined") {
-      window.location.href = "/admin/login"
+      // Redirect to /login (unified auth entry) — NOT /admin/login (legacy
+      // blog admin).  Middleware, ReviewAuthGuard, and this client must all
+      // agree on the same login destination to avoid redirect loops.
+      window.location.href = "/login"
     }
     throw new Error("认证已过期，请重新登录")
   }

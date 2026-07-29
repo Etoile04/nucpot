@@ -70,7 +70,8 @@ async function assertAuthGate(
   const p = await context.newPage()
   try {
     await p.goto(path, { waitUntil: "domcontentloaded" })
-    await expect(p).toHaveURL(/\/admin\/login/, { timeout: 30_000 })
+    // Middleware redirects to /login (not /admin/login) — see middleware.ts
+    await expect(p).toHaveURL(/\/login/, { timeout: 30_000 })
 
     // Login page should render at least one input — state-driven, no fixed delay.
     await expect(p.locator("form, input").first()).toBeVisible({ timeout: 10_000 })
