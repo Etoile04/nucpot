@@ -99,10 +99,27 @@ database directly through SQLAlchemy.
 
 ### Password persistence (NFM-2012)
 
-> **WARNING:** The default behavior prints the password to stdout.
-> If the terminal scrollback is lost (e.g. agent runs, CI capture),
-> the password is irrecoverable. Always use ``--save-password-to``
-> in automated contexts.
+> **WARNING — PASSWORD IS NOT STORED:**
+>
+> The `create-service-account` command prints the plaintext password
+> to stdout **exactly once**. It is **never** written to the database,
+> application logs, or any persistent file (unless you opt in with
+> ``--save-password-to``).
+>
+> **You MUST use ``--save-password-to <path>`` in all automated
+> contexts** (agent runs, CI pipelines, scripts) where terminal
+> scrollback may be lost.
+>
+> **If the password is lost, there is no recovery mechanism**
+> other than deleting the user row via SQL and re-running
+> ``create-service-account`` to generate a new credential:
+>
+> ```sql
+> DELETE FROM users WHERE username = '<account-name>';
+> ```
+>
+> Any in-flight JWTs issued against the old row remain valid
+> until their TTL expires.
 
 To save the password to a file with owner-only permissions (mode 0600):
 
