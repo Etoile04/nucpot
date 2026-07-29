@@ -27,8 +27,6 @@ PRs. If you want to test the hook locally before NFM-2084 lands, check out the
 
 ---
 
----
-
 ## The rule (one line)
 
 Every commit **subject** on every branch merged into `main` must contain **either**:
@@ -72,8 +70,10 @@ with no trace in history; CI will still catch the offending commit on the PR.
 ## The control: CI is the gate, the local hook is a convenience
 
 **Authoritative check:** GitHub Actions on `pull_request`
-(`.github/workflows/ci.yml`). It cannot be skipped by failing to configure
-anything and cannot be bypassed with `--no-verify`. The PR records the result.
+(`.github/workflows/commit-ref-gate.yml`,
+[NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`). It cannot be skipped
+by failing to configure anything and cannot be bypassed with `--no-verify`.
+The PR records the result.
 
 **Local hook (opt-in, fast feedback):** a `commit-msg` hook will ship in
 `.githooks/` once [NFM-2084](/NFM/issues/NFM-2084) lands on `main`. Until then,

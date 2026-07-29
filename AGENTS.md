@@ -24,8 +24,6 @@ branch or wait for the merge.
 
 ---
 
----
-
 ## The rule
 
 Every commit **subject** on every branch merged into `main` must contain **either**:
@@ -72,8 +70,9 @@ with no trace in history; CI will still catch the offending commit on the PR.
 ## The control: CI is the gate, the local hook is a convenience
 
 **Authoritative check:** GitHub Actions on `pull_request`
-(`.github/workflows/ci.yml`). It cannot be skipped by an unconfigured clone and
-cannot be bypassed with `--no-verify`.
+(`.github/workflows/commit-ref-gate.yml`,
+[NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`). It cannot be skipped
+by an unconfigured clone and cannot be bypassed with `--no-verify`.
 
 **Local hook (opt-in, fast feedback):** a `commit-msg` hook will ship in
 `.githooks/` once [NFM-2084](/NFM/issues/NFM-2084) lands on `main`. The intent,
