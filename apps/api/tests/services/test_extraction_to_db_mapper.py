@@ -22,10 +22,10 @@ from nfm_db.models import (
     PropertyType,
 )
 from nfm_db.services.extraction_to_db_mapper import (
+    ONTOFUEL_CATEGORY_TO_SLUG,
     MappingError,
     MappingResult,
     _normalize_category_slug,
-    ONTOFUEL_CATEGORY_TO_SLUG,
     map_and_persist,
 )
 

@@ -35,7 +35,6 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-
 REVISION = "031_seed_property_types"
 DOWN_REVISION = "030_create_corpus_table"
 MIGRATION_PATH = f"migrations/versions/{REVISION}.py"

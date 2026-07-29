@@ -531,10 +531,11 @@ class TestRealPgIntegration:
             # 3. Run migration 031 by importing its upgrade() and binding
             #    ``op`` to the live connection — exercises the EXACT code
             #    path on the real dialect.
-            from alembic.operations import Operations
-            from alembic.runtime.migration import MigrationContext
             import importlib.util as _il
             from pathlib import Path
+
+            from alembic.operations import Operations
+            from alembic.runtime.migration import MigrationContext
 
             module_path = Path(
                 "migrations/versions/031_seed_property_types.py"
