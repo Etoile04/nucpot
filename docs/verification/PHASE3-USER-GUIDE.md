@@ -83,6 +83,22 @@ https://nucpot.dpdns.org/review/kg
 
 > **操作建议**：低置信度（红色）的数据必须人工核查溯源后才能放行。
 
+### 展开溯源示例
+
+下面这张图展示了点击「UO2 melting_point」行的「展开溯源」按钮后，底部面板自动加载文献段落的过程：
+
+![第三步 - 展开溯源: UO2 melting_point 节点展开，显示 PNNL 文献段落与 LaTeX 公式](screenshots/03-source-expanded-merged.png)
+
+**图中可见内容**：
+- 第一行 **UO2 melting_point** 已展开（展开按钮显示 ∨，而非 ▶）
+- 底部出现文献标题：**📗 Material Property Correlations: Comparisons between FRAPCON-4.0, FRAPTRAN-2.0, and MATPRO (PNNL 2015)**
+- 期刊元数据：**PNNL Technical Report (2015)**
+- 段落摘要：`# 2.1.1 Model Development and Comparisons` + 3113.15K 熔点方程
+- **LaTeX 自动渲染**：`UO₂`（下标）、`MOX`（缩写）、`(U,Pu)O₂`（嵌套下标）
+- 蓝色聊天按钮（右下）可联系客服
+
+> 💡 **下一步**：第四步讲解这个面板里的真实用途 — 与节点值对照验证
+
 ---
 
 ## 第四步：查看数据溯源（最关键！）
@@ -260,7 +276,7 @@ A: 可能是登录过期或 CF Tunnel 间歇性问题（HTTP 502）。重新登�
 |---|------|------|
 | 01 | `screenshots/01-login.png` | 第一步：登录页面（邮箱 + 密码 + 登录按钮） |
 | 02 | `screenshots/02-review-list.png` | 第二步：审核列表（含「提取源」列徽章、9 列数据、统计行） |
-| 03 | `screenshots/03-source-expanded-merged.png` | 第三步辅助：审核列表 + 展开面板视图 |
+| 03 | `screenshots/03-source-expanded-merged.png` | 第三步示例：UO2 melting_point 单行展开，显示 PNNL 文献段落（含 LaTeX，**无 HTML 表格**） |
 | 04 | `screenshots/04-case1-k1-296-7-provenance.png` | **第四步 + 案例 1 复用**：UO2 K1=296.7 节点展开，FRAPCON Table 2.1 完整渲染 |
 | 05 | `screenshots/05-batch-operations.png` | 第五步：批量操作（5 行选中，批量审核/拒绝按钮出现） |
 | 06 | `screenshots/06-batch-confirm-dialog.png` | 第五步：批量审核确认对话框 |
