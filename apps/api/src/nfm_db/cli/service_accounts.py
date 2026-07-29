@@ -1,9 +1,8 @@
 """``nucpot create-service-account`` Click command (NFM-1973 / NFM-1972 AC-1).
 
 Provisions a new ``User`` row with ``is_service_account=True`` and emits
-a one-time password to stdout.  The password is **never** logged,
-persisted to a file, or re-displayed; the operator must capture it into
-a password manager at creation time.
+a one-time password.  The password is **never** logged or re-displayed;
+use ``--save-password-to <path>`` to persist it to a file with mode 600.
 
 Design notes
 ------------
@@ -30,12 +29,18 @@ Design notes
   instead of silently overwriting — that would mint a new password but
   leave the JWTs issued against the old hash valid until expiry, which
   is exactly the surprise operators don't want.
+
+* **Password persistence (NFM-2012).**  ``--save-password-to <path>``
+  writes the plaintext password to a file with mode 0600 so it survives
+  beyond the terminal scrollback.  Use ``-`` to explicitly print to
+  stdout (the default behavior when the flag is omitted).
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import secrets
 import sys
 from collections.abc import Coroutine
@@ -67,6 +72,20 @@ def _synthesize_service_email(username: str) -> str:
     return f"{username}@service.local"
 
 
+def _write_password_to_file(filepath: str, password: str) -> None:
+    """Write the plaintext password to *filepath* with mode 0600.
+
+    The file is created (or truncated) with owner-only read/write
+    permissions so that other users on the same host cannot read the
+    credential.  A trailing newline is appended for editor friendliness.
+    """
+    fd = os.open(filepath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, f"{password}\n".encode())
+    finally:
+        os.close(fd)
+
+
 def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine from a (possibly already-running) sync context.
 
@@ -76,9 +95,9 @@ def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     ``RuntimeError('asyncio.run() cannot be called from a running event loop')``.
 
     Strategy:
-    * No running loop → ``asyncio.run(coro)`` (the fast path used in
+    * No running loop -> ``asyncio.run(coro)`` (the fast path used in
       production).
-    * Already inside a loop → dispatch ``asyncio.run`` to a one-shot
+    * Already inside a loop -> dispatch ``asyncio.run`` to a one-shot
       worker thread.  The worker has its own loop so the coroutine runs
       to completion, and the parent thread blocks on the future so the
       CLI output ordering is preserved.
@@ -134,52 +153,8 @@ async def _create_service_account_async(
         return user
 
 
-@click.command(
-    name="create-service-account",
-    short_help="Create a service account and emit a one-time password.",
-    help=(
-        "Provision a new service account (NFM-1973 / NFM-1972 AC-1). "
-        "A cryptographically random password is generated, printed to "
-        "stdout exactly once, and never persisted in plaintext. "
-        "Copy it into your password manager before the shell scrollback "
-        "is lost — the command cannot recover it later.\n\n"
-        "The created user authenticates via the standard "
-        "``/auth/login`` endpoint but is gated to "
-        "``/api/v1/extraction/ingest`` only; every other endpoint "
-        "(including ``/admin/*``) returns ``403 Forbidden``."
-    ),
-)
-@click.option(
-    "--username",
-    required=True,
-    help="Username for the new service account (must be unique).",
-)
-@click.option(
-    "--role",
-    required=True,
-    type=click.Choice(["service"], case_sensitive=False),
-    help=(
-        "Role to assign.  Only ``service`` is supported today because "
-        "that is the sole RBAC identity admitted by the OntoFuel "
-        "ingest endpoint; future machine identities will be added as "
-        "new ``ServiceAccountScope`` enum members."
-    ),
-)
-def create_service_account(username: str, role: str) -> NoReturn:
-    """Create a service account and print its one-time password."""
-    # ``role`` is captured in the command for forward compatibility
-    # (the AC names it explicitly even though only ``service`` exists),
-    # but today the column shape is fixed — service accounts are the
-    # only kind this factory emits.
-    del role  # reserved for future scope-aware provisioning
-
-    password = _generate_password()
-    user = _run_async(_create_service_account_async(username, password))
-
-    # Print the banner + password to stdout.  We deliberately do NOT
-    # write the password to stderr or any log file so that operators
-    # who redirect stdout to a file (CI capture) still leave the secret
-    # in the terminal scrollback.
+def _emit_banner(user: User, password: str) -> None:
+    """Print the account-creation banner with the one-time password."""
     click.echo("")
     click.echo("=" * 72)
     click.echo(f"Service account created: {user.username}")
@@ -202,6 +177,73 @@ def create_service_account(username: str, role: str) -> NoReturn:
     )
     click.echo("=" * 72)
 
+
+@click.command(
+    name="create-service-account",
+    short_help="Create a service account and emit a one-time password.",
+    help=(
+        "Provision a new service account (NFM-1973 / NFM-1972 AC-1). "
+        "A cryptographically random password is generated and emitted "
+        "exactly once.  By default it prints to stdout; use "
+        "``--save-password-to <path>`` to persist it to a file with "
+        "mode 0600, or ``--save-password-to -`` to explicitly print "
+        "to stdout.\n\n"
+        "The created user authenticates via the standard "
+        "``/auth/login`` endpoint but is gated to "
+        "``/api/v1/extraction/ingest`` only; every other endpoint "
+        "(including ``/admin/*``) returns ``403 Forbidden``."
+    ),
+)
+@click.option(
+    "--username",
+    required=True,
+    help="Username for the new service account (must be unique).",
+)
+@click.option(
+    "--role",
+    required=True,
+    type=click.Choice(["service"], case_sensitive=False),
+    help=(
+        "Role to assign.  Only ``service`` is supported today because "
+        "that is the sole RBAC identity admitted by the OntoFuel "
+        "ingest endpoint; future machine identities will be added as "
+        "new ``ServiceAccountScope`` enum members."
+    ),
+)
+@click.option(
+    "--save-password-to",
+    default=None,
+    metavar="FILEPATH",
+    help=(
+        "Write the plaintext password to FILEPATH with mode 0600. "
+        "Use ``-`` to print to stdout (default behavior)."
+    ),
+)
+def create_service_account(
+    username: str,
+    role: str,
+    save_password_to: str | None,
+) -> NoReturn:
+    """Create a service account and print its one-time password."""
+    # ``role`` is captured in the command for forward compatibility
+    # (the AC names it explicitly even though only ``service`` exists),
+    # but today the column shape is fixed — service accounts are the
+    # only kind this factory emits.
+    del role  # reserved for future scope-aware provisioning
+
+    password = _generate_password()
+    user = _run_async(_create_service_account_async(username, password))
+
+    if save_password_to is not None and save_password_to != "-":
+        # Write to file with restricted permissions.
+        _write_password_to_file(save_password_to, password)
+        click.echo(f"Password saved to {save_password_to} (mode 0600).")
+        click.echo(f"Service account created: {user.username}")
+        click.echo(f"  user_id = {user.id}")
+    else:
+        # Print the banner + password to stdout (default or "-").
+        _emit_banner(user, password)
+
     sys.exit(0)
 
 
@@ -209,5 +251,6 @@ __all__ = [
     "_create_service_account_async",
     "_generate_password",
     "_run_async",
+    "_write_password_to_file",
     "create_service_account",
 ]
