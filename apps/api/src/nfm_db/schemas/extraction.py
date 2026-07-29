@@ -119,6 +119,20 @@ class ExtractionStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Canonical property_category values (NFM-1979 / AC-4).
+# Mapper translates to the broader DB PropertyCategory catalog (e.g. 11 Chinese
+# categories in property_catalog.PropertyCategory) when persisting.
+PropertyCategoryLiteral = Literal[
+    "mechanical",
+    "thermal",
+    "physical",
+    "diffusion",
+    "irradiation",
+    "nuclear",
+    "other",
+]
+
+
 class ExtractedProperty(BaseModel):
     """A single property extracted by the OntoFuel module (v4-aligned).
 
@@ -141,14 +155,23 @@ class ExtractedProperty(BaseModel):
     )
     phase: str | None = Field(default=None, description="Material phase (alpha, beta, gamma, etc.)")
     element: str | None = Field(default=None, description="Element if property is element-specific")
-    property_category: str | None = Field(
-        default=None, description="Property category from fixed catalog"
+    property_category: PropertyCategoryLiteral | None = Field(
+        default=None,
+        description=(
+            "Property category (NFM-1979 AC-4). Fixed Literal of 7 values; "
+            "use 'other' as the bucket for categories not on this list."
+        ),
     )
     property: str = Field(..., description="Property name")
     value: str = Field(..., description="Numeric value as string (preserves precision)")
     unit: str = Field(..., description="Unit of measurement")
     conditions: dict[str, Any] | None = Field(
-        default=None, description="Measurement conditions (temp, pressure, etc.)"
+        default=None,
+        description=(
+            "Measurement conditions. Standard keys: temperature, pressure, "
+            "neutron_flux, dose, strain_rate. Unknown keys are preserved "
+            "(see docs/extraction_conditions_schema.md)."
+        ),
     )
     context: str | None = Field(
         default=None, description="Additional context for understanding the value"
