@@ -5,12 +5,11 @@ Covers AC-1 through AC-4.
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import patch
 
 import pytest
 
-from monitoring.worker_health import WorkerHealthTracker, ALERT_THRESHOLD
+from monitoring.worker_health import ALERT_THRESHOLD, WorkerHealthTracker
 
 
 @pytest.fixture()
@@ -101,7 +100,7 @@ class TestCriticalAlertAtThreshold:
 
     def test_sentry_not_required(self, tracker: WorkerHealthTracker) -> None:
         """Tracker works even if sentry-sdk is not installed."""
-        with patch("monitoring.worker_health._try_sentry_capture") as mock:
+        with patch("monitoring.worker_health._try_sentry_capture"):
             tracker.record_failure("fail")
             # No exception raised
 
@@ -180,9 +179,10 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_includes_worker_fields(self) -> None:
         """Health endpoint returns worker health fields."""
+        from httpx import ASGITransport, AsyncClient
+
         from monitoring.worker_health import worker_health
         from nfm_db.main import app
-        from httpx import ASGITransport, AsyncClient
 
         worker_health.reset()
 
@@ -201,9 +201,10 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_shows_degraded_after_failures(self) -> None:
         """Health endpoint shows 'degraded' after >= 5 failures."""
+        from httpx import ASGITransport, AsyncClient
+
         from monitoring.worker_health import worker_health
         from nfm_db.main import app
-        from httpx import ASGITransport, AsyncClient
 
         worker_health.reset()
         for _ in range(5):
@@ -222,9 +223,10 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_shows_ok_initially(self) -> None:
         """Health endpoint shows 'ok' with zero failures by default."""
+        from httpx import ASGITransport, AsyncClient
+
         from monitoring.worker_health import worker_health
         from nfm_db.main import app
-        from httpx import ASGITransport, AsyncClient
 
         worker_health.reset()
 

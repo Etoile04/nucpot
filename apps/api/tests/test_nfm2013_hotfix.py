@@ -17,7 +17,6 @@ import pytest
 
 from nfm_db.services.llm_client import call_llm
 
-
 # ===================================================================
 # Task 1: call_llm retry on transient server errors
 # ===================================================================
@@ -223,6 +222,7 @@ class TestMineruAutoDetect:
         monkeypatch.setenv("MINERU_API_KEY", "has-key")
 
         import importlib
+
         import nfm_db.services.mineru_client as mcm
         importlib.reload(mcm)
 
@@ -236,6 +236,7 @@ class TestMineruAutoDetect:
         monkeypatch.delenv("NFM_MINERU_API_KEY", raising=False)
 
         import importlib
+
         import nfm_db.services.mineru_client as mcm
         importlib.reload(mcm)
 
@@ -249,6 +250,7 @@ class TestMineruAutoDetect:
         monkeypatch.delenv("NFM_MINERU_API_KEY", raising=False)
 
         import importlib
+
         import nfm_db.services.mineru_client as mcm
         importlib.reload(mcm)
 
@@ -265,6 +267,7 @@ class TestMineruAutoDetect:
         monkeypatch.setenv(key_var, "some-key-value")
 
         import importlib
+
         import nfm_db.services.mineru_client as mcm
         importlib.reload(mcm)
 
@@ -345,6 +348,7 @@ class TestIngestStatusEndpoint:
     async def test_ingest_status_falls_back_to_in_memory(self) -> None:
         """Endpoint returns in-memory job data when available."""
         from uuid import uuid4
+
         from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
 
         job_id_str = str(uuid4())
