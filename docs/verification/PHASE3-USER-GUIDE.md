@@ -203,29 +203,67 @@ https://nucpot.dpdns.org/review/kg
 
 **目标**：处理置信度 < 0.7 且标注为"手动/无源"的数据
 
-1. 找到 `simulation_method=AutoML regression ensemble (AutoGluon)`（置信度 0.48）
+![案例 2 - 低置信度 AutoML 节点展开](screenshots/07-case2-low-confidence-automl.png)
+
+**步骤**：
+
+1. 在列表中找到 `simulation_method=AutoML regression ensemble (AutoGluon)`（置信度 **0.48**，红色低）
 2. **提取源徽章显示**：`✋ 手动/无源`（灰色）— 表示该节点没有自动关联到具体 PDF 段落
-3. **展开溯源** → 显示 "Material_Property_Correlations" 文献标题 + 段落
-4. 判断：AutoGluon 这类模拟方法术语是否在原文中出现过？
-   - 若原文中确实有 AutoML/ AutoGluon 讨论 → **审核**
-   - 若是 LLM 误识别的方法名 → **拒绝** 并写"原文未提及此方法"
+3. 点击该行 **「展开溯源」** → 底部出现文献标题 + 段落（参见 07 图）
+4. **段落分析**：展开面板中显示的是：
+   - 文献标题：`Material Property Correlations: Comparisons between FRAPCON-4.0, FRAPTRAN-2.0, and MATPRO (PNNL 2015)`
+   - 段落：`An automated machine learning framework for high-fidelity prediction of...`
+5. **判断**：
+   - 在段落（或其他章节）中**搜索** `AutoGluon`、`AutoML` 这两个术语
+   - 若**未找到** → 这是 LLM 误识别的方法名 → **拒绝** 并写"原文未提及此方法"
+   - 若找到 → **审核**
+
+> ⚠️ **本案例预期操作**：点击 **「拒绝」**（红色按钮），在弹出对话框中输入"原文 PNNL 2015 报告未提及 AutoGluon 或 AutoML 自动化方法术语"，确认拒绝。
+
+---
 
 ### 案例 3：批量通过同文献节点
 
-**场景**：PNNL FRAPCON 文献提取了 18 个节点，全部来自同一可信来源且置信度 ≥ 0.9
+**场景**：PNNL FRAPCON 文献提取了 7 个高置信度节点（K1/K2/K3/θ/ED + PuO2 K1 + Gd₂O₃ K1），全部来自同一可信来源且置信度 ≥ 0.90
 
-1. 切换筛选为 **"已通过"** 看到已审批节点记录
-2. 切换筛选为 **"全部"** + 检查节点类型分布
-3. 校验每条节点都是 PNNL 文献 Table 2.1 的真实常数
-4. 对置信度 ≥ 0.95 的节点，可勾选后用 **「批量审核」** 加快速度
+![案例 3 - 批量勾选 7 个 PNNL 高置信度节点](screenshots/08-case3-pnnl-batch-selected.png)
+
+**步骤**：
+
+1. 在列表中找到所有 PNNL 来源节点（通过创建时间 07/28 08:41 或标题含 K1/K2/K3/θ/ED 区分）
+2. **逐个勾选**每行的复选框（PNG 中可见 7 行蓝色背景 + ✓ 标记）
+3. **底部批量操作栏**自动出现：
+   - "已选择 7 项"
+   - "批量审核"（绿色）
+   - "批量拒绝"（红色）
+   - "重置为待审"（灰色）
+4. 校验每条节点都是 PNNL 文献 Table 2.1 的真实常数
+5. 点击 **「批量审核」** → 确认对话框 → 7 个节点全部转为 `approved`
+
+> 💡 **08 图 vs 05 图区别**：05 是任意 5 行勾选（演示通用流程），08 是**专门针对 PNNL 同源节点**的批量选择（演示案例 3 场景）。
+
+---
 
 ### 案例 4：追溯 PDF 文献 → 数据点全过程
 
-1. 截屏 03 中显示的 `simulation_method=AutoML` 节点
-2. 提取源徽章虽是灰色（DOI 字段为空），但**展开溯源**时
-3. 自动 fetch `/api/v1/review/{id}/source` 端点
-4. 返回的 `source_title = "Material_Property_Correlations"` 来自 `data_sources` 表的真实记录
-5. 说明：即便列表 API 中 DOI 为 null，详情面板仍可拿到完整文献元数据
+**目标**：验证即便列表显示「手动/无源」，详情面板仍能通过自动 fetch 获取完整文献元数据
+
+![案例 4 - 列表显示手动/无源但展开面板自动获取完整文献标题](screenshots/09-case4-source-auto-resolved.png)
+
+**关键发现**：
+
+1. 列表中所有行的「提取源」列都是**灰色「手动/无源」徽章**（DOI 字段在 API 响应中为 null）
+2. **但展开溯源后**（以 UO2 thermal_conductivity at 1000K 为例）：
+   - 文献标题自动获取：`Material Property Correlations: Comparisons between FRAPCON-4.0, FRAPTRAN-2.0, and MATPRO (PNNL 2015)`
+   - 期刊元数据：`PNNL Technical Report (2015)`
+   - 段落渲染：`\mathrm{K}_{95}`、`A(x) = 2.85x + 0.035, m-K/W` 等复杂 LaTeX 公式
+3. **数据流**：
+   - 前端调用 `GET /api/v1/review/{id}/source` 端点
+   - 后端从 `data_sources` 表查 `source_id` 对应的标题
+   - 返回完整元数据 + 段落
+4. **结论**：列表 API 的 source.doi/title 字段可能为 null（前端性能优化考虑），但详情面板始终能拿到真实数据。
+
+> ⚠️ **设计取舍**：列表 API 故意省略文献元数据（减少 N+1 查询），由 SourceProvenancePanel 在展开时按需 fetch。
 
 ---
 
@@ -280,6 +318,9 @@ A: 可能是登录过期或 CF Tunnel 间歇性问题（HTTP 502）。重新登�
 | 04 | `screenshots/04-case1-k1-296-7-provenance.png` | **第四步 + 案例 1 复用**：UO2 K1=296.7 节点展开，FRAPCON Table 2.1 完整渲染 |
 | 05 | `screenshots/05-batch-operations.png` | 第五步：批量操作（5 行选中，批量审核/拒绝按钮出现） |
 | 06 | `screenshots/06-batch-confirm-dialog.png` | 第五步：批量审核确认对话框 |
+| 07 | `screenshots/07-case2-low-confidence-automl.png` | **案例 2**：低置信度 (0.48) AutoML 节点展开，演示「拒绝」决策 |
+| 08 | `screenshots/08-case3-pnnl-batch-selected.png` | **案例 3**：7 个 PNNL FRAPCON 高置信度节点批量勾选 |
+| 09 | `screenshots/09-case4-source-auto-resolved.png` | **案例 4**：列表「手动/无源」+ 展开面板自动获取完整文献标题 |
 
 ## 附录 B：核心 API 端点
 
