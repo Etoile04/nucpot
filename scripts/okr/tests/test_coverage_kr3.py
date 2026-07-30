@@ -20,6 +20,8 @@ import pytest
 from scripts.okr.coverage_kr3 import (
     ENVIRONMENTS,
     KR3_TARGET,
+    _default_prod_path,
+    _resolve_prod_path,
     build_report,
     compute_value,
     filter_environment,
@@ -320,6 +322,103 @@ class TestBuildReport:
         report = build_report(path, None, None, environment="staging")
         assert report["value"] is None
         assert report["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _resolve_prod_path / _default_prod_path (ADR-KR3 §C6.3.2)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveProdPathFallback:
+    """ADR-KR3 §C6.3.2 — the prod path fallback must not name a user.
+
+    The C6.3.2 invariant is that the fallback must use runtime expansion
+    (``Path.home()``), not a hardcoded literal like
+    ``/Users/lwj04/.nfmd/master-deploy-events.jsonl``. The check below
+    monkeypatches ``Path.home()`` to a synthetic path whose own string
+    contains no operator username — if the module had a hardcoded
+    literal anywhere, it would survive the monkeypatch and trip the
+    assertion. (We cannot use ``tmp_path`` here because pytest's
+    ``tmp_path`` itself embeds the host's username.)
+    """
+
+    _SYNTHETIC_HOME = Path("/opt/synthetic/nfmd-home")
+
+    def test_fallback_contains_no_lwj04_literal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
+
+        resolved = _resolve_prod_path(None)
+        assert "lwj04" not in str(resolved), (
+            f"prod-path fallback {resolved!r} contains 'lwj04' — must use "
+            "runtime Path.home() expansion, not a hardcoded username "
+            "literal (ADR-KR3 §C6.3.2)"
+        )
+
+    def test_default_prod_path_contains_no_lwj04_literal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+
+        assert "lwj04" not in str(_default_prod_path())
+
+    def test_fallback_contains_no_hardcoded_user_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The literal ``/Users/<name>`` and ``/home/<name>`` forms must
+        never appear in the resolved fallback. Catches both the macOS
+        and Linux conventions."""
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
+
+        resolved_str = str(_resolve_prod_path(None))
+        import re as _re
+        offenders = _re.findall(r"(?:/Users/|/home/)[A-Za-z0-9._-]+/", resolved_str)
+        assert not offenders, (
+            f"prod-path fallback {resolved_str!r} contains a hardcoded "
+            "user-path literal — ADR-KR3 §C6.3.2 forbids this in committed code"
+        )
+
+    def test_fallback_resolves_under_dot_nfmd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_home = tmp_path / "synthetic-home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+        monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
+
+        expected = fake_home / ".nfmd" / "master-deploy-events.jsonl"
+        assert _resolve_prod_path(None) == expected
+        assert _default_prod_path() == expected
+
+    def test_env_var_wins_over_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/opt/custom-prod.jsonl")
+
+        # Env var wins; the synthetic-home / fallback is never reached.
+        assert _resolve_prod_path(None) == Path("/opt/custom-prod.jsonl")
+
+    def test_explicit_arg_wins_over_env_var(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/opt/env-prod.jsonl")
+
+        assert _resolve_prod_path("/opt/arg-prod.jsonl") == Path("/opt/arg-prod.jsonl")
 
 
 # ---------------------------------------------------------------------------

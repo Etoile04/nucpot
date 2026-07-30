@@ -35,10 +35,10 @@ Environment variables:
                                falls back to <repo>/docker/.deploy-events.jsonl.
     NFMD_PROD_EVENTS_PATH    — host-absolute path to the production-series
                                JSONL (the file the prod collector appends to);
-                               falls back to
-                               /Users/lwj04/.nfmd/master-deploy-events.jsonl
-                               on the Mac Studio. Read only when ``--environment``
-                               is ``all`` or ``production``.
+                               falls back to ``<home>/.nfmd/master-deploy-events.jsonl``
+                               (runtime-expanded so the path contains no operator
+                               username literal — ADR-KR3 §C6.3.2). Read only when
+                               ``--environment`` is ``all`` or ``production``.
 """
 
 from __future__ import annotations
@@ -65,42 +65,41 @@ DEFAULT_ENVIRONMENT: str = ENVIRONMENTS[0]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_EVENTS_PATH = _REPO_ROOT / "docker" / ".deploy-events.jsonl"
-_DEFAULT_PROD_PATH = Path("/Users/lwj04/.nfmd/master-deploy-events.jsonl")
 
 
 # ---------------------------------------------------------------------------
 # IO
 # ---------------------------------------------------------------------------
 
+def _default_prod_path() -> Path:
+    """Runtime-expanded fallback for the production-series JSONL.
+
+    Returns ``<home>/.nfmd/master-deploy-events.jsonl`` for whatever the
+    current operator's home is. ADR-KR3 §C6.3.2 requires the fallback to
+    be portable across operators and hosts — no literal username may
+    appear as a default in committed code. ``Path.home()`` is called
+    lazily here (not at import time) so tests can monkeypatch it.
+    """
+    return Path.home() / ".nfmd" / "master-deploy-events.jsonl"
+
+
 def _resolve_prod_path(path_arg: str | os.PathLike[str] | None) -> Path:
     """Resolve the production-series JSONL path.
 
     Lookup order: explicit ``--prod-path`` arg, then ``NFMD_PROD_EVENTS_PATH``
-    env var, then the host-absolute fallback the collector writes to on the
-    Mac Studio. The default is intentionally host-absolute (not repo-relative)
-    because the prod collector runs as a self-hosted step that writes to a
-    fixed location on the Mac Studio, regardless of the runner's checkout.
+    env var, then ``_default_prod_path()`` (``<home>/.nfmd/...``). The
+    fallback is intentionally host-absolute (not repo-relative) because
+    the prod collector runs as a self-hosted step that writes to a
+    fixed location on the operator's host, regardless of the runner's
+    checkout. The fallback contains no literal username (ADR §C6.3.2).
     """
     if path_arg is not None:
         return Path(path_arg)
     env = os.environ.get("NFMD_PROD_EVENTS_PATH")
     if env:
         return Path(env)
-    return _DEFAULT_PROD_PATH
+    return _default_prod_path()
 
-
-def _resolve_path(path_arg: str | os.PathLike[str] | None) -> Path:
-    if path_arg is not None:
-        return Path(path_arg)
-    env = os.environ.get("NFMD_DEPLOY_EVENTS_PATH")
-    if env:
-        return Path(env)
-    return _DEFAULT_EVENTS_PATH
-
-
-# ---------------------------------------------------------------------------
-# IO
-# ---------------------------------------------------------------------------
 
 def _resolve_path(path_arg: str | os.PathLike[str] | None) -> Path:
     if path_arg is not None:
@@ -323,7 +322,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Path to the production-series JSONL (the file the prod "
         "collector appends to). Defaults to $NFMD_PROD_EVENTS_PATH or "
-        "/Users/lwj04/.nfmd/master-deploy-events.jsonl. Ignored when "
+        "<home>/.nfmd/master-deploy-events.jsonl (runtime-expanded; no "
+        "literal username is embedded — ADR-KR3 §C6.3.2). Ignored when "
         "--environment is 'staging'.",
     )
     return parser.parse_args(argv)
