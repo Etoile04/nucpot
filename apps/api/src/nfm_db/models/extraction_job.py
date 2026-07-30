@@ -16,7 +16,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, JSONArray, TimestampMixin
 
-
 # Status values mirror the contract documented for /ingest/{job_id}/status.
 # Mapping is synchronous in the current handler, so the persisted rows
 # always land at 'completed' (or 'failed' if map_and_persist raised).
