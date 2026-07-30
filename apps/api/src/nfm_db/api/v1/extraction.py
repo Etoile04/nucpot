@@ -49,11 +49,11 @@ class ExtractionIngestRequest(BaseModel):
     """
 
     source_reference: str = Field(
-        min_length=1,
         max_length=500,
         description=(
             "Source identifier OntoFuel used to produce this batch "
-            "(DOI, URL, internal id, file path)."
+            "(DOI, URL, internal id, file path). Empty strings are "
+            "accepted but cause sync-verification to be SKIPPED."
         ),
     )
     source_type: str = Field(

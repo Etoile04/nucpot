@@ -619,3 +619,120 @@ class TestSyncVerificationPerRequestDelta:
             f"Expected exactly 1 MISMATCH error mentioning "
             f"created_measurements=99; got errors={data['errors']}"
         )
+
+class TestVerifiedFalseDetector:
+    """NFM-2097 AC-1 / AC-2: verified-False drift paths that the original
+    fc4984a commit failed to cover — the gaps that allowed the W1
+    per-request-vs-cumulative bug to ship through Code Review.
+    """
+
+    @pytest.mark.asyncio
+    async def test_verified_false_on_mismatch_with_job_id(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-1: mock map_and_persist to claim created_measurements=2 while
+        actually persisting 1 row.
+
+        Asserts verified=False, db_measurement_count=1, a structured
+        MISMATCH error in errors[], and a valid job_id for correlation.
+        """
+        from nfm_db.services.extraction_to_db_mapper import (
+            MappingResult,
+            map_and_persist,
+        )
+
+        _real = map_and_persist
+
+        async def _lying_mapper(db, props):
+            result = await _real(db, props)
+            return MappingResult(
+                created_measurements=2,
+                reused_entities=result.reused_entities,
+                skipped_duplicate_measurements=result.skipped_duplicate_measurements,
+                skipped_unknown_properties=result.skipped_unknown_properties,
+                validation_errors=result.validation_errors,
+            )
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+            _lying_mapper,
+        )
+
+        doi = "10.1234/nfm2097-ac1"
+        resp = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=_ingest_payload(
+                properties=[_sample_property()],
+                corpus_id="nfm2097-mismatch",
+                source_reference=doi,
+            ),
+            headers=svc_headers,
+        )
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+
+        assert data["verified"] is False, (
+            f"Expected verified=False; got {data['verified']}"
+        )
+        assert data["db_measurement_count"] == 1, (
+            f"Expected db_measurement_count=1; got {data['db_measurement_count']}"
+        )
+
+        mismatch_errors = [
+            e for e in data["errors"]
+            if "sync-verification MISMATCH" in e
+            and "created_measurements=2" in e
+        ]
+        assert len(mismatch_errors) == 1, (
+            f"Expected 1 MISMATCH error; got {data['errors']}"
+        )
+
+        # Response carries a valid job_id for correlation.
+        assert "job_id" in data
+        assert len(data["job_id"]) == 36  # UUID hex format
+
+    @pytest.mark.asyncio
+    async def test_verified_false_when_no_source_reference(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-2: POST with empty source_reference -> verified=False with
+        'sync-verification SKIPPED: no source_reference' error.
+
+        The schema now accepts empty source_reference (NFM-2097).  When
+        source_reference is empty, the handler's sync-verification
+        cannot match by DOI and reports verified=False with SKIPPED.
+        """
+        resp = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json={
+                "source_reference": "",
+                "source_type": "doi",
+                "corpus_id": "nfm2097-nosr",
+                "properties": [_sample_property()],
+            },
+            headers=svc_headers,
+        )
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+
+        assert data["verified"] is False, (
+            f"Expected verified=False; got {data['verified']}"
+        )
+
+        skipped_errors = [
+            e for e in data["errors"]
+            if "sync-verification SKIPPED" in e
+            and "no source_reference" in e
+        ]
+        assert len(skipped_errors) == 1, (
+            f"Expected 1 SKIPPED error; got {data['errors']}"
+        )
