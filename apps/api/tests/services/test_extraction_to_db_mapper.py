@@ -347,9 +347,19 @@ class TestMapAndPersistMapping:
 class TestMapAndPersistTransaction:
     """Tests for transactional behavior."""
 
-    async def test_validation_error_does_not_create_partial_records(self, db_session: AsyncSession):
-        """If any item fails validation, no DB records should be created."""
-        await _seed_property_type(db_session)
+    async def test_validation_error_partial_success(self, db_session: AsyncSession):
+        """Valid items persist even when a sibling fails validation.
+
+        NFM-1984 changed the mapper from all-or-nothing to partial-success:
+        a single bad item no longer discards the entire batch. The valid
+        item should be persisted; the invalid one should be counted as a
+        validation error but not block the good data.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
 
         inputs = [
             _make_extracted_property(source_doi="10.1000/test1"),
@@ -359,10 +369,9 @@ class TestMapAndPersistTransaction:
         result = await map_and_persist(db_session, inputs)
 
         assert result.validation_errors == 1
-        sources = (await db_session.execute(select(DataSource))).scalars().all()
-        assert len(sources) == 0
-        materials = (await db_session.execute(select(Material))).scalars().all()
-        assert len(materials) == 0
+        # Valid item should still be persisted (partial-success, NFM-1984)
+        assert result.created_sources == 1
+        assert result.created_measurements == 1
 
 
 @pytest.mark.unit
