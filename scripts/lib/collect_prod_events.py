@@ -23,6 +23,8 @@ Environment variables:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import logging
@@ -31,7 +33,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 # §3.1 schema fields — exactly 10, exactly these names.
 SCHEMA_FIELDS: frozenset[str] = frozenset({
@@ -64,8 +66,50 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_JSONL_PATH = _REPO_ROOT / "docker" / ".deploy-events.jsonl"
 _DEFAULT_PROCESSED_SUFFIX = ".processed"
 _QUARANTINE_SUFFIX = ".quarantine"
+# Lockfile co-located with the processed ledger. The file itself is empty;
+# we only use it as an ``fcntl.flock()`` handle so concurrent collector
+# runs (multiple cron triggers racing, or a manual ``workflow_dispatch``
+# overlapping a scheduled run) serialise their read-then-write window.
+_LOCK_SUFFIX = ".lock"
 
 logger = logging.getLogger("collect_prod_events")
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: POSIX flock around the read-modify-write critical section
+# ---------------------------------------------------------------------------
+
+
+def _lock_path_for(processed_path: Path) -> Path:
+    """Return the lockfile path used to serialise ``process_event``.
+
+    Always derived from the processed ledger so the lock and the data
+    live on the same filesystem (POSIX flock is per-process-per-file).
+    """
+    return processed_path.with_name(processed_path.name + _LOCK_SUFFIX)
+
+
+@contextlib.contextmanager
+def _exclusive_lock(lock_path: Path) -> Iterator[None]:
+    """Hold an exclusive ``fcntl.flock`` for the duration of the block.
+
+    The kernel releases the lock automatically if the holding process
+    dies (signal, OOM, hard crash). That property is what lets the
+    ledger-first write order be crash-recoverable: a torn run leaves
+    the ledger as the source of truth and the JSONL simply missing the
+    one in-flight line (detectable via row-count vs line-count).
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 # ---------------------------------------------------------------------------
@@ -273,44 +317,67 @@ def process_event(
     ``processed`` (success), ``duplicate`` (already seen), ``quarantined``
     (could not validate). Never raises — a CRASH in a single event must
     not stop the collector from processing the next one.
+
+    Crash-safety contract (ADR §C6.1.6, code review 2026-07-30):
+
+    1. The read-process-write critical section is wrapped in an exclusive
+       ``fcntl.flock``. Concurrent invocations (overlapping cron + manual
+       ``workflow_dispatch``) serialise, eliminating the check-then-act
+       race that previously let two processes append the same SHA.
+    2. Inside the lock, the **ledger row is written FIRST**, then the
+       JSONL line. Each write is itself atomic (POSIX ``O_APPEND`` for
+       sub-``PIPE_BUF`` payloads). If the process crashes between the
+       two writes, the next run sees the ledger row as ``processed`` and
+       skips the JSONL append — the event is "lost" from the JSONL but
+       the ledger stays consistent. A duplicate JSONL entry (the
+       pre-fix failure mode) is **strictly worse** than an orphan ledger
+       row pointing to a missing JSONL line, because duplicates corrupt
+       the coverage metric downstream.
     """
     jsonl_path = Path(jsonl_path)
     processed_path = Path(processed_path)
-
-    # Parse + validate
-    try:
-        parsed = json.loads(event_json_text)
-    except json.JSONDecodeError as exc:
-        logger.warning("run_id=%s: invalid JSON (%s) — quarantining", run_id, exc)
-        quarantine_payload(jsonl_path, run_id, event_json_text)
-        sha = compute_sha256(event_json_text)
-        append_processed_row(processed_path, run_id, sha, "quarantined")
-        return "quarantined"
-
-    ok, err = validate_event(parsed)
-    if not ok:
-        logger.warning("run_id=%s: schema-invalid (%s) — quarantining", run_id, err)
-        quarantine_payload(jsonl_path, run_id, event_json_text)
-        sha = compute_sha256(event_json_text)
-        append_processed_row(processed_path, run_id, sha, "quarantined")
-        return "quarantined"
-
+    lock_path = _lock_path_for(processed_path)
     sha = compute_sha256(event_json_text)
-    ledger = read_processed(processed_path)
-    if sha in ledger:
-        # Already processed — record the duplicate annotation row, do not
-        # touch the JSONL. Per ADR §C6.1.6: "DO update the processed row's
-        # status field (processed becomes duplicate) so future restarts
-        # don't re-evaluate it." We implement this as an append-only ledger:
-        # the new row's status is "duplicate", and read_processed returns
-        # the first occurrence (so future re-runs still see the original).
-        append_processed_row(processed_path, run_id, sha, "duplicate")
-        return "duplicate"
 
-    line = json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
-    atomic_append_line(jsonl_path, line)
-    append_processed_row(processed_path, run_id, sha, "processed")
-    return "processed"
+    with _exclusive_lock(lock_path):
+        # Parse + validate inside the lock so the validation cost is
+        # serialised too — keeps log lines and ``wc -l`` output
+        # deterministic when runs overlap.
+        try:
+            parsed = json.loads(event_json_text)
+        except json.JSONDecodeError as exc:
+            logger.warning("run_id=%s: invalid JSON (%s) — quarantining", run_id, exc)
+            quarantine_payload(jsonl_path, run_id, event_json_text)
+            append_processed_row(processed_path, run_id, sha, "quarantined")
+            return "quarantined"
+
+        ok, err = validate_event(parsed)
+        if not ok:
+            logger.warning("run_id=%s: schema-invalid (%s) — quarantining", run_id, err)
+            quarantine_payload(jsonl_path, run_id, event_json_text)
+            append_processed_row(processed_path, run_id, sha, "quarantined")
+            return "quarantined"
+
+        # Re-read the ledger INSIDE the lock so the sha check is
+        # consistent with whatever the previous lock holder just wrote.
+        ledger = read_processed(processed_path)
+        if sha in ledger:
+            # Already processed — record the duplicate annotation row,
+            # do not touch the JSONL. Per ADR §C6.1.6: "DO update the
+            # processed row's status field (processed becomes duplicate)
+            # so future restarts don't re-evaluate it." Implemented as
+            # an append-only ledger; ``read_processed`` returns the
+            # first occurrence so future re-runs still see the original.
+            append_processed_row(processed_path, run_id, sha, "duplicate")
+            return "duplicate"
+
+        line = json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+        # Ledger row FIRST (atomic O_APPEND). Only after it has hit
+        # disk do we touch the JSONL. See the docstring for the full
+        # crash-safety rationale.
+        append_processed_row(processed_path, run_id, sha, "processed")
+        atomic_append_line(jsonl_path, line)
+        return "processed"
 
 
 def record_missing(

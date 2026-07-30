@@ -30,14 +30,22 @@ for bin in gh unzip python3; do
   fi
 done
 
-# Per ADR §C6.1.5 the JSONL path falls back to the repo default. The Python
-# module's resolve_jsonl_path() handles that.
+# Per ADR §C6.1.5 the JSONL path falls back to the repo default. Honour the
+# operator-supplied env var (set by the workflow from
+# ``vars.NFMD_DEPLOY_EVENTS_PATH``); otherwise let the Python module's
+# ``resolve_jsonl_path()`` apply its own sane default. Critically, do NOT
+# hardcode ``$REPO_ROOT/docker/.deploy-events.jsonl`` here — that would
+# override the env var and risk writer/reader path divergence between the
+# collector and downstream coverage tooling.
 if [ -z "${NFMD_DEPLOY_EVENTS_PATH:-}" ]; then
-  echo "[collect-prod-run] NFMD_DEPLOY_EVENTS_PATH not set — using repo default via collector"
+  echo "[collect-prod-run] NFMD_DEPLOY_EVENTS_PATH not set — collector will use its repo default"
 fi
 
-JSONL_PATH="$REPO_ROOT/docker/.deploy-events.jsonl"
-PROCESSED_PATH="${NFMD_DEPLOY_EVENTS_PROCESSED_PATH:-$JSONL_PATH.processed}"
+# Pass empty strings so the Python module does the env-var resolution.
+# The Python module's resolve_processed_path() defaults processed to
+# ``<jsonl>.processed``, so we just pass that env var (or empty) too.
+JSONL_PATH="${NFMD_DEPLOY_EVENTS_PATH:-}"
+PROCESSED_PATH="${NFMD_DEPLOY_EVENTS_PROCESSED_PATH:-}"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -47,10 +55,16 @@ echo "[collect-prod-run] repo_root=$REPO_ROOT jsonl=$JSONL_PATH processed=$PROCE
 # ---------------------------------------------------------------------------
 # Step 1: Resolve the production-deployment workflow id
 # ---------------------------------------------------------------------------
+# NOTE: the GitHub API at
+# ``/repos/{owner}/{repo}/actions/workflows/{workflow_file}`` returns the
+# workflow object directly — there is NO ``.workflow`` wrapper. A flat
+# ``.id`` is the correct path. Using ``.workflow.id`` returns ``null``,
+# which the previous version silently treated as "not found" and exited
+# successfully — collecting zero events.
 WF_ID="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${PROD_WF}" \
-  --jq '.workflow.id' 2>/dev/null || echo "")"
+  --jq '.id' 2>/dev/null || echo "")"
 
-if [ -z "$WF_ID" ]; then
+if [ -z "$WF_ID" ] || [ "$WF_ID" = "null" ]; then
   echo "[collect-prod-run] production-deployment workflow not found — nothing to do"
   exit 0
 fi
