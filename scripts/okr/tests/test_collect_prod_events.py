@@ -313,6 +313,65 @@ class TestProcessEvent:
         lines = jsonl.read_text().splitlines()
         assert lines == ['{"a":1}', '{"a":2}', '{"a":3}']
 
+    def test_read_processed_skips_malformed_rows(self, tmp_path: Path) -> None:
+        """Defensive: ``read_processed`` must not crash on garbage rows
+        (blank lines, missing tabs, wrong column count). Covers lines
+        182 and 185 of collect_prod_events.py."""
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        valid_sha = mod.compute_sha256(_canonical_json(_valid_event()))
+        processed.write_text(
+            # blank line
+            "\n"
+            # wrong column count (2 fields)
+            "run-x\tsha-y\n"
+            # valid row — should be returned
+            f"run-good\t{valid_sha}\tprocessed\n"
+            # wrong column count (4 fields)
+            "run-x\tsha-y\tstatus\textra\n"
+        )
+        ledger = mod.read_processed(processed)
+        assert ledger == {valid_sha: ("run-good", "processed")}
+
+    def test_record_missing_writes_ledger_row(self, tmp_path: Path) -> None:
+        """``record_missing`` writes a sentinel-sha + 'missing' row for
+        runs whose artifact never showed up."""
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        mod.record_missing(jsonl, processed, "run-no-artifact")
+        rows = [ln.split("\t") for ln in processed.read_text().splitlines()]
+        assert len(rows) == 1
+        assert rows[0][0] == "run-no-artifact"
+        assert rows[0][1] == "0" * 64  # MISSING_SHA_SENTINEL
+        assert rows[0][2] == "missing"
+        # And the JSONL must not have been touched.
+        assert not jsonl.exists() or jsonl.read_text() == ""
+
+    def test_process_event_under_lock_acquires_and_releases(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Smoke test for the lock context manager: it must yield at
+        least once and exit cleanly. A regression that drops the
+        ``with _exclusive_lock(...)`` block would crash here because
+        the patched ``fcntl.flock`` would not be called."""
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+
+        calls: list[int] = []
+        original_flock = mod.fcntl.flock
+
+        def counting_flock(fd: int, op: int) -> None:
+            calls.append(op)
+            original_flock(fd, op)
+
+        monkeypatch.setattr(mod.fcntl, "flock", counting_flock)
+        mod.process_event(
+            jsonl, processed, _canonical_json(_valid_event()), run_id="r-lock"
+        )
+        # LOCK_EX then LOCK_UN.
+        assert mod.fcntl.LOCK_EX in calls
+        assert mod.fcntl.LOCK_UN in calls
+
 
 class TestCliSubprocess:
     """The workflow calls the collector via subprocess — exercise the CLI."""
@@ -424,3 +483,142 @@ class TestPathResolution:
         mod = _import_collector()
         result = mod.resolve_jsonl_path(env={"NFMD_DEPLOY_EVENTS_PATH": "/custom/path.jsonl"})
         assert result == Path("/custom/path.jsonl")
+
+
+class TestConcurrencySafety:
+    """ADR §C6.1.6 / code review 2026-07-30:
+
+    The read-process-write critical section must hold an exclusive
+    ``fcntl.flock``, and the ledger row must hit disk BEFORE the JSONL
+    line. These tests are the regression net for the two HIGH findings
+    the reviewer flagged.
+    """
+
+    def test_lockfile_is_created_alongside_processed_ledger(
+        self, tmp_path: Path
+    ) -> None:
+        """``process_event`` opens a lockfile co-located with the ledger.
+        Used purely as an ``fcntl.flock`` handle; its contents are
+        irrelevant."""
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        mod.process_event(jsonl, processed, _canonical_json(_valid_event()), run_id="r1")
+        lock_path = mod._lock_path_for(processed)
+        assert lock_path.exists()
+        assert lock_path.parent == processed.parent
+        assert lock_path.name == processed.name + mod._LOCK_SUFFIX
+
+    def test_concurrent_threads_with_same_sha_produce_one_jsonl_line(
+        self, tmp_path: Path
+    ) -> None:
+        """Spawn N threads all calling ``process_event`` with the SAME
+        sha. The ``fcntl.flock`` must serialise them so exactly one
+        JSONL line is appended, regardless of how many threads race.
+
+        This is the regression test for the HIGH #3 check-then-act race.
+        """
+        import threading
+
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        text = _canonical_json(_valid_event())
+        n = 16
+        barrier = threading.Barrier(n)
+        results: list[str] = []
+        results_lock = threading.Lock()
+
+        def worker(run_id: str) -> None:
+            # All threads block on the barrier until everyone is ready,
+            # then release simultaneously to maximise the race window.
+            barrier.wait()
+            status = mod.process_event(jsonl, processed, text, run_id=run_id)
+            with results_lock:
+                results.append(status)
+
+        threads = [
+            threading.Thread(target=worker, args=(f"r{i}",))
+            for i in range(n)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Exactly one writer claimed the sha; everyone else recorded
+        # "duplicate". Order between writers is non-deterministic but
+        # the count must be exactly one.
+        assert results.count("processed") == 1, results
+        assert results.count("duplicate") == n - 1, results
+        assert len(jsonl.read_text().splitlines()) == 1
+        rows = [ln.split("\t") for ln in processed.read_text().splitlines()]
+        assert len(rows) == n
+        assert sum(1 for r in rows if r[2] == "processed") == 1
+        assert sum(1 for r in rows if r[2] == "duplicate") == n - 1
+
+    def test_concurrent_distinct_shas_all_persist(
+        self, tmp_path: Path
+    ) -> None:
+        """Sanity: the lock serialises correctly but does NOT block
+        independent events. N distinct shas must each append exactly
+        one JSONL line under contention."""
+        import threading
+
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        n = 8
+        barrier = threading.Barrier(n)
+
+        def worker(idx: int) -> None:
+            ev = _valid_event(
+                event_id=f"11111111-2222-4333-8444-5555555555{idx:02d}",
+                duration_ms=1000 + idx,
+            )
+            barrier.wait()
+            mod.process_event(jsonl, processed, _canonical_json(ev), run_id=f"r{idx}")
+
+        threads = [
+            threading.Thread(target=worker, args=(i,)) for i in range(n)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(jsonl.read_text().splitlines()) == n
+        assert len(processed.read_text().splitlines()) == n
+
+    def test_ledger_row_is_written_before_jsonl_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression for HIGH #4 crash window.
+
+        Inside the lock, the ledger row must hit disk FIRST, then the
+        JSONL line. We assert this by replacing ``atomic_append_line``
+        with a probe that reads the ledger just BEFORE the would-be
+        JSONL append — the row must already be there.
+        """
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        text = _canonical_json(_valid_event())
+        sha = mod.compute_sha256(text)
+
+        # Snapshot the probe state when the test fires.
+        probe: dict[str, object] = {"ledger_had_row": False, "jsonl_had_line": False}
+
+        original_atomic = mod.atomic_append_line
+
+        def probe_atomic(jp: Path, line: str) -> None:
+            # The ledger row MUST already be on disk by this point.
+            ledger = mod.read_processed(processed)
+            probe["ledger_had_row"] = sha in ledger
+            probe["jsonl_had_line"] = jp.exists() and bool(jp.read_text())
+            # Defer to the real implementation.
+            original_atomic(jp, line)
+
+        monkeypatch.setattr(mod, "atomic_append_line", probe_atomic)
+
+        status = mod.process_event(jsonl, processed, text, run_id="run-1")
+        assert status == "processed"
+        assert probe["ledger_had_row"] is True
+        assert probe["jsonl_had_line"] is False  # not yet appended
+        # And of course after the probe returns the JSONL does get it.
+        assert len(jsonl.read_text().splitlines()) == 1
