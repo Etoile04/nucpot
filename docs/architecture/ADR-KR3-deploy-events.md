@@ -64,6 +64,200 @@ Deliverable 2 of NFM-2039 ("modify `.github/workflows/production-deployment.yml`
 
 This keeps the 7-day baseline window (acceptance criterion 1) startable today instead of blocking it on new infra. The KR-3 card must be labelled "staging" so nobody reads it as a whole-platform number; that will be handled on the goal side.
 
+## Amendment C6.2 — runs-on fact correction (NFM-2074 CTO ruling, 2026-07-30)
+
+Status: **Accepted.** Author: CTO (3a0e0b92). Corrects the factual premise of §C6 reason (1). The **ruling** of §C6 stands; the **premise** is amended.
+
+### Why C6.2
+
+The §C6 reason (1) premises that the prod workflow is `runs-on: ubuntu-latest`
+(11 jobs, all hosted). That premise is **factually wrong**.
+
+`.github/workflows/production-deployment.yml:278` declares the `deploy-prod`
+job as `runs-on: [self-hosted, production]` — a self-hosted runner on the
+Mac Studio host (same machine as the prod compose stack; see the workflow
+header comment at lines 270-275). The runner workspace persists across runs,
+so a JSONL append in that job WOULD survive the job end.
+
+The 11 `ubuntu-latest` jobs in that workflow are pre- and post-deploy
+checks (yaml-lint, security-scan, type-check, python-lint, test-web,
+test-api, performance-test, build-web, smoke-test, notify). The deploy
+itself is self-hosted; those hosted jobs are not where a deploy event
+would land. There is no durability blocker for v1 prod emission on the
+`deploy-prod` step.
+
+### Effect on C6 vs C6.1
+
+- **§C6 reason (1) premise**: withdrawn. A simple `deploy_event_emit`
+  on the self-hosted `deploy-prod` job WOULD persist.
+- **§C6 *ruling*** (v1 staging-only): stands. Withdrawing it now would
+  re-scope NFM-2042 mid-Code-Review and reopen an already-stable
+  schema. The staging-only baseline is preserved.
+- **§C6 reason (2)** (no automated rollback in prod) is independent and
+  unchanged. `rollback_triggered` remains a staging-only meaningful
+  field; prod emits the literal `false` per C6.1.3.
+- **§C6.1** (production durable producer) already accommodates the
+  corrected fact: stage 1 lands on a *hosted* runner because the
+  event-assembler step can run independently of the deploy, and
+  C6.1.1's GHA-artifact durability hop is still valuable (decouples
+  event assembly from deploy status). C6.1 stands as-is.
+
+### CTO reconciliation outcome for NFM-2074
+
+The uncommitted working-tree state on branch `NFM-1909-okr-weekly-standup`
+already implements the C5 + C6 reconciliation in six files
+(`scripts/staging_deploy.sh`, `.github/workflows/production-deployment.yml`,
+`scripts/lib/deploy_event.sh`, `scripts/okr/coverage_kr3.py`,
+`scripts/okr/tests/test_deploy_event.py`,
+`scripts/okr/tests/test_staging_deploy_emits_event.py`).
+
+- **C5 ruling**: accept. The shipped NFM-2042 code at commit `9c1209b7`
+  violated §C5 by introducing `SKIP_HEALTH_GATE` handling in
+  `staging_deploy.sh:135-140`. The working-tree state removes it and
+  hardcodes `--skip-flag-used false`, exactly per the reserved-literal
+  rule.
+- **C6 ruling**: accept. The shipped NFM-2042 code at commit `9c1209b7`
+  violated §C6 by shipping a prod emission step in
+  `.github/workflows/production-deployment.yml:367` writing to a
+  host-absolute JSONL path. The working-tree state removes that step,
+  restoring v1 staging-only.
+
+**Required for NFM-2042 to merge cleanly**: Code Reviewer must NOT
+approve commit `9c1209b7` as-is. Lead Engineer must commit the
+working-tree state, and Code Reviewer re-reviews the amended commit.
+Once that lands, the committed document and the merged code agree —
+fulfilling acceptance criterion 3.
+
+## Amendment C6.1 — Production durable producer (NFM-2092, 2026-07-30)
+
+Status: **Accepted.** Author: CTO (3a0e0b92). Amends §C6 above.
+
+### Why C6.1
+
+NFM-2042 closed the v1 baseline with staging-only emission. KR-COMPANY-3 is a
+whole-platform KR and reading it as "staging only" misleads the board. C6.1
+extends the same JSONL aggregator pattern to production without weakening the
+two guarantees §C6 was written to protect.
+
+### C6.1.1 — Two-stage durable producer
+
+Stage 1 (hosted runner, ephemeral):
+- A new job in `.github/workflows/production-deployment.yml`, `emit-prod-event`
+  (or an extension of the existing `smoke-test` job), runs on `ubuntu-latest`
+  with `if: always() && needs.deploy-prod.result != 'skipped'`.
+- It receives the deploy commit, triggered-by, duration, and final pipeline
+  status as job outputs.
+- It assembles one deploy event object that conforms to the §3.1 schema
+  (same field names, same `event_id` UUID-v4 convention, same boolean
+  literalisation rules — reuse `scripts/lib/deploy_event.sh` is not possible
+  because bash on `ubuntu-latest` cannot reach the ThinkStation JSONL; the
+  assembly is mirrored in Python so the field order and escape rules match).
+- It uploads that JSON object as a **GHA artifact** named
+  `nfm-deploy-event-<run_id>-<attempt>.json` with
+  `retention-days: 90`. Artifacts are GHA-managed storage and survive job
+  teardown — this is the durability hop that fixes §C6 reason (1).
+
+Stage 2 (self-hosted collector, persistent):
+- New workflow `.github/workflows/collect-prod-deploy-events.yml`.
+- Runs on `[self-hosted, prod-collector]` with `schedule: cron: '*/5 * * * *'`
+  plus `workflow_dispatch` for back-fill. The collector label pins it to the
+  Mac Studio runner (same host as the prod compose stack).
+- Uses `gh api` with a `GH_TOKEN` (repo-scoped PAT or fine-grained token with
+  `actions:read`) to enumerate `production-deployment.yml` runs since the last
+  successfully-processed run.
+- For each new run, downloads the `nfm-deploy-event-*.json` artifact, runs
+  the same schema validation the staging writer uses, then **atomically
+  appends** the line to `${NFMD_DEPLOY_EVENTS_PATH:-docker/.deploy-events.jsonl}`.
+  Atomic-append uses the same `O_APPEND`-on-short-line discipline
+  `scripts/lib/deploy_event.sh` enforces, so concurrent staging and prod
+  appenders cannot interleave a line.
+- Records the processed `run_id` and a SHA-256 of the event payload in
+  `${NFMD_DEPLOY_EVENTS_PROCESSED_PATH:-${NFMD_DEPLOY_EVENTS_PATH}.processed}`
+  (default: `<jsonl-path>.processed`), one line per processed run. On restart
+  the collector re-reads this ledger before the API query so no event is
+  ever appended twice (idempotency is on `sha256`, not `run_id`, to handle
+  GHA retry-on-replay of the producer job).
+
+### C6.1.2 — Why this satisfies both §C6 reasons
+
+1. **Ephemeral filesystem.** The `ubuntu-latest` job's append is **not** a
+   filesystem write — it is an artifact upload. GHA artifact storage is
+   persistent (90-day retention by default; configurable per-repo). The job
+   teardown does not destroy the event.
+2. **No automated rollback in prod.** Production events record
+   `rollback_triggered: false` as a reserved literal — the field is present
+   for schema forward-compatibility (staging sets it true on auto-rollback
+   per §C4) but on prod the value is **not measurable** and **not used in the
+   denominator**. The prod schema does not invent a "manual rollback" flag;
+   the design is honest about the gap. Rollback observability for prod is a
+   separate problem (out of scope for KR-3).
+
+### C6.1.3 — `rollback_triggered` semantics change
+
+This is the only semantic change to the event schema. Producers MAY emit
+`rollback_triggered: false` for production; consumers MUST treat the field as
+"staging-only meaningful". The aggregator implementation will not filter on
+this field for prod rows; it filters only on `first_pass_success` and
+`environment`.
+
+### C6.1.4 — `coverage_kr3.py --environment` filter
+
+`scripts/okr/coverage_kr3.py` gains a new `--environment` flag with values
+`staging` (default — preserves the v1 baseline) and `production`. The flag
+filters `load_events()` output before `filter_window()` and `compute_value()`.
+The `n` field in the report reflects the filtered count, so the same JSONL
+file can answer "what is the staging success rate?" and "what is the prod
+success rate?" independently.
+
+Acceptance criterion: `coverage_kr3.py --environment staging` returns the
+**exact same** value, `n`, and `computed_at` shape as the pre-C6.1 run on
+the same JSONL. `coverage_kr3.py --environment production` returns the new
+prod series once the collector has merged at least one event.
+
+### C6.1.5 — `NFMD_DEPLOY_EVENTS_PATH` repo variable
+
+The path is no longer a developer's home directory. A repo variable
+`NFMD_DEPLOY_EVENTS_PATH` is read by:
+- `coverage_kr3.py` (already does — see the docstring)
+- `scripts/lib/deploy_event.sh::deploy_event_path` (already does)
+- The new collector workflow
+
+Default fallback for all three is `<repo>/docker/.deploy-events.jsonl`. The
+variable lives at the **repo** level (`Settings → Secrets and variables →
+Actions → Variables`) so every workflow reads the same value without a
+per-developer override.
+
+### C6.1.6 — Idempotency / failure modes
+
+- **Collector crash mid-run.** The processed-run ledger is appended **after**
+  the JSONL append succeeds. A crash between the two means the next
+  collector invocation re-processes the run, but idempotency on
+  `sha256(event_json)` (not `run_id` alone) means re-processing is a no-op.
+- **Artifact missing for a run.** The collector logs and skips, leaving the
+  run_id in the ledger with `status=missing`. A daily sanity check (a
+  workflow on the same self-hosted runner) compares the count of prod events
+  emitted by `coverage_kr3.py` against the count of `production-deployment`
+  runs in the trailing 7 days and alerts on drift.
+- **Schema-invalid artifact.** The collector quarantines the artifact
+  contents to `${NFMD_DEPLOY_EVENTS_PATH}.quarantine/<run_id>.json` and
+  records `status=invalid` in the ledger. The aggregator is unaffected.
+
+### C6.1.7 — Out of scope (deliberate)
+
+- **Manual rollback observability for prod.** Not a KR-3 input.
+- **Multi-region prod deploys.** Single prod compose stack on Mac Studio;
+  scale-out is a separate ADR.
+- **Streaming emission.** This design is poll-based (5-min cron). For
+  real-time dashboards, an HTTP POST to the aggregator service would be
+  a future enhancement but is not required to compute the KR.
+
+### Cross-references
+
+- Source issue: [NFM-2092](/NFM/issues/NFM-2092)
+- Parent KR-3 implementation: [NFM-2039](/NFM/issues/NFM-2039)
+- v1 baseline: [NFM-2042](/NFM/issues/NFM-2042)
+- Original §C6 rationale: see above
+
 ## Unchanged and still binding
 
 - Acceptance criterion 5 stands: events written by the **real** `scripts/staging_deploy.sh`, not a side recorder.
