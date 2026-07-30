@@ -62,7 +62,7 @@ class DNAService:
         try:
             val = uuid.UUID(dna_uuid)
             return val.version == 4
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
             return False
 
     @staticmethod
