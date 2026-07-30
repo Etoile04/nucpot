@@ -362,6 +362,17 @@ where = ["src"]
 include = ["nfm_db*"]
 namespaces = false
 
+# NFM-2239 follow-up: ship the JSON config files that live under
+# `src/nfm_db/config/` alongside the Python module. Without this,
+# `nfm_db.core.property_catalog._CONFIG_PATH` (and the phase-mapping
+# consumer) crash at import time with
+# `FileNotFoundError: .../site-packages/nfm_db/config/property_mapping.json`
+# because setuptools only packages `.py` files by default. Discovered by
+# E2E QA on the staging image: the installed package was missing the JSON
+# even though the Python module shipped correctly.
+[tool.setuptools.package-data]
+nfm_db = ["config/*.json"]
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"

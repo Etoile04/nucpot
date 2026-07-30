@@ -57,19 +57,22 @@ def _has_python() -> bool:
     return any(shutil.which(name) for name in ("python", "python3", "python3.12"))
 
 
-@pytest.mark.skipif(
-    not _has_python(),
-    reason="python interpreter not on PATH (needed for venv creation)",
-)
-def test_pip_install_ships_importable_nfm_db(tmp_path: Path) -> None:
-    """Reproduce the Dockerfile step: ``pip install .`` then ``import nfm_db``.
+# JSON config files that must be packaged alongside the nfm_db Python module.
+# `nfm_db.core.property_catalog._CONFIG_PATH` and the phase-mapping consumer
+# both resolve these from `nfm_db/config/*.json` next to the installed
+# `nfm_db/__init__.py`. If setuptools only ships `.py` files, every container
+# crashes at startup with `FileNotFoundError: .../nfm_db/config/property_mapping.json`.
+_PACKAGE_DATA_JSONS: tuple[str, ...] = ("property_mapping.json", "phase_mapping.json")
 
-    This is the exact failure mode the issue describes: every container
-    crashes at startup with ``ModuleNotFoundError: No module named 'nfm_db'``.
-    The test simulates the Docker build by copying the same files into a
-    temp dir, creating an isolated venv, and confirming that ``import
-    nfm_db`` resolves to a real ``__init__.py`` in the installed package.
+
+@pytest.fixture(scope="module")
+def installed_apps_api_venv(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Install ``apps/api`` into an isolated venv once per module.
+
+    Returns ``(venv_python, site_packages_dir)``. Multiple tests share this
+    fixture so the slow ``pip install .`` runs only once.
     """
+    tmp_path = tmp_path_factory.mktemp("nfm_db_install")
     stage = tmp_path / "stage"
     stage.mkdir()
     shutil.copy(APPS_API_PYPROJECT, stage / "pyproject.toml")
@@ -112,6 +115,31 @@ def test_pip_install_ships_importable_nfm_db(tmp_path: Path) -> None:
             f"stderr=\n{res.stderr.decode('utf-8', 'replace')[-2000:]}"
         )
 
+    # Resolve site-packages for the venv (different paths on POSIX vs Windows).
+    site_proc = subprocess.run(
+        [str(venv_python), "-c", "import site; print(site.getsitepackages()[0])"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    site_packages = Path(site_proc.stdout.strip())
+    return venv_python, site_packages
+
+
+@pytest.mark.skipif(
+    not _has_python(),
+    reason="python interpreter not on PATH (needed for venv creation)",
+)
+def test_pip_install_ships_importable_nfm_db(installed_apps_api_venv: tuple[Path, Path]) -> None:
+    """Reproduce the Dockerfile step: ``pip install .`` then ``import nfm_db``.
+
+    This is the exact failure mode the issue describes: every container
+    crashes at startup with ``ModuleNotFoundError: No module named 'nfm_db'``.
+    The test simulates the Docker build by copying the same files into a
+    temp dir, creating an isolated venv, and confirming that ``import
+    nfm_db`` resolves to a real ``__init__.py`` in the installed package.
+    """
+    venv_python, _site_packages = installed_apps_api_venv
     import_proc = subprocess.run(
         [str(venv_python), "-c", "import nfm_db; print(nfm_db.__file__)"],
         capture_output=True,
@@ -125,4 +153,63 @@ def test_pip_install_ships_importable_nfm_db(tmp_path: Path) -> None:
     assert resolved_path.name == "__init__.py", import_proc.stdout
     assert resolved_path.parent.name == "nfm_db", (
         f"Expected nfm_db/__init__.py, got {resolved_path}"
+    )
+
+
+@pytest.mark.skipif(
+    not _has_python(),
+    reason="python interpreter not on PATH (needed for venv creation)",
+)
+def test_pip_install_ships_nfm_db_package_data_json(
+    installed_apps_api_venv: tuple[Path, Path],
+) -> None:
+    """``property_mapping.json`` / ``phase_mapping.json`` must ship in the wheel.
+
+    ``nfm_db.core.property_catalog._CONFIG_PATH`` (and the phase-mapping
+    consumer) load these from ``nfm_db/config/*.json`` next to the
+    installed ``__init__.py``. Setuptools only ships Python files by
+    default, so without an explicit ``[tool.setuptools.package-data]``
+    (or ``include_package_data = True`` + ``MANIFEST.in``), every
+    container crashes at startup with::
+
+        FileNotFoundError: .../site-packages/nfm_db/config/property_mapping.json
+
+    This test is the regression for the second half of the NFM-2239
+    acceptance criteria: the staging image's installed package was
+    shipping the Python module correctly but missing the JSON config.
+    The assertion MUST fail before the package-data fix and pass after
+    — that is what makes it a true RED→GREEN test for this fix.
+    """
+    venv_python, site_packages = installed_apps_api_venv
+    installed_config_dir = site_packages / "nfm_db" / "config"
+    missing = tuple(
+        name for name in _PACKAGE_DATA_JSONS if not (installed_config_dir / name).is_file()
+    )
+    assert not missing, (
+        "Installed nfm_db package is missing required JSON package data: "
+        f"{missing}. Without [tool.setuptools.package-data] in "
+        "apps/api/pyproject.toml, every container crashes at startup with "
+        "FileNotFoundError on nfm_db/config/*.json. See NFM-2239."
+    )
+
+    # Also confirm the JSONs are well-formed — a 0-byte file would still pass
+    # is_file() but fail to load.
+    load_proc = subprocess.run(
+        [
+            str(venv_python),
+            "-c",
+            (
+                "import json, nfm_db.core.property_catalog as pc;"
+                "data = json.load(open(pc._CONFIG_PATH));"
+                "assert 'property_aliases' in data, data;"
+                "print('ok', len(data['property_aliases']), 'aliases')"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert load_proc.returncode == 0, (
+        f"`nfm_db.config.property_mapping.json` failed to parse in installed package. "
+        f"stderr={load_proc.stderr}"
     )
