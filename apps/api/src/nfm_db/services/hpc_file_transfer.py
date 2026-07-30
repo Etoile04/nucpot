@@ -128,8 +128,14 @@ async def create_task_directory(ssh_manager, task_id: str) -> None:
             sftp = client.open_sftp()
             try:
                 sftp.mkdir(remote_dir)
-            except OSError:
-                pass  # Directory already exists
+            except OSError as exc:
+                # mkdir failure is expected when the directory already exists;
+                # log at debug so the path stays visible in trace diagnostics.
+                logger.debug(
+                    "ensure_remote_dir: sftp.mkdir(%s) skipped after OSError: %s",
+                    remote_dir,
+                    exc,
+                )
 
             logger.info(f"Task directory ready: {remote_dir}")
 

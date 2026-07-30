@@ -648,8 +648,12 @@ async def trigger_extraction(
                 if source_type == "datasource":
                     try:
                         kg_source_id = uuid.UUID(source_reference)
-                    except (ValueError, AttributeError):
-                        pass
+                    except (ValueError, AttributeError) as exc:
+                        logger.debug(
+                            "_build_extraction_job: source_reference UUID parse failed for %r: %s",
+                            source_reference,
+                            exc,
+                        )
 
                 build_result = await builder.build_from_extraction(
                     mapped,

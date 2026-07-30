@@ -79,8 +79,10 @@ async def check_job_completion(ssh_manager, task_id: str) -> bool:
                     file_stat = sftp.stat(remote_path)
                     if file_stat.st_size > 0:
                         return True
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug(
+                        "poll_job_status: sftp.stat(%s) failed: %s", remote_path, exc
+                    )
 
             return False
 

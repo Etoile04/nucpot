@@ -117,6 +117,24 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src tests
 
+      # NFM-2219 / NFM-2211: CI guard against silent exception swallowing.
+      # Fails the PR if `apps/api/src/` contains a bare `except: pass`
+      # pattern outside the documented allowlist. Runs AFTER lint (so the
+      # failure has clean ruff output to read alongside) and BEFORE the
+      # pytest suite (so silent-swallow regressions are caught before
+      # spending CI minutes on the full test run).
+      - name: Check for silent exception swallowing
+        run: bash scripts/check_except_pass.sh
+
+      - name: Upload except-pass grep artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-except-pass-report
+          path: |
+            .ci_except_pass_allowlist
+          retention-days: 30
+
       - name: Type-check (mypy)
         run: uv run mypy src
 

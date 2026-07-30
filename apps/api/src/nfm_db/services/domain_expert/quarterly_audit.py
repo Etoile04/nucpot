@@ -179,8 +179,12 @@ def _check_recent_verification(
                         stale_refs.append(
                             f"{ref.get('property_name', 'unknown')} ({days_ago}d ago)"
                         )
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug(
+                        "quarterly_audit: verified_at parse failed for %r: %s",
+                        verified_at,
+                        exc,
+                    )
 
         if stale_refs:
             findings.append(

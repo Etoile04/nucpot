@@ -168,16 +168,20 @@ def _decompose_conditions(
     if temp_c is not None:
         try:
             temperature = float(temp_c)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "_resolve_temperature: temp_C parse failed for %r: %s", temp_c, exc
+            )
     else:
         # Fall back to temp_K → Celsius
         temp_k = conditions.get("temp_K")
         if temp_k is not None:
             try:
                 temperature = float(temp_k) - 273.15
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.debug(
+                    "_resolve_temperature: temp_K parse failed for %r: %s", temp_k, exc
+                )
 
     method: str | None = conditions.get("simulation_method")
     if method is not None:

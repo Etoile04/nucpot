@@ -146,8 +146,13 @@ def parse_csv_file(filepath: Path) -> list[dict[str, Any]]:
                 if val is not None and val != "":
                     try:
                         record[numeric_field] = float(val)
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as exc:
+                        logger.debug(
+                            "parse_dft_file: %s parse failed for %r: %s",
+                            numeric_field,
+                            val,
+                            exc,
+                        )
             records.append(record)
 
     return records

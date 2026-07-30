@@ -34,8 +34,9 @@ def _try_sentry_capture(event: dict[str, Any]) -> None:
         import sentry_sdk  # type: ignore[import-not-found]
 
         sentry_sdk.capture_event(event)
-    except ImportError:
-        pass
+    except ImportError as exc:
+        # Sentry is optional; missing dependency is expected.
+        logger.debug("worker_health: sentry_sdk unavailable: %s", exc)
 
 
 class WorkerHealthTracker:

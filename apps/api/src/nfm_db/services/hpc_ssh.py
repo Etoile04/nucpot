@@ -221,8 +221,12 @@ class SSHConnectionManager:
                     if hasattr(client, "transport") and client.transport:
                         client.transport.close()
                     client.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort cleanup; surface failures at debug so the
+                    # underlying transport exception is not silently lost.
+                    logger.debug(
+                        "hpc_ssh cleanup: failed to close connection: %s", exc
+                    )
                 del client
             self._active_connections.clear()
             self.hosts = []

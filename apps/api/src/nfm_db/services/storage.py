@@ -180,8 +180,10 @@ class LocalDiskStorage:
         path = self._resolve(relative_path)
         try:
             path.unlink()
-        except FileNotFoundError:
-            pass
+        except FileNotFoundError as exc:
+            logger.debug(
+                "LocalStorage.delete: %s already absent (no-op): %s", path, exc
+            )
 
     def exists(self, relative_path: str) -> bool:
         """Return True iff the file currently exists at *relative_path*."""

@@ -498,8 +498,11 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             )
             try:
                 await db.rollback()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "process_literature: rollback after persist-failure raised: %s",
+                    exc,
+                )
 
         logger.exception(
             "process_literature: pipeline failed for datasource_id=%s: %s",
