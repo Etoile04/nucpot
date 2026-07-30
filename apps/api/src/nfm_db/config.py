@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
     secret_key: str = "CHANGE_THIS_IN_PRODUCTION"
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 480  # 8 hours
     # NFM-1973 / NFM-1972 AC-1: TTL for service-account JWTs.
     # Configurable via NUCPOT_SERVICE_JWT_TTL_MINUTES env var, default 30 minutes.
     # Independent of human-user TTL so operators can tighten/loosen service
