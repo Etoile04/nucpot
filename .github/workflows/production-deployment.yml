@@ -757,6 +757,7 @@ jobs:
           name: nfm-deploy-event-${{ github.run_id }}-${{ github.run_attempt }}
           path: deploy-event.json
           retention-days: 90
+          if-no-files-found: error
 
   # ===========================================================================
   # S2: Deploy notification — GitHub issue + Feishu alert + auto-close
