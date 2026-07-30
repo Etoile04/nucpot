@@ -105,6 +105,90 @@ def _read_events(path: Path) -> list[dict]:
 
 
 class TestStagingEmitsOneEvent:
+    def test_build_failure_before_health_gate_does_not_append_event(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """C2: builds that never reach the health gate stay outside the denominator."""
+        fake, bin_dir, events_path = fake_repo
+        _make_stub(
+            bin_dir,
+            "docker",
+            'case "$*" in *" build") exit 1 ;; *) exit 0 ;; esac',
+        )
+        _make_stub(bin_dir, "curl", 'printf \'{"status":"ok"}\'')
+
+        result = _run(fake, bin_dir, events_path)
+
+        assert result.returncode != 0
+        assert _read_events(events_path) == []
+
+    def test_rollback_health_does_not_replace_failed_deploy_first_poll(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """C3: first-poll status describes the new deploy, not its rollback."""
+        fake, bin_dir, events_path = fake_repo
+        counter = bin_dir / "curl.count"
+        _make_stub(bin_dir, "docker", "exit 0")
+        _make_stub(
+            bin_dir,
+            "curl",
+            f'''count_file="{counter}"
+count=0
+if [ -f "$count_file" ]; then count="$(cat "$count_file")"; fi
+count=$((count + 1))
+printf '%s\\n' "$count" > "$count_file"
+if [ "$count" -le 2 ]; then exit 22; fi
+printf '{{"status":"ok"}}' ''',
+        )
+
+        result = _run(fake, bin_dir, events_path)
+
+        assert result.returncode != 0
+        event = _read_events(events_path)[0]
+        assert event["first_pass_success"] is False
+        assert event["health_gate_first_poll_passed"] is False
+        assert event["rollback_triggered"] is True
+
+    def test_reserved_skip_flag_is_always_false(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """C5: the removed bypass flag remains a reserved false field."""
+        fake, bin_dir, events_path = fake_repo
+        _make_stubs(bin_dir, health_should_pass=True)
+        result = _run(
+            fake, bin_dir, events_path, extra_env={"SKIP_HEALTH_GATE": "1"}
+        )
+
+        assert result.returncode == 0, result.stderr
+        event = _read_events(events_path)[0]
+        assert event["skip_flag_used"] is False
+        assert event["first_pass_success"] is True
+
+    def test_no_new_required_env_vars(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """Existing callers still succeed without an events-path override."""
+        fake, bin_dir, _ = fake_repo
+        _make_stubs(bin_dir, health_should_pass=True)
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
+            "STAGING_HEALTH_TIMEOUT": "3",
+            "STAGING_ROLLBACK_TAG": "prev",
+            "HOME": str(fake),
+            "NFMD_DEPLOY_EVENTS_PATH": "",
+        }
+        result = subprocess.run(
+            ["bash", str(fake / "scripts" / "staging_deploy.sh"), "deploy"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, (
+            "deploy script crashed when NFMD_DEPLOY_EVENTS_PATH was unset: "
+            f"stderr={result.stderr!r}"
+        )
+
     def test_health_gate_failure_path_still_appends(
         self, fake_repo: tuple[Path, Path, Path]
     ) -> None:
@@ -139,51 +223,3 @@ class TestStagingEmitsOneEvent:
         assert event["first_pass_success"] is True
         assert event["rollback_triggered"] is False
         assert event["health_gate_first_poll_passed"] is True
-
-    def test_skip_flag_forces_first_pass_success_false(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
-        """Per CPO ruling D2: skip flag must not let the metric read as success."""
-        fake, bin_dir, events_path = fake_repo
-        _make_stubs(bin_dir, health_should_pass=True)
-        result = _run(
-            fake, bin_dir, events_path, extra_env={"SKIP_HEALTH_GATE": "1"}
-        )
-        # The deploy still succeeds (skipped gate), but the metric must reflect
-        # that the gate was bypassed.
-        assert result.returncode == 0, result.stderr
-        event = _read_events(events_path)[0]
-        assert event["skip_flag_used"] is True
-        assert event["first_pass_success"] is False
-
-    def test_no_new_required_env_vars(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
-        """Acceptance criterion 5: existing callers see no behavioural change.
-
-        The writer's default-path resolution is covered by
-        ``test_deploy_event.py::TestDefaultPath``; here we only need to prove
-        that the deploy script does not fail when ``NFMD_DEPLOY_EVENTS_PATH``
-        is unset, which is the observable contract from an operator's shell.
-        """
-        fake, bin_dir, _ = fake_repo
-        _make_stubs(bin_dir, health_should_pass=True)
-        env = {
-            **os.environ,
-            "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
-            "STAGING_HEALTH_TIMEOUT": "3",
-            "STAGING_ROLLBACK_TAG": "prev",
-            "HOME": str(fake),
-            # Explicitly drop the override; the script must still run cleanly.
-            "NFMD_DEPLOY_EVENTS_PATH": "",
-        }
-        result = subprocess.run(
-            ["bash", str(fake / "scripts" / "staging_deploy.sh"), "deploy"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert result.returncode == 0, (
-            "deploy script crashed when NFMD_DEPLOY_EVENTS_PATH was unset: "
-            f"stderr={result.stderr!r}"
-        )

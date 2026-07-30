@@ -29,8 +29,9 @@ STAGING_API_HOST_PORT="${STAGING_API_HOST_PORT:-8001}"
 STAGING_HEALTH_PATH="${STAGING_HEALTH_PATH:-/api/v1/health}"
 STAGING_HEALTH_TIMEOUT="${STAGING_HEALTH_TIMEOUT:-120}"
 
-# KR-3 instrumentation (NFM-2042) — source the shared event writer so both
-# staging and production deploy to the same append-only JSONL.
+# KR-3 instrumentation (NFM-2042) — source the shared event writer for the
+# staging-only deployment-success metric. Production emission is deliberately
+# out of scope for v1; see docs/architecture/ADR-KR3-deploy-events.md.
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/deploy_event.sh"
 
@@ -83,16 +84,25 @@ wait_for_health() {
   until check_health_once; do
     poll_count=$((poll_count + 1))
     if [ "$SECONDS" -ge "$deadline" ]; then
+      if [ "${_DEPLOY_EVENT_ARMED}" = "true" ] \
+           && [ -z "${_DEPLOY_EVENT_FIRST_POLL:-}" ]; then
+        _DEPLOY_EVENT_FIRST_POLL="false"
+      fi
       err "Health gate FAILED for $label after ${STAGING_HEALTH_TIMEOUT}s."
       return 1
     fi
     sleep 3
   done
   # NFM-2042 constraint C2: "first poll passed" == the loop body never ran.
-  if [ "$poll_count" -eq 0 ] && [ "${_DEPLOY_EVENT_ARMED}" = "true" ]; then
-    _DEPLOY_EVENT_FIRST_POLL="true"
-  elif [ "${_DEPLOY_EVENT_ARMED}" = "true" ]; then
-    _DEPLOY_EVENT_FIRST_POLL="false"
+  # Record this only once: a successful rollback health check must not replace
+  # the failed new-deploy gate's first-poll result.
+  if [ "${_DEPLOY_EVENT_ARMED}" = "true" ] \
+       && [ -z "${_DEPLOY_EVENT_FIRST_POLL:-}" ]; then
+    if [ "$poll_count" -eq 0 ]; then
+      _DEPLOY_EVENT_FIRST_POLL="true"
+    else
+      _DEPLOY_EVENT_FIRST_POLL="false"
+    fi
   fi
   log "Health gate PASSED for $label."
   return 0
@@ -111,6 +121,8 @@ record_good() {
 # rollback return 1, die). To keep the event-writer contract we never
 # propagate a write failure (deploy_event_emit already returns 0).
 _emit_staging_deploy_event() {
+  # Snapshot the deploy status before any trap bookkeeping changes `$?`.
+  local rc=$?
   if [ "${_DEPLOY_EVENT_ARMED}" != "true" ]; then
     return 0
   fi
@@ -119,7 +131,6 @@ _emit_staging_deploy_event() {
   _DEPLOY_EVENT_ARMED="false"
   trap - EXIT
 
-  local rc=$?
   local now_ms
   now_ms="$(deploy_event_now_ms)"
   local duration_ms=0
@@ -127,18 +138,10 @@ _emit_staging_deploy_event() {
     duration_ms=$(( now_ms - _DEPLOY_EVENT_DURATION_START_MS ))
   fi
 
-  # first_pass_success: the deploy command returned zero AND no rollback
-  # ran AND no override was used. Per CPO ruling D2, skip-flag-used forces
-  # the metric to false so the team cannot game KR-3 by setting the flag.
+  # first_pass_success: the deploy command returned zero and no rollback ran.
   local first_pass="false"
-  if [ "$rc" -eq 0 ] && [ "${_DEPLOY_EVENT_ROLLBACK}" = "false" ] \
-       && [ "${SKIP_HEALTH_GATE:-}" != "1" ] \
-       && [ "${SKIP_HEALTH_GATE:-}" != "true" ]; then
+  if [ "$rc" -eq 0 ] && [ "${_DEPLOY_EVENT_ROLLBACK}" = "false" ]; then
     first_pass="true"
-  fi
-  local skip_used="false"
-  if [ "${SKIP_HEALTH_GATE:-}" = "1" ] || [ "${SKIP_HEALTH_GATE:-}" = "true" ]; then
-    skip_used="true"
   fi
 
   deploy_event_emit \
@@ -148,7 +151,7 @@ _emit_staging_deploy_event() {
     --first-pass-success "$first_pass" \
     --health-gate-first-poll-passed "${_DEPLOY_EVENT_FIRST_POLL:-false}" \
     --rollback-triggered "$_DEPLOY_EVENT_ROLLBACK" \
-    --skip-flag-used "$skip_used" \
+    --skip-flag-used false \
     --duration-ms "$duration_ms"
 
   return 0
@@ -168,15 +171,13 @@ snapshot_rollback_target() {
 # ---- commands ---------------------------------------------------------------
 cmd_deploy() {
   load_env_file
-  # KR-3 instrumentation (NFM-2042): reset event state, then arm a single
-  # EXIT trap that runs regardless of which terminal path the deploy takes.
-  # The trap runs after the function returns, so the local return code of
-  # cmd_deploy is what determines first_pass_success.
-  _DEPLOY_EVENT_ARMED="true"
+  # Reset event state for this invocation. The trap is armed only once the
+  # deploy reaches the health gate, so build/up failures stay out of the
+  # denominator (ADR-KR3-A1 C2).
+  _DEPLOY_EVENT_ARMED="false"
   _DEPLOY_EVENT_FIRST_POLL=""
   _DEPLOY_EVENT_ROLLBACK="false"
-  _DEPLOY_EVENT_DURATION_START_MS="$(deploy_event_now_ms)"
-  trap _emit_staging_deploy_event EXIT
+  _DEPLOY_EVENT_DURATION_START_MS=""
 
   log "Deploying NFM-DB staging stack (tag=${STAGING_IMAGE_TAG:-latest})..."
 
@@ -187,6 +188,12 @@ cmd_deploy() {
 
   log "Bringing stack up (api runs alembic migrations on start)..."
   compose up -d --remove-orphans
+
+  # Arm the EXIT trap at the health-gate boundary. This records every health
+  # outcome while excluding build/up failures, dry-runs, and other commands.
+  _DEPLOY_EVENT_ARMED="true"
+  _DEPLOY_EVENT_DURATION_START_MS="$(deploy_event_now_ms)"
+  trap _emit_staging_deploy_event EXIT
 
   if wait_for_health "new deploy"; then
     record_good

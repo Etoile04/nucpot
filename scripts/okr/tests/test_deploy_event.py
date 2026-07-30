@@ -1,7 +1,7 @@
 """Tests for scripts/lib/deploy_event.sh — the shared KR-3 deploy-event writer.
 
-NFM-2042. The writer is a sourceable shell helper used by both
-``scripts/staging_deploy.sh`` and ``.github/workflows/production-deployment.yml``.
+NFM-2042. The writer is a sourceable shell helper used by
+``scripts/staging_deploy.sh``; production emission is deferred by ADR-KR3-A1.
 These tests drive it through ``bash`` against a temp JSONL path.
 
 Contract under test:
@@ -165,7 +165,19 @@ class TestRobustness:
         assert result.returncode == 0
         assert "deploy-event" in result.stderr.lower()
 
-    def test_quotes_in_triggered_by_do_not_corrupt_json(self, tmp_path: Path) -> None:
+    def test_impl_failure_warns_but_returns_zero(self, tmp_path: Path) -> None:
+        events = tmp_path / "events.jsonl"
+        result = run_bash(
+            f'''set -euo pipefail
+. "{LIB}"
+_deploy_event_emit_impl() {{ return 7; }}
+deploy_event_emit {_DEFAULT_ARGS}
+''',
+            NFMD_DEPLOY_EVENTS_PATH=str(events),
+        )
+        assert result.returncode == 0
+        assert "event writer failed" in result.stderr.lower()
+
         events = tmp_path / "events.jsonl"
         args = _DEFAULT_ARGS.replace(
             "--triggered-by alice", "--triggered-by 'bob\"quote'"

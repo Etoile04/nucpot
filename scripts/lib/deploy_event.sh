@@ -2,10 +2,9 @@
 # =============================================================================
 # NFM-DB — Shared deploy-event writer for KR-COMPANY-3 (NFM-2042)
 # =============================================================================
-# Sourceable helper. Both callers use it so the JSON assembly lives in one
-# place:
-#   - scripts/staging_deploy.sh                    (environment=staging)
-#   - .github/workflows/production-deployment.yml  (environment=production)
+# Sourceable helper. The staging deploy script uses it so the JSON assembly
+# remains in one place. Production emission is intentionally deferred to a
+# separate durability design (see docs/architecture/ADR-KR3-deploy-events.md).
 #
 # Usage:
 #     . "$(dirname "$0")/lib/deploy_event.sh"
@@ -22,19 +21,9 @@
 # Event schema is fixed by the NFM-2035 spec, section 3.1: one JSON object per
 # line, appended, never rewritten.
 #
-# Storage path (constraint C3): production and staging deploy to the same
-# persistent host, so both write ONE shared file. Override with
-# NFMD_DEPLOY_EVENTS_PATH; the default is <repo>/docker/.deploy-events.jsonl.
-# CI callers MUST set NFMD_DEPLOY_EVENTS_PATH to a host-absolute path — the
-# runner's per-run workspace checkout is discarded after the job.
-#
-# CONTRACT: this helper must never fail its caller (NFM-2042 acceptance
-# criterion 5). Every failure path warns on stderr and returns 0. The
-# implementation runs in a subshell with `set +e` so that a sourcing script
-# running under `set -euo pipefail` cannot be aborted by a write error.
-# =============================================================================
+# Storage path: override with NFMD_DEPLOY_EVENTS_PATH; the default is
+# <repo>/docker/.deploy-events.jsonl.
 
-# Resolved once at source time: <repo> is two levels above scripts/lib/.
 _DEPLOY_EVENT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _DEPLOY_EVENT_REPO_ROOT="$(cd "$_DEPLOY_EVENT_LIB_DIR/../.." && pwd)"
 
@@ -173,6 +162,10 @@ _deploy_event_emit_impl() {
 
 # Append exactly one deploy event. Always returns 0.
 deploy_event_emit() {
-  ( set +e; _deploy_event_emit_impl "$@" ) || true
+  local rc=0
+  ( set +e; _deploy_event_emit_impl "$@" ) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    deploy_event_warn "event writer failed unexpectedly (rc=$rc) — event not recorded."
+  fi
   return 0
 }
