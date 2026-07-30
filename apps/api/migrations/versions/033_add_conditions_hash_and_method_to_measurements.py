@@ -336,13 +336,30 @@ def upgrade() -> None:
         server_default="",
     )
 
-    # 4. Backfill conditions_hash from MeasurementCondition rows.  Legacy
+    # 4. Add conditions_hash column if it does not exist (the column
+    #    was originally created by the rejected migration 032 which may
+    #    or may not have been applied to a given DB).  We use a
+    #    try/except so the migration is idempotent regardless.
+    try:
+        op.add_column(
+            "property_measurements",
+            sa.Column(
+                "conditions_hash",
+                sa.String(40),
+                nullable=True,
+                comment="SHA1 of JSON conditions dict (NFM-2032 dedup).",
+            ),
+        )
+    except Exception:
+        pass  # column already exists from a prior 032 run
+
+    # 5. Backfill conditions_hash from MeasurementCondition rows.  Legacy
     #    rows may already have a non-NULL hash (from the rejected 032
     #    migration); the deterministic computation is idempotent so we
     #    overwrite unconditionally.
     _backfill_conditions_hash()
 
-    # 5. Any rows that still have conditions_hash IS NULL (e.g. nested
+    # 6. Any rows that still have conditions_hash IS NULL (e.g. nested
     #    schema with no joined MeasurementCondition and no prior 032
     #    migration) get the empty-dict hash, then the column is set
     #    NOT NULL.
@@ -362,12 +379,12 @@ def upgrade() -> None:
         nullable=False,
     )
 
-    # 6. Deduplicate existing rows so the upcoming UNIQUE indexes can be
+    # 7. Deduplicate existing rows so the upcoming UNIQUE indexes can be
     #    created without conflict on legacy duplicates.
     _dedupe_property_measurements()
     _dedupe_datasets()
 
-    # 7. Drop the non-unique single-column index from the rejected 032
+    # 8. Drop the non-unique single-column index from the rejected 032
     #    migration (if it exists — wrapped in try/except because the
     #    column was never deployed to production).
     try:
@@ -375,7 +392,7 @@ def upgrade() -> None:
     except Exception:  # pragma: no cover — index may not exist on fresh DBs
         pass
 
-    # 8. Create the composite UNIQUE INDEX that makes the 5-tuple a DB
+    # 9. Create the composite UNIQUE INDEX that makes the 5-tuple a DB
     #    invariant.  This is the linchpin of cross-request dedup: even
     #    two concurrent inserts racing on an empty SELECT will fail
     #    one with IntegrityError, which the mapper catches and counts
@@ -395,23 +412,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Reverse the migration: drop the unique indexes, the method column, and
-    restore ``conditions_hash`` to nullable."""
+    """Reverse the migration: drop the unique indexes, the method column,
+    and the conditions_hash column (if it was created by this migration)."""
     op.drop_index(
         "uq_datasets_source_material", table_name="datasets"
     )
     op.drop_index("uq_pm_dedup", table_name="property_measurements")
-    # Restore the rejected-032 single-column index (idempotent w.r.t.
-    # production, which never had it).
-    op.create_index(
-        "idx_pm_conditions_hash",
-        "property_measurements",
-        ["conditions_hash"],
-    )
-    op.alter_column(
-        "property_measurements",
-        "conditions_hash",
-        existing_type=sa.String(40),
-        nullable=True,
-    )
+    # Drop conditions_hash column — this migration created it, so
+    # downgrade removes it (idempotent: try/except handles the case
+    # where it was created by a prior 032 run instead).
+    try:
+        op.drop_column("property_measurements", "conditions_hash")
+    except Exception:
+        pass
     op.drop_column("property_measurements", "method")
