@@ -43,10 +43,11 @@ This migration closes all three gaps:
 The migration is reversible (down drops the new column, the new unique
 indexes, and restores ``conditions_hash`` to nullable).
 
-Note: down_revision = '031_seed_property_types' (main head).  Originally
-chained on '032_create_data_submission_tables' from the NFM-2018 epic
-branch, but that migration is not yet merged to main.  When NFM-2018
-lands, its migration must re-point its down_revision to this revision.
+Note: down_revision = '032_add_dedup_unique_indexes' (main head after
+the NFM-2009 epic merge of NFM-2013).  Originally chained on
+'031_seed_property_types' (commit 9252bb6) when 032 was not yet merged;
+that revision landed with NFM-2013 via PR #488 follow-up, so this
+migration must re-point its down_revision to it.
 """
 from __future__ import annotations
 
@@ -59,7 +60,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "033_add_conditions_hash_and_method_to_measurements"
-down_revision: str | Sequence[str] | None = "031_seed_property_types"
+down_revision: str | Sequence[str] | None = "032_add_dedup_unique_indexes"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
