@@ -44,7 +44,27 @@ router = APIRouter(prefix="/auth", tags=["认证管理"])
 settings = get_settings()
 
 COOKIE_NAME = "access_token"
-COOKIE_MAX_AGE = 1800  # 30 minutes
+
+
+def _cookie_max_age(*, is_service_account: bool) -> int:
+    """Return the auth cookie lifetime, in seconds, for the issued token.
+
+    The cookie must expire with the JWT it carries.  When the cookie is the
+    shorter of the two the browser silently stops sending credentials while
+    the token is still valid, which surfaces as a sudden logout (NFM-2225 —
+    a hardcoded 30-minute cookie outlived by an 8-hour token).
+
+    Service accounts mint their tokens from ``service_jwt_ttl_minutes``
+    rather than ``access_token_expire_minutes``, so mirror whichever knob
+    actually produced the token.  Read at login time so a config change
+    takes effect without touching this module.
+    """
+    minutes = (
+        settings.service_jwt_ttl_minutes
+        if is_service_account
+        else settings.access_token_expire_minutes
+    )
+    return minutes * 60
 
 
 def _validate_password_strength(password: str) -> None:
@@ -119,7 +139,7 @@ async def login(
         secure=True,
         samesite="lax",
         path="/",
-        max_age=COOKIE_MAX_AGE,
+        max_age=_cookie_max_age(is_service_account=user.is_service_account),
     )
 
     return Token(access_token=access_token)
