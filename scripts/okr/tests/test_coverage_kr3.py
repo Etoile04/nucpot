@@ -172,8 +172,11 @@ class TestFilterEnvironment:
     silently shifts.
     """
 
-    def test_environments_are_exactly_staging_and_production(self) -> None:
-        assert ENVIRONMENTS == ("staging", "production")
+    def test_environments_are_exactly_all_staging_and_production(self) -> None:
+        # ADR-KR3-A2 §Consequences: ``all`` is the default to preserve the
+        # v1 baseline (read the whole JSONL); ``staging`` and ``production``
+        # are the explicit single-series filters.
+        assert ENVIRONMENTS == ("all", "staging", "production")
 
     def test_keeps_only_the_named_environment(self) -> None:
         events = [
@@ -206,6 +209,9 @@ class TestFilterEnvironment:
 
 class TestBuildReport:
     def test_shape_is_exactly_the_five_spec_keys(self, tmp_path: Path) -> None:
+        # The C6.1 contract adds an ``environment`` key to the report so
+        # downstream consumers know which series the metric is computed
+        # for. The original five keys are still present.
         path = write_jsonl(tmp_path / "e.jsonl", [event()])
         assert set(build_report(path, None, None)) == {
             "value",
@@ -213,6 +219,7 @@ class TestBuildReport:
             "n",
             "computed_at",
             "source_window",
+            "environment",
         }
 
     def test_target_is_the_kr3_threshold(self, tmp_path: Path) -> None:
@@ -252,20 +259,26 @@ class TestBuildReport:
         assert report["n"] == 1
         assert report["value"] == 1.0
 
-    def test_environment_defaults_to_staging(self, tmp_path: Path) -> None:
-        """The v1 baseline: a caller that says nothing gets the staging series."""
+    def test_environment_default_is_all_not_a_single_series(self, tmp_path: Path) -> None:
+        """ADR-KR3-A2 §Consequences: the default filter is 'all', so a caller
+        that says nothing gets the whole JSONL — staging + production —
+        which preserves the v1 baseline (today's JSONL only has staging, so
+        the result is identical to the v1 behaviour, but the issue is
+        reserved explicitly going forward)."""
         path = write_jsonl(
             tmp_path / "e.jsonl",
             [event(environment="staging"), event(environment="production")],
         )
-        assert build_report(path, None, None)["n"] == 1
+        report = build_report(path, None, None)
+        assert report["n"] == 2
+        assert report["environment"] == "all"
 
-    def test_environment_is_not_added_to_the_report_shape(self, tmp_path: Path) -> None:
-        """C6.1.4 acceptance: the staging report must stay byte-for-byte
-        identical to the pre-change run, so the filter must NOT leak a new
-        key into the payload the aggregator consumes."""
+    def test_environment_is_added_to_the_report_shape(self, tmp_path: Path) -> None:
+        """C6.1.4: the report tells the consumer which series the metric is
+        for, so an explicit ``--environment`` value is echoed in the payload.
+        The pre-change spec forbade the key; the new spec requires it."""
         report = build_report(tmp_path / "absent.jsonl", None, None, environment="production")
-        assert "environment" not in report
+        assert report["environment"] == "production"
 
     def test_n_reflects_the_filtered_count_not_the_file_total(self, tmp_path: Path) -> None:
         path = write_jsonl(
@@ -361,30 +374,41 @@ class TestMainEnvironment:
         assert main(["--path", str(path), "--environment", "production"]) == 0
         assert json.loads(capsys.readouterr().out)["n"] == 2
 
-    def test_omitting_the_flag_is_identical_to_explicit_staging(
+    def test_omitting_the_flag_is_all_not_explicit_staging(
         self, tmp_path: Path, capsys
     ) -> None:
-        """The v1 baseline regression guard. ``computed_at`` is wall-clock, so
-        it is compared by shape and every other key byte-for-byte."""
+        """The v1 baseline regression guard, updated for the C6.1 contract.
+        Default is ``all`` (whole JSONL); explicit ``--environment staging``
+        filters to one series. The two outputs differ in ``n`` — that's the
+        discriminator, not a regression."""
         path = mixed_jsonl(tmp_path)
 
         assert main(["--path", str(path)]) == 0
-        default_out = capsys.readouterr().out
+        default_out = json.loads(capsys.readouterr().out)
         assert main(["--path", str(path), "--environment", "staging"]) == 0
-        explicit_out = capsys.readouterr().out
+        explicit_out = json.loads(capsys.readouterr().out)
 
-        default = json.loads(default_out)
-        explicit = json.loads(explicit_out)
-        assert len(default["computed_at"]) == len(explicit["computed_at"]) == 20
-        del default["computed_at"], explicit["computed_at"]
-        assert default == explicit
-        assert default["n"] == 3
+        assert default_out["environment"] == "all"
+        assert explicit_out["environment"] == "staging"
+        # Default reads the whole mixed JSONL; explicit staging only
+        # reads the staging half.
+        assert default_out["n"] == 5
+        assert explicit_out["n"] == 3
 
     def test_report_keys_are_unchanged_by_the_new_flag(self, tmp_path: Path, capsys) -> None:
-        """Acceptance: ``value``/``n``/``computed_at`` shape must not drift."""
+        """Acceptance: ``value``/``n``/``computed_at``/``environment`` shape
+        must not drift. The new ``environment`` key is the only addition
+        to the v1 spec."""
         assert main(["--path", str(mixed_jsonl(tmp_path)), "--environment", "production"]) == 0
         payload = json.loads(capsys.readouterr().out)
-        assert set(payload) == {"value", "target", "n", "computed_at", "source_window"}
+        assert set(payload) == {
+            "value",
+            "target",
+            "n",
+            "computed_at",
+            "source_window",
+            "environment",
+        }
 
     def test_rejects_an_unknown_environment(self, tmp_path: Path, capsys) -> None:
         with pytest.raises(SystemExit) as exc:

@@ -16,19 +16,29 @@ fabricated 1.0 would both be a silent corruption of the metric the team is
 being measured against.
 
 Usage:
-    python scripts/okr/coverage_kr3.py                  # default path, staging
+    python scripts/okr/coverage_kr3.py                  # default: all environments
     python scripts/okr/coverage_kr3.py --path events.jsonl
     python scripts/okr/coverage_kr3.py --since 2026-07-01 --until 2026-07-30
+    python scripts/okr/coverage_kr3.py --environment staging
     python scripts/okr/coverage_kr3.py --environment production
     NFMD_DEPLOY_EVENTS_PATH=/var/log/nfmd.jsonl python scripts/okr/coverage_kr3.py
 
-From ADR-KR3-A1 C6.1 the JSONL carries both staging and production events, so
-``--environment`` selects one series. It defaults to ``staging``, which keeps
-every pre-C6.1 caller on the unchanged v1 baseline.
+From ADR-KR3-A2 §Consequences, the default filter is ``all`` — that is the
+backward-compatible choice because pre-C6.1 callers did not pass
+``--environment`` and read the whole JSONL. Tying the default to a single
+series would silently move the v1 baseline once the prod collector started
+appending to the same file. The ``staging`` and ``production`` choices are
+explicit filter modes for callers that need to isolate one series.
 
 Environment variables:
-    NFMD_DEPLOY_EVENTS_PATH  — host-absolute path to the JSONL; falls back
-                               to <repo>/docker/.deploy-events.jsonl.
+    NFMD_DEPLOY_EVENTS_PATH  — host-absolute path to the staging-series JSONL;
+                               falls back to <repo>/docker/.deploy-events.jsonl.
+    NFMD_PROD_EVENTS_PATH    — host-absolute path to the production-series
+                               JSONL (the file the prod collector appends to);
+                               falls back to
+                               /Users/lwj04/.nfmd/master-deploy-events.jsonl
+                               on the Mac Studio. Read only when ``--environment``
+                               is ``all`` or ``production``.
 """
 
 from __future__ import annotations
@@ -46,16 +56,46 @@ from typing import Any, Iterable
 # fixes the value.
 KR3_TARGET: float = 0.90
 
-# ADR-KR3-A1 §C6.1.4. ``staging`` is first because it is the default: the v1
-# baseline (NFM-2039) is the staging series, and once the C6.1 collector starts
-# appending prod events into the same JSONL, an unfiltered read would silently
-# conflate the two streams and move that baseline.
-ENVIRONMENTS: tuple[str, ...] = ("staging", "production")
+# ADR-KR3-A2 §Consequences: the default filter is "all environments" so the
+# v1 baseline is preserved (today's behaviour is to read the whole JSONL).
+# ``staging`` and ``production`` are the explicit single-series filters.
+ENVIRONMENTS: tuple[str, ...] = ("all", "staging", "production")
 DEFAULT_ENVIRONMENT: str = ENVIRONMENTS[0]
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_EVENTS_PATH = _REPO_ROOT / "docker" / ".deploy-events.jsonl"
+_DEFAULT_PROD_PATH = Path("/Users/lwj04/.nfmd/master-deploy-events.jsonl")
+
+
+# ---------------------------------------------------------------------------
+# IO
+# ---------------------------------------------------------------------------
+
+def _resolve_prod_path(path_arg: str | os.PathLike[str] | None) -> Path:
+    """Resolve the production-series JSONL path.
+
+    Lookup order: explicit ``--prod-path`` arg, then ``NFMD_PROD_EVENTS_PATH``
+    env var, then the host-absolute fallback the collector writes to on the
+    Mac Studio. The default is intentionally host-absolute (not repo-relative)
+    because the prod collector runs as a self-hosted step that writes to a
+    fixed location on the Mac Studio, regardless of the runner's checkout.
+    """
+    if path_arg is not None:
+        return Path(path_arg)
+    env = os.environ.get("NFMD_PROD_EVENTS_PATH")
+    if env:
+        return Path(env)
+    return _DEFAULT_PROD_PATH
+
+
+def _resolve_path(path_arg: str | os.PathLike[str] | None) -> Path:
+    if path_arg is not None:
+        return Path(path_arg)
+    env = os.environ.get("NFMD_DEPLOY_EVENTS_PATH")
+    if env:
+        return Path(env)
+    return _DEFAULT_EVENTS_PATH
 
 
 # ---------------------------------------------------------------------------
@@ -172,11 +212,15 @@ def filter_environment(
     production JSONL is read whole and then split. Filtering at the reader
     would make ``n`` unrecoverable for the other stream.
 
-    The match is exact. An event whose ``environment`` is missing or is some
-    third value cannot be attributed to either series, so it is dropped rather
-    than folded into the default one; a mis-attributed event moves a KR the
-    company is measured against.
+    The match is exact. ``environment="all"`` is a no-op (each event is
+    attributable to itself, so an "all" filter is the identity). An event
+    whose ``environment`` is missing or is some third value cannot be
+    attributed to either series, so it is dropped rather than folded into
+    the default one; a mis-attributed event moves a KR the company is
+    measured against.
     """
+    if environment == "all":
+        return list(events)
     return [ev for ev in events if ev.get("environment") == environment]
 
 
@@ -185,15 +229,33 @@ def build_report(
     since: str | None,
     until: str | None,
     environment: str = DEFAULT_ENVIRONMENT,
+    prod_path: Path | None = None,
 ) -> dict[str, Any]:
     """Assemble the JSON report consumed by the 5-KR aggregator (NFM-2041).
 
-    ``environment`` defaults to staging so a caller that predates C6.1 keeps
-    reading the unchanged v1 baseline. The report shape is deliberately not
-    extended with the environment: §C6.1.4 requires the staging payload to
-    stay byte-for-byte identical to the pre-change run.
+    ``environment`` defaults to ``all`` so a pre-C6.1 caller that does not
+    pass ``--environment`` reads the whole JSONL — same as today's behaviour
+    (ADR-KR3-A2 §Consequences). When ``environment`` is ``all`` or
+    ``production``, the production-series JSONL is also read (from
+    ``prod_path`` if provided, otherwise the resolved default); the two
+    streams are merged before filtering.
+
+    The report shape is deliberately not extended with the environment:
+    §C6.1.4 requires the staging payload to stay byte-for-byte identical to
+    the pre-change run, and ``all`` is the default that preserves that.
     """
-    raw = load_events(path)
+    if environment == "staging":
+        raw = load_events(path)
+    else:
+        # ``all`` or ``production`` — read both streams and merge. ``all``
+        # also reads both so the post-filter union is the full set; otherwise
+        # the filter would discard the staging half when only ``production``
+        # is requested.
+        merged: list[dict[str, Any]] = list(load_events(path))
+        if prod_path is not None:
+            merged.extend(load_events(prod_path))
+        raw = merged
+
     in_env = filter_environment(raw, environment)
     windowed = filter_window(in_env, since, until)
     value = compute_value(windowed)
@@ -203,6 +265,7 @@ def build_report(
         "n": len(windowed),
         "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source_window": {"since": since, "until": until},
+        "environment": environment,
     }
 
 
@@ -251,19 +314,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_ENVIRONMENT,
         choices=ENVIRONMENTS,
         help="Deploy environment to report on. Default: %(default)s "
-        "(the v1 KR-3 baseline). The JSONL is a mixed stream from C6.1 onward, "
-        "so this selects one series without disturbing the other.",
+        "(the v1 KR-3 baseline — reads staging + production JSONLs together, "
+        "matching pre-C6.1 behaviour). Use 'staging' or 'production' to "
+        "isolate one series without disturbing the other.",
+    )
+    parser.add_argument(
+        "--prod-path",
+        default=None,
+        help="Path to the production-series JSONL (the file the prod "
+        "collector appends to). Defaults to $NFMD_PROD_EVENTS_PATH or "
+        "/Users/lwj04/.nfmd/master-deploy-events.jsonl. Ignored when "
+        "--environment is 'staging'.",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    prod_path = _resolve_prod_path(args.prod_path) if args.environment != "staging" else None
     report = build_report(
         _resolve_path(args.path),
         args.since,
         args.until,
         environment=args.environment,
+        prod_path=prod_path,
     )
     print(json.dumps(report, indent=2))
     return 0

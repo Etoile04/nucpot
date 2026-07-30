@@ -196,6 +196,7 @@ class Backend(Protocol):
         new_state: SyncState,
     ) -> None: ...
     def alert_bad_fragment(self, run_id: int, reason: str) -> None: ...
+    def alert_append_failure(self, reason: str) -> None: ...
 
 
 def _gh_api(repo: str, *args: str) -> Any:
@@ -390,6 +391,52 @@ class GhBackend:
             # ``bad_run_ids`` so it will retry on the next iteration.
             pass
 
+    def alert_append_failure(self, reason: str) -> None:
+        """Notify the channel when ``append_and_advance`` raised.
+
+        ADR §Failure-mode 1 talks about a partial-line tail-recovery as
+        "logged + alerted"; the same belt-and-braces is required for the
+        broader SSH / flock / decode failure mode. Without this, the
+        collector can sit in a self-host outage for hours and produce
+        zero visibility — the ``workflow_run`` trigger is itself unreliable
+        when the runner is down, which is exactly the situation where the
+        cron fallback's silent stderr line is least actionable.
+        """
+        webhook = os.environ.get("ALERT_WEBHOOK", "")
+        if not webhook:
+            return
+        body = json.dumps({
+            "msg_type": "interactive",
+            "card": {
+                "header": {
+                    "title": {"tag": "plain_text", "content": "Prod deploy-event append failed"},
+                    "template": "red",
+                },
+                "elements": [{
+                    "tag": "markdown",
+                    "content": (
+                        f"**reason**: {reason}\n"
+                        "**action**: state NOT advanced; same fragments will be "
+                        "re-attempted on the next collector iteration. The "
+                        "POSIX flock is released on SSH process death, so the "
+                        "master JSONL is not corrupted by a mid-sync exit."
+                    ),
+                }],
+            },
+        })
+        try:
+            subprocess.run(
+                ["curl", "-sf", "-X", "POST", webhook,
+                 "-H", "Content-Type: application/json",
+                 "-d", body],
+                capture_output=True, check=False, timeout=10,
+            )
+        except Exception:
+            # Alert failure is non-fatal — the run will retry on the next
+            # iteration, and the next successful iteration trips the same
+            # code path again.
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Orchestration
@@ -425,7 +472,6 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
     )
 
     pending: list[tuple[int, str]] = []
-    highest_synced = next_state.last_synced_run_id
 
     for run in runs:
         if run.run_id <= next_state.last_synced_run_id:
@@ -472,13 +518,12 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             continue
 
         pending.append((run.run_id, json.dumps(events[0], separators=(",", ":"))))
-        highest_synced = max(highest_synced, run.run_id)
 
     if pending:
-        # Update the candidate next state BEFORE the SSH call — this is
-        # safe because we only persist on success. If the SSH raises,
-        # we return the original state instead.
-        next_state.last_synced_run_id = highest_synced
+        # Runs are already sorted by ``run_id`` (see the call to
+        # ``sorted(..., key=lambda r: r.run_id)`` above), so the
+        # advance target is the highest run_id in ``pending``.
+        next_state.last_synced_run_id = pending[-1][0]
         next_state.last_synced_at = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
@@ -488,11 +533,17 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             # Network partition mid-sync: the lock is released on SSH
             # process death (POSIX flock semantics) and the master JSONL
             # tail-1 sanity check truncates any partial line on the next
-            # iteration. We leave ``state`` UNCOMMITTED.
+            # iteration. We leave ``state`` UNCOMMITTED and alert so the
+            # self-host outage is not silently invisible — the
+            # ``workflow_run`` trigger is itself unreliable when the
+            # runner is down, which is exactly the situation where the
+            # cron fallback's silent stderr line is least actionable.
+            reason = f"{type(exc).__name__}: {exc}"
             print(
-                f"[collector] append failed, state NOT advanced: {exc}",
+                f"[collector] append failed, state NOT advanced: {reason}",
                 file=sys.stderr,
             )
+            backend.alert_append_failure(reason)
             return state
 
     return next_state
