@@ -47,6 +47,15 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=json --cov-fail-under=80
 
+      # NFM-2149 / ADR-NFM-2139 §5 D2: PR-time regression for the
+      # pre-deploy-assert script. Tests run on ubuntu-latest (no Docker
+      # needed) by stubbing `docker` on PATH with a shim that returns
+      # canned responses. The full live-Docker smoke lives in
+      # production-deployment.yml > pre-deploy-assert-smoke.
+      - name: Run pre-deploy-assert unit tests (NFM-2149)
+        run: |
+          python3 -m pytest tools/pre-deploy-assert-smoke/test_assert.py -v
+
       # Publishes the Cobertura XML for the KR-5 coverage aggregator (NFM-2047).
       # `always()` keeps a red run measurable: a run that fails the 80% gate
       # still has a real coverage number worth reporting.

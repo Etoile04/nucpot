@@ -265,6 +265,107 @@ jobs:
           path: apps/web/.next
 
   # =============================================================================
+  # P1/D2 — NFM-2149 / ADR-NFM-2139 §5 D2
+  # ----------------------------------------------------------------------
+  # Pre-deploy DB↔code Alembic assertion. Builds the candidate api image
+  # with an explicit `:candidate-<sha>` tag (preserves the prior `:latest`
+  # image so the workflow can be aborted mid-run without losing state),
+  # then verifies the prod DB's `alembic_version.version_num` exists in
+  # the candidate and `alembic heads` shows exactly one head.
+  #
+  # The candidate image is also tagged as `:latest` so deploy-prod's
+  # `docker compose ... up -d` (without `--build`) starts the image the
+  # assertion just inspected. This is Option 2 from the NFM-2149 spec
+  # and makes the D1 (NFM-2145) SHA-tag follow-up a one-line change.
+  #
+  # A failed assertion exits with a distinct code (64 = EX_USAGE,
+  # missing-revision) so `deploy-prod` (which has `needs: [...] including
+  # this job`) is **skipped**, not run.
+  # =============================================================================
+  pre-deploy-assert:
+    name: Pre-deploy DB↔code alembic assertion
+    runs-on: [self-hosted, production]
+    needs: [build-web, test-api]
+    if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success'
+    env:
+      HTTP_PROXY: http://127.0.0.1:7892
+      HTTPS_PROXY: http://127.0.0.1:7892
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,nucpot.dpdns.org,verify.nucpot.dpdns.org
+      # ADR §5 D2 "distinct exit code". 64 = EX_USAGE (sysexits.h).
+      # The smoke-test job uses a different value (42) so the two jobs
+      # never collide on a single exit-code namespace.
+      ASSERT_DISTINCT_EXIT: "64"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build candidate api image
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+            set -euo pipefail
+            cd ~/Projects/nucpot
+            export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            git pull origin main
+
+            SHORT_SHA="$(git rev-parse --short HEAD)"
+            CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
+            # Export to the workflow env so the next step can read it.
+            echo "CANDIDATE_TAG=${CANDIDATE_TAG}" >> "$GITHUB_ENV"
+
+            echo "===> Building candidate image ${CANDIDATE_TAG}..."
+            docker build -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+
+            # Tag as :latest so deploy-prod's `up -d` (without --build)
+            # starts the image the assertion just inspected. The candidate
+            # tag is preserved as the rollback primitive (D1 follow-up).
+            docker tag "${CANDIDATE_TAG}" nucpot-prod-api:latest
+            echo "===> Candidate image ready:"
+            docker images --format '  {{.Repository}}:{{.Tag}} ({{.CreatedSince}}, {{.Size}})' \
+              | grep '^nucpot-prod-api' || true
+          ENDSSH
+
+      - name: Run pre-deploy DB↔code alembic assertion
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+            set -euo pipefail
+            cd ~/Projects/nucpot
+            export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            echo "===> Running pre-deploy-assert against ${CANDIDATE_TAG}..."
+            bash tools/pre-deploy-assert-smoke/assert.sh \
+              --image "${CANDIDATE_TAG}" \
+              --db-container nucpot-prod-db \
+              --db-user "${PROD_POSTGRES_USER:-nfm}" \
+              --db-name "${PROD_POSTGRES_DB:-nfm_db}" \
+              --distinct-exit "${ASSERT_DISTINCT_EXIT}"
+            echo "===> ASSERT_OK: deploy-prod is unblocked"
+          ENDSSH
+
+  # =============================================================================
+  # P1/D2 — NFM-2149 regression test (live-Docker integration)
+  # ----------------------------------------------------------------------
+  # Wires the smoke harness into CI so a regression in `assert.sh` breaks
+  # the build before it breaks prod. Runs on the self-hosted production
+  # runner (Docker daemon + network to pull pgvector/pgvector:pg16).
+  # =============================================================================
+  pre-deploy-assert-smoke:
+    name: Pre-deploy-assert smoke test (NFM-2149)
+    runs-on: [self-hosted, production]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run assert.sh unit tests (no Docker required)
+        # Catches logical regressions in the bash script even when the
+        # live-Docker smoke below is skipped (PR runners don't have Docker).
+        run: |
+          python3 -m pytest tools/pre-deploy-assert-smoke/test_assert.py -v
+
+      - name: Run smoke.sh (live Docker + postgres)
+        # Simulates NFM-2135: DB stamped to revision X, image lacks X,
+        # verify workflow refuses with the distinct exit code + log names X.
+        # Then verifies the success path: image has X → exit 0.
+        run: |
+          bash tools/pre-deploy-assert-smoke/smoke.sh
+
+  # =============================================================================
   # Deployment
   # =============================================================================
   # NFM-586 / NFM-593: Self-hosted runner on Mac Studio (same machine as
@@ -272,12 +373,17 @@ jobs:
   # host's OpenSSH sshd — same pattern as staging (NFM-150 rev 2).
   # No external SSH needed. DEPLOY_HOST/DEPLOY_KEY/DEPLOY_USER secrets are
   # no longer consumed by this workflow and can be deleted.
+  #
+  # NFM-2149 / ADR-NFM-2139 §5 D2: deploy-prod is gated by pre-deploy-assert.
+  # The `up -d` is run WITHOUT `--build` (the candidate image was already
+  # built and tagged in the pre-deploy-assert job). The candidate tag is
+  # preserved as a rollback primitive for the D1 (NFM-2145) follow-up.
   # =============================================================================
   deploy-prod:
     name: Deploy Production (Docker Compose)
     runs-on: [self-hosted, production]
-    needs: [build-web, test-api]
-    if: always() && needs.build-web.result == 'success'
+    needs: [build-web, test-api, pre-deploy-assert]
+    if: always() && needs.build-web.result == 'success' && needs.pre-deploy-assert.result == 'success'
     env:
       HTTP_PROXY: http://127.0.0.1:7892
       HTTPS_PROXY: http://127.0.0.1:7892
@@ -305,11 +411,14 @@ jobs:
 
             git pull origin main
 
-            # Build the 3 distinct images. The api image is shared by the api
-            # and worker services (docker-compose.prod.yml:62, :216), so one
-            # build tag covers both. --build is BANNED below in the compose
-            # step — it would re-tag the new image as `latest` and destroy
-            # the prior SHA-tagged image, breaking rollback.
+            # Build the 3 distinct images (D1, NFM-2148). The api image is
+            # shared by the api and worker services (docker-compose.prod.yml:62,
+            # :216), so one build tag covers both. --build is BANNED below in
+            # the compose step — it would re-tag the new image as `latest` and
+            # destroy the prior SHA-tagged image, breaking rollback.
+            # pre-deploy-assert (D2, NFM-2149) has already validated the
+            # DB↔code alembic match against the candidate image before this
+            # point; see the pre-deploy-assert job in this workflow.
             echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
             docker build -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
 
@@ -327,8 +436,7 @@ jobs:
             # resolves each service's `image:` (docker-compose.prod.yml:62, :126,
             # :216, :275) to the matching SHA-tagged image we just built. The
             # schema authority (Alembic-only) is unchanged — Alembic runs on
-            # container boot via docker/prod-api.Dockerfile CMD, see NFM-2147.
-            docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d
+            # container boot via docker/prod-api.Dockerfile CMD, see NFM-2147.            docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d
 
             # Wait for services to start
             sleep 20
