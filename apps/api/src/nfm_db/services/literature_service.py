@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 
 from nfm_db.database import async_session_factory
 from nfm_db.models.source import DataSource
+from nfm_db.services.health_event_emitter import (
+    SEVERITY_WARNING,
+    build_context,
+    emit_health_event_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,9 +188,19 @@ def _parse_pdf_to_markdown(
                     "_parse_pdf_to_markdown: mineru failed (%s) — falling back to PyMuPDF",
                     exc,
                 )
-    except ImportError:
+    except ImportError as exc:
         # mineru_client module missing — treat as "MinerU not configured".
-        pass
+        # Previously silent: the whole corpus would quietly parse via
+        # PyMuPDF with no signal that the better extractor was absent.
+        emit_health_event_sync(
+            event_type="fallback_triggered",
+            severity=SEVERITY_WARNING,
+            source_service="mineru_extraction",
+            context=build_context(exc, fallback="pymupdf"),
+        )
+        logger.warning(
+            "_parse_pdf_to_markdown: mineru_client unavailable — using PyMuPDF"
+        )
 
     if markdown:
         return markdown
@@ -498,8 +513,17 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             )
             try:
                 await db.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                # A failed rollback leaves the session poisoned; emitting
+                # here is why the emitter uses its own session.
+                emit_health_event_sync(
+                    event_type="rollback_failed",
+                    severity="error",
+                    source_service="literature_service",
+                    context=build_context(
+                        rollback_exc, datasource_id=str(datasource_id)
+                    ),
+                )
 
         logger.exception(
             "process_literature: pipeline failed for datasource_id=%s: %s",

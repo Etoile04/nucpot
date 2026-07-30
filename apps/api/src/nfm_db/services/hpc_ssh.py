@@ -13,6 +13,11 @@ from pathlib import Path
 
 import paramiko
 
+from nfm_db.services.health_event_emitter import (
+    SEVERITY_WARNING,
+    build_context,
+    emit_health_event_sync,
+)
 from nfm_db.services.hpc_metrics import (
     PROMETHEUS_AVAILABLE,
     hpc_active_connections,
@@ -221,8 +226,13 @@ class SSHConnectionManager:
                     if hasattr(client, "transport") and client.transport:
                         client.transport.close()
                     client.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    emit_health_event_sync(
+                        event_type="ssh_cleanup_failed",
+                        severity=SEVERITY_WARNING,
+                        source_service="hpc_ssh",
+                        context=build_context(exc),
+                    )
                 del client
             self._active_connections.clear()
             self.hosts = []

@@ -100,6 +100,7 @@ class TimestampMixin:
     )
 
 
+from nfm_db.models.health_event import HealthEvent
 from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
@@ -261,6 +262,7 @@ __all__ = [
     "MDSimulationResult",
     "MDVerificationJob",
     "MatchMethod",
+    "HealthEvent",
     "Material",
     "MaterialAlias",
     "MaterialCategory",
