@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -270,6 +271,61 @@ async def db_session() -> AsyncSession:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 
+    await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# NFM-2032: real-Postgres integration fixture (opt-in)
+# ---------------------------------------------------------------------------
+# Activated by setting NFM_TEST_DATABASE_URL to a disposable asyncpg
+# URL (e.g. ``postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_test_nfm2032``).
+# When the env var is unset the fixture is auto-skipped, so the regular
+# SQLite ``db_session`` continues to drive the rest of the test suite.
+# This is the only piece of the test stack that exercises the real
+# Postgres dialect against the 5-tuple composite UNIQUE INDEX introduced
+# by migration 033; SQLAlchemy's SQLite dialect silently accepts
+# duplicate UNIQUE rows in some configurations, so the SQLite suite
+# cannot be trusted on its own for race detection.
+
+
+_NFM_TEST_PG_URL = os.environ.get("NFM_TEST_DATABASE_URL", "").strip()
+
+
+@pytest.fixture
+async def pg_session() -> AsyncSession:
+    """Create a disposable Postgres async session for NFM-2032 SQL probes.
+
+    Skips when ``NFM_TEST_DATABASE_URL`` is unset; the test calling
+    this fixture must therefore be decorated with
+    ``@pytest.mark.skipif(not _NFM_TEST_PG_URL, ...)`` or equivalent
+    so the suite stays green on CI without Postgres.
+
+    Schema is created from the application metadata (no migrations
+    applied); the dedup tests assert the composite UNIQUE INDEX is
+    enforced by the DB regardless of how the schema was built.
+    """
+    if not _NFM_TEST_PG_URL:
+        pytest.skip(
+            "NFM_TEST_DATABASE_URL is not set; skipping real-Postgres test"
+        )
+
+    engine = create_async_engine(_NFM_TEST_PG_URL, echo=False)
+    # Replace JSONB/ARRAY with JSON because the test metadata is
+    # written once for both SQLite and Postgres; the prod sessions
+    # use the JSONB/ARRAY types so the schema matches production.
+    async with engine.begin() as conn:
+        await conn.run_sync(_safe_create_all, Base.metadata)
+
+    session_factory = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    async with session_factory() as session:
+        yield session
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
 
