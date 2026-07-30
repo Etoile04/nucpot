@@ -53,15 +53,34 @@ export function buildKgNodeLabelIndex(
   return index
 }
 
-/** Stable label for an unresolved node id (AC-2 fallback).
+/**
+ * Stable label for an unresolved node id (AC-2 fallback).
  *
- * Keeps the full id so a missing source/target can still be referenced
- * in a bug report (e.g. "edge points at kg-node-…"). For the rare
- * full-UUID fallback case, callers may rely on CSS truncation in the
- * surrounding flex container to keep the row height bounded.
+ * Orphan endpoints are routine: the backend caps nodes at 200 and
+ * edges at 400 (literature.py `_MAX_KG_NODES_PER_SOURCE` /
+ * `_MAX_KG_EDGES_PER_SOURCE`), so densely-extracted papers routinely
+ * surface edges whose endpoints were truncated out of the node page.
+ * Rendering those 36-char UUIDs verbatim wraps the row and breaks the
+ * visual rhythm of the panel.
+ *
+ * Truncates to the first 8 chars + ellipsis whenever the id is longer
+ * than `_SHORT_ID_THRESHOLD` (12). 8 hex chars are enough to identify
+ * a specific UUID within a small list and to copy into a bug report.
+ * Short ids (test fixtures, short slugs) pass through unchanged so we
+ * don't pepper the UI with ellipsis on already-readable labels.
+ *
+ * The row container also applies `truncate` / `min-w-0` / `flex-1`
+ * classes (see `KgEdgeRow` below) so the resolved label still ellipsises
+ * gracefully when the row itself is narrower than the truncated form.
  */
+const _SHORT_ID_THRESHOLD = 12
+const _SHORT_ID_PREFIX_LENGTH = 8
+
 function shortId(id: string): string {
-  return id
+  if (id.length <= _SHORT_ID_THRESHOLD) {
+    return id
+  }
+  return `${id.slice(0, _SHORT_ID_PREFIX_LENGTH)}…`
 }
 
 interface KgEdgeRowProps {
@@ -78,15 +97,30 @@ function KgEdgeRow({ edge, labelIndex }: KgEdgeRowProps) {
     shortId(edge.source_target_id ?? "?")
 
   return (
-    <div className="text-sm">
-      <span data-testid="edge-source">{sourceLabel}</span>
-      <span className="mx-1 text-gray-400">--</span>
-      <span data-testid="edge-relation" className="font-mono">
+    <div className="text-sm flex items-center gap-1 min-w-0">
+      <span
+        data-testid="edge-source"
+        className="truncate min-w-0 flex-1"
+        title={edge.source_node_id ?? undefined}
+      >
+        {sourceLabel}
+      </span>
+      <span className="text-gray-400 flex-shrink-0">--</span>
+      <span
+        data-testid="edge-relation"
+        className="font-mono flex-shrink-0"
+      >
         {edge.property_name}
       </span>
-      <span className="mx-1 text-gray-400">--&gt;</span>
-      <span data-testid="edge-target">{targetLabel}</span>
-      <span className="ml-1 text-gray-400">→</span>
+      <span className="text-gray-400 flex-shrink-0">--&gt;</span>
+      <span
+        data-testid="edge-target"
+        className="truncate min-w-0 flex-1"
+        title={edge.source_target_id ?? undefined}
+      >
+        {targetLabel}
+      </span>
+      <span className="ml-1 text-gray-400 flex-shrink-0">→</span>
     </div>
   )
 }

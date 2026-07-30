@@ -123,21 +123,63 @@ describe("ExtractionResultsList — KG edge triple (AC-2)", () => {
     expect(edgeRow.textContent).toContain("→")
   })
 
-  it("falls back to the raw UUID when a kg_node label cannot be resolved", () => {
-    // Edge points at a node id that isn't in the kg_node list.
+  it("falls back to a truncated UUID when a kg_node label cannot be resolved", () => {
+    // Edge points at node ids that aren't in the kg_node list. Because
+    // the backend caps nodes at 200 and edges at 400 (literature.py
+    // _MAX_KG_NODES_PER_SOURCE / _MAX_KG_EDGES_PER_SOURCE), orphan
+    // endpoints are routine — they must NOT render as raw 36-char
+    // UUIDs that wrap and destroy row rhythm.
     const orphanEdge: KgEdgeExtractionResultItem = {
       ...kgEdgeRow,
       id: "kg-edge-orphan",
-      source_node_id: "kg-node-missing-source",
-      source_target_id: "kg-node-missing-target",
+      source_node_id: "673258f9-21dc-4485-a6dd-1eb1df13ed23",
+      source_target_id: "8a72bbe3-7c14-4f2a-b5d9-1c8e5a9c1f44",
     }
 
     render(<ExtractionResultsList items={[orphanEdge]} />)
 
     const edgeRow = screen.getByTestId(`extraction-row-${orphanEdge.id}`)
-    // Resolved labels missing → show truncated ids rather than crash.
-    expect(edgeRow.textContent).toContain("missing-source")
-    expect(edgeRow.textContent).toContain("missing-target")
+    const renderedText = edgeRow.textContent ?? ""
+
+    // Full UUID must NOT appear — that was the pre-fix defect.
+    expect(renderedText).not.toContain("673258f9-21dc-4485-a6dd-1eb1df13ed23")
+    expect(renderedText).not.toContain("8a72bbe3-7c14-4f2a-b5d9-1c8e5a9c1f44")
+
+    // Truncated prefix must be visible (referenceable in bug reports).
+    expect(renderedText).toContain("673258f9")
+    expect(renderedText).toContain("8a72bbe3")
+  })
+
+  it("does not truncate ids that are already short", () => {
+    // Short identifiers (e.g. test fixtures) must pass through verbatim —
+    // adding ellipsis to a 12-char id would be visual noise.
+    const shortSourceEdge: KgEdgeExtractionResultItem = {
+      ...kgEdgeRow,
+      id: "kg-edge-short",
+      source_node_id: "short-source",
+      source_target_id: "short-target",
+    }
+
+    render(<ExtractionResultsList items={[shortSourceEdge]} />)
+
+    const edgeRow = screen.getByTestId(`extraction-row-${shortSourceEdge.id}`)
+    expect(edgeRow.textContent).toContain("short-source")
+    expect(edgeRow.textContent).toContain("short-target")
+    // No ellipsis on short ids.
+    expect(edgeRow.textContent).not.toContain("…")
+  })
+
+  it("renders edge row container with flex + min-w-0 so the row height stays bounded", () => {
+    // The UXDesigner review (NFM-2249) found the KgEdgeRow container
+    // was a plain `<div className="text-sm">` with no `truncate`,
+    // `min-w-0`, or `overflow-hidden`. A long source/target would wrap
+    // and inflate the row. CSS truncation must work — className must
+    // include the truncation primitives.
+    render(<ExtractionResultsList items={[kgNodeRow, kgEdgeRow]} />)
+
+    const edgeRow = screen.getByTestId(`extraction-row-${kgEdgeRow.id}`)
+    expect(edgeRow.querySelector(".truncate")).not.toBeNull()
+    expect(edgeRow.querySelector(".min-w-0")).not.toBeNull()
   })
 })
 
