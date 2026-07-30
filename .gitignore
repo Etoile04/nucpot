@@ -33,6 +33,7 @@ docker/postgres-data/
 .claude/
 CLAUDE.md
 AGENTS.md
+!/AGENTS.md
 .gitnexus/
 .hermes/
 *.tsbuildinfo

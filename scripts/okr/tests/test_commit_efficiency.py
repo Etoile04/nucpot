@@ -7,6 +7,11 @@ Functions under test:
 - fetch_issue_statuses(issue_refs: list[str], api_url: str) -> dict[str, str]
 - calculate_metrics(commits: list[dict], statuses: dict[str, str]) -> dict
 - build_report(period_start: str, period_end: str, commits: list[dict], statuses: dict[str, str]) -> dict
+
+The [no-issue] tests in ``TestNoIssueEscapeHatch`` PIN the escape-hatch
+behaviour mandated by ADR-NFM-2081 §D2: a commit subject containing
+``[no-issue]`` MUST be classified as unreferenced (structural waste). The
+literal marker must NOT be allowed to launder the KR-2 metric.
 """
 
 from __future__ import annotations
@@ -286,3 +291,138 @@ class TestEnrichCommitsWithRefs:
         enrich_commits_with_refs(commits)
         assert commits == original
         assert "issue_refs" not in commits[0]
+
+
+# ---------------------------------------------------------------------------
+# [no-issue] escape hatch (NFM-2083 / ADR-NFM-2081 §D2)
+# ---------------------------------------------------------------------------
+#
+# These tests PIN the existing behaviour that a commit subject containing
+# the literal marker ``[no-issue]`` is classified as UNREFERENCED by
+# ``extract_issue_refs`` and therefore as structural waste by
+# ``calculate_metrics``. The marker is an escape hatch for genuinely
+# non-OKR commits (e.g. version bumps of third-party tooling) and must
+# NOT launder the KR-2 structural-waste-rate metric.
+#
+# The acceptance criterion is "pin, do not fix": if any of these tests
+# fail, that's a regression — the regex would have to change to add
+# ``[no-issue]`` as a positive match, which the ADR explicitly forbids.
+
+
+
+from scripts.okr.commit_efficiency import _ISSUE_REF_PATTERN
+
+
+class TestNoIssueEscapeHatch:
+    """Pin behavioural contract for the [no-issue] escape hatch."""
+
+    @pytest.mark.unit
+    def test_no_issue_marker_yields_no_refs(self) -> None:
+        """Extracting from a subject carrying only ``[no-issue]`` returns []."""
+        result = extract_issue_refs("chore: bump ruff to 0.14 [no-issue]")
+        assert result == []
+
+    @pytest.mark.unit
+    def test_no_issue_with_prefix_brackets(self) -> None:
+        """``[no-issue]`` may also appear as the sole prefix token."""
+        result = extract_issue_refs("[no-issue] chore: bump ruff to 0.14")
+        assert result == []
+
+    @pytest.mark.unit
+    def test_bare_nfm_reference_is_extracted(self) -> None:
+        """A plain NFM-### subject is referenced (not waste)."""
+        result = extract_issue_refs("feat: NFM-2082 commit reference enforcement")
+        assert "NFM-2082" in result
+
+    @pytest.mark.unit
+    def test_bracketed_nfm_reference_is_extracted(self) -> None:
+        """The conventional bracketed form ``[NFM-###]`` is referenced."""
+        result = extract_issue_refs("[NFM-2082] feat: commit reference enforcement")
+        assert "NFM-2082" in result
+
+    @pytest.mark.unit
+    def test_plain_chore_without_marker_yields_no_refs(self) -> None:
+        """A subject with no marker and no ref is waste (existing behaviour)."""
+        result = extract_issue_refs("chore: dep sync")
+        assert result == []
+
+    @pytest.mark.unit
+    def test_revert_with_nfm_reference_is_extracted(self) -> None:
+        """A ``Revert "NFM-1234 ..."`` message carries the ref in the subject."""
+        result = extract_issue_refs('Revert "NFM-1234 old thing"')
+        assert "NFM-1234" in result
+
+    @pytest.mark.unit
+    def test_revert_with_no_issue_marker_yields_no_refs(self) -> None:
+        """A ``Revert "[no-issue] ..."`` message is still unreferenced."""
+        result = extract_issue_refs('Revert "chore: bump ruff to 0.14 [no-issue]"')
+        assert result == []
+
+    @pytest.mark.unit
+    def test_literal_no_issue_does_not_match_nfm_pattern(self) -> None:
+        """The literal ``[no-issue]`` MUST NOT match the strict NFM-\\d+ regex.
+
+        This is the structural guarantee from ADR-NFM-2081 §D2: the regex
+        permits only the canonical ``NFM-<digits>`` form, so any literal
+        marker carrying non-digit characters after ``NFM-`` is excluded.
+        """
+        assert _ISSUE_REF_PATTERN.findall("[no-issue]") == []
+        assert _ISSUE_REF_PATTERN.findall("foo [no-issue] bar") == []
+        assert _ISSUE_REF_PATTERN.search("NFM-") is None
+        # ``fullmatch`` returns a Match object; .group() gives the matched string.
+        match = _ISSUE_REF_PATTERN.fullmatch("NFM-2082")
+        assert match is not None and match.group() == "NFM-2082"
+
+
+class TestCalculateMetricsWithNoIssue:
+    """``[no-issue]`` commits must be tallied as structural waste."""
+
+    @pytest.mark.unit
+    def test_no_issue_commit_counts_as_waste(self) -> None:
+        """A commit whose only 'reference' is the escape hatch is waste."""
+        commits = [
+            {"hash": "a", "message": "chore: bump ruff to 0.14 [no-issue]", "issue_refs": []},
+            {"hash": "b", "message": "feat: NFM-2082 enforcement", "issue_refs": ["NFM-2082"]},
+        ]
+        statuses = {"NFM-2082": "done"}
+        result = calculate_metrics(commits, statuses)
+
+        assert result["commits"]["total"] == 2
+        assert result["commits"]["withoutIssueRef"] == 1
+        assert result["commits"]["withIssueRef"] == 1
+        # structural_waste = 1 / 2 = 0.5
+        assert abs(result["metrics"]["structuralWasteRate"] - 0.5) < 1e-9
+
+    @pytest.mark.unit
+    def test_mixed_no_issue_and_referenced_commit_efficiency(self) -> None:
+        """KR-2 metric must reflect only committed NFM-### work, not escapes."""
+        commits = [
+            {"hash": "a", "message": "chore: bump ruff [no-issue]", "issue_refs": []},
+            {"hash": "b", "message": "chore: dep sync", "issue_refs": []},
+            {"hash": "c", "message": "feat: NFM-100 login", "issue_refs": ["NFM-100"]},
+            {"hash": "d", "message": "feat: NFM-101 logout", "issue_refs": ["NFM-101"]},
+        ]
+        statuses = {"NFM-100": "done", "NFM-101": "done"}
+        result = calculate_metrics(commits, statuses)
+
+        # Only the 2 no-issue / chore commits are waste; the 2 NFM-### are referenced.
+        assert result["commits"]["withIssueRef"] == 2
+        assert result["commits"]["withoutIssueRef"] == 2
+        assert abs(result["metrics"]["structuralWasteRate"] - 0.5) < 1e-9
+        # Completed issues / total commits = 2/4 = 0.5
+        assert abs(result["metrics"]["commitEfficiency"] - 0.5) < 1e-9
+
+    @pytest.mark.unit
+    def test_only_no_issue_commits_yields_full_waste_rate(self) -> None:
+        """If every commit in the window carries the escape hatch, waste = 1.0."""
+        commits = [
+            {"hash": "a", "message": "chore: bump ruff [no-issue]", "issue_refs": []},
+            {"hash": "b", "message": "chore: twiddle config [no-issue]", "issue_refs": []},
+        ]
+        statuses: dict[str, str] = {}
+        result = calculate_metrics(commits, statuses)
+
+        assert result["commits"]["withIssueRef"] == 0
+        assert result["commits"]["withoutIssueRef"] == 2
+        assert result["metrics"]["structuralWasteRate"] == 1.0
+        assert result["metrics"]["commitEfficiency"] == 0.0
