@@ -34,9 +34,15 @@ permissions:
 jobs:
   collect-prod-events:
     name: Collect production deploy events
-    # Self-hosted runner — pinned to `prod-collector` label on the Mac Studio
-    # host (same machine as the prod compose stack per ADR-KR3-A1 §C6.1).
-    runs-on: [self-hosted, prod-collector]
+    # Self-hosted runner — pinned to the `production` label on the Mac Studio
+    # host (same machine as the prod compose stack per ADR-KR3-A1 §C6.1). The
+    # historical `prod-collector` label was never registered on the runner, so
+    # workflow_dispatch runs queued forever. Switching to `production` matches
+    # the only self-hosted runner that exists (wenjiedeMac-Studio, labels:
+    # self-hosted/macOS/ARM64/production). Collector and deployer share the
+    # runner; contention is low because deploy-prod only runs on push/tag/d
+    # ispatch while the collector runs every 5 min.
+    runs-on: [self-hosted, production]
     env:
       # Prefer a fine-grained PAT (`secrets.GH_TOKEN`) so the collector works
       # even on forks; fall back to the per-run GITHUB_TOKEN which already has
