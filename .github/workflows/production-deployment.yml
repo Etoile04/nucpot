@@ -282,6 +282,10 @@ jobs:
       HTTP_PROXY: http://127.0.0.1:7892
       HTTPS_PROXY: http://127.0.0.1:7892
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,nucpot.dpdns.org,verify.nucpot.dpdns.org
+      # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
+      # commit SHA. The deploy heredoc re-exports this on the host so the
+      # compose step and the manual rollback recipe both use the same tag.
+      PROD_IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
 
@@ -291,10 +295,40 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+
+            # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
+            # commit SHA so a bad deploy can be rolled back by re-tagging, not
+            # by rebuilding. The local daemon keeps the last 10 successful
+            # nucpot-prod-* tags per repository (see prune step at end).
+            export PROD_IMAGE_TAG="${{ github.sha }}"
+            echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
+
             git pull origin main
 
-            # Rebuild and restart ALL containers (including web)
-            docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d --build
+            # Build the 3 distinct images. The api image is shared by the api
+            # and worker services (docker-compose.prod.yml:62, :216), so one
+            # build tag covers both. --build is BANNED below in the compose
+            # step — it would re-tag the new image as `latest` and destroy
+            # the prior SHA-tagged image, breaking rollback.
+            echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
+            docker build -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+
+            echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
+            docker build -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
+              -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
+
+            echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
+            docker build -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
+              -f docker/web.Dockerfile \
+              --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
+              --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
+
+            # Restart ALL containers using the SHA-tagged images. PROD_IMAGE_TAG
+            # resolves each service's `image:` (docker-compose.prod.yml:62, :126,
+            # :216, :275) to the matching SHA-tagged image we just built. The
+            # schema authority (Alembic-only) is unchanged — Alembic runs on
+            # container boot via docker/prod-api.Dockerfile CMD, see NFM-2147.
+            docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d
 
             # Wait for services to start
             sleep 20
@@ -328,6 +362,29 @@ jobs:
 
             echo "Checking Web health..."
             curl -f http://localhost:3000/ || exit 1
+
+            # NFM-2148 / ADR-NFM-2139 §5 D1 retention: keep the most-recent
+            # 10 nucpot-prod-* tags per repository in the local daemon. Tags
+            # are sorted by Docker's CreatedAt timestamp; everything past the
+            # 10th newest is removed. The new SHA we just built is always
+            # newest, so it is never pruned. Disk cap: ~60-80 GB on the
+            # Mac Studio (4 images × 10 tags × ~1.5-2 GB).
+            echo "==> Pruning nucpot-prod-* tags older than the last 10 per repository"
+            for REPO in nucpot-prod-api nucpot-prod-lightrag nucpot-prod-web; do
+              OLD_IDS=$(docker images --format '{{.Repository}}|{{.Tag}}|{{.ID}}|{{.CreatedAt}}' \
+                | grep "^${REPO}|" \
+                | sort -t'|' -k4,4 -r \
+                | tail -n +11 \
+                | cut -d'|' -f3 \
+                | sort -u)
+              if [ -n "$OLD_IDS" ]; then
+                echo "    removing old ${REPO} tags: $(echo "$OLD_IDS" | tr '\n' ' ')"
+                echo "$OLD_IDS" | xargs -r docker image rm -f
+              else
+                echo "    ${REPO}: nothing to prune"
+              fi
+            done
+            echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
           ENDSSH
 
       - name: External smoke tests
@@ -644,7 +701,7 @@ jobs:
                   `1. [View failed run](${runUrl})\n` +
                   `2. Check Docker containers: \`ssh lwj04@<host> docker ps\`\n` +
                   `3. Check Cloudflare Tunnel status\n` +
-                  `4. Manual rollback: \`ssh lwj04@<host> docker compose -f docker-compose.prod.yml down && git checkout <prev-sha> && docker compose -f docker-compose.prod.yml up -d --build\`\n` +
+                  `4. Manual rollback (NFM-2148 / ADR-NFM-2139 §5 D1 — SHA-tagged): \`ssh lwj04@<host> PROD_IMAGE_TAG=<prev-sha> docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d\` (no rebuild; \`<prev-sha>\` is the SHA of the last successful deploy event — see C6.1.1 / NFM-2110)\n` +
                   `5. This issue auto-closes on next successful deploy`,
                 labels: ['deploy-failure'],
               });
