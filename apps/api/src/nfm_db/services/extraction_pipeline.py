@@ -31,9 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.services.extraction_prompt import build_extraction_system_prompt
 from nfm_db.services.gap_scan_service import GapScanService
 from nfm_db.services.health_event_emitter import (
+    EVENT_VALIDATION_DROP,
     SEVERITY_WARNING,
     build_context,
-    emit_health_event_sync,
+    emit_health_event,
 )
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 from nfm_db.services.quality_gate import QualityGateService
@@ -656,8 +657,12 @@ async def trigger_extraction(
                     except (ValueError, AttributeError) as exc:
                         # Provenance is optional but losing it silently
                         # makes KG nodes untraceable to their source.
-                        emit_health_event_sync(
-                            event_type="validation_drop",
+                        # The outer function is async, so we ``await`` the
+                        # async emitter (NFM-2241 C2). The emitter opens
+                        # its own session, so the caller's transaction
+                        # state is irrelevant.
+                        await emit_health_event(
+                            event_type=EVENT_VALIDATION_DROP,
                             severity=SEVERITY_WARNING,
                             source_service="extraction_pipeline",
                             context=build_context(

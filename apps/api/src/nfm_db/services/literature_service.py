@@ -516,12 +516,17 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             except Exception as rollback_exc:
                 # A failed rollback leaves the session poisoned; emitting
                 # here is why the emitter uses its own session.
-                emit_health_event_sync(
-                    event_type="rollback_failed",
-                    severity="error",
+                # ``rollback_failed`` is not in the NFM-2211-B spec enum;
+                # ``_prepare`` coerces it to ``generic_silent_catch`` while
+                # keeping the original label in the payload.
+                await emit_health_event(
+                    event_type=EVENT_GENERIC_SILENT_CATCH,
+                    severity=SEVERITY_ERROR,
                     source_service="literature_service",
                     context=build_context(
-                        rollback_exc, datasource_id=str(datasource_id)
+                        rollback_exc,
+                        datasource_id=str(datasource_id),
+                        reported_event_type="rollback_failed",
                     ),
                 )
 
