@@ -18,9 +18,11 @@ from pathlib import Path
 import pytest
 
 from scripts.okr.coverage_kr3 import (
+    ENVIRONMENTS,
     KR3_TARGET,
     build_report,
     compute_value,
+    filter_environment,
     filter_window,
     load_events,
     main,
@@ -160,6 +162,45 @@ class TestFilterWindow:
 
 
 # ---------------------------------------------------------------------------
+# filter_environment (C6.1.4)
+# ---------------------------------------------------------------------------
+
+class TestFilterEnvironment:
+    """The prod collector (C6.1.2) appends into the same JSONL as the staging
+    writer, so from C6.1 onward the file is a mixed stream. Without this
+    filter the KR conflates both environments and the v1 staging baseline
+    silently shifts.
+    """
+
+    def test_environments_are_exactly_staging_and_production(self) -> None:
+        assert ENVIRONMENTS == ("staging", "production")
+
+    def test_keeps_only_the_named_environment(self) -> None:
+        events = [
+            event(environment="staging"),
+            event(environment="production"),
+            event(environment="staging"),
+        ]
+        assert len(filter_environment(events, "staging")) == 2
+        assert len(filter_environment(events, "production")) == 1
+
+    def test_match_is_exact_not_prefix(self) -> None:
+        assert filter_environment([event(environment="staging-canary")], "staging") == []
+
+    def test_drops_events_with_a_missing_environment_field(self) -> None:
+        """A schema-incomplete row cannot be attributed to a stream, so it must
+        not be silently counted into the default one."""
+        no_env = {k: v for k, v in event().items() if k != "environment"}
+        assert filter_environment([no_env], "staging") == []
+
+    def test_does_not_mutate_input(self) -> None:
+        events = [event(environment="staging"), event(environment="production")]
+        before = json.dumps(events)
+        filter_environment(events, "staging")
+        assert json.dumps(events) == before
+
+
+# ---------------------------------------------------------------------------
 # build_report
 # ---------------------------------------------------------------------------
 
@@ -211,6 +252,62 @@ class TestBuildReport:
         assert report["n"] == 1
         assert report["value"] == 1.0
 
+    def test_environment_defaults_to_staging(self, tmp_path: Path) -> None:
+        """The v1 baseline: a caller that says nothing gets the staging series."""
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [event(environment="staging"), event(environment="production")],
+        )
+        assert build_report(path, None, None)["n"] == 1
+
+    def test_environment_is_not_added_to_the_report_shape(self, tmp_path: Path) -> None:
+        """C6.1.4 acceptance: the staging report must stay byte-for-byte
+        identical to the pre-change run, so the filter must NOT leak a new
+        key into the payload the aggregator consumes."""
+        report = build_report(tmp_path / "absent.jsonl", None, None, environment="production")
+        assert "environment" not in report
+
+    def test_n_reflects_the_filtered_count_not_the_file_total(self, tmp_path: Path) -> None:
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [event(environment="staging")] * 3 + [event(environment="production")] * 2,
+        )
+        assert build_report(path, None, None, environment="staging")["n"] == 3
+        assert build_report(path, None, None, environment="production")["n"] == 2
+
+    def test_each_environment_gets_its_own_value(self, tmp_path: Path) -> None:
+        """Both streams in one file must not contaminate each other's rate."""
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [
+                event(environment="staging"),
+                event(environment="staging", first_pass_success=False),
+                event(environment="production"),
+                event(environment="production"),
+            ],
+        )
+        assert build_report(path, None, None, environment="staging")["value"] == 0.5
+        assert build_report(path, None, None, environment="production")["value"] == 1.0
+
+    def test_environment_filter_composes_with_the_date_window(self, tmp_path: Path) -> None:
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [
+                event(environment="staging", ts="2026-01-01T00:00:00Z"),
+                event(environment="staging", ts="2026-07-20T00:00:00Z"),
+                event(environment="production", ts="2026-07-20T00:00:00Z"),
+            ],
+        )
+        report = build_report(path, "2026-07-01", None, environment="staging")
+        assert report["n"] == 1
+
+    def test_prod_only_file_reports_null_for_staging(self, tmp_path: Path) -> None:
+        """Filtering to an absent stream is 'no data', not a fabricated 1.0."""
+        path = write_jsonl(tmp_path / "e.jsonl", [event(environment="production")])
+        report = build_report(path, None, None, environment="staging")
+        assert report["value"] is None
+        assert report["n"] == 0
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -239,3 +336,71 @@ class TestMain:
     def test_rejects_malformed_since(self) -> None:
         with pytest.raises(SystemExit):
             main(["--since", "20-07-2026"])
+
+
+# ---------------------------------------------------------------------------
+# CLI --environment (C6.1.4)
+# ---------------------------------------------------------------------------
+
+def mixed_jsonl(tmp_path: Path) -> Path:
+    """3 staging + 2 production rows — the C6.1 mixed-stream shape."""
+    return write_jsonl(
+        tmp_path / "mixed.jsonl",
+        [event(environment="staging")] * 3 + [event(environment="production")] * 2,
+    )
+
+
+class TestMainEnvironment:
+    def test_staging_selects_three_of_five(self, tmp_path: Path, capsys) -> None:
+        path = mixed_jsonl(tmp_path)
+        assert main(["--path", str(path), "--environment", "staging"]) == 0
+        assert json.loads(capsys.readouterr().out)["n"] == 3
+
+    def test_production_selects_two_of_five(self, tmp_path: Path, capsys) -> None:
+        path = mixed_jsonl(tmp_path)
+        assert main(["--path", str(path), "--environment", "production"]) == 0
+        assert json.loads(capsys.readouterr().out)["n"] == 2
+
+    def test_omitting_the_flag_is_identical_to_explicit_staging(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """The v1 baseline regression guard. ``computed_at`` is wall-clock, so
+        it is compared by shape and every other key byte-for-byte."""
+        path = mixed_jsonl(tmp_path)
+
+        assert main(["--path", str(path)]) == 0
+        default_out = capsys.readouterr().out
+        assert main(["--path", str(path), "--environment", "staging"]) == 0
+        explicit_out = capsys.readouterr().out
+
+        default = json.loads(default_out)
+        explicit = json.loads(explicit_out)
+        assert len(default["computed_at"]) == len(explicit["computed_at"]) == 20
+        del default["computed_at"], explicit["computed_at"]
+        assert default == explicit
+        assert default["n"] == 3
+
+    def test_report_keys_are_unchanged_by_the_new_flag(self, tmp_path: Path, capsys) -> None:
+        """Acceptance: ``value``/``n``/``computed_at`` shape must not drift."""
+        assert main(["--path", str(mixed_jsonl(tmp_path)), "--environment", "production"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert set(payload) == {"value", "target", "n", "computed_at", "source_window"}
+
+    def test_rejects_an_unknown_environment(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit) as exc:
+            main(["--path", str(mixed_jsonl(tmp_path)), "--environment", "dev"])
+        assert exc.value.code != 0
+        assert "dev" in capsys.readouterr().err
+
+    def test_rejects_an_empty_environment(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exc:
+            main(["--path", str(mixed_jsonl(tmp_path)), "--environment", ""])
+        assert exc.value.code != 0
+
+    def test_help_documents_the_flag(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc:
+            main(["--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "--environment" in out
+        assert "staging" in out and "production" in out
