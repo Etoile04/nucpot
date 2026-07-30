@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# .githooks/commit-msg — local convenience hook mirroring the NFM-### CI gate
+#
+# This hook is INERT until a user opts in. CI is the enforcing gate.
+# Per ADR-NFM-2081 §D1, this hook is fast feedback, not control.
+#
+# Enable (one-time, per clone):
+#   git config core.hooksPath .githooks
+#
+# Pass rules (subject is the first line of the commit message file at "$1"):
+#   1. subject matches /NFM-[0-9]+/
+#   2. subject contains the literal token "[no-issue]"  (auditable escape hatch)
+#   3. subject starts with 'Revert "'                    (auto-generated, structural)
+#
+# Merge-commit exemption is owned by CI (parent-count check); a `commit-msg` hook
+# fires only on the single commit being authored, so merge commits are already
+# excluded by construction.
+#
+# Exit 0 on pass, non-zero with a single-line diagnostic on fail.
+set -euo pipefail
+
+msg_file="${1:-}"
+if [[ -z "${msg_file}" || ! -f "${msg_file}" ]]; then
+    echo "commit-msg: missing or unreadable message file '$1'" >&2
+    exit 2
+fi
+
+subject="$(head -n 1 "${msg_file}")"
+
+# Empty subject — refuse; git itself will reject this, fail fast with our message.
+if [[ -z "${subject// }" ]]; then
+    echo "commit-msg: commit subject is empty — use 'NFM-### …', '[no-issue] …', or 'Revert \"...\"'." >&2
+    exit 1
+fi
+
+# Rule 1: NFM-### reference present in subject.
+if [[ "${subject}" =~ NFM-[0-9]+ ]]; then
+    exit 0
+fi
+
+# Rule 2: explicit escape-hatch token.
+if [[ "${subject}" == *"[no-issue]"* ]]; then
+    exit 0
+fi
+
+# Rule 3: revert commit (auto-generated subject, original ref is usually carried).
+if [[ "${subject}" == 'Revert "'* ]]; then
+    exit 0
+fi
+
+echo "commit-msg: subject must contain NFM-### (e.g. 'NFM-2084 …'), the literal '[no-issue]' token, or start with 'Revert \"'." >&2
+echo "commit-msg: got: ${subject}" >&2
+exit 1
