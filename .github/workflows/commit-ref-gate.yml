@@ -17,6 +17,12 @@ name: Commit Reference Gate
 on:
   pull_request:
     branches: [main]
+  # NFM-2191 AC-2: while the gate was PR-only, a direct push to main bypassed
+  # it entirely. Validating on push closes that hole, and also covers
+  # squash-merge subjects — those are authored at merge time and therefore
+  # never seen by the pull_request run.
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -26,20 +32,26 @@ jobs:
     name: Validate every non-merge commit subject in PR range
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR head with full history
+      - name: Checkout validation target with full history
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Fetch PR base ref
+        if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
           BASE_REF="${{ github.event.pull_request.base.ref }}"
           git fetch --no-tags --depth=1 origin "${BASE_REF}"
 
-      - name: Validate commit subjects
+      # Both "Resolve commit range" steps below export the same two variables
+      # — RANGE_START (exclusive lower bound, empty means "no lower bound")
+      # and RANGE_END (inclusive upper bound) — so the validation step that
+      # follows carries the rule exactly once, for both event kinds.
+      - name: Resolve commit range (pull_request)
+        if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -58,9 +70,64 @@ jobs:
           echo "Merge-base:        ${MERGE_BASE}"
           echo "PR head SHA:       ${HEAD_SHA}"
 
+          {
+            echo "RANGE_START=${MERGE_BASE}"
+            echo "RANGE_END=${HEAD_SHA}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Resolve commit range (push)
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+
+          # A direct push has no merge-base to resolve: the range is simply
+          # what the push moved main from → to. `before` is the all-zeros
+          # sentinel on a branch's first push, and is also unreachable after
+          # a force-push that discarded it — in both cases fall back to the
+          # parent of `after`. If `after` is a root commit with no parent,
+          # drop the lower bound and validate its full reachable history.
+          ZERO="0000000000000000000000000000000000000000"
+
+          if [[ -n "${BEFORE_SHA}" && "${BEFORE_SHA}" != "${ZERO}" ]] \
+             && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            RANGE_START="${BEFORE_SHA}"
+          elif RANGE_START="$(git rev-parse --verify --quiet "${AFTER_SHA}^")"; then
+            echo "'before' unusable (${BEFORE_SHA:-<empty>}) — fell back to ${AFTER_SHA}^"
+          else
+            RANGE_START=""
+            echo "'after' is a root commit — validating full reachable history."
+          fi
+
+          echo "Push before SHA:   ${BEFORE_SHA:-<empty>}"
+          echo "Range lower bound: ${RANGE_START:-<root>}"
+          echo "Push after SHA:    ${AFTER_SHA}"
+
+          {
+            echo "RANGE_START=${RANGE_START}"
+            echo "RANGE_END=${AFTER_SHA}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Validate commit subjects
+        run: |
+          set -euo pipefail
+
+          MERGE_BASE="${RANGE_START:-}"
+          HEAD_SHA="${RANGE_END:?commit range was never resolved}"
+
           if [[ "${MERGE_BASE}" == "${HEAD_SHA}" ]]; then
-            echo "HEAD equals merge-base — no new commits in PR range. Nothing to validate."
+            echo "HEAD equals merge-base — no new commits in range. Nothing to validate."
             exit 0
+          fi
+
+          # With no lower bound (root-commit push) walk everything reachable
+          # from HEAD; otherwise walk the half-open range.
+          if [[ -n "${MERGE_BASE}" ]]; then
+            REV_RANGE="${MERGE_BASE}..${HEAD_SHA}"
+          else
+            REV_RANGE="${HEAD_SHA}"
           fi
 
           # Enumerate non-merge commits in the PR range, oldest → newest.
@@ -93,10 +160,10 @@ jobs:
 
             FAIL=1
             FAIL_REPORT+="FAIL ${sha}  ${subject}"$'\n'
-          done < <(git log --format='%H%x09%s' --no-merges --reverse "${MERGE_BASE}..${HEAD_SHA}")
+          done < <(git log --format='%H%x09%s' --no-merges --reverse "${REV_RANGE}")
 
           if [[ "${COUNT}" -eq 0 ]]; then
-            echo "All commits in the PR range are merge commits — nothing to validate."
+            echo "All commits in the range are merge commits — nothing to validate."
             exit 0
           fi
 
