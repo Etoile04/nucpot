@@ -16,12 +16,12 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
 from nfm_db.database import get_db
-from nfm_db.models import Corpus, ExtractionJob
+from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMeasurement
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
@@ -106,6 +106,8 @@ class ExtractionIngestAck(BaseModel):
     validation_errors: int = Field(default=0, description="Records that failed validation.")
     total_received: int = Field(default=0, description="Total property records in the request.")
     processing_time_ms: float = Field(default=0, description="Server-side processing time in milliseconds.")
+    verified: bool = Field(default=False, description="AC-R3: True iff the per-request delta in PropertyMeasurement rows tied to source_reference equals created_measurements. Catches silent D1 dead-mode failures.")
+    db_measurement_count: int = Field(default=0, description="AC-R3: PropertyMeasurement row count tied to source_reference AFTER this request's map_and_persist. Used to derive the per-request delta.")
     errors: list[str] = Field(default_factory=list, description="Error details for failed records.")
     received_at: datetime
     message: str = "Ingest accepted; queued for processing."
@@ -395,7 +397,48 @@ async def ingest_extraction_batch(
     job_status = "completed"
     error_message: str | None = None
 
+    # AC-R3 (NFM-2009 / NFM-2096 W1): sync verification — re-query DB to
+    # confirm map_and_persist actually wrote the rows it claimed. Catches
+    # silent D1 dead-mode failures where the mapper silently drops writes
+    # (e.g. async LLM 502, validator returning early, transaction rolled
+    # back by a later exception). Without this gate, the API returns
+    # `created_measurements=N` while the row never lands.
+    #
+    # W1 fix (NFM-2096): use a *per-request delta*, not a cumulative
+    # `count == created_measurements` equality.  The cumulative comparison
+    # only holds on the FIRST ingest for a given source_reference; any
+    # subsequent request carrying a distinct, valid, non-duplicate value
+    # trips a false MISMATCH because the cumulative total already includes
+    # the prior request's rows.  Snapshot the count BEFORE map_and_persist
+    # and assert `(after - before) == created_measurements`.
+    db_measurement_count = 0
+    count_before = 0
+    verified = False
+    source_ref = payload.source_reference or ""
+
+    def _count_q_for_source(ref: str):
+        return (
+            select(func.count(PropertyMeasurement.id))
+            .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
+            .join(DataSource, Dataset.source_id == DataSource.id)
+            .where(DataSource.doi == ref)
+        )
+
     if payload.properties:
+        # Snapshot the pre-persist count for the source_reference.  Skipped
+        # silently if source_reference is empty (cannot match by DOI).
+        if source_ref:
+            try:
+                count_before = (
+                    await session.execute(_count_q_for_source(source_ref))
+                ).scalar_one()
+            except Exception:
+                logger.exception(
+                    "ingest_extraction_batch: pre-persist count failed job_id=%s",
+                    job_id,
+                )
+                count_before = 0
+
         try:
             from nfm_db.services.extraction_to_db_mapper import (
                 map_and_persist,
@@ -424,6 +467,42 @@ async def ingest_extraction_batch(
 
     elapsed_ms = (time.monotonic() - t_start) * 1000
     completed_at = datetime.now(UTC)
+
+    # AC-R3 post-persist verification: per-request delta vs. claimed
+    # created_measurements.  This is the W1 fix — it survives legitimate
+    # incremental ingests (POST#1 then POST#2 with distinct values under
+    # the same DOI both report verified=True) while still catching silent
+    # drops (mock that claims created_measurements=2 but inserts 0 rows).
+    if payload.properties and source_ref:
+        try:
+            db_measurement_count = (
+                await session.execute(_count_q_for_source(source_ref))
+            ).scalar_one()
+            delta = db_measurement_count - count_before
+            verified = delta == created_measurements
+            if not verified:
+                drift_msg = (
+                    f"sync-verification MISMATCH: claimed created_measurements="
+                    f"{created_measurements} but per-request delta for "
+                    f"source_reference={source_ref!r} is {delta} "
+                    f"(count_before={count_before}, count_after="
+                    f"{db_measurement_count})"
+                )
+                logger.error(
+                    "ingest_extraction_batch: %s job_id=%s", drift_msg, job_id
+                )
+                errors.append(drift_msg)
+        except Exception:
+            logger.exception(
+                "ingest_extraction_batch: post-persist verification query "
+                "failed job_id=%s",
+                job_id,
+            )
+            errors.append("sync-verification query raised an unexpected error")
+    elif payload.properties and not source_ref:
+        # No source_reference → cannot match by DOI; flag as unverified.
+        verified = False
+        errors.append("sync-verification SKIPPED: no source_reference")
 
     # --- NFM-2013 AC-2: persist an ExtractionJob row so the operator can
     # audit what landed and the new /status endpoint can serve the real
