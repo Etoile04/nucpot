@@ -86,16 +86,31 @@ log "  DB revision: ${DB_VERSION}"
 
 # ---- 2. Assert revision file present in candidate image ------------------
 # The image (docker/prod-api.Dockerfile) bakes apps/api/migrations/ to
-# /app/migrations/. The file is named <revision>_<slug>.py.
+# /app/migrations/. Filenames follow one of two alembic conventions:
+#   <revision>.py                       — hand-crafted merge files (e.g. 036_merge_chain_A_and_B.py)
+#   <revision>_<slug>.py                — standard alembic revisions
+# The glob below matches BOTH forms (it requires no literal underscore after
+# the revision; only the `.py` suffix is mandatory). A literal underscore
+# would silently miss the no-slug case and refuse every deploy of a hand-
+# written merge migration — see NFM-2245.
 log "Checking ${DB_VERSION} in image ${IMAGE}..."
 MATCHES="$(docker run --rm "${IMAGE}" \
-    sh -c "ls /app/migrations/versions/${DB_VERSION}_*.py 2>/dev/null | head -1" 2>/dev/null || true)"
+    sh -c "ls /app/migrations/versions/${DB_VERSION}*.py 2>/dev/null | head -1" 2>/dev/null || true)"
 
 if [ -z "${MATCHES}" ]; then
   err "ASSERT_FAIL: prod DB has revision '${DB_VERSION}' but image '${IMAGE}' lacks it"
-  err "ASSERT_FAIL: missing migration: /app/migrations/versions/${DB_VERSION}_*.py"
+  err "ASSERT_FAIL: missing migration: /app/migrations/versions/${DB_VERSION}*.py"
   err "ASSERT_FAIL: refusing deploy (exit ${DISTINCT_EXIT})"
   err "ASSERT_FAIL: this is the NFM-2135 condition — the image's migration graph does not include the DB's head"
+  # NFM-2245 AC: surface the first ~20 files actually present in the image so
+  # the next regression is debuggable from the workflow log alone.
+  # Note: `>&2` is applied AFTER `2>/dev/null` in bash (left-to-right), so
+  # the inner `ls`'s stderr-to-/dev/null is the only suppression; stdout
+  # then lands on the parent's stderr where the operator can read it.
+  err "ASSERT_FAIL: debug — ls /app/migrations/versions/ | head -20:"
+  docker run --rm "${IMAGE}" \
+      sh -c 'ls /app/migrations/versions/ 2>/dev/null | head -20 | sed "s/^/    /"' \
+      >&2 || true
   exit "${DISTINCT_EXIT}"
 fi
 ok "  Found: ${MATCHES}"

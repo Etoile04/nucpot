@@ -203,3 +203,99 @@ fi
     assert result.returncode == 0
     assert "WARN" in result.stderr
     assert "2 head(s)" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# NFM-2245: hand-crafted merge files are named <revision>.py (no slug).
+# The old glob `${DB_VERSION}_*.py` refused every deploy of such a file
+# even when the file was present. The fix is `${DB_VERSION}*.py` so both
+# `<revision>.py` and `<revision>_<slug>.py` match. These tests guard the
+# regression: a no-slug file in the image MUST resolve to exit 0, the
+# debug `ls` MUST appear on failure, and the with-slug case MUST still
+# work.
+# ---------------------------------------------------------------------------
+
+
+def test_no_slug_merge_file_passes_assertion():
+    """NFM-2245: glob must match <revision>.py without a trailing slug."""
+    bin_dir = _write_fake_docker(
+        Path("/tmp/nfmd-test-no-slug"),
+        """\
+if [[ "$*" == *"psql"* ]]; then
+    echo "036_merge_chain_A_and_B"
+elif [[ "$*" == *"alembic heads"* ]]; then
+    echo "036_merge_chain_A_and_B (head)"
+# No-slug filename: NO underscore between B and .py. Old glob refused this.
+elif [[ "$*" == *"migrations/versions/036_merge_chain_A_and_B"* ]]; then
+    echo "/app/migrations/versions/036_merge_chain_A_and_B.py"
+fi
+""",
+    )
+    result = _run_assert(
+        ["--image", "fake:noslug", "--db-container", "pg"],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 0, (
+        f"expected 0, got {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "ASSERT_OK" in result.stdout
+    assert "036_merge_chain_A_and_B" in result.stdout
+
+
+def test_with_slug_file_still_passes_assertion():
+    """NFM-2245: glob must still match <revision>_<slug>.py (no regression)."""
+    bin_dir = _write_fake_docker(
+        Path("/tmp/nfmd-test-with-slug"),
+        """\
+if [[ "$*" == *"psql"* ]]; then
+    echo "abcd1234abcd"
+elif [[ "$*" == *"alembic heads"* ]]; then
+    echo "abcd1234abcd (head)"
+elif [[ "$*" == *"migrations/versions/abcd1234"* ]]; then
+    echo "/app/migrations/versions/abcd1234abcd_create_foo.py"
+fi
+""",
+    )
+    result = _run_assert(
+        ["--image", "fake:slug", "--db-container", "pg"],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 0, (
+        f"expected 0, got {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "ASSERT_OK" in result.stdout
+
+
+def test_missing_file_debug_log_lists_versions_dir():
+    """NFM-2245 AC: on failure, the script must log the first ~20 files
+    actually present in /app/migrations/versions/ so the next regression
+    is debuggable from the workflow log alone."""
+    bin_dir = _write_fake_docker(
+        Path("/tmp/nfmd-test-debug-log"),
+        """\
+if [[ "$*" == *"psql"* ]]; then
+    echo "9999999999_phantom"
+elif [[ "$*" == *"alembic heads"* ]]; then
+    echo "abcd1234abcd (head)"
+elif [[ "$*" == *"migrations/versions/9999999999_phantom"* ]]; then
+    # First probe — empty: image lacks the revision file.
+    :
+elif [[ "$*" == *"migrations/versions/"* && "$*" != *"9999999999_phantom"* ]]; then
+    # Second probe (the new debug ls) — list the first 20 files present.
+    echo "001_create_users_table.py"
+    echo "002_create_blog_posts_table.py"
+    echo "036_merge_chain_A_and_B.py"
+fi
+""",
+    )
+    result = _run_assert(
+        ["--image", "fake:debug", "--db-container", "pg"],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 64
+    assert "9999999999_phantom" in result.stderr
+    assert "ASSERT_FAIL" in result.stderr
+    # The new debug logging must surface directory contents.
+    assert "001_create_users_table.py" in result.stderr
+    assert "036_merge_chain_A_and_B.py" in result.stderr
+    assert "debug" in result.stderr.lower()
