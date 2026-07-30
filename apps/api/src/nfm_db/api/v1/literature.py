@@ -467,7 +467,8 @@ async def get_literature_detail(
     # Also load KG nodes/edges produced by the OntoFuel pipeline for this
     # source — these are the real "extraction results" since the OntoFuel
     # pipeline writes to kg_nodes/kg_edges, not extraction_results.
-    from nfm_db.models.kg import KGNode, KGEdge as _KGEdge  # late import
+    from nfm_db.models.kg import KGEdge as _KGEdge
+    from nfm_db.models.kg import KGNode  # late import
 
     kg_nodes_for_source = (
         await db.execute(
