@@ -36,3 +36,11 @@ class ExtractionFigure(Base):
     extracted_data: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, default=None
     )
+    # Columns from the production DB schema that were previously missing
+    # from the model. Added so SELECT queries for the literature detail
+    # panel can access figure image paths, captions, and confidence scores.
+    image_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    caption: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float] = mapped_column(
+        nullable=False, default=0.0
+    )

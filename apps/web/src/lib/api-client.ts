@@ -315,7 +315,18 @@ export interface LiteratureListItem {
   readonly created_at: string
 }
 
+export interface LiteratureFigure {
+  readonly id: string
+  readonly page_number?: number | null
+  readonly figure_type?: string | null
+  readonly image_path?: string | null
+  readonly caption?: string | null
+  readonly confidence?: number
+}
+
 export interface LiteratureDetail extends LiteratureListItem {
+  readonly content_md?: string | null
+  readonly figures?: readonly LiteratureFigure[]
   readonly extraction_results?: readonly Record<string, unknown>[]
   readonly updated_at?: string | null
 }

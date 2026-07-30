@@ -29,6 +29,7 @@ import {
   Drawer,
   Empty,
   Form,
+  Image as AntImage,
   Input,
   InputNumber,
   Pagination,
@@ -53,9 +54,11 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons"
 import type { ColumnsType } from "antd/es/table"
+import ReactMarkdown from "react-markdown"
 import {
   literatureApi,
   type LiteratureDetail,
+  type LiteratureFigure,
   type LiteratureListItem,
   type LiteratureStatus,
 } from "@/lib/api-client"
@@ -729,6 +732,21 @@ interface DetailPanelProps {
 
 function DetailPanel({ detail }: DetailPanelProps) {
   const extractionResults = detail.extraction_results ?? []
+  const figures = detail.figures ?? []
+  const contentMd = detail.content_md
+
+  // Build image URL from figure image_path for the serving endpoint
+  const buildImageUrl = (fig: LiteratureFigure): string | undefined => {
+    if (!fig.image_path) return undefined
+    // image_path format: "<uuid>/images/<hash>.jpg" or "images/<hash>.jpg"
+    const path = fig.image_path
+    // Strip leading uuid/ if present (endpoint already scopes by literature_id)
+    const relativePath = path.startsWith(`${detail.id}/`)
+      ? path.slice(detail.id.length + 1)
+      : path
+    return `/api/v1/literature/${detail.id}/files/${relativePath}`
+  }
+
   return (
     <div className="space-y-4">
       <Descriptions
@@ -754,6 +772,76 @@ function DetailPanel({ detail }: DetailPanelProps) {
           >
             {detail.abstract}
           </Paragraph>
+        </Card>
+      )}
+
+      {contentMd && (
+        <Card
+          size="small"
+          title="提取全文 (Markdown)"
+          className="overflow-hidden"
+        >
+          <div className="max-h-96 overflow-y-auto prose prose-sm prose-invert max-w-none
+                          [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded
+                          [&_table]:border-collapse [&_th]:border [&_td]:border
+                          [&_th]:px-2 [&_td]:px-2
+                          [&_pre]:bg-gray-800 [&_pre]:p-2 [&_pre]:rounded
+                          [&_code]:text-pink-300">
+            <ReactMarkdown
+              components={{
+                img: ({ src, alt }) => {
+                  // Rewrite relative image paths to the serving endpoint
+                  const imgSrc = typeof src === "string" && src.startsWith("images/")
+                    ? `/api/v1/literature/${detail.id}/files/${src}`
+                    : src
+                  return (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={imgSrc as string} alt={alt ?? ""} />
+                  )
+                },
+              }}
+            >
+              {contentMd}
+            </ReactMarkdown>
+          </div>
+        </Card>
+      )}
+
+      {figures.length > 0 && (
+        <Card size="small" title={`提取图片（${figures.length}）`}>
+          <AntImage.PreviewGroup>
+            <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
+              {figures.map((fig) => {
+                const url = buildImageUrl(fig)
+                return (
+                  <div key={fig.id} className="border border-gray-700 rounded p-2">
+                    {url ? (
+                      <AntImage
+                        src={url}
+                        alt={fig.caption ?? `Figure p.${fig.page_number ?? "?"}`}
+                        className="!w-full object-contain"
+                        style={{ maxHeight: 200 }}
+                      />
+                    ) : (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="无图片路径"
+                      />
+                    )}
+                    {fig.caption && (
+                      <div className="text-xs text-gray-400 mt-1">
+                        {fig.caption.substring(0, 120)}
+                        {fig.caption.length > 120 && "…"}
+                      </div>
+                    )}
+                    {fig.page_number != null && (
+                      <Tag className="mt-1">p.{fig.page_number}</Tag>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </AntImage.PreviewGroup>
         </Card>
       )}
 

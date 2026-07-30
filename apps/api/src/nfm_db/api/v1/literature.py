@@ -28,6 +28,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,11 +42,13 @@ from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.literature import (
     LiteratureDetailResponse,
+    LiteratureFigure,
     LiteratureListItem,
     LiteratureReextractResponse,
     LiteratureStatusResponse,
     LiteratureUploadResponse,
 )
+from nfm_db.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -440,7 +443,27 @@ async def get_literature_detail(
         for er in er_result.scalars().all()
     ]
 
-    # Build full detail with the populated extraction_results.
+    # Load extracted figures linked to this source.
+    fig_stmt = (
+        select(ExtractionFigure)
+        .where(ExtractionFigure.source_id == literature_id)
+        .order_by(ExtractionFigure.page_number.asc())
+        .limit(200)
+    )
+    fig_result = await db.execute(fig_stmt)
+    figures = [
+        LiteratureFigure(
+            id=fig.id,
+            page_number=fig.page_number,
+            figure_type=fig.figure_type,
+            image_path=fig.image_path,
+            caption=fig.caption,
+            confidence=fig.confidence,
+        )
+        for fig in fig_result.scalars().all()
+    ]
+
+    # Build full detail with the populated extraction_results + content_md + figures.
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
@@ -452,6 +475,8 @@ async def get_literature_detail(
             abstract=source.abstract,
             status=source.parse_status or "uploaded",
             source_id=source.id,
+            content_md=source.content_md,
+            figures=figures,
             extraction_results=extraction_results,
             created_at=source.created_at,
             updated_at=source.updated_at,
@@ -628,3 +653,53 @@ async def delete_literature(
         success=True,
         data={"message": f"Literature {literature_id} deleted"},
     )
+
+
+@router.get(
+    "/{literature_id}/files/{file_path:path}",
+    summary="Serve a stored file (image, asset) for this literature",
+    description="Read and serve a file from the literature's storage directory. "
+    "Used by the detail panel to render extracted images referenced in content_md.",
+)
+async def get_literature_file(
+    literature_id: uuid.UUID,
+    file_path: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Serve a file (e.g. extracted image) from storage.
+
+    The ``file_path`` is a relative path within the literature's storage
+    directory, e.g. ``images/<hash>.jpg``.  Path traversal (``..``) is
+    rejected by the storage layer's safety validator.
+    """
+    # Verify the literature exists (raises 404 if not).
+    await _get_source_or_404(literature_id, db)
+
+    storage = get_storage()
+    full_path = f"{literature_id}/{file_path}"
+    try:
+        data = storage.read(full_path)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found: {file_path}",
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not accessible: {file_path}",
+        )
+
+    # Guess content type from extension.
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    content_type = {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "svg": "image/svg+xml",
+        "pdf": "application/pdf",
+    }.get(ext, "application/octet-stream")
+
+    return Response(content=data, media_type=content_type)
