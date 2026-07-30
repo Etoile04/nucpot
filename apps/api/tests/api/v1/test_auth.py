@@ -247,11 +247,21 @@ async def test_login_cookie_max_age_follows_config_at_login_time(
 
 
 @pytest.mark.asyncio
-async def test_login_cookie_max_age_matches_service_account_ttl(async_client, db_session) -> None:
-    """Service accounts keep their own (shorter) TTL — no 8-hour widening."""
+async def test_login_cookie_max_age_matches_service_account_ttl(
+    async_client, db_session, monkeypatch
+) -> None:
+    """Service accounts keep their own (shorter) TTL — no 8-hour widening.
+
+    ``service_jwt_ttl_minutes`` defaults to 30, which is *exactly* the old
+    hardcoded ``COOKIE_MAX_AGE = 1800``.  Asserting against the default would
+    therefore still pass if this branch regressed back to the constant, so pin
+    the knob to a value that collides with neither 1800 nor the human
+    ``access_token_expire_minutes`` path.
+    """
     user, _hashed = await _seed_user(db_session, username="svcttl", password="secret123")
     user.is_service_account = True
     await db_session.commit()
+    monkeypatch.setattr(auth_endpoints.settings, "service_jwt_ttl_minutes", 7)
 
     with patch(
         "nfm_db.api.v1.auth_endpoints.authenticate_user",
@@ -264,8 +274,10 @@ async def test_login_cookie_max_age_matches_service_account_ttl(async_client, db
 
     assert response.status_code == 200
     cookie = _parse_login_cookie(response)
-    expected = auth_endpoints.settings.service_jwt_ttl_minutes * 60
-    assert int(cookie["max-age"]) == expected
+    assert int(cookie["max-age"]) == 7 * 60
+    # Neither the human knob nor the retired 1800 constant.
+    assert int(cookie["max-age"]) != auth_endpoints.settings.access_token_expire_minutes * 60
+    assert int(cookie["max-age"]) != 1800
 
 
 @pytest.mark.asyncio
