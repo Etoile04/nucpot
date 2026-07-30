@@ -183,6 +183,98 @@ describe("ExtractionResultsList — KG edge triple (AC-2)", () => {
   })
 })
 
+/**
+ * Regression guards for the defects found in the second Visual QA pass
+ * (NFM-2249, VQA-1 .. VQA-5). Each of these was invisible to the unit
+ * suite and only surfaced in rendered pixels, so they are asserted on
+ * the layout primitives that produced them.
+ */
+describe("ExtractionResultsList — visual regression guards", () => {
+  it("VQA-1: endpoint spans do not use flex-1, which sizes them equally regardless of content", () => {
+    // `flex-1` is `flex: 1 1 0%` — basis 0 means both endpoint boxes get
+    // the same width no matter how long their text is. Measured at 390px
+    // that clipped a 20-char target while leaving 75px unused beside a
+    // 7-char source. Endpoints must be sized by their content.
+    render(
+      <ExtractionResultsList items={[kgNodeRow, kgNodeRowDensity, kgEdgeRow]} />,
+    )
+
+    const edgeRow = screen.getByTestId(`extraction-row-${kgEdgeRow.id}`)
+    const endpoints = edgeRow.querySelectorAll('[data-testid^="edge-"]')
+
+    expect(endpoints.length).toBeGreaterThan(0)
+    for (const endpoint of endpoints) {
+      expect(endpoint.className).not.toContain("flex-1")
+    }
+  })
+
+  it("VQA-2: nothing renders after the target label except an inert spacer", () => {
+    // A trailing `→` span sat where a "go to detail" chevron would sit on
+    // all 34 edge rows, reading as an affordance that does nothing.
+    render(
+      <ExtractionResultsList items={[kgNodeRow, kgNodeRowDensity, kgEdgeRow]} />,
+    )
+
+    const edgeRow = screen.getByTestId(`extraction-row-${kgEdgeRow.id}`)
+    const target = within(edgeRow).getByTestId("edge-target")
+
+    let sibling = target.nextElementSibling
+    while (sibling !== null) {
+      expect(sibling.textContent).toBe("")
+      sibling = sibling.nextElementSibling
+    }
+  })
+
+  it("VQA-3: header row wraps and its property name truncates", () => {
+    // Without `flex-wrap` the header overflowed its container by up to
+    // 67px at 390x844, clipping `置信度 92%` mid-glyph.
+    render(<ExtractionResultsList items={[kgNodeRow]} />)
+
+    const row = screen.getByTestId(`extraction-row-${kgNodeRow.id}`)
+    const header = within(row).getByTestId("extraction-header")
+    expect(header.className).toContain("flex-wrap")
+
+    const propertyName = within(row).getByText(kgNodeRow.property_name)
+    expect(propertyName.className).toContain("truncate")
+    expect(propertyName.className).toContain("min-w-0")
+  })
+
+  it("VQA-4: the triple uses a single arrow idiom, not ASCII hyphens", () => {
+    render(
+      <ExtractionResultsList items={[kgNodeRow, kgNodeRowDensity, kgEdgeRow]} />,
+    )
+
+    const edgeRow = screen.getByTestId(`extraction-row-${kgEdgeRow.id}`)
+    const text = edgeRow.textContent ?? ""
+
+    expect(text).toContain("→")
+    expect(text).not.toContain("--")
+  })
+
+  it("VQA-5: provenance is the only coloured pill — confidence is plain text", () => {
+    // `manual` and the confidence Tag were both `color="default"`, so a
+    // manual row showed three near-identical grey pills and the
+    // provenance signal stopped reading as provenance (AC-1).
+    render(<ExtractionResultsList items={[manualRow, kgNodeRow]} />)
+
+    const provenance = screen.getByText("手动录入")
+    const provenanceTag = provenance.classList.contains("ant-tag")
+      ? provenance
+      : provenance.closest(".ant-tag")
+    expect(provenanceTag?.className).toContain("ant-tag-gold")
+
+    const confidence = screen.getByText(/置信度/)
+    expect(confidence.closest(".ant-tag")).toBeNull()
+  })
+
+  it("H4: no text-gray-400, which fails the 4.5:1 contrast floor on white", () => {
+    const { container } = render(
+      <ExtractionResultsList items={[kgNodeRow, kgNodeRowDensity, kgEdgeRow]} />,
+    )
+    expect(container.querySelector(".text-gray-400")).toBeNull()
+  })
+})
+
 describe("ExtractionResultsList — graceful degradation (AC-5)", () => {
   it("does not render a provenance tag and does not crash when source_type is absent", () => {
     // Pre-#552 live prod shape: items have no `source_type`.
@@ -208,8 +300,9 @@ describe("ExtractionResultsList — graceful degradation (AC-5)", () => {
     expect(within(row).getByText("legacy_property")).toBeInTheDocument()
   })
 
-  it("does not crash on an empty list", () => {
+  it("H5: renders an explicit empty state rather than a bare bordered box", () => {
     expect(() => render(<ExtractionResultsList items={[]} />)).not.toThrow()
+    expect(screen.getByTestId("extraction-empty")).toBeInTheDocument()
   })
 })
 

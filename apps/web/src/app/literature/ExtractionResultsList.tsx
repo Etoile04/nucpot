@@ -12,7 +12,7 @@
  * owns layout / sizing.
  */
 
-import { Tag } from "antd"
+import { Empty, Tag } from "antd"
 
 import type {
   ExtractionResultItem,
@@ -31,7 +31,11 @@ const SOURCE_TYPE_LABEL: Record<"manual" | "kg_node" | "kg_edge", string> = {
 }
 
 const SOURCE_TYPE_COLOR: Record<"manual" | "kg_node" | "kg_edge", string> = {
-  manual: "default",
+  // `gold` rather than `default`: the confidence and review_status pills
+  // were also neutral grey, so a manual row showed three near-identical
+  // pills and the provenance signal stopped reading as provenance.
+  // `blue` is unavailable — `item_type` already owns it.
+  manual: "gold",
   kg_node: "cyan",
   kg_edge: "purple",
 }
@@ -69,7 +73,7 @@ export function buildKgNodeLabelIndex(
  * Short ids (test fixtures, short slugs) pass through unchanged so we
  * don't pepper the UI with ellipsis on already-readable labels.
  *
- * The row container also applies `truncate` / `min-w-0` / `flex-1`
+ * The row container also applies `truncate` / `min-w-0` / `shrink`
  * classes (see `KgEdgeRow` below) so the resolved label still ellipsises
  * gracefully when the row itself is narrower than the truncated form.
  */
@@ -97,36 +101,70 @@ function KgEdgeRow({ edge, labelIndex }: KgEdgeRowProps) {
     shortId(edge.source_target_id ?? "?")
 
   return (
-    <div className="text-sm flex items-center gap-1 min-w-0">
+    <div
+      className="text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 min-w-0"
+      role="group"
+      aria-label={`${sourceLabel} ${edge.property_name} ${targetLabel}`}
+    >
+      {/*
+        `shrink` and NOT `flex-1`. `flex-1` is `flex: 1 1 0%` — a zero
+        basis makes both endpoint boxes the same width regardless of
+        content, so a long target clipped while space sat unused beside
+        a short source. `shrink` sizes each box to its own content.
+
+        `flex-wrap` then covers the narrow case: at 390px a full triple
+        genuinely exceeds one line, and a node label is data. Wrapping
+        the target onto a second line keeps it whole, where ellipsis
+        would silently eat the tail of e.g. `thermal_conductivity`.
+        `truncate` remains as the last resort for a single label wider
+        than the whole row.
+      */}
       <span
         data-testid="edge-source"
-        className="truncate min-w-0 flex-1"
+        className="truncate min-w-0 shrink"
         title={edge.source_node_id ?? undefined}
       >
         {sourceLabel}
       </span>
-      <span className="text-gray-400 flex-shrink-0">--</span>
+      <span className="text-gray-500 shrink-0" aria-hidden="true">
+        →
+      </span>
       <span
         data-testid="edge-relation"
-        className="font-mono flex-shrink-0"
+        className="font-mono text-xs text-gray-600 shrink-0"
       >
         {edge.property_name}
       </span>
-      <span className="text-gray-400 flex-shrink-0">--&gt;</span>
+      <span className="text-gray-500 shrink-0" aria-hidden="true">
+        →
+      </span>
       <span
         data-testid="edge-target"
-        className="truncate min-w-0 flex-1"
+        className="truncate min-w-0 shrink"
         title={edge.source_target_id ?? undefined}
       >
         {targetLabel}
       </span>
-      <span className="ml-1 text-gray-400 flex-shrink-0">→</span>
+      {/* Absorbs slack after the triple so the endpoints stay adjacent
+          to their predicate instead of being pushed to the rails. */}
+      <span className="flex-1" aria-hidden="true" />
     </div>
   )
 }
 
 export function ExtractionResultsList({ items }: ExtractionResultsListProps) {
   const labelIndex = buildKgNodeLabelIndex(items)
+
+  if (items.length === 0) {
+    return (
+      <div data-testid="extraction-empty" className="py-6">
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="暂无抽取结果"
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -147,7 +185,16 @@ export function ExtractionResultsList({ items }: ExtractionResultsListProps) {
             data-testid={`extraction-row-${item.id}`}
             className="border border-gray-200 rounded p-2 text-xs"
           >
-            <div className="flex items-center gap-2 mb-1">
+            {/*
+              `flex-wrap` is load-bearing: without it this header
+              overflowed its container by up to 67px at 390x844, clipping
+              `置信度 92%` mid-glyph. The detail panel is narrower than
+              the viewport, so the header must be allowed a second line.
+            */}
+            <div
+              data-testid="extraction-header"
+              className="flex flex-wrap items-center gap-2 mb-1 min-w-0"
+            >
               {knownSourceType !== null && (
                 <Tag color={SOURCE_TYPE_COLOR[knownSourceType]}>
                   {SOURCE_TYPE_LABEL[knownSourceType]}
@@ -157,12 +204,16 @@ export function ExtractionResultsList({ items }: ExtractionResultsListProps) {
                 <Tag color="blue">{item.item_type}</Tag>
               )}
               {knownSourceType !== "kg_edge" && (
-                <span className="font-medium">{item.property_name}</span>
+                <span className="font-medium truncate min-w-0">
+                  {item.property_name}
+                </span>
               )}
+              {/* Plain text, not a Tag — keeps provenance the only
+                  coloured pill in the row (AC-1 "distinct treatment"). */}
               {item.confidence != null && (
-                <Tag color="default">
+                <span className="text-gray-500">
                   置信度 {(item.confidence * 100).toFixed(0)}%
-                </Tag>
+                </span>
               )}
               {knownSourceType === "manual" &&
                 "review_status" in item &&
@@ -195,7 +246,7 @@ function RowBody({ item }: { item: ExtractionResultItem }) {
       <>
         {renderCommonBody(item)}
         {item.source_paragraph != null && (
-          <div className="text-gray-500 italic mt-1">
+          <div className="text-gray-500 italic mt-1 leading-relaxed">
             「{item.source_paragraph.substring(0, 200)}」
           </div>
         )}
@@ -211,7 +262,7 @@ function RowBody({ item }: { item: ExtractionResultItem }) {
           <div className="text-gray-500 text-xs">单位：{item.unit}</div>
         )}
         {item.source_paragraph != null && (
-          <div className="text-gray-500 italic mt-1">
+          <div className="text-gray-500 italic mt-1 leading-relaxed">
             「{item.source_paragraph.substring(0, 200)}」
           </div>
         )}
