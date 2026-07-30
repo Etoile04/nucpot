@@ -17,18 +17,21 @@ literal marker must NOT be allowed to launder the KR-2 metric.
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from scripts.okr.commit_efficiency import (
+    build_arg_parser,
     build_report,
     calculate_metrics,
     enrich_commits_with_refs,
     extract_issue_refs,
     fetch_issue_statuses,
     parse_git_log,
+    run_git_log,
 )
 
 
@@ -426,3 +429,129 @@ class TestCalculateMetricsWithNoIssue:
         assert result["commits"]["withoutIssueRef"] == 2
         assert result["metrics"]["structuralWasteRate"] == 1.0
         assert result["metrics"]["commitEfficiency"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# run_git_log — revision basis (NFM-2204 / R2)
+# ---------------------------------------------------------------------------
+
+class TestRunGitLogRevisionBasis:
+    """Pin the revision basis the KR-2 metric is computed against.
+
+    Before NFM-2204, ``run_git_log`` shelled out to ``git log --oneline
+    --since=... --until=...`` with no revision argument. Two defects followed:
+
+    1. Implicit ``HEAD`` — the number measured whichever branch happened to be
+       checked out, so it moved with the workspace rather than with behaviour.
+    2. Merge commits were counted, while the CI gate exempts them by
+       construction (parent-count >= 2). Numerator and denominator disagreed
+       about what a "commit" is.
+
+    These tests assert on the *argv actually handed to* ``subprocess.run`` —
+    not on the returned number. A test that only checks the return value
+    cannot distinguish an explicit basis from an implicit one, because both
+    produce a plausible integer.
+    """
+
+    @staticmethod
+    def _capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+        """Replace subprocess.run with a recorder; return the capture dict."""
+        captured: dict[str, list[str]] = {}
+
+        def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+            captured["cmd"] = cmd
+            return MagicMock(stdout="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        return captured
+
+    @pytest.mark.unit
+    def test_revision_basis_appears_in_argv(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The caller-supplied revision must reach git as an explicit token."""
+        captured = self._capture(monkeypatch)
+
+        run_git_log("2026-07-27", "2026-08-03", rev="origin/main")
+
+        assert "origin/main" in captured["cmd"], (
+            "revision basis missing from argv — git would default to HEAD, "
+            f"making the metric workspace-dependent. argv={captured['cmd']}"
+        )
+
+    @pytest.mark.unit
+    def test_merge_commits_are_excluded_from_argv(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--max-parents=1 must be passed so merges are dropped.
+
+        The CI gate exempts merge commits by construction. If the metric counts
+        them, the numerator and the denominator are measuring different things.
+        """
+        captured = self._capture(monkeypatch)
+
+        run_git_log("2026-07-27", "2026-08-03", rev="origin/main")
+
+        assert "--max-parents=1" in captured["cmd"], (
+            "merge commits are not excluded — the metric counts commits the "
+            f"gate exempts. argv={captured['cmd']}"
+        )
+
+    @pytest.mark.unit
+    def test_basis_cannot_be_omitted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """There must be no implicit-HEAD fallback.
+
+        Omitting the basis must be a hard error at the call site, not a silent
+        fall back to whatever is checked out.
+        """
+        self._capture(monkeypatch)
+
+        with pytest.raises(TypeError):
+            run_git_log("2026-07-27", "2026-08-03")  # type: ignore[call-arg]
+
+    @pytest.mark.unit
+    def test_explicit_rev_is_not_overridden_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-default basis must be honoured verbatim, and only it."""
+        captured = self._capture(monkeypatch)
+
+        run_git_log("2026-07-27", "2026-08-03", rev="v1.2.3")
+
+        assert "v1.2.3" in captured["cmd"]
+        assert "origin/main" not in captured["cmd"], (
+            "default basis leaked into an explicitly-parameterised call: "
+            f"argv={captured['cmd']}"
+        )
+
+    @pytest.mark.unit
+    def test_date_window_still_reaches_git(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pinning the basis must not drop the --since/--until window."""
+        captured = self._capture(monkeypatch)
+
+        run_git_log("2026-07-27", "2026-08-03", rev="origin/main")
+
+        assert "--since=2026-07-27" in captured["cmd"]
+        assert "--until=2026-08-03" in captured["cmd"]
+
+
+class TestRevCliFlag:
+    """The revision basis must be settable from the command line."""
+
+    @pytest.mark.unit
+    def test_rev_flag_defaults_to_origin_main(self) -> None:
+        """Default basis is the shared remote branch, not the local checkout."""
+        args = build_arg_parser().parse_args(
+            ["--since", "2026-07-27", "--until", "2026-08-03"]
+        )
+        assert args.rev == "origin/main"
+
+    @pytest.mark.unit
+    def test_rev_flag_is_overridable(self) -> None:
+        """An operator can measure a different basis when they need to."""
+        args = build_arg_parser().parse_args(
+            ["--since", "2026-07-27", "--until", "2026-08-03", "--rev", "v1.2.3"]
+        )
+        assert args.rev == "v1.2.3"

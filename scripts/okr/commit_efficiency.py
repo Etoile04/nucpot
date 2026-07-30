@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 
 _ISSUE_REF_PATTERN = re.compile(r"NFM-\d+")
 
+# Revision basis for the KR-2 measurement (NFM-2204 / R2).
+#
+# The shared remote branch, not the local checkout: the number must describe
+# merged history, not whatever the measuring workspace happens to be on. Fetch
+# before measuring — a stale local ref reproduces the very defect this pins.
+DEFAULT_REV = "origin/main"
+
+# Merge commits carry no authored subject and are exempt from the
+# commit-reference gate by construction (parent-count >= 2). Excluding them
+# keeps this metric counting the same population the gate polices.
+_NON_MERGE_FILTER = "--max-parents=1"
+
 
 def parse_git_log(git_output: str) -> list[dict[str, str]]:
     """Parse raw ``git log --oneline`` output into structured commit records.
@@ -236,13 +248,26 @@ def _validate_date(value: str, arg_name: str) -> str:
     return value
 
 
-def run_git_log(since: str, until: str) -> str:
-    """Execute ``git log --oneline`` for the given date range."""
+def run_git_log(since: str, until: str, *, rev: str) -> str:
+    """Execute ``git log --oneline`` for a date range on an explicit revision.
+
+    ``rev`` is keyword-only and deliberately has no default. Before NFM-2204
+    this function passed no revision at all, so git fell back to ``HEAD``: the
+    metric measured whichever branch happened to be checked out and moved with
+    the workspace rather than with behaviour. Callers must now state which
+    history they mean; :func:`build_arg_parser` supplies the CLI default.
+
+    ``--max-parents=1`` drops merge commits. The commit-reference gate exempts
+    them by construction (parent-count >= 2), so counting them here would make
+    this metric's denominator disagree with what the gate enforces.
+    """
     result = subprocess.run(
         [
             "git", "log", "--oneline",
+            _NON_MERGE_FILTER,
             f"--since={since}",
             f"--until={until}",
+            rev,
         ],
         capture_output=True,
         text=True,
@@ -251,7 +276,12 @@ def run_git_log(since: str, until: str) -> str:
     return result.stdout
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Construct the CLI parser.
+
+    Extracted from :func:`main` so the ``--rev`` default is assertable without
+    invoking the network-dependent report pipeline.
+    """
     parser = argparse.ArgumentParser(
         description="Calculate commit efficiency and structural waste rate.",
     )
@@ -268,13 +298,27 @@ def main() -> None:
         help="Period end (YYYY-MM-DD)",
     )
     parser.add_argument(
+        "--rev",
+        default=DEFAULT_REV,
+        help=(
+            "Revision basis to measure (default: %(default)s). Pinning this to "
+            "the shared remote branch keeps the number reproducible; leaving it "
+            "to the local checkout does not. Fetch first — a stale local ref "
+            "silently reproduces the defect this flag exists to fix."
+        ),
+    )
+    parser.add_argument(
         "--api-url",
         default="http://localhost:3000",
         help="Paperclip API base URL",
     )
-    args = parser.parse_args()
+    return parser
 
-    raw_log = run_git_log(args.since, args.until)
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+
+    raw_log = run_git_log(args.since, args.until, rev=args.rev)
     commits = parse_git_log(raw_log)
     enriched = enrich_commits_with_refs(commits)
 
