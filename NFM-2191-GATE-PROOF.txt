@@ -1,0 +1,1 @@
+NFM-2191 AC-4 throwaway gate proof. Do not merge.
