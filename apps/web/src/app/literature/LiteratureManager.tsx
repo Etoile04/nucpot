@@ -791,12 +791,26 @@ function DetailPanel({ detail }: DetailPanelProps) {
               components={{
                 img: ({ src, alt }) => {
                   // Rewrite relative image paths to the serving endpoint
-                  const imgSrc = typeof src === "string" && src.startsWith("images/")
-                    ? `/api/v1/literature/${detail.id}/files/${src}`
-                    : src
+                  // Handles two formats:
+                  //   1. "images/<hash>.jpg" (bare relative)
+                  //   2. "data_sources/<id>/images/<hash>.jpg" (full storage path)
+                  const s = typeof src === "string" ? src : ""
+                  let imgSrc = s
+                  if (s.startsWith("data_sources/")) {
+                    // Extract the parts after "data_sources/<uuid>/"
+                    const parts = s.split("/")
+                    // parts = ["data_sources", "<uuid>", "images", "<hash>"]
+                    if (parts.length >= 4) {
+                      const id = parts[1]
+                      const rest = parts.slice(2).join("/")
+                      imgSrc = `/api/v1/literature/${id}/files/${rest}`
+                    }
+                  } else if (s.startsWith("images/")) {
+                    imgSrc = `/api/v1/literature/${detail.id}/files/${s}`
+                  }
                   return (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={imgSrc as string} alt={alt ?? ""} />
+                    <img src={imgSrc} alt={alt ?? ""} />
                   )
                 },
               }}
