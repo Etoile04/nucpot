@@ -464,6 +464,55 @@ async def get_literature_detail(
     ]
 
     # Build full detail with the populated extraction_results + content_md + figures.
+    # Also load KG nodes/edges produced by the OntoFuel pipeline for this
+    # source — these are the real "extraction results" since the OntoFuel
+    # pipeline writes to kg_nodes/kg_edges, not extraction_results.
+    from nfm_db.models.kg import KGNode, KGEdge as _KGEdge  # late import
+
+    kg_nodes_for_source = (
+        await db.execute(
+            select(KGNode)
+            .where(KGNode.source_id == literature_id)
+            .order_by(KGNode.created_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+    kg_edges_for_source = (
+        await db.execute(
+            select(_KGEdge)
+            .where(_KGEdge.source_id == literature_id)
+            .order_by(_KGEdge.created_at.desc())
+            .limit(400)
+        )
+    ).scalars().all()
+    kg_extraction_results = [
+        {
+            "id": str(n.id),
+            "property_name": n.label,
+            "item_type": n.node_type,
+            "item_data": n.properties or {},
+            "value": (n.properties or {}).get("value"),
+            "unit": (n.properties or {}).get("unit"),
+            "confidence": n.confidence,
+            "source_node_id": str(n.id),
+            "source_page": (n.properties or {}).get("source_page"),
+            "source_paragraph": (n.properties or {}).get("source_paragraph"),
+        }
+        for n in kg_nodes_for_source
+    ] + [
+        {
+            "id": str(e.id),
+            "property_name": e.relation_type,
+            "item_type": "edge",
+            "item_data": e.properties or {},
+            "value": None,
+            "confidence": e.confidence,
+            "source_node_id": str(e.source_node_id),
+            "source_target_id": str(e.target_node_id),
+        }
+        for e in kg_edges_for_source
+    ]
+
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
@@ -477,7 +526,7 @@ async def get_literature_detail(
             source_id=source.id,
             content_md=source.content_md,
             figures=figures,
-            extraction_results=extraction_results,
+            extraction_results=kg_extraction_results,
             created_at=source.created_at,
             updated_at=source.updated_at,
         ),
