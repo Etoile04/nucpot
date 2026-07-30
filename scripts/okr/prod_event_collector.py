@@ -25,8 +25,8 @@ a mock backend.
 
 CLI usage:
     python scripts/okr/prod_event_collector.py \
-        --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
-        --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
+        --sync-state ~/.nfmd/prod-event-sync-state.json \
+        --master-jsonl ~/.nfmd/master-deploy-events.jsonl \
         --repo Etoile04/nucpot \
         --ssh-target lwj04@127.0.0.1
 
@@ -567,17 +567,64 @@ def _save_state(path: Path, state: SyncState) -> None:
     path.write_text(state.to_json() + "\n")
 
 
+# ---------------------------------------------------------------------------
+# Default-path resolution (ADR-KR3 §C6.3.2)
+# ---------------------------------------------------------------------------
+#
+# The collector previously defaulted ``--sync-state`` and ``--master-jsonl``
+# to paths under one operator's home directory. C6.3.2 rejects that: the
+# default must not name a user. The fallback here is therefore runtime-
+# expanded (``Path.home()``), which works for any operator on any host
+# without embedding a literal username in committed code. ``Path.home()``
+# is called lazily so tests can monkeypatch it.
+
+def _default_sync_state_path() -> Path:
+    """Runtime-expanded fallback for the sync-state JSON."""
+    return Path.home() / ".nfmd" / "prod-event-sync-state.json"
+
+
+def _default_master_jsonl_path() -> Path:
+    """Runtime-expanded fallback for the production-series master JSONL."""
+    return Path.home() / ".nfmd" / "master-deploy-events.jsonl"
+
+
+def _resolve_sync_state_path(cli_value: str | None) -> Path:
+    """Resolve the sync-state path: CLI arg → env → runtime fallback."""
+    if cli_value is not None:
+        return Path(cli_value)
+    env = os.environ.get("NFMD_PROD_EVENTS_SYNC_STATE")
+    if env:
+        return Path(env)
+    return _default_sync_state_path()
+
+
+def _resolve_master_jsonl_path(cli_value: str | None) -> Path:
+    """Resolve the master JSONL path: CLI arg → env → runtime fallback."""
+    if cli_value is not None:
+        return Path(cli_value)
+    env = os.environ.get("NFMD_PROD_EVENTS_PATH")
+    if env:
+        return Path(env)
+    return _default_master_jsonl_path()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--sync-state",
-        default="/Users/lwj04/.nfmd/prod-event-sync-state.json",
-        help="Path to the sync-state JSON file on the Mac Studio.",
+        default=None,
+        help="Path to the sync-state JSON file on the host. "
+        "Defaults to $NFMD_PROD_EVENTS_SYNC_STATE or "
+        "<home>/.nfmd/prod-event-sync-state.json (runtime-expanded; no "
+        "literal username embedded — ADR-KR3 §C6.3.2).",
     )
     parser.add_argument(
         "--master-jsonl",
-        default="/Users/lwj04/.nfmd/master-deploy-events.jsonl",
-        help="Path to the master prod-events JSONL on the Mac Studio.",
+        default=None,
+        help="Path to the master prod-events JSONL on the host. "
+        "Defaults to $NFMD_PROD_EVENTS_PATH or "
+        "<home>/.nfmd/master-deploy-events.jsonl (runtime-expanded; no "
+        "literal username embedded — ADR-KR3 §C6.3.2).",
     )
     parser.add_argument("--repo", default="Etoile04/nucpot")
     parser.add_argument(
@@ -591,11 +638,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    sync_state_path = Path(args.sync_state)
+    sync_state_path = _resolve_sync_state_path(args.sync_state)
+    master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
     state = _load_state(sync_state_path)
 
     backend: Backend = GhBackend(
-        args.repo, args.ssh_target, args.master_jsonl, str(sync_state_path),
+        args.repo, args.ssh_target, str(master_jsonl_path), str(sync_state_path),
     )
     try:
         next_state = collect(state, backend)
