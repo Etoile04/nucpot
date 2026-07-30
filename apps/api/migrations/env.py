@@ -87,9 +87,7 @@ async def run_async_migrations() -> None:
         # NFM-2146 D3 / NFM-2196: deploy lock must live on THIS connection,
         # not in a transient session that releases it on exit. See module
         # docstring for the C1 bug this closes.
-        await connection.execute(
-            text(f"SELECT pg_advisory_lock({NFMD_DEPLOY_LOCK_KEY})")
-        )
+        await connection.execute(text(f"SELECT pg_advisory_lock({NFMD_DEPLOY_LOCK_KEY})"))
         try:
             await connection.run_sync(do_run_migrations)
         finally:
@@ -97,9 +95,7 @@ async def run_async_migrations() -> None:
             # net for a crashed migration. ``pg_advisory_unlock`` from a
             # different connection returns f, so the call site must be on
             # the same connection that took the lock.
-            await connection.execute(
-                text(f"SELECT pg_advisory_unlock({NFMD_DEPLOY_LOCK_KEY})")
-            )
+            await connection.execute(text(f"SELECT pg_advisory_unlock({NFMD_DEPLOY_LOCK_KEY})"))
 
     await connectable.dispose()
 
@@ -109,7 +105,8 @@ def run_migrations_online() -> None:
     asyncio.run(run_async_migrations())
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+if __name__ == "__main__":
+    if context.is_offline_mode():
+        run_migrations_offline()
+    else:
+        run_migrations_online()
