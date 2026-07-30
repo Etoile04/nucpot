@@ -25,7 +25,32 @@ from nfm_db.services.extraction_pipeline import (
     trigger_extraction,
 )
 
-pytestmark = pytest.mark.xfail(reason="NFM-1366: trigger_extraction() does not accept multimodal kwargs", strict=False)
+# NFM-2158: the previous module-level ``pytest.mark.xfail`` covered all 21 tests
+# with a single blanket reason, but only 6 of them still exercise an unimplemented
+# capability -- the other 15 had started passing and silently lost their regression
+# signal.  Markers are now applied per-test, with ``strict=True`` so that
+# implementing the underlying capability fails the suite until the marker is removed.
+#
+# Two limitations remain (both tracked by NFM-1366):
+#   1. ``trigger_extraction()`` accepts ``extract_figures``/``extract_tables`` but
+#      not ``figure_types``/``confidence_threshold``/``conflict_strategy``.
+#   2. ``multimodal_extraction.run_multimodal_extraction()`` is implemented but is
+#      never invoked from ``trigger_extraction()``.
+_XFAIL_UNSUPPORTED_KWARGS = pytest.mark.xfail(
+    reason=(
+        "NFM-1366: trigger_extraction() accepts extract_figures/extract_tables but "
+        "not figure_types/confidence_threshold/conflict_strategy (raises TypeError)"
+    ),
+    strict=True,
+)
+
+_XFAIL_STAGE_NOT_WIRED = pytest.mark.xfail(
+    reason=(
+        "NFM-1366: multimodal_extraction.run_multimodal_extraction() is implemented "
+        "but is never called from trigger_extraction(), so the stage never runs"
+    ),
+    strict=True,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -184,6 +209,7 @@ class TestTriggerExtractionMultimodalOptions:
             )
             assert job.extract_tables is True
 
+    @_XFAIL_UNSUPPORTED_KWARGS
     @pytest.mark.asyncio
     async def test_accepts_figure_types_option(self) -> None:
         """trigger_extraction stores figure_types on the job."""
@@ -203,6 +229,7 @@ class TestTriggerExtractionMultimodalOptions:
             )
             assert job.figure_types == ["line", "heatmap"]
 
+    @_XFAIL_UNSUPPORTED_KWARGS
     @pytest.mark.asyncio
     async def test_accepts_confidence_threshold_option(self) -> None:
         """trigger_extraction stores confidence_threshold on the job."""
@@ -222,6 +249,7 @@ class TestTriggerExtractionMultimodalOptions:
             )
             assert job.confidence_threshold == 0.8
 
+    @_XFAIL_UNSUPPORTED_KWARGS
     @pytest.mark.asyncio
     async def test_accepts_conflict_strategy_option(self) -> None:
         """trigger_extraction stores conflict_strategy on the job."""
@@ -250,6 +278,7 @@ class TestTriggerExtractionMultimodalOptions:
 class TestMultimodalPipelineExecution:
     """Tests for multimodal stage running after text extraction."""
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_multimodal_runs_when_extract_figures_true(self) -> None:
         """When extract_figures=True, run_multimodal_extraction is called."""
@@ -274,6 +303,7 @@ class TestMultimodalPipelineExecution:
                 )
                 mock_mm.assert_awaited_once()
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_multimodal_runs_when_extract_tables_true(self) -> None:
         """When extract_tables=True, run_multimodal_extraction is called."""
@@ -320,6 +350,7 @@ class TestMultimodalPipelineExecution:
                 )
                 mock_mm.assert_not_awaited()
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_stub_mode_populates_figures_and_tables(self) -> None:
         """In stub mode, figures and tables are populated on the job."""
@@ -505,7 +536,12 @@ class TestTextOnlyRegression:
 
     @pytest.mark.asyncio
     async def test_text_only_with_staged_results(self) -> None:
-        """Text-only with accepted results still stages correctly."""
+        """Text-only with accepted results still stages correctly.
+
+        ``source_reference`` must be a syntactically valid DOI: NFM-636 added a
+        defense-in-depth guard at pipeline entry that fails the job outright when
+        ``source_type == "doi"`` and the reference does not match ``10.NNNN/...``.
+        """
         session = _make_mock_session()
 
         mock_gate = AsyncMock()
@@ -544,7 +580,7 @@ class TestTextOnlyRegression:
             ):
                 job = await trigger_extraction(
                     session,
-                    source_reference="text_only_staged",
+                    source_reference="10.1234/text-only-staged",
                     source_type="doi",
                 )
             assert job.status == JobStatus.COMPLETED

@@ -93,6 +93,10 @@ ALLOWLIST: set[str] = {
     "numpy",
     # httpx (declared)
     "httpx",
+    # sentry-sdk: optional — lazy-imported inside try/except ImportError in
+    # monitoring/worker_health.py (NFM-2014). The project does not yet
+    # configure Sentry, and adding it as a hard dep would be wasteful.
+    "sentry_sdk",
 }
 
 # First-party / sibling packages internal to the NucPot monorepo.
@@ -101,6 +105,7 @@ FIRST_PARTY: set[str] = {
     "nfm_db",
     "nfm_md_runner",
     "nfm_ref_gapfill",
+    "monitoring",
     "tests",
 }
 
