@@ -86,10 +86,14 @@ log "  DB revision: ${DB_VERSION}"
 
 # ---- 2. Assert revision file present in candidate image ------------------
 # The image (docker/prod-api.Dockerfile) bakes apps/api/migrations/ to
-# /app/migrations/. The file is named <revision>_<slug>.py.
+# /app/migrations/. Files are usually named <revision>_<slug>.py, but
+# merge revisions (e.g., NFM-2210's 036_merge_chain_A_and_B.py) often
+# name the file exactly after the revision ID with no slug suffix —
+# so we accept BOTH forms. The glob is run inside `docker run` so each
+# match uses the candidate image's filesystem, not the runner's.
 log "Checking ${DB_VERSION} in image ${IMAGE}..."
 MATCHES="$(docker run --rm "${IMAGE}" \
-    sh -c "ls /app/migrations/versions/${DB_VERSION}_*.py 2>/dev/null | head -1" 2>/dev/null || true)"
+    sh -c "ls /app/migrations/versions/${DB_VERSION}.py /app/migrations/versions/${DB_VERSION}_*.py 2>/dev/null | head -1" 2>/dev/null || true)"
 
 if [ -z "${MATCHES}" ]; then
   err "ASSERT_FAIL: prod DB has revision '${DB_VERSION}' but image '${IMAGE}' lacks it"
