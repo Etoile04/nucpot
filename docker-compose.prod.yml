@@ -4,7 +4,12 @@
 # Can run on Mac Studio (primary) or any Docker-capable host.
 # Usage:
 #   cp docker/.env.prod.example docker/.env.prod   # then fill secrets
+#   ./scripts/verify-env-sync.sh                   # pre-deploy env key check
 #   docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d --build
+#
+# Pre-deploy check: ./scripts/verify-env-sync.sh
+# Fails when a key in the root .env.prod is missing from docker/.env.prod
+# (NFM-2221 — the MINERU_API_KEY silent-fallback incident).
 #
 # Services:
 #   - nucpot-prod-db: PostgreSQL 16
