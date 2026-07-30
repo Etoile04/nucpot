@@ -2,7 +2,6 @@
 
 import logging
 import uuid
-from pathlib import Path
 from typing import Annotated
 
 import frontmatter as matter
@@ -14,7 +13,6 @@ from nfm_db.api.v1.auth import (
     require_blog_role,
     require_editor,
 )
-from nfm_db.config import get_settings
 from nfm_db.database import get_db
 from nfm_db.models.blog_post import PostStatus
 from nfm_db.models.user import BlogRole, User
@@ -26,6 +24,7 @@ from nfm_db.schemas.blog_post import (
     WorkflowActionResponse,
 )
 from nfm_db.schemas.common import PaginationParams
+from nfm_db.services import blog_post as _blog_post_service
 from nfm_db.services.blog_post import (
     approve_post,
     create_blog_post,
@@ -39,12 +38,7 @@ from nfm_db.services.blog_post import (
 )
 
 router = APIRouter(tags=["博客管理"])
-settings = get_settings()
 logger = logging.getLogger(__name__)
-
-
-def _content_dir() -> Path:
-    return Path(settings.blog_content_dir)
 
 
 def _read_markdown(slug: str) -> dict | None:
@@ -57,9 +51,15 @@ def _read_markdown(slug: str) -> dict | None:
         return None
 
     safe_name = slug.split("/")[-1]
-    md_path = (_content_dir() / f"{safe_name}.md").resolve()
+    # NFM-2195: look up via the module so test patches applied to
+    # ``nfm_db.services.blog_post.get_content_dir`` (e.g. via
+    # ``unittest.mock.patch``) are honoured. Direct attribute access on the
+    # service module keeps this layer reading from the same source of truth
+    # the writer uses, with no divergent settings.env-var copies.
+    content_dir = _blog_post_service.get_content_dir().resolve()
+    md_path = (content_dir / f"{safe_name}.md").resolve()
 
-    if not md_path.is_relative_to(_content_dir().resolve()):
+    if not md_path.is_relative_to(content_dir):
         logger.warning("Resolved path escapes content dir: slug=%r", slug)
         return None
 
@@ -68,10 +68,16 @@ def _read_markdown(slug: str) -> dict | None:
     try:
         raw = md_path.read_text(encoding="utf-8")
         parsed = matter.loads(raw)
+        # Defensive coercion: frontmatter may emit ``tags:`` (no value) when
+        # the writer produced an empty list, which YAML parses as ``None``
+        # rather than ``[]``. Normalise to ``[]`` so ``BlogPostResponse``
+        # validation never trips on a missing/None tag list.
+        raw_tags = parsed.metadata.get("tags")
+        tags = list(raw_tags) if isinstance(raw_tags, list) else []
         return {
             "content": parsed.content,
             "summary": parsed.metadata.get("summary", ""),
-            "tags": parsed.metadata.get("tags", []),
+            "tags": tags,
             "author_name": parsed.metadata.get("author", ""),
         }
     except Exception:
