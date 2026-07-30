@@ -676,27 +676,37 @@ async def delete_literature(
     """删除文献项及其所有关联的提取数据。
 
     Delete a literature item and all associated extraction data.
+
+    Uses raw SQL ``DELETE FROM data_sources WHERE id = ...`` to let
+    PostgreSQL's ``ON DELETE CASCADE`` / ``ON DELETE SET NULL`` handle
+    child rows automatically.  The previous ORM-based approach (loading
+    each child row then ``await db.delete(child)``) caused SQLAlchemy
+    to emit ``UPDATE datasets SET source_id=NULL`` before the parent
+    DELETE — but ``datasets.source_id`` is NOT NULL, so the UPDATE
+    raised ``NotNullViolationError``.  Raw SQL avoids this entirely.
     """
-    source = await _get_source_or_404(literature_id, db)
+    # Verify the literature exists (raises 404 if not).
+    await _get_source_or_404(literature_id, db)
 
-    # Delete associated extraction figures and results.
-    if hasattr(ExtractionFigure, "__tablename__"):
-        fig_stmt = select(ExtractionFigure).where(
-            ExtractionFigure.source_id == literature_id,
-        )
-        fig_result = await db.execute(fig_stmt)
-        for fig in fig_result.scalars().all():
-            await db.delete(fig)
+    # Raw SQL DELETE — DB-level CASCADE handles:
+    #   datasets (CASCADE), data_source_authors (CASCADE),
+    #   extraction_figures (SET NULL), kg_nodes (SET NULL),
+    #   kg_edges (SET NULL), extraction_results (no FK → stays).
+    from sqlalchemy import text as _sa_text
 
-    if hasattr(ExtractionResult, "__tablename__"):
-        er_stmt = select(ExtractionResult).where(
-            ExtractionResult.source_id == literature_id,
-        )
-        er_result = await db.execute(er_stmt)
-        for er in er_result.scalars().all():
-            await db.delete(er)
+    # First clean up extraction_results (no FK CASCADE on this table).
+    await db.execute(
+        _sa_text(
+            "DELETE FROM extraction_results WHERE source_id = :sid"
+        ).bindparams(sid=literature_id)
+    )
 
-    await db.delete(source)
+    # Now delete the data_source — CASCADE handles the rest.
+    await db.execute(
+        _sa_text(
+            "DELETE FROM data_sources WHERE id = :sid"
+        ).bindparams(sid=literature_id)
+    )
     await db.commit()
 
     return ApiResponse(
