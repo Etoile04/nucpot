@@ -30,6 +30,42 @@ for bin in gh unzip python3; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# gh_api_capture <jq-filter> <endpoint...>
+#
+# Run ``gh api <endpoint...> --jq <filter>`` and surface both stdout and
+# stderr. Unlike bare ``gh api ... 2>/dev/null``, this helper:
+#   * returns the filtered stdout on the function's stdout
+#   * writes the raw gh api stderr (auth errors, rate-limit hits,
+#     5xx, network failures, …) to the orchestrator's stderr so the
+#     GHA run log shows the real failure instead of a silent no-op
+#   * exits non-zero when ``gh api`` exits non-zero, so an auth
+#     misconfiguration does NOT degrade into "exit 0, zero events
+#     collected" — the previous failure mode.
+#
+# The ``|| echo ''`` fallback intentionally produces an empty value
+# only when ``gh`` exited zero but the filter produced nothing (a
+# genuine "no runs yet" case), which is the only acceptable use of
+# the silent path.
+gh_api_capture() {
+  local filter="$1"; shift
+  local out err rc
+  local tmp
+  tmp="$(mktemp)"
+  # ``gh api`` exits non-zero on transport/HTTP/auth errors. We must
+  # NOT swallow that signal.
+  gh api "$@" --jq "$filter" >"$tmp" 2>&1
+  rc=$?
+  out="$(cat "$tmp")"
+  rm -f "$tmp"
+  if [ "$rc" -ne 0 ]; then
+    echo "[collect-prod-run] gh api FAILED (rc=$rc): $*" >&2
+    echo "[collect-prod-run] gh api stderr: $out" >&2
+    return "$rc"
+  fi
+  printf '%s\n' "$out"
+}
+
 # Per ADR §C6.1.5 the JSONL path falls back to the repo default. Honour the
 # operator-supplied env var (set by the workflow from
 # ``vars.NFMD_DEPLOY_EVENTS_PATH``); otherwise let the Python module's
@@ -61,8 +97,9 @@ echo "[collect-prod-run] repo_root=$REPO_ROOT jsonl=$JSONL_PATH processed=$PROCE
 # ``.id`` is the correct path. Using ``.workflow.id`` returns ``null``,
 # which the previous version silently treated as "not found" and exited
 # successfully — collecting zero events.
-WF_ID="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${PROD_WF}" \
-  --jq '.id' 2>/dev/null || echo "")"
+WF_ID="$(gh_api_capture '.id' \
+  "repos/${GITHUB_REPOSITORY}/actions/workflows/${PROD_WF}")" \
+  || { echo "[collect-prod-run] aborting: workflow-id lookup failed" >&2; exit 1; }
 
 if [ -z "$WF_ID" ] || [ "$WF_ID" = "null" ]; then
   echo "[collect-prod-run] production-deployment workflow not found — nothing to do"
@@ -75,9 +112,9 @@ echo "[collect-prod-run] workflow_id=$WF_ID"
 # ---------------------------------------------------------------------------
 # jq -r '.workflow_runs[].id' returns one id per line in stable order
 # (server-side, latest first). We process in that order.
-RUN_IDS="$(gh api \
-  "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=50" \
-  --jq '.workflow_runs[].id' 2>/dev/null || echo "")"
+RUN_IDS="$(gh_api_capture '.workflow_runs[].id' \
+  "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=50")" \
+  || { echo "[collect-prod-run] aborting: run enumeration failed" >&2; exit 1; }
 
 if [ -z "$RUN_IDS" ]; then
   echo "[collect-prod-run] no runs found for workflow $WF_ID"
@@ -102,13 +139,21 @@ for RUN_ID in $RUN_IDS; do
   fi
 
   # 3b. List artifacts; only the nfm-deploy-event-*.json ones matter.
-  ARCHIVE_URLS="$(gh api \
-    "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
-    --jq '.artifacts[]
-            | select(.name | startswith("nfm-deploy-event-"))
-            | select(.name | endswith(".json"))
-            | .archive_download_url' \
-    2>/dev/null || echo "")"
+  # Per-run artifact lookup failure is non-fatal — we record a missing
+  # ledger row and move on, so a single bad run doesn't break the sweep.
+  if ! ARCHIVE_URLS="$(gh_api_capture \
+        '.artifacts[]
+          | select(.name | startswith("nfm-deploy-event-"))
+          | select(.name | endswith(".json"))
+          | .archive_download_url' \
+        "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" 2>/dev/null)"; then
+    echo "[collect-prod-run] run_id=$RUN_ID artifact listing failed — recording missing" >&2
+    python3 "$COLLECTOR" record-missing \
+      --run-id "$RUN_ID" \
+      --jsonl "$JSONL_PATH" \
+      --processed "$PROCESSED_PATH" || true
+    continue
+  fi
 
   if [ -z "$ARCHIVE_URLS" ]; then
     echo "[collect-prod-run] run_id=$RUN_ID no nfm-deploy-event artifact — recording missing"
