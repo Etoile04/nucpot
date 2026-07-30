@@ -7,15 +7,20 @@
  * NFM-2236 AC: "When the refresh token is revoked server-side, the
  * user sees an explicit re-authentication prompt rather than an
  * unexplained failure." We never auto-redirect — the user clicks
- * "Re-login" to navigate to ``/admin/login?redirect=…`` so they keep
+ * "Re-login" to navigate to ``/admin/login?returnTo=…`` so they keep
  * context.
  *
  * Render this ONCE per authenticated app (typically alongside
  * ``<SessionIndicator />`` in the global header / AppShell).  The
- * modal is non-dismissable except by completing the re-login flow:
- * closing it without re-authenticating leaves the user logged out,
- * which is intentional — silent re-auth is what we're explicitly
- * avoiding.
+ * modal is non-dismissable except by completing the re-login flow
+ * (NFM-2251 §b: no × / no Esc / no mask-click): closing it without
+ * re-authenticating leaves the user logged out, which is intentional
+ * — silent re-auth is what we're explicitly avoiding.
+ *
+ * On the "Re-login" button, we navigate to
+ * ``/admin/login?returnTo=<current-pathname>`` so the user lands
+ * back on the page they were on after a successful re-auth
+ * (NFM-2254 AC).
  */
 
 import { useMemo } from "react"
@@ -40,7 +45,7 @@ export function ReAuthPrompt() {
   const loginUrl = useMemo(() => {
     if (!pathname) return "/admin/login"
     if (pathname.startsWith("/admin/login")) return "/admin/login"
-    return `/admin/login?redirect=${encodeURIComponent(pathname)}`
+    return `/admin/login?returnTo=${encodeURIComponent(pathname)}`
   }, [pathname])
 
   const onReLogin = () => {
