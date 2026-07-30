@@ -323,10 +323,88 @@ export interface LiteratureFigure {
   readonly confidence?: number
 }
 
+// ─── Extraction results (merged from extraction_results + kg_nodes + kg_edges) ───
+
+/**
+ * Origin discriminator for items in
+ * `LiteratureDetail.extraction_results`. Mirrors the backend Pydantic
+ * `ExtractionSourceType` in `apps/api/src/nfm_db/schemas/literature.py`.
+ *
+ *   - `manual` — row originated from the legacy `extraction_results` table.
+ *   - `kg_node` — row produced by the OntoFuel LLM pipeline (`kg_nodes`).
+ *   - `kg_edge` — row produced by the OntoFuel LLM pipeline (`kg_edges`).
+ */
+export type ExtractionItemSourceType = "manual" | "kg_node" | "kg_edge"
+
+/** Common fields populated for every variant of ExtractionResultItem. */
+interface ExtractionResultItemBase {
+  readonly id: string
+  readonly property_name: string
+  readonly item_type: string
+  readonly item_data: Record<string, unknown>
+  readonly value: unknown | null
+  readonly confidence: number | null
+  readonly created_at: string | null
+  /**
+   * Snippet of the source paragraph the row was extracted from.
+   *
+   * Populated for both `manual` (extraction_results table) and
+   * `kg_node` (kg_nodes row) variants. Not set on `kg_edge`.
+   */
+  readonly source_paragraph: string | null
+}
+
+/** Row that originated from the legacy `extraction_results` table. */
+export interface ManualExtractionResultItem extends ExtractionResultItemBase {
+  readonly source_type: "manual"
+  readonly review_status: string | null
+}
+
+/** Row produced by the OntoFuel pipeline and stored in `kg_nodes`. */
+export interface KgNodeExtractionResultItem extends ExtractionResultItemBase {
+  readonly source_type: "kg_node"
+  readonly unit: string | null
+  readonly source_page: number | null
+}
+
+/** Row produced by the OntoFuel pipeline and stored in `kg_edges`. */
+export interface KgEdgeExtractionResultItem extends ExtractionResultItemBase {
+  readonly source_type: "kg_edge"
+  readonly source_node_id: string | null
+  readonly source_target_id: string | null
+}
+
+/**
+ * One merged extraction row, regardless of origin.
+ *
+ * Discriminated on `source_type` so the compiler can narrow per-variant
+ * fields (e.g. only `kg_edge` rows carry `source_target_id`).
+ *
+ * The backend schema is `extra="ignore"`, so unknown extra fields are
+ * tolerated — only the fields listed above are guaranteed.
+ */
+export type ExtractionResultItem =
+  | ManualExtractionResultItem
+  | KgNodeExtractionResultItem
+  | KgEdgeExtractionResultItem
+
+/**
+ * Backward-compat alias for the pre-PR-#552 live prod shape.
+ *
+ * Until PR #552 (NFM-2224-kg-nodes-merge) deploys, the API does not yet
+ * emit `source_type` on every row. Consumers should keep using
+ * `ExtractionResultItem`; this alias exists for one release window so
+ * the UI does not crash on transitional data and AC-5 graceful
+ * degradation is observable.
+ */
+export type ExtractionResultItemLegacy = ExtractionResultItemBase & {
+  readonly source_type?: undefined
+}
+
 export interface LiteratureDetail extends LiteratureListItem {
   readonly content_md?: string | null
   readonly figures?: readonly LiteratureFigure[]
-  readonly extraction_results?: readonly Record<string, unknown>[]
+  readonly extraction_results?: readonly ExtractionResultItem[]
   readonly updated_at?: string | null
 }
 

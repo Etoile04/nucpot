@@ -62,6 +62,7 @@ import {
   type LiteratureListItem,
   type LiteratureStatus,
 } from "@/lib/api-client"
+import { ExtractionResultsList } from "@/app/literature/ExtractionResultsList"
 
 const { Title, Text, Paragraph } = Typography
 const { Dragger } = Upload
@@ -852,37 +853,7 @@ function DetailPanel({ detail }: DetailPanelProps) {
             description="暂无提取结果"
           />
         ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {extractionResults.map((er) => (
-              <div
-                key={er.id as string}
-                className="border border-gray-200 rounded p-2 text-xs"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <Tag color="blue">{er.item_type as string}</Tag>
-                  <span className="font-medium">{er.property_name as string}</span>
-                  {er.confidence != null && (
-                    <Tag color="default">
-                      置信度 {((er.confidence as number) * 100).toFixed(0)}%
-                    </Tag>
-                  )}
-                  {er.review_status != null && (
-                    <Tag>{String(er.review_status)}</Tag>
-                  )}
-                </div>
-                {er.value != null && (
-                  <pre className="bg-gray-50 p-2 rounded text-xs overflow-x-auto">
-                    {JSON.stringify(er.value, null, 2)}
-                  </pre>
-                )}
-                {er.source_paragraph != null && (
-                  <div className="text-gray-500 italic mt-1">
-                    「{(er.source_paragraph as string).substring(0, 200)}」
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <ExtractionResultsList items={extractionResults} />
         )}
       </Card>
     </div>
