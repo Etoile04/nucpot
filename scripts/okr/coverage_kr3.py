@@ -6,10 +6,9 @@ and emits the metric for the company-level KR:
     KR-COMPANY-3 — Deployment Success Rate — target >= 0.90
 
 The metric is the share of events whose ``first_pass_success`` flag is the
-literal JSON ``true``. A deploy that ran a rollback or that used a
-``SKIP_HEALTH_GATE`` override is recorded with ``first_pass_success = false``
-by the writer (per CPO ruling D2 in NFM-2042) — so this file is dumb about
-those distinctions and simply trusts the writer.
+literal JSON ``true``. The staging writer records rollback outcomes and keeps
+``skip_flag_used`` as the reserved ``false`` schema field (ADR-KR3-A1 C5), so
+this file is dumb about those distinctions and simply trusts the writer.
 
 Critical property (acceptance criterion 4): when the JSONL is absent or empty
 the value is ``None`` and ``n == 0``. A bare ``ZeroDivisionError`` or a
@@ -17,10 +16,15 @@ fabricated 1.0 would both be a silent corruption of the metric the team is
 being measured against.
 
 Usage:
-    python scripts/okr/coverage_kr3.py                  # default path
+    python scripts/okr/coverage_kr3.py                  # default path, staging
     python scripts/okr/coverage_kr3.py --path events.jsonl
     python scripts/okr/coverage_kr3.py --since 2026-07-01 --until 2026-07-30
+    python scripts/okr/coverage_kr3.py --environment production
     NFMD_DEPLOY_EVENTS_PATH=/var/log/nfmd.jsonl python scripts/okr/coverage_kr3.py
+
+From ADR-KR3-A1 C6.1 the JSONL carries both staging and production events, so
+``--environment`` selects one series. It defaults to ``staging``, which keeps
+every pre-C6.1 caller on the unchanged v1 baseline.
 
 Environment variables:
     NFMD_DEPLOY_EVENTS_PATH  — host-absolute path to the JSONL; falls back
@@ -41,6 +45,14 @@ from typing import Any, Iterable
 # requires this to appear in the report; NFM-2035 spec section 4 criterion 1
 # fixes the value.
 KR3_TARGET: float = 0.90
+
+# ADR-KR3-A1 §C6.1.4. ``staging`` is first because it is the default: the v1
+# baseline (NFM-2039) is the staging series, and once the C6.1 collector starts
+# appending prod events into the same JSONL, an unfiltered read would silently
+# conflate the two streams and move that baseline.
+ENVIRONMENTS: tuple[str, ...] = ("staging", "production")
+DEFAULT_ENVIRONMENT: str = ENVIRONMENTS[0]
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_EVENTS_PATH = _REPO_ROOT / "docker" / ".deploy-events.jsonl"
@@ -150,14 +162,40 @@ def compute_value(events: Iterable[dict[str, Any]]) -> float | None:
     return success / total
 
 
+def filter_environment(
+    events: list[dict[str, Any]],
+    environment: str,
+) -> list[dict[str, Any]]:
+    """Keep only events emitted by ``environment`` (ADR-KR3-A1 §C6.1.4).
+
+    Applied after :func:`load_events` — never at IO — so a mixed staging +
+    production JSONL is read whole and then split. Filtering at the reader
+    would make ``n`` unrecoverable for the other stream.
+
+    The match is exact. An event whose ``environment`` is missing or is some
+    third value cannot be attributed to either series, so it is dropped rather
+    than folded into the default one; a mis-attributed event moves a KR the
+    company is measured against.
+    """
+    return [ev for ev in events if ev.get("environment") == environment]
+
+
 def build_report(
     path: Path,
     since: str | None,
     until: str | None,
+    environment: str = DEFAULT_ENVIRONMENT,
 ) -> dict[str, Any]:
-    """Assemble the JSON report consumed by the 5-KR aggregator (NFM-2041)."""
+    """Assemble the JSON report consumed by the 5-KR aggregator (NFM-2041).
+
+    ``environment`` defaults to staging so a caller that predates C6.1 keeps
+    reading the unchanged v1 baseline. The report shape is deliberately not
+    extended with the environment: §C6.1.4 requires the staging payload to
+    stay byte-for-byte identical to the pre-change run.
+    """
     raw = load_events(path)
-    windowed = filter_window(raw, since, until)
+    in_env = filter_environment(raw, environment)
+    windowed = filter_window(in_env, since, until)
     value = compute_value(windowed)
     return {
         "value": value,
@@ -166,6 +204,7 @@ def build_report(
         "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source_window": {"since": since, "until": until},
     }
+
 
 
 # ---------------------------------------------------------------------------
@@ -207,12 +246,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=_validate_date,
         help="Inclusive upper bound (YYYY-MM-DD, full day).",
     )
+    parser.add_argument(
+        "--environment",
+        default=DEFAULT_ENVIRONMENT,
+        choices=ENVIRONMENTS,
+        help="Deploy environment to report on. Default: %(default)s "
+        "(the v1 KR-3 baseline). The JSONL is a mixed stream from C6.1 onward, "
+        "so this selects one series without disturbing the other.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    report = build_report(_resolve_path(args.path), args.since, args.until)
+    report = build_report(
+        _resolve_path(args.path),
+        args.since,
+        args.until,
+        environment=args.environment,
+    )
     print(json.dumps(report, indent=2))
     return 0
 
