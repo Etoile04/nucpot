@@ -38,7 +38,7 @@ jobs:
 
       - name: Verify columns exist
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             docker exec nucpot-prod-db psql -U "${PROD_POSTGRES_USER:-nfm}" -d "${PROD_POSTGRES_DB:-nfm_db}" -c "
               SELECT column_name, data_type
               FROM information_schema.columns

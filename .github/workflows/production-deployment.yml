@@ -329,7 +329,7 @@ jobs:
 
       - name: Run pre-deploy DB↔code alembic assertion
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
@@ -402,7 +402,7 @@ jobs:
       - name: Deploy via Docker Compose (loopback SSH)
         id: deploy
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
 
