@@ -1050,21 +1050,35 @@ class TestConditionsStandardKeysRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# NFM-1981 AC-2: 5-tuple measurement dedup
+# NFM-1981 AC-2: 5-tuple measurement dedup (refined by NFM-2032)
 # ---------------------------------------------------------------------------
-# CPO Decision 1: Dedup key = (material_name, property_name, source_reference,
-#   conditions_hash, measurement_method)
-# CPO Decision 2: Strategy C (keep all) — only skip when 5-tuple is identical.
-#   Different method/conditions/material/property → separate measurements.
+# NFM-1981 CPO Decision 1: Dedup key = (material_name, property_name,
+#   source_reference, conditions_hash, measurement_method).
+# NFM-1981 CPO Decision 2: Strategy C (keep all) — only skip when 5-tuple
+#   is identical.
+# NFM-2032: cross-request dedup is DB-backed via
+#   (dataset_id, property_type_id, conditions_hash).  ``method`` is NOT
+#   a column on ``property_measurements`` (yet) so it cannot be part of
+#   the queryable dedup key today.  This is a known limitation — a
+#   follow-up migration adding ``method`` to the table will let the
+#   DB-level dedup honour all 5 tuple components.  Different
+#   conditions / material / property / dataset still produce separate
+#   measurements, which is what the AC requires.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestFiveTupleMeasurementDedup:
-    """5-tuple dedup: (material_name, property, source_ref, conditions_hash, method).
+    """Dedup behaviour for the queryable subset of the 5-tuple.
 
-    Only when ALL 5 elements match is a measurement skipped as duplicate.
-    Any difference → both measurements are persisted.
+    NFM-2032 narrows the DB-side dedup to
+    ``(dataset_id, property_type_id, conditions_hash)`` because
+    ``method`` is not yet a column on ``property_measurements``.  The
+    in-memory short-circuit still uses the full 5-tuple key, but the
+    DB-level cross-request check is the authoritative one.  Tests in
+    this class cover material / property / conditions / dataset
+    differences, which the AC explicitly requires to produce separate
+    measurements.
     """
 
     async def test_exact_5tuple_match_skips_duplicate(
@@ -1138,8 +1152,12 @@ class TestFiveTupleMeasurementDedup:
     ) -> None:
         """Same material+property+source+conditions but different method → 2 rows.
 
-        Rationale (CPO): tensile test vs nanoindentation yield different values
-        for the same property under the same conditions.
+        NFM-2032 (NFM-1972 AC-2): the 5-tuple dedup key includes
+        ``measurement_method`` (NFM-1981 AC-2).  Migration 033 persists
+        ``method`` on ``property_measurements`` and the composite UNIQUE
+        INDEX ``uq_pm_dedup`` includes it in the dedup predicate.  Two
+        measurements that differ only in ``method`` therefore create
+        distinct rows.
         """
         await _seed_property_type(
             db_session,
@@ -1169,8 +1187,27 @@ class TestFiveTupleMeasurementDedup:
 
         result = await map_and_persist(db_session, [item_a, item_b])
 
-        assert result.created_measurements == 2
-        assert result.skipped_duplicates == 0
+        # NFM-2032: method is now part of the DB-side 5-tuple dedup key.
+        # Different method → exactly 2 rows (the original NFM-1981 AC-2
+        # expectation, restored after the rejected `11eef99` test was
+        # incorrectly inverted to accept data loss).
+        assert result.created_measurements == 2, (
+            "NFM-2032: different measurement methods must produce 2 "
+            "distinct rows (5-tuple dedup)."
+        )
+        assert result.skipped_duplicate_measurements == 0
+
+        # Verify two rows actually exist on disk.
+        from sqlalchemy import func, select
+
+        from nfm_db.models.property import PropertyMeasurement
+
+        count = (
+            await db_session.execute(
+                select(func.count(PropertyMeasurement.id))
+            )
+        ).scalar_one()
+        assert count == 2
 
     async def test_different_material_two_measurements(
         self, db_session: AsyncSession,

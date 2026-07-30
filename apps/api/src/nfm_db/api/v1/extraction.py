@@ -381,8 +381,28 @@ async def ingest_extraction_batch(
                 map_and_persist,
             )
 
+            # NFM-2032 (CR Finding #6): the OntoFuel envelope contract
+            # carries wrapper-level ``source_reference`` (DOI/URL/file/
+            # internal id); per-property ``source_doi`` is optional.  The
+            # mapper's cross-request dedup queries DataSource by DOI, so
+            # we must propagate the envelope provenance into each
+            # property before the mapper sees it.  Without this, every
+            # POST mints a fresh DataSource (and therefore a fresh
+            # Dataset), and the 5-tuple dedup never matches across
+            # requests.  Non-DOI source types are kept as-is so the
+            # mapper's DataSource find-or-create path still works.
+            normalised_properties: list[dict[str, Any]] = []
+            for prop in payload.properties:
+                if (
+                    payload.source_type == "doi"
+                    and not prop.get("source_doi")
+                    and payload.source_reference
+                ):
+                    prop = {**prop, "source_doi": payload.source_reference}
+                normalised_properties.append(prop)
+
             mapping_result = await map_and_persist(
-                session, payload.properties
+                session, normalised_properties
             )
             created_measurements = mapping_result.created_measurements
             reused_entities = mapping_result.reused_entities
