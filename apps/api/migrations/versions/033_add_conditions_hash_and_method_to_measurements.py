@@ -1,7 +1,7 @@
 """Add conditions_hash + method + composite UNIQUE constraint to measurements
 
 Revision ID: 033_add_conditions_hash_and_method_to_measurements
-Revises: 032_create_data_submission_tables
+Revises: 031_seed_property_types
 Create Date: 2026-07-30
 
 NFM-2032 (NFM-1972 AC-2): the cross-request dedup query in
@@ -43,10 +43,10 @@ This migration closes all three gaps:
 The migration is reversible (down drops the new column, the new unique
 indexes, and restores ``conditions_hash`` to nullable).
 
-Note: down_revision = '032_create_data_submission_tables' to chain on
-the NFM-2018 sibling migration.  Release engineer must coordinate the
-merge order; if NFM-2018 lands second, the integration re-points its
-down_revision at this revision.
+Note: down_revision = '031_seed_property_types' (main head).  Originally
+chained on '032_create_data_submission_tables' from the NFM-2018 epic
+branch, but that migration is not yet merged to main.  When NFM-2018
+lands, its migration must re-point its down_revision to this revision.
 """
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "033_add_conditions_hash_and_method_to_measurements"
-down_revision: str | Sequence[str] | None = "032_create_data_submission_tables"
+down_revision: str | Sequence[str] | None = "031_seed_property_types"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
