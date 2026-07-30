@@ -415,3 +415,78 @@ async def asyncio_sleep_zero() -> None:
     import asyncio
 
     await asyncio.sleep(0)
+
+
+async def test_get_literature_detail_does_not_dedup_distinct_kg_edges(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Regression: distinct KG edges must NOT collapse on dedup key.
+
+    Previously ``_dedupe_and_sort`` keyed on ``(property_name, value)``, but
+    ``_kg_edge_to_item`` always set ``value=None`` — so every edge sharing
+    a ``relation_type`` (e.g. ``UO2 --hasProperty--> density`` and
+    ``UO2 --hasProperty--> melting_point``) collapsed into a single row,
+    silently dropping real relations. This test pins that three distinct
+    ``hasProperty`` edges from the same source node all surface.
+    """
+    source = await _seed_source(db_session)
+    # Single source node.
+    source_node = await _seed_kg_node(
+        db_session,
+        source_id=source.id,
+        label="UO2",
+        node_type="Material",
+    )
+    # Three distinct target nodes, each linked via the same relation_type.
+    target_density = await _seed_kg_node(
+        db_session,
+        source_id=source.id,
+        label="density",
+        node_type="Property",
+    )
+    target_melting = await _seed_kg_node(
+        db_session,
+        source_id=source.id,
+        label="melting_point",
+        node_type="Property",
+    )
+    target_thermal = await _seed_kg_node(
+        db_session,
+        source_id=source.id,
+        label="thermal_conductivity",
+        node_type="Property",
+    )
+    edge_density = await _seed_kg_edge(
+        db_session,
+        source_id=source.id,
+        source_node_id=source_node.id,
+        target_node_id=target_density.id,
+        relation_type="hasProperty",
+    )
+    edge_melting = await _seed_kg_edge(
+        db_session,
+        source_id=source.id,
+        source_node_id=source_node.id,
+        target_node_id=target_melting.id,
+        relation_type="hasProperty",
+    )
+    edge_thermal = await _seed_kg_edge(
+        db_session,
+        source_id=source.id,
+        source_node_id=source_node.id,
+        target_node_id=target_thermal.id,
+        relation_type="hasProperty",
+    )
+
+    response = await async_client.get(f"/api/v1/literature/{source.id}")
+    assert response.status_code == 200
+    items = response.json()["data"]["extraction_results"]
+
+    edge_items = [it for it in items if it.get("source_type") == "kg_edge"]
+    expected_ids = {str(edge_density.id), str(edge_melting.id), str(edge_thermal.id)}
+    actual_ids = {it["id"] for it in edge_items}
+    assert actual_ids == expected_ids, (
+        "Distinct kg_edges collapsed on the dedup key — "
+        f"expected {expected_ids}, got {actual_ids}"
+    )
+    assert len(edge_items) == 3

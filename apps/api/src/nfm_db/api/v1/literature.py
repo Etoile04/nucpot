@@ -161,16 +161,34 @@ def _kg_edge_to_item(edge: KGEdge) -> ExtractionResultItem:
 def _dedupe_and_sort(
     items: list[ExtractionResultItem],
 ) -> list[ExtractionResultItem]:
-    """Remove duplicate items by (property_name, value); sort newest first.
+    """Remove duplicate items by a source-type-aware identity; sort newest first.
 
-    Manual entries are merged first, then kg_nodes, then kg_edges — so when
-    two rows collide on the dedup key, the manual entry wins (insertion order
-    is preserved by :func:`dict.fromkeys`).
+    Manual entries and kg_node rows share identity on
+    ``(property_name, value)`` — when both collide the manual entry wins
+    because the manual list is merged first (insertion order is preserved
+    by the ``seen`` set).
+
+    kg_edge rows are relations, not scalar values: their ``value`` field
+    is intentionally ``None`` and two distinct edges that share a
+    ``relation_type`` (e.g. ``UO2 --hasProperty--> density`` and
+    ``UO2 --hasProperty--> melting_point``) MUST NOT collapse. Edges
+    are therefore identified by the triple
+    ``(relation_type, source_node_id, target_node_id)``. The DB enforces
+    uniqueness on that triple per ``data_source_id`` (UniqueConstraint
+    ``uq_kg_edges_source_target_relation``), so two legitimate edges
+    will never collide on it.
     """
-    seen: set[tuple[str, object]] = set()
+    seen: set[tuple[object, ...]] = set()
     deduped: list[ExtractionResultItem] = []
     for item in items:
-        key = (item.property_name, item.value)
+        if item.source_type == "kg_edge":
+            key = (
+                item.property_name,
+                item.source_node_id,
+                item.source_target_id,
+            )
+        else:
+            key = (item.property_name, item.value)
         if key in seen:
             continue
         seen.add(key)
