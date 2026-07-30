@@ -42,14 +42,18 @@ RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
     (sleep 5 && pip install --no-cache-dir 'xgboost>=3.0,<4' \
       -i https://pypi.tuna.tsinghua.edu.cn/simple)
 
-# NFM-2146 / ADR-NFM-2139 §5 D3: deploy-time migration only. Migration is no
-# longer part of the container boot path — alembic.ini is NOT baked into the
-# image. The migration step runs from the deploy workflow (scripts/prod_migrate.sh)
-# inside an ephemeral container using this same image (overridden entrypoint),
-# guarded by a Postgres advisory lock so concurrent migrators cannot race.
-# Without this decoupling, every rolling restart re-runs alembic upgrade head
-# and any failure breaks the boot path — NFM-2146 failure-mode shift is:
-# "failed boot (current) → failed deploy (after D3) — alertable, retryable".
+# NFM-2146 / ADR-NFM-2139 §5 D3: bake alembic.ini + migrations into the image
+# so the deploy-time migration step (scripts/prod_migrate.sh) can invoke
+# `alembic upgrade head` inside an ephemeral container using this same image
+# (overridden entrypoint). The CMD itself serves uvicorn only — migration is
+# no longer part of the boot path.
+#
+# Failure-mode shift: "502 on boot" (when alembic crashed during container
+# start) → "failed deploy step" (when alembic crashes during the dedicated
+# migrate run, before any container comes up — alertable, retryable, no
+# traffic cut over). See scripts/prod_migrate.sh for the advisory-lock
+# + readiness-wait contract that guards concurrent migrators.
+COPY apps/api/alembic.ini ./
 
 # ML model artifacts for prediction endpoints (phase classifier + temp predictor)
 # prediction_service.py resolves MODELS_DIR = /app/models (6 parent hops from src/nfm_db/ml/)
