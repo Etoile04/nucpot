@@ -372,6 +372,57 @@ class TestProcessEvent:
         assert mod.fcntl.LOCK_EX in calls
         assert mod.fcntl.LOCK_UN in calls
 
+    def test_interrupted_write_recovers_no_double_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Code review HIGH #4 (2026-07-30): the reviewer asked for an
+        interrupted-write recovery test.
+
+        Scenario: a process crashes AFTER appending the ledger row but
+        BEFORE appending the JSONL line. The next run must:
+
+        1. See the ledger row as ``processed``.
+        2. Return ``duplicate`` (skipping the JSONL append).
+        3. NOT append a second JSONL line.
+
+        This is the recovery path that justifies ledger-first write order.
+        """
+        import pathlib
+
+        mod = _import_collector()
+        jsonl, processed, _ = _paths(tmp_path)
+        text = _canonical_json(_valid_event())
+        sha = mod.compute_sha256(text)
+
+        # Simulate the crash window: monkey-patch ``atomic_append_line``
+        # to raise AFTER ``append_processed_row`` has been called.
+        def crashing_atomic(jp: pathlib.Path, line: str) -> None:
+            raise RuntimeError("simulated crash between ledger and JSONL append")
+
+        monkeypatch.setattr(mod, "atomic_append_line", crashing_atomic)
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            mod.process_event(jsonl, processed, text, run_id="run-X")
+
+        # State on disk: ledger has the row, JSONL is empty/absent.
+        rows = processed.read_text().splitlines()
+        assert len(rows) == 1
+        assert rows[0].split("\t") == ["run-X", sha, "processed"]
+        assert (not jsonl.exists()) or jsonl.read_text() == ""
+
+        # Now the recovery: a second run on the SAME sha must return
+        # "duplicate" and MUST NOT append a JSONL line.
+        monkeypatch.undo()  # restore atomic_append_line
+        status = mod.process_event(jsonl, processed, text, run_id="run-Y")
+        assert status == "duplicate"
+        assert (not jsonl.exists()) or jsonl.read_text() == ""
+        rows2 = [ln.split("\t") for ln in processed.read_text().splitlines()]
+        assert len(rows2) == 2
+        assert rows2[0][2] == "processed"
+        assert rows2[1][2] == "duplicate"
+        assert rows2[0][1] == sha
+        assert rows2[1][1] == sha
+
 
 class TestCliSubprocess:
     """The workflow calls the collector via subprocess — exercise the CLI."""
