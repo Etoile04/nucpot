@@ -414,6 +414,18 @@ jobs:
 
             git pull origin main
 
+            # NFM-2242 / NFM-2221: env-drift guard. Compares key *names*
+            # (never values) between root .env.prod and docker/.env.prod.
+            # The previous incident: MINERU_API_KEY lived in root .env.prod
+            # but never made it into docker/.env.prod, so the container
+            # silently fell back to PyMuPDF for weeks. Drift must abort
+            # the deploy before any image is built. The script exits 1 on
+            # drift or a missing input file; no `|| true` is appended, so
+            # the heredoc aborts and the deploy-prod job fails. The script
+            # only prints key names, so the workflow logs stay secret-free.
+            echo "==> Verifying .env.prod ↔ docker/.env.prod key drift (NFM-2242)"
+            bash ./scripts/verify-env-sync.sh .env.prod docker/.env.prod
+
             # Build the 3 distinct images (D1, NFM-2148). The api image is
             # shared by the api and worker services (docker-compose.prod.yml:62,
             # :216), so one build tag covers both. --build is BANNED below in

@@ -58,7 +58,7 @@ module = "asyncpg.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "scripts/okr/tests"]
+testpaths = ["tests", "scripts/okr/tests", "scripts/tests"]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
 
