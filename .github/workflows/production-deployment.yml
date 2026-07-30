@@ -444,17 +444,16 @@ jobs:
             # Wait for services to start
             sleep 20
 
-            # Ensure migration files match HEAD (prevent stale local edits)
-            git checkout HEAD -- apps/api/scripts/migrations/
-
-            # Run database migrations (idempotent, both files)
-            for SQL_FILE in apps/api/scripts/migrations/001_add_dedup_hash.sql \
-                             apps/api/scripts/migrations/002_fix_dedup_hash_simple.sql; do
-              if [ -f "$SQL_FILE" ]; then
-                echo "Applying migration: $SQL_FILE"
-                docker exec -i nucpot-prod-db psql -U "${PROD_POSTGRES_USER:-nfm}" -d "${PROD_POSTGRES_DB:-nfm_db}" < "$SQL_FILE" || echo "Migration $SQL_FILE skipped (may already be applied)"
-              fi
-            done
+            # Schema authority: Alembic-only (ADR-NFM-2139 §5 D4).
+            # The prod-api container entrypoint already runs
+            #     `alembic upgrade head && exec uvicorn ...`
+            # at every boot (docker/prod-api.Dockerfile:61), so all DDL is
+            # applied through Alembic revisions under
+            #     apps/api/migrations/versions/
+            # The legacy ``apps/api/scripts/migrations/*.sql`` directory has
+            # been emptied and the previous belt-and-suspenders ``psql`` loop
+            # removed.  No path in this deploy writes to the prod DB except
+            # through Alembic.
 
             # Internal health checks — the first curl-f is the production
             # equivalent of staging's first-poll gate (ADR-KR3-A2 §Failure-mode 6).
