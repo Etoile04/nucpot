@@ -100,12 +100,21 @@ class TestMigrationChain:
             f"got {rev.down_revision!r}"
         )
 
-    def test_head_is_035(self, script_directory: ScriptDirectory) -> None:
-        """After this migration is applied, the chain head is 035."""
+    def test_035_is_direct_ancestor_of_head(self, script_directory: ScriptDirectory) -> None:
+        """035 is no longer the chain head after the 036 merge.
+
+        Migration 036_merge_chain_A_and_B (commit 9df2f3f) merged chain A
+        (032_create_data_submission_tables) with chain B (035_multimodal),
+        making 036 the new head. We verify 035 is still reachable in the
+        revision graph instead of asserting it is the head.
+        """
         head = script_directory.get_current_head()
-        assert head == REVISION, (
-            f"Expected head={REVISION!r}, got {head!r}"
+        assert head == "036_merge_chain_A_and_B", (
+            f"Expected head='036_merge_chain_A_and_B', got {head!r}"
         )
+        # 035 must still be a known revision in the chain
+        rev = script_directory.get_revision(REVISION)
+        assert rev is not None, f"Revision {REVISION!r} not found in migration chain"
 
     def test_no_duplicate_revisions(self, script_directory: ScriptDirectory) -> None:
         revisions = [r.revision for r in script_directory.walk_revisions()]
