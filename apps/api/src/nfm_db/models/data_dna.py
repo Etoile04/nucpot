@@ -1,25 +1,30 @@
-"""Data DNA ORM model (NFM-2019).
+"""Data DNA ORM model (NFM-2019, NFM-2026).
 
 The data DNA record captures the cryptographic identity of a
 contributed record (UUIDv4, SHA-256, optional SM3).  It is the
 authoritative fingerprint used to deduplicate submissions in the
 1+N architecture.
-"""
 
+NFM-2026: Added classification_level FK for contract enforcement.
+"""
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import String, Uuid
+from sqlalchemy import CheckConstraint, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
+from nfm_db.models.classification_level import classification_check_constraint
 
 
 class DataDna(TimestampMixin, Base):
     """A data DNA record — fingerprints a single record by UUID + hash."""
 
     __tablename__ = "data_dna"
+    __table_args__ = (
+        classification_check_constraint(),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -54,6 +59,12 @@ class DataDna(TimestampMixin, Base):
         String(64),
         nullable=True,
         comment="Optional SM3 hex digest (GB/T 32905).",
+    )
+    classification_level: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("classification_levels.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="Security label (§3.1.2, §5.7). AC-4: stored alongside DNA.",
     )
 
     def __repr__(self) -> str:

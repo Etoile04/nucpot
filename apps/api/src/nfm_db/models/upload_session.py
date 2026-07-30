@@ -1,24 +1,29 @@
-"""Upload session ORM model (NFM-2019).
+"""Upload session ORM model (NFM-2019, NFM-2026).
 
 A upload session coordinates a chunked file submission from a
 resource node.  It tracks progress, exposes a resume token, and
 records the final SHA-256 once the upload completes.
-"""
 
+NFM-2026: Added classification_level FK for contract enforcement.
+"""
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import BigInteger, ForeignKey, String, Uuid
+from sqlalchemy import CheckConstraint, ForeignKey, String, Uuid, BigInteger
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
+from nfm_db.models.classification_level import classification_check_constraint
 
 
 class UploadSession(TimestampMixin, Base):
     """A chunked file upload session owned by a single resource node."""
 
     __tablename__ = "upload_sessions"
+    __table_args__ = (
+        classification_check_constraint(),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -74,6 +79,12 @@ class UploadSession(TimestampMixin, Base):
         nullable=False,
         server_default="pending",
         comment="Lifecycle status: pending, in_progress, completed, failed.",
+    )
+    classification_level: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("classification_levels.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="Security label (§3.1.2, §5.7).",
     )
 
     def __repr__(self) -> str:

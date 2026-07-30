@@ -106,6 +106,8 @@ from nfm_db.models.blog_post import (  # noqa: E402
 )
 from nfm_db.models.classification_level import (  # noqa: E402
     ClassificationLevel,
+    ClassificationLevelEnum,
+    classification_check_constraint,
 )
 from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
     ConflictRecord,
@@ -221,6 +223,8 @@ __all__ = [
     "BlogRole",
     "CacheLevel",
     "ClassificationLevel",
+    "ClassificationLevelEnum",
+    "classification_check_constraint",
     "CompatJSONB",
     "Confidence",
     "ConflictRecord",
