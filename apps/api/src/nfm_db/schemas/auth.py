@@ -16,6 +16,34 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class RefreshTokenResponse(BaseModel):
+    """Response for POST /api/v1/auth/refresh (NFM-2236).
+
+    Carries the new access token in the JSON body — *not* only via the
+    Set-Cookie header — so that the JavaScript frontend (which cannot
+    read the HttpOnly cookie) can schedule the next auto-refresh.
+    ``expires_at`` is the wall-clock expiry of the freshly-minted JWT,
+    in ISO 8601 UTC. Callers should treat the JWT as expiring no later
+    than this instant, even if the cookie's ``Max-Age`` would extend it.
+    """
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+
+
+class SessionInfoResponse(BaseModel):
+    """Response for GET /api/v1/auth/session (NFM-2236).
+
+    Pairs the current user profile with the JWT ``expires_at`` so the
+    frontend ``SessionManager`` can bootstrap its countdown without
+    needing to decode the HttpOnly cookie itself.
+    """
+
+    user: "UserResponse"
+    expires_at: datetime
+
+
 class TokenData(BaseModel):
     """Token payload data."""
 
@@ -161,8 +189,10 @@ __all__ = [
     "ROLE_INFO",
     "BlogRoleResponse",
     "LoginRequest",
+    "RefreshTokenResponse",
     "RoleAssignmentRequest",
     "RoleAssignmentResponse",
+    "SessionInfoResponse",
     "Token",
     "TokenData",
     "UserBase",
