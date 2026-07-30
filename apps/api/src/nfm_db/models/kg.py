@@ -121,6 +121,15 @@ class KGNode(TimestampMixin, Base):
         nullable=True,
         comment="Timestamp of last review action",
     )
+    # Extraction-method provenance (NFM-2247). Distinct from the kg_provenance
+    # table, which traces the *source document*; this records *how* the node
+    # was produced. NULL means unknown — the documented backfill for rows
+    # predating migration 037.
+    extraction_method: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="llm | manual | mineru (comma-joined when several apply)",
+    )
 
     # -- relationships --
     source: Mapped["DataSource | None"] = relationship()
@@ -221,6 +230,14 @@ class KGEdge(TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
         comment="Timestamp of last review action",
+    )
+    # Extraction-method provenance (NFM-2247). Edges appear in the
+    # literature-detail extraction_results array alongside nodes, so they need
+    # the same column. NULL means unknown.
+    extraction_method: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="llm | manual | mineru (comma-joined when several apply)",
     )
 
     # -- relationships --

@@ -51,6 +51,9 @@ class LiteratureFigure(BaseModel):
     image_path: str | None = None
     caption: str | None = None
     confidence: float = 0.0
+    # NFM-2247: how the figure was produced, normally ["mineru"]. Empty means
+    # unknown; the frontend badge renders that as 来源未知.
+    provenance: list[str] = Field(default_factory=list)
 
 
 class LiteratureDetailResponse(BaseModel):

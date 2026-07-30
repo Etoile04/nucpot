@@ -48,6 +48,7 @@ from nfm_db.schemas.literature import (
     LiteratureStatusResponse,
     LiteratureUploadResponse,
 )
+from nfm_db.services.provenance import parse_provenance
 from nfm_db.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -438,6 +439,10 @@ async def get_literature_detail(
             "review_status": er.review_status,
             "source_page": er.source_page,
             "source_paragraph": er.source_paragraph,
+            # NFM-2247: how this item was produced. Empty list = unknown,
+            # which the frontend badge renders as 来源未知 rather than
+            # guessing from confidence or review_status.
+            "provenance": parse_provenance(er.extraction_method),
             "created_at": er.created_at.isoformat() if er.created_at else None,
         }
         for er in er_result.scalars().all()
@@ -459,6 +464,7 @@ async def get_literature_detail(
             image_path=fig.image_path,
             caption=fig.caption,
             confidence=fig.confidence,
+            provenance=parse_provenance(fig.extraction_method),
         )
         for fig in fig_result.scalars().all()
     ]
@@ -498,6 +504,8 @@ async def get_literature_detail(
             "source_node_id": str(n.id),
             "source_page": (n.properties or {}).get("source_page"),
             "source_paragraph": (n.properties or {}).get("source_paragraph"),
+            # NFM-2247 — same contract as the legacy branch above.
+            "provenance": parse_provenance(n.extraction_method),
         }
         for n in kg_nodes_for_source
     ] + [
@@ -510,6 +518,7 @@ async def get_literature_detail(
             "confidence": e.confidence,
             "source_node_id": str(e.source_node_id),
             "source_target_id": str(e.target_node_id),
+            "provenance": parse_provenance(e.extraction_method),
         }
         for e in kg_edges_for_source
     ]
