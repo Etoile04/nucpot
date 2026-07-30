@@ -125,6 +125,7 @@ jobs:
       # spending CI minutes on the full test run).
       - name: Check for silent exception swallowing
         run: bash scripts/check_except_pass.sh
+        working-directory: ${{ github.workspace }}
 
       - name: Upload except-pass grep artifact
         if: always()
