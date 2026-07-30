@@ -567,6 +567,8 @@ async def ingest_extraction_batch(
             validation_errors=validation_errors,
             total_received=total_received,
             processing_time_ms=round(elapsed_ms, 1),
+            verified=verified,
+            db_measurement_count=db_measurement_count,
             errors=errors,
             received_at=datetime.now(UTC),
         ).model_dump(),

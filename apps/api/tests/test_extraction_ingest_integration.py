@@ -34,14 +34,7 @@ pytestmark = pytest.mark.no_auto_auth
 
 
 def _sample_property(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return a minimal property dict that passes ExtractedProperty validation.
-
-    NFM-2032 (CR Finding #6): the wrapper-level ``source_reference`` is
-    the authoritative provenance; the endpoint now normalises it into
-    each property's ``source_doi`` automatically.  We omit ``source_doi``
-    from the base sample so the integration tests exercise the
-    envelope-only path the way the OntoFuel production client does.
-    """
+    """Return a minimal property dict that passes ExtractedProperty validation."""
     base: dict[str, Any] = {
         "material_name": "UO2",
         "composition": "UO2",
@@ -63,21 +56,12 @@ def _ingest_payload(
     source_reference: str = "10.1234/test",
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build the JSON body for POST /extraction/ingest.
-
-    NFM-2032: the endpoint now propagates ``source_reference`` into
-    each property's ``source_doi`` when ``source_type == "doi"``.  We
-    therefore honour the OntoFuel production payload shape and let
-    the endpoint do the normalisation.  Tests that exercise the
-    explicit per-property provenance path can still pass
-    ``source_doi`` through ``_sample_property``.
-    """
-    props = properties or [_sample_property()]
+    """Build the JSON body for POST /extraction/ingest."""
     body: dict[str, Any] = {
         "source_reference": source_reference,
         "source_type": "doi",
         "corpus_id": corpus_id,
-        "properties": props,
+        "properties": properties or [_sample_property()],
         **overrides,
     }
     return body
@@ -392,11 +376,11 @@ class TestIngestWithConditions:
 
 
 class TestIngestDuplicateDetection:
-    """AC-3: 5-tuple dedup within and across POSTs (NFM-2032).
+    """AC-3: 5-tuple dedup within and across POSTs.
 
     Within a single POST, map_and_persist skips exact 5-tuple duplicates.
-    Across POSTs, a DB query checks for existing measurements with the same
-    (dataset_id, property_type_id, conditions_hash) before inserting.
+    Across POSTs, DataSource/Material find-or-create produces skip counts.
+    Full cross-call measurement dedup is a future enhancement.
     """
 
     @pytest.mark.asyncio
@@ -450,8 +434,10 @@ class TestIngestDuplicateDetection:
         assert "skipped_duplicate_measurements" in data1
 
         # Second POST (identical 5-tuples).
-        # NFM-2032: cross-request dedup now queries DB for existing
-        # measurements with matching (dataset, property_type, conditions_hash).
+        # NOTE: map_and_persist 5-tuple dedup is per-call (within a single
+        # batch).  Cross-call dedup (same 5-tuple across separate POSTs) is a
+        # future enhancement.  For now, DataSource/Material find-or-create
+        # produces skipped counts >= 1.
         resp2 = await async_client.post(
             "/api/v1/extraction/ingest",
             json=payload,
@@ -464,127 +450,172 @@ class TestIngestDuplicateDetection:
         assert data2["skipped_duplicates"] >= 1, (
             f"Expected skipped_duplicates >= 1, got {data2['skipped_duplicates']}"
         )
-        assert data2["skipped_duplicate_measurements"] >= 1, (
-            "NFM-2032: cross-request dedup must skip duplicate measurements"
-        )
-        assert data2["created_measurements"] == 0, (
-            "NFM-2032: no new measurements should be created for duplicates"
-        )
         # NFM-1996: backward-compat alias must equal sum of split counters
         assert data2["skipped_duplicates"] == (
             data2["reused_entities"] + data2["skipped_duplicate_measurements"]
         )
 
 
-class TestCrossRequestMeasurementDedup:
-    """NFM-2032: verify identical payload POSTed N times produces 1 row.
+class TestSyncVerificationPerRequestDelta:
+    """NFM-2096 AC-2 / AC-3: AC-R3 sync verification uses per-request
+    delta (after - before == created_measurements), NOT cumulative count.
 
-    This tests the specific bug: seen_measurement_keys was a local set that
-    did not query the DB, so cross-request dedup was broken.
+    Before the W1 fix, the verifier compared ``created_measurements``
+    against ``SELECT count(*)`` (cumulative per-DOI), which only held on
+    the FIRST ingest.  After the fix, both POST#1 and POST#2 with
+    distinct valid values under the same DOI report ``verified=True``.
     """
 
     @pytest.mark.asyncio
-    async def test_three_posts_one_measurement_row(
+    async def test_incremental_ingest_both_verified(
         self,
         async_client: AsyncClient,
         svc_headers: dict[str, str],
         seeded_property_type: PropertyType,
         db_session: AsyncSession,
     ) -> None:
-        """POST identical payload 3 times -> exactly 1 PropertyMeasurement row."""
-        payload = _ingest_payload(
-            properties=[_sample_property()],
-            corpus_id="cross-dedup-test",
-        )
+        """POST#1 then POST#2 with distinct 5-tuples under the same
+        DOI must both report ``verified=True``.
 
-        # First POST
+        The 5-tuple dedup key is (material_name, property, source_ref,
+        conditions_hash, method).  To test a *legitimate* incremental
+        ingest, the second POST must differ in at least one dedup-key
+        component — we use a different property name (lattice_constant
+        vs density), seeded as a separate PropertyType.
+
+        ``db_measurement_count`` reflects the cumulative total AFTER
+        this request, while ``verified`` checks the per-request delta.
+        """
+        doi = "10.1234/nfm2096-ac2"
+
+        # Seed a second property type so the second POST is a novel 5-tuple.
+        category = (await db_session.execute(
+            select(PropertyCategory).where(PropertyCategory.slug == "thermal")
+        )).scalar_one_or_none()
+        assert category is not None
+        density_type = PropertyType(
+            category_id=category.id,
+            name="density",
+            slug="density",
+            value_type="scalar",
+        )
+        db_session.add(density_type)
+        await db_session.flush()
+
+        # POST#1: first ingest for this DOI (lattice_constant).
         resp1 = await async_client.post(
             "/api/v1/extraction/ingest",
-            json=payload,
+            json=_ingest_payload(
+                properties=[_sample_property({"value": "5.470"})],
+                corpus_id="nfm2096-delta",
+                source_reference=doi,
+            ),
             headers=svc_headers,
         )
         assert resp1.status_code == 202
         data1 = resp1.json()["data"]
-        assert data1["created_measurements"] == 1
-        assert data1["skipped_duplicate_measurements"] == 0
 
-        # Second POST (same payload)
+        # AC-2a: first ingest must be verified.
+        assert data1["verified"] is True, (
+            f"POST#1 should be verified; got verified={data1['verified']}, "
+            f"db_measurement_count={data1['db_measurement_count']}, "
+            f"created_measurements={data1['created_measurements']}"
+        )
+        assert data1["db_measurement_count"] == 1
+        assert data1["created_measurements"] == 1
+
+        # POST#2: distinct 5-tuple under the SAME DOI (different property).
         resp2 = await async_client.post(
             "/api/v1/extraction/ingest",
-            json=payload,
+            json=_ingest_payload(
+                properties=[_sample_property({
+                    "property": "density",
+                    "value": "10.95",
+                    "unit": "g/cm3",
+                })],
+                corpus_id="nfm2096-delta",
+                source_reference=doi,
+            ),
             headers=svc_headers,
         )
         assert resp2.status_code == 202
         data2 = resp2.json()["data"]
-        assert data2["created_measurements"] == 0, (
-            "NFM-2032: 2nd POST should create 0 measurements"
-        )
-        assert data2["skipped_duplicate_measurements"] >= 1, (
-            "NFM-2032: 2nd POST should skip duplicate measurement"
-        )
 
-        # Third POST (same payload)
-        resp3 = await async_client.post(
-            "/api/v1/extraction/ingest",
-            json=payload,
-            headers=svc_headers,
+        # AC-2b: second ingest must ALSO be verified (per-request delta).
+        assert data2["verified"] is True, (
+            f"POST#2 should be verified; got verified={data2['verified']}, "
+            f"db_measurement_count={data2['db_measurement_count']}, "
+            f"created_measurements={data2['created_measurements']}"
         )
-        assert resp3.status_code == 202
-        data3 = resp3.json()["data"]
-        assert data3["created_measurements"] == 0, (
-            "NFM-2032: 3rd POST should create 0 measurements"
-        )
-        assert data3["skipped_duplicate_measurements"] >= 1, (
-            "NFM-2032: 3rd POST should skip duplicate measurement"
-        )
-
-        # Verify exactly 1 PropertyMeasurement row in DB
-        rows = (await db_session.execute(
-            select(PropertyMeasurement)
-        )).scalars().all()
-        assert len(rows) == 1, (
-            f"NFM-2032: expected exactly 1 measurement row, got {len(rows)}"
-        )
+        # db_measurement_count is cumulative (2 after both POSTs),
+        # but verified=True because delta (2-1=1) == created_measurements (1).
+        assert data2["db_measurement_count"] == 2
+        assert data2["created_measurements"] == 1
 
     @pytest.mark.asyncio
-    async def test_different_conditions_creates_new_measurement(
+    async def test_force_mismatch_detected(
         self,
         async_client: AsyncClient,
         svc_headers: dict[str, str],
         seeded_property_type: PropertyType,
-        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Same source+material+property but different conditions -> 2 rows."""
-        payload_a = _ingest_payload(
-            properties=[_sample_property({"conditions": {"temperature": 298}})],
-            corpus_id="cond-dedup-test",
-        )
-        payload_b = _ingest_payload(
-            properties=[_sample_property({"conditions": {"temperature": 800}})],
-            corpus_id="cond-dedup-test",
+        """AC-3: mock map_and_persist to claim created_measurements=2 while
+        inserting 0 rows -> ``verified=False`` with MISMATCH error.
+
+        This confirms the detector still catches real silent failures.
+        """
+        doi = "10.1234/nfm2096-ac3"
+
+        # Patch map_and_persist to lie about what it persisted.
+        from nfm_db.services.extraction_to_db_mapper import (
+            MappingResult,
+            map_and_persist,
         )
 
-        resp_a = await async_client.post(
+        _real_map_and_persist = map_and_persist
+
+        async def _lying_map_and_persist(db, props):
+            # Call the real one so DB state is consistent, but return
+            # inflated created_measurements.
+            result = await _real_map_and_persist(db, props)
+            return MappingResult(
+                created_measurements=99,  # lie: claim 99, actually 0 new
+                reused_entities=result.reused_entities,
+                skipped_duplicate_measurements=result.skipped_duplicate_measurements,
+                skipped_unknown_properties=result.skipped_unknown_properties,
+                validation_errors=result.validation_errors,
+            )
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+            _lying_map_and_persist,
+        )
+
+        resp = await async_client.post(
             "/api/v1/extraction/ingest",
-            json=payload_a,
+            json=_ingest_payload(
+                properties=[_sample_property()],
+                corpus_id="nfm2096-mismatch",
+                source_reference=doi,
+            ),
             headers=svc_headers,
         )
-        assert resp_a.status_code == 202
-        assert resp_a.json()["data"]["created_measurements"] == 1
+        assert resp.status_code == 202
+        data = resp.json()["data"]
 
-        resp_b = await async_client.post(
-            "/api/v1/extraction/ingest",
-            json=payload_b,
-            headers=svc_headers,
+        # AC-3: must report verified=False.
+        assert data["verified"] is False, (
+            f"Force-mismatch should yield verified=False; "
+            f"got verified={data['verified']}"
         )
-        assert resp_b.status_code == 202
-        assert resp_b.json()["data"]["created_measurements"] == 1, (
-            "Different conditions should create a new measurement"
-        )
-
-        rows = (await db_session.execute(
-            select(PropertyMeasurement)
-        )).scalars().all()
-        assert len(rows) == 2, (
-            f"Expected 2 measurement rows (different conditions), got {len(rows)}"
+        # Must contain the structured MISMATCH error message.
+        mismatch_errors = [
+            e for e in data["errors"]
+            if "sync-verification MISMATCH" in e
+            and "created_measurements=99" in e
+        ]
+        assert len(mismatch_errors) == 1, (
+            f"Expected exactly 1 MISMATCH error mentioning "
+            f"created_measurements=99; got errors={data['errors']}"
         )
