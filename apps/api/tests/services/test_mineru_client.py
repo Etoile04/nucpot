@@ -80,8 +80,22 @@ class TestEnvStr:
 
 class TestMineruEnabled:
     def test_defaults_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """mineru_enabled() returns True when MINERU_API_KEY is present."""
+        monkeypatch.setenv("_MINERU_DOTENV_LOADED", "1")
         monkeypatch.delenv("MINERU_ENABLED", raising=False)
+        monkeypatch.setenv("MINERU_API_KEY", "test-key")
         assert mineru_enabled() is True
+
+    def test_defaults_to_false_without_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mineru_enabled() returns False when no API key is set."""
+        monkeypatch.setenv("_MINERU_DOTENV_LOADED", "1")
+        monkeypatch.delenv("MINERU_ENABLED", raising=False)
+        monkeypatch.delenv("MINERU_API_KEY", raising=False)
+        monkeypatch.delenv("MinerU_API_KEY", raising=False)
+        monkeypatch.delenv("NFM_MINERU_API_KEY", raising=False)
+        assert mineru_enabled() is False
 
 
 class TestMineruApiKey:
