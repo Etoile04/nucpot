@@ -312,9 +312,12 @@ jobs:
             done
 
             # Internal health checks — the first curl-f is the production
-            # equivalent of staging's first-poll gate (constraint C4). We
-            # record its outcome in a marker file so the "Emit KR-3 deploy
-            # event" step can read it without re-parsing the heredoc.
+            # equivalent of staging's first-poll gate (ADR-KR3-A2 §Failure-mode 6).
+            # We write a marker file on success so the "Emit prod deploy-event
+            # fragment" post-step can read the outcome without re-parsing the
+            # heredoc. The deploy-prod job runs on a self-hosted runner on the
+            # same Mac Studio host (header comment lines 270-275), so the
+            # runner's /tmp is the host's /tmp.
             echo "Checking API health..."
             rm -f /tmp/nfmd_prod_health_passed
             if curl -f http://localhost:8001/api/v1/health; then
@@ -357,47 +360,95 @@ jobs:
 
           echo "=== All external smoke tests passed ==="
 
-      # NFM-2042: emit a KR-3 deploy event for production.
-      # Per C3: write to a host-absolute path (NOT the runner's ephemeral
-      # workspace checkout). The job's `runs-on: [self-hosted, production]`
-      # means the file persists across jobs.
-      # Per C4: production has no poll loop, so health_gate_first_poll_passed
-      # == the first curl-f inside the SSH heredoc succeeded. We use a marker
-      # file written by the deploy step to avoid parsing the heredoc output.
-      - name: Emit KR-3 deploy event
-        if: always()
-        env:
-          NFMD_DEPLOY_EVENTS_PATH: /Users/lwj04/Projects/nucpot/docker/.deploy-events.jsonl
-          SKIP_HEALTH_GATE: ${{ vars.SKIP_HEALTH_GATE || '' }}
-        run: |
-          mkdir -p "$(dirname "$NFMD_DEPLOY_EVENTS_PATH")"
-          COMMIT_SHA="${{ github.sha }}"
-          USER_LOGIN="${{ github.actor }}"
-          SUCCESS="false"
-          if [ "${{ steps.deploy.outcome }}" = "success" ] \
-              && [ "${{ steps.external-smoke-tests.outcome }}" = "success" ]; then
-            SUCCESS="true"
-          fi
-          FIRST_POLL="false"
-          if [ -f /tmp/nfmd_prod_health_passed ]; then
-            FIRST_POLL="true"
-          fi
-          DURATION_MS=$(( $(date +%s%3N) - ${NFMD_DEPLOY_START_MS:-$(date +%s%3N)} ))
-          . "$GITHUB_WORKSPACE/scripts/lib/deploy_event.sh"
-          deploy_event_emit \
-            --environment production \
-            --triggered-by "$USER_LOGIN" \
-            --commit-sha "$COMMIT_SHA" \
-            --first-pass-success "$SUCCESS" \
-            --health-gate-first-poll-passed "$FIRST_POLL" \
-            --rollback-triggered false \
-            --skip-flag-used "$([ "$SKIP_HEALTH_GATE" = "1" ] || [ "$SKIP_HEALTH_GATE" = "true" ] && echo true || echo false)" \
-            --duration-ms "$DURATION_MS"
-
       - name: Verify Celery workers
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
             "export PATH=\"/usr/local/bin:\$PATH\" && docker exec nucpot-prod-worker celery -A nfm_db.services.celery_app:celery_app inspect active"
+
+      # =======================================================================
+      # NFM-2109 / ADR-KR3-A2: emit prod deploy-event fragment for the collector.
+      #
+      # Two-step durability hop: this step writes one JSONL line to a
+      # per-run path on the runner, then the next step uploads it as a GHA
+      # artifact. The collector workflow (prod-deploy-event-collector.yml)
+      # downloads prod-deploy-event-* artifacts and appends to the master
+      # JSONL on the Mac Studio.
+      #
+      # Constraints (ADR §Acceptance 1):
+      # - Wrapped in EXIT trap per ADR-KR3-A1 C1/C2 (one line per run,
+      #   even on unexpected exit).
+      # - Never changes deploy-prod's exit code (set +e + the library's
+      #   never-fail contract).
+      # - if: always() so a failing SSH step / smoke step / celery verify
+      #   still emits — that's failure mode 6.
+      # - The marker file /tmp/nfmd_prod_health_passed is the prod analog
+      #   of staging's first-poll gate; the deploy step writes it on success.
+      # =======================================================================
+      - name: Emit prod deploy-event fragment
+        if: always()
+        env:
+          GITHUB_ACTOR_VAL: ${{ github.actor }}
+          GITHUB_SHA_VAL: ${{ github.sha }}
+          GITHUB_RUN_ID_VAL: ${{ github.run_id }}
+        run: |
+          set +e
+          # Constraint: never fail the deploy-prod job, even on a programming
+          # error or missing marker file.
+          FRAGMENT_DIR="$RUNNER_TEMP/prod-deploy-events"
+          mkdir -p "$FRAGMENT_DIR"
+          FRAGMENT_PATH="$FRAGMENT_DIR/${{ github.run_id }}.jsonl"
+
+          # Compute outcome from earlier step outcomes.
+          DEPLOY_OK="false"
+          [ "${{ steps.deploy.outcome }}" = "success" ] && DEPLOY_OK="true"
+          SMOKE_OK="false"
+          [ "${{ steps.external-smoke-tests.outcome }}" = "success" ] && SMOKE_OK="true"
+          SUCCESS="false"
+          if [ "$DEPLOY_OK" = "true" ] && [ "$SMOKE_OK" = "true" ]; then
+            SUCCESS="true"
+          fi
+
+          # First-poll gate: the deploy heredoc's internal API curl succeeded.
+          # The marker file lives on the Mac Studio (same fs as the runner).
+          FIRST_POLL="false"
+          if [ -f /tmp/nfmd_prod_health_passed ]; then
+            FIRST_POLL="true"
+          fi
+
+          _prod_emit() {
+            # Source the library; it NEVER fails its caller (acceptance criterion 5).
+            # Override NFMD_DEPLOY_EVENTS_PATH so the write lands in the fragment
+            # dir, not the default repo-relative path. The library strips
+            # control chars from environment names — "production" passes through
+            # untouched.
+            . "$GITHUB_WORKSPACE/scripts/lib/deploy_event.sh" || return 0
+            NFMD_DEPLOY_EVENTS_PATH="$FRAGMENT_PATH" deploy_event_emit \
+              --environment production \
+              --triggered-by "${GITHUB_ACTOR_VAL:-unknown}" \
+              --commit-sha "${GITHUB_SHA_VAL:-unknown}" \
+              --first-pass-success "$1" \
+              --health-gate-first-poll-passed "$2" \
+              --rollback-triggered false \
+              --skip-flag-used false \
+              --duration-ms 0 \
+              || return 0
+            return 0
+          }
+
+          # ADR-KR3-A1 C1: arm-on-EXIT guarantees exactly one line per run,
+          # even on an unexpected early exit between here and the upload step.
+          trap '_prod_emit "$SUCCESS" "$FIRST_POLL"' EXIT
+
+          _prod_emit "$SUCCESS" "$FIRST_POLL"
+          exit 0
+
+      - name: Upload prod deploy-event fragment
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: prod-deploy-event-${{ github.run_id }}
+          path: ${{ runner.temp }}/prod-deploy-events/
+          if-no-files-found: error
 
   # =============================================================================
   # Post-deployment
@@ -441,12 +492,84 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
+  # C6.1.1 — Production durable producer (stage 1) — NFM-2110
+  #
+  # Hosted runner that assembles one §3.1 deploy-event JSON object via the
+  # Python mirror (scripts/lib/deploy_event_emitter.py) and uploads it as a
+  # GHA artifact named ``nfm-deploy-event-<run_id>-<attempt>.json`` with
+  # 90-day retention. Stage 2 of C6.1.1 is a separate collector workflow
+  # (NFM-2110 sibling) that downloads these artifacts and atomically appends
+  # to the master JSONL on the Mac Studio.
+  #
+  # This job deliberately does NOT write to NFMD_DEPLOY_EVENTS_PATH — the
+  # producer's only persistent output is the artifact. See ADR-KR3-A1 §C6.1
+  # and ADR-KR3-A2 for the design rationale.
+  # ===========================================================================
+  emit-prod-event:
+    name: Emit Production Deploy Event
+    runs-on: ubuntu-latest
+    needs: [smoke-test]
+    if: always() && needs.deploy-prod.result != 'skipped'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute deploy duration in milliseconds
+        id: duration
+        env:
+          RUN_STARTED_AT: ${{ github.run_started_at }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from datetime import UTC, datetime
+          start = datetime.fromisoformat(
+              os.environ["RUN_STARTED_AT"].replace("Z", "+00:00")
+          )
+          now = datetime.now(UTC)
+          duration_ms = int((now - start).total_seconds() * 1000)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"duration_ms={duration_ms}\n")
+          PY
+
+      - name: Emit production deploy event to JSON file
+        env:
+          SMOKE_RESULT: ${{ needs.smoke-test.result }}
+          TRIGGERED_BY: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          # first_pass_success: True iff needs.smoke-test.result == 'success'
+          # (ADR-KR3-A1 C6.1.1 — failure / skipped / cancelled all map to false).
+          if [ "$SMOKE_RESULT" = "success" ]; then
+            FIRST_PASS="true"
+          else
+            FIRST_PASS="false"
+          fi
+
+          python3 scripts/lib/deploy_event_emitter.py \
+            --environment production \
+            --triggered-by "$TRIGGERED_BY" \
+            --commit-sha "$COMMIT_SHA" \
+            --first-pass-success "$FIRST_PASS" \
+            --health-gate-first-poll-passed false \
+            --rollback-triggered false \
+            --skip-flag-used false \
+            --duration-ms "${{ steps.duration.outputs.duration_ms }}" \
+            > deploy-event.json
+
+      - name: Persist event as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nfm-deploy-event-${{ github.run_id }}-${{ github.run_attempt }}
+          path: deploy-event.json
+          retention-days: 90
+
+  # ===========================================================================
   # S2: Deploy notification — GitHub issue + Feishu alert + auto-close
   # ===========================================================================
   notify:
     name: Notify Deployment Status
     runs-on: ubuntu-latest
-    needs: [smoke-test]
+    needs: [smoke-test, emit-prod-event]
     if: always() && github.event_name == 'push'
     permissions:
       issues: write
