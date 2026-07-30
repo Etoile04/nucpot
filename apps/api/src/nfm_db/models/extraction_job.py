@@ -14,7 +14,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nfm_db.models import Base, JSONArray, TimestampMixin
+from nfm_db.models import Base, CompatJSONB, TimestampMixin
 
 # Status values mirror the contract documented for /ingest/{job_id}/status.
 # Mapping is synchronous in the current handler, so the persisted rows
@@ -107,7 +107,7 @@ class ExtractionJob(TimestampMixin, Base):
     extract_tables: Mapped[bool] = mapped_column(default=False)
     confidence_threshold: Mapped[float] = mapped_column(default=0.5)
     figure_types: Mapped[list[str] | None] = mapped_column(
-        JSONArray, default=None, nullable=True,
+        CompatJSONB, default=None, nullable=True,
     )
 
     def __repr__(self) -> str:
