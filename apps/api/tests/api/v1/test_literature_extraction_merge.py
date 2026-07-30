@@ -143,9 +143,6 @@ async def test_get_literature_detail_returns_kg_node_items_with_source_type(
     assert payload["success"] is True
 
     items = payload["data"]["extraction_results"]
-    print(f"\n>>> items count: {len(items)}, kg_node_items: {sum(1 for i in items if i.get('source_type') == 'kg_node')}\n")
-    if items:
-        print(f">>> item[0] source_type: {items[0].get('source_type')}, keys: {list(items[0].keys())}\n")
     assert items, "extraction_results must include KG nodes"
 
     kg_node_items = [item for item in items if item.get("source_type") == "kg_node"]
