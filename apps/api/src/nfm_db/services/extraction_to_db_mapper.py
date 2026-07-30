@@ -60,6 +60,31 @@ def _is_dedup_conflict(exc: IntegrityError) -> bool:
     return any(frag.lower() in msg for frag in _DEDUP_CONFLICT_FRAGMENTS)
 
 
+#: Pydantic Literal allowed values for ExtractedProperty.property_category.
+#: Anything else (including non-ASCII) is coerced to "other" before validation.
+_VALID_PROPERTY_CATEGORIES: frozenset[str] = frozenset(
+    {"mechanical", "thermal", "physical", "diffusion", "irradiation", "nuclear", "other"}
+)
+
+
+def _coerce_unknown_categories(raw: dict[str, Any]) -> dict[str, Any]:
+    """Coerce non-Literal ``property_category`` values to ``"other"``.
+
+    The OntoFuel LLM sometimes returns Chinese (or otherwise localized)
+    category strings (e.g. ``"比热容"``) instead of the 7 English Literal
+    values.  Without this, every item in the batch raises ValidationError
+    and the batch is silently dropped.  With this, the value falls through
+    as ``"other"`` and the downstream PropertyCategory catalog can map it
+    back to the correct Chinese category at persist time.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    cat = raw.get("property_category")
+    if isinstance(cat, str) and cat not in _VALID_PROPERTY_CATEGORIES:
+        return {**raw, "property_category": "other"}
+    return raw
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -313,6 +338,12 @@ async def map_and_persist(
     validation_error_count = 0
 
     for idx, raw in enumerate(extraction_output):
+        # Preprocess: coerce unknown property_category values (e.g. Chinese
+        # LLM outputs like "比热容") to "other" instead of dropping the
+        # entire item. The downstream PropertyCategory catalog translates
+        # "other" to the correct Chinese category at persist time.
+        raw = _coerce_unknown_categories(raw)
+
         try:
             validated.append(ExtractedProperty.model_validate(raw))
         except ValidationError as exc:
