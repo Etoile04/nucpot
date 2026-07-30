@@ -138,13 +138,20 @@ for RUN_ID in $RUN_IDS; do
     fi
   fi
 
-  # 3b. List artifacts; only the nfm-deploy-event-*.json ones matter.
+  # 3b. List artifacts; only the nfm-deploy-event-* ones matter.
   # Per-run artifact lookup failure is non-fatal — we record a missing
   # ledger row and move on, so a single bad run doesn't break the sweep.
+  #
+  # NFM-2144: do NOT require ``endswith(".json")`` on the artifact name.
+  # The producer (``.github/workflows/production-deployment.yml`` line
+  # 592) uploads artifacts as ``nfm-deploy-event-<run_id>-<run_attempt>``
+  # — the artifact name has NO ``.json`` suffix; the ``.json`` file lives
+  # only inside the uploaded zip and is extracted by the ``unzip '*.json'``
+  # step below. The previous filter silently rejected every real producer
+  # artifact, recording all 50 production runs as ``missing``.
   if ! ARCHIVE_URLS="$(gh_api_capture \
         '.artifacts[]
           | select(.name | startswith("nfm-deploy-event-"))
-          | select(.name | endswith(".json"))
           | .archive_download_url' \
         "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" 2>/dev/null)"; then
     echo "[collect-prod-run] run_id=$RUN_ID artifact listing failed — recording missing" >&2
