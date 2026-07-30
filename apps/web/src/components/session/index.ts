@@ -1,13 +1,11 @@
-export { default as SessionIndicator } from './SessionIndicator'
-export { useSessionRemaining } from './useSessionRemaining'
-export { SessionProvider, SessionContext, DEFAULT_SESSION_VALUE } from './SessionContext'
-export type {
-  SessionContextValue,
-  SessionProviderProps,
-  SessionState,
-} from './SessionContext'
-export {
-  formatRemainingMain,
-  buildIndicatorCopy,
-  buildIndicatorAria,
-} from './SessionIndicator'
+/**
+ * Barrel export for the session subsystem.
+ *
+ * Consumers should import from "@/components/session" rather than
+ * reaching into individual files — keeps the public surface small
+ * and lets us refactor internals without touching every call site.
+ */
+
+export { SessionProvider, useSession } from "./SessionProvider"
+export { SessionIndicator } from "./SessionIndicator"
+export { ReAuthPrompt } from "./ReAuthPrompt"
