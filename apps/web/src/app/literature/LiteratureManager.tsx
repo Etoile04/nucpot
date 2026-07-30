@@ -55,6 +55,7 @@ import {
 } from "@ant-design/icons"
 import type { ColumnsType } from "antd/es/table"
 import ReactMarkdown from "react-markdown"
+import { ProvenanceBadge } from "@/components/shared/ProvenanceBadge"
 import {
   literatureApi,
   type LiteratureDetail,
@@ -730,7 +731,7 @@ interface DetailPanelProps {
   readonly detail: LiteratureDetail
 }
 
-function DetailPanel({ detail }: DetailPanelProps) {
+export function DetailPanel({ detail }: DetailPanelProps) {
   const extractionResults = detail.extraction_results ?? []
   const figures = detail.figures ?? []
   const contentMd = detail.content_md
@@ -859,6 +860,7 @@ function DetailPanel({ detail }: DetailPanelProps) {
                 className="border border-gray-200 rounded p-2 text-xs"
               >
                 <div className="flex items-center gap-2 mb-1">
+                  <ProvenanceBadge provenance={er.provenance} />
                   <Tag color="blue">{er.item_type as string}</Tag>
                   <span className="font-medium">{er.property_name as string}</span>
                   {er.confidence != null && (
