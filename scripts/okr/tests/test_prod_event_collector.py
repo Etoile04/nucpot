@@ -59,6 +59,7 @@ class _FakeBackend:
         if self.alerts is None:
             self.alerts = []
         self.append_calls: list = []
+        self.append_failure_alerts: list = []
 
     def list_production_runs(self, since: datetime) -> list:
         return list(self.runs)
@@ -77,6 +78,9 @@ class _FakeBackend:
 
     def alert_bad_fragment(self, run_id: int, reason: str) -> None:
         self.alerts.append((run_id, reason))
+
+    def alert_append_failure(self, reason: str) -> None:
+        self.append_failure_alerts.append(reason)
 
 
 class TestValidateFragment:
@@ -292,6 +296,11 @@ class TestEnvironmentFilter:
         out = coverage_kr3.filter_environment([_ev("staging"), _ev("production")], "production")
         assert len(out) == 1 and out[0]["environment"] == "production"
 
+    def test_filter_all_is_identity(self) -> None:
+        events = [_ev("staging"), _ev("production")]
+        out = coverage_kr3.filter_environment(events, "all")
+        assert out == events
+
     def test_filter_drops_unknown_environment(self) -> None:
         events = [_ev("staging"), _ev("canary"), _ev("production")]
         out = coverage_kr3.filter_environment(events, "staging")
@@ -317,19 +326,124 @@ class TestEnvironmentFilter:
             assert report["n"] == 2
             assert report["value"] == expected_value
 
-    def test_default_environment_is_staging(self, tmp_path: Path) -> None:
-        # Backward compat: pre-C6.1 callers see the staging series.
+    def test_default_environment_is_all(self, tmp_path: Path) -> None:
+        # ADR-KR3-A2 §Consequences: the default filter is "all
+        # environments" so pre-C6.1 callers see the same whole-JSONL
+        # behaviour they had before C6.1 began landing. Asserting n==2
+        # (both staging and production rows) is the discriminator
+        # against the previous "staging" default.
         events = [_ev("staging"), _ev("production")]
         p = tmp_path / "events.jsonl"
         p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
         report = coverage_kr3.build_report(p, None, None)
+        assert report["n"] == 2
+        assert report["environment"] == "all"
+
+    def test_build_report_all_reads_prod_path(self) -> None:
+        # When ``--environment`` is ``all`` (the default), the prod path
+        # is also read and merged into the report. Until the prod
+        # collector starts appending, the prod path is empty — the
+        # staging fraction still drives the metric. This is the path
+        # the CR's HIGH severity issue unblocks.
+        staging_events = [_ev("staging", success=True), _ev("staging", success=False)]
+        prod_events = [_ev("production", success=True), _ev("production", success=False)]
+        report = coverage_kr3.build_report(
+            _FakePath(staging_events),
+            None, None,
+            environment="all",
+            prod_path=_FakePath(prod_events),
+        )
+        assert report["n"] == 4
+        assert report["value"] == 0.5
+
+    def test_build_report_production_only(self) -> None:
+        # ``--environment production`` reads only the prod path.
+        staging_events = [_ev("staging", success=True)]
+        prod_events = [_ev("production", success=False), _ev("production", success=True)]
+        report = coverage_kr3.build_report(
+            _FakePath(staging_events),
+            None, None,
+            environment="production",
+            prod_path=_FakePath(prod_events),
+        )
+        assert report["n"] == 2
+        assert report["value"] == 0.5
+
+    def test_build_report_staging_skips_prod_path(self) -> None:
+        # ``--environment staging`` must not read the prod path; a
+        # v1 caller that explicitly opts into the staging-only series
+        # is unaffected by future prod appends.
+        staging_events = [_ev("staging", success=True)]
+        prod_events = [_ev("production", success=False)]
+        report = coverage_kr3.build_report(
+            _FakePath(staging_events),
+            None, None,
+            environment="staging",
+            prod_path=_FakePath(prod_events),
+        )
         assert report["n"] == 1
+        assert report["value"] == 1.0
+
+    def test_resolve_prod_path_uses_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/tmp/fake-prod.jsonl")
+        assert coverage_kr3._resolve_prod_path(None) == Path("/tmp/fake-prod.jsonl")
+
+    def test_resolve_prod_path_explicit_arg_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/tmp/env-prod.jsonl")
+        assert coverage_kr3._resolve_prod_path("/tmp/explicit-prod.jsonl") == Path(
+            "/tmp/explicit-prod.jsonl"
+        )
 
     def test_cli_parses_environment_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "argv", ["coverage_kr3.py", "--environment", "production"])
         assert coverage_kr3._parse_args().environment == "production"
 
+    def test_cli_default_is_all(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["coverage_kr3.py"])
+        assert coverage_kr3._parse_args().environment == "all"
+
+    def test_cli_accepts_prod_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            sys, "argv",
+            ["coverage_kr3.py", "--environment", "production", "--prod-path", "/tmp/x.jsonl"],
+        )
+        assert coverage_kr3._parse_args().prod_path == "/tmp/x.jsonl"
+
     def test_cli_rejects_unknown_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "argv", ["coverage_kr3.py", "--environment", "canary"])
         with pytest.raises(SystemExit):
             coverage_kr3._parse_args()
+
+
+class TestAppendFailureAlert:
+    """The except-branch in collect() must call backend.alert_append_failure.
+
+    ADR §Failure-mode 1 talks about a partial-line tail-recovery as
+    "logged + alerted"; the same belt-and-braces is required for the
+    broader SSH / flock / decode failure. The CR flagged the silent
+    stderr-only path as a visibility hole.
+    """
+
+    def test_failed_append_fires_alert(self) -> None:
+        run = _make_run(900)
+        backend = _FakeBackend(runs=[run], fragments={900: json.dumps(_FULL_EVENT)})
+        backend.append_should_raise = RuntimeError("ssh connection reset")
+        collect(SyncState(), backend)
+        assert len(backend.append_failure_alerts) == 1
+        assert "ssh connection reset" in backend.append_failure_alerts[0]
+        assert "RuntimeError" in backend.append_failure_alerts[0]
+
+    def test_successful_append_does_not_alert(self) -> None:
+        run = _make_run(901)
+        backend = _FakeBackend(runs=[run], fragments={901: json.dumps(_FULL_EVENT)})
+        collect(SyncState(), backend)
+        assert backend.append_failure_alerts == []
+
+    def test_no_pending_fragments_skips_alert(self) -> None:
+        # All runs are pre-sync — no append attempted, no alert expected.
+        run = _make_run(902)
+        backend = _FakeBackend(runs=[run], fragments={902: json.dumps(_FULL_EVENT)})
+        initial = SyncState(last_synced_run_id=1000)
+        collect(initial, backend)
+        assert backend.append_failure_alerts == []
+        assert backend.append_calls == []
