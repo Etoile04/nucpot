@@ -37,10 +37,12 @@ from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
 from nfm_db.models.extraction_figure import ExtractionFigure
 from nfm_db.models.extraction_result import ExtractionResult
+from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.source import DataSource
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.literature import (
+    ExtractionResultItem,
     LiteratureDetailResponse,
     LiteratureFigure,
     LiteratureListItem,
@@ -91,6 +93,145 @@ async def _get_source_or_404(
     if source is None:
         raise HTTPException(status_code=404, detail="Literature not found")
     return source
+
+
+# ---------------------------------------------------------------------------
+# Extraction result merge (NFM-2224)
+# ---------------------------------------------------------------------------
+
+# Per-row caps so a misbehaving literature (e.g. 10 000 KG edges) cannot
+# blow out the JSON response. Frontend only renders the first screenful anyway.
+_MAX_MANUAL_RESULTS = 200
+_MAX_KG_NODES_PER_SOURCE = 200
+_MAX_KG_EDGES_PER_SOURCE = 400
+
+
+def _row_to_manual_item(er: ExtractionResult) -> ExtractionResultItem:
+    """Shape one row from the legacy ``extraction_results`` table."""
+    return ExtractionResultItem(
+        source_type="manual",
+        id=str(er.id),
+        property_name=er.property_name,
+        item_type=er.item_type,
+        item_data=er.item_data or {},
+        value=er.value,
+        confidence=er.confidence,
+        review_status=er.review_status,
+        source_page=er.source_page,
+        source_paragraph=er.source_paragraph,
+        created_at=er.created_at.isoformat() if er.created_at else None,
+    )
+
+
+def _kg_node_to_item(node: KGNode) -> ExtractionResultItem:
+    """Shape one OntoFuel ``kg_nodes`` row into the unified response item."""
+    props = node.properties or {}
+    return ExtractionResultItem(
+        source_type="kg_node",
+        id=str(node.id),
+        property_name=node.label,
+        item_type=node.node_type,
+        item_data=props,
+        value=props.get("value"),
+        unit=props.get("unit"),
+        confidence=node.confidence,
+        source_node_id=str(node.id),
+        source_page=props.get("source_page"),
+        source_paragraph=props.get("source_paragraph"),
+        created_at=node.created_at.isoformat() if node.created_at else None,
+    )
+
+
+def _kg_edge_to_item(edge: KGEdge) -> ExtractionResultItem:
+    """Shape one OntoFuel ``kg_edges`` row into the unified response item."""
+    return ExtractionResultItem(
+        source_type="kg_edge",
+        id=str(edge.id),
+        property_name=edge.relation_type,
+        item_type="edge",
+        item_data=edge.properties or {},
+        value=None,
+        confidence=edge.confidence,
+        source_node_id=str(edge.source_node_id),
+        source_target_id=str(edge.target_node_id),
+        created_at=edge.created_at.isoformat() if edge.created_at else None,
+    )
+
+
+def _dedupe_and_sort(
+    items: list[ExtractionResultItem],
+) -> list[ExtractionResultItem]:
+    """Remove duplicate items by (property_name, value); sort newest first.
+
+    Manual entries are merged first, then kg_nodes, then kg_edges — so when
+    two rows collide on the dedup key, the manual entry wins (insertion order
+    is preserved by :func:`dict.fromkeys`).
+    """
+    seen: set[tuple[str, object]] = set()
+    deduped: list[ExtractionResultItem] = []
+    for item in items:
+        key = (item.property_name, item.value)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    deduped.sort(key=lambda row: row.created_at or "", reverse=True)
+    return deduped
+
+
+async def _collect_extraction_results(
+    source_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[ExtractionResultItem]:
+    """Merge extraction rows from every source attached to ``source_id``.
+
+    Sources merged (most-recent wins on dedup key):
+
+    1. ``extraction_results`` table — manually-entered items (``source_type='manual'``).
+    2. ``kg_nodes`` table — OntoFuel LLM-extracted entity nodes (``source_type='kg_node'``).
+    3. ``kg_edges`` table — OntoFuel LLM-extracted relations (``source_type='kg_edge'``).
+
+    Each result row carries the ``source_type`` discriminator defined in
+    :class:`ExtractionResultItem` (NFM-2224 AC-1 / AC-2). Duplicate rows
+    (same ``property_name`` + ``value``) are collapsed, keeping the
+    manual entry in preference to LLM-derived ones.
+    """
+    # --- 1. legacy manual entries ------------------------------------------
+    er_rows = (
+        await db.execute(
+            select(ExtractionResult)
+            .where(ExtractionResult.source_id == source_id)
+            .order_by(ExtractionResult.created_at.desc())
+            .limit(_MAX_MANUAL_RESULTS)
+        )
+    ).scalars().all()
+
+    # --- 2. OntoFuel KG nodes ----------------------------------------------
+    kg_node_rows = (
+        await db.execute(
+            select(KGNode)
+            .where(KGNode.source_id == source_id)
+            .order_by(KGNode.created_at.desc())
+            .limit(_MAX_KG_NODES_PER_SOURCE)
+        )
+    ).scalars().all()
+
+    # --- 3. OntoFuel KG edges ----------------------------------------------
+    kg_edge_rows = (
+        await db.execute(
+            select(KGEdge)
+            .where(KGEdge.source_id == source_id)
+            .order_by(KGEdge.created_at.desc())
+            .limit(_MAX_KG_EDGES_PER_SOURCE)
+        )
+    ).scalars().all()
+
+    combined: list[ExtractionResultItem] = (
+        [_row_to_manual_item(er) for er in er_rows]
+        + [_kg_node_to_item(n) for n in kg_node_rows]
+        + [_kg_edge_to_item(e) for e in kg_edge_rows]
+    )
+    return _dedupe_and_sort(combined)
 
 
 def _source_to_detail(source: DataSource) -> LiteratureDetailResponse:
@@ -419,31 +560,9 @@ async def get_literature_detail(
     """
     source = await _get_source_or_404(literature_id, db)
 
-    # Load extraction results linked to this source via source_id.
-    er_stmt = (
-        select(ExtractionResult)
-        .where(ExtractionResult.source_id == literature_id)
-        .order_by(ExtractionResult.created_at.desc())
-        .limit(200)  # cap for response size; UI can paginate client-side
-    )
-    er_result = await db.execute(er_stmt)
-    legacy_extraction_results = [
-        {
-            "id": str(er.id),
-            "property_name": er.property_name,
-            "item_type": er.item_type,
-            "item_data": er.item_data,
-            "value": er.value,
-            "confidence": er.confidence,
-            "review_status": er.review_status,
-            "source_page": er.source_page,
-            "source_paragraph": er.source_paragraph,
-            "created_at": er.created_at.isoformat() if er.created_at else None,
-        }
-        for er in er_result.scalars().all()
-    ]
-
-    # Load extracted figures linked to this source.
+    # Load extraction results linked to this source via source_id (legacy).
+    # `extraction_results` table is now only one of three merged sources; see
+    # `_collect_extraction_results` for the full KG-aware merge (NFM-2224).
     fig_stmt = (
         select(ExtractionFigure)
         .where(ExtractionFigure.source_id == literature_id)
@@ -463,56 +582,7 @@ async def get_literature_detail(
         for fig in fig_result.scalars().all()
     ]
 
-    # Build full detail with the populated extraction_results + content_md + figures.
-    # Also load KG nodes/edges produced by the OntoFuel pipeline for this
-    # source — these are the real "extraction results" since the OntoFuel
-    # pipeline writes to kg_nodes/kg_edges, not extraction_results.
-    from nfm_db.models.kg import KGEdge as _KGEdge
-    from nfm_db.models.kg import KGNode  # late import
-
-    kg_nodes_for_source = (
-        await db.execute(
-            select(KGNode)
-            .where(KGNode.source_id == literature_id)
-            .order_by(KGNode.created_at.desc())
-            .limit(200)
-        )
-    ).scalars().all()
-    kg_edges_for_source = (
-        await db.execute(
-            select(_KGEdge)
-            .where(_KGEdge.source_id == literature_id)
-            .order_by(_KGEdge.created_at.desc())
-            .limit(400)
-        )
-    ).scalars().all()
-    kg_extraction_results = [
-        {
-            "id": str(n.id),
-            "property_name": n.label,
-            "item_type": n.node_type,
-            "item_data": n.properties or {},
-            "value": (n.properties or {}).get("value"),
-            "unit": (n.properties or {}).get("unit"),
-            "confidence": n.confidence,
-            "source_node_id": str(n.id),
-            "source_page": (n.properties or {}).get("source_page"),
-            "source_paragraph": (n.properties or {}).get("source_paragraph"),
-        }
-        for n in kg_nodes_for_source
-    ] + [
-        {
-            "id": str(e.id),
-            "property_name": e.relation_type,
-            "item_type": "edge",
-            "item_data": e.properties or {},
-            "value": None,
-            "confidence": e.confidence,
-            "source_node_id": str(e.source_node_id),
-            "source_target_id": str(e.target_node_id),
-        }
-        for e in kg_edges_for_source
-    ]
+    extraction_results = await _collect_extraction_results(literature_id, db)
 
     return ApiResponse(
         success=True,
@@ -527,7 +597,7 @@ async def get_literature_detail(
             source_id=source.id,
             content_md=source.content_md,
             figures=figures,
-            extraction_results=legacy_extraction_results + kg_extraction_results,
+            extraction_results=extraction_results,
             created_at=source.created_at,
             updated_at=source.updated_at,
         ),
