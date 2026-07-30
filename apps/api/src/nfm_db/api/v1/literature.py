@@ -427,7 +427,7 @@ async def get_literature_detail(
         .limit(200)  # cap for response size; UI can paginate client-side
     )
     er_result = await db.execute(er_stmt)
-    extraction_results = [
+    legacy_extraction_results = [
         {
             "id": str(er.id),
             "property_name": er.property_name,
@@ -527,7 +527,7 @@ async def get_literature_detail(
             source_id=source.id,
             content_md=source.content_md,
             figures=figures,
-            extraction_results=kg_extraction_results,
+            extraction_results=legacy_extraction_results + kg_extraction_results,
             created_at=source.created_at,
             updated_at=source.updated_at,
         ),
