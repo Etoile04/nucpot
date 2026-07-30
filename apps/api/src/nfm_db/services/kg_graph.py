@@ -82,7 +82,8 @@ async def resolve_focal_node(
             return result
         return None
     except (ValueError, AttributeError):
-        pass
+        # Not a UUID — fall through to the "type:label" lookup below.
+        logger.debug("Node ref %r is not a UUID; trying type:label", trimmed)
 
     # 2. Try "type:label" form
     if ":" in trimmed:
