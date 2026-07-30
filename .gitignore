@@ -29,7 +29,6 @@ docker/.env.*
 *.swo
 *~
 docker/postgres-data/
-docker/.deploy-events.jsonl
 .worktrees/
 .claude/
 CLAUDE.md
@@ -43,3 +42,10 @@ test-results/
 apps/api/content/blog/
 .paperclip/
 *.bak.json
+
+# KR-COMPANY-3 / NFMD_DEPLOY_EVENTS_PATH runtime artefacts (see ADR-KR3-A1 §C6.1.5).
+# The persistent host path may be /var/log/nfmd/...; these entries cover the
+# repo-relative fallback that local developers and CI may use.
+docker/.deploy-events.jsonl
+docker/.deploy-events.jsonl.processed
+docker/.deploy-events.jsonl.quarantine/
