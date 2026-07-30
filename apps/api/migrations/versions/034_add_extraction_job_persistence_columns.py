@@ -31,36 +31,41 @@ DB (e.g. if a future hotfix adds a subset of these columns first).
 Columns added (mirroring ``apps/api/src/nfm_db/models/extraction_job.py``):
 
 Provenance (NFM-2013 AC-2)
-  * source_reference VARCHAR(500)  NULL
-  * source_type      VARCHAR(20)   NULL
-  * corpus_id        VARCHAR(100)  NULL
+  * source_reference VARCHAR(500)                     NULL
+  * source_type      VARCHAR(20)                      NULL
+  * corpus_id        VARCHAR(100)                     NULL
 
 Status (NFM-2013 AC-5)
-  * error_message    TEXT          NULL
+  * error_message    TEXT                             NULL
 
-Counts (OntoFuel handoff contract)
-  * total_received               INT NOT NULL DEFAULT 0
-  * created_measurements         INT NOT NULL DEFAULT 0
-  * reused_entities              INT NOT NULL DEFAULT 0
-  * skipped_duplicate_measurements INT NOT NULL DEFAULT 0
-  * skipped_unknown_properties   INT NOT NULL DEFAULT 0
-  * skipped_duplicates           INT NOT NULL DEFAULT 0
-  * validation_errors            INT NOT NULL DEFAULT 0
+Counts (OntoFuel handoff contract) — INTEGER NOT NULL DEFAULT 0
+  * total_received
+  * created_measurements
+  * reused_entities
+  * skipped_duplicate_measurements
+  * skipped_unknown_properties
+  * skipped_duplicates
+  * validation_errors
 
-Timestamps
-  * started_at    TIMESTAMP WITH TIME ZONE NULL
-  * completed_at  TIMESTAMP WITH TIME ZONE NULL
+Timestamps — TIMESTAMP WITH TIME ZONE NULL
+  * started_at
+  * completed_at
 
-The migration is reversible (down drops the columns). ONTO the SQLite test
-DB, ``ADD COLUMN IF NOT EXISTS`` is unavailable, so the helper
-``_safe_add_column`` falls back to ``try/except`` mirroring migration 033.
+Implementation note (NFM-2115 follow-up):
+  The previous version of this migration called ``sa.Column.compile(dialect=...)``
+  in the PostgreSQL branch, which returned ONLY the column name (no type, no
+  NOT NULL, no server_default) and therefore emitted invalid ``ALTER TABLE ...
+  ADD COLUMN IF NOT EXISTS <name>`` statements. The SQLite test path went
+  through ``op.add_column(...)`` which uses ``CreateColumn`` internally, so
+  the SQLite suite passed but the PG branch was untested. This rewrite drops
+  the helper entirely and uses raw ``ALTER TABLE`` strings — the 13 columns
+  are fixed, hand-rolled DDL is the simplest, audit-friendly form, and a
+  real-Postgres verification step is now mandatory before re-handoff.
 """
-
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -70,204 +75,119 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _safe_add_column(
-    table: str,
-    column: sa.Column,
-    *,
-    if_not_exists: bool = True,
-) -> None:
-    """Add a column to ``table``, idempotently.
+# ---------------------------------------------------------------------------
+# Column specs. Each entry is the literal ``ALTER TABLE extraction_jobs
+# ADD COLUMN IF NOT EXISTS ...`` fragment emitted on PostgreSQL. The SQLite
+# path uses the equivalent ``op.add_column(...)`` with hand-built Column
+# objects (so the test-DDL parity still holds but the SQLite and PG paths
+# remain fully independent).
+# ---------------------------------------------------------------------------
 
-    On PostgreSQL we use ``ADD COLUMN IF NOT EXISTS`` (PG 9.6+) so re-running
-    the migration on a partially-migrated DB is safe and produces no error.
-    On SQLite (used by the test suite) ``ADD COLUMN IF NOT EXISTS`` does
-    NOT exist, so we fall back to a ``try/except`` around the plain
-    ``ADD COLUMN`` and swallow the duplicate-column error.
-    """
-    bind = op.get_bind()
-    dialect = bind.dialect.name
-    if dialect == "postgresql" and if_not_exists:
-        # Compile the column to its DDL fragment (column name + type + constraints)
-        # then wrap it in ADD COLUMN IF NOT EXISTS so re-runs are no-ops.
-        col_ddl = str(column.compile(dialect=bind.dialect)).strip()
-        op.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_ddl}')
-        return
-    # SQLite / unknown: best-effort; swallow duplicate-column errors.
-    try:
-        op.add_column(table, column)
-    except Exception:
-        # Column already exists. Re-running the migration must be a no-op.
-        pass
+# PG DDL — derived directly from apps/api/src/nfm_db/models/extraction_job.py.
+_PG_ADD_COLUMNS: tuple[str, ...] = (
+    # --- Provenance (NFM-2013 AC-2) ---
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS source_reference VARCHAR(500)",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS source_type VARCHAR(20)",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS corpus_id VARCHAR(100)",
+    # --- Status (NFM-2013 AC-5) ---
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS error_message TEXT",
+    # --- Counts (OntoFuel handoff contract) ---
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS total_received INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS created_measurements INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS reused_entities INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS skipped_duplicate_measurements INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS skipped_unknown_properties INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS skipped_duplicates INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS validation_errors INTEGER NOT NULL DEFAULT 0",
+    # --- Timestamps ---
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE",
+)
+
+# Down migration: drop the same 13 columns. Order does not matter (no FKs
+# link these columns), but we list them in reverse-add order for hygiene.
+_PG_DROP_COLUMNS: tuple[str, ...] = (
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS completed_at",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS started_at",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS validation_errors",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS skipped_duplicates",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS skipped_unknown_properties",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS skipped_duplicate_measurements",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS reused_entities",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS created_measurements",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS total_received",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS error_message",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS corpus_id",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS source_type",
+    "ALTER TABLE extraction_jobs DROP COLUMN IF EXISTS source_reference",
+)
+
+# SQLite specs: same column shape, expressed as ``op.add_column`` calls.
+# ``op.add_column`` accepts the full Column object, so the count columns
+# carry an explicit ``server_default`` so legacy rows inserted before
+# migration 034 receive a valid default during column addition — keeping
+# the NOT NULL constraint satisfiable for backfilled data.
+import sqlalchemy as sa  # noqa: E402  (post-typing-import to keep PG block first)
+
+_SQLITE_ADD_COLUMNS: tuple[sa.Column, ...] = (
+    sa.Column("source_reference", sa.String(500), nullable=True),
+    sa.Column("source_type", sa.String(20), nullable=True),
+    sa.Column("corpus_id", sa.String(100), nullable=True),
+    sa.Column("error_message", sa.Text(), nullable=True),
+    sa.Column("total_received", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("created_measurements", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("reused_entities", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("skipped_duplicate_measurements", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("skipped_unknown_properties", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("skipped_duplicates", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("validation_errors", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+)
 
 
-def _safe_drop_column(table: str, column_name: str) -> None:
-    """Drop a column from ``table``, tolerating 'does not exist' errors.
+def upgrade() -> None:
+    """Add 13 columns to extraction_jobs so the running API can INSERT.
 
-    Mirrors the idempotency of ``_safe_add_column`` so downgrade is safe
-    even if a partial downgrade already ran.
+    Uses raw PG ``ALTER TABLE … ADD COLUMN IF NOT EXISTS`` — the previous
+    implementation invoked ``sa.Column.compile(dialect=...)`` which produces
+    only the column name (no type, no constraints) and therefore could not
+    have produced valid DDL on PG. Raw SQL keeps the migration auditable
+    and trivially re-runnable.
     """
     bind = op.get_bind()
     dialect = bind.dialect.name
     if dialect == "postgresql":
-        op.execute(f'ALTER TABLE {table} DROP COLUMN IF EXISTS {column_name}')
+        for stmt in _PG_ADD_COLUMNS:
+            op.execute(stmt)
         return
-    try:
-        op.drop_column(table, column_name)
-    except Exception:
-        pass
+    # SQLite (test path): ``ADD COLUMN IF NOT EXISTS`` does not exist; rely
+    # on ``op.add_column`` and tolerate ``OperationalError`` so the test
+    # suite can re-run the migration. ``server_default="0"`` on each count
+    # column satisfies the NOT NULL constraint for legacy backfill rows.
+    import sqlalchemy.exc  # local import — only the SQLite branch needs it
 
-
-def upgrade() -> None:
-    """Add 13 columns to extraction_jobs so the running API can INSERT."""
-    # --- Provenance (NFM-2013 AC-2) ---
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "source_reference",
-            sa.String(500),
-            nullable=True,
-            comment="DOI / URL / file path the batch was extracted from.",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "source_type",
-            sa.String(20),
-            nullable=True,
-            comment="doi | url | file | internal_id | datasource.",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "corpus_id",
-            sa.String(100),
-            nullable=True,
-            comment="External corpus slug the batch was tagged with.",
-        ),
-    )
-
-    # --- Status (NFM-2013 AC-5) ---
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "error_message",
-            sa.Text(),
-            nullable=True,
-            comment="Last failure reason when status='failed'.",
-        ),
-    )
-
-    # --- Counts (NFM-2013 AC-5 / OntoFuel handoff contract) ---
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "total_received",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Total property records received in the request payload.",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "created_measurements",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Property measurements persisted to DB.",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "reused_entities",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Existing DB entities reused (DataSource/Material already in DB).",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "skipped_duplicate_measurements",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Duplicate measurements skipped (NFM-2032 5-tuple dedup).",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "skipped_unknown_properties",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Records skipped because the property type was unknown.",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "skipped_duplicates",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment=(
-                "Backward-compat alias: "
-                "reused_entities + skipped_duplicate_measurements + "
-                "skipped_unknown_properties."
-            ),
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "validation_errors",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Records rejected by the validation gate.",
-        ),
-    )
-
-    # --- Timestamps ---
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "started_at",
-            sa.DateTime(timezone=True),
-            nullable=True,
-            comment="Time the handler began processing the batch.",
-        ),
-    )
-    _safe_add_column(
-        "extraction_jobs",
-        sa.Column(
-            "completed_at",
-            sa.DateTime(timezone=True),
-            nullable=True,
-            comment="Time the handler finished (success or failure).",
-        ),
-    )
+    for col in _SQLITE_ADD_COLUMNS:
+        try:
+            op.add_column("extraction_jobs", col)
+        except sqlalchemy.exc.OperationalError:
+            # Column already exists from a prior partial run. Migration is
+            # idempotent at the test-DDL level too.
+            pass
 
 
 def downgrade() -> None:
-    """Drop the 13 columns added by upgrade(). Idempotent."""
-    _safe_drop_column("extraction_jobs", "completed_at")
-    _safe_drop_column("extraction_jobs", "started_at")
-    _safe_drop_column("extraction_jobs", "validation_errors")
-    _safe_drop_column("extraction_jobs", "skipped_duplicates")
-    _safe_drop_column("extraction_jobs", "skipped_unknown_properties")
-    _safe_drop_column("extraction_jobs", "skipped_duplicate_measurements")
-    _safe_drop_column("extraction_jobs", "reused_entities")
-    _safe_drop_column("extraction_jobs", "created_measurements")
-    _safe_drop_column("extraction_jobs", "total_received")
-    _safe_drop_column("extraction_jobs", "error_message")
-    _safe_drop_column("extraction_jobs", "corpus_id")
-    _safe_drop_column("extraction_jobs", "source_type")
-    _safe_drop_column("extraction_jobs", "source_reference")
+    """Drop the 13 columns added by upgrade(). Idempotent on PG and SQLite."""
+    bind = op.get_bind()
+    dialect = bind.dialect.name
+    if dialect == "postgresql":
+        for stmt in _PG_DROP_COLUMNS:
+            op.execute(stmt)
+        return
+    import sqlalchemy.exc  # local import — only the SQLite branch needs it
+
+    for col in reversed(_SQLITE_ADD_COLUMNS):
+        try:
+            op.drop_column("extraction_jobs", col.name)
+        except sqlalchemy.exc.OperationalError:
+            pass
