@@ -8,17 +8,27 @@
  *   - In-flight form state is preserved across the modal opening
  *     (modal must NOT unmount the form beneath it).
  *   - Esc and mask-click do not dismiss the modal (NFM-2251 §b).
+ *   - The "returnTo" carries the FULL current URL, including the
+ *     query string (NFM-2254 AC: "capturing the current URL").
+ *   - There is exactly one actionable button in the modal —
+ *     no "Later"/"稍后" cancel affordance (NFM-2251 §b:
+ *     non-dismissible surface).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { render, screen, cleanup, fireEvent, act } from "@testing-library/react"
 import { ConfigProvider } from "antd"
 
-// Mock next/navigation so useRouter/usePathname resolve in jsdom.
+// Mock next/navigation so useRouter/usePathname/useSearchParams
+// resolve in jsdom. The pathname and search string are mutable
+// per-test so we can drive the returnTo round-trip below.
 const routerReplace = vi.fn()
+let mockedPathname = "/literature"
+let mockedSearch = ""
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: routerReplace }),
-  usePathname: () => "/literature",
+  usePathname: () => mockedPathname,
+  useSearchParams: () => new URLSearchParams(mockedSearch),
 }))
 
 import { SessionProvider, ReAuthPrompt } from "@/components/session"
@@ -59,12 +69,19 @@ describe("<ReAuthPrompt />", () => {
 
   beforeEach(() => {
     harness = createHarness()
+    mockedPathname = "/literature"
+    mockedSearch = ""
   })
 
   afterEach(() => {
     harness.manager.shutdown()
     cleanup()
     routerReplace.mockClear()
+    // jsdom's window.location.hash persists across tests — clear it
+    // so the round-trip test starts deterministic.
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search)
+    }
   })
 
   it("renders nothing when authenticated", async () => {
@@ -136,8 +153,58 @@ describe("<ReAuthPrompt />", () => {
     expect(routerReplace).toHaveBeenCalledTimes(1)
     const calledUrl = routerReplace.mock.calls[0]?.[0] as string
     expect(calledUrl).toMatch(/^\/admin\/login\?returnTo=/)
-    // pathname mocked to /literature — must be encoded.
+    // pathname mocked to /literature with no search params —
+    // returnTo must be the URL-encoded pathname.
     expect(calledUrl).toContain(encodeURIComponent("/literature"))
+  })
+
+  it("captures the query string in returnTo (NFM-2254 AC)", async () => {
+    // Drive the round-trip case the previous revision silently
+    // dropped: a user on a filtered, paginated view whose session
+    // dies must return to that exact filtered view, not page 1.
+    mockedPathname = "/literature"
+    mockedSearch = "page=3&status=pending"
+    harness.fetchMe.mockResolvedValueOnce({
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    })
+    harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
+    renderPrompt(harness)
+    await new Promise((r) => setTimeout(r, 5))
+    await harness.manager.refresh().catch(() => undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const okBtn = screen.getByRole("button", { name: /重新登录/ })
+    await act(async () => {
+      fireEvent.click(okBtn)
+    })
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    const calledUrl = routerReplace.mock.calls[0]?.[0] as string
+    expect(calledUrl).toMatch(/^\/admin\/login\?returnTo=/)
+    // The full path-with-query must be URL-encoded into returnTo.
+    expect(calledUrl).toContain(
+      encodeURIComponent("/literature?page=3&status=pending"),
+    )
+  })
+
+  it("renders exactly one actionable button — no 稍后 cancel affordance (NFM-2251 §b)", async () => {
+    harness.fetchMe.mockResolvedValueOnce({
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    })
+    harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
+    renderPrompt(harness)
+    await new Promise((r) => setTimeout(r, 5))
+    await harness.manager.refresh().catch(() => undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const allButtons = screen.getAllByRole("button")
+    const actionable = allButtons.filter(
+      (b) => !b.getAttribute("aria-label")?.includes("Close"),
+    )
+    expect(actionable).toHaveLength(1)
+    expect(actionable[0]).toHaveTextContent(/重新登录/)
+    // No 稍后 ("Later") anywhere on the modal surface.
+    expect(screen.queryByText(/稍后/)).toBeNull()
   })
 
   it("Esc does not dismiss the modal (NFM-2251 §b)", async () => {

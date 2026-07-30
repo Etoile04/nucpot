@@ -119,4 +119,52 @@ describe("useFormDraft", () => {
     )
     expect(result.current[0]).toEqual({ title: "safe", body: "" })
   })
+
+  it("does not clobber a draft when formId changes at runtime", () => {
+    // Regression: a previous revision of this hook wrote the
+    // old form's value under the new form's key when formId
+    // changed mid-mount, silently destroying the new form's
+    // persisted draft. Two drafts must remain independent.
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) =>
+        useFormDraft<DraftShape>(id, { title: "default", body: "" }),
+      { initialProps: { id: "post-a" } },
+    )
+
+    // User types into form A.
+    act(() => {
+      result.current[1]({ title: "A draft", body: "A body" })
+    })
+    expect(
+      JSON.parse(
+        window.sessionStorage.getItem("nfm:formDraft:post-a") as string,
+      ),
+    ).toMatchObject({ v: { title: "A draft", body: "A body" } })
+
+    // Pre-existing draft for form B — must survive the formId swap.
+    window.sessionStorage.setItem(
+      "nfm:formDraft:post-b",
+      JSON.stringify({ v: { title: "B pre-existing", body: "" }, ts: Date.now() }),
+    )
+
+    // Form ID changes mid-mount (e.g. user navigates from /new/a
+    // to /new/b without unmounting the page chrome).
+    rerender({ id: "post-b" })
+
+    // A's draft is intact.
+    const aDraft = JSON.parse(
+      window.sessionStorage.getItem("nfm:formDraft:post-a") as string,
+    )
+    expect(aDraft).toMatchObject({ v: { title: "A draft", body: "A body" } })
+    // B's draft is intact — the value from form A was NOT written
+    // under B's key on the swap effect run.
+    const bDraft = JSON.parse(
+      window.sessionStorage.getItem("nfm:formDraft:post-b") as string,
+    )
+    expect(bDraft).toMatchObject({
+      v: { title: "B pre-existing", body: "" },
+    })
+    // The hook now hydrates from B's draft.
+    expect(result.current[0]).toEqual({ title: "B pre-existing", body: "" })
+  })
 })

@@ -20,9 +20,14 @@
  * (``T`` is whatever you want to serialize). The contract is:
  *   - On first render, return either the persisted draft (if fresh)
  *     or ``initial``.
- *   - On every value change, write the draft + a timestamp.
- *   - On unmount, drafts are KEPT — clearing is the page's responsibility
- *     (``clearFormDraft``) so navigating away then back preserves work.
+ *   - On every value change within the same formId, write the draft +
+ *     a timestamp.
+ *   - On a ``formId`` change at runtime, re-read storage for the new
+ *     formId and skip the write — never write the previous form's value
+ *     under the new form's key.
+ *   - On unmount, drafts are KEPT — clearing is the page's
+ *     responsibility (``clearFormDraft``) so navigating away then
+ *     back preserves work.
  */
 
 import { useEffect, useRef, useState } from "react"
@@ -87,14 +92,34 @@ export function useFormDraft<T>(
 ): readonly [T, (next: T) => void] {
   const [value, setValue] = useState<T>(() => readDraft(formId, initial))
   const isFirstRender = useRef(true)
+  // Track the formId we last observed so a runtime formId change is
+  // detected as a real event — not as a "value change under formId B"
+  // (which would clobber B's persisted draft with A's value).
+  const lastSeenFormId = useRef(formId)
+  // Capture `initial` at mount only — callers commonly pass an inline
+  // object literal (``{ title: "", body: "" }``), whose reference
+  // changes every render. We don't want that to retrigger the effect.
+  const initialRef = useRef(initial)
 
   useEffect(() => {
     // Skip the very first render — we already loaded from storage and
     // re-writing on mount would just churn the timestamp.
     if (isFirstRender.current) {
       isFirstRender.current = false
+      lastSeenFormId.current = formId
       return
     }
+
+    // formId changed at runtime: re-read storage for the new formId,
+    // and DO NOT write the old form's value under the new form's key.
+    // Without this guard the effect fires with [formId=B, value=A]
+    // and overwrites B's persisted draft with A's value.
+    if (lastSeenFormId.current !== formId) {
+      lastSeenFormId.current = formId
+      setValue(readDraft(formId, initialRef.current))
+      return
+    }
+
     writeDraft(formId, value)
   }, [formId, value])
 
