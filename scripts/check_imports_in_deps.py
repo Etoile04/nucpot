@@ -93,9 +93,9 @@ ALLOWLIST: set[str] = {
     "numpy",
     # httpx (declared)
     "httpx",
-    # sentry-sdk: optional — lazy-imported inside try/except ImportError in
-    # monitoring/worker_health.py (NFM-2014). The project does not yet
-    # configure Sentry, and adding it as a hard dep would be wasteful.
+    # sentry_sdk is wrapped in try/except ImportError at apps/api/src/monitoring/worker_health.py
+    # — Sentry is optional and not configured in this project. Imported lazily so the
+    # module is always importable regardless of whether sentry-sdk is installed.
     "sentry_sdk",
 }
 
@@ -105,6 +105,8 @@ FIRST_PARTY: set[str] = {
     "nfm_db",
     "nfm_md_runner",
     "nfm_ref_gapfill",
+    # apps/api/src/monitoring/ — sibling package (logging_config, prometheus,
+    # worker_health). Imported by literature_dispatcher + health endpoint.
     "monitoring",
     "tests",
 }

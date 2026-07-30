@@ -300,16 +300,20 @@ jobs:
 
       - name: Build candidate api image
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+          # Compute CANDIDATE_TAG in the workflow shell (where $GITHUB_ENV is bound
+          # by GitHub Actions) and pass it to the SSH heredoc. Writing to $GITHUB_ENV
+          # inside the SSH heredoc fails with `set -u` because the variable is unset
+          # in the remote shell. The remote shell still does `git pull` so its HEAD
+          # matches the workflow checkout (no-op when already up to date).
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
+          echo "CANDIDATE_TAG=${CANDIDATE_TAG}" >> "$GITHUB_ENV"
+
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
             git pull origin main
-
-            SHORT_SHA="$(git rev-parse --short HEAD)"
-            CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
-            # Export to the workflow env so the next step can read it.
-            echo "CANDIDATE_TAG=${CANDIDATE_TAG}" >> "$GITHUB_ENV"
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
             docker build -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .

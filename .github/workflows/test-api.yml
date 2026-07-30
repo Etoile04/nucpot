@@ -53,8 +53,11 @@ jobs:
       # canned responses. The full live-Docker smoke lives in
       # production-deployment.yml > pre-deploy-assert-smoke.
       - name: Run pre-deploy-assert unit tests (NFM-2149)
+        # `uv run` so pytest comes from the project venv (system python3 has no pytest),
+        # and `../../tools/...` because this job's `working-directory` defaults to apps/api.
+        # Mirrors the `uv run python ../../scripts/check_schema_compat.py` pattern above.
         run: |
-          python3 -m pytest tools/pre-deploy-assert-smoke/test_assert.py -v
+          uv run pytest ../../tools/pre-deploy-assert-smoke/test_assert.py -v
 
       # Publishes the Cobertura XML for the KR-5 coverage aggregator (NFM-2047).
       # `always()` keeps a red run measurable: a run that fails the 80% gate
