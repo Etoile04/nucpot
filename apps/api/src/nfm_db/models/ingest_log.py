@@ -67,13 +67,13 @@ class IngestLog(Base):
         nullable=True,
         comment="Free-form error payload when status=failed.",
     )
-    started_at: Mapped[DateTime | None] = mapped_column(  # type: ignore[name-defined]
+    started_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
         comment="Wall-clock time the operation started.",
     )
-    completed_at: Mapped[DateTime | None] = mapped_column(  # type: ignore[name-defined]
+    completed_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
         comment="Wall-clock time the operation completed (NULL while in flight).",

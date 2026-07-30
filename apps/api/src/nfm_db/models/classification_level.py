@@ -10,9 +10,8 @@ This module adds the enum and CHECK constraint for enforcement.
 from __future__ import annotations
 
 import enum
-from typing import ClassVar
-
 import uuid
+from typing import ClassVar
 
 from sqlalchemy import CheckConstraint, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,9 +22,9 @@ from nfm_db.models import Base, TimestampMixin
 class ClassificationLevelEnum(str, enum.Enum):
     """Contract security labels (§3.1.2, §5.7)."""
 
-    UNCLASSIFIED: ClassVar[str] = "非密"
-    INTERNAL: ClassVar[str] = "内部"
-    SECRET: ClassVar[str] = "秘密"
+    UNCLASSIFIED: ClassVar[str] = "非密"  # type: ignore[misc]
+    INTERNAL: ClassVar[str] = "内部"  # type: ignore[misc]
+    SECRET: ClassVar[str] = "秘密"  # type: ignore[misc]
 
     @classmethod
     def labels(cls) -> set[str]:

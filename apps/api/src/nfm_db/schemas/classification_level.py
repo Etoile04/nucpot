@@ -13,7 +13,7 @@ from nfm_db.models.classification_level import ClassificationLevelEnum
 
 _VALID_LABELS = ClassificationLevelEnum.labels()
 _CLASSIFICATION_ERROR = (
-    f"classification_level must be one of {{'，'.join(sorted(_VALID_LABELS))}}"
+    f"classification_level must be one of {', '.join(sorted(_VALID_LABELS))}"
 )
 
 

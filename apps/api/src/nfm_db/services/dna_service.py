@@ -12,7 +12,6 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.data_dna import DataDna
@@ -115,4 +114,4 @@ class DNAService:
             )
 
 
-__all__ = ["DNARecord", "DNAMissingError", "DNAService"]
+__all__ = ["DNAMissingError", "DNARecord", "DNAService"]

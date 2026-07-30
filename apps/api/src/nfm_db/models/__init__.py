@@ -224,7 +224,6 @@ __all__ = [
     "CacheLevel",
     "ClassificationLevel",
     "ClassificationLevelEnum",
-    "classification_check_constraint",
     "CompatJSONB",
     "Confidence",
     "ConflictRecord",
@@ -290,4 +289,5 @@ __all__ = [
     "User",
     "VerificationResultMD",
     "VerificationTask",
+    "classification_check_constraint",
 ]

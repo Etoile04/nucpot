@@ -42,7 +42,6 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-
 REVISION = "035_add_extraction_job_multimodal_flags"
 DOWN_REVISION = "034_add_extraction_job_persistence_columns"
 MIGRATION_PATH = f"migrations/versions/{REVISION}.py"
