@@ -2,8 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Install uv for faster, more resilient dependency resolution.
+# uv retries automatically on network errors and falls back
+# between indexes — no manual mirror fallback chain needed.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir .
+RUN uv pip install --system --no-cache .
 
 COPY src/ ./src/
 
