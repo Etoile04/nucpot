@@ -7,20 +7,19 @@
 
 ---
 
-## Status (as of NFM-2086)
+## Status (as of NFM-2204)
 
 What is enforced right now versus what is still in flight:
 
-| Control                            | Where it lives                                | Status (2026-07-30)                                                                                                |
+| Control                            | Where it lives                                | Status (2026-07-31)                                                                                                |
 | ---------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **CI gate** on `pull_request`      | `.github/workflows/commit-ref-gate.yml` ([NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`) | **Live on `main`.** The gate validates every non-merge commit subject in the PR range. Non-compliant PRs go red.    |
-| **Local `commit-msg` hook**        | `.githooks/commit-msg` ([NFM-2084](/NFM/issues/NFM-2084), commit `6c42aea3`)                       | **Branch-only, not yet on `main`.** Do not claim a hook is "already enabled" in this repo; it is not.               |
-| **KR-2 metric** (`commit_efficiency.py`) | `scripts/okr/commit_efficiency.py` (`_ISSUE_REF_PATTERN`)                              | **Live.** Counts `[no-issue]` as structural waste.                                                                  |
+| **CI gate** on `pull_request` + `push` | `.github/workflows/commit-ref-gate.yml` ([NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`) | **Live on `main`.** A non-compliant PR or direct push (missing `NFM-###` and missing `[no-issue]`) will be red. The required-status context is named *Validate every non-merge commit subject in PR range*. Note: `enforce_admins` is still `false`, so an admin direct-push can bypass the status check — see NFM-2204/R1. |
+| **Local `commit-msg` hook**        | `.githooks/commit-msg` ([NFM-2084](/NFM/issues/NFM-2084), commit `d58e2823`, PR #520)             | **Live on `main`.** Shipped in PR #520. `git config core.hooksPath .githooks` activates it immediately.              |
+| **KR-2 metric** (`commit_efficiency.py`) | `scripts/okr/commit_efficiency.py` (`_ISSUE_REF_PATTERN`)                              | **Live.** Counts `[no-issue]` as structural waste per ADR-NFM-2081 §D2. Revision basis pinned to `origin/main --max-parents=1` (NFM-2204/R2). |
 
-**What this means for you:** rely on the CI gate for compliance; do not assume
-`core.hooksPath .githooks` does anything until NFM-2084 lands. If you want
-local pre-commit validation, check out the [NFM-2084](/NFM/issues/NFM-2084)
-branch or wait for the merge.
+**What this means for you:** both controls are live on `main`. The CI gate
+catches non-compliant PRs and direct pushes; the local hook provides instant
+feedback at commit time once configured.
 
 ---
 
@@ -31,8 +30,9 @@ Every commit **subject** on every branch merged into `main` must contain **eithe
 - an `NFM-###` issue reference (e.g. `NFM-2081`), **or**
 - the literal token `[no-issue]`.
 
-PRs whose commit subjects contain neither will fail CI on `pull_request` and
-cannot merge. The check runs against commit **subjects**; body and footers are
+PRs whose commit subjects contain neither will fail CI and
+cannot merge. Direct pushes to `main` with non-compliant subjects will also
+fail. The check runs against commit **subjects**; body and footers are
 not inspected.
 
 When you produce a commit message in this repo, you must do one of these two
@@ -69,16 +69,22 @@ with no trace in history; CI will still catch the offending commit on the PR.
 
 ## The control: CI is the gate, the local hook is a convenience
 
-**Authoritative check:** GitHub Actions on `pull_request`
+**Authoritative check:** GitHub Actions on `pull_request` **and `push`**
 (`.github/workflows/commit-ref-gate.yml`,
-[NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`). It cannot be skipped
-by an unconfigured clone and cannot be bypassed with `--no-verify`.
+[NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`). It runs for every
+non-merge commit in the PR range and on every direct push to `main`.
+The required-status context is named *Validate every non-merge commit
+subject in PR range*. It cannot be skipped by an unconfigured clone and
+cannot be bypassed with `--no-verify`. Note: `enforce_admins` is still
+`false` (tracked as NFM-2204/R1), so an admin direct-push can bypass the
+status check.
 
-**Local hook (opt-in, fast feedback):** a `commit-msg` hook will ship in
-`.githooks/` once [NFM-2084](/NFM/issues/NFM-2084) lands on `main`. The intent,
-once it lands, is that it moves the failure from "10 minutes later in CI" to
-"instantly at commit time". It is a convenience — not the control. Without
-configuration, it does nothing and CI rejects later. That is intentional.
+**Local hook (opt-in, fast feedback):** the `commit-msg` hook shipped on
+`main` in PR #520 ([NFM-2084](/NFM/issues/NFM-2084), commit `d58e2823`).
+It moves the failure from "minutes later in CI" to "instantly at commit
+time". It is a convenience — not the control. Run
+`git config core.hooksPath .githooks` once per clone (and per worktree) to
+activate it.
 
 ### Enable the local hook (one line)
 
