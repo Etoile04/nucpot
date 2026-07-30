@@ -75,10 +75,15 @@ done
 # NFM-2146) so the container runs the migrator instead of the API server.
 # env.py (apps/api/migrations/env.py) takes ``pg_advisory_lock`` on the
 # connection that runs the migration, so concurrent migrators serialize at
-# the SQL level.
+# the SQL level. NFM-2196: ``-e NFMD_DEPLOY_LOCK_KEY`` must be passed
+# explicitly — the compose ``api`` service does not declare it, so without
+# this flag env.py would silently fall back to its own literal default and
+# an operator-supplied override would be logged here but never applied
+# (split-brain in the mutual-exclusion mechanism).
 log "Running alembic upgrade head via nucpot-prod-api:${IMAGE_TAG} (deploy lock key=${NFMD_DEPLOY_LOCK_KEY})"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
   run --rm -T --no-deps \
+  -e NFMD_DEPLOY_LOCK_KEY="$NFMD_DEPLOY_LOCK_KEY" \
   --entrypoint alembic api upgrade head
 
 log "Alembic upgrade head complete"

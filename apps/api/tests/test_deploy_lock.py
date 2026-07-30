@@ -32,13 +32,16 @@ from sqlalchemy.ext.asyncio import create_async_engine
 _NFM_TEST_PG_URL = os.environ.get("NFM_TEST_DATABASE_URL", "").strip()
 _LOCK_KEY = 7423912  # NFM-2146 D3 / ADR-NFM-2139 §5 D3
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not _NFM_TEST_PG_URL,
-        reason="NFM_TEST_DATABASE_URL is not set; deploy-lock tests require real Postgres",
-    ),
-]
+# NFM-2196: applied per-test to the two tests that need a live Postgres, NOT
+# module-level. A module-level ``pytestmark`` would also skip
+# ``test_env_py_acquires_deploy_lock_in_migration_context``, which is a pure
+# source-code assertion — that guard is the always-on backstop against the
+# NFM-2196 regression and must run in the default (SQLite-bound) CI suite.
+# Same split as tests/test_seed_property_types_migration_runtime.py.
+_requires_pg = pytest.mark.skipif(
+    not _NFM_TEST_PG_URL,
+    reason="NFM_TEST_DATABASE_URL is not set; deploy-lock tests require real Postgres",
+)
 
 
 def _probe_lock_held_by_other_connection() -> bool:
@@ -61,6 +64,8 @@ def _probe_lock_held_by_other_connection() -> bool:
         engine.dispose()
 
 
+@pytest.mark.integration
+@_requires_pg
 def test_postgres_advisory_lock_is_session_scoped():
     """Primitive contract: pg_advisory_lock on conn A blocks pg_try_advisory_lock on conn B.
 
@@ -164,6 +169,8 @@ def test_env_py_acquires_deploy_lock_in_migration_context():
     )
 
 
+@pytest.mark.integration
+@_requires_pg
 @pytest.mark.asyncio
 async def test_two_concurrent_migrators_serialize_on_deploy_lock():
     """AC#2 / NFM-2196: simulate two migrators hitting the lock at the same time.
