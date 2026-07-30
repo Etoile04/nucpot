@@ -271,3 +271,84 @@ per-developer override.
 - NFM-2041 (5-KR report CLI) needs the KR-3 cell labelled "staging" in the output.
 - NFM-2043 (baseline recorder) blocks 7 days from "first event on this branch" — not from the implementation PR, since the implementation PR does not run `deploy` against the staging self-hosted runner.
 - Follow-up design issue (prod event durability) needs to be created as a child of NFM-2039 and assigned to CPO, blocked by NFM-2042.
+
+## Amendment C6.3 — Reconciliation of ADR-KR3-A1 C6.1 with ADR-KR3-A2 (NFM-2108 CTO ruling, 2026-07-30)
+
+Status: **Accepted.** Author: CTO (3a0e0b92). Reconciles this ADR's §C6.1.4 and
+§C6.1.5 with `ADR-KR3-prod-emission.md` (ADR-KR3-A2, author CPO, issue NFM-2053).
+
+### Why C6.3
+
+A2 was authored in parallel with the C6.1 build-out and reached implementation
+(NFM-2109, commit `e00c28f0` plus uncommitted worktree edits) while still
+carrying `Status: Proposed`. A2 amends §C6 and, in doing so, contradicts two
+C6.1 clauses. Both designs edit the same file (`scripts/okr/coverage_kr3.py`),
+and NFM-2113 is scheduled to merge them. Leaving an Accepted design and a
+Proposed design in conflict would make that integration ambiguous. This
+amendment rules on each conflict.
+
+### C6.3.1 — `--environment` default: **A2 wins.** C6.1.4 is amended.
+
+C6.1.4 specified `staging` as the default so an unfiltered read could not
+silently conflate the two series once prod events landed in the same JSONL.
+A2 splits the series into **two files** (a staging JSONL and a prod master
+JSONL), which removes the conflation hazard *by construction*. With separate
+files the reason for the `staging` default no longer exists, and `all` is the
+strictly more backward-compatible default: a pre-C6.1 caller that passes no
+flag continues to read everything, exactly as before.
+
+Ruling: `ENVIRONMENTS = ("all", "staging", "production")` with `all` as the
+default is **accepted**. C6.1.4's "default — preserves the v1 baseline"
+wording is superseded.
+
+The C6.1.4 acceptance criterion is **restated**, because the original phrasing
+is unsatisfiable under an exact-match filter: `--environment staging` reproduces
+the pre-C6.1 run only for events that carry `"environment": "staging"`; any
+legacy line written before the field existed is dropped. The binding criterion
+is therefore that the **default** (`all`) invocation must reproduce the
+pre-C6.1 `value` and `n` on the same JSONL. That is the backward-compatibility
+gate.
+
+### C6.3.2 — Hardcoded home-directory paths: **rejected.** C6.1.5 stands.
+
+C6.1.5 states verbatim: *"The path is no longer a developer's home directory."*
+The current implementation defaults to one operator's home directory in at
+least five places:
+
+- `scripts/okr/coverage_kr3.py` — `_DEFAULT_PROD_PATH = Path("/Users/lwj04/.nfmd/master-deploy-events.jsonl")`
+- `scripts/okr/prod_event_collector.py` — `--sync-state` and `--master-jsonl` argparse defaults
+
+This is the exact defect C6.1.5 was written to prevent, and it is disqualifying
+for a platform meant to outlive any one operator's machine: the collector
+becomes unrunnable by a second maintainer, in CI, or on a replacement host, and
+it fails by silently reading or writing the wrong file rather than erroring.
+
+Ruling: env-var-first resolution is correct and is retained, but the **fallback
+must not name a user**. Required shape:
+
+- prod master JSONL ← `NFMD_PROD_EVENTS_PATH`, falling back to a
+  non-user-specific location (`$XDG_STATE_HOME` / `~/.nfmd/...` expanded at
+  runtime, or a repo-relative path consistent with C6.1.5's `<repo>/docker/`
+  precedent).
+- collector sync state ← `NFMD_PROD_EVENTS_SYNC_STATE`, same rule.
+- No literal `/Users/<name>` or `/home/<name>` may appear as a default in
+  committed code. Documentation examples may show a concrete path.
+
+Remediation is tracked as a child of NFM-2108 and **blocks NFM-2113**, so the
+violating default cannot reach `main` through the integration merge.
+
+### C6.3.3 — ADR-KR3-A2 status
+
+A2's core decision (Option A: artifact upload plus collector, rejecting direct
+SSH + flock) is **accepted** — it is the same two-stage durability pattern as
+C6.1.1, and its rejection rationale for Option B is sound. A2 moves from
+`Proposed` to `Accepted` with the C6.3.2 carve-out recorded, so the repository
+does not hold a Proposed ADR that already governs merged code.
+
+### C6.3.4 — Process finding
+
+A2 amends a CTO-accepted ADR and reached implementation while `Proposed`.
+Amendments to an Accepted ADR require architecture sign-off **before** the
+implementing issue starts, not after. This is a routing gap rather than a fault
+in the design: NFM-2109 hangs off a different parent than the NFM-2108 subtree,
+so the conflict was invisible to both tracks until integration.
