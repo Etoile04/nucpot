@@ -351,6 +351,17 @@ markers = [
     "performance: Performance benchmark tests",
 ]
 
+# NFM-2239: explicitly discover the nfm_db package from src/. Without this
+# directive, `pip install .` from a slim image (e.g. python:3.12-slim used in
+# docker/staging-api.Dockerfile and docker/prod-api.Dockerfile) only produces
+# the nfm_db_api-*.dist-info metadata shell — the nfm_db package directory is
+# never installed, so `import nfm_db` / `uvicorn nfm_db.main:app` crashes with
+# `ModuleNotFoundError: No module named 'nfm_db'` at container startup.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["nfm_db*"]
+namespaces = false
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
