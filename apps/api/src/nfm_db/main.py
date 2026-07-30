@@ -42,7 +42,6 @@ from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
 from nfm_db.api.v1.batch import (
     materials_router as batch_materials_router,
 )
-from nfm_db.api.v1.hub_nodes import router as hub_nodes_router
 from nfm_db.api.v1.batch import (
     properties_router as batch_properties_router,
 )

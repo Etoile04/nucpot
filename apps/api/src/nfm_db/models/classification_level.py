@@ -10,9 +10,8 @@ This module adds the enum and CHECK constraint for enforcement.
 from __future__ import annotations
 
 import enum
-from typing import ClassVar
-
 import uuid
+from typing import ClassVar
 
 from sqlalchemy import CheckConstraint, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column

@@ -9,20 +9,18 @@ import uuid
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.classification_level import ClassificationLevel
-from nfm_db.models.data_dna import DataDna
 from nfm_db.models.material import Material, MaterialCategory
-from nfm_db.models.property import PropertyCategory, PropertyType, PropertyMeasurement, Dataset
+from nfm_db.models.property import Dataset, PropertyCategory, PropertyMeasurement, PropertyType
 from nfm_db.models.source import DataSource
 from nfm_db.schemas.material import MaterialCreate
 from nfm_db.schemas.source import DataSourceCreate
 from nfm_db.services.dna_service import DNAMissingError, DNAService
 from nfm_db.services.dna_write_integration import (
+    _persist_dna,
     create_material_with_dna,
     create_source_with_dna,
-    _persist_dna,
 )
 
 _CL_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -160,7 +158,6 @@ async def test_create_measurement_auto_generates_dna(db_session):
     db_session.add(ptype)
     await db_session.commit()
     # Create measurement directly (bypass wrapper, test _persist_dna)
-    from nfm_db.models.property import PropertyMeasurement
     measurement = PropertyMeasurement(
         dataset_id=ds.id,
         property_type_id=ptype.id,

@@ -7,7 +7,6 @@ This is the service-layer gate mandated by Contract §3.1.2.
 """
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 
@@ -100,7 +99,7 @@ async def _persist_dna(
 
 
 __all__ = [
-    "create_source_with_dna",
-    "create_measurement_with_dna",
     "create_material_with_dna",
+    "create_measurement_with_dna",
+    "create_source_with_dna",
 ]

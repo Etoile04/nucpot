@@ -12,7 +12,7 @@ TDD RED phase — these tests define the acceptance criteria.
 from __future__ import annotations
 
 import uuid
-import enum
+
 import pytest
 from pydantic import ValidationError
 
@@ -21,7 +21,6 @@ from nfm_db.schemas.classification_level import (
     ClassifiedDataDnaCreate,
     ClassifiedUploadSessionCreate,
 )
-
 
 # ========================================================================
 # 1. ClassificationLevelEnum
@@ -159,7 +158,7 @@ class TestDbCheckConstraint:
         The constraint is attached via __table_args__ so SQLAlchemy
         compiles it to proper SQL during CREATE TABLE.
         """
-        from sqlalchemy import create_engine, text, Column, String, Uuid
+        from sqlalchemy import Column, String, Uuid, create_engine
         from sqlalchemy.orm import declarative_base
 
         from nfm_db.models.classification_level import (
