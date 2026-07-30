@@ -48,6 +48,8 @@ IMPORT_NAME_OVERRIDES: set[str] = {
     "multipart",
     # prometheus-client is imported as "prometheus_client"
     "prometheus_client",
+    # sentry-sdk is imported as "sentry_sdk"
+    "sentry_sdk",
     # PyYAML is imported as "yaml"
     "yaml",
     # shap: lazy-imported inside try/except in train_v11.py (line 773).
@@ -101,6 +103,10 @@ FIRST_PARTY: set[str] = {
     "nfm_db",
     "nfm_md_runner",
     "nfm_ref_gapfill",
+    # ``monitoring`` is the standalone observability package added by
+    # NFM-2014 alongside the API.  It is a sibling of ``nfm_db`` (sits
+    # in the same ``src/`` tree), not a third-party distribution.
+    "monitoring",
     "tests",
 }
 

@@ -141,10 +141,14 @@ class TestListPropertiesEndpoint:
         dataset = await _seed_dataset(db_session, material_id=mat.id, source_id=src.id)
         prop_type = await _seed_property_type(db_session)
 
-        # Create 5 measurements
-        for _ in range(5):
+        # Create 5 measurements.  Distinct methods: NFM-2032's uq_pm_dedup
+        # makes (dataset_id, property_type_id, conditions_hash, method) unique.
+        for i in range(5):
             await _seed_measurement(
-                db_session, dataset_id=dataset.id, property_type_id=prop_type.id
+                db_session,
+                dataset_id=dataset.id,
+                property_type_id=prop_type.id,
+                method=f"m{i}",
             )
 
         # Page 1 with per_page=2
@@ -399,6 +403,7 @@ class TestPropertiesStatsEndpoint:
                 dataset_id=dataset.id,
                 property_type_id=prop_type.id,
                 value_scalar=100.0 + i,
+                method=f"m{i}",
             )
             db_session.add(meas)
         await db_session.commit()

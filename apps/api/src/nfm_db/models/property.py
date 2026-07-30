@@ -5,6 +5,7 @@ property_measurements, measurement_conditions.
 Stores material property data with multi-type value support and conditions.
 """
 
+import hashlib
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -30,6 +31,16 @@ if TYPE_CHECKING:
     from nfm_db.models.material import Material
     from nfm_db.models.source import DataSource
     from nfm_db.models.unit import Unit
+
+
+# NFM-2032 made ``PropertyMeasurement.conditions_hash`` NOT NULL so the
+# 5-tuple dedup key can be a DB-level invariant.  A measurement with no
+# recorded conditions still needs a hash, and it must be the *same* digest
+# that ``extraction_to_db_mapper._conditions_hash(None)`` produces and that
+# migration 033 backfills onto legacy rows — otherwise an ingest would fail
+# to match a row it had itself written.  Keeping the constant here (models
+# layer) lets the mapper import it without inverting the dependency.
+EMPTY_CONDITIONS_HASH = hashlib.sha1(b"{}").hexdigest()
 
 
 class PropertyCategory(TimestampMixin, Base):
@@ -229,14 +240,11 @@ class PropertyMeasurement(TimestampMixin, Base):
         nullable=True,
         comment="Timestamp of last review action",
     )
-    conditions_hash: Mapped[str | None] = mapped_column(
+    conditions_hash: Mapped[str] = mapped_column(
         String(40),
-        nullable=True,
-        comment=(
-            "SHA1 hash of measurement conditions for dedup "
-            "(NFM-2032 5-tuple). Nullable in ORM for legacy rows; "
-            "migration 032 backfills + sets NOT NULL."
-        ),
+        nullable=False,
+        default=EMPTY_CONDITIONS_HASH,
+        comment="SHA1 hash of measurement conditions for dedup (NFM-2032)",
     )
     method: Mapped[str] = mapped_column(
         String(100),

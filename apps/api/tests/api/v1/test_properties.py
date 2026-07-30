@@ -130,7 +130,9 @@ async def test_list_measurements_paginated(async_client, db_session) -> None:
     pt = await _seed_property_type(db_session, cat.id)
     ds = await _seed_dataset(db_session, mat.id)
     for i in range(3):
-        await _seed_measurement(db_session, ds.id, pt.id, value_scalar=float(i + 1))
+        await _seed_measurement(
+            db_session, ds.id, pt.id, value_scalar=float(i + 1), method=f"m{i}"
+        )
 
     response = await async_client.get("/api/v1/properties?per_page=2")
     assert response.status_code == 200
@@ -325,8 +327,8 @@ async def test_stats_with_data(async_client, db_session) -> None:
     cat = await _seed_category(db_session, name="Thermal", slug="thermal")
     pt = await _seed_property_type(db_session, cat.id)
     ds = await _seed_dataset(db_session, mat.id)
-    await _seed_measurement(db_session, ds.id, pt.id, value_scalar=1.0)
-    await _seed_measurement(db_session, ds.id, pt.id, value_scalar=2.0)
+    await _seed_measurement(db_session, ds.id, pt.id, value_scalar=1.0, method="m0")
+    await _seed_measurement(db_session, ds.id, pt.id, value_scalar=2.0, method="m1")
 
     response = await async_client.get("/api/v1/properties/stats")
     assert response.status_code == 200

@@ -552,17 +552,22 @@ class TestRelationships:
         db_session.add(dataset)
         await db_session.flush()
 
+        # Distinct methods: NFM-2032's uq_pm_dedup makes
+        # (dataset_id, property_type_id, conditions_hash, method) unique, so
+        # two rows differing only in value_scalar are duplicates by design.
         db_session.add_all(
             [
                 PropertyMeasurement(
                     dataset_id=dataset.id,
                     property_type_id=pt.id,
                     value_scalar=3.5,
+                    method="m0",
                 ),
                 PropertyMeasurement(
                     dataset_id=dataset.id,
                     property_type_id=pt.id,
                     value_scalar=4.0,
+                    method="m1",
                 ),
             ]
         )

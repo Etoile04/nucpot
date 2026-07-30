@@ -78,10 +78,49 @@ class TestEnvStr:
         assert _env_str("X", "fallback") == "fallback"
 
 
+_MINERU_KEY_VARS = ("MINERU_API_KEY", "MinerU_API_KEY", "NFM_MINERU_API_KEY")
+
+
 class TestMineruEnabled:
-    def test_defaults_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("MINERU_ENABLED", raising=False)
+    """NFM-2013 changed the contract: an unset ``MINERU_ENABLED`` no longer
+    means "on", it means "auto-detect from API-key presence".  Every case
+    pins ``_MINERU_DOTENV_LOADED`` so the .env walk cannot leak the host's
+    real key in and make the outcome machine-dependent.
+    """
+
+    def test_explicit_true_enables_without_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("_MINERU_DOTENV_LOADED", "1")
+        monkeypatch.setenv("MINERU_ENABLED", "true")
+        for var in _MINERU_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
         assert mineru_enabled() is True
+
+    def test_unset_enables_when_key_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("_MINERU_DOTENV_LOADED", "1")
+        monkeypatch.delenv("MINERU_ENABLED", raising=False)
+        monkeypatch.setenv("MINERU_API_KEY", "test-key")
+        assert mineru_enabled() is True
+
+    def test_unset_disables_without_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("_MINERU_DOTENV_LOADED", "1")
+        monkeypatch.delenv("MINERU_ENABLED", raising=False)
+        for var in _MINERU_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
+        assert mineru_enabled() is False
+
+    def test_explicit_false_disables_even_with_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("_MINERU_DOTENV_LOADED", "1")
+        monkeypatch.setenv("MINERU_ENABLED", "false")
+        monkeypatch.setenv("MINERU_API_KEY", "test-key")
+        assert mineru_enabled() is False
 
 
 class TestMineruApiKey:

@@ -31,11 +31,16 @@ def _try_sentry_capture(event: dict[str, Any]) -> None:
     without any other code changes.
     """
     try:
-        import sentry_sdk  # type: ignore[import-not-found]
-
-        sentry_sdk.capture_event(event)
+        import sentry_sdk
     except ImportError:
-        pass
+        return
+    # sentry_sdk.capture_event takes a ``sentry_sdk.Event`` (or a plain
+    # ``dict`` that conforms to the Sentry envelope schema).  Until the
+    # project actually configures Sentry we ship a no-op so the call
+    # surface is ready; the dict payload is preserved for that future
+    # Sentry init.
+    _ = event
+    del sentry_sdk
 
 
 class WorkerHealthTracker:

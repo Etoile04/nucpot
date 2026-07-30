@@ -34,6 +34,7 @@ from nfm_db.models import (
     PropertyMeasurement,
     PropertyType,
 )
+from nfm_db.models.property import EMPTY_CONDITIONS_HASH
 from nfm_db.schemas.extraction import ExtractedProperty
 
 logger = logging.getLogger(__name__)
@@ -157,7 +158,7 @@ def _conditions_hash(conditions: dict[str, Any] | None) -> str:
     sufficient for dedup keys and avoids known MD5 collision classes.
     """
     if not conditions:
-        return hashlib.sha1(b"{}").hexdigest()
+        return EMPTY_CONDITIONS_HASH
     serialised = json.dumps(conditions, sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(serialised.encode("utf-8")).hexdigest()
 

@@ -7,21 +7,34 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_health_check_returns_ok(async_client) -> None:
-    """GET /health should return {"status": "ok"}."""
-    response = await async_client.get("/api/v1/health")
-    assert response.status_code == 200
-    body = response.json()
-    assert body == {"status": "ok"}
+    """GET /health should report status ok and a clean worker counter."""
+    from monitoring.worker_health import worker_health
+
+    worker_health.reset()
+    try:
+        response = await async_client.get("/api/v1/health")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["consecutive_failures"] == 0
+    finally:
+        worker_health.reset()
 
 
 @pytest.mark.asyncio
 async def test_health_check_response_body_keys(async_client) -> None:
-    """Response should contain exactly one key: status."""
+    """Response is the worker-health snapshot (NFM-2014)."""
     response = await async_client.get("/api/v1/health")
     assert response.status_code == 200
     body = response.json()
-    assert set(body.keys()) == {"status"}
+    assert set(body.keys()) == {
+        "status",
+        "consecutive_failures",
+        "last_success_at",
+        "last_error",
+    }
     assert isinstance(body["status"], str)
+    assert isinstance(body["consecutive_failures"], int)
 
 
 @pytest.mark.asyncio

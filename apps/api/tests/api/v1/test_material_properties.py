@@ -213,8 +213,10 @@ async def test_list_material_properties_isolates_by_material(async_client, db_se
     ds_a = await _seed_dataset(db_session, mat_a.id, src.id)
     ds_b = await _seed_dataset(db_session, mat_b.id, src.id)
     await _seed_measurement(db_session, ds_a.id, pt.id, value_scalar=1.0)
-    await _seed_measurement(db_session, ds_b.id, pt.id, value_scalar=2.0)
-    await _seed_measurement(db_session, ds_b.id, pt.id, value_scalar=3.0)
+    # ds_b's two rows need distinct methods: NFM-2032's uq_pm_dedup makes
+    # (dataset_id, property_type_id, conditions_hash, method) unique.
+    await _seed_measurement(db_session, ds_b.id, pt.id, value_scalar=2.0, method="m0")
+    await _seed_measurement(db_session, ds_b.id, pt.id, value_scalar=3.0, method="m1")
 
     response = await async_client.get(API.format(material_id=mat_a.id))
 
@@ -238,7 +240,9 @@ async def test_list_material_properties_pagination(async_client, db_session) -> 
     pt = await _seed_property_type(db_session, cat.id)
     ds = await _seed_dataset(db_session, mat.id, src.id)
     for i in range(5):
-        await _seed_measurement(db_session, ds.id, pt.id, value_scalar=float(i))
+        await _seed_measurement(
+            db_session, ds.id, pt.id, value_scalar=float(i), method=f"m{i}"
+        )
 
     page_1 = await async_client.get(API.format(material_id=mat.id) + "?page=1&limit=2")
     page_2 = await async_client.get(API.format(material_id=mat.id) + "?page=2&limit=2")

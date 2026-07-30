@@ -33,7 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.models import (
     ExtractionJob,
     PropertyCategory,
-    PropertyMeasurement,
     PropertyType,
     User,
 )
