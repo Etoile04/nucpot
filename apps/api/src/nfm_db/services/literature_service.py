@@ -68,6 +68,29 @@ def _get_storage() -> StorageBackend:
     return get_storage()
 
 
+def _run_async(coro: Any) -> Any:
+    """Run an async coroutine from a sync context safely.
+
+    Celery prefork workers may already have an event loop running.
+    ``asyncio.run()`` raises ``RuntimeError: asyncio.run() cannot be
+    called from a running event loop`` in that case.  This helper runs
+    the coroutine in a fresh thread with its own event loop, avoiding
+    the conflict.
+    """
+    import asyncio as _aio
+    import concurrent.futures as _cf
+
+    try:
+        # Fast path: no running loop → asyncio.run is safe.
+        _aio.get_running_loop()
+        # If we reach here, a loop IS running → use a worker thread.
+        with _cf.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_aio.run, coro).result()
+    except RuntimeError:
+        # No running loop → safe to use asyncio.run directly.
+        return _aio.run(coro)
+
+
 # ---------------------------------------------------------------------------
 # PDF → Markdown (PyMuPDF)
 # ---------------------------------------------------------------------------
@@ -113,7 +136,7 @@ def _parse_pdf_to_markdown(
                 )
                 zip_bytes_for_assets: bytes | None = None
                 if ds_id is not None and storage is not None:
-                    result = asyncio.run(
+                    result = _run_async(
                         client.parse_pdf(
                             pdf_bytes, filename="upload.pdf", return_zip=True
                         )
