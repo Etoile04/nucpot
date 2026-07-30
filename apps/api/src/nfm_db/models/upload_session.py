@@ -14,16 +14,12 @@ from sqlalchemy import BigInteger, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
-from nfm_db.models.classification_level import classification_check_constraint
 
 
 class UploadSession(TimestampMixin, Base):
     """A chunked file upload session owned by a single resource node."""
 
     __tablename__ = "upload_sessions"
-    __table_args__ = (
-        classification_check_constraint(),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),

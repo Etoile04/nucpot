@@ -238,11 +238,15 @@ class TestDataDnaCreation:
 
     @pytest.mark.asyncio
     async def test_create_minimal(self, db_session: AsyncSession) -> None:
+        cl = ClassificationLevel(label="非密")
+        db_session.add(cl)
+        await db_session.flush()
         dna = DataDna(
             record_type="material",
             record_id=uuid.uuid4(),
             dna_uuid=uuid.uuid4(),
             sha256_hash="a" * 64,
+            classification_level=cl.id,
         )
         db_session.add(dna)
         await db_session.commit()
@@ -253,12 +257,16 @@ class TestDataDnaCreation:
 
     @pytest.mark.asyncio
     async def test_create_with_sm3(self, db_session: AsyncSession) -> None:
+        cl = ClassificationLevel(label="内部")
+        db_session.add(cl)
+        await db_session.flush()
         dna = DataDna(
             record_type="property",
             record_id=uuid.uuid4(),
             dna_uuid=uuid.uuid4(),
             sha256_hash="a" * 64,
             sm3_hash="b" * 64,
+            classification_level=cl.id,
         )
         db_session.add(dna)
         await db_session.commit()
@@ -270,6 +278,9 @@ class TestDataDnaCreation:
         self,
         db_session: AsyncSession,
     ) -> None:
+        cl = ClassificationLevel(label="秘密")
+        db_session.add(cl)
+        await db_session.flush()
         shared_uuid = uuid.uuid4()
         db_session.add(
             DataDna(
@@ -277,6 +288,7 @@ class TestDataDnaCreation:
                 record_id=uuid.uuid4(),
                 dna_uuid=shared_uuid,
                 sha256_hash="a" * 64,
+                classification_level=cl.id,
             )
         )
         await db_session.commit()
@@ -286,6 +298,7 @@ class TestDataDnaCreation:
                 record_id=uuid.uuid4(),
                 dna_uuid=shared_uuid,
                 sha256_hash="c" * 64,
+                classification_level=cl.id,
             )
         )
         with pytest.raises(IntegrityError):
@@ -342,12 +355,16 @@ class TestUploadSessionCreation:
         )
         db_session.add(node)
         await db_session.flush()
+        cl = ClassificationLevel(label="非密")
+        db_session.add(cl)
+        await db_session.flush()
         session_obj = UploadSession(
             resource_node_id=node.id,
             file_name="data.dat",
             total_size=1000,
             chunk_size=100,
             total_chunks=10,
+            classification_level=cl.id,
         )
         db_session.add(session_obj)
         await db_session.commit()
@@ -563,12 +580,17 @@ class TestTableInspection:
         db_session.add(node)
         await db_session.flush()
 
+        cl = ClassificationLevel(label="非密")
+        db_session.add(cl)
+        await db_session.flush()
+
         session_obj = UploadSession(
             resource_node_id=node.id,
             file_name="data.dat",
             total_size=1024,
             chunk_size=128,
             total_chunks=8,
+            classification_level=cl.id,
         )
         db_session.add(session_obj)
 
@@ -577,11 +599,9 @@ class TestTableInspection:
             record_id=uuid.uuid4(),
             dna_uuid=uuid.uuid4(),
             sha256_hash="a" * 64,
+            classification_level=cl.id,
         )
         db_session.add(dna)
-
-        cl = ClassificationLevel(label="非密")
-        db_session.add(cl)
 
         log = IngestLog(
             resource_node_id=node.id,

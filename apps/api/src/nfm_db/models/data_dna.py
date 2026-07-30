@@ -15,16 +15,12 @@ from sqlalchemy import ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, TimestampMixin
-from nfm_db.models.classification_level import classification_check_constraint
 
 
 class DataDna(TimestampMixin, Base):
     """A data DNA record — fingerprints a single record by UUID + hash."""
 
     __tablename__ = "data_dna"
-    __table_args__ = (
-        classification_check_constraint(),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
