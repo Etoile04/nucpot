@@ -25,6 +25,7 @@ from nfm_db.services.extraction_to_db_mapper import (
     ONTOFUEL_CATEGORY_TO_SLUG,
     MappingError,
     MappingResult,
+    _coerce_unknown_categories,
     _normalize_category_slug,
     map_and_persist,
 )
@@ -348,7 +349,14 @@ class TestMapAndPersistTransaction:
     """Tests for transactional behavior."""
 
     async def test_validation_error_does_not_create_partial_records(self, db_session: AsyncSession):
-        """If any item fails validation, no DB records should be created."""
+        """Validation errors are counted and the count is exposed.
+
+        Per NFM-1984/1985 partial-success design, valid items in a batch with
+        invalid neighbours are still persisted; only the invalid item is
+        dropped. The key invariant this test guards is that the
+        ``validation_errors`` counter is actually threaded into the
+        ``MappingResult`` (was hardcoded to 0 — see NFM-2199).
+        """
         await _seed_property_type(db_session)
 
         inputs = [
@@ -359,10 +367,94 @@ class TestMapAndPersistTransaction:
         result = await map_and_persist(db_session, inputs)
 
         assert result.validation_errors == 1
+        # Partial success (NFM-1984/1985): valid items still persist.
         sources = (await db_session.execute(select(DataSource))).scalars().all()
-        assert len(sources) == 0
+        assert len(sources) == 1
         materials = (await db_session.execute(select(Material))).scalars().all()
-        assert len(materials) == 0
+        assert len(materials) == 1
+        # No measurement is created because the bad item never reached the
+        # measurement-creation loop and the valid item is missing the
+        # required property fields (only the source/material are populated).
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        assert len(measurements) == 0
+
+
+# ---------------------------------------------------------------------------
+# NFM-1984: category literal coercion before Pydantic validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCoerceUnknownCategories:
+    """Unit tests for ``_coerce_unknown_categories``.
+
+    The OntoFuel LLM occasionally returns Chinese or otherwise localized
+    category strings (e.g. ``"比热容"``) instead of the 7 English Literal
+    values. The mapper pre-processes each item so non-Literal strings are
+    coerced to ``"other"`` BEFORE ``ExtractedProperty.model_validate`` runs;
+    the downstream PropertyCategory catalog translates ``"other"`` back to
+    the correct Chinese category at persist time.
+
+    These tests guard the four branches of the helper:
+
+    1. Non-dict input → returned unchanged.
+    2. Dict without ``property_category`` → returned unchanged.
+    3. Dict with a NON-string ``property_category`` → returned unchanged.
+    4. Dict with a non-Literal ``property_category`` → coerced to ``"other"``.
+    5. Dict with a valid Literal ``property_category`` → returned unchanged.
+    """
+
+    def test_non_dict_input_returned_unchanged(self) -> None:
+        """A non-dict raw item must pass through untransformed."""
+        assert _coerce_unknown_categories(None) is None
+        assert _coerce_unknown_categories("string") == "string"
+        assert _coerce_unknown_categories(42) == 42
+        assert _coerce_unknown_categories([1, 2, 3]) == [1, 2, 3]
+
+    def test_dict_without_property_category_returned_unchanged(self) -> None:
+        """Missing property_category is not an error — helper passes through."""
+        raw = {"material_name": "UO2", "value": "8.5", "unit": "W/(m·K)"}
+        result = _coerce_unknown_categories(raw)
+        # Same object identity (no pointless copy) and no property_category added.
+        assert result is raw
+        assert "property_category" not in result
+
+    def test_dict_with_non_string_property_category_returned_unchanged(self) -> None:
+        """None / int property_category is not coerced (out of scope)."""
+        for value in (None, 0, 7, ["thermal"]):
+            raw = {"property_category": value, "value": "1"}
+            assert _coerce_unknown_categories(raw) is raw, (
+                f"non-string category {value!r} should not be coerced"
+            )
+
+    def test_dict_with_chinese_property_category_coerced_to_other(self) -> None:
+        """A Chinese (non-Literal) property_category is coerced to 'other'."""
+        raw = {"property_category": "比热容", "value": "8.5"}
+        result = _coerce_unknown_categories(raw)
+        # Must NOT mutate the input — return a new dict.
+        assert result is not raw
+        assert result["property_category"] == "other"
+        # Sibling fields preserved
+        assert result["value"] == "8.5"
+        # Original untouched.
+        assert raw["property_category"] == "比热容"
+
+    def test_dict_with_unrecognized_english_property_category_coerced_to_other(self) -> None:
+        """A non-Literal English category (e.g., 'thermal-property') is coerced."""
+        raw = {"property_category": "thermal-property"}
+        result = _coerce_unknown_categories(raw)
+        assert result["property_category"] == "other"
+
+    def test_dict_with_valid_literal_property_category_returned_unchanged(self) -> None:
+        """All 7 valid Literal values pass through untransformed."""
+        for valid in (
+            "mechanical", "thermal", "physical",
+            "diffusion", "irradiation", "nuclear", "other",
+        ):
+            raw = {"property_category": valid}
+            assert _coerce_unknown_categories(raw) is raw, (
+                f"valid Literal {valid!r} must not be coerced"
+            )
 
 
 @pytest.mark.unit

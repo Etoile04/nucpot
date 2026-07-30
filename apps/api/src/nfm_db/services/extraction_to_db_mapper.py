@@ -374,7 +374,7 @@ async def map_and_persist(
         )
 
     if not validated:
-        return MappingResult()
+        return MappingResult(validation_errors=validation_error_count)
 
     # --- Phase 2: Group and dedup ---
     # Track created entities by dedup key to avoid duplicate inserts
@@ -578,7 +578,7 @@ async def map_and_persist(
         reused_entities=reused_entities,
         skipped_duplicate_measurements=skipped_duplicate_measurements,
         skipped_unknown_properties=skipped_unknown_properties,
-        validation_errors=0,
+        validation_errors=validation_error_count,
     )
 
 
