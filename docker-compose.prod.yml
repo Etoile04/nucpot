@@ -85,8 +85,8 @@ services:
       # AC #4 — must be visible via ``docker exec nucpot-prod-api env``.
       LLM_PROVIDER: ollama
       LLM_API_KEY: ollama
-      LLM_BASE_URL: http://192.168.3.200:11434/v1
-      LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
+      LLM_BASE_URL: ${PROD_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${PROD_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
       # NFM-1807: httpx does not support wildcards in NO_PROXY.
       # List every Docker-internal hostname the API may call so
       # requests bypass the host proxy and go directly over the
@@ -237,8 +237,8 @@ services:
       # the api service values above.
       LLM_PROVIDER: ollama
       LLM_API_KEY: ollama
-      LLM_BASE_URL: http://192.168.3.200:11434/v1
-      LLM_MODEL: qwen3.6:35b-a3b-coding-nvfp4
+      LLM_BASE_URL: ${PROD_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${PROD_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
       # NFM-MINERU-1: MinerU env must mirror the api service — the worker
       # runs ``process_literature_task`` which calls parse_pdf_to_markdown.
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
