@@ -18,9 +18,13 @@ from pathlib import Path
 import pytest
 
 from scripts.okr.coverage_kr3 import (
+    ENVIRONMENTS,
     KR3_TARGET,
+    _default_prod_path,
+    _resolve_prod_path,
     build_report,
     compute_value,
+    filter_environment,
     filter_window,
     load_events,
     main,
@@ -160,11 +164,56 @@ class TestFilterWindow:
 
 
 # ---------------------------------------------------------------------------
+# filter_environment (C6.1.4)
+# ---------------------------------------------------------------------------
+
+class TestFilterEnvironment:
+    """The prod collector (C6.1.2) appends into the same JSONL as the staging
+    writer, so from C6.1 onward the file is a mixed stream. Without this
+    filter the KR conflates both environments and the v1 staging baseline
+    silently shifts.
+    """
+
+    def test_environments_are_exactly_all_staging_and_production(self) -> None:
+        # ADR-KR3-A2 §Consequences: ``all`` is the default to preserve the
+        # v1 baseline (read the whole JSONL); ``staging`` and ``production``
+        # are the explicit single-series filters.
+        assert ENVIRONMENTS == ("all", "staging", "production")
+
+    def test_keeps_only_the_named_environment(self) -> None:
+        events = [
+            event(environment="staging"),
+            event(environment="production"),
+            event(environment="staging"),
+        ]
+        assert len(filter_environment(events, "staging")) == 2
+        assert len(filter_environment(events, "production")) == 1
+
+    def test_match_is_exact_not_prefix(self) -> None:
+        assert filter_environment([event(environment="staging-canary")], "staging") == []
+
+    def test_drops_events_with_a_missing_environment_field(self) -> None:
+        """A schema-incomplete row cannot be attributed to a stream, so it must
+        not be silently counted into the default one."""
+        no_env = {k: v for k, v in event().items() if k != "environment"}
+        assert filter_environment([no_env], "staging") == []
+
+    def test_does_not_mutate_input(self) -> None:
+        events = [event(environment="staging"), event(environment="production")]
+        before = json.dumps(events)
+        filter_environment(events, "staging")
+        assert json.dumps(events) == before
+
+
+# ---------------------------------------------------------------------------
 # build_report
 # ---------------------------------------------------------------------------
 
 class TestBuildReport:
     def test_shape_is_exactly_the_five_spec_keys(self, tmp_path: Path) -> None:
+        # The C6.1 contract adds an ``environment`` key to the report so
+        # downstream consumers know which series the metric is computed
+        # for. The original five keys are still present.
         path = write_jsonl(tmp_path / "e.jsonl", [event()])
         assert set(build_report(path, None, None)) == {
             "value",
@@ -172,6 +221,7 @@ class TestBuildReport:
             "n",
             "computed_at",
             "source_window",
+            "environment",
         }
 
     def test_target_is_the_kr3_threshold(self, tmp_path: Path) -> None:
@@ -211,6 +261,165 @@ class TestBuildReport:
         assert report["n"] == 1
         assert report["value"] == 1.0
 
+    def test_environment_default_is_all_not_a_single_series(self, tmp_path: Path) -> None:
+        """ADR-KR3-A2 §Consequences: the default filter is 'all', so a caller
+        that says nothing gets the whole JSONL — staging + production —
+        which preserves the v1 baseline (today's JSONL only has staging, so
+        the result is identical to the v1 behaviour, but the issue is
+        reserved explicitly going forward)."""
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [event(environment="staging"), event(environment="production")],
+        )
+        report = build_report(path, None, None)
+        assert report["n"] == 2
+        assert report["environment"] == "all"
+
+    def test_environment_is_added_to_the_report_shape(self, tmp_path: Path) -> None:
+        """C6.1.4: the report tells the consumer which series the metric is
+        for, so an explicit ``--environment`` value is echoed in the payload.
+        The pre-change spec forbade the key; the new spec requires it."""
+        report = build_report(tmp_path / "absent.jsonl", None, None, environment="production")
+        assert report["environment"] == "production"
+
+    def test_n_reflects_the_filtered_count_not_the_file_total(self, tmp_path: Path) -> None:
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [event(environment="staging")] * 3 + [event(environment="production")] * 2,
+        )
+        assert build_report(path, None, None, environment="staging")["n"] == 3
+        assert build_report(path, None, None, environment="production")["n"] == 2
+
+    def test_each_environment_gets_its_own_value(self, tmp_path: Path) -> None:
+        """Both streams in one file must not contaminate each other's rate."""
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [
+                event(environment="staging"),
+                event(environment="staging", first_pass_success=False),
+                event(environment="production"),
+                event(environment="production"),
+            ],
+        )
+        assert build_report(path, None, None, environment="staging")["value"] == 0.5
+        assert build_report(path, None, None, environment="production")["value"] == 1.0
+
+    def test_environment_filter_composes_with_the_date_window(self, tmp_path: Path) -> None:
+        path = write_jsonl(
+            tmp_path / "e.jsonl",
+            [
+                event(environment="staging", ts="2026-01-01T00:00:00Z"),
+                event(environment="staging", ts="2026-07-20T00:00:00Z"),
+                event(environment="production", ts="2026-07-20T00:00:00Z"),
+            ],
+        )
+        report = build_report(path, "2026-07-01", None, environment="staging")
+        assert report["n"] == 1
+
+    def test_prod_only_file_reports_null_for_staging(self, tmp_path: Path) -> None:
+        """Filtering to an absent stream is 'no data', not a fabricated 1.0."""
+        path = write_jsonl(tmp_path / "e.jsonl", [event(environment="production")])
+        report = build_report(path, None, None, environment="staging")
+        assert report["value"] is None
+        assert report["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _resolve_prod_path / _default_prod_path (ADR-KR3 §C6.3.2)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveProdPathFallback:
+    """ADR-KR3 §C6.3.2 — the prod path fallback must not name a user.
+
+    The C6.3.2 invariant is that the fallback must use runtime expansion
+    (``Path.home()``), not a hardcoded literal like
+    ``/Users/lwj04/.nfmd/master-deploy-events.jsonl``. The check below
+    monkeypatches ``Path.home()`` to a synthetic path whose own string
+    contains no operator username — if the module had a hardcoded
+    literal anywhere, it would survive the monkeypatch and trip the
+    assertion. (We cannot use ``tmp_path`` here because pytest's
+    ``tmp_path`` itself embeds the host's username.)
+    """
+
+    _SYNTHETIC_HOME = Path("/opt/synthetic/nfmd-home")
+
+    def test_fallback_contains_no_lwj04_literal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
+
+        resolved = _resolve_prod_path(None)
+        assert "lwj04" not in str(resolved), (
+            f"prod-path fallback {resolved!r} contains 'lwj04' — must use "
+            "runtime Path.home() expansion, not a hardcoded username "
+            "literal (ADR-KR3 §C6.3.2)"
+        )
+
+    def test_default_prod_path_contains_no_lwj04_literal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+
+        assert "lwj04" not in str(_default_prod_path())
+
+    def test_fallback_contains_no_hardcoded_user_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The literal ``/Users/<name>`` and ``/home/<name>`` forms must
+        never appear in the resolved fallback. Catches both the macOS
+        and Linux conventions."""
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
+
+        resolved_str = str(_resolve_prod_path(None))
+        import re as _re
+        offenders = _re.findall(r"(?:/Users/|/home/)[A-Za-z0-9._-]+/", resolved_str)
+        assert not offenders, (
+            f"prod-path fallback {resolved_str!r} contains a hardcoded "
+            "user-path literal — ADR-KR3 §C6.3.2 forbids this in committed code"
+        )
+
+    def test_fallback_resolves_under_dot_nfmd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_home = tmp_path / "synthetic-home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+        monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
+
+        expected = fake_home / ".nfmd" / "master-deploy-events.jsonl"
+        assert _resolve_prod_path(None) == expected
+        assert _default_prod_path() == expected
+
+    def test_env_var_wins_over_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/opt/custom-prod.jsonl")
+
+        # Env var wins; the synthetic-home / fallback is never reached.
+        assert _resolve_prod_path(None) == Path("/opt/custom-prod.jsonl")
+
+    def test_explicit_arg_wins_over_env_var(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
+        )
+        monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/opt/env-prod.jsonl")
+
+        assert _resolve_prod_path("/opt/arg-prod.jsonl") == Path("/opt/arg-prod.jsonl")
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -239,3 +448,82 @@ class TestMain:
     def test_rejects_malformed_since(self) -> None:
         with pytest.raises(SystemExit):
             main(["--since", "20-07-2026"])
+
+
+# ---------------------------------------------------------------------------
+# CLI --environment (C6.1.4)
+# ---------------------------------------------------------------------------
+
+def mixed_jsonl(tmp_path: Path) -> Path:
+    """3 staging + 2 production rows — the C6.1 mixed-stream shape."""
+    return write_jsonl(
+        tmp_path / "mixed.jsonl",
+        [event(environment="staging")] * 3 + [event(environment="production")] * 2,
+    )
+
+
+class TestMainEnvironment:
+    def test_staging_selects_three_of_five(self, tmp_path: Path, capsys) -> None:
+        path = mixed_jsonl(tmp_path)
+        assert main(["--path", str(path), "--environment", "staging"]) == 0
+        assert json.loads(capsys.readouterr().out)["n"] == 3
+
+    def test_production_selects_two_of_five(self, tmp_path: Path, capsys) -> None:
+        path = mixed_jsonl(tmp_path)
+        assert main(["--path", str(path), "--environment", "production"]) == 0
+        assert json.loads(capsys.readouterr().out)["n"] == 2
+
+    def test_omitting_the_flag_is_all_not_explicit_staging(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """The v1 baseline regression guard, updated for the C6.1 contract.
+        Default is ``all`` (whole JSONL); explicit ``--environment staging``
+        filters to one series. The two outputs differ in ``n`` — that's the
+        discriminator, not a regression."""
+        path = mixed_jsonl(tmp_path)
+
+        assert main(["--path", str(path)]) == 0
+        default_out = json.loads(capsys.readouterr().out)
+        assert main(["--path", str(path), "--environment", "staging"]) == 0
+        explicit_out = json.loads(capsys.readouterr().out)
+
+        assert default_out["environment"] == "all"
+        assert explicit_out["environment"] == "staging"
+        # Default reads the whole mixed JSONL; explicit staging only
+        # reads the staging half.
+        assert default_out["n"] == 5
+        assert explicit_out["n"] == 3
+
+    def test_report_keys_are_unchanged_by_the_new_flag(self, tmp_path: Path, capsys) -> None:
+        """Acceptance: ``value``/``n``/``computed_at``/``environment`` shape
+        must not drift. The new ``environment`` key is the only addition
+        to the v1 spec."""
+        assert main(["--path", str(mixed_jsonl(tmp_path)), "--environment", "production"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert set(payload) == {
+            "value",
+            "target",
+            "n",
+            "computed_at",
+            "source_window",
+            "environment",
+        }
+
+    def test_rejects_an_unknown_environment(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit) as exc:
+            main(["--path", str(mixed_jsonl(tmp_path)), "--environment", "dev"])
+        assert exc.value.code != 0
+        assert "dev" in capsys.readouterr().err
+
+    def test_rejects_an_empty_environment(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exc:
+            main(["--path", str(mixed_jsonl(tmp_path)), "--environment", ""])
+        assert exc.value.code != 0
+
+    def test_help_documents_the_flag(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc:
+            main(["--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "--environment" in out
+        assert "staging" in out and "production" in out
