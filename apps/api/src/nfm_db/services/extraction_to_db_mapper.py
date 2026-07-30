@@ -315,12 +315,32 @@ async def map_and_persist(
     for idx, raw in enumerate(extraction_output):
         try:
             validated.append(ExtractedProperty.model_validate(raw))
-        except ValidationError:
-            logger.warning("Validation failed for extraction item %d", idx)
+        except ValidationError as exc:
+            # Log full validation details so silent schema drift is debuggable
+            # (was previously only a count — NFM-1984/1985 lesson).
+            logger.warning(
+                "Validation failed for extraction item %d: %s",
+                idx,
+                exc.json(include_url=False)[:500],
+            )
+            logger.debug(
+                "Validation failed item %d raw payload: %s",
+                idx,
+                json.dumps(raw, default=str)[:500],
+            )
             validation_error_count += 1
 
+        # Partial-success: keep validating the rest even when one fails.
+        # Previously a single ValidationError caused the entire literature's
+        # batch to be discarded — fixed per NFM-1984/1985 silent failure.
+        # Items that DO validate still get persisted below.
+
     if validation_error_count > 0:
-        return MappingResult(validation_errors=validation_error_count)
+        logger.warning(
+            "Extraction batch had %d/%d validation failures — partial persistence",
+            validation_error_count,
+            len(extraction_output),
+        )
 
     if not validated:
         return MappingResult()
