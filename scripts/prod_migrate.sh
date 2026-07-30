@@ -4,17 +4,28 @@
 # NFM-2146 / ADR-NFM-2139 §5 D3: deploy-time alembic migration, decoupled
 # from container boot. Runs BEFORE `docker compose up -d` so a bad migration
 # fails the deploy (alertable, retryable) instead of the boot path (502 until
-# manual fix). Guards the DB with a Postgres advisory lock so concurrent
-# migrators (cron jobs, manual ssh, parallel CI runs) cannot race.
+# manual fix).
 #
 # Failure-mode shift: failed boot → failed deploy.
+#
+# The deploy lock is now acquired by env.py on the migration's own async
+# connection (apps/api/migrations/env.py: ``run_async_migrations``), so
+# concurrent migrators (cron jobs, manual ssh, parallel CI runs) cannot
+# race into ``alembic upgrade head`` against the same database. The
+# pre-fix (NFM-2196) shell-level acquire in a transient ``psql -tAc``
+# session released the session-level lock before alembic started, so
+# the lock provided zero mutual exclusion. The lock now lives on the
+# connection that runs the migration, and is auto-released on
+# disconnect (NullPool dispose) even if the process is killed.
 #
 # Usage (called from .github/workflows/production-deployment.yml deploy step):
 #   ./scripts/prod_migrate.sh
 #
 # Environment overrides:
-#   NFMD_DEPLOY_LOCK_KEY       Postgres advisory-lock key (default 7423912)
-#   NFMD_DEPLOY_LOCK_TIMEOUT   Seconds to wait for the lock (default 60)
+#   NFMD_DEPLOY_LOCK_KEY       Postgres advisory-lock key (default 7423912).
+#                              env.py looks this up from the same env var so
+#                              the shell does NOT need to acquire the lock
+#                              itself — see apps/api/migrations/env.py.
 #   NFMD_COMPOSE_FILE          Path to the prod compose file
 #   NFMD_ENV_FILE              Path to the prod env file
 #
@@ -23,19 +34,24 @@
 # =============================================================================
 set -euo pipefail
 
-LOCK_KEY="${NFMD_DEPLOY_LOCK_KEY:-7423912}"
-LOCK_TIMEOUT="${NFMD_DEPLOY_LOCK_TIMEOUT:-60}"
 COMPOSE_FILE="${NFMD_COMPOSE_FILE:-docker-compose.prod.yml}"
 ENV_FILE="${NFMD_ENV_FILE:-docker/.env.prod}"
 
 DB_USER="${PROD_POSTGRES_USER:-nfm}"
 DB_NAME="${PROD_POSTGRES_DB:-nfm_db}"
 IMAGE_TAG="${PROD_IMAGE_TAG:-latest}"
+NFMD_DEPLOY_LOCK_KEY="${NFMD_DEPLOY_LOCK_KEY:-7423912}"
 
 log() { printf '[prod_migrate] %s\n' "$*"; }
 
+# NFM-2146 D3 / NFM-2196: the deploy lock is acquired by env.py on the
+# migration's own connection, so a concurrent migrator blocks at the SQL
+# level until the first connection closes. There is no shell-level acquire
+# loop and no ``pg_advisory_unlock`` cleanup here — both were the bugs the
+# NFM-2196 code review closed.
+
 # ---- Step 1: ensure db is reachable (and start it if it isn't running) ----
-# This guarantees the lock + alembic step has a healthy target. `compose up -d
+# This guarantees the migration step has a healthy target. `compose up -d
 # db` is idempotent and respects depends_on inside the compose project.
 log "Bringing nucpot-prod-db up (idempotent)"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d db >/dev/null
@@ -51,49 +67,16 @@ while ! docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
   sleep 2
 done
 
-# ---- Step 2: acquire Postgres advisory lock ----
-# `pg_try_advisory_lock` returns immediately; loop until acquired or timeout.
-# The lock is held by the db-container session that runs the SELECT and is
-# released when that session ends OR when we explicitly pg_advisory_unlock().
-log "Acquiring advisory lock ${LOCK_KEY} (timeout=${LOCK_TIMEOUT}s)"
-deadline=$(( $(date +%s) + LOCK_TIMEOUT ))
-LOCK_HELD="false"
-while true; do
-  acquired=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
-    exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tAc \
-    "SELECT pg_try_advisory_lock(${LOCK_KEY});" 2>/dev/null | tr -d '[:space:]' || echo "f")
-  if [ "$acquired" = "t" ]; then
-    LOCK_HELD="true"
-    break
-  fi
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    log "ERROR: could not acquire deploy lock ${LOCK_KEY} within ${LOCK_TIMEOUT}s — another migrator is running"
-    exit 1
-  fi
-  sleep 1
-done
-log "Lock acquired"
-
-# Release on ANY exit path (success, alembic failure, signal).
-cleanup() {
-  local exit_code=$?
-  if [ "$LOCK_HELD" = "true" ]; then
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
-      exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tAc \
-      "SELECT pg_advisory_unlock(${LOCK_KEY});" >/dev/null 2>&1 || true
-    log "Lock released"
-  fi
-  exit "$exit_code"
-}
-trap cleanup EXIT INT TERM
-
-# ---- Step 3: run alembic upgrade head inside an ephemeral api container ----
+# ---- Step 2: run alembic upgrade head inside an ephemeral api container ----
 # `compose run --rm` removes the container on exit. `--no-deps` skips the
 # depends_on chain (we don't want to wait for the API's "healthy" gate —
 # we only need the db, which we already confirmed above).
 # `--entrypoint alembic` overrides the api image's CMD (now uvicorn-only per
 # NFM-2146) so the container runs the migrator instead of the API server.
-log "Running alembic upgrade head via nucpot-prod-api:${IMAGE_TAG}"
+# env.py (apps/api/migrations/env.py) takes ``pg_advisory_lock`` on the
+# connection that runs the migration, so concurrent migrators serialize at
+# the SQL level.
+log "Running alembic upgrade head via nucpot-prod-api:${IMAGE_TAG} (deploy lock key=${NFMD_DEPLOY_LOCK_KEY})"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
   run --rm -T --no-deps \
   --entrypoint alembic api upgrade head
