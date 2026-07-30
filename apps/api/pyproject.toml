@@ -340,6 +340,23 @@ markers = [
     "performance: Performance benchmark tests",
 ]
 
+# NFM-2185: Omit ML training-time scripts from coverage measurement. These
+# files are offline training-pipeline utilities (CSV/parquet I/O, model
+# retraining, cross-validation folds) — they are NOT reached by any
+# production API route (verified by grep against apps/api/src/nfm_db/api/*).
+# The remaining ML modules (prediction_service, feature_engineering,
+# cluster_model, dft_import, ml_surrogate, energy_features_v11) stay in
+# scope because they ARE runtime-reachable from /api/v1/{prediction,dft,
+# design}. The omitted scripts are run manually during model retraining
+# (NFM-1674, NFM-1756, NFM-1678) and have no unit-test surface in CI.
+[tool.coverage.run]
+omit = [
+    "src/nfm_db/ml/compute_incremental_features.py",
+    "src/nfm_db/ml/group_kfold_cv.py",
+    "src/nfm_db/ml/merge_training_set.py",
+    "src/nfm_db/ml/data_pipeline.py",
+]
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"

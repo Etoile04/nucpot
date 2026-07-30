@@ -106,11 +106,43 @@ class TestMigrationChain:
         Migration 036_merge_chain_A_and_B (commit 9df2f3f) merged chain A
         (032_create_data_submission_tables) with chain B (035_multimodal),
         making 036 the new head. We verify 035 is still reachable in the
-        revision graph instead of asserting it is the head.
+        revision graph instead of asserting it is the head. AC-1 still
+        holds (the existing ``test_down_revision_is_034`` pins the
+        034→035 edge).
         """
-        head = script_directory.get_current_head()
-        assert head == "036_merge_chain_A_and_B", (
-            f"Expected head='036_merge_chain_A_and_B', got {head!r}"
+        # Walk back from every current head via down_revision to collect
+        # the set of ancestors. The migration graph is a DAG; 035 must
+        # appear in the set of ancestors of every current head. This
+        # generalises the head-equality check that the original
+        # test_head_is_035 used and that 036's merge invalidated.
+        heads = script_directory.get_heads()
+        assert heads, "No heads found in migration graph"
+        reachable: set[str] = set()
+        stack: list[str] = list(heads)
+        while stack:
+            rev_id = stack.pop()
+            if rev_id in reachable:
+                continue
+            reachable.add(rev_id)
+            rev = script_directory.get_revision(rev_id)
+            assert rev is not None, f"Revision {rev_id!r} not registered"
+            if rev.down_revision is None:
+                continue
+            if isinstance(rev.down_revision, str):
+                stack.append(rev.down_revision)
+            else:
+                stack.extend(rev.down_revision)
+        assert REVISION in reachable, (
+            f"Expected {REVISION!r} to be reachable from current head(s) "
+            f"{sorted(heads)!r}; migration may have been removed from the chain"
+        )
+        # The graph must be a single head (no fork) — a multi-head graph
+        # is the symptom of the NFM-2156 crash-loop and must be caught
+        # even when 035 is otherwise reachable.
+        assert len(heads) == 1, (
+            f"Expected exactly one migration head, got {sorted(heads)!r}. "
+            f"Multi-head graphs crash alembic upgrade head — add a merge "
+            f"migration to consolidate."
         )
         # 035 must still be a known revision in the chain
         rev = script_directory.get_revision(REVISION)
