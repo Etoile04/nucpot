@@ -348,7 +348,12 @@ class TestMapAndPersistTransaction:
     """Tests for transactional behavior."""
 
     async def test_validation_error_does_not_create_partial_records(self, db_session: AsyncSession):
-        """If any item fails validation, no DB records should be created."""
+        """Validation errors are counted; valid items still persist (partial persistence).
+
+        Per NFM-1984/1985: a single ValidationError no longer discards the
+        entire batch. Items that pass validation are persisted; items that
+        fail are counted in ``validation_errors`` and skipped.
+        """
         await _seed_property_type(db_session)
 
         inputs = [
@@ -359,10 +364,10 @@ class TestMapAndPersistTransaction:
         result = await map_and_persist(db_session, inputs)
 
         assert result.validation_errors == 1
-        sources = (await db_session.execute(select(DataSource))).scalars().all()
-        assert len(sources) == 0
-        materials = (await db_session.execute(select(Material))).scalars().all()
-        assert len(materials) == 0
+        # The valid item's source/material/dataset ARE persisted (partial
+        # persistence, NFM-1984/1985), even though the measurement may be
+        # skipped if the property type doesn't match the catalog.
+        assert result.created_sources == 1
 
 
 @pytest.mark.unit
