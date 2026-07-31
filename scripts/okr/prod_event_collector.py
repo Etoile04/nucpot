@@ -28,7 +28,7 @@ CLI usage:
         --sync-state ~/.nfmd/prod-event-sync-state.json \
         --master-jsonl ~/.nfmd/master-deploy-events.jsonl \
         --repo Etoile04/nucpot \
-        --ssh-target lwj04@127.0.0.1
+        --ssh-target deployer@prod-host.example.com
 
 Required environment:
     GH_TOKEN              repo-scope PAT or workflow token.
@@ -578,29 +578,24 @@ def _save_state(path: Path, state: SyncState) -> None:
 # without embedding a literal username in committed code. ``Path.home()``
 # is called lazily so tests can monkeypatch it.
 
-def _default_ssh_user() -> str:
-    """Runtime-expanded fallback for the SSH username (ADR-KR3 §C6.3.3)."""
-    return os.environ.get("NFMD_PROD_EVENTS_SSH_USER", Path.home().name)
-
-
-def _default_ssh_host() -> str:
-    """Runtime-expanded fallback for the SSH host."""
-    return os.environ.get("NFMD_PROD_EVENTS_SSH_HOST", "127.0.0.1")
-
-
 def _resolve_ssh_target(cli_value: str | None) -> str:
-    """Resolve the SSH target: CLI arg → env vars → runtime fallback.
+    """Resolve the SSH target: CLI arg → ``NFMD_PROD_SSH_TARGET`` env.
 
-    Composes ``user@host`` from
-    ``NFMD_PROD_EVENTS_SSH_USER``/``NFMD_PROD_EVENTS_SSH_HOST`` (each
-    falling back to ``Path.home().name`` / ``127.0.0.1``).  No
-    developer-specific username literal is embedded in committed code.
+    Raises:
+        SystemExit: if neither ``cli_value`` nor ``NFMD_PROD_SSH_TARGET``
+            is provided.
     """
     if cli_value is not None:
         return cli_value
-    user = _default_ssh_user()
-    host = _default_ssh_host()
-    return f"{user}@{host}"
+    env_value = os.environ.get("NFMD_PROD_SSH_TARGET")
+    if env_value:
+        return env_value
+    print(
+        "error: --ssh-target is required.  Set it via the CLI flag or "
+        "the NFMD_PROD_SSH_TARGET environment variable.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _default_sync_state_path() -> Path:
@@ -654,10 +649,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default="Etoile04/nucpot")
     parser.add_argument(
         "--ssh-target", default=None,
-        help="SSH target as user@host. Defaults to "
-        "$NFMD_PROD_EVENTS_SSH_USER@$NFMD_PROD_EVENTS_SSH_HOST, "
-        "falling back to <current-user>@127.0.0.1 (runtime-expanded; "
-        "no literal username embedded — ADR-KR3 §C6.3.3).",
+        help="SSH target as user@host (required). Set via this flag or "
+        "the NFMD_PROD_SSH_TARGET environment variable.",
     )
     parser.add_argument(
         "--dry-run",
