@@ -378,10 +378,33 @@ export interface LiteratureFigure {
   readonly confidence?: number
 }
 
+/** Origin discriminator for extraction result items (mirrors backend ExtractionSourceType). */
+export type LiteratureExtractionSourceType = "manual" | "kg_node" | "kg_edge"
+
+/** One extraction result row with source-type discriminator. */
+export interface LiteratureExtractionResultItem {
+  readonly id: string
+  readonly source_type: LiteratureExtractionSourceType
+  readonly property_name: string
+  readonly item_type: string
+  readonly item_data?: Record<string, unknown>
+  readonly value?: unknown
+  readonly confidence?: number | null
+  readonly created_at?: string | null
+  readonly review_status?: string | null
+  readonly unit?: string | null
+  readonly source_page?: number | null
+  readonly source_paragraph?: string | null
+  readonly source_node_id?: string | null
+  readonly source_target_id?: string | null
+  /** NFM-2247: how this item was produced (e.g. ["llm"], ["manual"], ["llm","manual"]). */
+  readonly provenance?: readonly string[]
+}
+
 export interface LiteratureDetail extends LiteratureListItem {
   readonly content_md?: string | null
   readonly figures?: readonly LiteratureFigure[]
-  readonly extraction_results?: readonly Record<string, unknown>[]
+  readonly extraction_results?: readonly LiteratureExtractionResultItem[]
   readonly updated_at?: string | null
 }
 
