@@ -44,7 +44,9 @@ jobs:
         run: |
           set -euo pipefail
           BASE_REF="${{ github.event.pull_request.base.ref }}"
-          git fetch --no-tags --depth=1 origin "${BASE_REF}"
+          # Fetch the base ref with full history so merge-base can resolve
+          # the fork point even when the PR head is behind main (NFM-2256).
+          git fetch --no-tags origin "${BASE_REF}"
 
       # Both "Resolve commit range" steps below export the same two variables
       # — RANGE_START (exclusive lower bound, empty means "no lower bound")
