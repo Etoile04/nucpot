@@ -14,6 +14,7 @@ contract.
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -38,7 +39,7 @@ class HealthEvent(Base):
     event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     source_service: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True,
     )

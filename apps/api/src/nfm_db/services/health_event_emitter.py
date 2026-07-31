@@ -63,9 +63,9 @@ import logging
 import threading
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import insert
+from sqlalchemy import Table as SATable, insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from nfm_db.database import async_session_factory
@@ -204,7 +204,7 @@ async def emit_health_event(
     try:
         async with factory() as session:
             await session.execute(
-                insert(HealthEvent.__table__).values(
+                insert(cast(SATable, HealthEvent.__table__)).values(
                     id=uuid.uuid4(),
                     event_type=event_type,
                     severity=severity,
