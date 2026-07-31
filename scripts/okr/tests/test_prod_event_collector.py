@@ -28,6 +28,9 @@ from prod_event_collector import (  # noqa: E402
     FragmentInvalid,
     Run,
     SyncState,
+    _default_ssh_host,
+    _default_ssh_user,
+    _resolve_ssh_target,
     collect,
     validate_fragment,
 )
@@ -447,3 +450,62 @@ class TestAppendFailureAlert:
         collect(initial, backend)
         assert backend.append_failure_alerts == []
         assert backend.append_calls == []
+
+
+# ── _resolve_ssh_target / _default_ssh_user / _default_ssh_host (ADR-KR3 §C6.3.3) ──
+
+
+class TestResolveSshTargetFallback:
+    """Mirror of TestResolveProdPathFallback for the SSH target string."""
+
+    def test_explicit_cli_arg_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_USER", "envuser")
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_HOST", "envhost")
+        assert _resolve_ssh_target("cli@explicit") == "cli@explicit"
+
+    def test_env_vars_compose_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_USER", "deployer")
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_HOST", "10.0.0.1")
+        assert _resolve_ssh_target(None) == "deployer@10.0.0.1"
+
+    def test_default_host_is_loopback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NFMD_PROD_EVENTS_SSH_HOST", raising=False)
+        assert _default_ssh_host() == "127.0.0.1"
+
+    def test_default_user_is_current_home_user(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NFMD_PROD_EVENTS_SSH_USER", raising=False)
+        assert _default_ssh_user() == Path.home().name
+
+    def test_default_contains_no_lwj04_literal(self) -> None:
+        """AC1: no lwj04@ literal in argparse defaults in committed source."""
+        import prod_event_collector as _mod
+
+        source = Path(_mod.__file__).read_text()
+        for line in source.splitlines():
+            if "--ssh-target" in line and "default=" in line:
+                assert "lwj04" not in line, (
+                    "lwj04 literal found in argparse default for --ssh-target"
+                )
+
+    def test_ssh_user_env_overrides_home_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_USER", "svc-deploy")
+        monkeypatch.delenv("NFMD_PROD_EVENTS_SSH_HOST", raising=False)
+        assert _resolve_ssh_target(None) == "svc-deploy@127.0.0.1"
+
+    def test_ssh_host_env_overrides_loopback_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("NFMD_PROD_EVENTS_SSH_USER", raising=False)
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_HOST", "192.168.1.100")
+        resolved = _resolve_ssh_target(None)
+        assert resolved.endswith("@192.168.1.100")
+        assert resolved.startswith(Path.home().name + "@")
+
+    def test_both_env_vars_compose_correctly(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_USER", "alice")
+        monkeypatch.setenv("NFMD_PROD_EVENTS_SSH_HOST", "10.0.0.5")
+        assert _resolve_ssh_target(None) == "alice@10.0.0.5"
