@@ -105,12 +105,13 @@ class TestMigrationChain:
 
         Migration 036_merge_chain_A_and_B (commit 9df2f3f) merged chain A
         (032_create_data_submission_tables) with chain B (035_multimodal),
-        making 036 the new head. We verify 035 is still reachable in the
-        revision graph instead of asserting it is the head.
+        and 037_create_health_events_table (NFM-2220) chains off 036.
+        We verify 035 is still reachable in the revision graph instead of
+        asserting it is the head.
         """
         head = script_directory.get_current_head()
-        assert head == "036_merge_chain_A_and_B", (
-            f"Expected head='036_merge_chain_A_and_B', got {head!r}"
+        assert head == "037_create_health_events_table", (
+            f"Expected head='037_create_health_events_table', got {head!r}"
         )
         # 035 must still be a known revision in the chain
         rev = script_directory.get_revision(REVISION)

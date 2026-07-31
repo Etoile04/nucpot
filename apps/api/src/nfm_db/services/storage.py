@@ -12,11 +12,14 @@ so the storage layer can be swapped without rewriting stored references.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -181,7 +184,8 @@ class LocalDiskStorage:
         try:
             path.unlink()
         except FileNotFoundError:
-            pass
+            # Documented contract: delete() is idempotent.
+            logger.debug("delete(): %s already absent", relative_path)
 
     def exists(self, relative_path: str) -> bool:
         """Return True iff the file currently exists at *relative_path*."""

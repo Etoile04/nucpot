@@ -136,6 +136,7 @@ from nfm_db.models.feedback import (  # noqa: E402
     FeedbackType,
     Priority,
 )
+from nfm_db.models.health_event import HealthEvent  # noqa: E402
 from nfm_db.models.hpc_failover_event import (  # noqa: E402
     HPCFailoverEvent,
 )
@@ -246,6 +247,7 @@ __all__ = [
     "FeedbackType",
     "FittingMethod",
     "HPCFailoverEvent",
+    "HealthEvent",
     "HpcJob",
     "HpcJobStatus",
     "HubNode",

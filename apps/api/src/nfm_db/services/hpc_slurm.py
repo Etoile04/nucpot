@@ -157,8 +157,9 @@ def upload_script_via_sftp(
         remote_dir = "/".join(remote_path.split("/")[:-1])
         try:
             sftp.mkdir(remote_dir)
-        except OSError:
-            pass  # Directory may already exist
+        except OSError as exc:
+            # Idempotent mkdir: pre-existing directory is the normal case.
+            logger.debug("Remote dir %s already exists (%s)", remote_dir, exc)
 
         with sftp.file(remote_path, "w") as f:
             f.write(script_content)
