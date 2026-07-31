@@ -140,6 +140,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
+      # Install psycopg[binary] for sync create_engine bridge. The project
+      # ships only asyncpg; the deploy-lock tests use create_engine() with
+      # postgresql+psycopg:// to open probe connections on separate sync
+      # sessions. See test_deploy_lock.py::_sync_url().
+      - name: Install psycopg[binary]
+        run: uv pip install "psycopg[binary]"
+
       # Install pg_isready (postgresql-client). pg_isready is the deterministic
       # gate for waiting on the Postgres 16 service container; the service
       # ``--health-cmd`` runs inside the container and is not visible from the

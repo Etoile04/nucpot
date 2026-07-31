@@ -61,8 +61,14 @@ _requires_pg = pytest.mark.skipif(
 
 
 def _sync_url(async_url: str) -> str:
-    """Strip ``+asyncpg`` from an asyncpg URL so sync engines can connect."""
-    return async_url.replace("+asyncpg", "")
+    """Convert an asyncpg URL to a psycopg (v3) URL for sync engines.
+
+    The project ships only ``asyncpg`` as its PG driver. ``psycopg[binary]``
+    is installed as a CI-only extra (see ``.github/workflows/test-api.yml``
+    deploy-lock job) and provides the sync ``create_engine`` bridge the
+    probe connections need.
+    """
+    return async_url.replace("+asyncpg", "+psycopg")
 
 
 @pytest.mark.integration
