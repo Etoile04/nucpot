@@ -13,7 +13,7 @@ What is enforced right now versus what is still in flight:
 
 | Control                            | Where it lives                                | Status (2026-07-31)                                                                                                |
 | ---------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **CI gate** on `pull_request` + `push` | `.github/workflows/commit-ref-gate.yml` ([NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`) | **Live on `main`.** A non-compliant PR or direct push (missing `NFM-###` and missing `[no-issue]`) will be red. The required-status context is named *Validate every non-merge commit subject in PR range*. Note: `enforce_admins` is still `false`, so an admin direct-push can bypass the status check — see NFM-2204/R1. |
+| **CI gate** on `pull_request` + `push` | `.github/workflows/commit-ref-gate.yml` ([NFM-2085](/NFM/issues/NFM-2085), commit `6fce970f`) | **Live on `main`.** A non-compliant PR or direct push (missing `NFM-###` and missing `[no-issue]`) will be red. The required-status context is named *Validate every non-merge commit subject in PR range*. `enforce_admins` is `true` (NFM-2204/R1) — admin bypass of required-status checks is no longer possible. |
 | **Local `commit-msg` hook**        | `.githooks/commit-msg` ([NFM-2084](/NFM/issues/NFM-2084), commit `d58e2823`, PR #520)             | **Live on `main`.** Shipped in PR #520. `git config core.hooksPath .githooks` activates it immediately.              |
 | **KR-2 metric** (`commit_efficiency.py`) | `scripts/okr/commit_efficiency.py` (`_ISSUE_REF_PATTERN`)                              | **Live.** Counts `[no-issue]` as structural waste per ADR-NFM-2081 §D2. Revision basis pinned to `origin/main --max-parents=1` (NFM-2204/R2). |
 
@@ -75,9 +75,9 @@ with no trace in history; CI will still catch the offending commit on the PR.
 non-merge commit in the PR range and on every direct push to `main`.
 The required-status context is named *Validate every non-merge commit
 subject in PR range*. It cannot be skipped by an unconfigured clone and
-cannot be bypassed with `--no-verify`. Note: `enforce_admins` is still
-`false` (tracked as NFM-2204/R1), so an admin direct-push can bypass the
-status check.
+and cannot be bypassed with `--no-verify`. `enforce_admins` is `true`
+(NFM-2204/R1), so admin direct-pushes are also subject to required-status
+checks — there is no standing bypass.
 
 **Local hook (opt-in, fast feedback):** the `commit-msg` hook shipped on
 `main` in PR #520 ([NFM-2084](/NFM/issues/NFM-2084), commit `d58e2823`).
