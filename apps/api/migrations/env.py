@@ -95,7 +95,15 @@ async def run_async_migrations() -> None:
             # net for a crashed migration. ``pg_advisory_unlock`` from a
             # different connection returns f, so the call site must be on
             # the same connection that took the lock.
-            await connection.execute(text(f"SELECT pg_advisory_unlock({NFMD_DEPLOY_LOCK_KEY})"))
+            # If the transaction is already aborted (e.g. migration DDL
+            # failed), the unlock must be issued in a fresh savepoint or
+            # the advisory lock will auto-release on connection close
+            # (NullPool dispose). Suppress the unlock error to avoid
+            # masking the original migration failure.
+            try:
+                await connection.execute(text(f"SELECT pg_advisory_unlock({NFMD_DEPLOY_LOCK_KEY})"))
+            except Exception:
+                pass  # Lock auto-releases on connection close
 
     await connectable.dispose()
 
