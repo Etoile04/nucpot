@@ -82,13 +82,13 @@ class TestSeverityConstants:
     def test_vocabulary_is_closed(self):
         # The vocabulary MUST stay closed so the alert endpoint's WHERE IN
         # clauses don't drift. NF M-2241 M3.
-        assert VALID_SEVERITIES == frozenset({"info", "warning", "error", "critical"})
+        assert frozenset({"info", "warning", "error", "critical"}) == VALID_SEVERITIES
 
 
 class TestEventTypeVocabulary:
     def test_lists_every_spec_event_type(self):
         # NFM-2211-B spec names these five. NF M-2241 M3.
-        assert VALID_EVENT_TYPES == frozenset(
+        assert frozenset(
             {
                 EVENT_FALLBACK_TRIGGERED,
                 EVENT_VALIDATION_DROP,
@@ -96,7 +96,7 @@ class TestEventTypeVocabulary:
                 EVENT_ASYNCIO_CRASH,
                 EVENT_GENERIC_SILENT_CATCH,
             }
-        )
+        ) == VALID_EVENT_TYPES
 
 
 class TestBuildContext:
@@ -381,7 +381,7 @@ class TestBackgroundPatterns:
         # the ``except`` arm of ``_coerce_unknown_categories`` and the
         # helper will fall through to ``emit_health_event_sync``.
         class _BoomSet:
-            def __contains__(self, item):  # noqa: D401 - test helper
+            def __contains__(self, item):
                 raise RuntimeError("coercion lookup failed")
 
         with patch.object(mapper, "_VALID_PROPERTY_CATEGORIES", _BoomSet()):

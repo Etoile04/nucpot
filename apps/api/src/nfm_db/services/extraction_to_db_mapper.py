@@ -98,8 +98,10 @@ def _coerce_unknown_categories(raw: dict[str, Any]) -> dict[str, Any]:
         from nfm_db.services.health_event_emitter import (
             EVENT_CATEGORY_COERCION_FAIL,
             SEVERITY_WARNING,
-            build_context as _build_ctx,
             emit_health_event_sync,
+        )
+        from nfm_db.services.health_event_emitter import (
+            build_context as _build_ctx,
         )
 
         emit_health_event_sync(
