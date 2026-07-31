@@ -144,6 +144,12 @@ show it as waste.
 
 ---
 
+## Database migrations
+
+**Migration branching:** New migrations must branch from the current `main` HEAD revision, not from a stale base. Always run `alembic heads` locally before pushing to verify single-head state. CI enforces this check on every PR — a forked migration graph will fail the build.
+
+---
+
 ## See also
 
 - [`AGENTS.md`](AGENTS.md) — same rule, written for coding-agent context loading.

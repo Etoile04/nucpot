@@ -40,7 +40,8 @@ def _safe_float(raw: Any) -> float:
     try:
         return float(raw)
     except (ValueError, TypeError):
-        pass
+        # Not a plain number — try the sci-notation normalisation below.
+        logger.debug("_safe_float: %r not directly float-able", raw)
     s = str(raw).strip()
     # Normalise x 10^ / x10^ / *10^ -> e notation. The first char in the
     # character class is the Unicode MULTIPLICATION SIGN (\u00d7) so we
@@ -50,7 +51,8 @@ def _safe_float(raw: Any) -> float:
     try:
         return float(s)
     except (ValueError, TypeError):
-        pass
+        # Normalised form still not numeric — fall back to token scan.
+        logger.debug("_safe_float: normalised %r still not float-able", s)
     # Fall back to first numeric token
     m = re.search(r"[-+]?\d*\.?\d+", str(raw))
     return float(m.group()) if m else 0.0
