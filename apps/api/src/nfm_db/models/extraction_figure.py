@@ -29,7 +29,7 @@ class ExtractionFigure(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     source_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("data_sources.id"), nullable=True
+        Uuid, ForeignKey("data_sources.id", ondelete="SET NULL"), nullable=True
     )
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     figure_type: Mapped[str | None] = mapped_column(String, nullable=True)
