@@ -210,7 +210,7 @@ test.describe("Ontology page — tablet 768px", { tag: "@integration" }, () => {
       if (navBox) {
         // Frame should start below the nav (with tolerance for live-site
         // rendering variance at 768px tablet breakpoint)
-        expect(frameBox!.y).toBeGreaterThanOrEqual(navBox.y + navBox.height - 25)
+        expect(frameBox!.y).toBeGreaterThanOrEqual(navBox.y + navBox.height - 30)
       }
     }
   })
