@@ -324,6 +324,94 @@ class TestFailedParse:
 
 
 # ---------------------------------------------------------------------------
+# 4b. Rollback-failure health event (NFM-2241 CR-1 regression)
+# ---------------------------------------------------------------------------
+
+
+class _FailAfterFirstGet:
+    """Proxy over a real ``AsyncSession`` that poisons the failure path.
+
+    The first ``get`` (step 1 of the pipeline) succeeds so the real row
+    loads; every later ``get`` raises, which is what drives execution into
+    the ``except`` block that persists the failure status.  ``rollback``
+    then raises too, reaching the innermost handler that emits the health
+    event.  Everything else delegates to the real session.
+    """
+
+    def __init__(self, inner: AsyncSession) -> None:
+        self._inner = inner
+        self._gets = 0
+        self.rollback_attempted = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        self._gets += 1
+        if self._gets == 1:
+            return await self._inner.get(*args, **kwargs)
+        raise RuntimeError("get exploded")
+
+    async def rollback(self) -> None:
+        self.rollback_attempted = True
+        raise RuntimeError("rollback exploded")
+
+
+class TestRollbackFailureEmitsHealthEvent:
+    """A failed ``rollback`` must record a health event instead of silently
+    swallowing — and must not mask the original pipeline exception.
+
+    This is the NFM-2241 CR-1 regression guard.  The handler referenced
+    ``emit_health_event`` / ``EVENT_GENERIC_SILENT_CATCH`` / ``SEVERITY_ERROR``
+    without importing them, so the branch raised ``NameError`` at runtime.
+    The whole suite still passed because nothing exercised it.  Patching only
+    the emitter function (not the two constants) keeps this test sensitive to
+    all three names.
+    """
+
+    async def test_rollback_failure_emits_event_and_preserves_original_error(
+        self, db_session: AsyncSession
+    ) -> None:
+        ds = await _add_datasource(
+            db_session,
+            content_md=None,
+            file_path="bad/file.pdf",
+        )
+        poisoned = _FailAfterFirstGet(db_session)
+
+        with (
+            patch.object(
+                lit_svc,
+                "_get_storage",
+                return_value=MagicMock(read=MagicMock(return_value=b"junk")),
+            ),
+            patch.object(
+                lit_svc, "_parse_pdf_to_markdown", side_effect=RuntimeError("parse exploded")
+            ),
+            patch.object(lit_svc, "emit_health_event", new_callable=AsyncMock) as emit,
+        ):
+            # The ORIGINAL pipeline error must surface — not NameError, and
+            # not the rollback error.  This is the regression that mattered:
+            # a NameError here would both lose the event and mask the cause.
+            with pytest.raises(RuntimeError, match="parse exploded"):
+                await lit_svc.process_literature(poisoned, ds.id)
+
+        assert poisoned.rollback_attempted, "failure path never attempted rollback"
+        emit.assert_awaited_once()
+
+        kwargs = emit.await_args.kwargs
+        assert kwargs["event_type"] == lit_svc.EVENT_GENERIC_SILENT_CATCH
+        assert kwargs["severity"] == lit_svc.SEVERITY_ERROR
+        assert kwargs["source_service"] == "literature_service"
+        # The original label is preserved in the payload even though the
+        # event_type is coerced to a spec-enumerated value.
+        assert kwargs["context"]["reported_event_type"] == "rollback_failed"
+        assert kwargs["context"]["datasource_id"] == str(ds.id)
+        # The rollback failure — not the parse failure — is the cause recorded.
+        assert "rollback exploded" in str(kwargs["context"])
+
+
+# ---------------------------------------------------------------------------
 # 5. Edge cases
 # ---------------------------------------------------------------------------
 

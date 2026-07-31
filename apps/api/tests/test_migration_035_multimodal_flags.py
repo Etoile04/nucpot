@@ -107,6 +107,7 @@ class TestMigrationChain:
         (032_create_data_submission_tables) with chain B (035_multimodal);
         037_merge_ref_gap_fill_chain (NFM-2196) then merged in the
         035_ref/036_ref gap-fill chain that NFM-2147 D4 forked off 034.
+        037_create_health_events_table (NFM-2220) chains off 036.
 
         We assert the *invariant* — exactly one head, with 035 reachable
         from it — rather than pinning a literal head id, which goes stale

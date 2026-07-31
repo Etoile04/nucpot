@@ -20,6 +20,12 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
+from nfm_db.services.health_event_emitter import (
+    SEVERITY_WARNING,
+    build_context,
+    emit_health_event_sync,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -179,8 +185,15 @@ def _check_recent_verification(
                         stale_refs.append(
                             f"{ref.get('property_name', 'unknown')} ({days_ago}d ago)"
                         )
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    # A malformed date previously removed the reference
+                    # from the audit entirely — silently under-reporting.
+                    emit_health_event_sync(
+                        event_type="validation_drop",
+                        severity=SEVERITY_WARNING,
+                        source_service="quarterly_audit",
+                        context=build_context(exc, verified_at=str(verified_at)),
+                    )
 
         if stale_refs:
             findings.append(

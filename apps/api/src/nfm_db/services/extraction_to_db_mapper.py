@@ -35,6 +35,12 @@ from nfm_db.models import (
     PropertyType,
 )
 from nfm_db.schemas.extraction import ExtractedProperty
+from nfm_db.services.health_event_emitter import (
+    EVENT_VALIDATION_DROP,
+    SEVERITY_WARNING,
+    build_context,
+    emit_health_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +85,32 @@ def _coerce_unknown_categories(raw: dict[str, Any]) -> dict[str, Any]:
     """
     if not isinstance(raw, dict):
         return raw
-    cat = raw.get("property_category")
-    if isinstance(cat, str) and cat not in _VALID_PROPERTY_CATEGORIES:
-        return {**raw, "property_category": "other"}
-    return raw
+    try:
+        cat = raw.get("property_category")
+        if isinstance(cat, str) and cat not in _VALID_PROPERTY_CATEGORIES:
+            return {**raw, "property_category": "other"}
+        return raw
+    except Exception as exc:
+        # NFM-2241 C3 pattern #2: a coercion failure must leave a
+        # trace. ``emit_health_event_sync`` is correct here because
+        # ``_coerce_unknown_categories`` is invoked synchronously from
+        # ``map_and_persist``; the emitter opens its own session.
+        from nfm_db.services.health_event_emitter import (
+            EVENT_CATEGORY_COERCION_FAIL,
+            SEVERITY_WARNING,
+            emit_health_event_sync,
+        )
+        from nfm_db.services.health_event_emitter import (
+            build_context as _build_ctx,
+        )
+
+        emit_health_event_sync(
+            event_type=EVENT_CATEGORY_COERCION_FAIL,
+            severity=SEVERITY_WARNING,
+            source_service="extraction_to_db_mapper",
+            context=_build_ctx(exc, raw_repr=repr(raw)[:200]),
+        )
+        return raw
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +402,21 @@ async def map_and_persist(
         )
 
     if not validated:
+        # NFM-2241 C3 pattern #3: a total-validation failure used to
+        # vanish from the telemetry stream — the caller saw the count
+        # in the MappingResult but the broader pipeline had no signal.
+        # Emit before returning so an alert query can flag a literature
+        # whose extraction output is entirely un-parseable.
+        await emit_health_event(
+            event_type=EVENT_VALIDATION_DROP,
+            severity=SEVERITY_WARNING,
+            source_service="extraction_to_db_mapper",
+            context=build_context(
+                None,
+                validation_errors=validation_error_count,
+                batch_size=len(extraction_output),
+            ),
+        )
         return MappingResult(validation_errors=validation_error_count)
 
     # --- Phase 2: Group and dedup ---
