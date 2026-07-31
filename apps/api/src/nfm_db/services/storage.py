@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Pluggable storage backend for literature uploads (NFM-1486).
 
 Defines a :class:`StorageBackend` Protocol and a default
@@ -11,6 +9,8 @@ backend; an S3 backend is reserved for a later issue (see NFM-1485-2).
 All paths returned by ``save`` are *root-relative* (``{datasource_id}/{name}``)
 so the storage layer can be swapped without rewriting stored references.
 """
+
+from __future__ import annotations
 
 import logging
 import os
