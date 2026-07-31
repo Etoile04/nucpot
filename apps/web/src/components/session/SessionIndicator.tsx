@@ -126,14 +126,12 @@ export default function SessionIndicator(): ReactElement | null {
     ) : (
       <ClockCircleOutlined aria-hidden="true" />
     )
-  const isAssertive = band === 'error'
-
   return (
     <Tag
       color={color}
       bordered={false}
       icon={icon}
-      aria-live={isAssertive ? 'assertive' : 'polite'}
+      aria-live="polite"
       aria-atomic="true"
       aria-label={buildIndicatorAria(remainingSeconds, band)}
       data-state={band}

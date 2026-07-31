@@ -186,7 +186,7 @@ describe("SessionIndicator — band transitions", () => {
     expect(tag).toHaveAttribute("data-state", "error")
   })
 
-  it("tags aria-live is 'polite' in ok and warning bands", () => {
+  it("tags aria-live is 'polite' across all bands (UX spec §5.3 no-assertive rule)", () => {
     const { rerender } = render(
       <SessionContext.Provider
         value={makeContextValue({ state: "authenticated", remainingSeconds: 900 })}
@@ -194,11 +194,14 @@ describe("SessionIndicator — band transitions", () => {
         <SessionIndicator />
       </SessionContext.Provider>,
     )
+
+    // ok band — polite
     expect(screen.getByText("会话剩余 15:00").closest(".ant-tag")).toHaveAttribute(
       "aria-live",
       "polite",
     )
 
+    // warning band — polite (session countdown is informational)
     rerender(
       <SessionContext.Provider
         value={makeContextValue({ state: "authenticated", remainingSeconds: 60 })}
@@ -210,13 +213,31 @@ describe("SessionIndicator — band transitions", () => {
       "aria-live",
       "polite",
     )
-  })
 
-  it("tags aria-live flips to 'assertive' in the error band", () => {
-    renderWith(makeContextValue({ state: "authenticated", remainingSeconds: 10 }))
+    // error band — polite per UX spec §5.3 (no assertive for non-critical)
+    rerender(
+      <SessionContext.Provider
+        value={makeContextValue({ state: "authenticated", remainingSeconds: 10 })}
+      >
+        <SessionIndicator />
+      </SessionContext.Provider>,
+    )
     expect(screen.getByText("会话即将过期 10 秒").closest(".ant-tag")).toHaveAttribute(
       "aria-live",
-      "assertive",
+      "polite",
+    )
+
+    // refreshing band — polite (included for completeness)
+    rerender(
+      <SessionContext.Provider
+        value={makeContextValue({ state: "refreshing", remainingSeconds: 60 })}
+      >
+        <SessionIndicator />
+      </SessionContext.Provider>,
+    )
+    expect(screen.getByText("刷新中…").closest(".ant-tag")).toHaveAttribute(
+      "aria-live",
+      "polite",
     )
   })
 
