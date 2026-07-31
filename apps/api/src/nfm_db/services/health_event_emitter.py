@@ -65,7 +65,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import Table as SATable, insert
+from sqlalchemy import Table as SATable
+from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from nfm_db.database import async_session_factory
