@@ -42,9 +42,17 @@ RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
     (sleep 5 && pip install --no-cache-dir 'xgboost>=3.0,<4' \
       -i https://pypi.tuna.tsinghua.edu.cn/simple)
 
-# Bake in alembic config so the entrypoint can auto-migrate (matches staging-api.Dockerfile).
-# Without this, new migrations shipped in code are never applied to the production DB,
-# causing UndefinedColumnError at runtime (schema drift incident, 2026-07-20).
+# NFM-2146 / ADR-NFM-2139 §5 D3: bake alembic.ini + migrations into the image
+# so the deploy-time migration step (scripts/prod_migrate.sh) can invoke
+# `alembic upgrade head` inside an ephemeral container using this same image
+# (overridden entrypoint). The CMD itself serves uvicorn only — migration is
+# no longer part of the boot path.
+#
+# Failure-mode shift: "502 on boot" (when alembic crashed during container
+# start) → "failed deploy step" (when alembic crashes during the dedicated
+# migrate run, before any container comes up — alertable, retryable, no
+# traffic cut over). See scripts/prod_migrate.sh for the advisory-lock
+# + readiness-wait contract that guards concurrent migrators.
 COPY apps/api/alembic.ini ./
 
 # ML model artifacts for prediction endpoints (phase classifier + temp predictor)
@@ -56,6 +64,6 @@ ENV PYTHONPATH=/app/src
 
 EXPOSE 8000
 
-# Migrate then serve. `alembic upgrade head` is idempotent — already-applied
-# revisions are skipped, so this is safe on every container start / restart.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn nfm_db.main:app --host 0.0.0.0 --port 8000 --workers 4"]
+# Serve only — migration is the deploy workflow's job (NFM-2146). The exact
+# command form is pinned by ADR-NFM-2139 §5 D3 acceptance criterion 1.
+CMD ["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

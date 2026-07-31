@@ -89,3 +89,93 @@ jobs:
           flags: api
           name: api-coverage
           fail_ci_if_error: false
+
+  # NFM-2196 / NFM-2146 D3: PR-time regression for the deploy-lock invariant.
+  # The default pytest run deselects integration tests via ``-m 'not integration'``
+  # in apps/api/pyproject.toml, so the behavioral contract test that exercises
+  # ``run_async_migrations()`` against a real Postgres never runs in CI. This
+  # job spins up a Postgres 16 service, points ``NFM_TEST_DATABASE_URL`` at it,
+  # and runs ``tests/test_deploy_lock.py`` with the integration marker respected
+  # (overriding the project's default ``-m 'not integration'`` deselection).
+  #
+  # Two AC#2 contracts are proved here:
+  # 1. ``test_run_async_migrations_holds_advisory_lock_during_execution`` —
+  #    while env.py drives ``do_run_migrations`` on the migration's own async
+  #    connection, a probe on a *separate* connection cannot acquire the same
+  #    key. Pre-fix code (lock in transient psql session) → probe acquires.
+  # 2. ``test_run_async_migrations_releases_lock_after_completion`` — the
+  #    finally-block unlock frees the deploy lock so the next migrator proceeds.
+  test-deploy-lock-pg:
+    name: API Deploy-Lock (Postgres)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nfm
+          POSTGRES_PASSWORD: nfm
+          POSTGRES_DB: nfm_deploy_lock_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U nfm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NFM_TEST_DATABASE_URL: postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_deploy_lock_test
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # Install psycopg[binary] for sync create_engine bridge. The project
+      # ships only asyncpg; the deploy-lock tests use create_engine() with
+      # postgresql+psycopg:// to open probe connections on separate sync
+      # sessions. See test_deploy_lock.py::_sync_url().
+      - name: Install psycopg[binary]
+        run: uv pip install "psycopg[binary]"
+
+      # Install pg_isready (postgresql-client). pg_isready is the deterministic
+      # gate for waiting on the Postgres 16 service container; the service
+      # ``--health-cmd`` runs inside the container and is not visible from the
+      # runner's host namespace.
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Wait for Postgres to be reachable. The service is declared above, but
+      # the connection can race with first-step startup; pg_isready is the
+      # deterministic gate.
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U nfm; then
+              echo "Postgres ready"
+              break
+            fi
+            echo "Waiting for Postgres (${i}/30)..."
+            sleep 2
+          done
+          # GitHub Actions service-container port mapping can report "ready"
+          # via TCP probe before the mapped port is fully usable.  A short
+          # soak ensures the port is stable before test connections open.
+          sleep 5
+
+      # Override the ``addopts = "-m 'not integration'"`` deselection in
+      # apps/api/pyproject.toml by setting ``addopts=""`` on the CLI. This
+      # runs the deploy-lock integration tests against the live PG service.
+      # ``--no-cov`` keeps this job independent of the coverage gate.
+      - name: Run deploy-lock behavioral tests
+        run: |
+          uv run pytest tests/test_deploy_lock.py -v --no-cov --override-ini="addopts="

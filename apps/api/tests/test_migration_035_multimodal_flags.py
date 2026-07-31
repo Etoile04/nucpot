@@ -101,21 +101,32 @@ class TestMigrationChain:
         )
 
     def test_035_is_direct_ancestor_of_head(self, script_directory: ScriptDirectory) -> None:
-        """035 is no longer the chain head after the 036 merge.
+        """035 is no longer the chain head, but must remain an ancestor of it.
 
         Migration 036_merge_chain_A_and_B (commit 9df2f3f) merged chain A
-        (032_create_data_submission_tables) with chain B (035_multimodal),
-        and 037_create_health_events_table (NFM-2220) chains off 036.
-        We verify 035 is still reachable in the revision graph instead of
-        asserting it is the head.
+        (032_create_data_submission_tables) with chain B (035_multimodal);
+        037_merge_ref_gap_fill_chain (NFM-2196) then merged in the
+        035_ref/036_ref gap-fill chain that NFM-2147 D4 forked off 034.
+        037_create_health_events_table (NFM-2220) chains off 036.
+
+        We assert the *invariant* — exactly one head, with 035 reachable
+        from it — rather than pinning a literal head id, which goes stale
+        on every new merge revision (this test failed on the two-head fork
+        that NFM-2196 fixed, and previously hardcoded 036_merge_chain_A_and_B).
         """
-        head = script_directory.get_current_head()
-        assert head == "037_create_health_events_table", (
-            f"Expected head='037_create_health_events_table', got {head!r}"
+        heads = script_directory.get_heads()
+        assert len(heads) == 1, (
+            f"Expected exactly 1 alembic head, got {len(heads)}: {heads!r}. "
+            f"A forked migration graph fails the single-head gates in "
+            f"test-api.yml and tools/pre-deploy-assert-smoke/assert.sh, and "
+            f"breaks `alembic upgrade head` at deploy time."
         )
-        # 035 must still be a known revision in the chain
-        rev = script_directory.get_revision(REVISION)
-        assert rev is not None, f"Revision {REVISION!r} not found in migration chain"
+        # 035 must still be reachable from the single head.
+        ancestors = {rev.revision for rev in script_directory.iterate_revisions(heads[0], "base")}
+        assert REVISION in ancestors, (
+            f"Revision {REVISION!r} is not an ancestor of head {heads[0]!r} — "
+            f"the multimodal chain was detached from the migration graph"
+        )
 
     def test_no_duplicate_revisions(self, script_directory: ScriptDirectory) -> None:
         revisions = [r.revision for r in script_directory.walk_revisions()]
