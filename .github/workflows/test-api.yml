@@ -167,6 +167,10 @@ jobs:
             echo "Waiting for Postgres (${i}/30)..."
             sleep 2
           done
+          # GitHub Actions service-container port mapping can report "ready"
+          # via TCP probe before the mapped port is fully usable.  A short
+          # soak ensures the port is stable before test connections open.
+          sleep 5
 
       # Override the ``addopts = "-m 'not integration'"`` deselection in
       # apps/api/pyproject.toml by setting ``addopts=""`` on the CLI. This
