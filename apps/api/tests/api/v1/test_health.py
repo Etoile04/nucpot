@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from monitoring.worker_health import worker_health
+from nfm_db.monitoring.worker_health import worker_health
 
 
 @pytest.mark.asyncio

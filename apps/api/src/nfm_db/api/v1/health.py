@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from monitoring.worker_health import worker_health
+from nfm_db.monitoring.worker_health import worker_health
 from nfm_db.middleware.rate_limit import limiter
 
 router = APIRouter(tags=["健康检查"])

@@ -9,7 +9,7 @@ from nfm_db.main import app
 @pytest.mark.asyncio
 async def test_health_check_returns_ok() -> None:
     """Health endpoint returns status ok."""
-    from monitoring.worker_health import worker_health
+    from nfm_db.monitoring.worker_health import worker_health
 
     worker_health.reset()
     transport = ASGITransport(app=app)
