@@ -77,8 +77,10 @@ export default function Nav() {
           NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
         </Link>
 
-        {/* Desktop nav */}
-        <div className="hidden md:flex items-center gap-6 text-sm">
+        {/* Desktop nav — switched from md (768px) to lg (1024px) to keep
+            Chinese character labels on a single line. The 582px inner width at
+            768px is too narrow for 11 links; see NFM-2198. */}
+        <div className="hidden lg:flex items-center gap-6 text-sm">
           {NAV_LINKS.map(link => (
             <Link
               key={link.href}
@@ -243,9 +245,9 @@ export default function Nav() {
           )}
         </div>
 
-        {/* Mobile hamburger */}
+        {/* Mobile hamburger — visible below the lg (1024px) breakpoint. */}
         <button
-          className="md:hidden text-white"
+          className="lg:hidden text-white"
           onClick={() => setMobileOpen(prev => !prev)}
           aria-label="打开导航菜单"
           aria-expanded={mobileOpen}
@@ -258,7 +260,7 @@ export default function Nav() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden px-6 pb-4 flex flex-col gap-3 text-sm border-t border-gray-700/50">
+        <div className="lg:hidden px-6 pb-4 flex flex-col gap-3 text-sm border-t border-gray-700/50">
           {NAV_LINKS.map(link => (
             <Link
               key={link.href}
