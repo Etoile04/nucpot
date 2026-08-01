@@ -99,7 +99,7 @@ export function SessionProvider({
     // SessionManager) so the indicator re-renders on every tick.
     // We use a self-scheduling setTimeout (not setInterval) so the
     // clock can be controlled by the injected setTimeoutFn in tests.
-    let tickId: ReturnType<typeof window.setTimeout> | undefined
+    let tickId: number | undefined
     const tick = () => {
       if (cancelled) return
       setRemainingSeconds(mgr.getRemainingSeconds())

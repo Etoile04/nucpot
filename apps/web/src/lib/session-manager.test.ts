@@ -74,15 +74,15 @@ interface Harness {
 
 function createHarness(opts?: { safetyMarginFraction?: number }): Harness {
   const clock = new FakeClock()
-  const fetchRefresh = vi.fn<ReturnType<SessionManagerOptions["fetchRefresh"]>>()
-  const fetchSession = vi.fn<ReturnType<SessionManagerOptions["fetchSession"]>>()
+  const fetchRefresh = vi.fn() as ReturnType<typeof vi.fn>
+  const fetchSession = vi.fn() as ReturnType<typeof vi.fn>
 
   const manager = new SessionManager({
-    fetchRefresh,
-    fetchSession,
+    fetchRefresh: fetchRefresh as unknown as SessionManagerOptions["fetchRefresh"],
+    fetchSession: fetchSession as unknown as SessionManagerOptions["fetchSession"],
     safetyMarginFraction: opts?.safetyMarginFraction ?? 0.2,
     setTimeoutFn: (cb, ms) => clock.setTimeout(cb, ms),
-    clearTimeoutFn: (id) => clock.clearTimeout(id),
+    clearTimeoutFn: (id) => clock.clearTimeout(id as number),
     nowFn: () => clock.now(),
   })
 
