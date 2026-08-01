@@ -1,11 +1,28 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { authApi } from "@/lib/api-client"
+
+const DEFAULT_REDIRECT = "/admin/blog"
+
+/**
+ * Validate that a `returnTo` value is a safe internal path.
+ * Rejects absolute URLs, protocol-relative URLs, and non-path values
+ * to prevent open-redirect attacks.
+ */
+function isValidReturnTo(value: string): boolean {
+  if (!value || !value.startsWith("/")) return false
+  if (value.startsWith("//")) return false
+  // Reject values containing a colon before any slash (e.g. "javascript:")
+  const colonIdx = value.indexOf(":")
+  if (colonIdx >= 0 && value.indexOf("/") > colonIdx) return false
+  return true
+}
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -18,7 +35,10 @@ export default function LoginPage() {
 
     try {
       await authApi.login(username, password)
-      router.push("/admin/blog")
+      const returnTo = searchParams.get("returnTo")
+      const destination =
+        returnTo && isValidReturnTo(returnTo) ? returnTo : DEFAULT_REDIRECT
+      router.push(destination)
       router.refresh()
     } catch (err) {
       setError(
