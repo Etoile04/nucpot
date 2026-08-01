@@ -1,78 +1,152 @@
-"use client"
+'use client'
+
+import { Tag } from 'antd'
+import {
+  ClockCircleOutlined,
+  SyncOutlined,
+  WarningOutlined,
+} from '@ant-design/icons'
+import type { ReactElement } from 'react'
+import { useSession } from './SessionProvider'
 
 /**
- * SessionIndicator — minimal inline countdown of remaining session time.
+ * Session-countdown UI surface (NFM-2253, B side of NFM-2236).
  *
- * Renders nothing when the user is unauthenticated.
- * Otherwise shows ``mm:ss`` (or ``h:mm:ss`` past one hour) inside an
- * AntD ``Tag``. The tag's color shifts from neutral → warning → error
- * as remaining time approaches zero, so a reviewer can verify the
- * visibility requirement at a glance without inspecting CSS classes.
+ * Spec: [NFM-2251 design-spec](/NFM/issues/NFM-2251) §2 and §5.1.
  *
- * Mount this once per authenticated page (typically in the global
- * header).  Do NOT mount it inside a form: even though the tag is
- * small, any re-render can steal focus on some browsers.
+ * A pure presentation component. Reads `state` and `remainingSeconds`
+ * from `useSession()` (backed by the real SessionProvider / SessionManager
+ * from NFM-2252) and renders an AntD `Tag` inside the existing `Nav` row.
+ * Hidden (returns null, not just visibility:hidden) when there is no
+ * session or when the session has expired — the re-auth modal takes
+ * over in the expired case.
+ *
+ * Lifecycle boundary: the tab-visibility listener lives in
+ * `SessionProvider` (NFM-2252) per NFM-2251 §2.5. By the time
+ * `remaining` reaches this component, it has already been reconciled
+ * to the true value; the indicator just renders it.
  */
 
-import { Tag } from "antd"
-import { ClockCircleOutlined } from "@ant-design/icons"
+const WARNING_THRESHOLD_SECONDS = 120
+const ERROR_THRESHOLD_SECONDS = 30
+const HOUR_IN_SECONDS = 3600
 
-import { useSession } from "./SessionProvider"
+type IndicatorBand = 'ok' | 'warning' | 'error' | 'refreshing'
 
-export interface SessionIndicatorProps {
-  /** Override the urgency thresholds (in seconds). */
-  readonly warningUnderSeconds?: number
-  readonly errorUnderSeconds?: number
+function computeBand(remainingSeconds: number): Exclude<IndicatorBand, 'refreshing'> {
+  if (remainingSeconds < ERROR_THRESHOLD_SECONDS) return 'error'
+  if (remainingSeconds < WARNING_THRESHOLD_SECONDS) return 'warning'
+  return 'ok'
 }
 
-function formatRemaining(totalSeconds: number): string {
-  if (totalSeconds <= 0) return "0:00"
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  const mm = String(minutes).padStart(hours > 0 ? 2 : 1, "0")
-  const ss = String(seconds).padStart(2, "0")
-  if (hours > 0) {
-    return `${hours}:${mm}:${ss}`
+function pad2(n: number): string {
+  return n.toString().padStart(2, '0')
+}
+
+/**
+ * Pure time-format helpers. Centralised in this component so the spec
+ * wording is the only source of truth and so NFM-2254 (ReAuthPrompt)
+ * can reuse the same formatter. Exported for unit tests.
+ */
+
+export function formatRemainingMain(remainingSeconds: number): string {
+  const safe = Math.max(0, Math.floor(remainingSeconds))
+  if (safe >= HOUR_IN_SECONDS) {
+    const h = Math.floor(safe / HOUR_IN_SECONDS)
+    const mm = Math.floor((safe % HOUR_IN_SECONDS) / 60)
+    const ss = safe % 60
+    return `${h}:${pad2(mm)}:${pad2(ss)}`
   }
-  return `${minutes}:${ss}`
+  const mm = Math.floor(safe / 60)
+  const ss = safe % 60
+  return `${pad2(mm)}:${pad2(ss)}`
 }
 
-export function SessionIndicator({
-  warningUnderSeconds = 120,
-  errorUnderSeconds = 30,
-}: SessionIndicatorProps) {
+export function buildIndicatorCopy(
+  remainingSeconds: number,
+  band: Exclude<IndicatorBand, 'refreshing'>,
+): string {
+  if (band === 'error') {
+    return `会话即将过期 ${Math.max(0, Math.floor(remainingSeconds))} 秒`
+  }
+  if (band === 'warning') {
+    return `会话即将到期 ${formatRemainingMain(remainingSeconds)}`
+  }
+  return `会话剩余 ${formatRemainingMain(remainingSeconds)}`
+}
+
+export function buildIndicatorAria(remainingSeconds: number, band: IndicatorBand): string {
+  if (band === 'refreshing') return '正在刷新会话'
+  if (band === 'error') {
+    return `会话即将过期，剩余 ${Math.max(0, Math.floor(remainingSeconds))} 秒，请保存工作`
+  }
+  if (band === 'warning') {
+    return `会话即将到期，剩余 ${formatRemainingMain(remainingSeconds)}`
+  }
+  const total = Math.max(0, Math.floor(remainingSeconds))
+  const mm = Math.floor(total / 60)
+  const ss = total % 60
+  return `会话剩余 ${mm} 分 ${ss} 秒`
+}
+
+export function SessionIndicator(): ReactElement | null {
   const { state, remainingSeconds } = useSession()
 
-  // Hide entirely when there is no live session to track.
-  if (state.kind !== "authenticated" && state.kind !== "refreshing") {
+  // Derive the plain string band from the discriminated union.
+  const kind = state.kind
+
+  // Spec §2.2 — hidden (not visibility:hidden) when there's no session.
+  // The re-auth modal owns the user's attention once the session is
+  // expired; the indicator would compete with it.
+  if (kind === 'unauthenticated' || kind === 'expired') {
     return null
   }
 
-  let color: string
-  if (state.kind === "refreshing") {
-    color = "processing"
-  } else if (remainingSeconds <= errorUnderSeconds) {
-    color = "error"
-  } else if (remainingSeconds <= warningUnderSeconds) {
-    color = "warning"
-  } else {
-    color = "default"
+  const band: IndicatorBand =
+    kind === 'refreshing' ? 'refreshing' : computeBand(remainingSeconds)
+
+  if (band === 'refreshing') {
+    return (
+      <Tag
+        color="processing"
+        bordered={false}
+        icon={<SyncOutlined spin aria-hidden="true" />}
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label="正在刷新会话"
+        data-testid="session-indicator"
+        data-state="refreshing"
+        data-remaining-seconds={remainingSeconds}
+        tabIndex={-1}
+      >
+        刷新中…
+      </Tag>
+    )
   }
+
+  const color = band === 'error' ? 'error' : band === 'warning' ? 'warning' : 'default'
+  const icon =
+    band === 'error' ? (
+      <WarningOutlined aria-hidden="true" />
+    ) : (
+      <ClockCircleOutlined aria-hidden="true" />
+    )
+  const isAssertive = band === 'error'
 
   return (
     <Tag
       color={color}
-      icon={state.kind === "refreshing" ? undefined : <ClockCircleOutlined />}
+      bordered={false}
+      icon={icon}
+      aria-live={isAssertive ? 'assertive' : 'polite'}
+      aria-atomic="true"
+      aria-label={buildIndicatorAria(remainingSeconds, band)}
       data-testid="session-indicator"
-      data-state={state.kind}
+      data-state={band}
       data-remaining-seconds={remainingSeconds}
-      aria-live="polite"
-      style={{ userSelect: "none" }}
+      tabIndex={-1}
     >
-      {state.kind === "refreshing"
-        ? "续期中…"
-        : `会话剩余 ${formatRemaining(remainingSeconds)}`}
+      {buildIndicatorCopy(remainingSeconds, band)}
     </Tag>
   )
 }
