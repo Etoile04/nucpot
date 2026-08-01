@@ -352,6 +352,10 @@ jobs:
   pre-deploy-assert-smoke:
     name: Pre-deploy-assert smoke test (NFM-2149)
     runs-on: [self-hosted, production]
+    env:
+      HTTP_PROXY: http://127.0.0.1:7892
+      HTTPS_PROXY: http://127.0.0.1:7892
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
     steps:
       - uses: actions/checkout@v7
 
