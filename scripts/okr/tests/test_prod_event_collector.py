@@ -28,6 +28,7 @@ from prod_event_collector import (  # noqa: E402
     FragmentInvalid,
     Run,
     SyncState,
+    _resolve_ssh_target,
     collect,
     validate_fragment,
 )
@@ -447,3 +448,40 @@ class TestAppendFailureAlert:
         collect(initial, backend)
         assert backend.append_failure_alerts == []
         assert backend.append_calls == []
+
+
+# ── _resolve_ssh_target / _default_ssh_user / _default_ssh_host (ADR-KR3 §C6.3.3) ──
+
+
+class TestResolveSshTarget:
+    """C6.3.3: --ssh-target resolves from CLI arg or NFMD_PROD_SSH_TARGET."""
+
+    def test_explicit_cli_arg_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFMD_PROD_SSH_TARGET", "env@host")
+        assert _resolve_ssh_target("cli@explicit") == "cli@explicit"
+
+    def test_env_var_provides_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFMD_PROD_SSH_TARGET", "deployer@10.0.0.1")
+        assert _resolve_ssh_target(None) == "deployer@10.0.0.1"
+
+    def test_missing_both_exits_with_error(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC2: omitting flag and env var produces actionable error (SystemExit)."""
+        monkeypatch.delenv("NFMD_PROD_SSH_TARGET", raising=False)
+        with pytest.raises(SystemExit):
+            _resolve_ssh_target(None)
+
+    def test_no_user_specific_literal_in_argparse(self) -> None:
+        """AC1: no lwj04@ or other user-specific literal in argparse defaults."""
+        import prod_event_collector as _mod
+
+        source = Path(_mod.__file__).read_text()
+        for line in source.splitlines():
+            if "--ssh-target" in line and "default=" in line:
+                assert "lwj04" not in line, (
+                    "lwj04 literal found in argparse default for --ssh-target"
+                )
+                assert "@" not in line or "NFMD" in line, (
+                    "user@host literal found in argparse default for --ssh-target"
+                )
