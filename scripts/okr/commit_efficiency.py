@@ -18,9 +18,10 @@ import json
 import logging
 import re
 import subprocess
-import urllib.request
 from datetime import datetime
 from typing import Any
+
+from scripts.okr import fetch_all_issues
 
 logger = logging.getLogger(__name__)
 
@@ -103,31 +104,32 @@ def enrich_commits_with_refs(commits: list[dict[str, str]]) -> list[dict[str, An
 def fetch_issue_statuses(
     issue_refs: list[str],
     api_url: str,
+    company_id: str,
 ) -> dict[str, str]:
     """Query the Paperclip API for issue statuses.
 
+    Uses ``fetch_all_issues`` to exhaustively paginate all issues, then
+    filters locally for the requested refs. This fixes the silent 1000-row
+    cap that caused the 288-vs-713 NFMDP undercount.
+
     Returns a mapping of issue key → status string.
-    On failure, logs a warning and the issue gets status ``"unknown"``.
+    Unresolved refs get status ``"unknown"``.
     """
     statuses: dict[str, str] = {}
     if not issue_refs:
         return statuses
 
-    query = " OR ".join(issue_refs)
     try:
-        url = f"{api_url}/api/issues?q={urllib.request.quote(query)}"
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            body = json.loads(resp.read().decode())
-        for issue in body.get("issues", []):
-            statuses[issue["key"]] = issue.get("status", "unknown")
-    except urllib.error.URLError as exc:
-        logger.warning("Paperclip API unreachable at %s: %s", api_url, exc)
+        all_issues = fetch_all_issues(api_url, company_id, {})
+        # Build a lookup from all issues keyed by issue key.
+        issue_by_key: dict[str, str] = {}
+        for issue in all_issues:
+            key = issue.get("key")
+            if key:
+                issue_by_key[key] = issue.get("status", "unknown")
+
         for ref in issue_refs:
-            statuses[ref] = "unknown"
-    except (json.JSONDecodeError, KeyError) as exc:
-        logger.warning("Paperclip API returned malformed response: %s", exc)
-        for ref in issue_refs:
-            statuses[ref] = "unknown"
+            statuses[ref] = issue_by_key.get(ref, "unknown")
     except Exception as exc:
         logger.warning("Unexpected error fetching issue statuses: %s", exc)
         for ref in issue_refs:
@@ -312,6 +314,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="http://localhost:3000",
         help="Paperclip API base URL",
     )
+    parser.add_argument(
+        "--company-id",
+        default="",
+        help=(
+            "Company UUID for the Paperclip issues API. "
+            "Required for paginated issue lookups."
+        ),
+    )
     return parser
 
 
@@ -325,7 +335,7 @@ def main() -> None:
     all_refs = list({
         ref for c in enriched for ref in c["issue_refs"]
     })
-    statuses = fetch_issue_statuses(all_refs, args.api_url)
+    statuses = fetch_issue_statuses(all_refs, args.api_url, args.company_id)
 
     report = build_report(args.since, args.until, enriched, statuses)
     print(json.dumps(report, indent=2))

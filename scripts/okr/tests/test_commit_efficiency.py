@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -110,39 +109,45 @@ class TestExtractIssueRefs:
 # ---------------------------------------------------------------------------
 
 class TestFetchIssueStatuses:
-    """Query Paperclip API for issue statuses, with caching and error handling."""
+    """Query Paperclip API for issue statuses, using paginated fetch_all_issues."""
 
-    @patch("scripts.okr.commit_efficiency.urllib.request.urlopen")
-    def test_returns_status_map_on_success(self, mock_urlopen: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "issues": [
-                {"key": "NFM-100", "status": "done"},
-                {"key": "NFM-200", "status": "in_progress"},
-            ]
-        }).encode()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_response
+    @patch("scripts.okr.commit_efficiency.fetch_all_issues")
+    def test_returns_status_map_on_success(self, mock_fetch: MagicMock) -> None:
+        mock_fetch.return_value = [
+            {"key": "NFM-100", "status": "done"},
+            {"key": "NFM-200", "status": "in_progress"},
+            {"key": "NFM-300", "status": "todo"},
+        ]
 
-        result = fetch_issue_statuses(["NFM-100", "NFM-200"], "http://localhost:3000")
+        result = fetch_issue_statuses(
+            ["NFM-100", "NFM-200"], "http://localhost:3000", "company-uuid"
+        )
         assert result["NFM-100"] == "done"
         assert result["NFM-200"] == "in_progress"
+        # NFM-300 not requested → not in result.
 
-    @patch("scripts.okr.commit_efficiency.urllib.request.urlopen")
-    def test_returns_unknown_on_api_error(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.side_effect = Exception("API down")
-        result = fetch_issue_statuses(["NFM-999"], "http://localhost:3000")
+    @patch("scripts.okr.commit_efficiency.fetch_all_issues")
+    def test_returns_unknown_for_missing_refs(self, mock_fetch: MagicMock) -> None:
+        mock_fetch.return_value = [
+            {"key": "NFM-100", "status": "done"},
+        ]
+
+        result = fetch_issue_statuses(
+            ["NFM-100", "NFM-999"], "http://localhost:3000", "company-uuid"
+        )
+        assert result["NFM-100"] == "done"
         assert result["NFM-999"] == "unknown"
 
-    @patch("scripts.okr.commit_efficiency.urllib.request.urlopen")
-    def test_returns_unknown_on_network_error(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.side_effect = urllib.error.URLError("network unreachable")
-        result = fetch_issue_statuses(["NFM-888"], "http://localhost:3000")
-        assert result["NFM-888"] == "unknown"
+    @patch("scripts.okr.commit_efficiency.fetch_all_issues")
+    def test_returns_unknown_on_api_error(self, mock_fetch: MagicMock) -> None:
+        mock_fetch.side_effect = Exception("API down")
+        result = fetch_issue_statuses(
+            ["NFM-999"], "http://localhost:3000", "company-uuid"
+        )
+        assert result["NFM-999"] == "unknown"
 
     def test_returns_empty_dict_for_empty_refs(self) -> None:
-        result = fetch_issue_statuses([], "http://localhost:3000")
+        result = fetch_issue_statuses([], "http://localhost:3000", "company-uuid")
         assert result == {}
 
 
