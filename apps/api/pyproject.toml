@@ -133,9 +133,20 @@ ignore = [
 "tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
 # Multiplication sign × is intentional in alloy-population math docs (NFM-1681)
 "tests/test_design_optimization.py" = ["RUF001", "RUF002"]
+# NFM-2195: Chinese fullwidth punctuation is intentional in blog customer-case test data
+"tests/api/v1/test_blog_customer_case.py" = ["RUF001", "RUF002"]
 # NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
 "tests/test_auth_service.py" = ["E402", "F811", "I001"]
 "tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
+# NFM-2088: Alembic migrations are point-in-time DB schema snapshots —
+# modifying them post-merge breaks reproducibility for users who have
+# already applied them. Exclude modernization rules (UP*, F401, I001,
+# W292) that flag old-style typing imports / unsorted imports / missing
+# trailing newlines, none of which are bugs in generated migration code.
+"migrations/versions/*.py" = ["UP035", "UP007", "F401", "I001", "W292"]
+# Multiplication sign × is intentional in alloy/chemistry composition
+# strings (e.g. "Ti10×V5×Al3"). RUF001 would corrupt the data.
+"scripts/generate_golden_fixtures.py" = ["RUF001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nfm_db"]
