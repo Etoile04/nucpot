@@ -74,14 +74,8 @@ interface Harness {
 
 function createHarness(opts?: { safetyMarginFraction?: number }): Harness {
   const clock = new FakeClock()
-  const fetchRefresh = vi.fn<
-    Parameters<SessionManagerOptions["fetchRefresh"]>,
-    ReturnType<SessionManagerOptions["fetchRefresh"]>
-  >()
-  const fetchSession = vi.fn<
-    Parameters<SessionManagerOptions["fetchSession"]>,
-    ReturnType<SessionManagerOptions["fetchSession"]>
-  >()
+  const fetchRefresh = vi.fn<ReturnType<SessionManagerOptions["fetchRefresh"]>>()
+  const fetchSession = vi.fn<ReturnType<SessionManagerOptions["fetchSession"]>>()
 
   const manager = new SessionManager({
     fetchRefresh,

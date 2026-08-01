@@ -21,7 +21,6 @@ import {
 } from '@/components/session'
 import {
   SessionManager,
-  type RefreshResponse,
   type SessionManagerOptions,
 } from '@/lib/session-manager'
 
@@ -76,14 +75,8 @@ interface Harness {
 
 function createHarness(): Harness {
   const clock = new FakeClock()
-  const fetchRefresh = vi.fn<
-    Parameters<SessionManagerOptions['fetchRefresh']>,
-    ReturnType<SessionManagerOptions['fetchRefresh']>
-  >()
-  const fetchSession = vi.fn<
-    Parameters<SessionManagerOptions['fetchSession']>,
-    ReturnType<SessionManagerOptions['fetchSession']>
-  >()
+  const fetchRefresh = vi.fn<ReturnType<SessionManagerOptions['fetchRefresh']>>()
+  const fetchSession = vi.fn<ReturnType<SessionManagerOptions['fetchSession']>>()
   const manager = new SessionManager({
     fetchRefresh,
     fetchSession,
