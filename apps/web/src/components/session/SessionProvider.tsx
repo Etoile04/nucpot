@@ -42,6 +42,18 @@ interface SessionContextValue {
 
 const SessionContext = createContext<SessionContextValue | null>(null)
 
+/**
+ * Safe default returned by useSession() when rendered outside a
+ * <SessionProvider> — e.g. on public routes (/, /login, /browse) where
+ * the dashboard-only provider is not mounted.  Consumers (SessionIndicator,
+ * ReAuthPrompt) already handle the "unauthenticated" state gracefully.
+ */
+const DEFAULT_SESSION_CONTEXT: SessionContextValue = {
+  state: { kind: "unauthenticated" },
+  remainingSeconds: 0,
+  refresh: async () => undefined,
+}
+
 export interface SessionProviderProps {
   readonly children: ReactNode
   /**
@@ -117,10 +129,7 @@ export function SessionProvider({
 
 export function useSession(): SessionContextValue {
   const ctx = useContext(SessionContext)
-  if (ctx === null) {
-    throw new Error("useSession must be used inside <SessionProvider>")
-  }
-  return ctx
+  return ctx ?? DEFAULT_SESSION_CONTEXT
 }
 
 /**
@@ -128,14 +137,8 @@ export function useSession(): SessionContextValue {
  * Use sparingly — most consumers should use ``useSession()`` instead.
  * Exposed so api-client wrappers can subscribe to refresh events.
  */
-export function useSessionManager(): SessionManager {
-  // Re-derive from context: callers should not poke the manager
-  // directly. This hook exists for symmetry with the test suite.
+export function useSessionManager(): SessionManager | null {
   const ctx = useContext(SessionContext)
-  if (ctx === null) {
-    throw new Error("useSessionManager must be used inside <SessionProvider>")
-  }
-  // We don't expose the manager itself via context (it's mutable and
-  // shouldn't trigger renders). Provide an empty ref hook instead.
+  if (ctx === null) return null
   return useRef<SessionManager>(null as unknown as SessionManager).current
 }

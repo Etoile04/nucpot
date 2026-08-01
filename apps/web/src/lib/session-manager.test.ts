@@ -67,7 +67,7 @@ interface Harness {
   manager: SessionManager
   clock: FakeClock
   fetchRefresh: ReturnType<typeof vi.fn>
-  fetchMe: ReturnType<typeof vi.fn>
+  fetchSession: ReturnType<typeof vi.fn>
   resolveNext: (response: RefreshResponse) => void
   rejectNext: (error: Error) => void
 }
@@ -78,14 +78,14 @@ function createHarness(opts?: { safetyMarginFraction?: number }): Harness {
     Parameters<SessionManagerOptions["fetchRefresh"]>,
     ReturnType<SessionManagerOptions["fetchRefresh"]>
   >()
-  const fetchMe = vi.fn<
-    Parameters<SessionManagerOptions["fetchMe"]>,
-    ReturnType<SessionManagerOptions["fetchMe"]>
+  const fetchSession = vi.fn<
+    Parameters<SessionManagerOptions["fetchSession"]>,
+    ReturnType<SessionManagerOptions["fetchSession"]>
   >()
 
   const manager = new SessionManager({
     fetchRefresh,
-    fetchMe,
+    fetchSession,
     safetyMarginFraction: opts?.safetyMarginFraction ?? 0.2,
     setTimeoutFn: (cb, ms) => clock.setTimeout(cb, ms),
     clearTimeoutFn: (id) => clock.clearTimeout(id),
@@ -96,7 +96,7 @@ function createHarness(opts?: { safetyMarginFraction?: number }): Harness {
     manager,
     clock,
     fetchRefresh,
-    fetchMe,
+    fetchSession,
     resolveNext: (response) => {
       fetchRefresh.mockResolvedValueOnce(response)
     },
@@ -120,8 +120,8 @@ describe("SessionManager", () => {
   })
 
   describe("init()", () => {
-    it("starts unauthenticated when /me fails", async () => {
-      harness.fetchMe.mockResolvedValueOnce(null)
+    it("starts unauthenticated when /session fails", async () => {
+      harness.fetchSession.mockResolvedValueOnce(null)
 
       await harness.manager.init()
 
@@ -129,9 +129,9 @@ describe("SessionManager", () => {
       expect(harness.manager.getRemainingSeconds()).toBe(0)
     })
 
-    it("transitions to authenticated with expiry when /me succeeds", async () => {
+    it("transitions to authenticated with expiry when /session succeeds", async () => {
       const expiresAt = harness.clock.now() + 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       await harness.manager.init()
 
@@ -145,7 +145,7 @@ describe("SessionManager", () => {
 
     it("schedules the first refresh on the timer", async () => {
       const expiresAt = harness.clock.now() + 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       await harness.manager.init()
 
@@ -157,7 +157,7 @@ describe("SessionManager", () => {
   describe("auto-refresh scheduling", () => {
     it("fires refresh at exactly the safety margin before expiry", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
       harness.resolveNext({ expires_at: futureIso(expiresAt + 30 * 60 * 1000) })
 
       await harness.manager.init()
@@ -169,7 +169,7 @@ describe("SessionManager", () => {
 
     it("does NOT fire before the safety margin", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       await harness.manager.init()
 
@@ -181,7 +181,7 @@ describe("SessionManager", () => {
     it("re-schedules after a successful refresh based on the new expiry", async () => {
       const initialExpiry = 30 * 60 * 1000
       const newExpiry = initialExpiry + 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(initialExpiry) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(initialExpiry) })
       harness.resolveNext({ expires_at: futureIso(newExpiry) })
 
       await harness.manager.init()
@@ -203,7 +203,7 @@ describe("SessionManager", () => {
     it("shares a single in-flight network call across N concurrent callers", async () => {
       const expiresAt = 30 * 60 * 1000
       const newExpiry = 60 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       let resolveOuter!: (v: RefreshResponse) => void
       harness.fetchRefresh.mockReturnValueOnce(
@@ -229,7 +229,7 @@ describe("SessionManager", () => {
 
     it("starts a fresh call after the previous one settles", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       harness.resolveNext({ expires_at: futureIso(60 * 60 * 1000) })
       harness.resolveNext({ expires_at: futureIso(90 * 60 * 1000) })
@@ -243,7 +243,7 @@ describe("SessionManager", () => {
 
     it("marks state as refreshing while in flight, then authenticated", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       let resolveOuter!: (v: RefreshResponse) => void
       harness.fetchRefresh.mockReturnValueOnce(
@@ -267,7 +267,7 @@ describe("SessionManager", () => {
   describe("refresh failure", () => {
     it("transitions to expired state and notifies subscribers", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       const subscriber = vi.fn()
       const unsub = harness.manager.subscribe(subscriber)
@@ -290,7 +290,7 @@ describe("SessionManager", () => {
 
     it("does NOT auto-retry after a failure (caller must re-auth)", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
       harness.rejectNext(new Error("network"))
 
       await harness.manager.init()
@@ -303,7 +303,7 @@ describe("SessionManager", () => {
 
     it("the failing refresh rejects all coalesced callers", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       let rejectOuter!: (e: Error) => void
       harness.fetchRefresh.mockReturnValueOnce(
@@ -328,7 +328,7 @@ describe("SessionManager", () => {
   describe("countdown", () => {
     it("getRemainingSeconds() returns positive seconds while authenticated", async () => {
       const expiresAt = 5 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       await harness.manager.init()
 
@@ -340,7 +340,7 @@ describe("SessionManager", () => {
 
     it("getRemainingSeconds() returns 0 once past expiry", async () => {
       const expiresAt = 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       await harness.manager.init()
 
@@ -352,7 +352,7 @@ describe("SessionManager", () => {
   describe("subscriber notifications", () => {
     it("notifies on every state transition", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       const subscriber = vi.fn()
       harness.manager.subscribe(subscriber)
@@ -364,7 +364,7 @@ describe("SessionManager", () => {
     })
 
     it("returns an unsubscribe function that stops notifications", async () => {
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(30 * 60 * 1000) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(30 * 60 * 1000) })
 
       const subscriber = vi.fn()
       const unsub = harness.manager.subscribe(subscriber)
@@ -383,7 +383,7 @@ describe("SessionManager", () => {
   describe("shutdown", () => {
     it("clears any pending refresh timer", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
 
       await harness.manager.init()
       expect(harness.clock.hasPending()).toBe(true)
@@ -394,7 +394,7 @@ describe("SessionManager", () => {
 
     it("is idempotent", async () => {
       const expiresAt = 30 * 60 * 1000
-      harness.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      harness.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
       await harness.manager.init()
 
       harness.manager.shutdown()
@@ -407,7 +407,7 @@ describe("SessionManager", () => {
       harness.manager.shutdown()
       const h = createHarness({ safetyMarginFraction: 0.1 })
       const expiresAt = 30 * 60 * 1000
-      h.fetchMe.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
+      h.fetchSession.mockResolvedValueOnce({ expires_at: futureIso(expiresAt) })
       h.resolveNext({ expires_at: futureIso(expiresAt + 30 * 60 * 1000) })
 
       await h.manager.init()

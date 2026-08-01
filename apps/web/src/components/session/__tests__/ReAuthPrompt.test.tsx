@@ -38,20 +38,20 @@ import {
 } from "@/lib/session-manager"
 
 type FetchRefresh = SessionManagerOptions["fetchRefresh"]
-type FetchMe = SessionManagerOptions["fetchMe"]
+type FetchMe = SessionManagerOptions["fetchSession"]
 
 interface Harness {
   manager: SessionManager
   fetchRefresh: ReturnType<typeof vi.fn>
-  fetchMe: ReturnType<typeof vi.fn>
+  fetchSession: ReturnType<typeof vi.fn>
 }
 
 function createHarness(): Harness {
   const fetchRefresh = vi.fn() as unknown as ReturnType<typeof vi.fn> &
     FetchRefresh
-  const fetchMe = vi.fn() as unknown as ReturnType<typeof vi.fn> & FetchMe
-  const manager = new SessionManager({ fetchRefresh, fetchMe })
-  return { manager, fetchRefresh, fetchMe }
+  const fetchSession = vi.fn() as unknown as ReturnType<typeof vi.fn> & FetchMe
+  const manager = new SessionManager({ fetchRefresh, fetchSession })
+  return { manager, fetchRefresh, fetchSession }
 }
 
 function renderPrompt(harness: Harness) {
@@ -85,7 +85,7 @@ describe("<ReAuthPrompt />", () => {
   })
 
   it("renders nothing when authenticated", async () => {
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     renderPrompt(harness)
@@ -94,7 +94,7 @@ describe("<ReAuthPrompt />", () => {
   })
 
   it("shows the modal when state becomes expired", async () => {
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
@@ -108,7 +108,7 @@ describe("<ReAuthPrompt />", () => {
   })
 
   it("appears within 1s of refresh-failure transition (NFM-2254 SLA)", async () => {
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     renderPrompt(harness)
@@ -135,7 +135,7 @@ describe("<ReAuthPrompt />", () => {
   })
 
   it("routes to /admin/login with returnTo=<pathname> when Re-login is clicked", async () => {
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
@@ -164,7 +164,7 @@ describe("<ReAuthPrompt />", () => {
     // dies must return to that exact filtered view, not page 1.
     mockedPathname = "/literature"
     mockedSearch = "page=3&status=pending"
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
@@ -188,7 +188,7 @@ describe("<ReAuthPrompt />", () => {
   })
 
   it("renders exactly one actionable button — no 稍后 cancel affordance (NFM-2251 §b)", async () => {
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
@@ -208,7 +208,7 @@ describe("<ReAuthPrompt />", () => {
   })
 
   it("Esc does not dismiss the modal (NFM-2251 §b)", async () => {
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))
@@ -228,7 +228,7 @@ describe("<ReAuthPrompt />", () => {
   it("does not unmount sibling content while the modal is open", async () => {
     // Sibling form content must remain mounted while the modal is up —
     // this is what preserves in-flight form state across the modal opening.
-    harness.fetchMe.mockResolvedValueOnce({
+    harness.fetchSession.mockResolvedValueOnce({
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     harness.fetchRefresh.mockRejectedValueOnce(new Error("revoked"))

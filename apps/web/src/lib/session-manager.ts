@@ -18,7 +18,7 @@ export interface RefreshResponse {
   readonly expires_at: string // ISO 8601
 }
 
-export interface SessionMeResponse {
+export interface SessionInfoData {
   readonly expires_at: string // ISO 8601
 }
 
@@ -37,8 +37,8 @@ export type SessionSubscriber = (state: SessionState) => void
 export interface SessionManagerOptions {
   /** Hit `POST /api/v1/auth/refresh` and return its body. */
   readonly fetchRefresh: (input: RequestInfo) => Promise<RefreshResponse>
-  /** Hit `GET /api/v1/auth/me` to bootstrap expiry; return null when not signed in. */
-  readonly fetchMe: (input: RequestInfo) => Promise<SessionMeResponse | null>
+  /** Hit `GET /api/v1/auth/session` to bootstrap expiry; return null when not signed in. */
+  readonly fetchSession: (input: RequestInfo) => Promise<SessionInfoData | null>
   /** Fraction of remaining lifetime before which refresh fires. Default 0.2. */
   readonly safetyMarginFraction?: number
   /** Injectable clock + timer functions for tests. */
@@ -51,7 +51,7 @@ export class SessionManager {
   private state: SessionState = { kind: "unauthenticated" }
   private readonly subscribers = new Set<SessionSubscriber>()
   private readonly fetchRefresh: (input: RequestInfo) => Promise<RefreshResponse>
-  private readonly fetchMe: (input: RequestInfo) => Promise<SessionMeResponse | null>
+  private readonly fetchSession: (input: RequestInfo) => Promise<SessionInfoData | null>
   private readonly safetyMarginFraction: number
   private readonly setTimeoutFn: (cb: () => void, ms: number) => unknown
   private readonly clearTimeoutFn: (id: unknown) => void
@@ -70,7 +70,7 @@ export class SessionManager {
 
   constructor(options: SessionManagerOptions) {
     this.fetchRefresh = options.fetchRefresh
-    this.fetchMe = options.fetchMe
+    this.fetchSession = options.fetchSession
     this.safetyMarginFraction = options.safetyMarginFraction ?? 0.2
     this.setTimeoutFn = options.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms))
     this.clearTimeoutFn =
@@ -78,15 +78,15 @@ export class SessionManager {
     this.nowFn = options.nowFn ?? (() => Date.now())
   }
 
-  /** Bootstrap expiry via /me. Idempotent. */
+  /** Bootstrap expiry via /session. Idempotent. */
   async init(): Promise<void> {
     if (this.isShutdown) return
-    const me = await this.fetchMe("/api/v1/auth/me")
-    if (!me) {
+    const session = await this.fetchSession("/api/v1/auth/session")
+    if (!session) {
       this.transition({ kind: "unauthenticated" })
       return
     }
-    const expiresAt = Date.parse(me.expires_at)
+    const expiresAt = Date.parse(session.expires_at)
     if (Number.isNaN(expiresAt)) {
       this.transition({ kind: "unauthenticated" })
       return
@@ -225,6 +225,7 @@ export class SessionManager {
  * Use this from React providers; tests should construct SessionManager directly.
  */
 export function createBrowserSessionManager(): SessionManager {
+  /** Fetch a JSON endpoint and unwrap the ApiResponse.data envelope. */
   const jsonFetch = async <T>(input: RequestInfo, init?: RequestInit): Promise<T> => {
     const res = await fetch(input, {
       ...init,
@@ -234,15 +235,16 @@ export function createBrowserSessionManager(): SessionManager {
     if (!res.ok) {
       throw new Error(`${res.status} ${res.statusText}`)
     }
-    return (await res.json()) as T
+    const body = (await res.json()) as { data: T }
+    return body.data
   }
 
   return new SessionManager({
     fetchRefresh: async (input) =>
       jsonFetch<RefreshResponse>(input, { method: "POST" }),
-    fetchMe: async (input): Promise<SessionMeResponse | null> => {
+    fetchSession: async (input): Promise<SessionInfoData | null> => {
       try {
-        return await jsonFetch<SessionMeResponse>(input)
+        return await jsonFetch<SessionInfoData>(input)
       } catch {
         return null
       }

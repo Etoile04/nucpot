@@ -25,9 +25,10 @@ export const metadata = {
  *     an unauthenticated visitor sees the AuthGuard's redirect
  *     first, and never the modal.
  *
- * NFM-2253's <SessionIndicator /> is mounted separately in Nav (root
- * layout) so it can sit in the header on /, /login, and (dashboard)
- * routes; the same SessionProvider mounted here is consumed by both.
+ * NFM-2253's <SessionIndicator /> is mounted in Nav (root layout) so
+ * it appears in the header on all routes.  useSession() returns a safe
+ * "unauthenticated" default outside this provider, so the indicator
+ * gracefully hides on public routes (/, /login, /browse).
  */
 export default function DashboardLayout({
   children,
