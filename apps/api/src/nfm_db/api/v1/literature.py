@@ -50,6 +50,7 @@ from nfm_db.schemas.literature import (
     LiteratureStatusResponse,
     LiteratureUploadResponse,
 )
+from nfm_db.services.provenance import parse_provenance
 from nfm_db.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,10 @@ def _row_to_manual_item(er: ExtractionResult) -> ExtractionResultItem:
         review_status=er.review_status,
         source_page=er.source_page,
         source_paragraph=er.source_paragraph,
+        # NFM-2247: how this item was produced. Empty list = unknown,
+        # which the frontend badge renders as 来源未知 rather than
+        # guessing from confidence or review_status.
+        provenance=parse_provenance(er.extraction_method),
         created_at=er.created_at.isoformat() if er.created_at else None,
     )
 
@@ -138,6 +143,8 @@ def _kg_node_to_item(node: KGNode) -> ExtractionResultItem:
         source_node_id=str(node.id),
         source_page=props.get("source_page"),
         source_paragraph=props.get("source_paragraph"),
+        # NFM-2247 — same contract as the legacy branch above.
+        provenance=parse_provenance(node.extraction_method),
         created_at=node.created_at.isoformat() if node.created_at else None,
     )
 
@@ -154,6 +161,7 @@ def _kg_edge_to_item(edge: KGEdge) -> ExtractionResultItem:
         confidence=edge.confidence,
         source_node_id=str(edge.source_node_id),
         source_target_id=str(edge.target_node_id),
+        provenance=parse_provenance(edge.extraction_method),
         created_at=edge.created_at.isoformat() if edge.created_at else None,
     )
 
@@ -596,6 +604,7 @@ async def get_literature_detail(
             image_path=fig.image_path,
             caption=fig.caption,
             confidence=fig.confidence,
+            provenance=parse_provenance(fig.extraction_method),
         )
         for fig in fig_result.scalars().all()
     ]

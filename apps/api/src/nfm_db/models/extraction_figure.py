@@ -12,6 +12,7 @@ from sqlalchemy import JSON, ForeignKey, Integer, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base
+from nfm_db.services.provenance import PROVENANCE_MINERU
 
 
 class ExtractionFigure(Base):
@@ -43,4 +44,16 @@ class ExtractionFigure(Base):
     caption: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float] = mapped_column(
         nullable=False, default=0.0
+    )
+    # Extraction-method provenance (NFM-2247). The DB column already exists —
+    # migration 026 added it — but the model never declared it, so the
+    # literature detail panel could not read it. Figures only ever come from
+    # the MinerU / VLM figure-and-plot pipeline, so ORM-created rows default to
+    # `mineru`; pre-existing rows keep whatever the DB holds (often NULL,
+    # which the frontend renders as 来源未知).
+    extraction_method: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        default=PROVENANCE_MINERU,
+        comment="How this figure was produced; see nfm_db.services.provenance",
     )
