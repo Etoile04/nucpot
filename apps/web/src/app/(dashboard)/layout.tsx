@@ -1,5 +1,6 @@
 import AuthGuard from "@/components/auth/AuthGuard"
 import SessionTimerBadge from "@/components/auth/SessionTimerBadge"
+import SessionWarning from "@/components/auth/SessionWarning"
 
 export const metadata = {
   title: "Dashboard - NFMD",
@@ -23,6 +24,7 @@ export default function DashboardLayout({
 }) {
   return (
     <AuthGuard>
+      <SessionWarning />
       <div className="min-h-[calc(100vh-73px)] bg-gray-900">
         <div style={{ display: "flex", justifyContent: "flex-end", padding: "0.5rem 1rem" }}>
           <SessionTimerBadge />
