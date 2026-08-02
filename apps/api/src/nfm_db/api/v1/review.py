@@ -41,6 +41,7 @@ from nfm_db.schemas.review import (
     ReviewStatusUpdate,
     SourceProvenanceResponse,
 )
+from nfm_db.services.provenance import PROVENANCE_MANUAL, add_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,27 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
         source=source_info,
         created_at=row.created_at,
     )
+
+
+def _stamp_manual_provenance(row: Any, new_status: str) -> None:
+    """Record that a human authored this item's current value (NFM-2247).
+
+    Only the ``corrected`` transition rewrites the extracted data, so only it
+    claims ``manual``. ``approved`` and ``rejected`` are verdicts *about*
+    someone else's work — an approved LLM value is still an LLM value — so they
+    leave provenance untouched. This keeps the column a record of authorship
+    rather than a re-encoding of ``review_status``.
+
+    The token is appended, so an LLM-extracted value corrected by a reviewer
+    ends up ``llm,manual`` and the badge renders 手动 by client-side
+    precedence. Tables without the column (``property_measurements``) are
+    skipped.
+    """
+    if new_status != ReviewStatus.CORRECTED.value:
+        return
+    if not hasattr(row, "extraction_method"):
+        return
+    row.extraction_method = add_provenance(row.extraction_method, PROVENANCE_MANUAL)
 
 
 def _create_correction_audit(
@@ -490,6 +512,7 @@ async def update_review_status(
     row.review_note = body.note
     row.reviewed_by = str(current_user.id) if current_user else None
     row.reviewed_at = datetime.now(UTC)
+    _stamp_manual_provenance(row, body.status)
 
     # Write a Review audit record for any reviewer-initiated feedback signal
     # (correction, or a needs-revision request when the UI does not yet
@@ -564,6 +587,7 @@ async def batch_review(
         row.review_note = item.note
         row.reviewed_by = str(current_user.id) if current_user else None
         row.reviewed_at = datetime.now(UTC)
+        _stamp_manual_provenance(row, item.status)
         succeeded += 1
 
         # Audit record for any reviewer-initiated feedback signal (see

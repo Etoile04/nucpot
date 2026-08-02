@@ -55,6 +55,9 @@ class LiteratureFigure(BaseModel):
     image_path: str | None = None
     caption: str | None = None
     confidence: float = 0.0
+    # NFM-2247: how the figure was produced, normally ["mineru"]. Empty means
+    # unknown; the frontend badge renders that as 来源未知.
+    provenance: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +108,10 @@ class ExtractionResultItem(BaseModel):
     # KG-edge-only fields.
     source_node_id: str | None = Field(None, description="Edge source endpoint (kg_node/kg_edge).")
     source_target_id: str | None = Field(None, description="Edge target endpoint — only set when source_type == 'kg_edge'.")
+
+    # NFM-2247: how this item was produced. Empty list means unknown;
+    # the frontend badge renders that as 来源未知.
+    provenance: list[str] = Field(default_factory=list)
 
 
 class LiteratureDetailResponse(BaseModel):
