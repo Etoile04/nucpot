@@ -4,38 +4,69 @@ import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import ImageUpload from "@/components/admin/ImageUpload"
+import {
+  useFormDraft,
+  clearFormDraft,
+} from "@/components/session/useFormDraft"
 import { blogApi } from "@/lib/api-client"
+
+/** Shape of the persisted blog-new-post draft. */
+interface BlogPostDraft {
+  readonly title: string
+  readonly author: string
+  readonly tags: string
+  readonly summary: string
+  readonly content: string
+}
+
+const EMPTY_DRAFT: BlogPostDraft = {
+  title: "",
+  author: "",
+  tags: "",
+  summary: "",
+  content: "",
+} as const
+
+/** sessionStorage key used by useFormDraft for this form. */
+const BLOG_NEW_FORM_ID = "blog-new-post"
 
 export default function NewBlogPostPage() {
   const router = useRouter()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const [title, setTitle] = useState("")
-  const [author, setAuthor] = useState("")
-  const [tags, setTags] = useState("")
-  const [summary, setSummary] = useState("")
-  const [content, setContent] = useState("")
+
+  // Draft-persisted fields — survive a re-auth round-trip via sessionStorage.
+  const [draft, setDraft] = useFormDraft<BlogPostDraft>(
+    BLOG_NEW_FORM_ID,
+    EMPTY_DRAFT,
+  )
+  const { title, author, tags, summary, content } = draft
+
+  // UI-only state (not persisted across re-auth).
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [isPreviewMode, setIsPreviewMode] = useState(false)
 
   const handleImageInsert = (markdown: string) => {
-    setContent((prev) => {
-      const textarea = textareaRef.current
-      if (!textarea) return prev
+    const textarea = textareaRef.current
+    if (!textarea) return
 
-      const start = textarea.selectionStart
-      const end = textarea.selectionEnd
-      const newText = prev.substring(0, start) + "\n" + markdown + "\n" + prev.substring(end)
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const newText =
+      content.substring(0, start) +
+      "\n" +
+      markdown +
+      "\n" +
+      content.substring(end)
 
-      setTimeout(() => {
-        textarea.focus()
-        const newPosition = start + markdown.length + 2
-        textarea.setSelectionRange(newPosition, newPosition)
-      }, 0)
+    setDraft({ ...draft, content: newText })
 
-      return newText
-    })
+    setTimeout(() => {
+      textarea.focus()
+      const newPosition = start + markdown.length + 2
+      textarea.setSelectionRange(newPosition, newPosition)
+    }, 0)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -53,11 +84,8 @@ export default function NewBlogPostPage() {
       })
 
       setSuccess(true)
-      setTitle("")
-      setAuthor("")
-      setTags("")
-      setSummary("")
-      setContent("")
+      clearFormDraft(BLOG_NEW_FORM_ID)
+      setDraft(EMPTY_DRAFT)
 
       setTimeout(() => {
         router.push("/admin/blog/posts")
@@ -152,7 +180,7 @@ export default function NewBlogPostPage() {
             id="title"
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
             required
             style={{
               width: "100%",
@@ -179,7 +207,7 @@ export default function NewBlogPostPage() {
             id="author"
             type="text"
             value={author}
-            onChange={(e) => setAuthor(e.target.value)}
+            onChange={(e) => setDraft({ ...draft, author: e.target.value })}
             required
             style={{
               width: "100%",
@@ -206,7 +234,7 @@ export default function NewBlogPostPage() {
             id="tags"
             type="text"
             value={tags}
-            onChange={(e) => setTags(e.target.value)}
+            onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
             placeholder="例如: 使用指南, API, 教程"
             style={{
               width: "100%",
@@ -232,7 +260,7 @@ export default function NewBlogPostPage() {
           <textarea
             id="summary"
             value={summary}
-            onChange={(e) => setSummary(e.target.value)}
+            onChange={(e) => setDraft({ ...draft, summary: e.target.value })}
             required
             rows={3}
             style={{
@@ -262,7 +290,7 @@ export default function NewBlogPostPage() {
             ref={textareaRef}
             id="content"
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => setDraft({ ...draft, content: e.target.value })}
             required
             rows={15}
             style={{
