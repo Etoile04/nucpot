@@ -84,6 +84,11 @@ export interface ApiResponse<T> {
   readonly data: T
 }
 
+export interface SessionInfoResponse {
+  readonly expires_at: string
+  readonly expires_in_seconds: number
+}
+
 export const authApi = {
   login: async (username: string, password: string): Promise<TokenResponse> => {
     const body = new URLSearchParams()
@@ -118,6 +123,11 @@ export const authApi = {
       credentials: "include",
     }).catch(() => {})
   },
+
+  sessionInfo: (): Promise<SessionInfoResponse> =>
+    request<ApiResponse<SessionInfoResponse>>("/api/v1/auth/session-info").then(
+      (r) => r.data,
+    ),
 } as const
 
 /** Blog post types matching backend BlogPostResponse + file content */

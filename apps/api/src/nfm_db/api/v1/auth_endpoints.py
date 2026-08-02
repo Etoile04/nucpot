@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import (
+    _extract_bearer_token,
     get_current_active_user,
 )
 from nfm_db.api.v1.auth import (
@@ -28,6 +29,7 @@ from nfm_db.schemas.auth import (
     BlogRoleResponse,
     RoleAssignmentRequest,
     RoleAssignmentResponse,
+    SessionInfoResponse,
     Token,
     UserCreate,
     UserResponse,
@@ -37,6 +39,7 @@ from nfm_db.services.auth_service import (
     authenticate_user,
     create_access_token,
     create_service_account_token,
+    decode_access_token,
     get_password_hash,
 )
 
@@ -211,6 +214,49 @@ async def get_current_user_info(
     return ApiResponse(
         success=True,
         data=UserResponse.model_validate(current_user),
+    )
+
+
+@router.get(
+    "/session-info",
+    response_model=ApiResponse[SessionInfoResponse],
+    summary="获取会话过期信息",
+    description="获取当前 JWT 会话的过期时间。\n\nGet current session expiration info from JWT.",
+)
+@limiter.limit("60/minute")
+async def get_session_info(
+    request: Request,
+) -> ApiResponse[SessionInfoResponse]:
+    """Return session expiry information decoded from the JWT.
+
+    Reads the token from the HttpOnly cookie (or Authorization header
+    fallback), decodes the ``exp`` claim, and returns both the absolute
+    timestamp and a relative seconds-remaining value.
+    """
+    token = _extract_bearer_token(request)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    payload = decode_access_token(token)
+    if not payload or "exp" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    exp_dt = datetime.fromtimestamp(payload["exp"], tz=UTC)
+    now = datetime.now(UTC)
+    expires_in_seconds = max(0, int((exp_dt - now).total_seconds()))
+
+    return ApiResponse(
+        success=True,
+        data=SessionInfoResponse(
+            expires_at=exp_dt,
+            expires_in_seconds=expires_in_seconds,
+        ),
     )
 
 

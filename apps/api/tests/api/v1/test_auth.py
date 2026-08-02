@@ -760,3 +760,85 @@ async def test_register_then_login(_mock_auth, _mock_hash, async_client, db_sess
     )
     assert login_resp.status_code == 200
     assert "access_token" in login_resp.json()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/auth/session-info (NFM-2226)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_info_with_valid_token(async_client, db_session) -> None:
+    """Authenticated request returns expiry data from the JWT."""
+    user, _hashed = await _seed_user(db_session, username="sessioninfo", password="pw")
+    token = create_access_token(data={"sub": str(user.id)})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await async_client.get(
+        "/api/v1/auth/session-info",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    data = body["data"]
+    assert "expires_at" in data
+    assert isinstance(data["expires_in_seconds"], int)
+    assert data["expires_in_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_session_info_with_cookie(async_client, db_session) -> None:
+    """Session info reads the JWT from the HttpOnly cookie (not just header)."""
+    await _seed_user(db_session, username="cookieinfo", password="secret123")
+
+    with patch(
+        "nfm_db.api.v1.auth_endpoints.authenticate_user",
+        return_value=True,
+    ):
+        login_resp = await async_client.post(
+            "/api/v1/auth/login",
+            data={"username": "cookieinfo", "password": "secret123"},
+        )
+    assert login_resp.status_code == 200
+
+    cookie_header = login_resp.headers.get("set-cookie", "")
+    session_resp = await async_client.get(
+        "/api/v1/auth/session-info",
+        headers={"cookie": cookie_header},
+    )
+    assert session_resp.status_code == 200
+    data = session_resp.json()["data"]
+    assert data["expires_in_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_session_info_no_token_returns_401(async_client) -> None:
+    """Request without any auth credential returns 401."""
+    response = await async_client.get("/api/v1/auth/session-info")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_session_info_invalid_token_returns_401(async_client) -> None:
+    """Request with a garbage token returns 401."""
+    response = await async_client.get(
+        "/api/v1/auth/session-info",
+        headers={"Authorization": "Bearer garbage.token.here"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_session_info_expires_in_seconds_non_negative(
+    async_client, db_session,
+) -> None:
+    """Even for a just-created token, expires_in_seconds must be >= 0."""
+    user, _hashed = await _seed_user(db_session, username="sesspos", password="pw")
+    token = create_access_token(data={"sub": str(user.id)})
+    response = await async_client.get(
+        "/api/v1/auth/session-info",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["expires_in_seconds"] >= 0

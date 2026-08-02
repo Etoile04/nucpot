@@ -10,6 +10,7 @@ import {
   authApi,
   blogApi,
 } from "@/lib/api-client"
+import SessionTimerBadge from "@/components/auth/SessionTimerBadge"
 
 const { Sider, Content } = Layout
 
@@ -150,6 +151,9 @@ export default function BlogLayout({
               width: "100%",
               borderTop: "1px solid #f0f0f0",
               padding: "0.75rem 1rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
             }}
           >
             <a
@@ -168,6 +172,7 @@ export default function BlogLayout({
             >
               退出登录
             </a>
+            <SessionTimerBadge />
           </div>
         </Sider>
         <Layout style={{ marginLeft: 200 }}>

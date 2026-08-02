@@ -87,6 +87,13 @@ class RoleAssignmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SessionInfoResponse(BaseModel):
+    """Session expiration information decoded from the JWT."""
+
+    expires_at: datetime
+    expires_in_seconds: int
+
+
 class BlogRoleResponse(BaseModel):
     """Response model for a single blog role."""
 
@@ -163,6 +170,7 @@ __all__ = [
     "LoginRequest",
     "RoleAssignmentRequest",
     "RoleAssignmentResponse",
+    "SessionInfoResponse",
     "Token",
     "TokenData",
     "UserBase",
