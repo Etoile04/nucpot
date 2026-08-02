@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Acceptance gate for `paperclip_issue_lookup` — ADR-008 / NFM-2036.
 
-Runs the four cases from the arch-spec against the live `$PAPERCLIP_API_URL`
+Runs the six cases from the arch-spec against the live `$PAPERCLIP_API_URL`
 and prints PASS / FAIL for each. Exits non-zero if any case fails.
 
     python3 scripts/verify_paperclip_issue_lookup.py
@@ -12,6 +12,8 @@ and prints PASS / FAIL for each. Exits non-zero if any case fails.
 | 2 | key restored, BASE_URL not company-scoped | WrongPath raised, zero HTTP calls |
 | 3 | lookup_issue("NFM-DOES-NOT-EXIST-9999")   | NotFound, distinct from errors    |
 | 4 | lookup_issue("NFM-1909")                  | Ok, 1 issue, pages_consumed == 1  |
+| 5 | lookup_issue("NFM-2113") — known blocked  | blockedBy present, non-empty      |
+| 6 | lookup_issue("NFM-2092") — known blocked  | blockedBy present, non-empty      |
 
 Cases 1 and 2 must prove *no HTTP call was attempted*. They do that by
 replacing the helper's `requests` module with a spy that records any call and
@@ -33,6 +35,10 @@ import paperclip_issue_lookup as plu  # noqa: E402
 LIVE_IDENTIFIER = "NFM-1909"
 ABSENT_IDENTIFIER = "NFM-DOES-NOT-EXIST-9999"
 NON_COMPANY_SCOPED_URL = "https://paperclip.invalid/api/issues"
+
+# Known-blocked issues used by the trap-3 regression cases.
+BLOCKED_IDENTIFIER_A = "NFM-2113"  # blockers: NFM-2110, NFM-2111, NFM-2112
+BLOCKED_IDENTIFIER_B = "NFM-2092"  # multiple blockers
 
 
 class SpyRequests:
@@ -136,11 +142,74 @@ def case_4_live_issue() -> str:
     )
 
 
+def case_5_blocked_issue_a() -> str:
+    """NFM-2113 returns expanded payload with blockedBy present (trap-3)."""
+    result = plu.lookup_issue(BLOCKED_IDENTIFIER_A)
+    if not isinstance(result, plu.Ok):
+        raise AssertionError(f"expected Ok, got {result!r}")
+    if len(result.issues) != 1:
+        raise AssertionError(f"expected 1 issue, got {len(result.issues)}")
+
+    issue = result.issues[0]
+    blocked_by = issue.get("blockedBy")
+    if blocked_by is None:
+        raise AssertionError(
+            f"blockedBy is key-absent — trap-3 not fixed: "
+            f"keys present: {[k for k in issue if k.startswith('block')]}"
+        )
+    if not isinstance(blocked_by, list) or len(blocked_by) == 0:
+        raise AssertionError(
+            f"blockedBy is empty list/missing — trap-3 not fixed: {blocked_by!r}"
+        )
+
+    blockers = [
+        b.get("identifier", b.get("id", "?"))
+        for b in blocked_by
+    ]
+    return f"blockedBy present: {blockers}"
+
+
+def case_6_blocked_issue_b() -> str:
+    """NFM-2092 returns expanded payload with non-empty blockedBy (trap-3)."""
+    result = plu.lookup_issue(BLOCKED_IDENTIFIER_B)
+    if not isinstance(result, plu.Ok):
+        raise AssertionError(f"expected Ok, got {result!r}")
+    if len(result.issues) != 1:
+        raise AssertionError(f"expected 1 issue, got {len(result.issues)}")
+
+    issue = result.issues[0]
+    blocked_by = issue.get("blockedBy")
+    if blocked_by is None:
+        raise AssertionError(
+            f"blockedBy is key-absent — trap-3 not fixed for {BLOCKED_IDENTIFIER_B}"
+        )
+    if not isinstance(blocked_by, list) or len(blocked_by) == 0:
+        raise AssertionError(
+            f"blockedBy empty/missing for {BLOCKED_IDENTIFIER_B}: {blocked_by!r}"
+        )
+
+    blockers = [
+        b.get("identifier", b.get("id", "?"))
+        for b in blocked_by
+    ]
+    return f"blockedBy present ({len(blockers)} blockers): {blockers}"
+
+
 CASES = [
     ("1", "missing PAPERCLIP_API_KEY -> AuthError, no HTTP", case_1_missing_key),
     ("2", "non-company-scoped BASE_URL -> WrongPathError, no HTTP", case_2_wrong_path),
     ("3", f"{ABSENT_IDENTIFIER} -> NotFound", case_3_not_found),
     ("4", f"{LIVE_IDENTIFIER} -> Ok(1 issue)", case_4_live_issue),
+    (
+        "5",
+        f"{BLOCKED_IDENTIFIER_A} -> blockedBy present (trap-3 regression)",
+        case_5_blocked_issue_a,
+    ),
+    (
+        "6",
+        f"{BLOCKED_IDENTIFIER_B} -> blockedBy non-empty (trap-3 regression)",
+        case_6_blocked_issue_b,
+    ),
 ]
 
 

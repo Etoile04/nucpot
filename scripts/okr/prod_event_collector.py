@@ -28,7 +28,7 @@ CLI usage:
         --sync-state ~/.nfmd/prod-event-sync-state.json \
         --master-jsonl ~/.nfmd/master-deploy-events.jsonl \
         --repo Etoile04/nucpot \
-        --ssh-target lwj04@127.0.0.1
+        --ssh-target deployer@prod-host.example.com
 
 Required environment:
     GH_TOKEN              repo-scope PAT or workflow token.
@@ -578,6 +578,26 @@ def _save_state(path: Path, state: SyncState) -> None:
 # without embedding a literal username in committed code. ``Path.home()``
 # is called lazily so tests can monkeypatch it.
 
+def _resolve_ssh_target(cli_value: str | None) -> str:
+    """Resolve the SSH target: CLI arg → ``NFMD_PROD_SSH_TARGET`` env.
+
+    Raises:
+        SystemExit: if neither ``cli_value`` nor ``NFMD_PROD_SSH_TARGET``
+            is provided.
+    """
+    if cli_value is not None:
+        return cli_value
+    env_value = os.environ.get("NFMD_PROD_SSH_TARGET")
+    if env_value:
+        return env_value
+    print(
+        "error: --ssh-target is required.  Set it via the CLI flag or "
+        "the NFMD_PROD_SSH_TARGET environment variable.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _default_sync_state_path() -> Path:
     """Runtime-expanded fallback for the sync-state JSON."""
     return Path.home() / ".nfmd" / "prod-event-sync-state.json"
@@ -628,8 +648,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo", default="Etoile04/nucpot")
     parser.add_argument(
-        "--ssh-target", default="lwj04@127.0.0.1",
-        help="Loopback SSH target (self-hosted runner = Mac Studio host).",
+        "--ssh-target", default=None,
+        help="SSH target as user@host (required). Set via this flag or "
+        "the NFMD_PROD_SSH_TARGET environment variable.",
     )
     parser.add_argument(
         "--dry-run",
@@ -640,10 +661,11 @@ def main(argv: list[str] | None = None) -> int:
 
     sync_state_path = _resolve_sync_state_path(args.sync_state)
     master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
+    ssh_target = _resolve_ssh_target(args.ssh_target)
     state = _load_state(sync_state_path)
 
     backend: Backend = GhBackend(
-        args.repo, args.ssh_target, str(master_jsonl_path), str(sync_state_path),
+        args.repo, ssh_target, str(master_jsonl_path), str(sync_state_path),
     )
     try:
         next_state = collect(state, backend)

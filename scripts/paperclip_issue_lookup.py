@@ -13,6 +13,19 @@ been deleted. It had not.
     | GET /api/issues/{id}         (no auth)       | 401 {"error": "Unauthorized"}         | 404 / deleted  |
     | GET /api/issues?limit=5      (no companyId)  | 400 {"error": "Missing companyId..."} | len() == 0     |
     | GET /api/companies/{id}/issues?limit=2000    | 1000 rows, silently truncated         | complete set   |
+    | GET /api/companies/{id}/issues/{uuid}        | row present but expanded fields missing | no blockers    |
+
+The fourth row is the **trap-3** pitfall: the collection endpoint silently
+strips ``blockedBy``, ``comments``, ``ancestors``, ``blocks``,
+``terminalBlockers``, ``planDocument``, and ``workProducts``.  An agent
+that reads blockers through the collection path concludes "no blockers"
+even when the issue is genuinely blocked.
+
+``lookup_issue()`` mitigates trap-3 by resolving the UUID through the
+collection, then re-fetching via the bare ``GET /api/issues/{uuid}``
+endpoint which returns the full expanded payload.  ``lookup_issues()``
+deliberately stays on the collection — callers must NOT trust
+``blockedBy`` from list reads.
 
 Every one of those reaches a naive caller as "zero issues". This module makes
 that shape unreachable.
@@ -276,6 +289,70 @@ def _paginate(
     return rows, max(pages, 1), truncated
 
 
+# --- Expanded single-issue fetch (trap-3 mitigation) ------------------------
+
+# The collection endpoint (GET /api/companies/{id}/issues) silently strips
+# several expanded fields: blockedBy, comments, ancestors, blocks,
+# terminalBlockers, planDocument, workProducts.  Reading blockers through
+# the collection path always reports "no blockers" even when they exist.
+#
+# The bare per-issue endpoint (GET /api/issues/{uuid}) returns the full
+# expanded payload including all of the above.  This module therefore
+# resolves the UUID through the collection, then re-fetches via the bare
+# endpoint so callers of ``lookup_issue()`` see the true ``blockedBy`` set.
+#
+# ``lookup_issues()`` deliberately stays on the collection endpoint —
+# callers must NOT trust ``blockedBy`` from list reads.
+
+
+def _issue_from(response: requests.Response) -> dict | ApiError:
+    """Extract a single expanded issue dict from a bare ``GET /api/issues/{uuid}``."""
+    if response.status_code in (401, 403):
+        raise AuthError(
+            http_status=response.status_code,
+            message=f"API rejected the credentials ({response.status_code})",
+            hint="missing or invalid PAPERCLIP_API_KEY",
+        )
+
+    try:
+        body = response.json()
+    except ValueError:
+        return ApiError(
+            http_status=response.status_code,
+            body=response.text[:500],
+            kind="unknown",
+        )
+
+    if isinstance(body, dict) and "error" in body:
+        return ApiError(
+            http_status=response.status_code,
+            body=str(body["error"])[:500],
+            kind=_error_kind(response.status_code),
+        )
+
+    if isinstance(body, dict) and "id" in body:
+        return body
+
+    return ApiError(
+        http_status=response.status_code,
+        body=f"unexpected response shape: {type(body).__name__}",
+        kind="unknown",
+    )
+
+
+def _fetch_expanded_issue(uuid: str) -> dict | ApiError:
+    """Fetch a single issue by UUID via the bare ``GET /api/issues/{uuid}``.
+
+    This intentionally bypasses :func:`_validated_url` because the bare
+    per-issue endpoint is *not* company-scoped — that scoping guard only
+    applies to collection operations.
+    """
+    key = _api_key()
+    url = f"{API_ROOT}/api/issues/{uuid}"
+    response = _get(url, {}, key)
+    return _issue_from(response)
+
+
 def _clean(params: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in params.items() if v not in (None, "", [])}
 
@@ -292,16 +369,26 @@ def lookup_issue(identifier: str, max_pages: int = DEFAULT_MAX_PAGES) -> LookupR
 
     Returns ``Ok`` with a single-element list, or ``NotFound``.
     Raises ``AuthError`` / ``WrongPath`` — see the module docstring.
+
+    The returned issue dict includes expanded fields (``blockedBy``,
+    ``comments``, ``ancestors``, etc.) by re-fetching via the bare per-issue
+    endpoint after UUID resolution.  This is the trap-3 mitigation — see
+    module docstring.
     """
     ident = (identifier or "").strip()
     if not ident:
         raise ValueError("identifier must be a non-empty string")
 
+    # Fast path: caller already has the UUID — skip the collection entirely.
+    if _UUID.match(ident):
+        expanded = _fetch_expanded_issue(ident)
+        if isinstance(expanded, ApiError):
+            return expanded
+        return Ok(issues=[expanded], pages_consumed=1)
+
     # The server's `q` search is relevance-ranked and fuzzy: it returns unrelated
-    # rows for a nonsense identifier, so we must exact-match locally. UUIDs are
-    # not searchable via `q`, so those scan the collection instead.
-    by_uuid = bool(_UUID.match(ident))
-    query = _clean({} if by_uuid else {"q": ident})
+    # rows for a nonsense identifier, so we must exact-match locally.
+    query = _clean({"q": ident})
 
     page = _paginate(query, max_pages)
     if isinstance(page, ApiError):
@@ -309,7 +396,18 @@ def lookup_issue(identifier: str, max_pages: int = DEFAULT_MAX_PAGES) -> LookupR
     rows, pages, truncated = page
 
     for row in rows:
-        if row.get("id") == ident or _same(row.get("identifier"), ident):
+        if _same(row.get("identifier"), ident):
+            # Re-fetch via the bare per-issue endpoint to get expanded fields
+            # (blockedBy, comments, ancestors, etc.) that the collection strips.
+            row_uuid = row.get("id")
+            if row_uuid:
+                expanded = _fetch_expanded_issue(row_uuid)
+                if isinstance(expanded, ApiError):
+                    # Fall back to the collection row if expanded fetch fails.
+                    return Ok(
+                        issues=[row], pages_consumed=pages, truncated=truncated
+                    )
+                return Ok(issues=[expanded], pages_consumed=pages, truncated=truncated)
             return Ok(issues=[row], pages_consumed=pages, truncated=truncated)
 
     if truncated:

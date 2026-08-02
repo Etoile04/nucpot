@@ -16,11 +16,13 @@ passlib-based auth_service functions at the endpoint layer.
 from __future__ import annotations
 
 import uuid
+from http.cookies import SimpleCookie
 from unittest.mock import patch
 
 import bcrypt
 import pytest
 
+from nfm_db.api.v1 import auth_endpoints
 from nfm_db.models.user import BlogRole, User
 from nfm_db.services.auth_service import create_access_token
 
@@ -75,6 +77,20 @@ def _auth_headers(user: User) -> dict[str, str]:
     """Build Authorization header for a given user."""
     token = create_access_token(data={"sub": str(user.id)})
     return {"Authorization": f"Bearer {token}"}
+
+
+def _parse_login_cookie(response) -> SimpleCookie:
+    """Return the parsed ``access_token`` cookie morsel from a login response.
+
+    ``SimpleCookie`` normalizes attribute names to lowercase and exposes
+    flag attributes (``httponly``/``secure``) as booleans, which keeps the
+    assertions readable.
+    """
+    jar: SimpleCookie = SimpleCookie()
+    for header in response.headers.get_list("set-cookie"):
+        jar.load(header)
+    assert auth_endpoints.COOKIE_NAME in jar, "login did not set an auth cookie"
+    return jar[auth_endpoints.COOKIE_NAME]
 
 
 # Shared patches for endpoint tests that go through the API auth flow.
@@ -173,6 +189,117 @@ async def test_login_missing_fields(async_client) -> None:
     """Missing form fields return 422."""
     response = await async_client.post("/api/v1/auth/login", data={})
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Login cookie lifetime (NFM-2225)
+#
+# The HttpOnly cookie must expire with the JWT it carries.  A cookie shorter
+# than the token silently logs the user out while the token is still valid —
+# that was the original 30-minute-cookie / 8-hour-token mismatch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_login_cookie_max_age_matches_access_token_ttl(async_client, db_session) -> None:
+    """Human login cookie expires with the JWT, not 30 minutes early."""
+    await _seed_user(db_session, username="cookiettl", password="secret123")
+
+    with patch(
+        "nfm_db.api.v1.auth_endpoints.authenticate_user",
+        return_value=True,
+    ):
+        response = await async_client.post(
+            "/api/v1/auth/login",
+            data={"username": "cookiettl", "password": "secret123"},
+        )
+
+    assert response.status_code == 200
+    cookie = _parse_login_cookie(response)
+    expected = auth_endpoints.settings.access_token_expire_minutes * 60
+    assert int(cookie["max-age"]) == expected
+
+
+@pytest.mark.asyncio
+async def test_login_cookie_max_age_follows_config_at_login_time(
+    async_client, db_session, monkeypatch
+) -> None:
+    """Cookie lifetime is read from config per-login, not frozen at import."""
+    await _seed_user(db_session, username="cookiecfg", password="secret123")
+    monkeypatch.setattr(
+        auth_endpoints.settings,
+        "access_token_expire_minutes",
+        45,
+    )
+
+    with patch(
+        "nfm_db.api.v1.auth_endpoints.authenticate_user",
+        return_value=True,
+    ):
+        response = await async_client.post(
+            "/api/v1/auth/login",
+            data={"username": "cookiecfg", "password": "secret123"},
+        )
+
+    assert response.status_code == 200
+    cookie = _parse_login_cookie(response)
+    assert int(cookie["max-age"]) == 45 * 60
+
+
+@pytest.mark.asyncio
+async def test_login_cookie_max_age_matches_service_account_ttl(
+    async_client, db_session, monkeypatch
+) -> None:
+    """Service accounts keep their own (shorter) TTL — no 8-hour widening.
+
+    ``service_jwt_ttl_minutes`` defaults to 30, which is *exactly* the old
+    hardcoded ``COOKIE_MAX_AGE = 1800``.  Asserting against the default would
+    therefore still pass if this branch regressed back to the constant, so pin
+    the knob to a value that collides with neither 1800 nor the human
+    ``access_token_expire_minutes`` path.
+    """
+    user, _hashed = await _seed_user(db_session, username="svcttl", password="secret123")
+    user.is_service_account = True
+    await db_session.commit()
+    monkeypatch.setattr(auth_endpoints.settings, "service_jwt_ttl_minutes", 7)
+
+    with patch(
+        "nfm_db.api.v1.auth_endpoints.authenticate_user",
+        return_value=True,
+    ):
+        response = await async_client.post(
+            "/api/v1/auth/login",
+            data={"username": "svcttl", "password": "secret123"},
+        )
+
+    assert response.status_code == 200
+    cookie = _parse_login_cookie(response)
+    assert int(cookie["max-age"]) == 7 * 60
+    # Neither the human knob nor the retired 1800 constant.
+    assert int(cookie["max-age"]) != auth_endpoints.settings.access_token_expire_minutes * 60
+    assert int(cookie["max-age"]) != 1800
+
+
+@pytest.mark.asyncio
+async def test_login_cookie_security_attributes_unchanged(async_client, db_session) -> None:
+    """Regression guard: only max_age changes, the hardening flags stay."""
+    await _seed_user(db_session, username="cookieattrs", password="secret123")
+
+    with patch(
+        "nfm_db.api.v1.auth_endpoints.authenticate_user",
+        return_value=True,
+    ):
+        response = await async_client.post(
+            "/api/v1/auth/login",
+            data={"username": "cookieattrs", "password": "secret123"},
+        )
+
+    assert response.status_code == 200
+    cookie = _parse_login_cookie(response)
+    assert cookie["httponly"] is True
+    assert cookie["secure"] is True
+    assert cookie["samesite"].lower() == "lax"
+    assert cookie["path"] == "/"
 
 
 # ---------------------------------------------------------------------------
