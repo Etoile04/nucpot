@@ -7,7 +7,7 @@
  */
 
 export { SessionProvider, useSession } from "./SessionProvider"
-export { SessionIndicator } from "./SessionIndicator"
+export { SessionIndicator, formatRemainingMain, buildIndicatorCopy, buildIndicatorAria } from "./SessionIndicator"
 export { ReAuthPrompt } from "./ReAuthPrompt"
 export {
   useFormDraft,
