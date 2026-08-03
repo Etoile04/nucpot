@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/AuthProvider'
+import { SessionIndicator } from '@/components/session'
 
 const NAV_LINKS = [
   { href: '/browse', label: '浏览' },
@@ -125,6 +126,12 @@ export default function Nav() {
               </div>
             )}
           </div>
+
+          {/* Session indicator — right of NAV_LINKS/KG, left of auth.
+              * Hidden on mobile (md:flex wraps the entire desktop nav, so the
+              * indicator is implicitly hidden on small viewports per spec §2.1).
+              * Spec: [NFM-2251](/NFM/issues/NFM-2251) §2.6 */}
+          <SessionIndicator />
 
           {/* Auth section */}
           {!loading && (
