@@ -48,8 +48,8 @@ class TestLoadAgeExtension:
         _load_age_extension(mock_conn, MagicMock())
         # No exception propagated — silently skipped.
 
-    def test_age_not_installed_skips_gracefully(self) -> None:
-        """If AGE extension is not installed, LOAD 'age' fails and is caught."""
+    def test_age_not_installed_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """If AGE is unavailable, the best-effort fallback remains observable."""
         mock_conn = MagicMock()
         # First call succeeds (SELECT current_database), second fails (LOAD 'age')
         mock_conn.cursor.execute.side_effect = [
@@ -57,8 +57,10 @@ class TestLoadAgeExtension:
             Exception("extension not available"),  # LOAD 'age'
         ]
 
-        _load_age_extension(mock_conn, MagicMock())
-        # Exception swallowed silently.
+        with caplog.at_level("WARNING", logger="nfm_db.database"):
+            _load_age_extension(mock_conn, MagicMock())
+
+        assert "AGE extension not available" in caplog.text
 
 
 # ---------------------------------------------------------------------------

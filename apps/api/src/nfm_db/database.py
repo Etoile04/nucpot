@@ -1,11 +1,14 @@
 """Database engine and session management."""
 
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nfm_db.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 engine = create_async_engine(
     get_settings().database_url,
@@ -30,7 +33,7 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
         cursor.execute("LOAD 'age';")
         cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
     except Exception:
-        pass  # no-op: non-PostgreSQL or AGE extension not installed
+        logger.warning("AGE extension not available, skipping LOAD 'age' setup", exc_info=True)
 
 
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
