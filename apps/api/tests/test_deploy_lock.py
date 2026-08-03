@@ -40,9 +40,14 @@ from __future__ import annotations
 import ast
 import contextlib
 import os
+import sys
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from alembic.config import Config
+from alembic.runtime.environment import EnvironmentContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
@@ -107,13 +112,7 @@ def _import_env_module(pg_url: str) -> Any:
     directly (with its own mocks for ``do_run_migrations`` /
     ``async_engine_from_config``).
     """
-    import sys
-
     import alembic.context as ac
-    from alembic.config import Config
-    from alembic.runtime.environment import EnvironmentContext
-    from alembic.script import ScriptDirectory
-    from unittest.mock import patch
 
     monkey_url = os.environ.copy()
     monkey_url["NFM_DATABASE_URL"] = pg_url
@@ -144,7 +143,7 @@ def _import_env_module(pg_url: str) -> Any:
             # module scope: ``config = context.config`` etc.).
             sys.modules.pop("migrations.env", None)
             sys.modules.pop("migrations", None)
-            from migrations import env as env_mod  # noqa: WPS433
+            from migrations import env as env_mod
 
         return env_mod
 
