@@ -129,6 +129,13 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src tests
 
+      # NFM-2219: CI guard against silent exception swallowing.
+      # Uses the AST-based check_silent_catch.py (NFM-2410/2408) to detect
+      # bare `except: pass` patterns. Files annotated with `# no-op: <reason>`
+      # are exempt. Runs after lint, before tests — catch regressions early.
+      - name: Check for silent exception swallowing (NFM-2219)
+        run: uv run python ${{ github.workspace }}/scripts/check_silent_catch.py ${{ github.workspace }}/apps/api/src
+
       - name: Type-check (mypy)
         run: uv run mypy src
 
