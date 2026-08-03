@@ -25,6 +25,7 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
   Descriptions,
   Drawer,
   Empty,
@@ -62,6 +63,14 @@ import {
   type LiteratureListItem,
   type LiteratureStatus,
 } from "@/lib/api-client"
+import {
+  resolveProvenanceBadge,
+  resolveProvenanceKey,
+  getProvenanceSectionLabel,
+  getProvenanceColor,
+  KG_EDGE_BADGE,
+  PROVENANCE_SECTION_ORDER,
+} from "@/lib/provenance"
 
 const { Title, Text, Paragraph } = Typography
 const { Dragger } = Upload
@@ -852,37 +861,72 @@ function DetailPanel({ detail }: DetailPanelProps) {
             description="暂无提取结果"
           />
         ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {extractionResults.map((er) => (
-              <div
-                key={er.id as string}
-                className="border border-gray-200 rounded p-2 text-xs"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <Tag color="blue">{er.item_type as string}</Tag>
-                  <span className="font-medium">{er.property_name as string}</span>
-                  {er.confidence != null && (
-                    <Tag color="default">
-                      置信度 {((er.confidence as number) * 100).toFixed(0)}%
+          <Collapse
+            defaultActiveKey={PROVENANCE_SECTION_ORDER.filter((pk) =>
+              extractionResults.some((er) => resolveProvenanceKey(er.provenance ?? []) === pk),
+            )}
+            className="max-h-96 overflow-y-auto"
+            items={PROVENANCE_SECTION_ORDER.flatMap((pk) => {
+              const items = extractionResults.filter(
+                (er) => resolveProvenanceKey(er.provenance ?? []) === pk,
+              )
+              if (items.length === 0) return []
+              return [{
+                key: pk,
+                label: (
+                  <span className="flex items-center gap-2">
+                    <Tag color={getProvenanceColor(pk)}>
+                      {getProvenanceSectionLabel(pk)}
                     </Tag>
-                  )}
-                  {er.review_status != null && (
-                    <Tag>{String(er.review_status)}</Tag>
-                  )}
-                </div>
-                {er.value != null && (
-                  <pre className="bg-gray-50 p-2 rounded text-xs overflow-x-auto">
-                    {JSON.stringify(er.value, null, 2)}
-                  </pre>
-                )}
-                {er.source_paragraph != null && (
-                  <div className="text-gray-500 italic mt-1">
-                    「{(er.source_paragraph as string).substring(0, 200)}」
+                    <span className="text-xs text-gray-400">{items.length} 项</span>
+                  </span>
+                ),
+                children: (
+                  <div className="space-y-2">
+                    {items.map((er) => {
+                      const badge = resolveProvenanceBadge(er.provenance ?? [])
+                      const isKgEdge = er.source_type === "kg_edge"
+                      return (
+                        <div
+                          key={er.id}
+                          className="border border-gray-200 rounded p-2 text-xs"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <Tag color={badge.color}>{badge.label}</Tag>
+                            <Tag color="blue">{er.item_type}</Tag>
+                            {isKgEdge && (
+                              <Tag color={KG_EDGE_BADGE.color}>
+                                {KG_EDGE_BADGE.label}
+                              </Tag>
+                            )}
+                            <span className="font-medium">{er.property_name}</span>
+                            {er.confidence != null && (
+                              <Tag color="default">
+                                置信度 {(er.confidence * 100).toFixed(0)}%
+                              </Tag>
+                            )}
+                            {er.review_status != null && (
+                              <Tag>{String(er.review_status)}</Tag>
+                            )}
+                          </div>
+                          {er.value != null && (
+                            <pre className="bg-gray-50 p-2 rounded text-xs overflow-x-auto">
+                              {JSON.stringify(er.value, null, 2)}
+                            </pre>
+                          )}
+                          {er.source_paragraph != null && (
+                            <div className="text-gray-500 italic mt-1">
+                              「{er.source_paragraph.substring(0, 200)}」
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
+                ),
+              }]
+            })}
+          />
         )}
       </Card>
     </div>
