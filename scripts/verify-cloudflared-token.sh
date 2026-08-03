@@ -29,15 +29,33 @@
 #   PROD_CLOUDFLARE_TUNNEL_ID  Space-separated denylist of forbidden tunnel
 #                              ids. Default: the production nucpot tunnel.
 #
+# Contract (NFM-2516): exit 0 means "compose will accept this env file and the
+# token is not a prod tunnel". docker-compose.staging.yml interpolates the
+# token as `${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?...}` — the `:?` form errors on
+# unset *or* empty — and the cloudflared service has no `profiles:` key, so it
+# is always part of `compose up`. The guard must therefore never return 0 for
+# an absent or empty key: that would report success for precisely the states
+# compose is guaranteed to reject.
+#
 # Exit codes:
-#   0 — key absent (skip), or present with a tunnel id outside the denylist
-#   1 — file missing, key present-but-malformed, or tunnel id is in denylist
+#   0 — key present with a real tunnel id outside the denylist
+#   1 — file missing, key absent, empty, a known placeholder, malformed, or a
+#       tunnel id in the denylist
 # =============================================================================
 set -euo pipefail
 
 ENV_FILE="${1:-}"
 KEY_NAME="${2:-STAGING_CLOUDFLARE_TUNNEL_TOKEN}"
 PROD_CLOUDFLARE_TUNNEL_ID="${PROD_CLOUDFLARE_TUNNEL_ID:-04b1e559-4547-4568-b77e-e018ca9fa6d6}"
+
+# Space-separated list of known placeholder values. `change-me` is the
+# original NFM-2509 sentinel; the longer value is what
+# docker/.env.staging.example actually ships. NFM-2516: the two had drifted
+# apart, so an operator who copied the template verbatim hit the JWT decoder
+# and got "does not look like a JWT" instead of usable guidance. Keep this in
+# sync with the template — the test
+# test_checked_in_example_placeholder_is_recognized_by_the_guard enforces it.
+CLOUDFLARE_TOKEN_PLACEHOLDERS="${CLOUDFLARE_TOKEN_PLACEHOLDERS:-change-me change-me-paste-token-from-cloudflare-zero-trust}"
 
 err() { printf '\033[1;31m[verify-cloudflared-token]\033[0m %s\n' "$*" >&2; }
 ok()  { printf '\033[1;32m[verify-cloudflared-token]\033[0m %s\n' "$*" >&2; }
@@ -58,8 +76,15 @@ fi
 # this variable — only its parsed tunnel id is ever shown to the operator.
 TOKEN_LINE="$(grep -E "^${KEY_NAME}=" "$ENV_FILE" | tail -n1 || true)"
 if [ -z "$TOKEN_LINE" ]; then
-  ok "$KEY_NAME is not set in $ENV_FILE (skip)"
-  exit 0
+  err "$KEY_NAME is not set in $ENV_FILE"
+  err "docker-compose.staging.yml interpolates it as \${$KEY_NAME:?...}, which"
+  err "aborts 'docker compose up' when the variable is unset or empty, and the"
+  err "cloudflared service has no 'profiles:' key so it always starts."
+  err "Set $KEY_NAME to a dedicated staging tunnel token from Cloudflare Zero Trust."
+  err "If staging genuinely needs no tunnel, remove the cloudflared service from"
+  err "docker-compose.staging.yml (or put it behind a compose profile) — deleting"
+  err "just the env line leaves the deploy broken."
+  exit 1
 fi
 TOKEN_VALUE="${TOKEN_LINE#${KEY_NAME}=}"
 TOKEN_VALUE="${TOKEN_VALUE%\"}"
@@ -73,16 +98,28 @@ TOKEN_VALUE="${TOKEN_VALUE%$'\r'}"
 # container fail at runtime with an opaque compose error.
 if [ -z "$TOKEN_VALUE" ]; then
   err "$KEY_NAME is present but empty in $ENV_FILE"
-  err "An empty token causes the cloudflared container to fail at startup with an opaque compose error."
-  err "Remove the line entirely if staging does not need a tunnel, or set a real staging token."
+  err "\${$KEY_NAME:?...} in docker-compose.staging.yml treats empty the same as"
+  err "unset, so 'docker compose up' aborts before the cloudflared container starts."
+  err "Set a dedicated staging tunnel token from Cloudflare Zero Trust."
   exit 1
 fi
 
-# Placeholder value — this is the documented example; skip as before.
-if [ "$TOKEN_VALUE" = "change-me" ]; then
-  ok "$KEY_NAME is the example placeholder (skip)"
-  exit 0
-fi
+# Known placeholder — recognised and rejected. NFM-2516: a placeholder is
+# non-empty, so compose interpolates it happily; `cloudflared` then fails edge
+# authentication and crash-loops under `restart: unless-stopped`. Failing here
+# with actionable guidance beats an opaque crash-loop after deploy. The value
+# is a public template constant, not a secret, so echoing it is safe — but we
+# echo only the matched placeholder, never $TOKEN_VALUE from an unknown state.
+for placeholder in $CLOUDFLARE_TOKEN_PLACEHOLDERS; do
+  if [ "$TOKEN_VALUE" = "$placeholder" ]; then
+    err "$KEY_NAME is still the template placeholder ('$placeholder') in $ENV_FILE"
+    err "compose accepts a non-empty placeholder, so this fails later: cloudflared"
+    err "rejects it at edge authentication and the container restart-loops."
+    err "Provision a dedicated staging tunnel in Cloudflare Zero Trust and paste its"
+    err "token here. Do not reuse the production tunnel token."
+    exit 1
+  fi
+done
 
 # --- 3. decode JWT payload (middle segment) ---------------------------------
 # Real cloudflared tokens are three base64url segments separated by `.`. The

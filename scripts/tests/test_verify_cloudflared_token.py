@@ -30,8 +30,20 @@ from pathlib import Path
 import pytest
 
 SCRIPT: Path = Path(__file__).resolve().parents[1] / "verify-cloudflared-token.sh"
+REPO_ROOT: Path = SCRIPT.resolve().parents[1]
 
 PROD_TUNNEL_ID: str = "04b1e559-4547-4568-b77e-e018ca9fa6d6"
+
+#: The placeholder actually shipped in ``docker/.env.staging.example``.
+#: NFM-2516: the NFM-2509 guard only recognised the shorter ``change-me``
+#: sentinel, so an operator who copied the template verbatim fell through to
+#: the JWT decoder and got an opaque "does not look like a JWT" instead of
+#: actionable "paste your real staging token" guidance.
+EXAMPLE_PLACEHOLDER: str = "change-me-paste-token-from-cloudflare-zero-trust"
+
+#: The original NFM-2509 sentinel. Still recognised, for env files written
+#: before the checked-in template grew the longer value.
+LEGACY_PLACEHOLDER: str = "change-me"
 
 
 def _make_token(tunnel_id: str) -> str:
@@ -95,12 +107,27 @@ def test_distinct_tunnel_id_in_staging_env_passes(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_key_absent_passes_with_skip_message(tmp_path: Path) -> None:
-    """An operator may legitimately not have set the staging tunnel yet."""
+def test_key_absent_fails(tmp_path: Path) -> None:
+    """An absent key must fail — ``docker-compose.staging.yml`` rejects it.
+
+    NFM-2516. The cloudflared service interpolates the token as::
+
+        TUNNEL_TOKEN: ${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?Set STAGING_...}
+
+    The ``:?`` form errors when the variable is *unset or empty*, and the
+    service carries no ``profiles:`` key, so it is always part of
+    ``compose up``. NFM-2509 skipped on absent with exit 0, which meant the
+    guard reported success for the one env-file state compose is guaranteed
+    to reject — the operator got a green pre-deploy check and then an
+    interpolation error at ``compose up``.
+    """
     env = _write_env(tmp_path / ".env.staging", "STAGING_DATABASE_URL=postgres://x\n")
     result = run_script(str(env))
-    assert result.returncode == 0, result.stderr
-    assert "skip" in (result.stdout + result.stderr).lower()
+    assert result.returncode == 1, result.stderr
+    assert "STAGING_CLOUDFLARE_TUNNEL_TOKEN" in result.stderr
+    # The operator needs to know compose will reject this, not just that a
+    # key is missing.
+    assert "compose" in result.stderr.lower()
 
 
 def test_empty_token_fails(tmp_path: Path) -> None:
@@ -134,21 +161,67 @@ def test_quoted_empty_token_fails(tmp_path: Path) -> None:
     assert "empty" in result.stderr.lower()
 
 
-def test_placeholder_still_skips(tmp_path: Path) -> None:
-    """The documented ``change-me`` placeholder must still skip.
+@pytest.mark.parametrize(
+    "placeholder",
+    [
+        pytest.param(LEGACY_PLACEHOLDER, id="legacy-change-me"),
+        pytest.param(EXAMPLE_PLACEHOLDER, id="checked-in-template"),
+    ],
+)
+def test_placeholder_fails_with_actionable_guidance(
+    tmp_path: Path, placeholder: str
+) -> None:
+    """Both placeholders must fail early with actionable guidance.
 
-    Regression guard for the NFM-2509 refactor: the empty/placeholder split
-    keeps the placeholder branch so the template env file does not turn
-    red out of the box.
+    NFM-2516, reversing the NFM-2509 ``test_placeholder_still_skips``
+    behaviour deliberately. A placeholder is never a working tunnel token:
+    compose happily interpolates it (it is non-empty, so ``:?`` is
+    satisfied), then ``cloudflared`` fails edge authentication and the
+    container crash-loops under ``restart: unless-stopped``. Surfacing that
+    at pre-deploy with "paste your real token" beats an opaque crash-loop.
+
+    The checked-in template value previously fell through to the JWT
+    decoder and produced "does not look like a JWT", which tells the
+    operator nothing about what to do next.
     """
     env = _write_env(
         tmp_path / ".env.staging",
-        "STAGING_CLOUDFLARE_TUNNEL_TOKEN=change-me\n",
+        f"STAGING_CLOUDFLARE_TUNNEL_TOKEN={placeholder}\n",
     )
     result = run_script(str(env))
-    assert result.returncode == 0, result.stderr
-    assert "skip" in (result.stdout + result.stderr).lower()
-    assert "placeholder" in (result.stdout + result.stderr).lower()
+    assert result.returncode == 1, result.stderr
+    assert "placeholder" in result.stderr.lower()
+    assert "STAGING_CLOUDFLARE_TUNNEL_TOKEN" in result.stderr
+    # Actionable: name where a real token comes from.
+    assert "zero trust" in result.stderr.lower()
+    # Not the old opaque decoder message.
+    assert "does not look like a jwt" not in result.stderr.lower()
+
+
+def test_checked_in_example_placeholder_is_recognized_by_the_guard() -> None:
+    """Lock the template and the guard together.
+
+    This is the actual NFM-2516 defect: ``docker/.env.staging.example``
+    drifted to a longer placeholder while the guard still matched only
+    ``change-me``. If someone edits the template again, this test fails
+    instead of the guard silently degrading to the opaque JWT error.
+    """
+    example: Path = REPO_ROOT / "docker" / ".env.staging.example"
+    assert example.is_file(), f"{example} not found"
+
+    value: str | None = None
+    for line in example.read_text().splitlines():
+        if line.startswith("STAGING_CLOUDFLARE_TUNNEL_TOKEN="):
+            value = line.split("=", 1)[1].strip().strip('"')
+    assert value is not None, "template must ship the key the guard checks"
+    assert value == EXAMPLE_PLACEHOLDER, (
+        f"template placeholder changed to {value!r}; teach the guard about it "
+        f"in scripts/verify-cloudflared-token.sh and update EXAMPLE_PLACEHOLDER"
+    )
+    # And the guard must actually list it as a placeholder.
+    assert value in SCRIPT.read_text(), (
+        "guard does not recognise the placeholder shipped in the template"
+    )
 
 
 def test_missing_env_file_exits_one(tmp_path: Path) -> None:
