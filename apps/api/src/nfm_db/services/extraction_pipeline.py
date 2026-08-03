@@ -30,6 +30,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.services.extraction_prompt import build_extraction_system_prompt
 from nfm_db.services.gap_scan_service import GapScanService
+from nfm_db.services.health_event_emitter import (
+    SEVERITY_WARNING,
+    build_context,
+    emit_health_event_sync,
+)
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 from nfm_db.services.quality_gate import QualityGateService
 
@@ -649,10 +654,15 @@ async def trigger_extraction(
                     try:
                         kg_source_id = uuid.UUID(source_reference)
                     except (ValueError, AttributeError) as exc:
-                        logger.debug(
-                            "_build_extraction_job: source_reference UUID parse failed for %r: %s",
-                            source_reference,
-                            exc,
+                        # Provenance is optional but losing it silently
+                        # makes KG nodes untraceable to their source.
+                        emit_health_event_sync(
+                            event_type="validation_drop",
+                            severity=SEVERITY_WARNING,
+                            source_service="extraction_pipeline",
+                            context=build_context(
+                                exc, source_reference=repr(source_reference)
+                            ),
                         )
 
                 build_result = await builder.build_from_extraction(

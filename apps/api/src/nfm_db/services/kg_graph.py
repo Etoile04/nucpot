@@ -81,8 +81,9 @@ async def resolve_focal_node(
         if result is not None:
             return result
         return None
-    except (ValueError, AttributeError) as exc:
-        logger.debug("resolve_node_id: UUID parse failed for %r: %s", trimmed, exc)
+    except (ValueError, AttributeError):
+        # Not a UUID — fall through to the "type:label" lookup below.
+        logger.debug("Node ref %r is not a UUID; trying type:label", trimmed)
 
     # 2. Try "type:label" form
     if ":" in trimmed:

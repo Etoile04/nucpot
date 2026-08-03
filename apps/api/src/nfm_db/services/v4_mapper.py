@@ -14,6 +14,11 @@ from typing import Any
 from nfm_db.core.extraction_rules import parse_value
 from nfm_db.core.phase_rules import PhaseMapper
 from nfm_db.core.property_catalog import STANDARD_PROPERTIES
+from nfm_db.services.health_event_emitter import (
+    SEVERITY_WARNING,
+    build_context,
+    emit_health_event_sync,
+)
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded singleton (expensive JSON config read happens once)
@@ -169,8 +174,11 @@ def _decompose_conditions(
         try:
             temperature = float(temp_c)
         except (TypeError, ValueError) as exc:
-            logger.debug(
-                "_resolve_temperature: temp_C parse failed for %r: %s", temp_c, exc
+            emit_health_event_sync(
+                event_type="validation_drop",
+                severity=SEVERITY_WARNING,
+                source_service="v4_mapper",
+                context=build_context(exc, field="temp_C", raw=repr(temp_c)),
             )
     else:
         # Fall back to temp_K → Celsius
@@ -179,8 +187,11 @@ def _decompose_conditions(
             try:
                 temperature = float(temp_k) - 273.15
             except (TypeError, ValueError) as exc:
-                logger.debug(
-                    "_resolve_temperature: temp_K parse failed for %r: %s", temp_k, exc
+                emit_health_event_sync(
+                    event_type="validation_drop",
+                    severity=SEVERITY_WARNING,
+                    source_service="v4_mapper",
+                    context=build_context(exc, field="temp_K", raw=repr(temp_k)),
                 )
 
     method: str | None = conditions.get("simulation_method")

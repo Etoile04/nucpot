@@ -158,13 +158,8 @@ def upload_script_via_sftp(
         try:
             sftp.mkdir(remote_dir)
         except OSError as exc:
-            # mkdir failure is expected when the directory already exists;
-            # log at debug so the path stays visible in trace diagnostics.
-            logger.debug(
-                "upload_script: sftp.mkdir(%s) skipped after OSError: %s",
-                remote_dir,
-                exc,
-            )
+            # Idempotent mkdir: pre-existing directory is the normal case.
+            logger.debug("Remote dir %s already exists (%s)", remote_dir, exc)
 
         with sftp.file(remote_path, "w") as f:
             f.write(script_content)
