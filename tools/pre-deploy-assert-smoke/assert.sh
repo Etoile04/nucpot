@@ -20,7 +20,6 @@
 #   assert.sh --image IMAGE \
 #             [--db-container CONTAINER] \
 #             [--db-user USER] [--db-name NAME] \
-#             [--db-password PASSWORD] \
 #             [--db-host-port PORT] \
 #             [--distinct-exit N] \
 #             [--no-strict-heads]
@@ -34,7 +33,6 @@ set -euo pipefail
 
 DB_USER="${DB_USER:-nfm}"
 DB_NAME="${DB_NAME:-nfm_db}"
-DB_PASSWORD="${DB_PASSWORD:-}"
 DB_HOST_PORT="${DB_HOST_PORT:-5433}"
 DB_CONTAINER="${DB_CONTAINER:-nucpot-prod-db}"
 DISTINCT_EXIT="${DISTINCT_EXIT:-64}"
@@ -51,7 +49,6 @@ while [[ $# -gt 0 ]]; do
     --db-container)    DB_CONTAINER="$2"; shift 2 ;;
     --db-user)         DB_USER="$2"; shift 2 ;;
     --db-name)         DB_NAME="$2"; shift 2 ;;
-    --db-password)     DB_PASSWORD="$2"; shift 2 ;;
     --db-host-port)    DB_HOST_PORT="$2"; shift 2 ;;
     --distinct-exit)   DISTINCT_EXIT="$2"; shift 2 ;;
     --no-strict-heads) STRICT_HEADS=0; shift ;;
@@ -72,11 +69,7 @@ ok()   { printf '\033[1;32m[assert]\033[0m %s\n' "$*"; }
 
 # ---- 1. Read DB alembic_version -------------------------------------------
 log "Reading alembic_version.version_num from ${DB_CONTAINER}..."
-_DOCKER_EXEC_ENV=()
-if [ -n "${DB_PASSWORD}" ]; then
-  _DOCKER_EXEC_ENV=(-e "PGPASSWORD=${DB_PASSWORD}")
-fi
-DB_VERSION_RAW="$(docker exec ${_DOCKER_EXEC_ENV[@]+"${_DOCKER_EXEC_ENV[@]}"} "${DB_CONTAINER}" psql \
+DB_VERSION_RAW="$(docker exec "${DB_CONTAINER}" psql \
     -U "${DB_USER}" \
     -d "${DB_NAME}" \
     -t -A -c "SELECT version_num FROM alembic_version;" 2>/dev/null || true)"
