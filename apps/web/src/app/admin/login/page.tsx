@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { authApi } from "@/lib/api-client"
 
@@ -21,6 +21,17 @@ function isValidReturnTo(value: string): boolean {
 }
 
 export default function LoginPage() {
+  return (
+    // useSearchParams() in a client page must be under a Suspense boundary
+    // during static prerender (Next.js 15 requirement — fixes
+    // "Error occurred prerendering page /admin/login").
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [username, setUsername] = useState("")
