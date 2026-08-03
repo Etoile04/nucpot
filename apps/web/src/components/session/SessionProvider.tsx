@@ -23,7 +23,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -130,15 +129,4 @@ export function SessionProvider({
 export function useSession(): SessionContextValue {
   const ctx = useContext(SessionContext)
   return ctx ?? DEFAULT_SESSION_CONTEXT
-}
-
-/**
- * Returns a stable reference to the underlying SessionManager.
- * Use sparingly — most consumers should use ``useSession()`` instead.
- * Exposed so api-client wrappers can subscribe to refresh events.
- */
-export function useSessionManager(): SessionManager | null {
-  const ctx = useContext(SessionContext)
-  if (ctx === null) return null
-  return useRef<SessionManager>(null as unknown as SessionManager).current
 }
