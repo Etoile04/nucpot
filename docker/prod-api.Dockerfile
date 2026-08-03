@@ -23,14 +23,15 @@ COPY apps/api/pyproject.toml ./
 COPY apps/api/src/ ./src/
 COPY apps/api/migrations/ ./migrations/
 
-# Install the package (retry logic for flaky PyPI networks in CN region)
-# Use Tsinghua mirror for reliable access in CN region
+# Install the package (pip fallback chain for flaky PyPI networks).
+# NFM-2418: Try Tsinghua mirror first (fast in CN), retry once, then fall
+# back to pypi.org as the ultimate safety net so builds never stall on a
+# single unreachable mirror.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple . || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple .) || \
-    (sleep 20 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple .)
+    pip install --no-cache-dir --default-timeout=180 --retries=15 .
 
 # Explicitly install xgboost as a defensive layer. The dependency is also
 # declared in apps/api/pyproject.toml, but pinning here ensures the package
@@ -40,7 +41,8 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
 RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
       -i https://pypi.tuna.tsinghua.edu.cn/simple || \
     (sleep 5 && pip install --no-cache-dir 'xgboost>=3.0,<4' \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple)
+      -i https://pypi.tuna.tsinghua.edu.cn/simple) || \
+    pip install --no-cache-dir 'xgboost>=3.0,<4'
 
 # NFM-2146 / ADR-NFM-2139 §5 D3: bake alembic.ini + migrations into the image
 # so the deploy-time migration step (scripts/prod_migrate.sh) can invoke
