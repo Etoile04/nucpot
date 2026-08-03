@@ -17,13 +17,12 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app/src
 
 # Install uv for faster, more resilient dependency resolution.
 # uv retries automatically on network errors and falls back
 # between indexes — no manual mirror fallback chain needed.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 
 # Install dependencies + the nfm_db package (src present so it is discovered
 # and importable).
