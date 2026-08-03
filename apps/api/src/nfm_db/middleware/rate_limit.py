@@ -76,7 +76,7 @@ def _inject_global_headers(limiter_instance: Limiter, request: Request, response
         response.headers["X-RateLimit-Remaining"] = str(window_stats[1])
         response.headers["X-RateLimit-Reset"] = str(reset_in)
     except Exception:
-        pass  # never let header injection crash a valid response
+        pass  # no-op: a missing quota header must not invalidate the response
     return response
 
 
