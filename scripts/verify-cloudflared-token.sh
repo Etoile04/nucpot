@@ -66,7 +66,20 @@ TOKEN_VALUE="${TOKEN_VALUE%\"}"
 TOKEN_VALUE="${TOKEN_VALUE#\"}"
 TOKEN_VALUE="${TOKEN_VALUE%$'\r'}"
 
-if [ -z "$TOKEN_VALUE" ] || [ "$TOKEN_VALUE" = "change-me" ]; then
+# Empty token — fail with a clear message instead of hiding behind the
+# placeholder branch. NFM-2509 review note: an operator who partially
+# applied the fix (emptied the token value rather than removing the line)
+# would otherwise see a green guard here, only to have the cloudflared
+# container fail at runtime with an opaque compose error.
+if [ -z "$TOKEN_VALUE" ]; then
+  err "$KEY_NAME is present but empty in $ENV_FILE"
+  err "An empty token causes the cloudflared container to fail at startup with an opaque compose error."
+  err "Remove the line entirely if staging does not need a tunnel, or set a real staging token."
+  exit 1
+fi
+
+# Placeholder value — this is the documented example; skip as before.
+if [ "$TOKEN_VALUE" = "change-me" ]; then
   ok "$KEY_NAME is the example placeholder (skip)"
   exit 0
 fi

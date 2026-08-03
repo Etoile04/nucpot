@@ -103,6 +103,54 @@ def test_key_absent_passes_with_skip_message(tmp_path: Path) -> None:
     assert "skip" in (result.stdout + result.stderr).lower()
 
 
+def test_empty_token_fails(tmp_path: Path) -> None:
+    """An empty-but-set token is broken — fail instead of silently skipping.
+
+    NFM-2509 review note: the original guard conflated an empty token with
+    the ``change-me`` placeholder, so an operator who partially applied the
+    fix (emptied the token value rather than removing the line) got a green
+    guard. ``docker compose`` would then start the cloudflared container
+    with an empty token and fail at runtime with an opaque error, which is
+    exactly the partial-fix state the guard is supposed to surface.
+    """
+    env = _write_env(
+        tmp_path / ".env.staging",
+        "STAGING_CLOUDFLARE_TUNNEL_TOKEN=\n",
+    )
+    result = run_script(str(env))
+    assert result.returncode == 1, result.stderr
+    assert "empty" in result.stderr.lower()
+    assert "STAGING_CLOUDFLARE_TUNNEL_TOKEN" in result.stderr
+
+
+def test_quoted_empty_token_fails(tmp_path: Path) -> None:
+    """A quoted empty string is still empty — same failure mode."""
+    env = _write_env(
+        tmp_path / ".env.staging",
+        'STAGING_CLOUDFLARE_TUNNEL_TOKEN=""\n',
+    )
+    result = run_script(str(env))
+    assert result.returncode == 1, result.stderr
+    assert "empty" in result.stderr.lower()
+
+
+def test_placeholder_still_skips(tmp_path: Path) -> None:
+    """The documented ``change-me`` placeholder must still skip.
+
+    Regression guard for the NFM-2509 refactor: the empty/placeholder split
+    keeps the placeholder branch so the template env file does not turn
+    red out of the box.
+    """
+    env = _write_env(
+        tmp_path / ".env.staging",
+        "STAGING_CLOUDFLARE_TUNNEL_TOKEN=change-me\n",
+    )
+    result = run_script(str(env))
+    assert result.returncode == 0, result.stderr
+    assert "skip" in (result.stdout + result.stderr).lower()
+    assert "placeholder" in (result.stdout + result.stderr).lower()
+
+
 def test_missing_env_file_exits_one(tmp_path: Path) -> None:
     result = run_script(str(tmp_path / "absent.env"))
     assert result.returncode == 1
