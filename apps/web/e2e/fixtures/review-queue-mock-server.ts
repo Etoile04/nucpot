@@ -182,13 +182,16 @@ export async function injectAuth(page: Page): Promise<void> {
     { name: "access_token", value: MOCK_TOKEN, domain, path: "/" },
     { name: TOKEN_KEY, value: MOCK_TOKEN, domain, path: "/" },
   ])
-  // Also keep localStorage for any legacy code paths
+  // Also keep localStorage for any legacy code paths.
+  // Playwright's addInitScript(script, arg) accepts exactly ONE arg; the
+  // previous positional-args shape (key, value) started failing under
+  // @playwright/test 1.62 with "Too many arguments. ... wrap them in an
+  // object". Wrap the pair in a single object and destructure inside.
   await page.context().addInitScript(
-    (key: string, value: string) => {
+    ({ key, value }: { key: string; value: string }) => {
       localStorage.setItem(key, value)
     },
-    TOKEN_KEY,
-    MOCK_TOKEN,
+    { key: TOKEN_KEY, value: MOCK_TOKEN },
   )
 }
 
