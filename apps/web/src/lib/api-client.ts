@@ -4,6 +4,12 @@
  * Authentication uses HttpOnly cookies set by the server.
  * All requests include credentials:"include" to send cookies automatically.
  * No localStorage token management needed (XSS-safe).
+ *
+ * NFM-2255: On 401, the client automatically attempts a silent token
+ * refresh (POST /api/v1/auth/refresh) before retrying the original
+ * request exactly once.  Concurrent 401s share a single in-flight
+ * refresh to avoid thundering-herd problems (AC: "N concurrent 401s
+ * => exactly 1 refresh fired").
  */
 
 export interface ApiError {
@@ -18,9 +24,47 @@ function buildHeaders(custom?: Record<string, string>): HeadersInit {
   }
 }
 
+// ── 401 refresh interceptor (NFM-2255) ──────────────────────────────
+
+/** Singleton in-flight refresh promise — ensures exactly one refresh. */
+let inFlightRefresh: Promise<boolean> | null = null
+
+/**
+ * Attempt to refresh the session token.  Returns true on success,
+ * false if the refresh itself failed (e.g. revoked token).
+ *
+ * Concurrent callers share the same in-flight request — the
+ * deduplication guarantees the NFM-2236 AC: "N concurrent 401s
+ * => exactly 1 refresh fired".
+ */
+async function attemptRefresh(): Promise<boolean> {
+  if (inFlightRefresh) return inFlightRefresh
+
+  inFlightRefresh = (async () => {
+    try {
+      const res = await fetch("/api/v1/auth/refresh", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      })
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      inFlightRefresh = null
+    }
+  })()
+
+  return inFlightRefresh
+}
+
 /**
  * Generic request wrapper.
  * Throws on non-OK responses with a descriptive error message.
+ *
+ * 401 handling: on first 401, silently refreshes the token and retries
+ * the request once.  If the refresh fails or the retry also 401s, throws
+ * the original error message so the UI can prompt re-authentication.
  */
 export async function request<T>(
   path: string,
@@ -35,11 +79,22 @@ export async function request<T>(
   })
 
   if (response.status === 401) {
-    // Don't force-redirect — let the caller handle it.
-    // Throwing a descriptive error lets the UI show message.error()
-    // and lets the user decide whether to re-login.
-    // (Previous behavior: window.location.href = "/login" —
-    // this caused silent page jumps during long sessions.)
+    const refreshed = await attemptRefresh()
+    if (refreshed) {
+      // Retry the original request exactly once after successful refresh.
+      const retry = await fetch(path, {
+        ...options,
+        credentials: "include",
+        headers: buildHeaders(
+          options.headers as Record<string, string> | undefined,
+        ),
+      })
+      if (retry.ok) {
+        if (retry.status === 204) return undefined as T
+        return retry.json() as Promise<T>
+      }
+    }
+    // Refresh failed or retry also 401 — surface the original message.
     throw new Error("认证已过期，请重新登录后重试")
   }
 
