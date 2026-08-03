@@ -274,6 +274,7 @@ module = [
     "nfm_db.api.v1.conflict",
     "nfm_db.api.v1.health",
     "nfm_db.api.v1.materials",
+    "nfm_db.api.admin.health",
 ]
 ignore_errors = true
 
