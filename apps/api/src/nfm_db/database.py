@@ -1,4 +1,9 @@
 """Database engine and session management."""
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 from collections.abc import AsyncGenerator
 
@@ -30,8 +35,7 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
         cursor.execute("LOAD 'age';")
         cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
     except Exception:
-        # Non-PostgreSQL or AGE not installed — skip silently
-        pass
+        logger.debug("AGE extension not available on this connection")
 
 
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

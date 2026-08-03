@@ -21,6 +21,11 @@ Env vars
 from __future__ import annotations
 
 import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from typing import Any, cast
 
 from slowapi import Limiter
@@ -76,7 +81,7 @@ def _inject_global_headers(limiter_instance: Limiter, request: Request, response
         response.headers["X-RateLimit-Remaining"] = str(window_stats[1])
         response.headers["X-RateLimit-Reset"] = str(reset_in)
     except Exception:
-        pass  # never let header injection crash a valid response
+        logger.warning("Failed to inject rate-limit headers on valid response")
     return response
 
 
@@ -127,5 +132,5 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Res
             )
             return response
     except Exception:
-        pass  # never let header injection crash the 429 response
+        logger.warning("Failed to inject rate-limit headers on 429 response")
     return JSONResponse(status_code=429, content=response_body)
