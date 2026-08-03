@@ -88,7 +88,7 @@ def fetch_all_issues(
         try:
             with urllib.request.urlopen(request, timeout=30) as resp:
                 body = json.loads(resp.read().decode())
-        except urllib.error.URLError as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PaperclipFetchError(
                 f"fetch_all_issues: HTTP error on page {page_num} "
                 f"(offset={offset}): {exc}"

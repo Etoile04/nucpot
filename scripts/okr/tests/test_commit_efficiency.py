@@ -114,9 +114,9 @@ class TestFetchIssueStatuses:
     @patch("scripts.okr.commit_efficiency.fetch_all_issues")
     def test_returns_status_map_on_success(self, mock_fetch: MagicMock) -> None:
         mock_fetch.return_value = [
-            {"key": "NFM-100", "status": "done"},
-            {"key": "NFM-200", "status": "in_progress"},
-            {"key": "NFM-300", "status": "todo"},
+            {"identifier": "NFM-100", "status": "done"},
+            {"identifier": "NFM-200", "status": "in_progress"},
+            {"identifier": "NFM-300", "status": "todo"},
         ]
 
         result = fetch_issue_statuses(
@@ -124,6 +124,25 @@ class TestFetchIssueStatuses:
         )
         assert result["NFM-100"] == "done"
         assert result["NFM-200"] == "in_progress"
+
+    @patch("scripts.okr.commit_efficiency.fetch_all_issues")
+    def test_returns_status_map_from_api_identifier(
+        self, mock_fetch: MagicMock,
+    ) -> None:
+        """Paperclip issue references come from the ``identifier`` field."""
+        mock_fetch.return_value = [
+            {"identifier": "NFM-100", "key": None, "status": "done"},
+            {"identifier": "NFM-200", "key": None, "status": "in_progress"},
+        ]
+
+        result = fetch_issue_statuses(
+            ["NFM-100", "NFM-200"],
+            "http://localhost:3000",
+            "co-1",
+            api_key="test-key",
+        )
+
+        assert result == {"NFM-100": "done", "NFM-200": "in_progress"}
 
     @patch("scripts.okr.commit_efficiency.fetch_all_issues")
     def test_propagates_paperclip_fetch_error(self, mock_fetch: MagicMock) -> None:
@@ -147,7 +166,7 @@ class TestFetchIssueStatuses:
     def test_returns_unknown_for_missing_refs(self, mock_fetch: MagicMock) -> None:
         """Issue refs not found in the full list get status 'unknown'."""
         mock_fetch.return_value = [
-            {"key": "NFM-100", "status": "done"},
+            {"identifier": "NFM-100", "status": "done"},
         ]
         result = fetch_issue_statuses(
             ["NFM-100", "NFM-999"], "http://localhost:3000", "co-1",

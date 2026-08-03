@@ -128,6 +128,22 @@ def test_fetch_all_issues_raises_on_http_error() -> None:
 
 
 @pytest.mark.unit
+def test_fetch_all_issues_wraps_timeout_error() -> None:
+    """Socket timeouts must degrade through the same fetch error contract."""
+    with patch(
+        "scripts.okr.urllib.request.urlopen",
+        side_effect=TimeoutError("timed out"),
+    ):
+        with pytest.raises(PaperclipFetchError, match=r"HTTP error"):
+            fetch_all_issues(
+                "http://localhost:3000",
+                company_id="co-1",
+                params={},
+                api_key="secret-key",
+            )
+
+
+@pytest.mark.unit
 def test_fetch_issue_statuses_propagates_fetch_error() -> None:
     """fetch_issue_statuses must NOT swallow PaperclipFetchError — the
     downstream report needs to know the fetch failed."""

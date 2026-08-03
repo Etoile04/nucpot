@@ -22,7 +22,7 @@ import subprocess
 from datetime import datetime
 from typing import Any
 
-from scripts.okr import PaperclipFetchError, fetch_all_issues
+from scripts.okr import fetch_all_issues
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ def fetch_issue_statuses(
     the requested ``issue_refs``. This fixes the silent 1000-row cap
     undercount (288-vs-713 NFMDP).
 
-    Returns a mapping of issue key → status string.
+    Returns a mapping of issue identifier → status string.
 
     Raises:
         PaperclipFetchError: propagated from ``fetch_all_issues`` so the
@@ -133,9 +133,9 @@ def fetch_issue_statuses(
     all_issues = fetch_all_issues(api_url, company_id, {}, api_key=api_key)
     ref_set = set(issue_refs)
     for issue in all_issues:
-        key = issue.get("key", "")
-        if key in ref_set:
-            statuses[key] = issue.get("status", "unknown")
+        identifier = issue.get("identifier", "")
+        if identifier in ref_set:
+            statuses[identifier] = issue.get("status", "unknown")
     # Any ref not found in the full issue list gets "unknown"
     for ref in issue_refs:
         if ref not in statuses:
@@ -348,7 +348,10 @@ def main() -> None:
     all_refs = list({
         ref for c in enriched for ref in c["issue_refs"]
     })
-    statuses = fetch_issue_statuses(all_refs, args.api_url, company_id)
+    api_key = os.environ.get("PAPERCLIP_API_KEY", "")
+    statuses = fetch_issue_statuses(
+        all_refs, args.api_url, company_id, api_key=api_key,
+    )
 
     report = build_report(args.since, args.until, enriched, statuses)
     print(json.dumps(report, indent=2))
