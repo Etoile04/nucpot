@@ -145,6 +145,13 @@ jobs:
               exit 1
             fi
 
+            # NFM-2509: pre-deploy guard against the staging cloudflared container
+            # being pointed at the production tunnel token. Decodes the JWT in
+            # STAGING_CLOUDFLARE_TUNNEL_TOKEN and refuses the deploy if the
+            # embedded tunnel id matches the prod denylist. Non-zero exit
+            # aborts the SSH `set -e` and the whole job.
+            ./scripts/verify-cloudflared-token.sh docker/.env.staging
+
             export STAGING_IMAGE_TAG="$TAG"
             ./scripts/staging_deploy.sh deploy
 

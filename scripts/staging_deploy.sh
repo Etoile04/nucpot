@@ -183,6 +183,13 @@ cmd_deploy() {
 
   snapshot_rollback_target
 
+  # NFM-2509: refuse to start the cloudflared container if its token resolves
+  # to a tunnel we already run elsewhere (e.g. the production tunnel). The
+  # container's network namespace has no localhost:3000 to satisfy the prod
+  # origin, so a duplicate replica causes intermittent 502s. See
+  # scripts/verify-cloudflared-token.sh for the full rationale.
+  "$PROJECT_ROOT/scripts/verify-cloudflared-token.sh" "$ENV_FILE"
+
   log "Building images..."
   compose build
 
