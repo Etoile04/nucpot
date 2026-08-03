@@ -22,7 +22,7 @@ import subprocess
 from datetime import datetime
 from typing import Any
 
-from scripts.okr import fetch_all_issues
+from scripts.okr import PaperclipFetchError, fetch_all_issues
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,7 @@ def fetch_issue_statuses(
     issue_refs: list[str],
     api_url: str,
     company_id: str,
+    api_key: str | None = None,
 ) -> dict[str, str]:
     """Query the Paperclip API for issue statuses using paginated fetch.
 
@@ -114,26 +115,30 @@ def fetch_issue_statuses(
     undercount (288-vs-713 NFMDP).
 
     Returns a mapping of issue key → status string.
-    On failure, logs a warning and the issue gets status ``"unknown"``.
+
+    Raises:
+        PaperclipFetchError: propagated from ``fetch_all_issues`` so the
+            downstream report can degrade to ``[no data]``. The previous
+            behaviour of silently defaulting every ref to ``"unknown"``
+            was the NFM-2443 defect — a fetch failure rendered as
+            ``commitEfficiency = 0.000`` rather than an honest empty
+            measurement.
     """
     statuses: dict[str, str] = {}
     if not issue_refs:
         return statuses
 
-    try:
-        all_issues = fetch_all_issues(api_url, company_id, {})
-        ref_set = set(issue_refs)
-        for issue in all_issues:
-            key = issue.get("key", "")
-            if key in ref_set:
-                statuses[key] = issue.get("status", "unknown")
-        # Any ref not found in the full issue list gets "unknown"
-        for ref in issue_refs:
-            if ref not in statuses:
-                statuses[ref] = "unknown"
-    except Exception as exc:
-        logger.warning("Unexpected error fetching issue statuses: %s", exc)
-        for ref in issue_refs:
+    # fetch_all_issues raises PaperclipFetchError on auth/HTTP/parse
+    # failure; we deliberately do NOT swallow it (NFM-2443 AC1+AC3).
+    all_issues = fetch_all_issues(api_url, company_id, {}, api_key=api_key)
+    ref_set = set(issue_refs)
+    for issue in all_issues:
+        key = issue.get("key", "")
+        if key in ref_set:
+            statuses[key] = issue.get("status", "unknown")
+    # Any ref not found in the full issue list gets "unknown"
+    for ref in issue_refs:
+        if ref not in statuses:
             statuses[ref] = "unknown"
 
     return statuses
