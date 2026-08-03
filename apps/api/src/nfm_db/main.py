@@ -38,6 +38,7 @@ from nfm_db.api.v1 import (
     verification,
     viz,
 )
+from nfm_db.api.v1.admin_health import router as admin_health_router
 from nfm_db.api.v1.auth_endpoints import router as auth_endpoints
 from nfm_db.api.v1.batch import (
     materials_router as batch_materials_router,
@@ -289,6 +290,7 @@ async def _upload_error_handler(_request: Request, exc: PotentialUploadError) ->
 
 
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
+app.include_router(admin_health_router, prefix="/api/v1", tags=["管理监控"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["反馈"])
 app.include_router(reference_values.router, prefix="/api/v1", tags=["参考值"])
 app.include_router(reference_gaps.router, prefix="/api/v1", tags=["参考值缺口"])
