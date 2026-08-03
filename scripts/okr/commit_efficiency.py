@@ -22,7 +22,7 @@ import subprocess
 from datetime import datetime
 from typing import Any
 
-from scripts.okr import fetch_all_issues
+from scripts.okr import PaperclipEmptyResultError, fetch_all_issues
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,7 @@ def fetch_issue_statuses(
     issue_refs: list[str],
     api_url: str,
     company_id: str,
+    api_key: str | None = None,
 ) -> dict[str, str]:
     """Query the Paperclip API for issue statuses using paginated fetch.
 
@@ -113,27 +114,64 @@ def fetch_issue_statuses(
     the requested ``issue_refs``. This fixes the silent 1000-row cap
     undercount (288-vs-713 NFMDP).
 
-    Returns a mapping of issue key → status string.
-    On failure, logs a warning and the issue gets status ``"unknown"``.
+    Returns a mapping of issue identifier → status string.
+
+    Raises:
+        PaperclipFetchError: propagated from ``fetch_all_issues`` so the
+            downstream report can degrade to ``[no data]``. The previous
+            behaviour of silently defaulting every ref to ``"unknown"``
+            was the NFM-2443 defect — a fetch failure rendered as
+            ``commitEfficiency = 0.000`` rather than an honest empty
+            measurement.
     """
     statuses: dict[str, str] = {}
     if not issue_refs:
         return statuses
 
-    try:
-        all_issues = fetch_all_issues(api_url, company_id, {})
-        ref_set = set(issue_refs)
-        for issue in all_issues:
-            key = issue.get("key", "")
-            if key in ref_set:
-                statuses[key] = issue.get("status", "unknown")
-        # Any ref not found in the full issue list gets "unknown"
-        for ref in issue_refs:
-            if ref not in statuses:
-                statuses[ref] = "unknown"
-    except Exception as exc:
-        logger.warning("Unexpected error fetching issue statuses: %s", exc)
-        for ref in issue_refs:
+    # fetch_all_issues raises PaperclipFetchError on auth/HTTP/parse
+    # failure; we deliberately do NOT swallow it (NFM-2443 AC1+AC3).
+    all_issues = fetch_all_issues(api_url, company_id, {}, api_key=api_key)
+    ref_set = set(issue_refs)
+
+    # AC1 (NFM-2492): an empty issue list with a non-empty ref set is not a
+    # measurement. The fetch succeeded but returned nothing — the same
+    # reader-cannot-distinguish failure that NFM-2443 closed for the
+    # raised-exception path, reached here by an HTTP 200 with ``[]``.
+    # A genuinely empty commit range (no refs at all) returns above, so
+    # this guard is only reached when there *is* something to look up.
+    if not all_issues:
+        raise PaperclipEmptyResultError(
+            f"fetch_issue_statuses: Paperclip returned 0 issues for company "
+            f"'{company_id}' but {len(ref_set)} NFM ref(s) were expected "
+            f"({sorted(ref_set)}); the lookup cannot have matched anything. "
+            "This usually means a wrong company_id, a token scoped to no "
+            "issues, or a commit range referencing issues from another "
+            "project (see NFM-2492)."
+        )
+
+    for issue in all_issues:
+        identifier = issue.get("identifier", "")
+        if identifier in ref_set:
+            statuses[identifier] = issue.get("status", "unknown")
+
+    # AC2 (NFM-2492): a non-empty list against which *zero* refs resolve is
+    # the lookup-mismatch class — e.g. NFM-2446's `key`-vs-`identifier` bug,
+    # where every issue carried a `key` but the caller keys on `identifier`.
+    # 2438 issues come back and not one ref matches: the metric would still
+    # compute `0.000` and the reader could not tell that from a real zero.
+    if not statuses:
+        raise PaperclipEmptyResultError(
+            f"fetch_issue_statuses: Paperclip returned {len(all_issues)} "
+            f"issue(s) but none resolved to the {len(ref_set)} NFM ref(s) "
+            f"expected ({sorted(ref_set)}); this is a lookup mismatch, not a "
+            "measurement. Likely the caller is keying on a field the API "
+            "no longer populates (see NFM-2446 / NFM-2492)."
+        )
+
+    # Any ref not found in the full issue list gets "unknown" — a real
+    # signal about those individual issues, not a measurement failure.
+    for ref in issue_refs:
+        if ref not in statuses:
             statuses[ref] = "unknown"
 
     return statuses
@@ -343,7 +381,10 @@ def main() -> None:
     all_refs = list({
         ref for c in enriched for ref in c["issue_refs"]
     })
-    statuses = fetch_issue_statuses(all_refs, args.api_url, company_id)
+    api_key = os.environ.get("PAPERCLIP_API_KEY", "")
+    statuses = fetch_issue_statuses(
+        all_refs, args.api_url, company_id, api_key=api_key,
+    )
 
     report = build_report(args.since, args.until, enriched, statuses)
     print(json.dumps(report, indent=2))

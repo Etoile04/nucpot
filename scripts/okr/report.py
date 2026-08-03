@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.okr import fetch_all_issues
+from scripts.okr import PaperclipFetchError, fetch_all_issues
 from scripts.okr.commit_efficiency import (
     calculate_metrics,
     enrich_commits_with_refs,
@@ -324,8 +324,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-url",
-        default="http://localhost:3000",
-        help="Paperclip API base URL",
+        default=os.environ.get("PAPERCLIP_API_URL") or "http://localhost:3000",
+        help=(
+            "Paperclip API base URL. Defaults to $PAPERCLIP_API_URL when "
+            "set, otherwise http://localhost:3000 (NFM-2443 AC2)."
+        ),
     )
     parser.add_argument(
         "--company-id",
@@ -361,7 +364,17 @@ def main() -> None:
             "--company-id is required (or set PAPERCLIP_COMPANY_ID env var)"
         )
 
-    # KR-1 & KR-2: commit efficiency + waste rate
+    api_key = os.environ.get("PAPERCLIP_API_KEY", "")
+
+    # KR-1 & KR-2: commit efficiency + waste rate.
+    #
+    # If the Paperclip fetch fails (auth, network, malformed response),
+    # we deliberately degrade KR-1 to None — i.e. "[no data]" — instead
+    # of letting the metric render as 0.000. A fetch failure must NEVER
+    # produce a numeric KR value, because a reader cannot distinguish
+    # "we measured zero" from "the measurement never ran" (NFM-2443
+    # AC3). KR-2 follows the same path so the two related metrics stay
+    # consistent.
     raw_log = run_git_log(args.since, args.until, rev=args.rev)
     commits = parse_git_log(raw_log)
     enriched = enrich_commits_with_refs(commits)
@@ -369,20 +382,42 @@ def main() -> None:
     all_refs = sorted({
         ref for c in enriched for ref in c["issue_refs"]
     })
-    statuses = fetch_issue_statuses(all_refs, args.api_url, company_id)
-    metrics = calculate_metrics(enriched, statuses)
 
-    kr1_value = metrics["metrics"]["commitEfficiency"]
-    kr2_value = metrics["metrics"]["structuralWasteRate"]
+    kr1_value: float | None
+    kr2_value: float | None
+    try:
+        statuses = fetch_issue_statuses(
+            all_refs, args.api_url, company_id, api_key=api_key,
+        )
+        metrics = calculate_metrics(enriched, statuses)
+        kr1_value = metrics["metrics"]["commitEfficiency"]
+        kr2_value = metrics["metrics"]["structuralWasteRate"]
+    except PaperclipFetchError as exc:
+        logger.warning(
+            "Paperclip fetch failed; reporting KR-1/KR-2 as [no data]: %s",
+            exc,
+        )
+        kr1_value = None
+        kr2_value = None
 
-    # KR-3: deploy success rate
+    # KR-3: deploy success rate (local file, no Paperclip dep)
     kr3_entry = compute_kr3(args.since, args.until, deploy_path=args.deploy_events_path)
 
-    # KR-4: lead time
-    done_issues = fetch_all_issues(args.api_url, company_id, {"status": "done"})
-    kr4_value = compute_lead_time(done_issues, args.since, args.until)
+    # KR-4: lead time — same fetch-failure semantics as KR-1.
+    kr4_value: float | None
+    try:
+        done_issues = fetch_all_issues(
+            args.api_url, company_id, {"status": "done"}, api_key=api_key,
+        )
+        kr4_value = compute_lead_time(done_issues, args.since, args.until)
+    except PaperclipFetchError as exc:
+        logger.warning(
+            "Paperclip fetch failed; reporting KR-4 as [no data]: %s",
+            exc,
+        )
+        kr4_value = None
 
-    # KR-5: test coverage
+    # KR-5: test coverage (local XML, no Paperclip dep)
     kr5_entry = compute_kr5(args.coverage_xml)
 
     report = build_kr_report(
