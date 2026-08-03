@@ -127,7 +127,9 @@ jobs:
           echo "OK: exactly one alembic head"
 
       - name: Detect undocumented silent catches
-        run: python scripts/check_silent_catch.py apps/api/src
+        run: |
+          python scripts/check_silent_catch.py apps/api/src
+          uv run --project apps/api pytest scripts/tests/test_check_silent_catch.py -q
         working-directory: ${{ github.workspace }}
 
       - name: Lint (ruff)
