@@ -127,5 +127,5 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Res
             )
             return response
     except Exception:
-        pass  # never let header injection crash the 429 response
+        pass  # no-op: header failure must not mask the rate-limit response
     return JSONResponse(status_code=429, content=response_body)
