@@ -23,6 +23,23 @@ class PaperclipFetchError(RuntimeError):
     """
 
 
+class PaperclipEmptyResultError(PaperclipFetchError):
+    """The fetch succeeded but the result is unusable for measurement.
+
+    Subclass of :class:`PaperclipFetchError` so every existing
+    ``except PaperclipFetchError`` guard (report.py KR-1/KR-2/KR-4) keeps
+    degrading to ``[no data]`` without needing a second handler, while
+    callers that care can still distinguish "the call failed" from
+    "the call returned an empty or unresolvable list".
+
+    NFM-2443 closed the *raised-exception* path; this closes the
+    *empty-but-successful* path (NFM-2492). A reader cannot distinguish
+    ``commitEfficiency = 0.000`` (the team shipped nothing) from
+    "0.000 because the lookup never matched", so we refuse to compute
+    the metric in the latter case.
+    """
+
+
 def fetch_all_issues(
     api_url: str,
     company_id: str,
