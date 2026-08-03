@@ -31,7 +31,7 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
         cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
     except Exception:
         # Non-PostgreSQL or AGE not installed — skip silently
-        pass
+        pass  # no-op: AGE is optional and unsupported by test databases
 
 
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
