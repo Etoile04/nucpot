@@ -117,7 +117,7 @@ jobs:
           POSTGRES_PASSWORD: nfm
           POSTGRES_DB: nfm_deploy_lock_test
         ports:
-          - 5432/tcp
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U nfm"
           --health-interval 10s
@@ -154,9 +154,10 @@ jobs:
       - name: Install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      # Wait for Postgres to be reachable. The service is declared above, but
-      # the connection can race with first-step startup; pg_isready is the
-      # deterministic gate.
+      # Wait for Postgres to be reachable. ``5432:5432`` maps the container
+      # port to host port 5432 deterministically; the service health check
+      # runs inside the container, so pg_isready from the runner host is the
+      # authoritative readiness gate. Fail loudly if Postgres never comes up.
       - name: Wait for Postgres
         run: |
           for i in $(seq 1 30); do
@@ -167,10 +168,10 @@ jobs:
             echo "Waiting for Postgres (${i}/30)..."
             sleep 2
           done
-          # GitHub Actions service-container port mapping can report "ready"
-          # via TCP probe before the mapped port is fully usable.  A short
-          # soak ensures the port is stable before test connections open.
-          sleep 5
+          # Hard-fail if pg_isready never succeeded. Without this gate the job
+          # silently proceeded to the test step, where every connection attempt
+          # failed with ECONNREFUSED — the original 50-run red streak.
+          pg_isready -h localhost -p 5432 -U nfm
 
       # Override the ``addopts = "-m 'not integration'"`` deselection in
       # apps/api/pyproject.toml by setting ``addopts=""`` on the CLI. This

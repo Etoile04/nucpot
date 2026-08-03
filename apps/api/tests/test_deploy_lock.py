@@ -38,9 +38,16 @@ URL); the AST guard (test 2) runs in the default (SQLite-bound) CI suite.
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
+import sys
+from typing import Any
+from unittest.mock import patch
 
 import pytest
+from alembic.config import Config
+from alembic.runtime.environment import EnvironmentContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
@@ -69,6 +76,76 @@ def _sync_url(async_url: str) -> str:
     probe connections need.
     """
     return async_url.replace("+asyncpg", "+psycopg")
+
+
+def _import_env_module(pg_url: str) -> Any:
+    """Import ``migrations/env.py`` outside Alembic's CLI flow.
+
+    Alembic's ``context`` module is a proxy: ``context.config``,
+    ``context.configure(...)``, ``context.is_offline_mode()`` etc. all
+    route through a module-global ``_proxy`` that is only installed when
+    ``EnvironmentContext.__init__`` runs inside alembic's
+    ``command.main()`` CLI. Importing ``migrations/env.py`` from a test
+    (no CLI) hit:
+
+        NameError: Can't invoke function 'configure', as the proxy object
+        has not yet been established for the Alembic 'EnvironmentContext'
+        class.
+
+    The previous test code tried to work around this with
+    ``alembic.context.config = Config()`` and a monkey-patched
+    ``is_offline_mode``. Setting those as module attributes does NOT
+    populate the proxy: ``_proxy`` is only set by
+    ``EnvironmentContext._install_proxy()``, and the proxied callables
+    (``configure``, ``run_migrations``, ``begin_transaction``) dispatch
+    through ``_proxy.<name>``, ignoring the module attributes entirely.
+
+    This helper constructs a real ``EnvironmentContext`` against a
+    ``Config`` + ``ScriptDirectory`` pointed at ``migrations/``,
+    installs the proxy with ``as_sql=True`` (so
+    ``context.is_offline_mode()`` returns True and ``env.py`` takes the
+    ``run_migrations_offline()`` branch instead of ``asyncio.run(...)``
+    at import time), and no-ops the three callables the offline branch
+    invokes so the module finishes importing without driving a real
+    migration against an empty DB. After import, ``run_async_migrations``
+    and ``do_run_migrations`` are available for the test to call
+    directly (with its own mocks for ``do_run_migrations`` /
+    ``async_engine_from_config``).
+    """
+    import alembic.context as ac
+
+    monkey_url = os.environ.copy()
+    monkey_url["NFM_DATABASE_URL"] = pg_url
+    with patch.dict(os.environ, monkey_url, clear=False):
+        cfg = Config()
+        cfg.set_main_option("script_location", "migrations")
+        # NFM_DATABASE_URL is read by env.py's get_settings(); also set
+        # the alembic Config's sqlalchemy.url so env.py's
+        # ``config.set_main_option("sqlalchemy.url", ...)`` is consistent.
+        cfg.set_main_option("sqlalchemy.url", pg_url)
+        script = ScriptDirectory.from_config(cfg)
+
+        # as_sql=True → is_offline_mode() returns True → env.py's
+        # top-level dispatch takes the offline branch (not asyncio.run).
+        ctx = EnvironmentContext(cfg, script, as_sql=True)
+        ctx._install_proxy()
+
+        # Suppress the offline-branch side effects at import time:
+        # env.py calls run_migrations_offline() → context.configure()
+        # → context.begin_transaction() → context.run_migrations(). The
+        # real migration is driven explicitly by the test below.
+        with (
+            patch.object(ac, "configure"),
+            patch.object(ac, "run_migrations"),
+            patch.object(ac, "begin_transaction", return_value=contextlib.nullcontext()),
+        ):
+            # Ensure a fresh import per test (env.py is stateful at
+            # module scope: ``config = context.config`` etc.).
+            sys.modules.pop("migrations.env", None)
+            sys.modules.pop("migrations", None)
+            from migrations import env as env_mod
+
+        return env_mod
 
 
 @pytest.mark.integration
@@ -274,22 +351,11 @@ async def test_run_async_migrations_holds_advisory_lock_during_execution(monkeyp
     # (inside the test, after the NFM_DATABASE_URL env override) keeps
     # the module-level state aligned with the test DB.
     monkeypatch.setenv("NFM_DATABASE_URL", _NFM_TEST_PG_URL)
-    # Pre-stage alembic.context so env.py's ``from alembic import context;
-    # config = context.config`` resolves at import time outside alembic's
-    # CLI flow. In alembic's runtime, ``alembic.context.config`` and
-    # ``alembic.context.is_offline_mode()`` are injected; we inject them
-    # here before importing env.py.
-    import alembic.context as _alembic_context
-    from alembic.config import Config as _AlembicConfig
-
-    _alembic_context.config = _AlembicConfig()
-    # Stage OFFLINE mode at import time so env.py does NOT call
-    # ``run_migrations_online()`` (which calls ``asyncio.run``, conflicting
-    # with pytest-asyncio's running loop). The test invokes
-    # ``run_async_migrations()`` directly below.
-    _alembic_context.is_offline_mode = lambda: True  # type: ignore[attr-defined]
-    # Now safe to import migrations.env outside alembic's CLI.
-    from migrations import env as env_mod
+    # Bootstrap the alembic proxy + import env.py outside alembic's CLI
+    # flow. See _import_env_module() for the proxy mechanics; the prior
+    # ``alembic.context.config = Config()`` approach did not install the
+    # proxy and raised NameError at env.py import time.
+    env_mod = _import_env_module(_NFM_TEST_PG_URL)
 
     # Pre-built async engine that points at the test DB. We bypass the
     # alembic Config machinery (which would try to read alembic.ini from
@@ -375,12 +441,9 @@ async def test_run_async_migrations_releases_lock_after_completion(monkeypatch):
     from unittest.mock import MagicMock, patch
 
     monkeypatch.setenv("NFM_DATABASE_URL", _NFM_TEST_PG_URL)
-    import alembic.context as _alembic_context
-    from alembic.config import Config as _AlembicConfig
-
-    _alembic_context.config = _AlembicConfig()
-    _alembic_context.is_offline_mode = lambda: True  # type: ignore[attr-defined]
-    from migrations import env as env_mod
+    # Bootstrap the alembic proxy + import env.py outside alembic's CLI
+    # flow. See _import_env_module() for the proxy mechanics.
+    env_mod = _import_env_module(_NFM_TEST_PG_URL)
 
     test_async_engine = create_async_engine(_NFM_TEST_PG_URL, poolclass=NullPool)
 
