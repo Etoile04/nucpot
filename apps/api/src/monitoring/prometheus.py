@@ -207,7 +207,7 @@ def clear_metrics() -> None:
         try:
             REGISTRY.unregister(c)
         except Exception:
-            pass
+            pass  # no-op: unregister may fail for already-unregistered collectors during cleanup
     logger.info("All metrics cleared")
 
 
