@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { render, screen, cleanup, fireEvent, act } from "@testing-library/react"
+import { render, screen, cleanup, fireEvent, act, waitFor } from "@testing-library/react"
 import { ConfigProvider } from "antd"
 
 // Mock next/navigation so useRouter/usePathname/useSearchParams
@@ -101,10 +101,13 @@ describe("<ReAuthPrompt />", () => {
     renderPrompt(harness)
     await new Promise((r) => setTimeout(r, 5))
     await harness.manager.refresh().catch(() => undefined)
-    await new Promise((r) => setTimeout(r, 5))
-    const el = screen.queryByTestId("reauth-prompt")
-    expect(el).not.toBeNull()
-    expect(el?.textContent ?? "").toMatch(/会话已过期/)
+    // Fixed 5ms sleeps are flaky on loaded CI runners — wait for the modal
+    // instead (async state transition, not a synchronous render).
+    await waitFor(() => {
+      const el = screen.queryByTestId("reauth-prompt")
+      expect(el).not.toBeNull()
+      expect(el?.textContent ?? "").toMatch(/会话已过期/)
+    })
   })
 
   it("appears within 1s of refresh-failure transition (NFM-2254 SLA)", async () => {
