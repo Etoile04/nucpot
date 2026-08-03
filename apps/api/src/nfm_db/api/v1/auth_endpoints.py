@@ -49,6 +49,12 @@ settings = get_settings()
 
 COOKIE_NAME = "access_token"
 
+# Refresh-issued JWT + cookie are deliberately short (30 minutes, per
+# NFM-2236 sliding-window design): every refresh re-mints both, so a
+# stolen cookie expires before the user's session does. Login-minted
+# tokens keep the configured ``access_token_expire_minutes`` lifetime.
+COOKIE_MAX_AGE = 30 * 60
+
 
 def _cookie_max_age(*, is_service_account: bool) -> int:
     """Return the auth cookie lifetime, in seconds, for the issued token.
@@ -183,8 +189,7 @@ async def refresh(
     # which is a latent bug — refresh fixes it on the refresh path).
     # Service accounts keep their scope claim; humans get a plain
     # ``{"sub": ...}`` payload — same shape as login.
-    cookie_max_age = _cookie_max_age(is_service_account=current_user.is_service_account)
-    access_token_expires = timedelta(seconds=cookie_max_age)
+    access_token_expires = timedelta(seconds=COOKIE_MAX_AGE)
     if current_user.is_service_account:
         new_token = create_service_account_token(
             current_user,
@@ -210,7 +215,7 @@ async def refresh(
         secure=True,
         samesite="lax",
         path="/",
-        max_age=cookie_max_age,
+        max_age=COOKIE_MAX_AGE,
     )
 
     return RefreshTokenResponse(
