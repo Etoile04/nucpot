@@ -173,23 +173,47 @@ A roll-up comment will be posted below this template by the close-out owner.
 
 ## 6. Close-out (the answer to the "3 days past window" defect)
 
+### 6a. Hollow-filing detection (pre-synthesis, NFM-2454)
+
+**Before synthesising, the close-out owner MUST validate every child issue.**
+
+Discovered in Week 32 (NFM-2454): 9 of 16 children closed `done` with the verbatim, unfilled template — literally containing `{ROLE}`, `{current_value}`, `{NFM-XXX}` placeholders. The board read `15/16 done` as "the company filed". The real number was 6/16. Worse, downstream aggregators (e.g. CEO proxy filing NFM-2450) silently ingested the hollow data and produced false roll-ups.
+
+Detection heuristic — a child is **hollow** if its description body matches **any** of:
+
+1. **Placeholder tokens present:** any of `{ROLE}`, `{NUMBER}`, `{current_value}`, `{NFM-XXX}`, `{Name}`, `{iso_week}`, `{target}`, `{one-line summary}`, `{key items}`, `{if any}` remain in the text.
+2. **Length below threshold:** body is <400 characters (a filled template is typically >800 chars; a genuinely filed report is >3.8k chars; hollow Week 32 children were 292–310 chars).
+
+On hollow detection, the close-out owner:
+
+1. PATCH the child back to `todo`.
+2. Post a comment on the child: `⚠️ **Hollow filing detected and reopened.** This standup child was closed without filling in the template (placeholder tokens still present). Please file a substantive report before closing again.`
+3. Counts the child as **hollow** (not filed, not missing) in the synthesis.
+
+**Rationale for reopening over flagging:** A `done` child with an empty body is misinformation. Leaving it `done` and adding a flag doesn't fix the aggregation consumers that only count `done`. Reopening forces the reporter to re-engage, and the synthesis correctly excludes it from the filed count.
+
+### 6b. Coverage thresholds (based on substantive filings only)
+
 | Trigger | Day | Time | Owner | Action |
 |---|---|---|---|---|
-| Auto | Friday | 17:00 Asia/Shanghai | Strategy Director | Synthesise reports into one roll-up comment on parent. Set parent status based on coverage. |
-| Threshold | Friday | 17:00 | Strategy Director | If ≥13 of 16 reporters filed → parent → `done`. If 8–12 → parent → `in_review` with gaps called out. If <8 → parent → `blocked` with explicit per-reporter gap list and `@CEO` mention. |
+| Pre-check | Friday | 17:00 Asia/Shanghai | Strategy Director | Run hollow-filing detection on all children. Reopen hollow `done` children per §6a. |
+| Auto | Friday | 17:00 Asia/Shanghai | Strategy Director | Synthesise reports into one roll-up comment on parent. Set parent status based on **substantive** coverage. |
+| Threshold | Friday | 17:00 | Strategy Director | If ≥13 of 16 **substantively filed** → parent → `done`. If 8–12 → parent → `in_review` with gaps called out. If <8 → parent → `blocked` with explicit per-reporter gap list and `@CEO` mention. |
 | Hard stop | Saturday | 00:00 | Strategy Director | Even if coverage is thin, post the synthesis and set final disposition. Never let the issue rot. |
 
-Synthesis format:
+### 6c. Synthesis format (revised for three-tier reporting)
 
 ```markdown
-## Cycle {iso_week} synthesis — {filed}/{expected} ({pct}%)
+## Cycle {iso_week} synthesis — {substantive_filed}/{expected} ({pct}%)
+> Of {total_closed} closed children: {substantive_filed} substantive, {hollow} hollow (reopened)
 
 ### Coverage
-- ✅ Filed: {names}
+- ✅ Filed: {names} ({char_count} chars each)
+- ⚠️ Hollow (reopened): {names}
 - ❌ Missing: {names}
 
 ### Cross-cutting themes
-- {themes extracted from filed reports}
+- {themes extracted from substantive reports only}
 
 ### Escalations
 - {blockers / red KRs that need CEO/CSO attention}
@@ -222,3 +246,29 @@ Synthesis format:
 - KR instrumentation gaps (KR-COMPANY-3, KR-COMPANY-5): tracked under a sibling CTO issue.
 - OKR *content* (what counts as a KR, how to score Green/Yellow/Red): not this routine's concern.
 - Agent-card / roster automation: this redesign keeps the roster as static text in the routine description. Auto-discovery of reporters from department hierarchy is a v2 concern.
+
+---
+
+## 10. NFM-2454: Hollow-filing defect fix (revision 4)
+
+### Defect
+
+9 of 16 Week 32 children closed `done` with the unfilled template body (292–310 chars, containing `{ROLE}`, `{NFM-XXX}` placeholders). The synthesis reported `15/16 done`. Real substantive filings: 6. Downstream aggregators (NFM-2450) silently ingested hollow data.
+
+### Fix (revision 4 — three changes)
+
+| # | Change | AC | Section |
+|---|--------|----|---------|
+| 1 | **Hollow-filing detection** — pre-synthesis validation reopens `done` children whose body contains template placeholders or is <400 chars | "A standup child with an unfilled template body cannot reach `done`" | §6a |
+| 2 | **Three-tier synthesis** — `filed / hollow / missing` instead of binary `filed / missing` | "Week 33 parent reports substantive-filing count" | §6c |
+| 3 | **Coverage thresholds rebased** — `≥13 of 16` now counts only substantive filings | Implied by AC1+AC2 | §6b |
+
+### Decision: `/standup` slash command deferred
+
+The issue's proposed fix #2 (a `/standup` slash command that auto-loads the agent's issues) is the right long-term fix — it removes the incentive to close hollow by making filing easy. However:
+
+- It requires **server-side slash command infrastructure** that doesn't yet exist in the Paperclip platform.
+- The routine-level hollow gate (§6a) is a **durable structural fix** that prevents the symptom regardless of agent motivation.
+- `/standup` scaffolding should be a **separate feature issue** when the platform supports custom slash commands.
+
+**Decision: defer `/standup` to a future cycle. The hollow gate is sufficient for now.**

@@ -128,24 +128,41 @@ Each reporter's individual filing task is in a child issue assigned to them.
 
 ## Close-out (Fri 17:00, owner: Strategy Director)
 
+### Pre-synthesis: hollow-filing detection (NFM-2454)
+
+**Mandatory before synthesis.** In Week 32, 9/16 children closed `done` with the unfilled template — the board read "15/16 done" when only 6 were substantive.
+
+For every child issue with status `done`:
+
+1. Check the child's description body for **placeholder tokens**: `{ROLE}`, `{NUMBER}`, `{current_value}`, `{NFM-XXX}`, `{Name}`, `{iso_week}`, `{target}`, `{one-line summary}`, `{key items}`, `{if any}`.
+2. Check the child's description body length. **Hollow if <400 chars** (substantive filings are >800 chars, typically >3.8k; Week 32 hollows were 292–310 chars).
+3. If hollow:
+   - PATCH the child back to `todo`.
+   - Post a comment: `⚠️ **Hollow filing detected and reopened.** This standup child was closed without filling in the template (placeholder tokens still present). Please file a substantive report before closing again.`
+   - Count as **hollow** in synthesis (not filed, not missing).
+
+### Coverage thresholds (substantive filings only)
+
 - Roll all 16 child-issue reports into one synthesis comment on the parent.
-- Set parent status:
-  - **≥13 of 16 filed** → `done` (target met)
-  - **8–12 filed** → `in_review` with per-reporter gap list and CEO/CSO mention
-  - **<8 filed** → `blocked` with full gap list and explicit `@CEO` mention
+- Set parent status based on **substantively filed** count (hollow reopens do NOT count as filed):
+  - **≥13 of 16 substantively filed** → `done` (target met)
+  - **8–12 substantively filed** → `in_review` with per-reporter gap list and CEO/CSO mention
+  - **<8 substantively filed** → `blocked` with full gap list and explicit `@CEO` mention
 - **Hard stop: Saturday 00:00.** Post the synthesis and final disposition regardless of coverage. Never let the issue rot past Friday.
 
 ## Synthesis comment format
 
 ```markdown
-## Cycle {iso_week} synthesis — {filed}/{expected} ({pct}%)
+## Cycle {iso_week} synthesis — {substantive_filed}/{expected} ({pct}%)
+> Of {total_closed} closed children: {substantive_filed} substantive, {hollow} hollow (reopened)
 
 ### Coverage
-- ✅ Filed: {names}
+- ✅ Filed: {names} ({char_count} chars each)
+- ⚠️ Hollow (reopened): {names}
 - ❌ Missing: {names}
 
 ### Cross-cutting themes
-- {themes extracted from filed reports}
+- {themes extracted from substantive reports only}
 
 ### Escalations
 - {blockers / red KRs that need CEO/CSO attention}
