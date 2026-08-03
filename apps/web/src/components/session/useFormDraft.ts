@@ -1,3 +1,5 @@
+"use client"
+
 /**
  * useFormDraft — persist in-flight form values across the re-auth flow.
  *
