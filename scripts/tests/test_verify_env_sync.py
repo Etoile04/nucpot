@@ -43,6 +43,14 @@ def env_pair(tmp_path: Path):
     return _make
 
 
+@pytest.fixture
+def prod_workflow() -> str:
+    """The production deployment workflow, as text."""
+    workflow = SCRIPT.resolve().parents[1] / ".github" / "workflows" / "production-deployment.yml"
+    assert workflow.is_file(), f"{workflow} not found"
+    return workflow.read_text()
+
+
 # ---------------------------------------------------------------------------
 # Packaging
 # ---------------------------------------------------------------------------
@@ -245,6 +253,24 @@ def test_no_hardcoded_secrets_in_script_source():
 # ---------------------------------------------------------------------------
 
 
+def test_docker_only_keys_are_reported_but_do_not_fail(env_pair):
+    """AC2 asks for drift in *either* direction to be reported.
+
+    NFM-2221 deliberately allows docker-only keys (the container may declare
+    tuning knobs the host has no use for), so this stays advisory: named in
+    the output, but never a non-zero exit.
+    """
+    root, docker = env_pair(
+        "DATABASE_URL=postgres://root\n",
+        "DATABASE_URL=postgres://docker\nDOCKER_ONLY_KNOB=1\n",
+    )
+    result = run_script(str(root), str(docker))
+    assert result.returncode == 0, result.stderr
+    assert "DOCKER_ONLY_KNOB" in result.stdout + result.stderr, (
+        "docker-only keys must still be surfaced, even though they pass"
+    )
+
+
 def test_compose_prod_references_the_script():
     compose = SCRIPT.resolve().parents[1] / "docker-compose.prod.yml"
     assert compose.is_file(), f"{compose} not found"
@@ -252,3 +278,40 @@ def test_compose_prod_references_the_script():
     assert "./scripts/verify-env-sync.sh" in head, (
         "docker-compose.prod.yml must reference the pre-deploy check near the top"
     )
+
+
+def test_production_workflow_runs_the_check(prod_workflow):
+    """A comment in docker-compose is documentation, not enforcement.
+
+    The compose reference above only tells a human to run the check. CI has to
+    actually invoke it, or drift reaches production exactly as it did in the
+    MINERU_API_KEY incident.
+    """
+    assert "verify-env-sync.sh" in prod_workflow, (
+        "production-deployment.yml must invoke scripts/verify-env-sync.sh"
+    )
+
+
+def test_env_check_gates_the_deploy(prod_workflow):
+    """Running the check after deploy-prod would report drift too late."""
+    assert prod_workflow.index("verify-env-sync.sh") < prod_workflow.index("  deploy-prod:"), (
+        "the env sync check must run before the deploy-prod job"
+    )
+
+
+def test_env_check_runs_on_the_host_holding_the_env_files(prod_workflow):
+    """`.env.prod` is gitignored, so it exists only on the production host.
+
+    A fresh ubuntu-latest checkout has neither env file, so the script would
+    exit 1 on "file not found" and fail every deploy. The check therefore has
+    to run inside the self-hosted runner's job.
+    """
+    job = prod_workflow[
+        prod_workflow.index("  pre-deploy-assert:") : prod_workflow.index(
+            "  pre-deploy-assert-smoke:"
+        )
+    ]
+    assert "verify-env-sync.sh" in job, (
+        "the env check belongs in the pre-deploy-assert job (self-hosted, production)"
+    )
+    assert "runs-on: [self-hosted, production]" in job

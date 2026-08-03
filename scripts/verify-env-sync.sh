@@ -20,7 +20,8 @@
 #
 # Note: docker-only keys are allowed. The check is one-directional — the
 # container env may legitimately declare extra tuning knobs that the host
-# env has no use for.
+# env has no use for. They are still listed as a NOTE (NFM-2406) so a typo'd
+# key is visible rather than passing as an intentional docker-only setting.
 # =============================================================================
 set -euo pipefail
 
@@ -53,6 +54,16 @@ ROOT_KEYS="$(extract_keys "$ROOT_ENV")"
 DOCKER_KEYS="$(extract_keys "$DOCKER_ENV")"
 
 MISSING="$(comm -23 <(printf '%s\n' "$ROOT_KEYS") <(printf '%s\n' "$DOCKER_KEYS"))"
+DOCKER_ONLY="$(comm -13 <(printf '%s\n' "$ROOT_KEYS") <(printf '%s\n' "$DOCKER_KEYS"))"
+
+# Reported, never fatal. Drift in this direction is usually deliberate (a
+# container tuning knob), but naming it makes a typo'd key visible instead of
+# leaving it to look like a legitimate docker-only setting.
+if [ -n "$DOCKER_ONLY" ]; then
+  echo "NOTE: keys only in $DOCKER_ENV (allowed, not a failure):"
+  echo "$DOCKER_ONLY"
+  echo ""
+fi
 
 if [ -n "$MISSING" ]; then
   echo "MISSING KEYS in $DOCKER_ENV:" >&2

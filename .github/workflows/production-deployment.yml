@@ -298,6 +298,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify env key sync (NFM-2406)
+        run: |
+          # Runs before the candidate build on purpose: env drift is a
+          # sub-second check and the build below is --no-cache, so failing
+          # here saves several minutes of pointless work.
+          #
+          # This must run over SSH rather than against the checkout above,
+          # because .env.prod and docker/.env.prod are gitignored — they exist
+          # only on the production host. `git pull` first so the check runs the
+          # script from the commit being deployed, not the last deploy's copy.
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+            set -euo pipefail
+            cd ~/Projects/nucpot
+            export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            git pull origin main
+
+            echo "===> Checking .env.prod <-> docker/.env.prod key drift..."
+            # Only key *names* are printed, never values — safe for CI logs.
+            bash scripts/verify-env-sync.sh
+          ENDSSH
+
       - name: Build candidate api image
         run: |
           # Compute CANDIDATE_TAG in the workflow shell (where $GITHUB_ENV is bound
