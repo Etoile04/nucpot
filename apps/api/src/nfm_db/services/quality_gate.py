@@ -39,9 +39,8 @@ def _safe_float(raw: Any) -> float:
     (e.g. '3.32 x 10^-8', '1.5e-7')."""
     try:
         return float(raw)
-    except (ValueError, TypeError):
-        # Not a plain number — try the sci-notation normalisation below.
-        logger.debug("_safe_float: %r not directly float-able", raw)
+    except (ValueError, TypeError) as exc:
+        logger.debug("_safe_float: direct float parse failed for %r: %s", raw, exc)
     s = str(raw).strip()
     # Normalise x 10^ / x10^ / *10^ -> e notation. The first char in the
     # character class is the Unicode MULTIPLICATION SIGN (\u00d7) so we
@@ -50,9 +49,8 @@ def _safe_float(raw: Any) -> float:
     s = re.sub(r"[×x*]\s*10\^?", "e", s)  # noqa: RUF001 (x char in pattern is intentional)
     try:
         return float(s)
-    except (ValueError, TypeError):
-        # Normalised form still not numeric — fall back to token scan.
-        logger.debug("_safe_float: normalised %r still not float-able", s)
+    except (ValueError, TypeError) as exc:
+        logger.debug("_safe_float: normalised float parse failed for %r: %s", s, exc)
     # Fall back to first numeric token
     m = re.search(r"[-+]?\d*\.?\d+", str(raw))
     return float(m.group()) if m else 0.0

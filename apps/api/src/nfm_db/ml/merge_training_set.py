@@ -611,8 +611,12 @@ def generate_distribution_report(
         try:
             comp = json.loads(comp_str) if isinstance(comp_str, str) else comp_str
             elements_seen.update(comp.keys())
-        except (json.JSONDecodeError, TypeError):
-            pass  # no-op: skip malformed composition strings
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.debug(
+                "merge_training_set: composition parse failed for %r: %s",
+                comp_str,
+                exc,
+            )
     element_list = sorted(elements_seen)
     report_lines.append(f"**Total unique elements:** {len(element_list)}")
     report_lines.append("")

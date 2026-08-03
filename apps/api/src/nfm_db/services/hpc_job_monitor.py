@@ -80,9 +80,9 @@ async def check_job_completion(ssh_manager, task_id: str) -> bool:
                     if file_stat.st_size > 0:
                         return True
                 except OSError as exc:
-                    # Output file not produced yet — expected while the job
-                    # is still running; keep polling the remaining files.
-                    logger.debug("Output %s not ready (%s)", remote_path, exc)
+                    logger.debug(
+                        "poll_job_status: sftp.stat(%s) failed: %s", remote_path, exc
+                    )
 
             return False
 
