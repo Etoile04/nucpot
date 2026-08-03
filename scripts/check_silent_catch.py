@@ -5,20 +5,30 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 from pathlib import Path
 
-NO_OP_MARKER = "# no-op:"
+NO_OP_PATTERN = re.compile(r"#\s*no-op:\s*\S")
 
 
 def _is_documented_pass(source_lines: list[str], statement: ast.stmt) -> bool:
     """Return whether a pass statement has an inline no-op reason."""
-    return NO_OP_MARKER in source_lines[statement.lineno - 1]
+    return NO_OP_PATTERN.search(source_lines[statement.lineno - 1]) is not None
+
+
+def _python_paths(root: Path) -> list[Path]:
+    """Return Python files under root, rejecting nonexistent paths."""
+    if not root.exists():
+        raise FileNotFoundError(root)
+    if root.is_file():
+        return [root] if root.suffix == ".py" else []
+    return sorted(root.rglob("*.py"))
 
 
 def find_silent_catches(root: Path) -> list[tuple[Path, int]]:
     """Return pass-only exception handlers lacking a documented reason."""
     violations: list[tuple[Path, int]] = []
-    for path in sorted(root.rglob("*.py")):
+    for path in _python_paths(root):
         source = path.read_text(encoding="utf-8")
         source_lines = source.splitlines()
         tree = ast.parse(source, filename=str(path))
