@@ -84,6 +84,14 @@ log "Running alembic upgrade head via nucpot-prod-api:${IMAGE_TAG} (deploy lock 
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
   run --rm -T --no-deps \
   -e NFMD_DEPLOY_LOCK_KEY="$NFMD_DEPLOY_LOCK_KEY" \
-  --entrypoint alembic api upgrade head
+  --entrypoint alembic api upgrade head < /dev/null
+# NFM-2210: `< /dev/null` is REQUIRED. `docker compose run` consumes the
+# parent's stdin; when this script runs inside a deploy heredoc
+# (`ssh ... << 'ENDSSH'`), that silently swallows every command after
+# `./scripts/prod_migrate.sh` in the heredoc — including the actual
+# `docker compose up -d` — so containers were never recreated and prod
+# stayed on stale images. Verified empirically: without the redirect the
+# deploy job "succeeds" but no container is recreated (8 consecutive red
+# production-deployment runs, 2026-08-02).
 
 log "Alembic upgrade head complete"
