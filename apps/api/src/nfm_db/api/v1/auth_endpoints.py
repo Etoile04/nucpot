@@ -183,7 +183,8 @@ async def refresh(
     # which is a latent bug — refresh fixes it on the refresh path).
     # Service accounts keep their scope claim; humans get a plain
     # ``{"sub": ...}`` payload — same shape as login.
-    access_token_expires = timedelta(seconds=COOKIE_MAX_AGE)
+    cookie_max_age = _cookie_max_age(is_service_account=current_user.is_service_account)
+    access_token_expires = timedelta(seconds=cookie_max_age)
     if current_user.is_service_account:
         new_token = create_service_account_token(
             current_user,
@@ -209,7 +210,7 @@ async def refresh(
         secure=True,
         samesite="lax",
         path="/",
-        max_age=COOKIE_MAX_AGE,
+        max_age=cookie_max_age,
     )
 
     return RefreshTokenResponse(
