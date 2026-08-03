@@ -71,7 +71,7 @@ ok "postgres ready"
 # Use a revision that cannot exist in any real image so the test is
 # hermetic — no real revision can accidentally match.
 log "Stamping alembic_version to '9999999999' (phantom revision)..."
-docker exec "${PG_CONTAINER}" psql -U assertsmoke -d assertsmoke -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -e PGPASSWORD=assertsmoke "${PG_CONTAINER}" psql -U assertsmoke -d assertsmoke -v ON_ERROR_STOP=1 <<'SQL'
 CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL);
 INSERT INTO alembic_version (version_num) VALUES ('9999999999');
 SELECT version_num FROM alembic_version;
@@ -96,6 +96,7 @@ ASSERT_LOG="$(mktemp)"
   --db-container "${PG_CONTAINER}" \
   --db-user assertsmoke \
   --db-name assertsmoke \
+  --db-password assertsmoke \
   --distinct-exit "${DISTINCT_EXIT_CODE}" \
   >"${ASSERT_LOG}" 2>&1
 EXIT_CODE=$?
@@ -150,6 +151,7 @@ set +e
   --db-container "${PG_CONTAINER}" \
   --db-user assertsmoke \
   --db-name assertsmoke \
+  --db-password assertsmoke \
   --no-strict-heads \
   >"${ASSERT_LOG}" 2>&1
 EXIT_CODE=$?
