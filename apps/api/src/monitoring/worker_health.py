@@ -35,7 +35,7 @@ def _try_sentry_capture(event: dict[str, Any]) -> None:
 
         sentry_sdk.capture_event(event)
     except ImportError:
-        pass
+        pass  # no-op: Sentry is an optional dependency
 
 
 class WorkerHealthTracker:
