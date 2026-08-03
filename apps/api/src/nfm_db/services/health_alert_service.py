@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.health_event import HealthEvent
 from nfm_db.schemas.health import (
+    ActiveErrorsData,
+    AdminAlertsResponse,
     AlertFilterMeta,
     AlertsMeta,
     AlertsResponse,
@@ -23,6 +25,7 @@ from nfm_db.schemas.health import (
     SummaryPeriod,
     SummaryResponse,
 )
+from nfm_db.services.health_event_emitter import SEVERITY_CRITICAL, SEVERITY_ERROR
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,10 @@ MAX_LIMIT = 500
 
 #: Default page size when no limit is supplied.
 DEFAULT_LIMIT = 50
+
+#: Severities that count as an *active error* for the admin summary
+#: (NFM-2422). ``info`` and ``warning`` are informational and excluded.
+ERROR_SEVERITIES = (SEVERITY_CRITICAL, SEVERITY_ERROR)
 
 
 def _default_since() -> datetime:
@@ -178,5 +185,59 @@ async def get_alerts_summary(
                 since=effective_since.isoformat(),
                 until=datetime.now(UTC).isoformat(),
             ),
+        ),
+    )
+
+
+async def get_active_error_summary(
+    db: AsyncSession,
+    *,
+    since: datetime | None = None,
+) -> AdminAlertsResponse:
+    """Aggregate error/critical health events for admin monitoring (NFM-2440).
+
+    Only ``error`` and ``critical`` severities count as active errors
+    (:data:`ERROR_SEVERITIES`); ``info`` and ``warning`` are informational.
+    Counting happens in SQL so the window never lands in memory row-by-row.
+
+    Args:
+        db: Async database session.
+        since: Lower bound for ``created_at``. Defaults to 24 h ago.
+
+    Returns:
+        An :class:`AdminAlertsResponse` whose ``status`` is always ``"ok"``;
+        error information lives in ``active_errors`` (count plus per-axis
+        ``event_type`` / ``severity`` breakdowns).
+    """
+    effective_since = since if since is not None else _default_since()
+
+    stmt = (
+        select(HealthEvent.event_type, HealthEvent.severity, func.count())
+        .where(
+            HealthEvent.severity.in_(ERROR_SEVERITIES),
+            HealthEvent.created_at >= effective_since,
+        )
+        .group_by(HealthEvent.event_type, HealthEvent.severity)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    total = 0
+    by_type: dict[str, int] = defaultdict(int)
+    by_severity: dict[str, int] = defaultdict(int)
+    for event_type, severity, count in rows:
+        total += count
+        by_type[event_type] += count
+        by_severity[severity] += count
+
+    return AdminAlertsResponse(
+        status="ok",
+        active_errors=ActiveErrorsData(
+            count=total,
+            categories={
+                "event_type": dict(by_type),
+                "severity": dict(by_severity),
+            },
+            since=effective_since.isoformat(),
+            until=datetime.now(UTC).isoformat(),
         ),
     )
