@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import (
     get_current_active_user,
+    get_current_user,
 )
 from nfm_db.api.v1.auth import (
     require_admin as require_admin_dep,
@@ -26,8 +27,10 @@ from nfm_db.models.user import (
 from nfm_db.schemas.auth import (
     ApiResponse,
     BlogRoleResponse,
+    RefreshTokenResponse,
     RoleAssignmentRequest,
     RoleAssignmentResponse,
+    SessionInfoResponse,
     Token,
     UserCreate,
     UserResponse,
@@ -37,6 +40,7 @@ from nfm_db.services.auth_service import (
     authenticate_user,
     create_access_token,
     create_service_account_token,
+    decode_access_token,
     get_password_hash,
 )
 
@@ -44,6 +48,12 @@ router = APIRouter(prefix="/auth", tags=["认证管理"])
 settings = get_settings()
 
 COOKIE_NAME = "access_token"
+
+# Refresh-issued JWT + cookie are deliberately short (30 minutes, per
+# NFM-2236 sliding-window design): every refresh re-mints both, so a
+# stolen cookie expires before the user's session does. Login-minted
+# tokens keep the configured ``access_token_expire_minutes`` lifetime.
+COOKIE_MAX_AGE = 30 * 60
 
 
 def _cookie_max_age(*, is_service_account: bool) -> int:
@@ -153,6 +163,68 @@ async def logout(response: Response) -> ApiResponse[dict[str, str]]:
 
 
 @router.post(
+    "/refresh",
+    response_model=RefreshTokenResponse,
+    summary="刷新访问令牌",
+    description=(
+        "Sliding-window session extension (NFM-2236).\n\n"
+        "Re-issues the `access_token` cookie if the current one is still "
+        "valid. The new token is returned in the JSON body so the "
+        "frontend can schedule the next refresh.\n\n"
+        "Returns 401 if the current cookie is missing, tampered, or "
+        "expired — the frontend then surfaces an explicit re-auth "
+        "prompt."
+    ),
+)
+@limiter.limit("30/minute")
+async def refresh(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+) -> RefreshTokenResponse:
+    """Refresh the access token. Sliding-window; idempotent."""
+    # Re-issue a fresh JWT whose ``exp`` matches the cookie ``Max-Age``
+    # exactly.  Without this alignment the JWT would outlive the cookie
+    # (login currently mints 8-hour JWTs but caps the cookie at 30 min,
+    # which is a latent bug — refresh fixes it on the refresh path).
+    # Service accounts keep their scope claim; humans get a plain
+    # ``{"sub": ...}`` payload — same shape as login.
+    access_token_expires = timedelta(seconds=COOKIE_MAX_AGE)
+    if current_user.is_service_account:
+        new_token = create_service_account_token(
+            current_user,
+            ServiceAccountScope.EXTRACTION_INGEST,
+            expires_delta=access_token_expires,
+        )
+    else:
+        new_token = create_access_token(
+            data={"sub": str(current_user.id)},
+            expires_delta=access_token_expires,
+        )
+
+    expires_at = datetime.now(UTC) + access_token_expires
+
+    # Re-set the HttpOnly cookie with a fresh Max-Age. The cookie
+    # attributes (HttpOnly, Secure, SameSite=Lax, Path) match ``/login``
+    # exactly so the browser treats this as a refresh of the same
+    # cookie, not a new one.
+    response.set_cookie(
+        COOKIE_NAME,
+        new_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=COOKIE_MAX_AGE,
+    )
+
+    return RefreshTokenResponse(
+        access_token=new_token,
+        expires_at=expires_at,
+    )
+
+
+@router.post(
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
@@ -211,6 +283,51 @@ async def get_current_user_info(
     return ApiResponse(
         success=True,
         data=UserResponse.model_validate(current_user),
+    )
+
+
+@router.get(
+    "/session",
+    response_model=ApiResponse[SessionInfoResponse],
+    summary="获取当前会话信息（含令牌到期时间）",
+    description=(
+        "Returns the current user profile AND the JWT ``expires_at`` "
+        "timestamp so the frontend ``SessionManager`` can schedule the "
+        "first silent refresh (NFM-2236).\n\n"
+        "Returns 401 if the user is not authenticated."
+    ),
+)
+async def get_session_info(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[SessionInfoResponse]:
+    """Return user profile + JWT expiry for frontend session bootstrap."""
+    # Re-decode the JWT to surface its ``exp`` claim.  ``get_current_user``
+    # has already validated the token, so this decode cannot fail in
+    # practice.  We deliberately do NOT trust the ``exp`` claim from a
+    # cached user record — the JWT is the source of truth.
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        # Bearer-header path: the ``HTTPBearer`` dependency already
+        # exposed the credentials via ``get_current_user``; we re-read
+        # them by parsing the ``Authorization`` header here.
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    payload = decode_access_token(token or "")
+    if not payload or "exp" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not derive token expiry from request",
+        )
+    expires_at = datetime.fromtimestamp(payload["exp"], tz=UTC)
+
+    return ApiResponse(
+        success=True,
+        data=SessionInfoResponse(
+            user=UserResponse.model_validate(current_user),
+            expires_at=expires_at,
+        ),
     )
 
 

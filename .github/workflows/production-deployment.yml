@@ -315,7 +315,11 @@ jobs:
             git pull origin main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
-            docker build -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+            # --no-cache prevents stale COPY layers (root cause of NFM-2376:
+            # Docker layer cache served a migrations/ layer predating 036)
+            echo "[diagnostic] git HEAD: $(git rev-parse --short HEAD)"
+            echo "[diagnostic] 036 migration: $(ls apps/api/migrations/versions/036_* 2>/dev/null || echo 'NOT FOUND')"
+            docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
 
             # Tag as :latest so deploy-prod's `up -d` (without --build)
             # starts the image the assertion just inspected. The candidate
@@ -426,15 +430,16 @@ jobs:
             # pre-deploy-assert (D2, NFM-2149) has already validated the
             # DB↔code alembic match against the candidate image before this
             # point; see the pre-deploy-assert job in this workflow.
+            # --no-cache on all builds (NFM-2376 root cause: stale layer cache)
             echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
-            docker build -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+            docker build --no-cache -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
 
             echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
-            docker build -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
+            docker build --no-cache -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
               -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
 
             echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
-            docker build -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
+            docker build --no-cache -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
               -f docker/web.Dockerfile \
               --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
               --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .

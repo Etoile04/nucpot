@@ -30,6 +30,7 @@ from nfm_db.models.kg import (
     KGReviewQueue,
 )
 from nfm_db.services.kg_utils import parse_aliases
+from nfm_db.services.provenance import PROVENANCE_LLM
 
 logger = logging.getLogger(__name__)
 
@@ -572,6 +573,9 @@ class GraphBuilder:
             # for human review. This replaces the old dual-write pattern
             # that also inserted into kg_review_queue (ADR-NFM-796).
             review_status="pending" if needs_review else "approved",
+            # NFM-2247: this node came out of the LLM extraction pipeline.
+            # Stamped at write time, never re-derived from confidence.
+            extraction_method=PROVENANCE_LLM,
         )
         self._session.add(node)
 
@@ -640,6 +644,8 @@ class GraphBuilder:
             review_status="pending"
             if relation.confidence < REVIEW_CONFIDENCE_THRESHOLD
             else "approved",
+            # NFM-2247: produced by the LLM relation-extraction pipeline.
+            extraction_method=PROVENANCE_LLM,
         )
         self._session.add(edge)
 
