@@ -126,12 +126,22 @@ class TestFetchIssueStatuses:
         assert result["NFM-200"] == "in_progress"
 
     @patch("scripts.okr.commit_efficiency.fetch_all_issues")
-    def test_returns_unknown_on_api_error(self, mock_fetch: MagicMock) -> None:
-        mock_fetch.side_effect = Exception("API down")
-        result = fetch_issue_statuses(
-            ["NFM-999"], "http://localhost:3000", "co-1",
-        )
-        assert result["NFM-999"] == "unknown"
+    def test_propagates_paperclip_fetch_error(self, mock_fetch: MagicMock) -> None:
+        """A PaperclipFetchError must propagate (NFM-2443 AC1+AC3).
+
+        Pre-NFM-2443 this test asserted that an API failure degraded every
+        ref to ``"unknown"`` — the exact silent-wrong-number behaviour the
+        defect was filed for. The new contract is to raise, so the report
+        can render KR-1/KR-4 as ``[no data]`` instead of ``0.000``.
+        """
+        from scripts.okr import PaperclipFetchError
+
+        mock_fetch.side_effect = PaperclipFetchError("API down")
+        with pytest.raises(PaperclipFetchError):
+            fetch_issue_statuses(
+                ["NFM-999"], "http://localhost:3000", "co-1",
+                api_key="test-key",
+            )
 
     @patch("scripts.okr.commit_efficiency.fetch_all_issues")
     def test_returns_unknown_for_missing_refs(self, mock_fetch: MagicMock) -> None:

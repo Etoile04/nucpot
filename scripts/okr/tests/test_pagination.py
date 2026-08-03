@@ -100,6 +100,7 @@ class TestFetchAllIssuesPagination:
                 f"http://127.0.0.1:{port}",
                 company_id="test-co",
                 params={},
+                api_key="test-key",
             )
             assert len(result) == 2037, (
                 f"Expected 2037 issues, got {len(result)}"
@@ -120,6 +121,7 @@ class TestFetchAllIssuesPagination:
                 f"http://127.0.0.1:{port}",
                 company_id="test-co",
                 params={},
+                api_key="test-key",
             )
             assert len(result) == 42
         finally:
@@ -134,6 +136,7 @@ class TestFetchAllIssuesPagination:
                 f"http://127.0.0.1:{port}",
                 company_id="test-co",
                 params={},
+                api_key="test-key",
             )
             assert result == []
         finally:
@@ -148,6 +151,7 @@ class TestFetchAllIssuesPagination:
                 f"http://127.0.0.1:{port}",
                 company_id="test-co",
                 params={},
+                api_key="test-key",
             )
             assert len(result) == 1000
         finally:
@@ -162,6 +166,7 @@ class TestFetchAllIssuesPagination:
                 f"http://127.0.0.1:{port}",
                 company_id="test-co",
                 params={},
+                api_key="test-key",
             )
             assert len(result) == 1001
             ids = {issue["id"] for issue in result}
@@ -187,6 +192,7 @@ class TestFetchAllIssuesPagination:
                 f"http://127.0.0.1:{port}",
                 company_id="test-co",
                 params={"status": "done"},
+                api_key="test-key",
             )
             # Verify query string includes the extra param
             assert any("status=done" in req for req in captured_requests), (
@@ -214,7 +220,7 @@ class TestFetchAllIssuesUnit:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = fetch_all_issues("http://localhost:3000", "co-1", {})
+        result = fetch_all_issues("http://localhost:3000", "co-1", {}, api_key="test-key")
 
         assert len(result) == 10
         assert result[0]["key"] == "NFM-1000"
@@ -228,6 +234,6 @@ class TestFetchAllIssuesUnit:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = fetch_all_issues("http://localhost:3000", "co-1", {})
+        result = fetch_all_issues("http://localhost:3000", "co-1", {}, api_key="test-key")
 
         assert result == []
