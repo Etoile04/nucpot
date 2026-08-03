@@ -70,6 +70,17 @@ class ExtractionResult(Base):
         comment="DOI of the source publication",
     )
 
+    # -- Extraction-method provenance (NFM-2247) --
+    # How this item was produced, as opposed to where in the document it came
+    # from (that is source_paragraph / source_page / source_doi above).
+    # Comma-joined tokens from nfm_db.services.provenance; NULL means unknown
+    # and is the documented backfill for rows predating migration 037.
+    extraction_method: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="llm | manual | mineru (comma-joined when several apply)",
+    )
+
     # -- Review fields --
     review_status: Mapped[str] = mapped_column(
         String(50),

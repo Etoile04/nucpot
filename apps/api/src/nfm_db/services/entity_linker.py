@@ -46,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import VALID_NODE_TYPES, KGNode, KGReviewQueue
+from nfm_db.services.provenance import PROVENANCE_LLM
 
 logger = logging.getLogger(__name__)
 
@@ -618,6 +619,10 @@ class EntityLinker:
             corpus_id=corpus_id,
             synced_to_graph=False,
             graph_synced_at=None,
+            # NFM-2247: linked nodes originate in the LLM extraction pipeline.
+            # Note this is the *extraction method*, distinct from the
+            # provenance_sources document trace merged into properties above.
+            extraction_method=PROVENANCE_LLM,
         )
         session.add(node)
         await session.flush()  # populate node.id without committing
