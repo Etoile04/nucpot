@@ -147,7 +147,7 @@ def parse_csv_file(filepath: Path) -> list[dict[str, Any]]:
                     try:
                         record[numeric_field] = float(val)
                     except (ValueError, TypeError):
-                        pass
+                        pass  # no-op: retain the original non-numeric CSV value
             records.append(record)
 
     return records
