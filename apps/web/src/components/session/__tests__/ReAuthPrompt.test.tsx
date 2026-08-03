@@ -145,7 +145,10 @@ describe("<ReAuthPrompt />", () => {
     renderPrompt(harness)
     await new Promise((r) => setTimeout(r, 5))
     await harness.manager.refresh().catch(() => undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    // Wait for the modal before interacting (fixed sleeps are flaky on CI).
+    await waitFor(() => {
+      expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    })
 
     // Find the OK button ("重新登录") and click it.
     const okBtn = screen.getByRole("button", { name: /重新登录/ })
@@ -174,7 +177,10 @@ describe("<ReAuthPrompt />", () => {
     renderPrompt(harness)
     await new Promise((r) => setTimeout(r, 5))
     await harness.manager.refresh().catch(() => undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    // Wait for the modal before interacting (fixed sleeps are flaky on CI).
+    await waitFor(() => {
+      expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    })
 
     const okBtn = screen.getByRole("button", { name: /重新登录/ })
     await act(async () => {
@@ -198,7 +204,10 @@ describe("<ReAuthPrompt />", () => {
     renderPrompt(harness)
     await new Promise((r) => setTimeout(r, 5))
     await harness.manager.refresh().catch(() => undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    // Wait for the modal before interacting (fixed sleeps are flaky on CI).
+    await waitFor(() => {
+      expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    })
 
     const allButtons = screen.getAllByRole("button")
     const actionable = allButtons.filter(
@@ -218,9 +227,10 @@ describe("<ReAuthPrompt />", () => {
     renderPrompt(harness)
     await new Promise((r) => setTimeout(r, 5))
     await harness.manager.refresh().catch(() => undefined)
-    await new Promise((r) => setTimeout(r, 5))
-
-    expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    // Wait for the modal (async transition — fixed sleeps are flaky on CI).
+    await waitFor(() => {
+      expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    })
 
     // Press Escape on the modal — it must remain visible.
     fireEvent.keyDown(document.body, { key: "Escape" })
@@ -248,9 +258,10 @@ describe("<ReAuthPrompt />", () => {
     )
     await new Promise((r) => setTimeout(r, 5))
     await harness.manager.refresh().catch(() => undefined)
-    await new Promise((r) => setTimeout(r, 5))
-
-    expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    // Wait for the modal before asserting (fixed sleeps are flaky on CI).
+    await waitFor(() => {
+      expect(screen.queryByTestId("reauth-prompt")).not.toBeNull()
+    })
     const input = screen.queryByTestId("in-flight-input")
     expect(input).not.toBeNull()
     expect((input as HTMLInputElement).value).toBe("draft text")
