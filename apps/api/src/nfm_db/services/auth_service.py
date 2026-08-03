@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -26,13 +27,20 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
-    """Create a JWT access token."""
+    """Create a JWT access token.
+
+    Each call mints a token with a fresh ``jti`` (JWT ID, RFC 7519 §4.1.7)
+    so two tokens issued in the same second are still byte-distinct. This
+    is required by the sliding-window refresh endpoint (NFM-2236) so a
+    re-issued cookie is observable as a *different* token, even when the
+    underlying subject and expiry are identical.
+    """
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
         expire = datetime.now(UTC) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "jti": uuid.uuid4().hex})
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
     return encoded_jwt
 
