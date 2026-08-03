@@ -1,4 +1,4 @@
-"""Service layer for health alert queries (NFM-2222).
+"""Service layer for health alert queries (NFM-2222, NFM-2416).
 
 Reads from the ``health_events`` table populated by
 :mod:`nfm_db.services.health_event_emitter`.
@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.health_event import HealthEvent
+from nfm_db.schemas.admin_health import AdminAlertItem, AdminHealthAlertsResponse
 from nfm_db.schemas.health import (
     AlertFilterMeta,
     AlertsMeta,
@@ -180,3 +181,66 @@ async def get_alerts_summary(
             ),
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Admin health alerts summary (NFM-2416)
+# ---------------------------------------------------------------------------
+
+
+async def get_admin_health_summary(
+    db: AsyncSession,
+    *,
+    since: datetime | None = None,
+) -> AdminHealthAlertsResponse:
+    """Return admin-oriented health summary grouped by event type.
+
+    Produces the structured error summary required by
+    ``GET /api/admin/health/alerts``::
+
+        {"status": "healthy"|"degraded", "alerts": [...]}
+
+    Each alert group contains ``type``, ``count``, and ``last_seen``.
+
+    Args:
+        db: Async database session.
+        since: Lower bound for ``created_at``. Defaults to 24 h ago.
+
+    Returns:
+        An :class:`AdminHealthAlertsResponse`.
+    """
+    effective_since = since if since is not None else _default_since()
+    filters = _build_filters(since=effective_since)
+
+    stmt = (
+        select(HealthEvent)
+        .where(*filters)
+        .order_by(HealthEvent.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = row.event_type
+        if key not in grouped:
+            grouped[key] = {"count": 0, "last_seen": row.created_at}
+        grouped[key]["count"] += 1
+        # rows are ordered desc, so first seen is the newest
+        if row.created_at > grouped[key]["last_seen"]:
+            grouped[key]["last_seen"] = row.created_at
+
+    alerts = [
+        AdminAlertItem(
+            type=event_type,
+            count=data["count"],
+            last_seen=data["last_seen"],
+        )
+        for event_type, data in grouped.items()
+    ]
+
+    status: Literal["healthy", "degraded"] = (
+        "degraded" if alerts else "healthy"
+    )
+
+    return AdminHealthAlertsResponse(status=status, alerts=alerts)
