@@ -13,6 +13,14 @@ const isCI = !!process.env.CI
 const isLiveTarget = process.env.E2E_TARGET === "live"
 const useChromeChannel = !isCI && process.env.USE_CHROME === "1"
 
+/**
+ * NFMD-only E2E specs — excluded from CI live E2E job (NFM-2396).
+ * These specs test NFMD-domain features not present on the live blog site.
+ * Local runs (no E2E_TARGET) still discover all specs.
+ */
+const NFMD_SPEC_PATTERN =
+  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|verification-linkage|review-api-smoke|nfm625-v4-visual-qa)\.spec\.ts$/
+
 const baseURL =
   process.env.BASE_URL ||
   (isLiveTarget ? "https://nucpot.dpdns.org" : "http://localhost:3000")
@@ -32,6 +40,7 @@ export default defineConfig({
     : "html",
   outputDir: "test-results",
   timeout: 30_000,
+  testIgnore: isLiveTarget ? [NFMD_SPEC_PATTERN] : undefined,
 
   use: {
     baseURL,
