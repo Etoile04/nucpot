@@ -80,6 +80,11 @@ export async function getPotential(id: string): Promise<PotentialDetail> {
   const response = await fetch(`/api/potentials/${id}`, {
     headers: { "Content-Type": "application/json" },
   })
-  if (!response.ok) throw new Error(`Failed to fetch potential: ${response.status}`)
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string; detail?: string }
+    throw new Error(
+      body.detail ?? `Failed to fetch potential: ${response.status}`,
+    )
+  }
   return (await response.json()) as PotentialDetail
 }

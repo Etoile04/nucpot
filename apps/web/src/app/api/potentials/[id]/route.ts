@@ -1,13 +1,23 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseAdmin } from "@/lib/supabase";
 
+/**
+ * GET /api/potentials/[id] — return full detail for a single potential.
+ *
+ * Uses supabaseAdmin (service-role key, bypasses RLS) when available,
+ * falling back to the anon supabase client. This fixes NFM-2536 where
+ * RLS policies on the potentials table blocked anon single-row reads
+ * while still allowing range/list queries.
+ */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
-  const { data, error } = await supabase
+  const client = supabaseAdmin ?? supabase;
+
+  const { data, error } = await client
     .from("potentials")
     .select("*")
     .eq("id", id)
@@ -15,7 +25,13 @@ export async function GET(
     .single();
 
   if (error || !data) {
-    return NextResponse.json({ error: "Potential not found" }, { status: 404 });
+    const detail = error
+      ? `Supabase error ${error.code}: ${error.message}`
+      : "No data returned";
+    return NextResponse.json(
+      { error: "Potential not found", detail },
+      { status: 404 },
+    );
   }
 
   return NextResponse.json(data);
