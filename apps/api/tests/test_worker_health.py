@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from monitoring.worker_health import ALERT_THRESHOLD, WorkerHealthTracker
+from nfm_db.monitoring.worker_health import ALERT_THRESHOLD, WorkerHealthTracker
 
 
 @pytest.fixture()
@@ -68,7 +68,7 @@ class TestCriticalAlertAtThreshold:
     """AC-2: After 5 failures, CRITICAL log + Sentry event."""
 
     def test_critical_log_at_threshold(self, tracker: WorkerHealthTracker) -> None:
-        with patch("monitoring.worker_health.logger") as mock_logger:
+        with patch("nfm_db.monitoring.worker_health.logger") as mock_logger:
             for i in range(5):
                 tracker.record_failure(f"fail {i}")
             mock_logger.critical.assert_called_once()
@@ -77,7 +77,7 @@ class TestCriticalAlertAtThreshold:
             assert call_args[1]["extra"]["consecutive_failures"] == 5
 
     def test_sentry_event_fired_at_threshold(self, tracker: WorkerHealthTracker) -> None:
-        with patch("monitoring.worker_health._try_sentry_capture") as mock_sentry:
+        with patch("nfm_db.monitoring.worker_health._try_sentry_capture") as mock_sentry:
             for i in range(5):
                 tracker.record_failure(f"fail {i}")
             mock_sentry.assert_called_once()
@@ -90,7 +90,7 @@ class TestCriticalAlertAtThreshold:
         self, tracker: WorkerHealthTracker
     ) -> None:
         """After alerting at count 5, a 6th failure alerts again but 5th doesn't re-alert."""
-        with patch("monitoring.worker_health.logger") as mock_logger:
+        with patch("nfm_db.monitoring.worker_health.logger") as mock_logger:
             for i in range(5):
                 tracker.record_failure(f"fail {i}")
             assert mock_logger.critical.call_count == 1
@@ -100,7 +100,7 @@ class TestCriticalAlertAtThreshold:
 
     def test_sentry_not_required(self, tracker: WorkerHealthTracker) -> None:
         """Tracker works even if sentry-sdk is not installed."""
-        with patch("monitoring.worker_health._try_sentry_capture"):
+        with patch("nfm_db.monitoring.worker_health._try_sentry_capture"):
             tracker.record_failure("fail")
             # No exception raised
 
@@ -153,7 +153,7 @@ class TestCounterResetsOnSuccess:
         self, tracker: WorkerHealthTracker
     ) -> None:
         """After success + 5 more failures, alert fires again."""
-        with patch("monitoring.worker_health.logger") as mock_logger:
+        with patch("nfm_db.monitoring.worker_health.logger") as mock_logger:
             # First batch — alert at 5
             for _ in range(5):
                 tracker.record_failure("fail")
@@ -181,8 +181,8 @@ class TestHealthEndpoint:
         """Health endpoint returns worker health fields."""
         from httpx import ASGITransport, AsyncClient
 
-        from monitoring.worker_health import worker_health
         from nfm_db.main import app
+        from nfm_db.monitoring.worker_health import worker_health
 
         worker_health.reset()
 
@@ -203,8 +203,8 @@ class TestHealthEndpoint:
         """Health endpoint shows 'degraded' after >= 5 failures."""
         from httpx import ASGITransport, AsyncClient
 
-        from monitoring.worker_health import worker_health
         from nfm_db.main import app
+        from nfm_db.monitoring.worker_health import worker_health
 
         worker_health.reset()
         for _ in range(5):
@@ -225,8 +225,8 @@ class TestHealthEndpoint:
         """Health endpoint shows 'ok' with zero failures by default."""
         from httpx import ASGITransport, AsyncClient
 
-        from monitoring.worker_health import worker_health
         from nfm_db.main import app
+        from nfm_db.monitoring.worker_health import worker_health
 
         worker_health.reset()
 

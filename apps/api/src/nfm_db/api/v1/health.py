@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.middleware.rate_limit import limiter
+from nfm_db.monitoring.worker_health import worker_health
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.health import AlertsResponse, SummaryResponse
 from nfm_db.services.health_alert_service import get_alerts, get_alerts_summary
@@ -25,8 +26,6 @@ async def health_check() -> dict:
     """返回API服务健康状态.
 
     Includes worker consecutive-failure counter (NFM-2014)."""
-    from monitoring.worker_health import worker_health
-
     return worker_health.snapshot()
 
 
