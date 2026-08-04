@@ -438,3 +438,160 @@ async def test_service_assemble_and_hash(chunk_tmpdir):
 async def test_service_compute_sha256():
     """SHA256 computation is correct."""
     assert svc._compute_sha256(b"hello") == hashlib.sha256(b"hello").hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Additional service-level tests for coverage gaps (NFM-2527)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_service_resolve_chunk_root_env_fallback():
+    """_resolve_chunk_root falls back to env var when override is None."""
+    import os
+
+    svc.set_chunk_storage_root(None)
+    os.environ["CHUNK_STORAGE_ROOT"] = "/tmp/test_chunks"
+    try:
+        result = svc._resolve_chunk_root()
+        assert result == svc.Path("/tmp/test_chunks")
+    finally:
+        os.environ.pop("CHUNK_STORAGE_ROOT", None)
+
+
+@pytest.mark.asyncio
+async def test_service_assemble_and_hash_missing_chunk_raises(chunk_tmpdir):
+    """_assemble_and_hash raises ValueError when a chunk is missing."""
+    session_dir = chunk_tmpdir / str(uuid.uuid4())
+    session_dir.mkdir(parents=True)
+    (session_dir / "0").write_bytes(b"AB")
+    # Chunk 1 is missing — should raise
+    with pytest.raises(ValueError, match="Chunk 1 is missing"):
+        svc._assemble_and_hash(session_dir, 2)
+
+
+@pytest.mark.asyncio
+async def test_service_init_upload_missing_classification_level(db_with_nodes, chunk_tmpdir):
+    """init_upload returns 404 when classification level does not exist."""
+    from nfm_db.schemas.data_submission import UploadInitRequest
+
+    payload = UploadInitRequest(
+        resource_node_id=_NODE_ID,
+        classification_level_id=uuid.uuid4(),  # non-existent
+        file_name="test.dat",
+        total_size=1024,
+        sha256_full=hashlib.sha256(b"\x00" * 1024).hexdigest(),
+        chunk_size=512,
+    )
+    with pytest.raises(Exception) as exc_info:
+        await svc.init_upload(db_with_nodes, payload)
+    assert exc_info.value.status_code == 404
+    assert "Classification level" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_service_complete_upload_already_completed(db_with_nodes, chunk_tmpdir):
+    """complete_upload returns early when session is already completed."""
+    from nfm_db.models.upload_session import UploadSession
+    from nfm_db.schemas.data_submission import UploadInitRequest
+
+    # Create a completed session directly
+    init_payload = UploadInitRequest(
+        resource_node_id=_NODE_ID,
+        classification_level_id=_CL_ID,
+        file_name="done.dat",
+        total_size=512,
+        sha256_full=hashlib.sha256(b"\x00" * 512).hexdigest(),
+        chunk_size=512,
+    )
+    init_result = await svc.init_upload(db_with_nodes, init_payload)
+    token = init_result.resume_token
+
+    # Mark as completed
+    session = await db_with_nodes.get(UploadSession, init_result.session_id)
+    session.status = "completed"
+    await db_with_nodes.commit()
+    await db_with_nodes.refresh(session)
+
+    # complete_upload should return completed status, not re-process
+    result = await svc.complete_upload(db_with_nodes, token, chunk_root=chunk_tmpdir)
+    assert result.status == "completed"
+    assert "already" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_service_resume_upload_completed_status(db_with_nodes, chunk_tmpdir):
+    """resume_upload returns terminal state without checking disk for completed sessions."""
+    from nfm_db.models.upload_session import UploadSession
+    from nfm_db.schemas.data_submission import UploadInitRequest
+
+    # Create session and mark completed
+    init_payload = UploadInitRequest(
+        resource_node_id=_NODE_ID,
+        classification_level_id=_CL_ID,
+        file_name="done2.dat",
+        total_size=512,
+        sha256_full=hashlib.sha256(b"\x00" * 512).hexdigest(),
+        chunk_size=512,
+    )
+    init_result = await svc.init_upload(db_with_nodes, init_payload)
+    token = init_result.resume_token
+
+    session = await db_with_nodes.get(UploadSession, init_result.session_id)
+    session.status = "completed"
+    session.uploaded_chunks = session.total_chunks
+    await db_with_nodes.commit()
+
+    # Resume should return completed with empty missing_chunks
+    result = await svc.resume_upload(db_with_nodes, token, chunk_root=chunk_tmpdir)
+    assert result.status == "completed"
+    assert result.missing_chunks == []
+    assert result.uploaded_chunks == session.total_chunks
+
+
+@pytest.mark.asyncio
+async def test_service_resume_upload_failed_status(db_with_nodes, chunk_tmpdir):
+    """resume_upload returns terminal state for failed sessions."""
+    from nfm_db.models.upload_session import UploadSession
+    from nfm_db.schemas.data_submission import UploadInitRequest
+
+    init_payload = UploadInitRequest(
+        resource_node_id=_NODE_ID,
+        classification_level_id=_CL_ID,
+        file_name="fail.dat",
+        total_size=512,
+        sha256_full=hashlib.sha256(b"\x00" * 512).hexdigest(),
+        chunk_size=512,
+    )
+    init_result = await svc.init_upload(db_with_nodes, init_payload)
+    token = init_result.resume_token
+
+    session = await db_with_nodes.get(UploadSession, init_result.session_id)
+    session.status = "failed"
+    await db_with_nodes.commit()
+
+    result = await svc.resume_upload(db_with_nodes, token, chunk_root=chunk_tmpdir)
+    assert result.status == "failed"
+    assert result.missing_chunks == []
+
+
+@pytest.mark.asyncio
+async def test_service_count_existing_chunks(chunk_tmpdir):
+    """_count_existing_chunks returns correct count."""
+    session_dir = chunk_tmpdir / str(uuid.uuid4())
+    session_dir.mkdir(parents=True)
+    (session_dir / "0").write_bytes(b"a")
+    (session_dir / "2").write_bytes(b"c")
+    assert svc._count_existing_chunks(session_dir, 3) == 2
+    assert svc._count_existing_chunks(session_dir, 4) == 2
+
+
+@pytest.mark.asyncio
+async def test_service_chunk_dir_for(chunk_tmpdir):
+    """_chunk_dir_for creates directory and returns path."""
+    import nfm_db.services.chunk_upload_service as mod
+
+    sid = uuid.uuid4()
+    result = mod._chunk_dir_for(chunk_tmpdir, sid)
+    assert result.exists()
+    assert result == chunk_tmpdir / str(sid)
