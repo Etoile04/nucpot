@@ -571,6 +571,7 @@ async def batch_review(
             row, item_table_name = await _find_review_item(item.id, db)
         except HTTPException as exc:
             failed += 1
+            logger.debug("batch review: item %s not found or invalid: %s", item.id, exc.detail)
             errors.append({"id": str(item.id), "error": exc.detail})
             continue
 
@@ -578,6 +579,7 @@ async def batch_review(
             _validate_transition(row.review_status, item.status)
         except HTTPException as exc:
             failed += 1
+            logger.debug("batch review: item %s transition rejected: %s", item.id, exc.detail)
             errors.append({"id": str(item.id), "error": exc.detail})
             continue
 
