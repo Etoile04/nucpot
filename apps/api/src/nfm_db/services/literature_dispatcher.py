@@ -159,7 +159,7 @@ def process_literature_task(self: Any, datasource_id: str) -> dict[str, Any]:
     (NFM-1485-2 / NFM-1487).  We import lazily so a partial deploy that has
     the dispatcher but not yet the service still imports cleanly.
     """
-    from monitoring.worker_health import worker_health
+    from nfm_db.monitoring.worker_health import worker_health
     from nfm_db.services.literature_service import process_literature_sync
 
     logger.info(
