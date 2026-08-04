@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from monitoring import prometheus
+from nfm_db.monitoring import prometheus
 
 
 def test_clear_metrics_logs_warning_when_collector_cannot_unregister(
