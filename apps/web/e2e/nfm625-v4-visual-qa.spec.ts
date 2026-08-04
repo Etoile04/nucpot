@@ -1,3 +1,4 @@
+// @nfmd
 /**
  * NFM-625 Visual QA — V4 Extraction Pages Auth-Gate UX
  *
