@@ -1,6 +1,6 @@
 """Health event emitter for structured silent-failure tracking (NFM-2220).
 
-Replaces bare ``except: pass`` blocks so that a swallowed failure always
+Replaces bare exception swallowing so that a swallowed failure always
 leaves an observable trace.
 
 Two entry points are provided:
@@ -57,6 +57,10 @@ SEVERITY_INFO = "info"
 SEVERITY_WARNING = "warning"
 SEVERITY_ERROR = "error"
 SEVERITY_CRITICAL = "critical"
+
+# Event types shared by extraction validation call sites.
+EVENT_VALIDATION_DROP = "validation_drop"
+EVENT_CATEGORY_COERCION_FAIL = "category_coercion_fail"
 
 VALID_SEVERITIES = frozenset(
     {SEVERITY_INFO, SEVERITY_WARNING, SEVERITY_ERROR, SEVERITY_CRITICAL}

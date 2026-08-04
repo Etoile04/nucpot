@@ -290,6 +290,7 @@ async def import_properties(
             await db.flush()
         except IntegrityError:
             await db.rollback()
+            logger.debug("batch import row %d: integrity constraint violation", i, exc_info=True)
             errors.append(
                 BatchRowError(
                     row=i,

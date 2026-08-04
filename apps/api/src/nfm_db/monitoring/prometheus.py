@@ -206,10 +206,12 @@ def clear_metrics() -> None:
     for c in list(REGISTRY._collector_to_names.keys()):
         try:
             REGISTRY.unregister(c)
-        except Exception as exc:
-            # Best-effort cleanup; surface failures at debug so the
-            # underlying collector exception is not silently lost.
-            logger.debug("prometheus: REGISTRY.unregister(%r) failed: %s", c, exc)
+        except Exception:
+            logger.warning(
+                "Could not unregister collector %r during metrics reset",
+                c,
+                exc_info=True,
+            )
     logger.info("All metrics cleared")
 
 

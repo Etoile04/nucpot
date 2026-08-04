@@ -213,6 +213,7 @@ def _load_dotenv_into_environ() -> None:
                     if key and key not in os.environ:
                         os.environ[key] = value
             except OSError:
+                logger.debug("failed to read dotenv file %s", env_path, exc_info=True)
                 continue
     finally:
         os.environ["_MINERU_DOTENV_LOADED"] = "1"

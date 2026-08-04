@@ -146,6 +146,7 @@ def resolve_consensus(entries: list[ConflictingEntry]) -> dict[str, Any] | None:
                 numeric_values.append(num)
                 entry_map.setdefault(num, []).append(entry)
             except (ValueError, TypeError):
+                logger.debug("skipping non-numeric scalar in conflict resolution: %r", scalar)
                 continue
 
     if not numeric_values:

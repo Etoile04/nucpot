@@ -36,10 +36,14 @@ if TYPE_CHECKING:
 from nfm_db.database import async_session_factory
 from nfm_db.models.source import DataSource
 from nfm_db.services.health_event_emitter import (
+    SEVERITY_ERROR,
     SEVERITY_WARNING,
     build_context,
+    emit_health_event,
     emit_health_event_sync,
 )
+
+EVENT_GENERIC_SILENT_CATCH = "rollback_failed"
 
 logger = logging.getLogger(__name__)
 
@@ -516,13 +520,11 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             except Exception as rollback_exc:
                 # A failed rollback leaves the session poisoned; emitting
                 # here is why the emitter uses its own session.
-                emit_health_event_sync(
-                    event_type="rollback_failed",
+                await emit_health_event(
+                    event_type=EVENT_GENERIC_SILENT_CATCH,
                     severity="error",
                     source_service="literature_service",
-                    context=build_context(
-                        rollback_exc, datasource_id=str(datasource_id)
-                    ),
+                    context={**build_context(rollback_exc, datasource_id=str(datasource_id)), "reported_event_type": "rollback_failed"},
                 )
 
         logger.exception(

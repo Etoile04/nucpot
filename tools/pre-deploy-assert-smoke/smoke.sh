@@ -71,7 +71,11 @@ ok "postgres ready"
 # Use a revision that cannot exist in any real image so the test is
 # hermetic — no real revision can accidentally match.
 log "Stamping alembic_version to '9999999999' (phantom revision)..."
-docker exec "${PG_CONTAINER}" psql -U assertsmoke -d assertsmoke -v ON_ERROR_STOP=1 <<'SQL'
+# NFM-2488: -i is REQUIRED. Without it, `docker exec` does NOT propagate
+# stdin, so the heredoc never reaches psql — the script silently exits 0
+# with no SQL executed, alembic_version is never created, and assert.sh's
+# later SELECT returns empty -> false DB_READ_FAIL exit 66.
+docker exec -i "${PG_CONTAINER}" psql -U assertsmoke -d assertsmoke -v ON_ERROR_STOP=1 <<'SQL'
 CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL);
 INSERT INTO alembic_version (version_num) VALUES ('9999999999');
 SELECT version_num FROM alembic_version;
