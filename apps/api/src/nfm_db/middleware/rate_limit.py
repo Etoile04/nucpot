@@ -24,14 +24,14 @@ import logging
 import os
 from typing import Any, cast
 
-logger = logging.getLogger(__name__)
-
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_LIMIT = os.environ.get("RATE_LIMIT_DEFAULT", "100/minute")
 _BURST_LIMIT = os.environ.get("RATE_LIMIT_BURST", "20/second")
