@@ -20,6 +20,7 @@ Env vars
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, cast
 
@@ -29,6 +30,8 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_LIMIT = os.environ.get("RATE_LIMIT_DEFAULT", "100/minute")
 _BURST_LIMIT = os.environ.get("RATE_LIMIT_BURST", "20/second")
@@ -76,7 +79,7 @@ def _inject_global_headers(limiter_instance: Limiter, request: Request, response
         response.headers["X-RateLimit-Remaining"] = str(window_stats[1])
         response.headers["X-RateLimit-Reset"] = str(reset_in)
     except Exception:
-        pass  # no-op: never let header injection crash a valid response
+        logger.debug("rate-limit header injection failed", exc_info=True)
     return response
 
 
@@ -127,5 +130,5 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Res
             )
             return response
     except Exception:
-        pass  # no-op: never let header injection crash the 429 response
+        logger.debug("rate-limit header injection failed on 429 response", exc_info=True)
     return JSONResponse(status_code=429, content=response_body)

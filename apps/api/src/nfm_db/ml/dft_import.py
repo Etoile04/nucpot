@@ -147,7 +147,7 @@ def parse_csv_file(filepath: Path) -> list[dict[str, Any]]:
                     try:
                         record[numeric_field] = float(val)
                     except (ValueError, TypeError):
-                        pass  # no-op: skip non-numeric field values gracefully
+                        logger.debug("skipping non-numeric value for %s: %r", numeric_field, val)
             records.append(record)
 
     return records
