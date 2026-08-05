@@ -26,7 +26,6 @@ from nfm_db.api.v1 import (
     lightrag,
     literature,
     materials,
-    upload,
     md_verification,
     ontology,
     potentials,
@@ -37,6 +36,7 @@ from nfm_db.api.v1 import (
     review,
     seed,
     sources,
+    upload,
     verification,
     viz,
 )
