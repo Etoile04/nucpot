@@ -6,7 +6,6 @@
  */
 
 import type {
-  ApiResponse,
   NodeListQuery,
   NodeRegisterRequest,
   NodeStatus,
@@ -15,54 +14,9 @@ import type {
   ResourceNode,
 } from "./hub-types"
 
+import { adminFetch, parseEnvelope } from "./admin-api-utils"
+
 const BASE = "/api/v1/hub/nodes"
-
-/** Wrapped fetch with credentials:'include' for all admin API calls. */
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: "include" })
-}
-
-/** Render FastAPI error payloads (string or 422 array) as one message. */
-function detailToMessage(detail: unknown): string | null {
-  if (typeof detail === "string") {
-    return detail
-  }
-  if (Array.isArray(detail)) {
-    const msgs = detail
-      .map((item) =>
-        item && typeof item === "object" && "msg" in item
-          ? String((item as { msg: unknown }).msg)
-          : null,
-      )
-      .filter((msg): msg is string => Boolean(msg))
-    if (msgs.length > 0) {
-      return msgs.join("; ")
-    }
-  }
-  return null
-}
-
-/** Parse a hub API response, unwrapping the ApiResponse envelope. */
-async function parseEnvelope<T>(response: Response, action: string): Promise<T> {
-  if (!response.ok) {
-    let message: string | null = null
-    try {
-      const body: { detail?: unknown; error?: unknown } = await response.json()
-      message =
-        detailToMessage(body.detail) ??
-        (typeof body.error === "string" ? body.error : null)
-    } catch {
-      // Non-JSON error body — fall through to the generic message.
-    }
-    throw new Error(message ?? `${action}失败 (HTTP ${response.status})`)
-  }
-
-  const result: ApiResponse<T> = await response.json()
-  if (!result.success) {
-    throw new Error(result.error || `${action}失败`)
-  }
-  return result.data as T
-}
 
 /** GET /api/v1/hub/nodes/ — paginated node list. */
 export async function listHubNodes(

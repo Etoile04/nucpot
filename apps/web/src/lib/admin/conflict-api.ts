@@ -4,61 +4,15 @@
  * Uses credentials:'include' for HttpOnly-cookie admin auth.
  */
 
-import type { ApiResponse } from "./hub-types"
 import type {
   ConflictListQuery,
   ConflictRecord,
   ConflictResolveRequest,
 } from "./conflict-types"
 
+import { adminFetch, parseEnvelope } from "./admin-api-utils"
+
 const BASE = "/api/v1/kg/conflicts"
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: "include" })
-}
-
-function detailToMessage(detail: unknown): string | null {
-  if (typeof detail === "string") {
-    return detail
-  }
-  if (Array.isArray(detail)) {
-    const msgs = detail
-      .map((item) =>
-        item && typeof item === "object" && "msg" in item
-          ? String((item as { msg: unknown }).msg)
-          : null,
-      )
-      .filter((msg): msg is string => Boolean(msg))
-    if (msgs.length > 0) {
-      return msgs.join("; ")
-    }
-  }
-  return null
-}
-
-async function parseEnvelope<T>(
-  response: Response,
-  action: string,
-): Promise<T> {
-  if (!response.ok) {
-    let message: string | null = null
-    try {
-      const body: { detail?: unknown; error?: unknown } = await response.json()
-      message =
-        detailToMessage(body.detail) ??
-        (typeof body.error === "string" ? body.error : null)
-    } catch {
-      // Non-JSON error body
-    }
-    throw new Error(message ?? `${action}失败 (HTTP ${response.status})`)
-  }
-
-  const result: ApiResponse<T> = await response.json()
-  if (!result.success) {
-    throw new Error(result.error || `${action}失败`)
-  }
-  return result.data as T
-}
 
 /** GET /api/v1/kg/conflicts — list conflict records. */
 export async function listConflicts(

@@ -29,6 +29,7 @@ import {
   ReloadOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons"
+import { formatTimestamp } from "@/lib/admin/format-timestamp"
 import { useQuery } from "@tanstack/react-query"
 import type { ColumnsType } from "antd/es/table"
 
@@ -53,12 +54,6 @@ function formatHeartbeat(iso: string | null): string {
   if (!iso) {
     return "从未上报"
   }
-  const ms = Date.parse(iso)
-  return Number.isNaN(ms) ? iso : new Date(ms).toLocaleString("zh-CN")
-}
-
-function formatTimestamp(iso: string | null): string {
-  if (!iso) return "—"
   const ms = Date.parse(iso)
   return Number.isNaN(ms) ? iso : new Date(ms).toLocaleString("zh-CN")
 }

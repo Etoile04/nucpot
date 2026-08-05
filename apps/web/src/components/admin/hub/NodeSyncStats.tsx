@@ -10,14 +10,14 @@ import {
   Descriptions,
   Progress,
   Space,
-  Statistic,
   Tag,
   Typography,
 } from "antd"
-import { SyncOutlined, WarningOutlined } from "@ant-design/icons"
+import { SyncOutlined } from "@ant-design/icons"
 import { useQuery } from "@tanstack/react-query"
 
 import { getHubNodeSyncStats } from "@/lib/admin/hub-api"
+import { formatTimestamp } from "@/lib/admin/format-timestamp"
 
 const POLL_INTERVAL_MS = 10_000
 
@@ -29,12 +29,6 @@ const SYNC_STATUS_CONFIG = {
 } as const
 
 type SyncStatusKey = keyof typeof SYNC_STATUS_CONFIG
-
-function formatTimestamp(iso: string | null): string {
-  if (!iso) return "—"
-  const ms = Date.parse(iso)
-  return Number.isNaN(ms) ? iso : new Date(ms).toLocaleString("zh-CN")
-}
 
 interface NodeSyncStatsProps {
   nodeId: string
@@ -96,24 +90,6 @@ export default function NodeSyncStats({ nodeId }: NodeSyncStatsProps) {
                     ? "normal"
                     : "active"
               }
-            />
-          </div>
-
-          <div style={{ display: "flex", gap: 24 }}>
-            <Statistic
-              title={
-                <span>
-                  <WarningOutlined style={{ color: "#faad14" }} /> 待解决冲突
-                </span>
-              }
-              value={stats.pending_conflicts}
-              valueStyle={{
-                color: stats.pending_conflicts > 0 ? "#faad14" : "#52c41a",
-              }}
-            />
-            <Statistic
-              title="总冲突记录"
-              value={stats.total_conflicts}
             />
           </div>
         </>

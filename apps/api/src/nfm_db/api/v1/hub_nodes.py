@@ -34,8 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models import HubNode, ResourceNode
-from nfm_db.models.conflict_record import ConflictRecord
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.hub_nodes import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
@@ -159,8 +158,7 @@ async def register_node(
 )
 async def list_nodes(
     db: Annotated[AsyncSession, Depends(get_db)],
-    page: int = Query(1, ge=1, description="页码"),
-    limit: int = Query(20, ge=1, le=100, description="每页数量 (1..100)"),
+    params: Annotated[PaginationParams, Depends()],
     hub_node_id: uuid.UUID | None = Query(
         None, description="按所属 hub 节点过滤 (可选)",
     ),
@@ -173,12 +171,12 @@ async def list_nodes(
         count_stmt = count_stmt.where(ResourceNode.hub_node_id == hub_node_id)
 
     total = (await db.execute(count_stmt)).scalar() or 0
-    pages = (total + limit - 1) // limit if total else 0
+    pages = params.pages(total)
 
     stmt = (
         stmt.order_by(ResourceNode.created_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
+        .offset(params.offset)
+        .limit(params.per_page)
     )
     rows = (await db.execute(stmt)).scalars().all()
 
@@ -187,8 +185,8 @@ async def list_nodes(
         data=PaginatedResponse(
             items=[NodeResponse.model_validate(r) for r in rows],
             total=total,
-            page=page,
-            limit=limit,
+            page=params.page,
+            limit=params.per_page,
             pages=pages,
         ),
     )
@@ -305,15 +303,10 @@ async def get_node_sync_stats(
     """Return sync statistics for a resource node."""
     node = await _get_node_or_404(node_id, db)
 
-    total_conflicts = (await db.execute(
-        select(func.count()).select_from(ConflictRecord),
-    )).scalar() or 0
-
-    pending_conflicts = (await db.execute(
-        select(func.count()).select_from(ConflictRecord).where(
-            ConflictRecord.status == "pending",
-        ),
-    )).scalar() or 0
+    # NOTE: ConflictRecord has no FK to ResourceNode (only material_node_id
+    # and property_node_id referencing kg_nodes), so per-node conflict
+    # counts cannot be scoped here.  Conflict counts are available via the
+    # dedicated /api/v1/kg/conflicts endpoint instead.
 
     sync_status = _derive_sync_status(
         node.sync_watermark,
@@ -328,8 +321,6 @@ async def get_node_sync_stats(
             last_heartbeat=node.last_heartbeat,
             sync_watermark=node.sync_watermark,
             offline_since=node.offline_since,
-            pending_conflicts=pending_conflicts,
-            total_conflicts=total_conflicts,
             sync_status=sync_status,
         ),
     )

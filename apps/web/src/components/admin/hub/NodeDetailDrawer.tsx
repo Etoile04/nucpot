@@ -44,17 +44,10 @@ import type { NodeStatus, ResourceNode } from "@/lib/admin/hub-types"
 import NodeConflictPanel from "./NodeConflictPanel"
 import NodeStatusBadge from "./NodeStatusBadge"
 import NodeSyncStats from "./NodeSyncStats"
+import { formatTimestamp } from "@/lib/admin/format-timestamp"
 
 const POLL_INTERVAL_MS = 10_000
 const MAX_HISTORY = 20
-
-function formatTimestamp(iso: string | null): string {
-  if (!iso) {
-    return "—"
-  }
-  const ms = Date.parse(iso)
-  return Number.isNaN(ms) ? iso : new Date(ms).toLocaleString("zh-CN")
-}
 
 /** Percent of the online window remaining since the last heartbeat. */
 function heartbeatFreshness(node: ResourceNode, now: Date): number {

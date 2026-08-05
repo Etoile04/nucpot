@@ -248,26 +248,26 @@ class TestListNodes:
         assert all(item["hub_node_id"] == str(hub_a.id) for item in body["items"])
 
     @pytest.mark.asyncio
-    async def test_list_pagination_limit_max_100(
+    async def test_list_pagination_per_page_max_100(
         self,
         async_client: AsyncClient,
     ) -> None:
-        """AC-4: limit > 100 → 422."""
-        response = await async_client.get("/api/v1/hub/nodes/?limit=101")
+        """AC-4: per_page > 100 → 422."""
+        response = await async_client.get("/api/v1/hub/nodes/?per_page=101")
 
         assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
-    async def test_list_pagination_limit_0_returns_422(
+    async def test_list_pagination_per_page_0_returns_422(
         self,
         async_client: AsyncClient,
     ) -> None:
-        response = await async_client.get("/api/v1/hub/nodes/?limit=0")
+        response = await async_client.get("/api/v1/hub/nodes/?per_page=0")
 
         assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
-    async def test_list_pagination_custom_limit(
+    async def test_list_pagination_custom_per_page(
         self,
         async_client: AsyncClient,
         db_session: AsyncSession,
@@ -279,7 +279,7 @@ class TestListNodes:
             )
             assert resp.status_code == 201, resp.text
 
-        response = await async_client.get("/api/v1/hub/nodes/?limit=2&page=2")
+        response = await async_client.get("/api/v1/hub/nodes/?per_page=2&page=2")
 
         assert response.status_code == 200, response.text
         body = response.json()["data"]
@@ -523,8 +523,6 @@ class TestSyncStats:
         assert stats["last_heartbeat"] is None
         assert stats["sync_watermark"] is None
         assert stats["offline_since"] is None
-        assert isinstance(stats["pending_conflicts"], int)
-        assert isinstance(stats["total_conflicts"], int)
         assert stats["sync_status"] == "unknown"
 
     @pytest.mark.asyncio

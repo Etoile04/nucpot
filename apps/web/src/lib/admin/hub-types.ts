@@ -47,7 +47,7 @@ export interface PaginatedData<T> {
   items: T[]
   total: number
   page: number
-  per_page: number
+  limit: number
   pages: number
 }
 
@@ -62,7 +62,5 @@ export interface NodeSyncStats {
   last_heartbeat: string | null
   sync_watermark: string | null
   offline_since: string | null
-  pending_conflicts: number
-  total_conflicts: number
   sync_status: string
 }

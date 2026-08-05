@@ -125,20 +125,17 @@ NodeListResponse = PaginatedResponse[NodeResponse]
 
 
 class NodeSyncStatsResponse(BaseModel):
-    """Sync statistics for a resource node (NFM-2030)."""
+    """Sync statistics for a resource node (NFM-2030).
+
+    NOTE: Per-node conflict counts are not included because
+    ``ConflictRecord`` has no FK to ``ResourceNode``.  Use the
+    dedicated ``/api/v1/kg/conflicts`` endpoint instead.
+    """
 
     node_id: uuid.UUID
     last_heartbeat: str | None = None
     sync_watermark: str | None = None
     offline_since: str | None = None
-    pending_conflicts: int = Field(
-        default=0,
-        description="Number of unresolved conflict records.",
-    )
-    total_conflicts: int = Field(
-        default=0,
-        description="Total conflict records (resolved + pending).",
-    )
     sync_status: str = Field(
         default="unknown",
         description="Derived sync status: synced, syncing, behind, unknown.",
