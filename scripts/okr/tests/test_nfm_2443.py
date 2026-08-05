@@ -9,8 +9,8 @@ is the exact silent-wrong-number the defect calls out.
 AC1: fetch_all_issues (and fetch_issue_statuses) send ``Authorization: Bearer``
     from ``$PAPERCLIP_API_KEY``; missing key raises rather than proceeding
     unauthenticated.
-AC2: ``--api-url`` defaults to ``$PAPERCLIP_API_URL`` when set;
-    ``http://localhost:3000`` remains the last-resort fallback.
+AC2: ``--api-url`` resolves from ``$PAPERCLIP_API_URL`` in main();
+    argparse default is ``None`` — no localhost fallback (NFM-2444).
 AC3: A failed issue fetch makes KR-1 report ``[no data]``. It must be
     impossible for a fetch failure to render as a numeric KR value.
 AC4: Regression test covering AC3 — inject a failing fetch, assert KR-1
@@ -161,30 +161,40 @@ def test_fetch_issue_statuses_propagates_fetch_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC2 — --api-url default from $PAPERCLIP_API_URL, fall back to localhost
+# AC2 — --api-url default from $PAPERCLIP_API_URL; None when unset (no fallback)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 def test_default_api_url_from_env_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If $PAPERCLIP_API_URL is set, --api-url defaults to it."""
+    """Argparse default is None; main() resolves $PAPERCLIP_API_URL.
+
+    NFM-2442/NFM-2444: argparse no longer reads the env var inline.
+    The resolution args.api_url or os.environ["PAPERCLIP_API_URL"] lives
+    in main(), so argparse itself always yields None unless --api-url
+    is passed explicitly.
+    """
     monkeypatch.setenv("PAPERCLIP_API_URL", "https://paperclip.example.com")
     args = build_arg_parser().parse_args(
         ["--since", "2026-07-27", "--until", "2026-08-02"]
     )
-    assert args.api_url == "https://paperclip.example.com"
+    assert args.api_url is None  # argparse default; main() does the env lookup
 
 
 @pytest.mark.unit
-def test_default_api_url_falls_back_to_localhost(
+def test_default_api_url_is_none_when_env_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With $PAPERCLIP_API_URL unset, --api-url falls back to localhost:3000."""
+    """With $PAPERCLIP_API_URL unset, --api-url is None (no localhost fallback).
+
+    NFM-2442/NFM-2444: the script must not guess a host — main() will error
+    out before any network call. The argparse default is explicitly None.
+    """
     monkeypatch.delenv("PAPERCLIP_API_URL", raising=False)
     args = build_arg_parser().parse_args(
         ["--since", "2026-07-27", "--until", "2026-08-02"]
     )
-    assert args.api_url == "http://localhost:3000"
+    assert args.api_url is None
 
 
 @pytest.mark.unit
