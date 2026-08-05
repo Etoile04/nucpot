@@ -84,26 +84,59 @@ if [ "$TOKEN_VALUE" = "change-me" ]; then
   exit 0
 fi
 
-# --- 3. decode JWT payload (middle segment) ---------------------------------
-# Real cloudflared tokens are three base64url segments separated by `.`. The
-# middle segment decodes to JSON containing the tunnel id under `t`. We
-# only need the unverified payload; this is a deployment sanity check, not
+# --- 3. decode tunnel id from a base64url-encoded JSON payload -----------
+# Cloudflare tunnel tokens come in two known shapes (both encode a JSON
+# object with at least a `t` field = tunnel id):
+#
+#   a) Single-segment base64url — the format `cloudflared` actually ships
+#      from the Cloudflare Zero Trust dashboard. Example (truncated):
+#        eyJhIjoi...LCJ0Ijoi...LCJzIjoi...SJ9
+#      Decoding once yields JSON like:
+#        {"a":"...","t":"<UUID>","s":"..."}
+#
+#   b) Three-segment JWT — the shape used by some earlier cloudflared
+#      versions and by the unit tests in scripts/tests/. The middle
+#      segment is the base64url-encoded payload; `t` is the same field.
+#
+# We accept either, prefer the single-segment shape (because that is what
+# production staging tokens look like since 2026-08), and only fall back
+# to JWT if the single-segment decode does not produce a `t` claim.
+#
+# The unverified payload is enough: this is a deployment sanity check, not
 # a security check.
-IFS='.' read -r _header _payload _signature <<<"$TOKEN_VALUE" || true
-if [ -z "${_payload:-}" ]; then
-  err "$KEY_NAME is present but does not look like a JWT (no '.segments')"
+#
+# base64url -> base64. Pad to a multiple of 4 so `base64 -d` is happy.
+_b64url_pad() {
+  local s="$1"
+  s="$(printf '%s' "$s" | tr '_-' '/+')"
+  case $(( ${#s} % 4 )) in
+    2) s="${s}==" ;;
+    3) s="${s}=" ;;
+  esac
+  printf '%s' "$s" | base64 -d 2>/dev/null
+}
+
+# Pick the candidate segment to decode:
+#   - If the value has 1 segment (no dot), use the whole value.
+#   - If the value has 3 segments (JWT), use the middle one.
+#   - Otherwise fail with a clear error.
+SEGMENT_COUNT="$(awk -F. '{print NF-1}' <<<"$TOKEN_VALUE" 2>/dev/null || echo 0)"
+case "$SEGMENT_COUNT" in
+  0) _CANDIDATE="$TOKEN_VALUE" ;;
+  2) IFS='.' read -r _h _CANDIDATE _s <<<"$TOKEN_VALUE" || true ;;
+  *)
+    err "$KEY_NAME has $SEGMENT_COUNT '.' segments; expected 0 (single-segment) or 2 (JWT)"
+    exit 1
+    ;;
+esac
+if [ -z "${_CANDIDATE:-}" ]; then
+  err "$KEY_NAME: could not isolate a base64url candidate segment"
   exit 1
 fi
 
-# base64url -> base64. Pad to a multiple of 4 so `base64 -d` is happy.
-_PADDED="$(printf '%s' "$_payload" | tr '_-' '/+')"
-case $(( ${#_PADDED} % 4 )) in
-  2) _PADDED="${_PADDED}==" ;;
-  3) _PADDED="${_PADDED}="  ;;
-esac
-DECODED="$(printf '%s' "$_PADDED" | base64 -d 2>/dev/null || true)"
+DECODED="$(_b64url_pad "$_CANDIDATE" || true)"
 if [ -z "$DECODED" ]; then
-  err "$KEY_NAME: payload segment is not valid base64"
+  err "$KEY_NAME: candidate segment is not valid base64url"
   exit 1
 fi
 

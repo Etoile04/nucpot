@@ -147,34 +147,63 @@ services:
       start_period: 60s
     networks: [staging]
 
-  # ---- Cloudflare Tunnel connector (REMOVED — NFM-2523) ----------------------
-  # The staging cloudflared service was removed as a permanent fix for
-  # NFM-2507 (prod 502 bleed caused by staging tunnel intercepting prod
-  # traffic via a misconfigured dashboard hostname rule).
+  # ---- Cloudflare Tunnel connector (RESTORED — NFM-2523 closed, NFM-2507 final fix) ---
+  # The staging cloudflared service was temporarily removed in PR #647 as a
+  # fail-closed measure while the Cloudflare Zero Trust dashboard was fixed
+  # (prod 502 bleed caused by staging tunnel intercepting prod traffic via a
+  # misconfigured dashboard hostname rule).
   #
-  # To restore staging public ingress:
-  #   1. Fix the Cloudflare Zero Trust dashboard config for the staging
-  #      tunnel (remove any prod hostname rules like nucpot.dpdns.org;
-  #      ensure origins use Docker service names, e.g. http://web:3000
-  #      NOT http://localhost:3000).
-  #   2. Uncomment the service block below and set
-  #      STAGING_CLOUDFLARE_TUNNEL_TOKEN in docker/.env.staging.
-  #   3. Run `docker compose -f docker-compose.staging.yml up -d cloudflared`.
+  # Restoration preconditions (MUST all hold before `docker compose up`):
+  #   1. A new staging tunnel exists in Cloudflare Zero Trust (e.g.
+  #      `nucpot-staging`) with token in `docker/.env.staging` as
+  #      `STAGING_CLOUDFLARE_TUNNEL_TOKEN`. The token MUST be distinct from
+  #      the production tunnel token (enforced in CI by
+  #      `verify-cloudflared-token.sh`).
+  #   2. The staging tunnel's public hostnames in Cloudflare are:
+  #        - `staging.nucpot.dpdns.org`      -> http://web:3000
+  #        - `staging-api.nucpot.dpdns.org`  -> http://api:8000
+  #      The staging tunnel MUST NOT declare any production hostname
+  #      (no `nucpot.dpdns.org` with empty subdomain, no `api.nucpot.dpdns.org`,
+  #      no `www.nucpot.dpdns.org`, etc.). Verified in CI.
+  #   3. The origin URLs MUST use Docker service names (`web:3000`, `api:8000`),
+  #      NOT `localhost` or `127.0.0.1`. Inside the cloudflared container,
+  #      `localhost` is the container's own loopback, not the host or network.
+  #   4. After starting, verify with:
+  #        - `for i in $(seq 1 50); do curl -s -o /dev/null -w "%{http_code}\n" \
+  #            https://nucpot.dpdns.org/sre-after-restore-$i-$(date +%s%N); \
+  #            done | sort | uniq -c`  -> 50/50 200 or 404, 0 个 502
+  #        - `docker logs --since 2m nucpot-staging-cloudflared 2>&1 | \
+  #            grep -c 'dest=https://nucpot.dpdns.org'` -> 0
   #
-  # The CI guard from NFM-2509 prevents the staging cloudflared from using
-  # the prod tunnel token — that is a separate layer of protection.
-  #
-  # # cloudflared:
-  # #   image: cloudflare/cloudflared:latest
-  # #   container_name: nucpot-staging-cloudflared
-  # #   restart: unless-stopped
-  # #   command: tunnel --no-autoupdate --metrics 0.0.0.0:36500 run
-  # #   environment:
-  # #     TUNNEL_TOKEN: ${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?Set STAGING_CLOUDFLARE_TUNNEL_TOKEN in docker/.env.staging}
-  # #   ports:
-  # #     - "127.0.0.1:${STAGING_CLOUDFLARED_METRICS_HOST_PORT:-36500}:36500"
-  # #   depends_on: [api, web]
-  # #   networks: [staging]
+  # The CI guard from NFM-2509 (`verify-cloudflared-token.sh`) remains as a
+  # second layer: it rejects any compose that uses a prod tunnel token in
+  # the staging path even if the dashboard is later mis-configured.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nucpot-staging-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:36501 run
+    environment:
+      TUNNEL_TOKEN: ${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?Set STAGING_CLOUDFLARE_TUNNEL_TOKEN in docker/.env.staging}
+      # cloudflared must reach Docker-DNS-resolved service names like
+      # `web:3000` and `api:8000` directly inside `nucpot-staging-net`.
+      # The Docker daemon may inject HTTP(S)_PROXY (e.g. host-side Clash /
+      # Verge at host.docker.internal:7892) which forces all outbound HTTP
+      # through an external proxy that cannot resolve these names — every
+      # tunnel request then times out as "context canceled". We explicitly
+      # unset the proxy vars and tighten NO_PROXY to include the staging
+      # service aliases. Source: NFM-2507 staging tunnel restoration
+      # (2026-08-05).
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "localhost,127.0.0.1,web,api,db,lightrag,nucpot-staging-net,172.18.0.0/16,172.25.0.0/16"
+      no_proxy: "localhost,127.0.0.1,web,api,db,lightrag,nucpot-staging-net,172.18.0.0/16,172.25.0.0/16"
+    ports:
+      - "127.0.0.1:${STAGING_CLOUDFLARED_METRICS_HOST_PORT:-36501}:36501"
+    depends_on: [api, web]
+    networks: [staging]
 
 networks:
   staging:
