@@ -40,8 +40,21 @@ from nfm_node_client.exceptions import (
     SyncStatusError,
     UploadError,
 )
+from nfm_node_client.offline_detector import ConnectionState, OfflineDetector
+from nfm_node_client.offline_queue import (
+    OfflineQueue,
+    OperationType,
+    PendingOperation,
+    SyncWatermark,
+)
 from nfm_node_client.pool import ConnectionPool
 from nfm_node_client.retry import RetryPolicy, compute_backoff_delay, retry_async
+from nfm_node_client.sync_manager import (
+    SyncConflictError,
+    SyncManager,
+    SyncResult,
+    SyncStatus as SyncMgrStatus,
+)
 from nfm_node_client.types import (
     Credentials,
     HeartbeatResponse,
@@ -57,18 +70,27 @@ __version__ = "0.1.0"
 
 __all__ = [
     "ConnectionPool",
+    "ConnectionState",
     "Credentials",
     "HeartbeatError",
     "HeartbeatResponse",
     "NfmNodeClient",
     "NfmNodeClientError",
     "NodeType",
+    "OfflineDetector",
+    "OfflineQueue",
+    "OperationType",
+    "PendingOperation",
     "RegistrationError",
     "ResourceNodeRegistration",
     "RetriesExhaustedError",
     "RetryPolicy",
+    "SyncConflictError",
+    "SyncManager",
+    "SyncResult",
     "SyncStatus",
     "SyncStatusError",
+    "SyncWatermark",
     "UploadError",
     "UploadResult",
     "__version__",
