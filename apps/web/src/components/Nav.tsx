@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { App } from 'antd'
 import { useAuth } from '@/components/AuthProvider'
-import { SessionIndicator } from '@/components/session'
+import { SessionIndicator, SessionTimerBadge, useExpiringSoonToast } from '@/components/session'
 
 const NAV_LINKS = [
   { href: '/browse', label: '浏览' },
@@ -70,6 +71,16 @@ export default function Nav() {
 
   const displayName = user?.username ?? "用户"
   const isAdmin = user?.blog_role === "admin"
+
+  // NFM-2417: show warning toast when session is about to expire.
+  const { message } = App.useApp()
+  const handleExpiringSoon = useCallback(() => {
+    message.warning({
+      content: "您的会话即将过期，请保存工作。",
+      duration: 10,
+    })
+  }, [message])
+  useExpiringSoonToast(handleExpiringSoon)
 
   return (
     <nav className="border-b border-gray-700">
@@ -154,6 +165,7 @@ export default function Nav() {
                       {displayName[0]}
                     </span>
                     <span>{displayName}</span>
+                    <SessionTimerBadge className="ml-1" />
                     <svg
                       className={`w-3.5 h-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`}
                       fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -324,6 +336,7 @@ export default function Nav() {
                 <>
                   <div className="border-t border-gray-700/50 pt-3 text-gray-400 text-xs">
                     {displayName}
+                    <SessionTimerBadge className="ml-2" />
                   </div>
                   <Link
                     href="/profile"

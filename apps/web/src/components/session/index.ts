@@ -9,6 +9,7 @@
 export { SessionProvider, useSession } from "./SessionProvider"
 export { SessionIndicator, formatRemainingMain, buildIndicatorCopy, buildIndicatorAria } from "./SessionIndicator"
 export { ReAuthPrompt } from "./ReAuthPrompt"
+export { SessionTimerBadge, useExpiringSoonToast } from "./SessionTimerBadge"
 export {
   useFormDraft,
   clearFormDraft,
