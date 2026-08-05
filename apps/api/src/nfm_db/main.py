@@ -36,6 +36,7 @@ from nfm_db.api.v1 import (
     review,
     seed,
     sources,
+    upload,
     verification,
     viz,
 )
@@ -321,6 +322,7 @@ app.include_router(v4_extraction.router, prefix="/api/v4", tags=["V4 信息抽�
 app.include_router(batch_reference_values_router, prefix="/api/v1", tags=["批量参考值"])
 app.include_router(prediction.router, prefix="/api/v1", tags=["ML预测"])
 app.include_router(design.router, prefix="/api/v1", tags=["设计优化"])
+app.include_router(upload.router, prefix="/api/v1", tags=["断点续传"])
 app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
 app.include_router(dedup.router, prefix="/api/v1", tags=["实体去重"])
 app.include_router(dft.router, prefix="/api/v1", tags=["DFT 计算"])

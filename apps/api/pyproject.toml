@@ -409,3 +409,12 @@ exclude_lines = [
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
+
+# Pre-existing lint patterns in ML/science test files (E402: sys.path, I001: unsorted, RUF: scientific notation)
+"tests/test_compute_incremental_features.py" = ["E402", "I001", "RUF003"]
+"tests/test_dft_calculation_model.py" = ["F401", "I001"]
+"tests/test_merge_training_set.py" = ["I001"]
+"tests/test_ml_feature_engineering.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_ml_prediction_api.py" = ["RUF001"]
+"tests/test_ml_surrogate.py" = ["E402", "I001"]
+"tests/eval/test_accuracy_benchmark.py" = ["E402"]
