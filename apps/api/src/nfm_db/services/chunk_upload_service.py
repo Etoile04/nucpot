@@ -175,7 +175,7 @@ async def upload_chunk(
     sha256_chunk: str,
     chunk_data: bytes,
     chunk_root: Path | None = None,
-) -> dict:
+) -> dict[str, uuid.UUID | int | str]:
     """Accept a single chunk, verify its SHA-256, and persist to disk."""
     session = await _find_session_by_token(db, resume_token)
 
