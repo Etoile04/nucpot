@@ -18,19 +18,17 @@ import { SyncOutlined, WarningOutlined } from "@ant-design/icons"
 import { useQuery } from "@tanstack/react-query"
 
 import { getHubNodeSyncStats } from "@/lib/admin/hub-api"
-import type { NodeSyncStats as NodeSyncStatsType } from "@/lib/admin/hub-types"
 
 const POLL_INTERVAL_MS = 10_000
 
-const SYNC_STATUS_CONFIG: Record<
-  string,
-  { label: string; color: string; percent: number }
-> = {
+const SYNC_STATUS_CONFIG = {
   synced: { label: "已同步", color: "#52c41a", percent: 100 },
   syncing: { label: "同步中", color: "#1677ff", percent: 60 },
   behind: { label: "落后", color: "#faad14", percent: 30 },
   unknown: { label: "未知", color: "#666", percent: 0 },
-}
+} as const
+
+type SyncStatusKey = keyof typeof SYNC_STATUS_CONFIG
 
 function formatTimestamp(iso: string | null): string {
   if (!iso) return "—"
@@ -49,9 +47,12 @@ export default function NodeSyncStats({ nodeId }: NodeSyncStatsProps) {
     refetchInterval: POLL_INTERVAL_MS,
   })
 
-  const config = stats
-    ? SYNC_STATUS_CONFIG[stats.sync_status] ?? SYNC_STATUS_CONFIG.unknown
-    : SYNC_STATUS_CONFIG.unknown
+  const statusKey: SyncStatusKey = stats
+    ? (stats.sync_status in SYNC_STATUS_CONFIG
+        ? (stats.sync_status as SyncStatusKey)
+        : "unknown")
+    : "unknown"
+  const config = SYNC_STATUS_CONFIG[statusKey]
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
