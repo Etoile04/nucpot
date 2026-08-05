@@ -71,18 +71,35 @@ TOKEN_VALUE="${TOKEN_VALUE%$'\r'}"
 # applied the fix (emptied the token value rather than removing the line)
 # would otherwise see a green guard here, only to have the cloudflared
 # container fail at runtime with an opaque compose error.
+#
+# NFM-2514 M1: the previous advice ("Remove the line entirely if staging
+# does not need a tunnel") contradicted docker-compose.staging.yml, which
+# hard-requires this var via ${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?...}.
+# `:?` fails on BOTH unset and empty, so removing the line would leave
+# the operator with a green guard (key absent -> skip) and a downstream
+# compose failure — the same shape the empty-token branch is supposed to
+# prevent, moved to the absent arm. The new advice steers operators to a
+# remediation that is also valid for the absent key.
 if [ -z "$TOKEN_VALUE" ]; then
   err "$KEY_NAME is present but empty in $ENV_FILE"
   err "An empty token causes the cloudflared container to fail at startup with an opaque compose error."
-  err "Remove the line entirely if staging does not need a tunnel, or set a real staging token."
+  err "Fix: set a real staging token, or gate the 'cloudflared' service behind a compose profile (see docker-compose.staging.yml)."
   exit 1
 fi
 
-# Placeholder value — this is the documented example; skip as before.
-if [ "$TOKEN_VALUE" = "change-me" ]; then
-  ok "$KEY_NAME is the example placeholder (skip)"
-  exit 0
-fi
+# Placeholder value — match the documented example and any
+# `change-me-...` variant the template may carry (e.g.
+# `change-me-paste-token-from-cloudflare-zero-trust` in
+# docker/.env.staging.example). NFM-2514 M2: an exact-match on `change-me`
+# left the committed template turning red; prefix-match keeps the template
+# green and the synthetic-literal test that used to guard this branch
+# honest.
+case "$TOKEN_VALUE" in
+  change-me*)
+    ok "$KEY_NAME is the example placeholder (skip)"
+    exit 0
+    ;;
+esac
 
 # --- 3. decode tunnel id from a base64url-encoded JSON payload -----------
 # Cloudflare tunnel tokens come in two known shapes (both encode a JSON
