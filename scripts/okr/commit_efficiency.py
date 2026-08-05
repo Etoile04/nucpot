@@ -350,8 +350,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-url",
-        default="http://localhost:3000",
-        help="Paperclip API base URL",
+        default=None,
+        help=(
+            "Paperclip API base URL. Required — set $PAPERCLIP_API_URL "
+            "or pass --api-url explicitly (NFM-2442/NFM-2444)."
+        ),
     )
     parser.add_argument(
         "--company-id",
@@ -374,6 +377,15 @@ def main() -> None:
             "--company-id is required (or set PAPERCLIP_COMPANY_ID env var)"
         )
 
+    api_url = args.api_url or os.environ.get("PAPERCLIP_API_URL")
+    if not api_url:
+        parser = build_arg_parser()
+        parser.error(
+            "--api-url is required (or set PAPERCLIP_API_URL env var). "
+            "The script must not guess a host — a wrong URL silently "
+            "produces plausible-looking but false KR values (NFM-2442)."
+        )
+
     raw_log = run_git_log(args.since, args.until, rev=args.rev)
     commits = parse_git_log(raw_log)
     enriched = enrich_commits_with_refs(commits)
@@ -383,7 +395,7 @@ def main() -> None:
     })
     api_key = os.environ.get("PAPERCLIP_API_KEY", "")
     statuses = fetch_issue_statuses(
-        all_refs, args.api_url, company_id, api_key=api_key,
+        all_refs, api_url, company_id, api_key=api_key,
     )
 
     report = build_report(args.since, args.until, enriched, statuses)
