@@ -45,6 +45,18 @@ def _make_token(tunnel_id: str) -> str:
     return f"fake-header.{b64}.fake-signature"
 
 
+def _make_real_format_token(tunnel_id: str) -> str:
+    """Build a single-segment base64url token in the format cloudflared
+    actually ships from the Cloudflare Zero Trust dashboard today (one
+    base64url-encoded JSON object with ``a``/``t``/``s`` fields).
+
+    The guard must accept this in addition to the legacy 3-segment JWT
+    shape — see the NFM-2507 staging tunnel restoration (2026-08-05).
+    """
+    payload: str = json.dumps({"a": "fake-account", "t": tunnel_id, "s": "fake-secret"})
+    return base64.urlsafe_b64encode(payload.encode()).rstrip(b"=").decode()
+
+
 def _write_env(path: Path, content: str) -> Path:
     path.write_text(content)
     return path
@@ -90,6 +102,35 @@ def test_distinct_tunnel_id_in_staging_env_passes(tmp_path: Path) -> None:
     env = _write_env(
         tmp_path / ".env.staging",
         f"STAGING_CLOUDFLARE_TUNNEL_TOKEN={_make_token(distinct)}\n",
+    )
+    result = run_script(str(env))
+    assert result.returncode == 0, result.stderr
+
+
+def test_real_format_token_with_prod_id_fails(tmp_path: Path) -> None:
+    """Single-segment base64url token (the real cloudflared format) carrying
+    the prod tunnel id must still trip the denylist guard. Mirrors
+    ``test_prod_tunnel_id_in_staging_env_fails`` for the JWT shape.
+    """
+    env = _write_env(
+        tmp_path / ".env.staging",
+        f"STAGING_CLOUDFLARE_TUNNEL_TOKEN={_make_real_format_token(PROD_TUNNEL_ID)}\n",
+    )
+    result = run_script(str(env))
+    assert result.returncode == 1, result.stderr
+    assert "STAGING_CLOUDFLARE_TUNNEL_TOKEN" in result.stderr
+    assert PROD_TUNNEL_ID in result.stderr
+
+
+def test_real_format_token_with_distinct_id_passes(tmp_path: Path) -> None:
+    """Single-segment base64url token (the real cloudflared format) carrying
+    a non-prod tunnel id must pass. Mirrors
+    ``test_distinct_tunnel_id_in_staging_env_passes`` for the JWT shape.
+    """
+    distinct: str = "11111111-2222-3333-4444-555555555555"
+    env = _write_env(
+        tmp_path / ".env.staging",
+        f"STAGING_CLOUDFLARE_TUNNEL_TOKEN={_make_real_format_token(distinct)}\n",
     )
     result = run_script(str(env))
     assert result.returncode == 0, result.stderr

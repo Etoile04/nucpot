@@ -32,6 +32,13 @@ Quick start::
 from __future__ import annotations
 
 from nfm_node_client.client import NfmNodeClient
+from nfm_node_client.conflict_resolver import (
+    ConflictRecord,
+    ConflictResolution,
+    ConflictResolver,
+    ConflictType,
+    ResolutionStrategy,
+)
 from nfm_node_client.exceptions import (
     HeartbeatError,
     NfmNodeClientError,
@@ -40,8 +47,26 @@ from nfm_node_client.exceptions import (
     SyncStatusError,
     UploadError,
 )
+from nfm_node_client.offline_detector import ConnectionState, OfflineDetector
+from nfm_node_client.offline_queue import (
+    OfflineQueue,
+    OperationType,
+    PendingOperation,
+    SyncWatermark,
+)
 from nfm_node_client.pool import ConnectionPool
 from nfm_node_client.retry import RetryPolicy, compute_backoff_delay, retry_async
+from nfm_node_client.sync_engine import (
+    SyncEngine,
+    SyncEngineResult,
+    SyncPhase,
+)
+from nfm_node_client.sync_manager import (
+    SyncConflictError,
+    SyncManager,
+    SyncResult,
+    SyncStatus as SyncMgrStatus,
+)
 from nfm_node_client.types import (
     Credentials,
     HeartbeatResponse,
@@ -50,27 +75,47 @@ from nfm_node_client.types import (
     SyncStatus,
     UploadResult,
 )
+from nfm_node_client.vector_clock import ClockComparison, VectorClock
 
 
 __version__ = "0.1.0"
 
 
 __all__ = [
+    "ClockComparison",
+    "ConflictRecord",
+    "ConflictResolution",
+    "ConflictResolver",
+    "ConflictType",
     "ConnectionPool",
+    "ConnectionState",
     "Credentials",
     "HeartbeatError",
     "HeartbeatResponse",
     "NfmNodeClient",
     "NfmNodeClientError",
     "NodeType",
+    "OfflineDetector",
+    "OfflineQueue",
+    "OperationType",
+    "PendingOperation",
     "RegistrationError",
+    "ResolutionStrategy",
     "ResourceNodeRegistration",
     "RetriesExhaustedError",
     "RetryPolicy",
+    "SyncEngine",
+    "SyncEngineResult",
+    "SyncConflictError",
+    "SyncManager",
+    "SyncPhase",
+    "SyncResult",
     "SyncStatus",
     "SyncStatusError",
+    "SyncWatermark",
     "UploadError",
     "UploadResult",
+    "VectorClock",
     "__version__",
     "compute_backoff_delay",
     "retry_async",
