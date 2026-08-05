@@ -12,6 +12,10 @@
  */
 
 import { request, type ApiResponse } from "./api-client"
+import {
+  type RagContractQueryResponse as BackendQueryResponse,
+  type RagContractReference as BackendReference,
+} from "./rag-contract"
 
 // ---------------------------------------------------------------------------
 // Types — frontend-facing (unchanged shape, stable contract for components)
@@ -54,25 +58,7 @@ export interface RagQueryResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Backend response shape — matches QueryResponse in
-// apps/api/src/nfm_db/schemas/lightrag.py
-// ---------------------------------------------------------------------------
-
-interface BackendReference {
-  readonly reference_id?: string | number
-  readonly file_path?: string
-  readonly content?: string | null
-}
-
-interface BackendQueryResponse {
-  readonly response: string
-  readonly references?: readonly BackendReference[]
-  readonly entities?: readonly unknown[]
-  readonly relationships?: readonly unknown[]
-}
-
-// ---------------------------------------------------------------------------
-// Mapping helpers
+// Mapping helpers — transforms canonical backend fields to frontend shape
 // ---------------------------------------------------------------------------
 
 function mapReferenceToCitation(ref: BackendReference, idx: number): RagCitation {
