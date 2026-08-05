@@ -21,9 +21,12 @@
 name: nucpot-prod
 
 services:
-  # ---- PostgreSQL 16 ---------------------------------------------------------
+  # ---- PostgreSQL 16 + pgvector + Apache AGE (NFM-1850) ----------------------
   db:
-    image: pgvector/pgvector:pg16
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    image: nucpot-pg-pgvector-age:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-db
     restart: unless-stopped
     environment:

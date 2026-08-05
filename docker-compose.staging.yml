@@ -16,9 +16,12 @@
 name: nucpot-staging
 
 services:
-  # ---- Bundled PostgreSQL 16 (staging database) ------------------------------
+  # ---- PostgreSQL 16 + pgvector + Apache AGE (NFM-1850) ----------------------
   db:
-    image: postgres:16
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    image: nucpot-pg-pgvector-age:${STAGING_IMAGE_TAG:-latest}
     container_name: nucpot-staging-db
     restart: unless-stopped
     environment:

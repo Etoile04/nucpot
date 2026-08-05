@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16
+    build:
+      context: ..
+      dockerfile: docker/postgres/Dockerfile
+    image: nucpot-pg-pgvector-age:dev
     environment:
       POSTGRES_USER: nfm
       POSTGRES_PASSWORD: nfm
