@@ -248,6 +248,7 @@ __all__ = [
     "FittingMethod",
     "HPCFailoverEvent",
     "HealthEvent",
+    "HealthEvent",
     "HpcJob",
     "HpcJobStatus",
     "HubNode",
