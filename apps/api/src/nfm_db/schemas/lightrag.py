@@ -1,4 +1,4 @@
-"""Pydantic schemas for LightRAG sidecar integration (NFM-862).
+"""Pydantic schemas for LightRAG sidecar integration (NFM-862, NFM-1848).
 
 Request/response models for the LightRAG document ingestion,
 semantic query, and health check endpoints.
@@ -7,6 +7,11 @@ LightRAG API surface (default port 9621):
   POST /documents/text  — ingest text document
   POST /query           — semantic query against the knowledge graph
   GET  /health          — service health check
+
+Cross-language contract:
+  These Pydantic models are the authoritative backend definition.
+  The TypeScript mirror lives in apps/web/src/lib/rag-contract.ts.
+  If you rename/add/remove a field here, update the TypeScript file too.
 """
 
 from __future__ import annotations
