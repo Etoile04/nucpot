@@ -124,13 +124,36 @@ NodeListResponse = PaginatedResponse[NodeResponse]
 """Paginated list of resource nodes — wrapped in ``ApiResponse`` by the route."""
 
 
+class NodeSyncStatsResponse(BaseModel):
+    """Sync statistics for a resource node (NFM-2030)."""
+
+    node_id: uuid.UUID
+    last_heartbeat: str | None = None
+    sync_watermark: str | None = None
+    offline_since: str | None = None
+    pending_conflicts: int = Field(
+        default=0,
+        description="Number of unresolved conflict records.",
+    )
+    total_conflicts: int = Field(
+        default=0,
+        description="Total conflict records (resolved + pending).",
+    )
+    sync_status: str = Field(
+        default="unknown",
+        description="Derived sync status: synced, syncing, behind, unknown.",
+    )
+
+
 ApiResponseNode = ApiResponse[NodeResponse]
 ApiResponseNodeList = ApiResponse[NodeListResponse]
+ApiResponseSyncStats = ApiResponse[NodeSyncStatsResponse]
 
 
 __all__ = [
     "ApiResponseNode",
     "ApiResponseNodeList",
+    "ApiResponseSyncStats",
     "NodeHeartbeatRequest",
     "NodeListResponse",
     "NodeRegisterRequest",
@@ -138,4 +161,5 @@ __all__ = [
     "NodeStatusLiteral",
     "NodeStatusUpdate",
     "NodeTypeLiteral",
+    "NodeSyncStatsResponse",
 ]

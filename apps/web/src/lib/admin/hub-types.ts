@@ -55,3 +55,14 @@ export interface NodeListQuery {
   page?: number
   per_page?: number
 }
+
+/** Sync statistics for a resource node (NFM-2030). */
+export interface NodeSyncStats {
+  node_id: string
+  last_heartbeat: string | null
+  sync_watermark: string | null
+  offline_since: string | null
+  pending_conflicts: number
+  total_conflicts: number
+  sync_status: string
+}

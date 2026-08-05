@@ -1,8 +1,11 @@
-/** Node detail drawer: heartbeat history + sync stats (NFM-2023, AC-3).
+/** Node detail drawer: info + sync stats + conflicts + heartbeat timeline (NFM-2030).
  *
- * Polls the node detail every 10s while open. The B2 API stores only
- * the latest heartbeat timestamp, so the "history" timeline accumulates
- * the heartbeats observed live during this admin session.
+ * Three-tab layout:
+ * - **信息**: Node metadata, heartbeat freshness, session heartbeat timeline
+ * - **同步**: Sync status, progress, conflict counts (polls every 10s)
+ * - **冲突**: Conflict list with manual/auto resolution (polls every 15s)
+ *
+ * Polls node detail every 10s while open.
  */
 
 "use client"
@@ -16,10 +19,16 @@ import {
   Popconfirm,
   Progress,
   Space,
+  Tabs,
   Tag,
   Timeline,
   Typography,
 } from "antd"
+import {
+  InfoCircleOutlined,
+  SyncOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
 import {
@@ -32,7 +41,9 @@ import {
   HEARTBEAT_ONLINE_THRESHOLD_MS,
 } from "@/lib/admin/hub-status"
 import type { NodeStatus, ResourceNode } from "@/lib/admin/hub-types"
+import NodeConflictPanel from "./NodeConflictPanel"
 import NodeStatusBadge from "./NodeStatusBadge"
+import NodeSyncStats from "./NodeSyncStats"
 
 const POLL_INTERVAL_MS = 10_000
 const MAX_HISTORY = 20
@@ -125,72 +136,116 @@ export default function NodeDetailDrawer({
       : "suspended"
     : null
 
+  const tabItems = node
+    ? [
+        {
+          key: "info",
+          label: (
+            <span>
+              <InfoCircleOutlined /> 信息
+            </span>
+          ),
+          children: (
+            <Space direction="vertical" size="large" style={{ width: "100%" }}>
+              <Descriptions column={1} size="small" bordered>
+                <Descriptions.Item label="实时状态">
+                  <NodeStatusBadge node={node} />
+                </Descriptions.Item>
+                <Descriptions.Item label="节点类型">
+                  <Tag>{node.node_type}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="API 地址">
+                  {node.api_endpoint}
+                </Descriptions.Item>
+                <Descriptions.Item label="最近心跳">
+                  {formatTimestamp(node.last_heartbeat)}
+                </Descriptions.Item>
+                <Descriptions.Item label="同步水位">
+                  {formatTimestamp(node.sync_watermark)}
+                </Descriptions.Item>
+                <Descriptions.Item label="离线开始时间">
+                  {formatTimestamp(node.offline_since)}
+                </Descriptions.Item>
+                <Descriptions.Item label="注册时间">
+                  {formatTimestamp(node.created_at)}
+                </Descriptions.Item>
+              </Descriptions>
+
+              <div>
+                <Typography.Text strong>心跳新鲜度</Typography.Text>
+                <Progress
+                  percent={heartbeatFreshness(node, now)}
+                  status={live === "online" ? "active" : "exception"}
+                  size="small"
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  节点每 30s 上报一次心跳；超过 90s 未收到即判定离线。
+                </Typography.Text>
+              </div>
+
+              <div>
+                <Typography.Text strong>
+                  心跳记录 (本次会话观测，每 10s 刷新)
+                </Typography.Text>
+                {heartbeatsRef.current.length > 0 ? (
+                  <Timeline
+                    style={{ marginTop: 12 }}
+                    items={heartbeatsRef.current.map((iso) => ({
+                      color: "green",
+                      children: formatTimestamp(iso),
+                    }))}
+                  />
+                ) : (
+                  <Typography.Paragraph
+                    type="secondary"
+                    style={{ marginTop: 8 }}
+                  >
+                    尚未观测到心跳。
+                  </Typography.Paragraph>
+                )}
+              </div>
+            </Space>
+          ),
+        },
+        {
+          key: "sync",
+          label: (
+            <span>
+              <SyncOutlined /> 同步
+            </span>
+          ),
+          children: <NodeSyncStats nodeId={node.id} />,
+        },
+        {
+          key: "conflicts",
+          label: (
+            <span>
+              <ThunderboltOutlined /> 冲突
+            </span>
+          ),
+          children: <NodeConflictPanel />,
+        },
+      ]
+    : []
+
   return (
     <Drawer
       title={node ? node.name : "节点详情"}
       open={nodeId !== null}
       onClose={onClose}
-      width={480}
+      width={560}
     >
       {error instanceof Error ? (
         <Alert type="error" showIcon message={error.message} />
       ) : null}
+
       {node ? (
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label="实时状态">
-              <NodeStatusBadge node={node} />
-            </Descriptions.Item>
-            <Descriptions.Item label="节点类型">
-              <Tag>{node.node_type}</Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="API 地址">
-              {node.api_endpoint}
-            </Descriptions.Item>
-            <Descriptions.Item label="最近心跳">
-              {formatTimestamp(node.last_heartbeat)}
-            </Descriptions.Item>
-            <Descriptions.Item label="同步水位 (最近成功同步)">
-              {formatTimestamp(node.sync_watermark)}
-            </Descriptions.Item>
-            <Descriptions.Item label="离线开始时间">
-              {formatTimestamp(node.offline_since)}
-            </Descriptions.Item>
-            <Descriptions.Item label="注册时间">
-              {formatTimestamp(node.created_at)}
-            </Descriptions.Item>
-          </Descriptions>
-
-          <div>
-            <Typography.Text strong>心跳新鲜度</Typography.Text>
-            <Progress
-              percent={heartbeatFreshness(node, now)}
-              status={live === "online" ? "active" : "exception"}
-              size="small"
-            />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              节点每 30s 上报一次心跳；超过 90s 未收到即判定离线。
-            </Typography.Text>
-          </div>
-
-          <div>
-            <Typography.Text strong>
-              心跳记录 (本次会话观测，每 10s 刷新)
-            </Typography.Text>
-            {heartbeatsRef.current.length > 0 ? (
-              <Timeline
-                style={{ marginTop: 12 }}
-                items={heartbeatsRef.current.map((iso) => ({
-                  color: "green",
-                  children: formatTimestamp(iso),
-                }))}
-              />
-            ) : (
-              <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                尚未观测到心跳。
-              </Typography.Paragraph>
-            )}
-          </div>
+        <>
+          <Tabs
+            items={tabItems}
+            defaultActiveKey="info"
+            style={{ marginBottom: 16 }}
+          />
 
           {mutationError ? (
             <Alert type="error" showIcon message={mutationError} />
@@ -201,7 +256,9 @@ export default function NodeDetailDrawer({
               <Button
                 loading={mutating}
                 onClick={() =>
-                  runMutation(() => updateHubNodeStatus(node.id, toggleStatus))
+                  runMutation(() =>
+                    updateHubNodeStatus(node.id, toggleStatus),
+                  )
                 }
               >
                 {toggleStatus === "suspended" ? "暂停节点" : "恢复节点"}
@@ -224,7 +281,7 @@ export default function NodeDetailDrawer({
               </Button>
             </Popconfirm>
           </Space>
-        </Space>
+        </>
       ) : null}
     </Drawer>
   )

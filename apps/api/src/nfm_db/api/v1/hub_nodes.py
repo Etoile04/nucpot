@@ -34,12 +34,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models import HubNode, ResourceNode
+from nfm_db.models.conflict_record import ConflictRecord
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.hub_nodes import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
     NodeStatusUpdate,
+    NodeSyncStatsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -266,6 +268,71 @@ async def receive_heartbeat(
     await db.commit()
     await db.refresh(node)
     return ApiResponse(success=True, data=NodeResponse.model_validate(node))
+
+
+# ---------------------------------------------------------------------------
+# GET /{node_id}/sync-stats — sync statistics for a node
+# ---------------------------------------------------------------------------
+
+
+def _derive_sync_status(
+    watermark: str | None,
+    heartbeat: str | None,
+    offline_since: str | None,
+) -> str:
+    """Derive a human-readable sync status from node fields."""
+    if offline_since is not None:
+        return "behind"
+    if watermark is None:
+        if heartbeat is not None:
+            return "syncing"
+        return "unknown"
+    if heartbeat is not None:
+        return "synced"
+    return "unknown"
+
+
+@router.get(
+    "/{node_id}/sync-stats",
+    response_model=ApiResponse[NodeSyncStatsResponse],
+    summary="获取节点同步统计",
+    description="Return sync statistics for a resource node, including conflict counts.",
+)
+async def get_node_sync_stats(
+    node_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ApiResponse[NodeSyncStatsResponse]:
+    """Return sync statistics for a resource node."""
+    node = await _get_node_or_404(node_id, db)
+
+    total_conflicts = (await db.execute(
+        select(func.count()).select_from(ConflictRecord),
+    )).scalar() or 0
+
+    pending_conflicts = (await db.execute(
+        select(func.count()).select_from(ConflictRecord).where(
+            ConflictRecord.status == "pending",
+        ),
+    )).scalar() or 0
+
+    sync_status = _derive_sync_status(
+        node.sync_watermark,
+        node.last_heartbeat,
+        node.offline_since,
+    )
+
+    return ApiResponse(
+        success=True,
+        data=NodeSyncStatsResponse(
+            node_id=node.id,
+            last_heartbeat=node.last_heartbeat,
+            sync_watermark=node.sync_watermark,
+            offline_since=node.offline_since,
+            pending_conflicts=pending_conflicts,
+            total_conflicts=total_conflicts,
+            sync_status=sync_status,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

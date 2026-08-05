@@ -10,6 +10,7 @@ import type {
   NodeListQuery,
   NodeRegisterRequest,
   NodeStatus,
+  NodeSyncStats,
   PaginatedData,
   ResourceNode,
 } from "./hub-types"
@@ -110,4 +111,12 @@ export async function updateHubNodeStatus(
 export async function deregisterHubNode(nodeId: string): Promise<void> {
   const response = await adminFetch(`${BASE}/${nodeId}`, { method: "DELETE" })
   await parseEnvelope<null>(response, "注销节点")
+}
+
+/** GET /api/v1/hub/nodes/{id}/sync-stats — sync statistics for a node. */
+export async function getHubNodeSyncStats(
+  nodeId: string,
+): Promise<NodeSyncStats> {
+  const response = await adminFetch(`${BASE}/${nodeId}/sync-stats`)
+  return parseEnvelope<NodeSyncStats>(response, "获取同步统计")
 }

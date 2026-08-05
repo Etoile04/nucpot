@@ -1,8 +1,11 @@
-/** Hub Admin main content: live node list + register + detail (NFM-2023).
+/** Hub Admin main content: topology + live node list + register + detail (NFM-2030).
  *
- * The list polls every 10s so 在线/离线 indicators track heartbeats
- * without a manual refresh (AC-2). Matches the admin panel's Ant Design
- * visual language (see admin/kg and admin/reference-data).
+ * Provides two view modes:
+ * - **Topology** (default): SVG star-topology with hub center + resource nodes
+ * - **Table**: paginated Ant Design table with all node details
+ *
+ * Both views poll every 10s for live status updates (AC-2).
+ * Matches the admin panel's Ant Design visual language.
  */
 
 "use client"
@@ -13,11 +16,19 @@ import {
   Button,
   Card,
   Flex,
+  Segmented,
+  Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd"
-import { PlusOutlined, ReloadOutlined } from "@ant-design/icons"
+import {
+  AppstoreOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons"
 import { useQuery } from "@tanstack/react-query"
 import type { ColumnsType } from "antd/es/table"
 
@@ -25,6 +36,7 @@ import { listHubNodes } from "@/lib/admin/hub-api"
 import type { ResourceNode } from "@/lib/admin/hub-types"
 import NodeDetailDrawer from "./NodeDetailDrawer"
 import NodeStatusBadge from "./NodeStatusBadge"
+import NodeTopologyView from "./NodeTopologyView"
 import RegisterNodeModal from "./RegisterNodeModal"
 
 const POLL_INTERVAL_MS = 10_000
@@ -35,6 +47,8 @@ const NODE_TYPE_LABELS: Record<string, string> = {
   observatory: "观测",
 }
 
+type ViewMode = "topology" | "table"
+
 function formatHeartbeat(iso: string | null): string {
   if (!iso) {
     return "从未上报"
@@ -43,7 +57,14 @@ function formatHeartbeat(iso: string | null): string {
   return Number.isNaN(ms) ? iso : new Date(ms).toLocaleString("zh-CN")
 }
 
+function formatTimestamp(iso: string | null): string {
+  if (!iso) return "—"
+  const ms = Date.parse(iso)
+  return Number.isNaN(ms) ? iso : new Date(ms).toLocaleString("zh-CN")
+}
+
 export default function HubAdminContent() {
+  const [viewMode, setViewMode] = useState<ViewMode>("topology")
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(20)
   const [registerOpen, setRegisterOpen] = useState(false)
@@ -88,6 +109,13 @@ export default function HubAdminContent() {
       ellipsis: true,
     },
     {
+      title: "同步水位",
+      dataIndex: "sync_watermark",
+      key: "sync_watermark",
+      width: 180,
+      render: (iso: string | null) => formatTimestamp(iso),
+    },
+    {
       title: "最近心跳",
       dataIndex: "last_heartbeat",
       key: "last_heartbeat",
@@ -96,18 +124,20 @@ export default function HubAdminContent() {
     },
   ]
 
+  const nodes = data?.items ?? []
+
   return (
     <div style={{ padding: 24, maxWidth: 1280, margin: "0 auto" }}>
       <Flex justify="space-between" align="center" wrap gap={12}>
         <div>
           <Typography.Title level={3} style={{ marginBottom: 4 }}>
-            中心节点管理
+            资源节点管理
           </Typography.Title>
           <Typography.Text type="secondary">
             1+N 架构资源节点注册、心跳与发现管理 (每 10s 自动刷新)
           </Typography.Text>
         </div>
-        <Flex gap={8}>
+        <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
             刷新
           </Button>
@@ -118,7 +148,33 @@ export default function HubAdminContent() {
           >
             注册新节点
           </Button>
-        </Flex>
+        </Space>
+      </Flex>
+
+      {/* View mode toggle */}
+      <Flex justify="center" style={{ marginTop: 16, marginBottom: 8 }}>
+        <Segmented
+          value={viewMode}
+          onChange={(val) => setViewMode(val as ViewMode)}
+          options={[
+            {
+              label: (
+                <Tooltip title="拓扑视图">
+                  <AppstoreOutlined /> 拓扑
+                </Tooltip>
+              ),
+              value: "topology",
+            },
+            {
+              label: (
+                <Tooltip title="列表视图">
+                  <UnorderedListOutlined /> 列表
+                </Tooltip>
+              ),
+              value: "table",
+            },
+          ]}
+        />
       </Flex>
 
       {error instanceof Error ? (
@@ -131,26 +187,47 @@ export default function HubAdminContent() {
         />
       ) : null}
 
-      <Card style={{ marginTop: 16 }} styles={{ body: { padding: 0 } }}>
-        <Table<ResourceNode>
-          rowKey="id"
-          columns={columns}
-          dataSource={data?.items ?? []}
+      {/* Topology view */}
+      {viewMode === "topology" ? (
+        <Card
+          style={{ marginTop: 8 }}
           loading={isLoading}
-          scroll={{ x: 960 }}
-          pagination={{
-            current: page,
-            pageSize: perPage,
-            total: data?.total ?? 0,
-            showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 个节点`,
-            onChange: (nextPage, nextPerPage) => {
-              setPage(nextPage)
-              setPerPage(nextPerPage)
-            },
-          }}
-        />
-      </Card>
+          styles={{ body: { padding: "32px 16px" } }}
+        >
+          {nodes.length > 0 ? (
+            <NodeTopologyView
+              nodes={nodes}
+              onNodeClick={(id) => setSelectedNodeId(id)}
+            />
+          ) : (
+            <Typography.Text type="secondary">
+              暂无注册节点。点击"注册新节点"开始。
+            </Typography.Text>
+          )}
+        </Card>
+      ) : (
+        /* Table view */
+        <Card style={{ marginTop: 8 }} styles={{ body: { padding: 0 } }}>
+          <Table<ResourceNode>
+            rowKey="id"
+            columns={columns}
+            dataSource={nodes}
+            loading={isLoading}
+            scroll={{ x: 960 }}
+            pagination={{
+              current: page,
+              pageSize: perPage,
+              total: data?.total ?? 0,
+              showSizeChanger: true,
+              showTotal: (total) => `共 ${total} 个节点`,
+              onChange: (nextPage, nextPerPage) => {
+                setPage(nextPage)
+                setPerPage(nextPerPage)
+              },
+            }}
+          />
+        </Card>
+      )}
 
       <RegisterNodeModal
         open={registerOpen}
