@@ -342,11 +342,11 @@ class IngestLogCreate(BaseModel):
 
 
 __all__ = [
+    "ChunkUploadRequest",
+    "ChunkUploadResponse",
     "ClassificationLabel",
     "ClassificationLevelCreate",
     "ClassificationLevelRead",
-    "ChunkUploadRequest",
-    "ChunkUploadResponse",
     "DataDnaCreate",
     "DataDnaRead",
     "HubNodeCreate",

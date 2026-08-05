@@ -48,7 +48,7 @@ def _resolve_chunk_root() -> Path:
 
 def set_chunk_storage_root(path: Path) -> None:
     """Override the chunk storage root (for testing)."""
-    global _CHUNK_STORAGE_ROOT  # noqa: PLW0603
+    global _CHUNK_STORAGE_ROOT
     _CHUNK_STORAGE_ROOT = path
 
 
