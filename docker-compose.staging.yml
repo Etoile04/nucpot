@@ -72,10 +72,19 @@ services:
     networks: [staging]
 
   # ---- NFM-DB Next.js web (staging front-end) --------------------------------
+  # NFM-2547: Unlike production (nginx upstream handles /api/*), staging has
+  # NO nginx or reverse proxy. Next.js must proxy /api/* itself via rewrites.
+  # Therefore API_SERVER_URL is required and DISABLE_API_REWRITE must NOT be set.
+  # The Dockerfile defaults to nucpot-prod-api (prod network), so we override
+  # both the build arg (baked at next build time) and runtime env (read by
+  # next.config.ts rewrites on each request) with staging service names.
   web:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
+      args:
+        API_SERVER_URL: "http://nucpot-staging-api:8000"
+        LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621"
     image: nucpot-staging-web:${STAGING_IMAGE_TAG:-latest}
     container_name: nucpot-staging-web
     restart: unless-stopped
@@ -83,6 +92,15 @@ services:
       - "${STAGING_WEB_HOST_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
+      # Next.js rewrite proxy target — must use staging Docker service name.
+      # Without this, the Dockerfile default (nucpot-prod-api) is used at build
+      # time, but DNS resolution fails at runtime since staging uses the
+      # nucpot-staging-* network.
+      API_SERVER_URL: "http://nucpot-staging-api:8000"
+      LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621"
+      # NFM-2547: Do NOT set DISABLE_API_REWRITE=true here. Staging has no
+      # nginx upstream, so Next.js must handle /api/* routing itself. Setting
+      # DISABLE_API_REWRITE=true would return 404 for all /api/* requests.
     depends_on:
       - api
     healthcheck:
