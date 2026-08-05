@@ -32,6 +32,13 @@ Quick start::
 from __future__ import annotations
 
 from nfm_node_client.client import NfmNodeClient
+from nfm_node_client.conflict_resolver import (
+    ConflictRecord,
+    ConflictResolution,
+    ConflictResolver,
+    ConflictType,
+    ResolutionStrategy,
+)
 from nfm_node_client.exceptions import (
     HeartbeatError,
     NfmNodeClientError,
@@ -49,6 +56,11 @@ from nfm_node_client.offline_queue import (
 )
 from nfm_node_client.pool import ConnectionPool
 from nfm_node_client.retry import RetryPolicy, compute_backoff_delay, retry_async
+from nfm_node_client.sync_engine import (
+    SyncEngine,
+    SyncEngineResult,
+    SyncPhase,
+)
 from nfm_node_client.sync_manager import (
     SyncConflictError,
     SyncManager,
@@ -63,12 +75,18 @@ from nfm_node_client.types import (
     SyncStatus,
     UploadResult,
 )
+from nfm_node_client.vector_clock import ClockComparison, VectorClock
 
 
 __version__ = "0.1.0"
 
 
 __all__ = [
+    "ClockComparison",
+    "ConflictRecord",
+    "ConflictResolution",
+    "ConflictResolver",
+    "ConflictType",
     "ConnectionPool",
     "ConnectionState",
     "Credentials",
@@ -82,17 +100,22 @@ __all__ = [
     "OperationType",
     "PendingOperation",
     "RegistrationError",
+    "ResolutionStrategy",
     "ResourceNodeRegistration",
     "RetriesExhaustedError",
     "RetryPolicy",
+    "SyncEngine",
+    "SyncEngineResult",
     "SyncConflictError",
     "SyncManager",
+    "SyncPhase",
     "SyncResult",
     "SyncStatus",
     "SyncStatusError",
     "SyncWatermark",
     "UploadError",
     "UploadResult",
+    "VectorClock",
     "__version__",
     "compute_backoff_delay",
     "retry_async",
