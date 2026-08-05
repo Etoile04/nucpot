@@ -148,13 +148,13 @@ services:
       LLM_BINDING_HOST: ${PROD_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
       LLM_BINDING_API_KEY: ${PROD_LIGHTRAG_LLM_API_KEY:?Set PROD_LIGHTRAG_LLM_API_KEY}
       EMBEDDING_BINDING: ${PROD_LIGHTRAG_EMBEDDING_BINDING:-openai}
-      # NFM-1765: nomic-embed-text (768d, ~0.065s/query on Mac CPU). Was
-      # qwen3-embedding:4b (2560d) per user decision 2026-07-24, but
-      # LightRAG 1.5.4 hybrid storage + 2560d vectors caused 60-240s
-      # query latency (cross-workspace lookup fallback). Reverting keeps
-      # E2E flow functional. See NFM-1808 followup for GPU/relay fix.
-      EMBEDDING_MODEL: ${PROD_LIGHTRAG_EMBEDDING_MODEL:-nomic-embed-text}
-      EMBEDDING_DIM: ${PROD_LIGHTRAG_EMBEDDING_DIM:-768}
+      # NFM-1849 / AC-4: bge-m3 (1024d, strong Chinese support per CTO ADR).
+      # Previous nomic-embed-text (768d) lacked Chinese nuclear-materials
+      # coverage; text-embedding-3-small was OpenAI-only.  bge-m3 runs via
+      # local Ollama — no external API cost, full multilingual support.
+      # WARNING: changing EMBEDDING_MODEL requires a full vector-index rebuild.
+      EMBEDDING_MODEL: ${PROD_LIGHTRAG_EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIM: ${PROD_LIGHTRAG_EMBEDDING_DIM:-1024}
       EMBEDDING_BINDING_HOST: ${PROD_LIGHTRAG_EMBEDDING_HOST:-http://host.docker.internal:11434/v1}
       EMBEDDING_BINDING_API_KEY: ${PROD_LIGHTRAG_EMBEDDING_API_KEY:-${PROD_LIGHTRAG_LLM_API_KEY}}
       # NFM-1764: pgvector storage backend (CTO ADR Option C — hybrid)
