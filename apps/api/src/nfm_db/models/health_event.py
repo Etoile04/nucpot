@@ -27,8 +27,7 @@ from nfm_db.models import Base
 class HealthEvent(Base):
     """Structured health event emitted by services when exceptions are caught.
 
-    Replaces bare ``except: pass`` blocks so that failures are
-    always observable.
+    Ensures caught service failures remain observable.
     """
 
     __tablename__ = "health_events"

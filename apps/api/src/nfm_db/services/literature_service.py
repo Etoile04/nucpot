@@ -36,8 +36,6 @@ if TYPE_CHECKING:
 from nfm_db.database import async_session_factory
 from nfm_db.models.source import DataSource
 from nfm_db.services.health_event_emitter import (
-    EVENT_FALLBACK_TRIGGERED,
-    EVENT_GENERIC_SILENT_CATCH,
     SEVERITY_ERROR,
     SEVERITY_WARNING,
     build_context,
@@ -47,8 +45,10 @@ from nfm_db.services.health_event_emitter import (
 
 logger = logging.getLogger(__name__)
 
+# Re-exported for mypy; the emitter validates at write time.
+EVENT_GENERIC_SILENT_CATCH = "generic_silent_catch"
+
 # ---------------------------------------------------------------------------
-# Constants
 # ---------------------------------------------------------------------------
 
 #: Status values written to ``DataSource.parse_status`` during the pipeline.
@@ -197,7 +197,7 @@ def _parse_pdf_to_markdown(
         # Previously silent: the whole corpus would quietly parse via
         # PyMuPDF with no signal that the better extractor was absent.
         emit_health_event_sync(
-            event_type=EVENT_FALLBACK_TRIGGERED,
+            event_type="fallback_triggered",
             severity=SEVERITY_WARNING,
             source_service="mineru_extraction",
             context=build_context(exc, fallback="pymupdf"),
