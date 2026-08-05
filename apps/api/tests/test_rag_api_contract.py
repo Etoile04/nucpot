@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient
 
-
 # Canonical field names — single source of truth.
 # MUST match QueryResponse in lightrag.py AND RagContractQueryResponse
 # in rag-contract.ts. If you change these, update all three locations.
