@@ -324,10 +324,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-url",
-        default=os.environ.get("PAPERCLIP_API_URL") or "http://localhost:3000",
+        default=None,
         help=(
-            "Paperclip API base URL. Defaults to $PAPERCLIP_API_URL when "
-            "set, otherwise http://localhost:3000 (NFM-2443 AC2)."
+            "Paperclip API base URL. Required — set $PAPERCLIP_API_URL "
+            "or pass --api-url explicitly (NFM-2442/NFM-2444)."
         ),
     )
     parser.add_argument(
@@ -364,6 +364,14 @@ def main() -> None:
             "--company-id is required (or set PAPERCLIP_COMPANY_ID env var)"
         )
 
+    api_url = args.api_url or os.environ.get("PAPERCLIP_API_URL")
+    if not api_url:
+        build_arg_parser().error(
+            "--api-url is required (or set PAPERCLIP_API_URL env var). "
+            "The script must not guess a host — a wrong URL silently "
+            "produces plausible-looking but false KR values (NFM-2442)."
+        )
+
     api_key = os.environ.get("PAPERCLIP_API_KEY", "")
 
     # KR-1 & KR-2: commit efficiency + waste rate.
@@ -387,7 +395,7 @@ def main() -> None:
     kr2_value: float | None
     try:
         statuses = fetch_issue_statuses(
-            all_refs, args.api_url, company_id, api_key=api_key,
+            all_refs, api_url, company_id, api_key=api_key,
         )
         metrics = calculate_metrics(enriched, statuses)
         kr1_value = metrics["metrics"]["commitEfficiency"]
@@ -407,7 +415,7 @@ def main() -> None:
     kr4_value: float | None
     try:
         done_issues = fetch_all_issues(
-            args.api_url, company_id, {"status": "done"}, api_key=api_key,
+            api_url, company_id, {"status": "done"}, api_key=api_key,
         )
         kr4_value = compute_lead_time(done_issues, args.since, args.until)
     except PaperclipFetchError as exc:
