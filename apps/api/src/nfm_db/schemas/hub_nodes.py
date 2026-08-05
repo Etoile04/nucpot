@@ -157,6 +157,6 @@ __all__ = [
     "NodeResponse",
     "NodeStatusLiteral",
     "NodeStatusUpdate",
-    "NodeTypeLiteral",
     "NodeSyncStatsResponse",
+    "NodeTypeLiteral",
 ]

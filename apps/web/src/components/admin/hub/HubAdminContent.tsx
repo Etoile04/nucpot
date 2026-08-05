@@ -196,7 +196,7 @@ export default function HubAdminContent() {
             />
           ) : (
             <Typography.Text type="secondary">
-              暂无注册节点。点击"注册新节点"开始。
+              暂无注册节点。点击&ldquo;注册新节点&rdquo;开始。
             </Typography.Text>
           )}
         </Card>
