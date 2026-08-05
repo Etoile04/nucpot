@@ -34,12 +34,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models import HubNode, ResourceNode
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.hub_nodes import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
     NodeStatusUpdate,
+    NodeSyncStatsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,8 +158,7 @@ async def register_node(
 )
 async def list_nodes(
     db: Annotated[AsyncSession, Depends(get_db)],
-    page: int = Query(1, ge=1, description="页码"),
-    limit: int = Query(20, ge=1, le=100, description="每页数量 (1..100)"),
+    params: Annotated[PaginationParams, Depends()],
     hub_node_id: uuid.UUID | None = Query(
         None, description="按所属 hub 节点过滤 (可选)",
     ),
@@ -171,12 +171,12 @@ async def list_nodes(
         count_stmt = count_stmt.where(ResourceNode.hub_node_id == hub_node_id)
 
     total = (await db.execute(count_stmt)).scalar() or 0
-    pages = (total + limit - 1) // limit if total else 0
+    pages = params.pages(total)
 
     stmt = (
         stmt.order_by(ResourceNode.created_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
+        .offset(params.offset)
+        .limit(params.per_page)
     )
     rows = (await db.execute(stmt)).scalars().all()
 
@@ -185,8 +185,8 @@ async def list_nodes(
         data=PaginatedResponse(
             items=[NodeResponse.model_validate(r) for r in rows],
             total=total,
-            page=page,
-            limit=limit,
+            page=params.page,
+            limit=params.per_page,
             pages=pages,
         ),
     )
@@ -266,6 +266,64 @@ async def receive_heartbeat(
     await db.commit()
     await db.refresh(node)
     return ApiResponse(success=True, data=NodeResponse.model_validate(node))
+
+
+# ---------------------------------------------------------------------------
+# GET /{node_id}/sync-stats — sync statistics for a node
+# ---------------------------------------------------------------------------
+
+
+def _derive_sync_status(
+    watermark: str | None,
+    heartbeat: str | None,
+    offline_since: str | None,
+) -> str:
+    """Derive a human-readable sync status from node fields."""
+    if offline_since is not None:
+        return "behind"
+    if watermark is None:
+        if heartbeat is not None:
+            return "syncing"
+        return "unknown"
+    if heartbeat is not None:
+        return "synced"
+    return "unknown"
+
+
+@router.get(
+    "/{node_id}/sync-stats",
+    response_model=ApiResponse[NodeSyncStatsResponse],
+    summary="获取节点同步统计",
+    description="Return sync statistics for a resource node, including conflict counts.",
+)
+async def get_node_sync_stats(
+    node_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ApiResponse[NodeSyncStatsResponse]:
+    """Return sync statistics for a resource node."""
+    node = await _get_node_or_404(node_id, db)
+
+    # NOTE: ConflictRecord has no FK to ResourceNode (only material_node_id
+    # and property_node_id referencing kg_nodes), so per-node conflict
+    # counts cannot be scoped here.  Conflict counts are available via the
+    # dedicated /api/v1/kg/conflicts endpoint instead.
+
+    sync_status = _derive_sync_status(
+        node.sync_watermark,
+        node.last_heartbeat,
+        node.offline_since,
+    )
+
+    return ApiResponse(
+        success=True,
+        data=NodeSyncStatsResponse(
+            node_id=node.id,
+            last_heartbeat=node.last_heartbeat,
+            sync_watermark=node.sync_watermark,
+            offline_since=node.offline_since,
+            sync_status=sync_status,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

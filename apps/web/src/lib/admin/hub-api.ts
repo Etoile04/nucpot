@@ -6,62 +6,17 @@
  */
 
 import type {
-  ApiResponse,
   NodeListQuery,
   NodeRegisterRequest,
   NodeStatus,
+  NodeSyncStats,
   PaginatedData,
   ResourceNode,
 } from "./hub-types"
 
+import { adminFetch, parseEnvelope } from "./admin-api-utils"
+
 const BASE = "/api/v1/hub/nodes"
-
-/** Wrapped fetch with credentials:'include' for all admin API calls. */
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: "include" })
-}
-
-/** Render FastAPI error payloads (string or 422 array) as one message. */
-function detailToMessage(detail: unknown): string | null {
-  if (typeof detail === "string") {
-    return detail
-  }
-  if (Array.isArray(detail)) {
-    const msgs = detail
-      .map((item) =>
-        item && typeof item === "object" && "msg" in item
-          ? String((item as { msg: unknown }).msg)
-          : null,
-      )
-      .filter((msg): msg is string => Boolean(msg))
-    if (msgs.length > 0) {
-      return msgs.join("; ")
-    }
-  }
-  return null
-}
-
-/** Parse a hub API response, unwrapping the ApiResponse envelope. */
-async function parseEnvelope<T>(response: Response, action: string): Promise<T> {
-  if (!response.ok) {
-    let message: string | null = null
-    try {
-      const body: { detail?: unknown; error?: unknown } = await response.json()
-      message =
-        detailToMessage(body.detail) ??
-        (typeof body.error === "string" ? body.error : null)
-    } catch {
-      // Non-JSON error body — fall through to the generic message.
-    }
-    throw new Error(message ?? `${action}失败 (HTTP ${response.status})`)
-  }
-
-  const result: ApiResponse<T> = await response.json()
-  if (!result.success) {
-    throw new Error(result.error || `${action}失败`)
-  }
-  return result.data as T
-}
 
 /** GET /api/v1/hub/nodes/ — paginated node list. */
 export async function listHubNodes(
@@ -110,4 +65,12 @@ export async function updateHubNodeStatus(
 export async function deregisterHubNode(nodeId: string): Promise<void> {
   const response = await adminFetch(`${BASE}/${nodeId}`, { method: "DELETE" })
   await parseEnvelope<null>(response, "注销节点")
+}
+
+/** GET /api/v1/hub/nodes/{id}/sync-stats — sync statistics for a node. */
+export async function getHubNodeSyncStats(
+  nodeId: string,
+): Promise<NodeSyncStats> {
+  const response = await adminFetch(`${BASE}/${nodeId}/sync-stats`)
+  return parseEnvelope<NodeSyncStats>(response, "获取同步统计")
 }

@@ -47,11 +47,20 @@ export interface PaginatedData<T> {
   items: T[]
   total: number
   page: number
-  per_page: number
+  limit: number
   pages: number
 }
 
 export interface NodeListQuery {
   page?: number
   per_page?: number
+}
+
+/** Sync statistics for a resource node (NFM-2030). */
+export interface NodeSyncStats {
+  node_id: string
+  last_heartbeat: string | null
+  sync_watermark: string | null
+  offline_since: string | null
+  sync_status: string
 }

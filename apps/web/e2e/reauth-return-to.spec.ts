@@ -37,7 +37,11 @@ test.describe("Re-auth returnTo round-trip", { tag: "@smoke" }, () => {
     // ---------------------------------------------------------------
     // Step 1: Login to establish an authenticated session
     // ---------------------------------------------------------------
-    await page.goto(LOGIN_PATH, { waitUntil: "networkidle" })
+    await page.goto(LOGIN_PATH, { waitUntil: "domcontentloaded" })
+    // Live NucPot keeps background requests open, so networkidle is not a
+    // reliable readiness signal. Wait for the controls this flow requires.
+    await expect(page.locator('input[type="email"]')).toBeVisible()
+    await expect(page.locator('input[name="password"]')).toBeVisible()
 
     // Fill in credentials
     await page.fill('input[type="email"]', E2E_USERNAME)
@@ -144,7 +148,11 @@ test.describe("Re-auth returnTo round-trip", { tag: "@smoke" }, () => {
   }) => {
     // Navigate directly to /admin/login — if session expires here,
     // returnTo should NOT include the login page itself
-    await page.goto(LOGIN_PATH, { waitUntil: "networkidle" })
+    await page.goto(LOGIN_PATH, { waitUntil: "domcontentloaded" })
+    // Live NucPot keeps background requests open, so networkidle is not a
+    // reliable readiness signal. Wait for the controls this flow requires.
+    await expect(page.locator('input[type="email"]')).toBeVisible()
+    await expect(page.locator('input[name="password"]')).toBeVisible()
 
     // The returnTo should NOT be set when already on the login page.
     // We verify this by checking the login page URL has no returnTo.

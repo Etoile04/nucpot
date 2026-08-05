@@ -136,4 +136,23 @@ describe("next.config.ts rewrites", () => {
       ...lightragRewrites(),
     ])
   })
+
+  // NFM-2547: Staging has no nginx upstream, so Next.js must proxy /api/*
+  // itself. API_SERVER_URL must be set and DISABLE_API_REWRITE must NOT be set.
+  // Missing API_SERVER_URL would fall back to localhost:8100 (unreachable).
+  it("proxies /api/* to staging API container + LightRAG (NFM-2547 staging config)", async () => {
+    const config = await loadConfig({
+      API_SERVER_URL: "http://nucpot-staging-api:8000",
+      LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621",
+      // DISABLE_API_REWRITE intentionally NOT set — staging needs the rewrite.
+    })
+    const rewrites = await config.rewrites!()
+    expect(rewrites).toEqual([
+      {
+        source: "/api/:path*",
+        destination: "http://nucpot-staging-api:8000/api/:path*",
+      },
+      ...lightragRewrites("http://nucpot-staging-lightrag:9621"),
+    ])
+  })
 })

@@ -58,7 +58,7 @@ def fetch_all_issues(
     "call without auth → silent empty list → plausible-looking 0.000".
 
     Args:
-        api_url: Paperclip API base URL (e.g. ``http://localhost:3000``).
+        api_url: Paperclip API base URL (no trailing slash required).
         company_id: Company UUID for scoped issue endpoint.
         params: Additional query parameters merged into every request
             (e.g. ``{"status": "done"}``).
