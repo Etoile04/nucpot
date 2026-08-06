@@ -23,11 +23,12 @@ constraint mid-feature is out of scope for this story.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,42 @@ from nfm_db.schemas.hub_nodes import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hub/nodes", tags=["Hub 节点管理"])
+
+# ---------------------------------------------------------------------------
+# Auth: Hub token validation
+# ---------------------------------------------------------------------------
+# TODO(NFM-2029-auth): Replace shared-secret HUB_TOKEN with per-node JWT
+# credentials.  The current approach validates that callers possess the hub
+# token but cannot distinguish one resource node from another.  A follow-up
+# issue should introduce JWT-based auth where the token encodes the node_id,
+# allowing sync-data endpoints to derive node identity from the token
+# directly (eliminating the path-parameter trust issue flagged in CR #679).
+
+_HUB_TOKEN: str | None = os.environ.get("HUB_TOKEN")
+
+
+async def _require_hub_token(
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    """Reject requests that lack a valid ``Authorization: Bearer <token>``.
+
+    Returns ``None`` — this is a *gate* dependency, not an identity
+    provider.  It ensures the caller possesses the shared hub secret.
+    """
+    if _HUB_TOKEN is None:
+        # No token configured — gate is disabled (dev / test mode).
+        return
+    if authorization is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header required",
+        )
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0] != "Bearer" or parts[1] != _HUB_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid hub token",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +322,7 @@ async def receive_heartbeat(
 async def fetch_sync_data(
     node_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _auth: Annotated[None, Depends(_require_hub_token)],
     since: int = Query(default=0, ge=0),
 ) -> ApiResponse[SyncDataResponse]:
     """Return operations with a monotonic sequence greater than ``since``."""
@@ -319,6 +357,7 @@ async def push_sync_data(
     node_id: uuid.UUID,
     body: SyncOperationRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _auth: Annotated[None, Depends(_require_hub_token)],
 ) -> ApiResponse[SyncOperationResponse]:
     """Idempotently persist one resource-node operation."""
     node = await _get_node_or_404(node_id, db)

@@ -14,13 +14,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import httpx
+
 from nfm_node_client.conflict_resolver import (
     ConflictRecord,
     ConflictResolver,
     ConflictResolution,
     ResolutionStrategy,
 )
-from nfm_node_client.hub_transport import HubTransport
+from nfm_node_client.exceptions import NfmNodeClientError
+from nfm_node_client.hub_transport import HubTransport, HubTransportError
 from nfm_node_client.offline_queue import OfflineQueue
 from nfm_node_client.vector_clock import ClockComparison, VectorClock
 
@@ -358,7 +361,7 @@ class SyncEngine:
                 break
             try:
                 await self._transport.push_operation(op)
-            except Exception as exc:
+            except (HubTransportError, NfmNodeClientError, httpx.HTTPError, ConnectionError) as exc:
                 self._queue.nack(op.row_id, error=str(exc))  # type: ignore[arg-type]
                 raise
             self._queue.ack(op.row_id)  # type: ignore[arg-type]

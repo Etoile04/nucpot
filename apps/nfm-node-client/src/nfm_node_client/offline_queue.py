@@ -23,6 +23,10 @@ from typing import Any
 
 _LOGGER = logging.getLogger("nfm_node_client.offline_queue")
 
+#: Maximum number of delivery retries before an operation is marked failed.
+#: Configurable at construction time via ``max_retries``.
+DEFAULT_MAX_RETRIES = 5
+
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS upload_queue (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +37,7 @@ CREATE TABLE IF NOT EXISTS upload_queue (
     priority    INTEGER NOT NULL DEFAULT 0,
     status      TEXT    NOT NULL DEFAULT 'pending',
     error       TEXT    DEFAULT NULL,
+    retry_count INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -49,6 +54,10 @@ CREATE TABLE IF NOT EXISTS sync_metadata (
     last_sync_time  TEXT    DEFAULT NULL,
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+"""
+
+_MIGRATE_RETRY_COUNT = """
+ALTER TABLE upload_queue ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
 """
 
 
@@ -72,6 +81,7 @@ class PendingOperation:
     status: str = "pending"
     error: str | None = None
     row_id: int | None = None
+    retry_count: int = 0
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -124,8 +134,9 @@ class OfflineQueue:
         does not exist.
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, max_retries: int = DEFAULT_MAX_RETRIES) -> None:
         self._db_path = db_path
+        self._max_retries = max_retries
         self._conn: sqlite3.Connection | None = None
         self._closed = False
         self._open()
@@ -142,6 +153,13 @@ class OfflineQueue:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(_SCHEMA_SQL)
+        # Migrate legacy databases that lack the retry_count column.
+        try:
+            conn.execute(_MIGRATE_RETRY_COUNT)
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists — safe to ignore.
+            pass
         self._conn = conn
 
     def _ensure_open(self) -> sqlite3.Connection:
@@ -157,6 +175,7 @@ class OfflineQueue:
     def _row_to_operation(row: sqlite3.Row) -> PendingOperation:
         """Convert a database row to a PendingOperation."""
         payload = json.loads(row["payload"]) if row["payload"] else {}
+        retry_count = row["retry_count"] if "retry_count" in row.keys() else 0
         return PendingOperation(
             op_type=OperationType(row["op_type"]),
             entity_type=row["entity_type"],
@@ -166,6 +185,7 @@ class OfflineQueue:
             status=row["status"],
             error=row["error"],
             row_id=row["id"],
+            retry_count=retry_count,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -224,8 +244,23 @@ class OfflineQueue:
         This is the production-safe counterpart to ``dequeue``: a network
         failure must not silently lose the operation before the hub confirms
         it.
+
+        Operations whose ``retry_count`` has reached ``max_retries`` are
+        automatically marked ``failed`` and skipped.
         """
         conn = self._ensure_open()
+        # Auto-fail operations that exceeded the retry limit.
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE upload_queue
+            SET status = 'failed', updated_at = ?
+            WHERE status = 'pending' AND retry_count >= ?
+            """,
+            (now, self._max_retries),
+        )
+        conn.commit()
+
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
@@ -238,7 +273,6 @@ class OfflineQueue:
         if row is None:
             return None
         operation = self._row_to_operation(row)
-        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             "UPDATE upload_queue SET status = 'in_flight', updated_at = ? WHERE id = ?",
             (now, operation.row_id),
@@ -255,16 +289,24 @@ class OfflineQueue:
         conn.commit()
 
     def nack(self, row_id: int, *, error: str = "") -> None:
-        """Return an in-flight operation to pending for a later retry."""
+        """Return an in-flight operation to pending for a later retry.
+
+        Increments ``retry_count``.  If the count reaches ``max_retries``,
+        the operation is marked ``failed`` instead of being re-queued.
+        """
         conn = self._ensure_open()
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
             UPDATE upload_queue
-            SET status = 'pending', error = ?, updated_at = ?
+            SET status = 'pending',
+                error = ?,
+                retry_count = retry_count + 1,
+                updated_at = ?
             WHERE id = ? AND status = 'in_flight'
+              AND retry_count < ?
             """,
-            (error, now, row_id),
+            (error, now, row_id, self._max_retries),
         )
         conn.commit()
 
