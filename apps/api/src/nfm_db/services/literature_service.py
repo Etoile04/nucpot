@@ -479,6 +479,45 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
             builder = GraphBuilder(db, sync_to_age=False)
             await builder.build_from_extraction(raw_properties, source_id=ds.id)
+
+            # --- Step 5b: multimodal extraction (figures + tables) ---
+            # NFM-1366: was previously dead code — run_multimodal_extraction
+            # existed but was never invoked from any pipeline path. The
+            # multimodal stage now runs in both trigger_extraction and
+            # process_literature. Failures are non-fatal (VLM may be
+            # unavailable, OCR may fail on corrupt pages).
+            if ds.file_path:
+                try:
+                    from nfm_db.services.extraction_pipeline import (
+                        ExtractionJob,
+                    )
+                    from nfm_db.services.multimodal_extraction import (
+                        run_multimodal_extraction,
+                    )
+
+                    pdf_bytes = _get_storage().read(ds.file_path)
+                    job = ExtractionJob(
+                        job_id=str(ds.id),
+                        source_reference=str(ds.id),
+                        source_type="datasource",
+                        extract_figures=True,
+                        extract_tables=True,
+                    )
+                    await run_multimodal_extraction(job, text_props=raw_properties)
+                    logger.info(
+                        "process_literature: datasource_id=%s — multimodal "
+                        "extracted %d figures, %d tables",
+                        ds.id,
+                        len(job.figures),
+                        len(job.tables),
+                    )
+                except Exception:
+                    logger.warning(
+                        "process_literature: datasource_id=%s — multimodal "
+                        "stage failed (non-fatal)",
+                        ds.id,
+                        exc_info=True,
+                    )
         else:
             logger.info(
                 "process_literature: datasource_id=%s — nothing to extract",
