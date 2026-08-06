@@ -21,6 +21,7 @@ Why this replaces PageSplitter + FigureDetector:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -473,41 +474,15 @@ async def extract_figures_with_mineru(
         "extract_figures_with_mineru: %d figures mapped to images", len(refs)
     )
 
-    # Step 3: For each figure, VLM extract + verify
-    results: list[ExtractionResult] = []
-    for ref in refs[:max_images]:
-        try:
-            extracted, e_elapsed, e_tokens = await vlm_extract(
-                vlm_client, ref.image_bytes
-            )
-            verification = None
-            v_elapsed = 0.0
-            if extracted is not None:
-                verification, v_elapsed = await vlm_verify(
-                    vlm_client, ref.image_bytes, extracted
-                )
-            results.append(
-                ExtractionResult(
-                    figure_ref=ref,
-                    extracted=extracted,
-                    verification=verification,
-                    extract_elapsed=e_elapsed,
-                    verify_elapsed=v_elapsed,
-                    extract_tokens=e_tokens,
-                )
-            )
-        except Exception as exc:
-            logger.warning(
-                "extract_figures_with_mineru: VLM failed for %s: %s",
-                ref.image_ref,
-                exc,
-            )
-            results.append(
-                ExtractionResult(
-                    figure_ref=ref, extracted=None, verification=None
-                )
-            )
-
+    # Step 3: For each figure, VLM extract + verify in parallel
+    # P2 optimization (NFM-1366): use asyncio.gather with bounded concurrency
+    # to overlap VLM round-trips. Ollama serves minicpm-v4.5:8b single-stream
+    # but minicpm-v vision still allows concurrent calls (each has its own
+    # forward pass). Cap concurrency at 6 to avoid VRAM contention.
+    refs_to_process = refs[:max_images]
+    results = await _process_figures_parallel(
+        vlm_client, refs_to_process, concurrency=6
+    )
     return results
 
 
@@ -516,6 +491,64 @@ def _get_mineru_api_key() -> str | None:
     import os
 
     return os.environ.get("MINERU_API_KEY")
+
+
+async def _process_figures_parallel(
+    vlm_client: Any,
+    refs: list[FigureRef],
+    *,
+    concurrency: int = 6,
+) -> list[ExtractionResult]:
+    """Run vlm_extract + vlm_verify across multiple figures concurrently.
+
+    Uses a semaphore to cap concurrent VLM calls at *concurrency*. Each
+    figure still needs extract before verify (sequential dependency), but
+    different figures' pipelines run in parallel.
+
+    Args:
+        vlm_client: OpenAI-compatible VLM client.
+        refs: List of FigureRef to process.
+        concurrency: Max simultaneous VLM HTTP calls. Defaults to 6
+            (chosen empirically to fit minicpm-v4.5:8b in 6 GB VRAM).
+
+    Returns:
+        One ExtractionResult per input ref, in the same order. Failed
+        VLM calls yield a result with extracted=None.
+    """
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _process_one(ref: FigureRef) -> ExtractionResult:
+        async with sem:
+            try:
+                extracted, e_elapsed, e_tokens = await vlm_extract(
+                    vlm_client, ref.image_bytes
+                )
+                verification = None
+                v_elapsed = 0.0
+                if extracted is not None:
+                    verification, v_elapsed = await vlm_verify(
+                        vlm_client, ref.image_bytes, extracted
+                    )
+                return ExtractionResult(
+                    figure_ref=ref,
+                    extracted=extracted,
+                    verification=verification,
+                    extract_elapsed=e_elapsed,
+                    verify_elapsed=v_elapsed,
+                    extract_tokens=e_tokens,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_process_figures_parallel: VLM failed for %s: %s",
+                    ref.image_ref,
+                    exc,
+                )
+                return ExtractionResult(
+                    figure_ref=ref, extracted=None, verification=None
+                )
+
+    coros = [_process_one(ref) for ref in refs]
+    return list(await asyncio.gather(*coros))
 
 
 # ---------------------------------------------------------------------------
