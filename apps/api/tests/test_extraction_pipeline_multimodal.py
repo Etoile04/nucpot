@@ -31,23 +31,14 @@ from nfm_db.services.extraction_pipeline import (
 # signal.  Markers are now applied per-test, with ``strict=True`` so that
 # implementing the underlying capability fails the suite until the marker is removed.
 #
-# Two limitations remain (both tracked by NFM-1366):
-#   1. ``trigger_extraction()`` accepts ``extract_figures``/``extract_tables`` but
-#      not ``figure_types``/``confidence_threshold``/``conflict_strategy``.
-#   2. ``multimodal_extraction.run_multimodal_extraction()`` is implemented but is
-#      never invoked from ``trigger_extraction()``.
+# NFM-1366 partially resolved (2026-08-06): multimodal stage is now wired into
+# trigger_extraction(). The remaining limitation is that trigger_extraction()
+# still does not accept figure_types/confidence_threshold/conflict_strategy
+# kwargs — those remain xfailed.
 _XFAIL_UNSUPPORTED_KWARGS = pytest.mark.xfail(
     reason=(
         "NFM-1366: trigger_extraction() accepts extract_figures/extract_tables but "
         "not figure_types/confidence_threshold/conflict_strategy (raises TypeError)"
-    ),
-    strict=True,
-)
-
-_XFAIL_STAGE_NOT_WIRED = pytest.mark.xfail(
-    reason=(
-        "NFM-1366: multimodal_extraction.run_multimodal_extraction() is implemented "
-        "but is never called from trigger_extraction(), so the stage never runs"
     ),
     strict=True,
 )
@@ -278,10 +269,8 @@ class TestTriggerExtractionMultimodalOptions:
 class TestMultimodalPipelineExecution:
     """Tests for multimodal stage running after text extraction."""
 
-    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_multimodal_runs_when_extract_figures_true(self) -> None:
-        """When extract_figures=True, run_multimodal_extraction is called."""
         session = _make_mock_session()
         stack, mock_extract, mock_qg, mock_gs = _make_mock_pipeline_dependencies()
         with stack:
@@ -303,7 +292,6 @@ class TestMultimodalPipelineExecution:
                 )
                 mock_mm.assert_awaited_once()
 
-    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_multimodal_runs_when_extract_tables_true(self) -> None:
         """When extract_tables=True, run_multimodal_extraction is called."""
@@ -350,7 +338,6 @@ class TestMultimodalPipelineExecution:
                 )
                 mock_mm.assert_not_awaited()
 
-    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_stub_mode_populates_figures_and_tables(self) -> None:
         """In stub mode, figures and tables are populated on the job."""
