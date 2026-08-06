@@ -686,6 +686,35 @@ async def trigger_extraction(
                     exc_info=True,
                 )
 
+        # Stage 5b: Multimodal extraction (figures + tables)
+        # Runs after KG build so that text-extracted properties are already
+        # staged. VLM/OCR failures are non-fatal (caught inside
+        # run_multimodal_extraction). NFM-1366: previously dead code — the
+        # function existed but was never called from this pipeline.
+        if extract_figures or extract_tables:
+            try:
+                from nfm_db.services.multimodal_extraction import (
+                    run_multimodal_extraction,
+                )
+
+                await run_multimodal_extraction(job, text_props=mapped)
+
+                fig_count = len(job.figures)
+                tbl_count = len(job.tables)
+                logger.info(
+                    "Job %s: multimodal extraction completed — "
+                    "figures=%d tables=%d",
+                    job_id,
+                    fig_count,
+                    tbl_count,
+                )
+            except Exception:
+                logger.warning(
+                    "Job %s: multimodal extraction stage failed (non-fatal)",
+                    job_id,
+                    exc_info=True,
+                )
+
         final_status = JobStatus.PARTIAL if rejected > 0 else JobStatus.COMPLETED
         _update_job(
             job,
