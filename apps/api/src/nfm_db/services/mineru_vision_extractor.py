@@ -210,7 +210,8 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
         result: dict[str, Any] | None = json.loads(text)
         return result
     except json.JSONDecodeError:
-        pass
+        # Expected for malformed VLM output; move to recovery strategy.
+        logger.debug("parse_vlm_json: direct parse failed, trying recovery")
 
     # Strategy 2: strip code fences
     cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip())
@@ -219,7 +220,7 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
         parsed: dict[str, Any] | None = json.loads(cleaned)
         return parsed
     except json.JSONDecodeError:
-        pass
+        logger.debug("parse_vlm_json: code-fence strip failed, trying recovery")
 
     # Strategy 3: extract first balanced {...}
     m = re.search(r"\{[^{}]*\}", text)
@@ -228,7 +229,7 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
             parsed = json.loads(m.group(0))
             return parsed
         except json.JSONDecodeError:
-            pass
+            logger.debug("parse_vlm_json: balanced extract failed, trying recovery")
 
     # Strategy 4: greedy balanced parse, try each } from end
     start = text.find("{")
@@ -244,6 +245,8 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
                     ):
                         return obj
                 except json.JSONDecodeError:
+                    # Expected during greedy trial-and-error — try next substring.
+                    logger.debug("parse_vlm_json: greedy substring failed at end=%d", end)
                     continue
 
     return None
