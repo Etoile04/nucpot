@@ -207,7 +207,8 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
     """
     # Strategy 1: direct parse
     try:
-        return json.loads(text)
+        result: dict[str, Any] | None = json.loads(text)
+        return result
     except json.JSONDecodeError:
         pass
 
@@ -215,7 +216,8 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
     cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip())
     cleaned = re.sub(r"\s*```$", "", cleaned)
     try:
-        return json.loads(cleaned)
+        parsed: dict[str, Any] | None = json.loads(cleaned)
+        return parsed
     except json.JSONDecodeError:
         pass
 
@@ -223,7 +225,8 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
     m = re.search(r"\{[^{}]*\}", text)
     if m:
         try:
-            return json.loads(m.group(0))
+            parsed = json.loads(m.group(0))
+            return parsed
         except json.JSONDecodeError:
             pass
 
@@ -235,7 +238,10 @@ def parse_vlm_json(text: str) -> dict[str, Any] | None:
                 try:
                     obj = json.loads(text[start:end])
                     # Look for any expected key
-                    if any(k in obj for k in ("type", "accuracy", "title", "rows", "headers", "series")):
+                    if isinstance(obj, dict) and any(
+                        k in obj
+                        for k in ("type", "accuracy", "title", "rows", "headers", "series")
+                    ):
                         return obj
                 except json.JSONDecodeError:
                     continue

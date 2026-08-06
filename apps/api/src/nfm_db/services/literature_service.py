@@ -349,7 +349,7 @@ async def _extract_via_mineru_vlm(
                 )
                 resp.raise_for_status()
                 data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            return str(data["choices"][0]["message"]["content"])
 
         vlm_client: Any = _vlm_call
     except Exception as exc:
