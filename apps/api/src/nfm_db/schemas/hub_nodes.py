@@ -194,9 +194,9 @@ __all__ = [
     "NodeStatusLiteral",
     "NodeStatusUpdate",
     "NodeSyncStatsResponse",
+    "NodeTypeLiteral",
     "SyncDataItem",
     "SyncDataResponse",
     "SyncOperationRequest",
     "SyncOperationResponse",
-    "NodeTypeLiteral",
 ]

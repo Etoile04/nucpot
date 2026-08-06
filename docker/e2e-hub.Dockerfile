@@ -17,4 +17,4 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=5 \
     pip install --no-cache-dir --default-timeout=180 --retries=10 /app/api /app/node
 
 EXPOSE 8000
-CMD ["sh", "-c", "cd /app/api && alembic upgrade 040_create_sync_operations && python /app/api/e2e/seed_hub.py && exec uvicorn nfm_db.main:app --host 0.0.0.0 --port 8000 --http h11"]
+CMD ["sh", "-c", "cd /app/api && alembic upgrade heads && python /app/api/e2e/seed_hub.py && exec uvicorn nfm_db.main:app --host 0.0.0.0 --port 8000 --http h11"]

@@ -1,22 +1,16 @@
-"""Persist Hub sync operations as an isolated head.
+"""Persist Hub sync operations.
 
-The main alembic chain (d3ddb691ae20 -> 022 -> ...) cannot be applied to a
-clean PostgreSQL database because the mid-chain migrations 011-021 reference
-objects (e.g. ``extraction_results``) that are only created by their
-siblings, and several files share the same numeric revision id
-(``revision: "013"``). ``alembic upgrade head`` stops at 022 with
-``UndefinedTableError`` on a fresh DB and the chain is unreachable from
-``head`` in both directions.
+Add the new ``sync_operations`` table that backs
+``GET/POST /api/v1/hub/nodes/{node_id}/sync-data``. Idempotent on
+fresh DBs because the migration also re-creates the minimum
+``hub_nodes`` and ``resource_nodes`` shape the FK needs.
 
-For the C-full E2E (NFM-2029) we only need ``sync_operations`` plus the
-``units`` / ``unit_conversions`` / ``property_categories`` seed that
-``009`` + ``010`` provide, plus a ``hub_nodes`` row for the resource daemons
-to register against. The Hub also has a hard FK to ``resource_nodes`` (which
-``d3ddb691ae20`` line creates), so we make ``040`` an independent head
-``down_revision = "010"``. Operationally we stamp the alembic version to
-``010`` after the seed step runs (see ``apps/api/e2e/seed_hub.py`` for the
-production path) and re-run ``alembic upgrade`` to apply this migration
-without traversing the broken mid-chain.
+The Hub FastAPI service depends on these tables existing before the
+container starts uvicorn, so the migration is independent of the
+unrelated main-line chain (``d3ddb691ae20 -> 022 -> 039``) which is
+broken on a clean PostgreSQL database. The two branches are united
+by ``041_merge_010_and_039`` so CI's NFM-167 single-head gate stays
+green.
 """
 from collections.abc import Sequence
 
@@ -25,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 revision: str = "040_create_sync_operations"
-down_revision: str | Sequence[str] | None = "010"
+down_revision: str | Sequence[str] | None = "041_merge_010_and_039"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
