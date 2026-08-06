@@ -101,7 +101,10 @@ def upgrade() -> None:
             sa.column("source", sa.String),
             sa.column("status", sa.String),
         ),
-        [{**p, "status": "published"} for p in potentials],
+        [
+            {**p, "status": "published", "lammps_config": p.get("lammps_config", {})}
+            for p in potentials
+        ],
     )
 
 

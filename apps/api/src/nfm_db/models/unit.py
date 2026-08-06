@@ -83,7 +83,7 @@ class UnitConversion(TimestampMixin, Base):
         ForeignKey("units.id", ondelete="CASCADE"),
     )
     factor: Mapped[float] = mapped_column(Numeric(20, 10))
-    offset: Mapped[float] = mapped_column(Numeric(20, 10), default=0.0)
+    offset_value: Mapped[float] = mapped_column(Numeric(20, 10), default=0.0)
 
     # -- relationships --
     source_unit: Mapped["Unit"] = relationship(

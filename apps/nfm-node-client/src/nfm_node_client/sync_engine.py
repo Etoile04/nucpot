@@ -14,12 +14,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import httpx
+
 from nfm_node_client.conflict_resolver import (
     ConflictRecord,
     ConflictResolver,
     ConflictResolution,
     ResolutionStrategy,
 )
+from nfm_node_client.exceptions import NfmNodeClientError
+from nfm_node_client.hub_transport import HubTransport, HubTransportError
 from nfm_node_client.offline_queue import OfflineQueue
 from nfm_node_client.vector_clock import ClockComparison, VectorClock
 
@@ -95,6 +99,7 @@ class SyncEngine:
         hub_url: str,
         watermark: int = 0,
         auto_resolve: bool = True,
+        transport: HubTransport | None = None,
     ) -> None:
         if not node_id:
             raise ValueError("node_id is required")
@@ -107,6 +112,7 @@ class SyncEngine:
         self._watermark = watermark
         self._auto_resolve = auto_resolve
         self._resolver = ConflictResolver()
+        self._transport = transport
         self._closed = False
 
         # Local vector clocks per entity for conflict detection
@@ -333,22 +339,32 @@ class SyncEngine:
     # ------------------------------------------------------------------
 
     async def _fetch_all_records(self) -> list[dict[str, Any]]:
-        """Fetch all records from the hub. Override for testing or HTTP."""
-        # Production: GET /api/v1/hub/nodes/{node_id}/sync-data
-        return []
+        """Fetch all records from the configured transport."""
+        if self._transport is None:
+            raise RuntimeError("SyncEngine requires a HubTransport for real I/O")
+        return await self._transport.fetch_all_records()
 
     async def _fetch_incremental_records(self, since: int) -> list[dict[str, Any]]:
-        """Fetch records changed since the given watermark. Override for testing."""
-        # Production: GET /api/v1/hub/nodes/{node_id}/sync-data?since={since}
-        return []
+        """Fetch records changed since the given watermark."""
+        if self._transport is None:
+            raise RuntimeError("SyncEngine requires a HubTransport for real I/O")
+        return await self._transport.fetch_incremental_records(since)
 
     async def _push_local_changes(self) -> int:
-        """Push pending local operations to the hub. Returns count pushed."""
+        """Push pending local operations, retaining them until Hub ACK."""
+        if self._transport is None:
+            raise RuntimeError("SyncEngine requires a HubTransport for real I/O")
         count = 0
         while True:
-            op = self._queue.dequeue()
+            op = self._queue.claim()
             if op is None:
                 break
+            try:
+                await self._transport.push_operation(op)
+            except (HubTransportError, NfmNodeClientError, httpx.HTTPError, ConnectionError) as exc:
+                self._queue.nack(op.row_id, error=str(exc))  # type: ignore[arg-type]
+                raise
+            self._queue.ack(op.row_id)  # type: ignore[arg-type]
             count += 1
             existing = self._local_clocks.get(op.entity_id)
             if existing is not None:

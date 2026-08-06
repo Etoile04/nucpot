@@ -77,14 +77,50 @@ class NodeStatusUpdate(BaseModel):
 
 
 class NodeHeartbeatRequest(BaseModel):
-    """Body for ``POST /api/v1/hub/nodes/{node_id}/heartbeat``.
-
-    Body is optional and currently carries no client-supplied fields;
-    the hub stamps ``last_heartbeat`` with the server-side UTC now.
-    Reserved for future ``{client_metrics: ...}`` payload.
-    """
+    """Body for ``POST /api/v1/hub/nodes/{node_id}/heartbeat``."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class SyncOperationRequest(BaseModel):
+    """Idempotent operation pushed by a resource node."""
+
+    operation_id: uuid.UUID
+    op_type: Literal["create", "update", "delete"]
+    entity_type: str = Field(min_length=1, max_length=100)
+    entity_id: str = Field(min_length=1, max_length=200)
+    payload: dict[str, object] = Field(default_factory=dict)
+    priority: int = 0
+    vector_clock: dict[str, object] | None = None
+
+
+class SyncOperationResponse(BaseModel):
+    """Stored operation and its monotonic Hub watermark."""
+
+    operation_id: uuid.UUID
+    watermark: int
+    duplicate: bool = False
+
+
+class SyncDataItem(BaseModel):
+    """Operation returned by incremental sync."""
+
+    sync_id: int
+    operation_id: uuid.UUID
+    resource_node_id: uuid.UUID
+    op_type: str
+    entity_type: str
+    entity_id: str
+    payload: dict[str, object]
+    vector_clock: dict[str, object] = Field(default_factory=dict)
+    updated_at: float = 0.0
+
+
+class SyncDataResponse(BaseModel):
+    """Incremental operation page for one node."""
+
+    items: list[SyncDataItem]
+    watermark: int
 
 
 # ---------------------------------------------------------------------------
@@ -159,4 +195,8 @@ __all__ = [
     "NodeStatusUpdate",
     "NodeSyncStatsResponse",
     "NodeTypeLiteral",
+    "SyncDataItem",
+    "SyncDataResponse",
+    "SyncOperationRequest",
+    "SyncOperationResponse",
 ]

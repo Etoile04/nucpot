@@ -199,6 +199,7 @@ from nfm_db.models.source import (  # noqa: E402
     DataSource,
     DataSourceAuthor,
 )
+from nfm_db.models.sync_operation import SyncOperation  # noqa: E402
 from nfm_db.models.unit import (  # noqa: E402
     Unit,
     UnitConversion,
@@ -284,6 +285,7 @@ __all__ = [
     "ReviewMixin",
     "ReviewStatus",
     "StagingStatus",
+    "SyncOperation",
     "TaskStatus",
     "TimestampMixin",
     "Unit",
