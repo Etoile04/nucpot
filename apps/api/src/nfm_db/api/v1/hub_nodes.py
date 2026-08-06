@@ -62,9 +62,6 @@ router = APIRouter(prefix="/hub/nodes", tags=["Hub 节点管理"])
 # allowing sync-data endpoints to derive node identity from the token
 # directly (eliminating the path-parameter trust issue flagged in CR #679).
 
-_HUB_TOKEN: str | None = os.environ.get("HUB_TOKEN")
-
-
 async def _require_hub_token(
     authorization: Annotated[str | None, Header()] = None,
 ) -> None:
@@ -72,8 +69,13 @@ async def _require_hub_token(
 
     Returns ``None`` — this is a *gate* dependency, not an identity
     provider.  It ensures the caller possesses the shared hub secret.
+
+    Reads ``HUB_TOKEN`` from the environment on every call rather than
+    capturing it at import time, so it stays fresh across app reloads
+    and mid-process env changes in tests (CR #679 finding 3).
     """
-    if _HUB_TOKEN is None:
+    hub_token: str | None = os.environ.get("HUB_TOKEN")
+    if hub_token is None:
         # No token configured — gate is disabled (dev / test mode).
         return
     if authorization is None:
@@ -82,7 +84,7 @@ async def _require_hub_token(
             detail="Authorization header required",
         )
     parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0] != "Bearer" or parts[1] != _HUB_TOKEN:
+    if len(parts) != 2 or parts[0] != "Bearer" or parts[1] != hub_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid hub token",
@@ -390,7 +392,10 @@ async def push_sync_data(
     )
     db.add(operation)
     await db.flush()
-    node.sync_watermark = str(operation.sequence_no)
+    # Derive watermark from MAX(sequence_no) instead of writing to
+    # node.sync_watermark on every push.  This eliminates the read-
+    # modify-write race when concurrent POST requests arrive for the
+    # same node (CR #679 finding 2).
     await db.commit()
     await db.refresh(operation)
     return ApiResponse(

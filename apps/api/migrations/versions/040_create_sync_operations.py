@@ -30,7 +30,14 @@ def upgrade() -> None:
     # d3ddb691ae20 -> 022 chain. Recreate just the columns the new
     # ``sync_operations`` FK + Hub registration path need. Idempotent
     # so re-running on a DB that already has the full table is a no-op.
-    bind.execute(
+    #
+    # These raw DDL statements must be visible to the follow-on
+    # seed_hub.py which runs in a fresh process.  We use AUTOCOMMIT
+    # so each statement commits immediately, rather than issuing a
+    # bare COMMIT which breaks alembic's own transaction wrapping
+    # (CR #679 finding 1).
+    autocommit = bind.execution_options(isolation_level="AUTOCOMMIT")
+    autocommit.execute(
         sa.text(
             "CREATE TABLE IF NOT EXISTS hub_nodes ("
             " id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
@@ -44,7 +51,7 @@ def upgrade() -> None:
             ")"
         )
     )
-    bind.execute(
+    autocommit.execute(
         sa.text(
             "CREATE TABLE IF NOT EXISTS resource_nodes ("
             " id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
@@ -90,11 +97,6 @@ def upgrade() -> None:
         ["resource_node_id"],
         unique=False,
     )
-    # Force a COMMIT so the just-created tables are visible to the
-    # follow-on seed_hub.py that runs in a fresh process. Without this
-    # the enclosing alembic transaction holds the DDL until exit and the
-    # Hub boot script sees ``UndefinedTableError`` for ``hub_nodes``.
-    bind.execute(sa.text("COMMIT"))
 
 
 def downgrade() -> None:
