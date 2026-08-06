@@ -20,9 +20,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create _ref_gap_fill_staging table with enums and indexes."""
-    op.execute("CREATE TYPE IF NOT EXISTS confidence_enum AS ENUM ('high', 'medium', 'low')")
-    op.execute("CREATE TYPE IF NOT EXISTS staging_status_enum AS ENUM ('pending', 'approved', 'rejected', 'promoted')")
-    op.execute("CREATE TYPE IF NOT EXISTS cache_level_enum AS ENUM ('L1', 'L2', 'L3A', 'L3B')")
+    op.execute("DO $$ BEGIN CREATE TYPE confidence_enum AS ENUM ('high', 'medium', 'low'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
+    op.execute("DO $$ BEGIN CREATE TYPE staging_status_enum AS ENUM ('pending', 'approved', 'rejected', 'promoted'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
+    op.execute("DO $$ BEGIN CREATE TYPE cache_level_enum AS ENUM ('L1', 'L2', 'L3A', 'L3B'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
 
     op.execute("""
         CREATE TABLE IF NOT EXISTS _ref_gap_fill_staging (

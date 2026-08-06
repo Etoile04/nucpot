@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models import HubNode, ResourceNode
+from nfm_db.models import HubNode, ResourceNode, SyncOperation
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.hub_nodes import (
     NodeHeartbeatRequest,
@@ -41,6 +41,10 @@ from nfm_db.schemas.hub_nodes import (
     NodeResponse,
     NodeStatusUpdate,
     NodeSyncStatsResponse,
+    SyncDataItem,
+    SyncDataResponse,
+    SyncOperationRequest,
+    SyncOperationResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -266,6 +270,97 @@ async def receive_heartbeat(
     await db.commit()
     await db.refresh(node)
     return ApiResponse(success=True, data=NodeResponse.model_validate(node))
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /{node_id}/sync-data — durable incremental sync
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{node_id}/sync-data",
+    response_model=ApiResponse[SyncDataResponse],
+    summary="拉取节点增量同步数据",
+)
+async def fetch_sync_data(
+    node_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    since: int = Query(default=0, ge=0),
+) -> ApiResponse[SyncDataResponse]:
+    """Return operations with a monotonic sequence greater than ``since``."""
+    await _get_node_or_404(node_id, db)
+    rows = (
+        await db.execute(
+            select(SyncOperation)
+            .where(
+                SyncOperation.resource_node_id == node_id,
+                SyncOperation.sequence_no > since,
+            )
+            .order_by(SyncOperation.sequence_no.asc())
+            .limit(1000)
+        )
+    ).scalars().all()
+    watermark = rows[-1].sequence_no if rows else since
+    return ApiResponse(
+        success=True,
+        data=SyncDataResponse(
+            items=[SyncDataItem(**row.as_record()) for row in rows],
+            watermark=watermark,
+        ),
+    )
+
+
+@router.post(
+    "/{node_id}/sync-data",
+    response_model=ApiResponse[SyncOperationResponse],
+    summary="推送节点同步操作",
+)
+async def push_sync_data(
+    node_id: uuid.UUID,
+    body: SyncOperationRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ApiResponse[SyncOperationResponse]:
+    """Idempotently persist one resource-node operation."""
+    node = await _get_node_or_404(node_id, db)
+    existing = (
+        await db.execute(
+            select(SyncOperation).where(
+                SyncOperation.resource_node_id == node_id,
+                SyncOperation.operation_id == body.operation_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return ApiResponse(
+            success=True,
+            data=SyncOperationResponse(
+                operation_id=existing.operation_id,
+                watermark=existing.sequence_no,
+                duplicate=True,
+            ),
+        )
+
+    operation = SyncOperation(
+        operation_id=body.operation_id,
+        resource_node_id=node_id,
+        op_type=body.op_type,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        payload=body.payload,
+        vector_clock=body.vector_clock,
+    )
+    db.add(operation)
+    await db.flush()
+    node.sync_watermark = str(operation.sequence_no)
+    await db.commit()
+    await db.refresh(operation)
+    return ApiResponse(
+        success=True,
+        data=SyncOperationResponse(
+            operation_id=operation.operation_id,
+            watermark=operation.sequence_no,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

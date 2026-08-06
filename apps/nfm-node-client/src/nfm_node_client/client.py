@@ -50,6 +50,12 @@ def _is_retryable_response(status: int) -> bool:
     return status >= 500 or status == 429
 
 
+def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
+    """Accept the standard ApiResponse envelope and legacy bare payloads."""
+    data = payload.get("data")
+    return data if isinstance(data, dict) else payload
+
+
 class NfmNodeClient:
     """Async client for a resource node to talk to its hub.
 
@@ -213,7 +219,7 @@ class NfmNodeClient:
 
         async def post() -> httpx.Response:
             response = await self._http_client().post(
-                f"{DEFAULT_BASE_PATH}/register",
+                f"{self._hub_url}{DEFAULT_BASE_PATH}/register",
                 json=body,
                 **self._request_kwargs(),
             )
@@ -230,7 +236,7 @@ class NfmNodeClient:
                 f"register failed: {response.status_code} {response.text}",
                 status_code=response.status_code,
             )
-        payload = response.json()
+        payload = _unwrap_data(response.json())
         registration = ResourceNodeRegistration.from_api(payload)
         self._node_id = registration.node_id
         _LOGGER.info(
@@ -269,7 +275,7 @@ class NfmNodeClient:
 
         async def post() -> httpx.Response:
             response = await self._http_client().post(
-                f"{DEFAULT_BASE_PATH}/{effective_node_id}/heartbeat",
+                f"{self._hub_url}{DEFAULT_BASE_PATH}/{effective_node_id}/heartbeat",
                 **self._request_kwargs(),
             )
             if _is_retryable_response(response.status_code):
@@ -285,7 +291,14 @@ class NfmNodeClient:
                 f"heartbeat failed: {response.status_code} {response.text}",
                 status_code=response.status_code,
             )
-        return HeartbeatResponse.from_api(response.json())
+        payload = _unwrap_data(response.json())
+        if "node_id" in payload:
+            return HeartbeatResponse.from_api(payload)
+        return HeartbeatResponse(
+            node_id=uuid.UUID(str(payload["id"])),
+            ack=True,
+            received_at=payload.get("last_heartbeat"),
+        )
 
     async def start_heartbeat_loop(self) -> None:
         """Start a background task that calls heartbeat() at the configured interval.
@@ -371,7 +384,7 @@ class NfmNodeClient:
 
         async def post() -> httpx.Response:
             response = await self._http_client().post(
-                f"{DEFAULT_BASE_PATH}/{effective_node_id}/upload",
+                f"{self._hub_url}{DEFAULT_BASE_PATH}/{effective_node_id}/upload",
                 json=body,
                 **self._request_kwargs(),
             )
@@ -388,7 +401,8 @@ class NfmNodeClient:
                 f"upload init failed: {response.status_code} {response.text}",
                 status_code=response.status_code,
             )
-        return UploadResult.from_api(response.json())
+        payload = _unwrap_data(response.json())
+        return UploadResult.from_api(payload)
 
     # ------------------------------------------------------------------
     # Public API — get_sync_status
@@ -405,7 +419,7 @@ class NfmNodeClient:
 
         async def get() -> httpx.Response:
             response = await self._http_client().get(
-                f"{DEFAULT_BASE_PATH}/{effective_node_id}/sync-status",
+                f"{self._hub_url}{DEFAULT_BASE_PATH}/{effective_node_id}/sync-status",
                 **self._request_kwargs(),
             )
             if _is_retryable_response(response.status_code):
@@ -421,7 +435,14 @@ class NfmNodeClient:
                 f"sync-status failed: {response.status_code} {response.text}",
                 status_code=response.status_code,
             )
-        return SyncStatus.from_api(response.json())
+        payload = _unwrap_data(response.json())
+        if "sync_status" in payload:
+            return SyncStatus(
+                node_id=effective_node_id,
+                online=payload["sync_status"] == "synced",
+                sync_watermark=payload.get("sync_watermark"),
+            )
+        return SyncStatus.from_api(payload)
 
     # ------------------------------------------------------------------
     # Lifecycle

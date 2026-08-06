@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -215,6 +216,72 @@ class OfflineQueue:
         conn.execute("DELETE FROM upload_queue WHERE id = ?", (op.row_id,))
         conn.commit()
         return op
+
+    def claim(self) -> PendingOperation | None:
+        """Claim one pending operation without deleting it.
+
+        A claimed operation remains durable until :meth:`ack` is called.
+        This is the production-safe counterpart to ``dequeue``: a network
+        failure must not silently lose the operation before the hub confirms
+        it.
+        """
+        conn = self._ensure_open()
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT * FROM upload_queue
+            WHERE status = 'pending'
+            ORDER BY priority DESC, id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        operation = self._row_to_operation(row)
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE upload_queue SET status = 'in_flight', updated_at = ? WHERE id = ?",
+            (now, operation.row_id),
+        )
+        conn.commit()
+        return PendingOperation(
+            **{**operation.__dict__, "status": "in_flight", "updated_at": now}
+        )
+
+    def ack(self, row_id: int) -> None:
+        """Acknowledge a successfully delivered operation."""
+        conn = self._ensure_open()
+        conn.execute("DELETE FROM upload_queue WHERE id = ?", (row_id,))
+        conn.commit()
+
+    def nack(self, row_id: int, *, error: str = "") -> None:
+        """Return an in-flight operation to pending for a later retry."""
+        conn = self._ensure_open()
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE upload_queue
+            SET status = 'pending', error = ?, updated_at = ?
+            WHERE id = ? AND status = 'in_flight'
+            """,
+            (error, now, row_id),
+        )
+        conn.commit()
+
+    def recover_in_flight(self) -> int:
+        """Requeue operations left in-flight by a crashed process."""
+        conn = self._ensure_open()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE upload_queue
+            SET status = 'pending', updated_at = ?
+            WHERE status = 'in_flight'
+            """,
+            (now,),
+        )
+        conn.commit()
+        return cursor.rowcount
 
     # ------------------------------------------------------------------
     # Peek / Size / Queries
