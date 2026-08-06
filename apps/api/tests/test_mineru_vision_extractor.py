@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import base64
 import io
-import json
 
 import pytest
-
 from PIL import Image
 
 from nfm_db.services.mineru_vision_extractor import (
+    ExtractionResult,
     FigureRef,
     extract_figures_with_mineru,
     image_to_base64_jpeg,
@@ -20,9 +19,7 @@ from nfm_db.services.mineru_vision_extractor import (
     to_job_figure,
     vlm_extract,
     vlm_verify,
-    ExtractionResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_figure_refs

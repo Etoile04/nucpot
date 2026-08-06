@@ -437,7 +437,6 @@ async def extract_figures_with_mineru(
     """
     from nfm_db.services.mineru_client import (
         MinerUClient,
-        MinerUError,
     )
 
     if mineru_client is None:
@@ -553,14 +552,14 @@ def to_job_figure(result: ExtractionResult, source_reference: str) -> dict[str, 
 
 
 __all__ = [
-    "FigureRef",
     "ExtractionResult",
+    "FigureRef",
+    "extract_figures_with_mineru",
+    "image_to_base64_jpeg",
     "parse_figure_refs",
     "parse_vlm_json",
     "resize_for_vlm",
-    "image_to_base64_jpeg",
+    "to_job_figure",
     "vlm_extract",
     "vlm_verify",
-    "extract_figures_with_mineru",
-    "to_job_figure",
 ]
