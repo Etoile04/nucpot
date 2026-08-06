@@ -1312,3 +1312,135 @@ class TestNoAgentDependency:
         assert "from anthropic" not in text
         assert "import openai" not in text
         assert "from openai" not in text
+
+
+# ---------------------------------------------------------------------------
+# 16. Context-window warning (NFM-2538, daily reflection 2026-08-06 §3.2)
+# ---------------------------------------------------------------------------
+
+
+class TestContextWindowWarning:
+    """The legacy ``call_llm`` function must log a warning when the
+    combined prompt approaches a known model's context window, so an
+    operator sees over-budget inputs instead of paying for a wasted call
+    that silently truncates.
+    """
+
+    @pytest.fixture
+    def _stub_http(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        """Stub the HTTP call so call_llm completes without the network.
+
+        Returns a dict that records the call (we don't assert on the
+        request body for these tests — the contract under test is the
+        warning, not the request shape).
+        """
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, Any]:
+                return {
+                    "choices": [{"message": {"content": "{}"}}],
+                    "usage": {"total_tokens": 10},
+                }
+
+        class _Client:
+            async def __aenter__(self) -> _Client:
+                return self
+
+            async def __aexit__(self, *exc: Any) -> None:
+                return None
+
+            async def post(self, *args: Any, **kwargs: Any) -> _Resp:
+                return _Resp()
+
+        monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: _Client())
+        return {}
+
+    @pytest.mark.asyncio
+    async def test_warns_when_qwen_prompt_approaches_32k(
+        self,
+        _stub_http: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A 28K-char prompt to qwen3.6:35b-a3b-coding-nvfp4 (limit 32K)
+        must emit a WARNING that names the model and the limit. Without
+        this, the daily-reflection recurring issue (FRAPCON's 277K chars
+        silently wasted) cannot be caught at the call site.
+        """
+        monkeypatch.setenv("LLM_MODEL", "qwen3.6:35b-a3b-coding-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://example.com/v1")
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING, logger="nfm_db.services.llm_client"):
+            await call_llm(
+                system_prompt="You extract structured data.",
+                user_message="x" * 28_000,  # 87.5% of 32K limit
+                temperature=0.0,
+            )
+
+        warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+        assert warnings, "expected a WARNING when prompt is at 87.5% of context"
+        msg = warnings[0].getMessage()
+        assert "qwen3.6:35b-a3b-coding-nvfp4" in msg
+        assert "32000" in msg
+        assert "context" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_does_not_warn_for_small_prompt(
+        self,
+        _stub_http: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A small prompt must not raise a false alarm. This is the
+        regression-guard against the warning becoming noise.
+        """
+        monkeypatch.setenv("LLM_MODEL", "qwen3.6:35b-a3b-coding-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://example.com/v1")
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING, logger="nfm_db.services.llm_client"):
+            await call_llm(
+                system_prompt="Extract.",
+                user_message="Short user message.",
+                temperature=0.0,
+            )
+
+        warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+        assert not warnings, f"unexpected WARNING: {[r.getMessage() for r in warnings]}"
+
+    @pytest.mark.asyncio
+    async def test_does_not_warn_for_unknown_model(
+        self,
+        _stub_http: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Unknown models with no entry in the lookup must NOT warn —
+        a missing lookup is a hard bug we want to surface separately
+        (via tests, not via prod warnings). A 28K-char prompt to an
+        unknown model is silent at WARNING level.
+        """
+        monkeypatch.setenv("LLM_MODEL", "future-llm-with-1m-context")
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://example.com/v1")
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING, logger="nfm_db.services.llm_client"):
+            await call_llm(
+                system_prompt="x" * 1000,
+                user_message="y" * 28_000,
+                temperature=0.0,
+            )
+
+        warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+        assert not warnings, (
+            f"unknown model should not warn; got: {[r.getMessage() for r in warnings]}"
+        )
