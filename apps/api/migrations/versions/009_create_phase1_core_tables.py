@@ -51,7 +51,7 @@ def upgrade() -> None:
             source_unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
             target_unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
             factor NUMERIC(20, 10) NOT NULL,
-            offset NUMERIC(20, 10) NOT NULL DEFAULT 0,
+            offset_value NUMERIC(20, 10) NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             CONSTRAINT uq_unit_conversions_source_target UNIQUE (source_unit_id, target_unit_id)
