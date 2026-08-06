@@ -362,7 +362,9 @@ async def push_sync_data(
     _auth: Annotated[None, Depends(_require_hub_token)],
 ) -> ApiResponse[SyncOperationResponse]:
     """Idempotently persist one resource-node operation."""
-    node = await _get_node_or_404(node_id, db)
+    # Validate the node exists (404 if it has not registered) and let the
+    # 404 surface from the helper, then discard the result.
+    await _get_node_or_404(node_id, db)
     existing = (
         await db.execute(
             select(SyncOperation).where(
