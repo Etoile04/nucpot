@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # tokens without affecting interactive sessions.
     service_jwt_ttl_minutes: int = _resolve_service_jwt_ttl()
     blog_content_dir: str = "content/blog"
+    # NFM-2568-T1: feature flag routing to V2 orchestrator.
+    # When True, trigger_extraction() delegates to ExtractionOrchestrator.
+    # When False (default), legacy pipeline runs unchanged.
+    extraction_v2_enabled: bool = False
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
