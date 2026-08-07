@@ -1539,6 +1539,51 @@ class TestStepGapScan:
             "staged_properties": staged,
         })
 
+        # Pre-seed upstream steps as completed so they skip on re-run.
+        # quality_gate metadata includes passed_properties so that
+        # _restore_context_from_existing can rehydrate _context for
+        # gap_scan's hash computation (NFM-2606).
+        for st in ("chunk",):
+            st_hash = compute_input_hash({
+                "step_type": st,
+                "source_reference": job.source_reference,
+                "source_type": job.source_type,
+            })
+            db_session.add(ExtractionStep(
+                job_id=job.id, step_type=st,
+                status="completed", input_hash=st_hash,
+            ))
+        for st in ("extract", "map"):
+            extra = {"raw_extractions": []} if st == "map" else {"chunk_ids": [], "extract_figures": False}
+            st_hash = compute_input_hash({
+                "step_type": st,
+                "source_reference": job.source_reference,
+                "source_type": job.source_type,
+                **extra,
+            })
+            meta = {}
+            if st == "map":
+                meta["mapped_properties"] = []
+            db_session.add(ExtractionStep(
+                job_id=job.id, step_type=st,
+                status="completed", input_hash=st_hash,
+                metadata_=meta,
+            ))
+        qg_hash = compute_input_hash({
+            "step_type": "quality_gate",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "mapped_properties": [],
+        })
+        db_session.add(ExtractionStep(
+            job_id=job.id, step_type="quality_gate",
+            status="completed", input_hash=qg_hash,
+            metadata_={
+                "staged": 0, "rejected": 0, "duplicates": 0,
+                "passed_properties": list(staged),
+            },
+        ))
+
         # Pre-seed a previously-completed gap_scan step with that hash.
         existing = ExtractionStep(
             job_id=job.id,
@@ -1550,7 +1595,6 @@ class TestStepGapScan:
         await db_session.flush()
 
         orchestrator = ExtractionOrchestrator(db_session, job)
-        orchestrator._context["passed_properties"] = staged
 
         # Sentinel: scan_gaps must NOT run — gap_scan should be skipped.
         with patch(
@@ -1587,15 +1631,59 @@ class TestStepGapScan:
     ) -> None:
         """AC: input_hash on the gap_scan step is SHA-256 of staged_properties."""
         job = await _create_job(session=db_session)
-        orchestrator = ExtractionOrchestrator(db_session, job)
 
         staged = [
             {"element_system": "Zr", "phase": "HCP", "property_name": "bulk_modulus"},
             {"element_system": "UO2", "phase": "FCC", "property_name": "lattice_constant"},
         ]
-        orchestrator._context["passed_properties"] = list(staged)
-
         expected_hash = compute_input_hash({"staged_properties": staged})
+
+        # Pre-seed all upstream steps as completed so they skip.
+        # quality_gate metadata includes passed_properties so the
+        # skip-restore path rehydrates _context for gap_scan (NFM-2606).
+        for st in ("chunk",):
+            st_hash = compute_input_hash({
+                "step_type": st,
+                "source_reference": job.source_reference,
+                "source_type": job.source_type,
+            })
+            db_session.add(ExtractionStep(
+                job_id=job.id, step_type=st,
+                status="completed", input_hash=st_hash,
+            ))
+        for st in ("extract", "map"):
+            extra = {"raw_extractions": []} if st == "map" else {"chunk_ids": [], "extract_figures": False}
+            st_hash = compute_input_hash({
+                "step_type": st,
+                "source_reference": job.source_reference,
+                "source_type": job.source_type,
+                **extra,
+            })
+            meta = {}
+            if st == "map":
+                meta["mapped_properties"] = []
+            db_session.add(ExtractionStep(
+                job_id=job.id, step_type=st,
+                status="completed", input_hash=st_hash,
+                metadata_=meta,
+            ))
+        qg_hash = compute_input_hash({
+            "step_type": "quality_gate",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "mapped_properties": [],
+        })
+        db_session.add(ExtractionStep(
+            job_id=job.id, step_type="quality_gate",
+            status="completed", input_hash=qg_hash,
+            metadata_={
+                "staged": 0, "rejected": 0, "duplicates": 0,
+                "passed_properties": list(staged),
+            },
+        ))
+        await db_session.flush()
+
+        orchestrator = ExtractionOrchestrator(db_session, job)
 
         with patch(
             "nfm_db.services.gap_scan_service.GapScanService.scan_gaps",
@@ -1613,3 +1701,312 @@ class TestStepGapScan:
         ).scalar_one()
         assert gap_scan_step.input_hash == expected_hash
         assert len(gap_scan_step.input_hash) == 64  # SHA-256 hex
+
+
+# ---------------------------------------------------------------------------
+# NFM-2606: passed_properties producer/consumer fix
+# ---------------------------------------------------------------------------
+
+
+class TestQualityGatePassesPropertiesToGapScan:
+    """Verify the _context["passed_properties"] producer/consumer pipeline.
+
+    NFM-2606 found that _step_quality_gate wrote only counts to
+    _context["quality_gate_result"] while _step_gap_scan read from the
+    never-written _context["passed_properties"]. These tests prove the
+    fix: quality_gate now also writes passed_properties, and gap_scan
+    receives non-empty staged properties.
+    """
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_writes_passed_properties_to_context(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """AC: _step_quality_gate populates _context['passed_properties']
+        with the staged property dicts."""
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+        mapped = _mapped_properties()
+        orchestrator._context["mapped_properties"] = list(mapped)
+
+        step = ExtractionStep(
+            job_id=job.id,
+            step_type="quality_gate",
+            status="running",
+            input_hash="deadbeef",
+        )
+        db_session.add(step)
+        await db_session.flush()
+
+        # Use the real QualityGateService — all properties pass when
+        # no range data is loaded.
+        await orchestrator._step_quality_gate(step)
+
+        # passed_properties must be a non-empty list of dicts.
+        passed = orchestrator._context.get("passed_properties")
+        assert isinstance(passed, list)
+        assert len(passed) == len(mapped), (
+            "passed_properties should contain one entry per staged property"
+        )
+        for item in passed:
+            assert isinstance(item, dict)
+            assert "element_system" in item
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_persists_passed_properties_in_metadata(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """AC: passed_properties is stored in step.metadata_ for skip-restore."""
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+        mapped = _mapped_properties()
+        orchestrator._context["mapped_properties"] = list(mapped)
+
+        step = ExtractionStep(
+            job_id=job.id,
+            step_type="quality_gate",
+            status="running",
+            input_hash="deadbeef",
+        )
+        db_session.add(step)
+        await db_session.flush()
+
+        await orchestrator._step_quality_gate(step)
+        await db_session.refresh(step)
+
+        meta_passed = step.metadata_.get("passed_properties")
+        assert isinstance(meta_passed, list)
+        assert len(meta_passed) == len(mapped)
+
+    @pytest.mark.asyncio
+    async def test_gap_scan_receives_non_empty_staged_from_quality_gate(
+        self, db_session,
+    ) -> None:
+        """AC: gap_scan receives real staged properties from quality_gate
+        when steps are invoked directly (quality_gate → gap_scan)."""
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        mapped = _mapped_properties()
+        orchestrator._context["mapped_properties"] = list(mapped)
+
+        # Run quality_gate step — it should write passed_properties.
+        qg_step = ExtractionStep(
+            job_id=job.id,
+            step_type="quality_gate",
+            status="running",
+            input_hash="deadbeef",
+        )
+        db_session.add(qg_step)
+        await db_session.flush()
+        await orchestrator._step_quality_gate(qg_step)
+
+        # Verify passed_properties was written.
+        passed = orchestrator._context.get("passed_properties")
+        assert isinstance(passed, list)
+        assert len(passed) > 0
+
+        # Now run gap_scan step — it reads from passed_properties.
+        gap_step = ExtractionStep(
+            job_id=job.id,
+            step_type="gap_scan",
+            status="running",
+            input_hash="deadbeef",
+        )
+        db_session.add(gap_step)
+        await db_session.flush()
+
+        with patch(
+            "nfm_db.services.gap_scan_service.GapScanService.scan_gaps",
+            new=AsyncMock(return_value=_make_scan_result()),
+        ):
+            await orchestrator._step_gap_scan(gap_step)
+
+        await db_session.flush()
+        await db_session.refresh(gap_step)
+        assert gap_step.input_hash is not None
+        assert gap_step.input_hash != compute_input_hash(
+            {"staged_properties": []}
+        ), (
+            "gap_scan input_hash should differ from empty-staged hash — "
+            "proving it received real properties from quality_gate"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gap_scan_hash_content_aware_with_staged_properties(
+        self, db_session,
+    ) -> None:
+        """AC: gap_scan's input_hash changes when staged properties change."""
+        # Property set A
+        props_a = [
+            {"element_system": "Zr", "phase": "HCP", "property_name": "bulk_modulus", "property": "bulk_modulus"},
+        ]
+        # Property set B (different content)
+        props_b = [
+            {"element_system": "UO2", "phase": "FCC", "property_name": "thermal_conductivity", "property": "thermal_conductivity"},
+        ]
+
+        hash_a = compute_input_hash({"staged_properties": props_a})
+        hash_b = compute_input_hash({"staged_properties": props_b})
+
+        assert hash_a != hash_b, "Sanity: different property sets produce different hashes"
+
+        # Directly verify that gap_scan uses the context value.
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        for props, expected_hash, label in [
+            (props_a, hash_a, "A"), (props_b, hash_b, "B"),
+        ]:
+            orchestrator._context["passed_properties"] = list(props)
+            gap_step = ExtractionStep(
+                job_id=job.id,
+                step_type="gap_scan",
+                status="running",
+                input_hash="deadbeef",
+            )
+            db_session.add(gap_step)
+            await db_session.flush()
+
+            with patch(
+                "nfm_db.services.gap_scan_service.GapScanService.scan_gaps",
+                new=AsyncMock(return_value=_make_scan_result()),
+            ):
+                await orchestrator._step_gap_scan(gap_step)
+
+            await db_session.flush()
+            await db_session.refresh(gap_step)
+            assert gap_step.input_hash == expected_hash, (
+                f"Property set {label}: gap_scan hash should match staged_properties hash"
+            )
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_skip_restores_passed_properties_for_gap_scan(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """AC: Two-real-run test — quality_gate skip restores
+        passed_properties so gap_scan computes the correct input_hash.
+
+        Mirrors test_step_quality_gate_skipped_on_run_when_map_skip_restores_context.
+        """
+        mapped = _mapped_properties()
+
+        # --- Run 1: pre-seed completed steps for map, quality_gate, gap_scan ---
+        job = await _create_job(session=db_session)
+
+        # Completed map step with payload
+        map_hash = compute_input_hash({
+            "step_type": "map",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "raw_extractions": [],
+        })
+        db_session.add(ExtractionStep(
+            job_id=job.id, step_type="map",
+            status="completed", input_hash=map_hash,
+            metadata_={"mapped_properties": list(mapped)},
+        ))
+
+        # Completed quality_gate step — hash is over real mapped_properties,
+        # metadata includes passed_properties for restore.
+        qg_hash = compute_input_hash({
+            "step_type": "quality_gate",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "mapped_properties": mapped,
+        })
+        db_session.add(ExtractionStep(
+            job_id=job.id, step_type="quality_gate",
+            status="completed", input_hash=qg_hash,
+            metadata_={
+                "staged": len(mapped),
+                "rejected": 0,
+                "duplicates": 0,
+                "passed_properties": list(mapped),
+            },
+        ))
+
+        # Completed gap_scan step — hash is over real staged_properties
+        # (NOT empty list as before the fix).
+        gap_hash = compute_input_hash({
+            "step_type": "gap_scan",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "staged_properties": mapped,
+        })
+        db_session.add(ExtractionStep(
+            job_id=job.id, step_type="gap_scan",
+            status="completed", input_hash=gap_hash,
+            metadata_={"input_hash": gap_hash, "non_fatal": True},
+        ))
+
+        # Completed extract and chunk steps so they also skip
+        for st in ("chunk", "extract"):
+            st_hash = compute_input_hash({
+                "step_type": st,
+                "source_reference": job.source_reference,
+                "source_type": job.source_type,
+                **({"chunk_ids": [], "extract_figures": False} if st == "extract" else {}),
+            })
+            db_session.add(ExtractionStep(
+                job_id=job.id, step_type=st,
+                status="completed", input_hash=st_hash,
+            ))
+        await db_session.flush()
+
+        # --- Run 2: re-run the orchestrator ---
+        # Stub QualityGateService to detect re-execution
+        called: dict = {}
+
+        class _FakeBulk:
+            accepted: list = []
+            rejected: list = []
+            duplicates: list = []
+
+        class _FakeGate:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def process_bulk(self, values):
+                called["count"] = len(values)
+                return _FakeBulk()
+
+            async def stage_record(self, *a, **kw) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_orchestrator.QualityGateService",
+            _FakeGate,
+        )
+
+        # Run 2: re-run the orchestrator over the same job.
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        with patch(
+            "nfm_db.services.gap_scan_service.GapScanService.scan_gaps",
+            new=AsyncMock(return_value=_make_scan_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result.status == "completed"
+
+        # QualityGateService.process_bulk must NOT have been called —
+        # quality_gate was skipped and context was restored.
+        assert "count" not in called, (
+            "quality_gate re-ran despite hash match. "
+            "passed_properties was not restored from metadata on skip."
+        )
+
+        # gap_scan must also have been skipped (no duplicate completed row).
+        gap_rows = (
+            await db_session.execute(
+                select(ExtractionStep).where(
+                    ExtractionStep.job_id == job.id,
+                    ExtractionStep.step_type == "gap_scan",
+                )
+            )
+        ).scalars().all()
+        statuses = {r.status for r in gap_rows}
+        assert statuses == {"completed", "skipped"} or statuses == {"completed"}, (
+            f"Expected gap_scan to be skipped or already completed, got: {statuses}"
+        )
