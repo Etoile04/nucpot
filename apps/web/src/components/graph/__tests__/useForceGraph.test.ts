@@ -55,7 +55,7 @@ const LARGE_DATA: GraphData = {
     label: `Node ${i}`,
     type: "default" as const,
   })),
-  edges: Array.from({ length: 300 }, (_, i) => ({
+  edges: Array.from({ length: 250 }, (_, i) => ({
     id: `e${i}`,
     source: `n${i}`,
     target: `n${(i + 1) % 250}`,
@@ -175,7 +175,7 @@ describe("useForceGraph", () => {
     )
 
     expect(result.current.simNodes).toHaveLength(250)
-    expect(result.current.simEdges).toHaveLength(300)
+    expect(result.current.simEdges).toHaveLength(250)
     expect(result.current.isRunning).toBe(true)
   })
 
@@ -218,5 +218,41 @@ describe("useForceGraph", () => {
     expect(result.current.error).toBeNull()
     expect(result.current.simNodes).toHaveLength(0)
     expect(result.current.simEdges).toHaveLength(0)
+  })
+
+  it("filters edges referencing non-existent nodes (NFM-2616)", async () => {
+    // The API may return edges whose source/target node IDs don't exist
+    // in the nodes array. d3-force's forceLink().id() throws
+    // "node not found" for such edges. The hook must silently drop them
+    // instead of propagating the error.
+    const DATA_WITH_DANGLING_EDGES: GraphData = {
+      nodes: [
+        { id: "n1", label: "Uranium", type: "material" },
+        { id: "n2", label: "Density", type: "property" },
+      ],
+      edges: [
+        { id: "e-valid", source: "n1", target: "n2" },
+        { id: "e-dangling-src", source: "781b3aef-dead-beef", target: "n1" },
+        { id: "e-dangling-tgt", source: "n2", target: "781b3aef-cafe-babe" },
+        { id: "e-both-dangling", source: "missing-a", target: "missing-b" },
+      ],
+    }
+
+    const { result } = renderHook(() =>
+      useForceGraph(DATA_WITH_DANGLING_EDGES, 800, 600),
+    )
+
+    // Only the valid edge should survive; all dangling edges are dropped.
+    expect(result.current.simEdges).toHaveLength(1)
+    expect(result.current.simEdges[0].id).toBe("e-valid")
+    expect(result.current.simNodes).toHaveLength(2)
+
+    // Simulation must start without error — no "node not found" thrown.
+    // Note: isRunning stays true because the mock simulation never fires
+    // its "end" event; the important check is that error remains null.
+    await waitFor(() => {
+      expect(result.current.simNodes).toHaveLength(2)
+    })
+    expect(result.current.error).toBeNull()
   })
 })

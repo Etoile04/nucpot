@@ -123,7 +123,15 @@ export function useForceGraph(
   /** Initialize simulation when data changes. */
   useEffect(() => {
     const nodes = data.nodes.map((n) => buildSimNode(n, w, h))
-    const edges = data.edges.map((e) => buildSimEdge(e))
+
+    // NFM-2616: drop edges whose source or target node doesn't exist
+    // in the current node set. d3-force's forceLink().id() throws
+    // "node not found" for such dangling edges — this is cosmetic on
+    // /kg/explore but would block the layout from completing cleanly.
+    const nodeIds = new Set(nodes.map((n) => n.id))
+    const edges = data.edges
+      .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+      .map((e) => buildSimEdge(e))
 
     nodesRef.current = nodes
     edgesRef.current = edges
