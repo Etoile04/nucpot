@@ -115,6 +115,11 @@ from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
     ResolutionStrategy,
 )
 from nfm_db.models.corpus import Corpus  # noqa: E402
+from nfm_db.models.data_collection_request import (  # noqa: E402
+    DATA_COLLECTION_REQUEST_STATUSES,
+    SOURCE_PREFERENCES,
+    DataCollectionRequest,
+)
 from nfm_db.models.data_dna import DataDna  # noqa: E402
 from nfm_db.models.dft_calculation import DFTCalculation  # noqa: E402
 from nfm_db.models.entity_merge import (  # noqa: E402
@@ -256,8 +261,11 @@ __all__ = [
     "ConflictRecord",
     "ConflictStatus",
     "Corpus",
+    "DATA_COLLECTION_REQUEST_STATUSES",
+    "DataCollectionRequest",
     "DFTCalculation",
     "DataDna",
+    "SOURCE_PREFERENCES",
     "DataSource",
     "DataSourceAuthor",
     "Dataset",
