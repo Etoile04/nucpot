@@ -146,6 +146,20 @@ def build_dataset(raw: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 # Training
 # ---------------------------------------------------------------------------
 
+XGB_PARAMS: dict[str, object] = {
+    "n_estimators": 800,
+    "max_depth": 5,
+    "learning_rate": 0.02,
+    "subsample": 0.7,
+    "colsample_bytree": 0.7,
+    "reg_alpha": 1.5,
+    "reg_lambda": 10.0,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "random_state": 42,  # overridden by RANDOM_STATE at call sites
+    "verbosity": 0,
+}
+
 
 def train_model(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, y_test: np.ndarray) -> xgb.XGBRegressor:
     """Train XGBoost regressor on 20D features.
@@ -153,19 +167,8 @@ def train_model(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, y_
     Starts from v1.1's best config, adjusted for larger dataset:
     more trees, deeper, stronger regularization to prevent overfitting.
     """
-    model = xgb.XGBRegressor(
-        n_estimators=800,
-        max_depth=5,
-        learning_rate=0.02,
-        subsample=0.7,
-        colsample_bytree=0.7,
-        reg_alpha=1.5,
-        reg_lambda=10.0,
-        min_child_weight=10,
-        gamma=0.1,
-        random_state=RANDOM_STATE,
-        verbosity=0,
-    )
+    params = {**XGB_PARAMS, "random_state": RANDOM_STATE}
+    model = xgb.XGBRegressor(**params)
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
     return model
 
@@ -201,19 +204,7 @@ def cross_validate(X: np.ndarray, y: np.ndarray, n_splits: int = 5) -> dict[str,
         X_tr, X_val = X[train_idx], X[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
 
-        model = xgb.XGBRegressor(
-            n_estimators=800,
-            max_depth=5,
-            learning_rate=0.02,
-            subsample=0.7,
-            colsample_bytree=0.7,
-            reg_alpha=1.5,
-            reg_lambda=10.0,
-            min_child_weight=10,
-            gamma=0.1,
-            random_state=RANDOM_STATE,
-            verbosity=0,
-        )
+        model = xgb.XGBRegressor(**{**XGB_PARAMS, "random_state": RANDOM_STATE})
         model.fit(X_tr, y_tr, verbose=False)
 
         metrics = evaluate(model, X_val, y_val)

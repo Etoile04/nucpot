@@ -90,11 +90,12 @@ class TestV11BackfillFromLegacy:
                 f"{type(exc).__name__}: {exc}"
             )
 
-        # Result is either a v1.1 dict or None (artifact unavailable).
-        # If dict, every v1.1 key was back-filled; check the 12 additions.
+        # Result is either a v3.0 dict or None (artifact unavailable).
+        # v3.0 is the default since NFM-2201; the 20D feature backfill
+        # applies to all versions.
         if result is not None:
             assert "model_version" in result
-            assert result["model_version"] == "v1.1"
+            assert result["model_version"] in ("v3.0", "v1.1")
 
     def test_explicit_v11_with_legacy_dict_routes_to_v11(self) -> None:
         """Explicit ``model_version='v1.1'`` must not fall through to v1.0

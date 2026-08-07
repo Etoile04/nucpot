@@ -139,14 +139,14 @@ class TestVersionConstant:
 
 
 class TestV30Prediction:
-    """Test that v3.0 model produces predictions matching the v1.1 contract."""
+    """Test that v3.0 model routing and prediction match the v1.1 contract."""
 
     def test_predict_energy_returns_v30_result(self) -> None:
         """predict_energy() with v3.0 model returns dict with required keys."""
         from nfm_db.ml.prediction_service import predict_energy
 
         features = {"mo_equivalent": 0.5}
-        with patch("nfm_db.ml.prediction_service.predict_energy_v11") as mock:
+        with patch("nfm_db.ml.prediction_service._predict_energy_v30") as mock:
             mock.return_value = {
                 "predicted_energy": -0.12,
                 "confidence": 0.9858,
@@ -164,11 +164,11 @@ class TestV30Prediction:
         assert 0.0 <= result["confidence"] <= 1.0
 
     def test_predict_energy_default_uses_v30(self) -> None:
-        """predict_energy() with no version arg defaults to v3.0."""
+        """predict_energy() with no version arg routes to _predict_energy_v30."""
         from nfm_db.ml.prediction_service import predict_energy
 
         features = {"mo_equivalent": 0.5}
-        with patch("nfm_db.ml.prediction_service.predict_energy_v11") as mock:
+        with patch("nfm_db.ml.prediction_service._predict_energy_v30") as mock:
             mock.return_value = {
                 "predicted_energy": -0.05,
                 "confidence": 0.98,
@@ -179,6 +179,22 @@ class TestV30Prediction:
             mock.assert_called_once()
 
         assert result["model_version"] == "v3.0"
+
+    def test_predict_energy_explicit_v30(self) -> None:
+        """predict_energy(model_version='v3.0') routes to v30 artifact."""
+        from nfm_db.ml.prediction_service import predict_energy
+
+        features = {"mo_equivalent": 0.5}
+        with patch("nfm_db.ml.prediction_service._predict_energy_v30") as mock:
+            mock.return_value = {
+                "predicted_energy": -0.07,
+                "confidence": 0.99,
+                "model_version": "v3.0",
+                "warnings": [],
+            }
+            result = predict_energy(features, model_version="v3.0")
+            mock.assert_called_once()
+            assert result["model_version"] == "v3.0"
 
     def test_predict_energy_v11_routing_preserved(self) -> None:
         """predict_energy(model_version='v1.1') routes to v1.1 artifact."""
@@ -217,12 +233,58 @@ class TestV30Prediction:
             assert result["model_version"] == "v1.0"
 
     def test_predict_energy_none_on_missing_artifact(self) -> None:
-        """predict_energy returns None when model artifact is unavailable."""
+        """predict_energy returns None when v3.0 model artifact is unavailable."""
         from nfm_db.ml.prediction_service import predict_energy
 
         features = {"mo_equivalent": 0.5}
-        with patch("nfm_db.ml.prediction_service.predict_energy_v11") as mock:
+        with patch("nfm_db.ml.prediction_service._predict_energy_v30") as mock:
             mock.return_value = None
             result = predict_energy(features)
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# AC-5: Integration — real artifact loading and prediction
+# ---------------------------------------------------------------------------
+
+
+class TestV30Integration:
+    """Integration tests: load the real v30 artifact and verify predictions."""
+
+    def test_v30_model_loads_and_predicts(self, v30_artifact: dict) -> None:
+        """The v3.0 artifact loads and produces a real prediction."""
+        import numpy as np
+
+        model = v30_artifact["model"]
+        feature_names = v30_artifact["feature_names"]
+        # Build a minimal feature vector (all zeros except mo_equivalent)
+        feature_dict = {name: 0.0 for name in feature_names}
+        feature_dict["mo_equivalent"] = 0.5
+        vals = np.array([feature_dict[n] for n in feature_names], dtype=np.float64).reshape(1, -1)
+        vals = np.nan_to_num(vals, nan=0.0, posinf=0.0, neginf=0.0)
+        predicted = model.predict(vals)[0]
+        assert isinstance(predicted, (int, float, np.floating))
+        assert np.isfinite(predicted)
+
+    def test_v30_prediction_service_returns_v30_version(self, v30_artifact: dict) -> None:
+        """predict_energy() returns model_version='v3.0' when using real artifact."""
+        from nfm_db.ml.prediction_service import _predict_energy_v30
+
+        features = {name: 0.0 for name in v30_artifact["feature_names"]}
+        features["mo_equivalent"] = 0.5
+        result = _predict_energy_v30(features)
+        assert result is not None
+        assert result["model_version"] == "v3.0"
+        assert "predicted_energy" in result
+        assert 0.0 <= result["confidence"] <= 1.0
+
+    def test_v30_composition_prediction(self, v30_artifact: dict) -> None:
+        """predict_energy_from_composition() routes through v3.0 model."""
+        from nfm_db.ml.prediction_service import predict_energy_from_composition
+
+        composition = {"U": 0.3, "O": 0.7}
+        result = predict_energy_from_composition(composition)
+        assert result is not None
+        assert result["model_version"] == "v3.0"
+        assert isinstance(result["predicted_energy"], float)

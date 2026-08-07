@@ -19,10 +19,6 @@ import numpy as np
 
 from nfm_db.ml.energy_features_v11 import (
     ENERGY_V11_FEATURE_NAMES,
-    predict_energy_v11,
-)
-from nfm_db.ml.energy_features_v11 import (
-    predict_energy_from_composition as _predict_energy_v11_from_composition,
 )
 from nfm_db.ml.model_version import (
     ENERGY_PREDICTOR_VERSION,
@@ -546,6 +542,53 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         return None
 
 
+def _predict_energy_v30(features: dict[str, float]) -> dict | None:
+    """Run the v3.0 EnergyPredictor trained on 2,909 PBE DFT compositions.
+
+    Returns None when the v3.0 artifact is unavailable. Uses the same 20D
+    feature schema as v1.1 (ENERGY_V11_FEATURE_NAMES); the improvement comes
+    from the larger training set, not from feature engineering changes.
+
+    Expected artifact: ``models/energy_predictor_v30.joblib`` (joblib dict
+    with keys ``model``, ``version``, ``metrics``, ``feature_names``).
+    """
+    v30_path = _env_path(ENERGY_MODEL_V30_FILENAME)
+    if not v30_path.exists():
+        logger.warning("v3.0 energy model not found at %s", v30_path)
+        return None
+    try:
+        import joblib
+
+        raw = joblib.load(v30_path)
+        if isinstance(raw, dict) and "model" in raw:
+            model = raw["model"]
+            feature_names = raw.get("feature_names", ENERGY_V11_FEATURE_NAMES)
+            model_data = raw
+        else:
+            model = raw
+            feature_names = ENERGY_V11_FEATURE_NAMES
+            model_data = {"model": raw}
+
+        vals = [features.get(n, 0.0) for n in (feature_names or [])]
+        X = np.array(vals, dtype=np.float64).reshape(1, -1)
+        if X is None or X.shape[1] == 0:
+            return None
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        predicted = float(model.predict(X)[0])
+        metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        r2 = metrics.get("r2", 0.0)
+        confidence = max(0.0, min(float(r2), 1.0))
+        return {
+            "predicted_energy": round(predicted, 6),
+            "confidence": round(confidence, 4),
+            "model_version": raw.get("version", "v3.0") if isinstance(raw, dict) else "v3.0",
+            "warnings": [],
+        }
+    except Exception:
+        logger.exception("v3.0 energy prediction failed")
+        return None
+
+
 def predict_energy(
     features: dict[str, float],
     model_version: str | None = None,
@@ -564,17 +607,14 @@ def predict_energy(
         ``warnings``. ``None`` if the requested artifact is unavailable.
     """
     effective = model_version or ENERGY_PREDICTOR_VERSION
-    if effective == "v1.0":
-        return _predict_energy_v10(features)
+    if effective == "v3.0":
+        return _predict_energy_v30(features)
     if effective == "v1.1":
         return _predict_energy_v11(features)
-    # v3.0 (default): uses the 20D v1.1 feature set via predict_energy_v11
-    # with the v3.0 model loaded as default artifact.
-    try:
-        return predict_energy_v11(features)
-    except Exception:
-        logger.exception("v3.0 energy prediction failed")
-        return None
+    if effective == "v1.0":
+        return _predict_energy_v10(features)
+    # Unknown version — fall back to v3.0 default
+    return _predict_energy_v30(features)
 
 
 def predict_energy_from_composition(
@@ -591,4 +631,9 @@ def predict_energy_from_composition(
         from nfm_db.ml.feature_engineering import compute_ml_features
         v10_features = compute_ml_features(composition)
         return predict_energy(v10_features, model_version="v1.0")
-    return _predict_energy_v11_from_composition(composition)
+    # v3.0 (default) and v1.1 share the 20D feature computation.
+    # Compute features once, then dispatch through predict_energy()
+    # which routes to the correct model artifact.
+    from nfm_db.ml.energy_features_v11 import compute_energy_features_v11
+    features = compute_energy_features_v11(composition)
+    return predict_energy(features, model_version=effective)
