@@ -149,10 +149,16 @@ class ExtractionOrchestrator:
                 input_hash=input_hash,
             )
             self._session.add(skipped)
-            await self._session.flush()
+            # Defer the insert flush to the run-level boundary so skipped
+            # and completed step rows share the same persistence batch.
             return
 
-        # Create step record.
+        # Create step record.  The insert is left in the unit of work so
+        # the run-level completion flush persists the full set of step
+        # rows (and their metadata updates) in one transaction. The
+        # downstream ``_find_completed_step`` call relies on
+        # SQLAlchemy autoflush, so prior-step rows remain visible to
+        # the SELECT without an explicit flush.
         step = ExtractionStep(
             job_id=self._job.id,
             step_type=step_type,
@@ -161,7 +167,6 @@ class ExtractionOrchestrator:
             started_at=datetime.now(UTC),
         )
         self._session.add(step)
-        await self._session.flush()
 
         # Dispatch to step implementation.
         step_fn = {
@@ -183,7 +188,12 @@ class ExtractionOrchestrator:
             step.status = "completed"
             step.completed_at = datetime.now(UTC)
         self._session.add(step)
-        await self._session.flush()
+        # Defer the completion flush to the run-level boundary so the
+        # five step rows persist in a single transaction with the job
+        # status update. Step bodies still flush their own
+        # intra-step writes (e.g. map metadata) where correctness
+        # depends on the row being queryable inside the same call.
+
 
     async def _find_completed_step(
         self,
@@ -563,7 +573,10 @@ class ExtractionOrchestrator:
             "cache_level": cache_level,
             "mapped_properties": mapped,
         }
-        self._session.add(step)
+        # Persist the metadata column so callers and tests that
+        # ``session.refresh(step)`` after the call see the new
+        # payload.  The step-row INSERT itself stays dirty until the
+        # run-level completion flush.
         await self._session.flush()
 
         # Forward to downstream steps (quality_gate, gap_scan).
@@ -641,7 +654,10 @@ class ExtractionOrchestrator:
                 "rejected": rejected_count,
                 "duplicates": duplicate_count,
             }
-            self._session.add(step)
+            # Persist the metadata column so callers and tests that
+            # ``session.refresh(step)`` after the call see the new
+            # payload.  The step-row INSERT itself stays dirty until
+            # the run-level completion flush.
             await self._session.flush()
 
             self._context["quality_gate_result"] = {

@@ -295,3 +295,20 @@ async def test_orchestrator_persists_step_rows() -> None:
         f"Orchestrator should write >= 10 step rows "
         f"(5 steps × insert+update), got {session.add_count}"
     )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_batches_step_lifecycle_flushes() -> None:
+    """Step lifecycle updates wait for the run-level flush boundary."""
+    session = _WriteCountingSession()
+    await _run_orchestrator_bench(SAMPLE_RAW_EXTRACTIONS, session)
+
+    # The benchmark path persists step rows in a single batch at the
+    # run boundary.  Two intra-step metadata flushes remain (map and
+    # quality_gate) so ``session.refresh(step)`` sees the persisted
+    # metadata column.  Lifecycle flushes per step would add ten more
+    # calls and recreate the overhead regression.
+    assert session.flush_count == 4, (
+        "Step lifecycle persistence should be batched to run boundaries, "
+        f"got {session.flush_count} flushes"
+    )
