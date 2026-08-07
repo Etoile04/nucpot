@@ -355,6 +355,48 @@ async def call_llm(
         len(user_message),
     )
 
+    # Context-window guard (NFM-2538 / daily reflection 2026-08-06 §3.2).
+    # The extraction pipeline used to feed 277K chars of PDF markdown into
+    # Qwen 3.6 35B's ~32K context window, where the model would either
+    # truncate silently or hang producing tokens until max_tokens. The
+    # cost is paid twice: the LLM call is wasted, and the downstream
+    # extraction has lost information. Warn loudly when the total prompt
+    # approaches the model's known context window so an operator can
+    # either chunk the input or swap the model.
+    #
+    # Conservative: only known model families have a hard limit. Unknown
+    # models log at DEBUG (no false alarms) but do not warn. This is
+    # deliberately a warning, not an exception — the LLM may still produce
+    # a partial answer that is useful, and we don't want to brick the
+    # pipeline for a soft signal. The chunking fix itself lives in
+    # extraction_pipeline.py and tracks separately.
+    _MODEL_CONTEXT_CHARS: dict[str, int] = {
+        # Qwen 3.5/3.6 32B/35B coding variants ship with 32K context.
+        # Characters here are ~chars per token ratio of 1.5:1 for Chinese-heavy
+        # text (qwen tokenizer), so 32K tokens ≈ 48K chars conservatively.
+        # Use 32K chars to give plenty of headroom and catch over-budget
+        # inputs early.
+        "qwen3.6:35b-a3b-coding-nvfp4": 32_000,
+        "qwen3.5:32b": 32_000,
+        "qwen3.5:4b-nvfp4": 16_000,
+        # OpenAI 4o / 4o-mini: 128K token context.
+        "gpt-4o": 128_000 * 4,
+        "gpt-4o-mini": 128_000 * 4,
+    }
+    _CONTEXT_WARN_FRACTION = 0.8
+    _context_limit = _MODEL_CONTEXT_CHARS.get(cfg["model"])
+    _prompt_len = len(system_prompt) + len(user_message)
+    if _context_limit is not None and _prompt_len >= _context_limit * _CONTEXT_WARN_FRACTION:
+        logger.warning(
+            "LLM prompt approaching context limit: model=%s, "
+            "prompt_len=%d, context_limit=%d (%.0f%% of limit). "
+            "Consider chunking the input or switching to a larger-context model.",
+            cfg["model"],
+            _prompt_len,
+            _context_limit,
+            100 * _prompt_len / _context_limit,
+        )
+
     # Retry loop for transient server errors (502, 503, 429).
     # The LLMClient class has its own _call_with_retry, but the legacy
     # call_llm function used by extraction_pipeline.py had none —
