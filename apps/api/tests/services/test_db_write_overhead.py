@@ -23,7 +23,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixtures (re-used from the parity test pattern)
 # ---------------------------------------------------------------------------
@@ -288,12 +287,12 @@ async def test_orchestrator_persists_step_rows() -> None:
     session = _WriteCountingSession()
     await _run_orchestrator_bench(SAMPLE_RAW_EXTRACTIONS, session)
 
-    # 5 steps × (1 insert + 1 update at completion) = 10 step-row writes.
+    # 5 steps x (1 insert + 1 update at completion) = 10 step-row writes.
     # Plus job-level writes (status flips) and any per-chunk / per-property
     # metadata writes from the real _step_map / _step_quality_gate paths.
     assert session.add_count >= 10, (
         f"Orchestrator should write >= 10 step rows "
-        f"(5 steps × insert+update), got {session.add_count}"
+        f"(5 steps x insert+update), got {session.add_count}"
     )
 
 

@@ -514,9 +514,11 @@ async def test_roles_admin_success(async_client, admin_user) -> None:
     body = response.json()
     assert body["success"] is True
     roles = body["data"]
-    assert len(roles) == 3
+    # Derive from the enum rather than hard-coding a count, so adding a role
+    # (e.g. domain_expert in NFM-2578) doesn't fail a test that isn't about it.
+    assert len(roles) == len(BlogRole)
     role_values = {r["role"] for r in roles}
-    assert role_values == {"admin", "editor", "reviewer"}
+    assert role_values == {r.value for r in BlogRole}
 
 
 @pytest.mark.asyncio

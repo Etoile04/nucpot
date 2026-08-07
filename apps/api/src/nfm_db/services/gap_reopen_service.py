@@ -93,9 +93,9 @@ async def check_and_reopen_wont_fix_gaps(
     """
     # Build the set of target keys from extraction results.
     extraction_keys: set[tuple[str, str]] = set()
-    for result in extraction_results:
-        item_type = result.get("item_type", "property")
-        item_data = result.get("item_data", result)
+    for extraction in extraction_results:
+        item_type = extraction.get("item_type", "property")
+        item_data = extraction.get("item_data", extraction)
         key = _build_target_key(item_type, item_data)
         if key:
             extraction_keys.add((item_type, key))

@@ -16,6 +16,10 @@ Indexes:
   - ontology_version_id (filter by ontology context)
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+
 from alembic import op
 import sqlalchemy as sa
 

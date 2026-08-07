@@ -7,7 +7,7 @@ detection and persists ``error_message`` on failure, halting the
 pipeline.
 
 This is a skeleton: step bodies are stubs that will be filled in by
-subsequent tasks (T2–T6).
+subsequent tasks (T2-T6).
 """
 
 from __future__ import annotations
@@ -343,7 +343,7 @@ class ExtractionOrchestrator:
         await self._session.flush()
 
     # ------------------------------------------------------------------
-    # Step stubs (skeleton — real implementations in T2–T6)
+    # Step stubs (skeleton — real implementations in T2-T6)
     # ------------------------------------------------------------------
 
     async def _step_chunk(
@@ -713,7 +713,7 @@ class ExtractionOrchestrator:
         and mirrored into ``step.metadata_['input_hash']`` for
         operator-visible traceability.
         """
-        staged_properties: list = self._context.get("passed_properties") or []
+        staged_properties: list[Any] = self._context.get("passed_properties") or []
 
         # SHA-256 of the JSON-serialized staged_properties — same
         # canonicalization as :func:`compute_input_hash` so the two

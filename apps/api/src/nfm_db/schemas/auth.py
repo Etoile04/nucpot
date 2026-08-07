@@ -155,6 +155,16 @@ ROLE_INFO = {
             Permission.REVIEW_POST,
         ],
     },
+    BlogRole.DOMAIN_EXPERT: {
+        "display_name": "Domain Expert",
+        "description": (
+            "Materials-domain specialist; may edit the ontology and review "
+            "extracted data. Carries no blog-authoring permissions."
+        ),
+        "permissions": [
+            Permission.REVIEW_POST,
+        ],
+    },
 }
 
 

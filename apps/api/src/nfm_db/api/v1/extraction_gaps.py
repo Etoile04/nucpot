@@ -250,7 +250,8 @@ async def list_extraction_gaps(
         chunks_by_id = {c.id: c for c in chunk_rows}
 
     items = [
-        _to_response(row, chunks_by_id.get(row.chunk_id)) for row in rows
+        _to_response(row, chunks_by_id.get(row.chunk_id) if row.chunk_id else None)
+        for row in rows
     ]
     return ExtractionGapListResponse(
         data=items,

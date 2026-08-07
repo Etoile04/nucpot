@@ -45,7 +45,6 @@ from nfm_db.models.extraction_gap import ExtractionGap
 from nfm_db.models.extraction_step import ExtractionStep
 from nfm_db.services.extraction_gap_scanner import ExtractionGapScanner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -157,7 +156,7 @@ async def test_scanner_accepts_mapping_ontology_shape() -> None:
 
 @pytest.mark.asyncio
 async def test_scan_finds_gaps_when_chunks_missing_properties() -> None:
-    """3 entity_types × 2 properties = 6 expected; chunks cover only 2 →
+    """3 entity_types x 2 properties = 6 expected; chunks cover only 2 →
     4 gaps created with the correct (entity_type, property) pairs.
     """
     session = _make_session()

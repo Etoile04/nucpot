@@ -104,4 +104,4 @@ class ReExtractionQueue(TimestampMixin, Base):
         )
 
 
-__all__ = ["ReExtractionQueue", "RE_EXTRACTION_STATUSES"]
+__all__ = ["RE_EXTRACTION_STATUSES", "ReExtractionQueue"]

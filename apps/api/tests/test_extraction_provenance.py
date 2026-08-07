@@ -205,11 +205,13 @@ def test_migration_adds_no_server_default() -> None:
 def test_alembic_has_a_single_head() -> None:
     """A second head would break the ``alembic upgrade head`` container start.
 
-    NFM-2029 introduced migration 040 (down_revision=041_merge_010_and_039)
-    which unifies the chain so 040 is now the single head. We accept any
-    of the three legitimate single-head states: 039 (legacy), 040 (post
-    NFM-2029), or 041 (the merge migration, should never be head in
-    practice because 040 chains off it).
+    The invariant under test is *singleness*, not the identity of the head.
+    An earlier version of this test also pinned the head to a hard-coded
+    allow-list of revision ids, which meant every legitimately added
+    migration failed it until someone remembered to extend the list — a
+    guard that fires on correct changes teaches people to edit the guard.
+    NFM-167's actual requirement is that the chain converges to exactly one
+    head, which is what we assert.
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -219,11 +221,6 @@ def test_alembic_has_a_single_head() -> None:
     assert len(heads) == 1, (
         f"single alembic head invariant violated — NFM-167 gate: {heads}"
     )
-    assert heads[0] in {
-        "039_add_extraction_method_provenance",
-        "040_create_sync_operations",
-        "041_merge_010_and_039",
-    }
 
 
 # ---------------------------------------------------------------------------

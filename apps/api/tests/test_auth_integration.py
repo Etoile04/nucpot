@@ -64,9 +64,11 @@ class TestRoleManagementFlow:
         data = response.json()
         assert data["success"] is True
         roles = data["data"]
-        assert len(roles) == 3
+        # Derive from the enum rather than hard-coding a count, so adding a
+        # role (e.g. domain_expert in NFM-2578) doesn't fail an unrelated test.
+        assert len(roles) == len(BlogRole)
         role_names = {role["role"] for role in roles}
-        assert role_names == {"admin", "editor", "reviewer"}
+        assert role_names == {r.value for r in BlogRole}
 
     async def test_assign_role_to_user(self, async_client: AsyncClient, admin_headers, db_session):
         """Test admin can assign role to user."""

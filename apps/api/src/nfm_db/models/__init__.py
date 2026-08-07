@@ -124,21 +124,21 @@ from nfm_db.models.entity_merge import (  # noqa: E402
 from nfm_db.models.extraction_chunk import (  # noqa: E402
     ExtractionChunk,
 )
+from nfm_db.models.extraction_figure import (  # noqa: E402
+    ExtractionFigure,
+)
 from nfm_db.models.extraction_gap import (  # noqa: E402
     EXTRACTION_GAP_STATUSES,
     ExtractionGap,
 )
-from nfm_db.models.extraction_figure import (  # noqa: E402
-    ExtractionFigure,
-)
 from nfm_db.models.extraction_job import (  # noqa: E402
     ExtractionJob,
 )
-from nfm_db.models.extraction_step import (  # noqa: E402
-    ExtractionStep,
-)
 from nfm_db.models.extraction_result import (  # noqa: E402
     ExtractionResult,
+)
+from nfm_db.models.extraction_step import (  # noqa: E402
+    ExtractionStep,
 )
 from nfm_db.models.feedback import (  # noqa: E402
     Feedback,
@@ -160,6 +160,13 @@ from nfm_db.models.kg import (  # noqa: E402
     KGReviewQueue,
     OntologyIdMap,
 )
+from nfm_db.models.knowledge_gap import (  # noqa: E402
+    KNOWLEDGE_GAP_STATUSES,
+    KNOWLEDGE_GAP_TYPES,
+    GapStatus,
+    GapType,
+    KnowledgeGap,
+)
 from nfm_db.models.material import (  # noqa: E402
     Material,
     MaterialAlias,
@@ -180,13 +187,6 @@ from nfm_db.models.md_verification import (  # noqa: E402
     PotentialFittingResult,
     VerificationResultMD,
 )
-from nfm_db.models.knowledge_gap import (  # noqa: E402
-    GapStatus,
-    GapType,
-    KnowledgeGap,
-    KNOWLEDGE_GAP_STATUSES,
-    KNOWLEDGE_GAP_TYPES,
-)
 from nfm_db.models.ontology import (  # noqa: E402
     KEntityType,
     KRelationType,
@@ -195,10 +195,6 @@ from nfm_db.models.ontology_version import (  # noqa: E402
     ONTOLOGY_VERSION_STATUSES,
     OntologyVersion,
 )
-from nfm_db.models.re_extraction_queue import (  # noqa: E402
-    RE_EXTRACTION_STATUSES,
-    ReExtractionQueue,
-)
 from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
     Dataset,
@@ -206,6 +202,10 @@ from nfm_db.models.property import (  # noqa: E402
     PropertyCategory,
     PropertyMeasurement,
     PropertyType,
+)
+from nfm_db.models.re_extraction_queue import (  # noqa: E402
+    RE_EXTRACTION_STATUSES,
+    ReExtractionQueue,
 )
 from nfm_db.models.ref_gap_fill import (  # noqa: E402
     CacheLevel,
@@ -241,6 +241,11 @@ from nfm_db.models.verification_task import (  # noqa: E402
 )
 
 __all__ = [
+    "EXTRACTION_GAP_STATUSES",
+    "KNOWLEDGE_GAP_STATUSES",
+    "KNOWLEDGE_GAP_TYPES",
+    "ONTOLOGY_VERSION_STATUSES",
+    "RE_EXTRACTION_STATUSES",
     "VALID_NODE_TYPES",
     "VALID_RELATION_TYPES",
     "VALID_TRANSITIONS",
@@ -266,12 +271,11 @@ __all__ = [
     "EntityMergeLog",
     "ExecutionStatus",
     "ExtractionChunk",
-    "EXTRACTION_GAP_STATUSES",
-    "ExtractionGap",
     "ExtractionFigure",
+    "ExtractionGap",
     "ExtractionJob",
-    "ExtractionStep",
     "ExtractionResult",
+    "ExtractionStep",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",
@@ -290,12 +294,10 @@ __all__ = [
     "JobType",
     "KEntityType",
     "KGEdge",
-    "KnowledgeGap",
-    "KNOWLEDGE_GAP_STATUSES",
-    "KNOWLEDGE_GAP_TYPES",
     "KGNode",
     "KGReviewQueue",
     "KRelationType",
+    "KnowledgeGap",
     "MDSimulationResult",
     "MDVerificationJob",
     "MatchMethod",
@@ -304,19 +306,17 @@ __all__ = [
     "MaterialCategory",
     "MaterialComposition",
     "MeasurementCondition",
-    "ONTOLOGY_VERSION_STATUSES",
     "OntologyIdMap",
     "OntologyVersion",
     "Permission",
     "PostStatus",
     "Potential",
     "PotentialFittingResult",
-    "RE_EXTRACTION_STATUSES",
-    "ReExtractionQueue",
     "Priority",
     "PropertyCategory",
     "PropertyMeasurement",
     "PropertyType",
+    "ReExtractionQueue",
     "RefGapFillStaging",
     "ResolutionStrategy",
     "ResourceNode",

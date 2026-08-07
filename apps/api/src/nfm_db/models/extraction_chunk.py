@@ -8,6 +8,7 @@ to downstream extraction and mapping steps.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy import ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -52,7 +53,7 @@ class ExtractionChunk(TimestampMixin, Base):
     )
 
     # --- Source offsets ---
-    source_span: Mapped[dict | None] = mapped_column(
+    source_span: Mapped[dict[str, Any] | None] = mapped_column(
         CompatJSONB,
         default=None,
         nullable=True,
