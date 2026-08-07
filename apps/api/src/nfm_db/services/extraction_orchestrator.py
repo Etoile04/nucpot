@@ -238,6 +238,15 @@ class ExtractionOrchestrator:
             # changed must not reuse a stale mapping.
             params["raw_extractions"] = self._context.get("raw_extractions") or []
 
+        if step_type == "quality_gate":
+            # quality_gate's input is the mapped_properties carried
+            # forward from _step_map. Include them so skip detection
+            # is content-aware (NFM-2600): a re-run whose map step
+            # produced different properties must not reuse a stale
+            # gate result. Mirrors the pattern for ``map`` (above)
+            # and ``gap_scan`` (below).
+            params["mapped_properties"] = self._context.get("mapped_properties") or []
+
         if step_type == "gap_scan":
             # gap_scan's input is the staged_properties carried forward
             # from _step_quality_gate. Include them so skip detection
