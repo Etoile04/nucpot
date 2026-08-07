@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
@@ -33,6 +33,11 @@ class OntologyVersion(TimestampMixin, Base):
     """
 
     __tablename__ = "ontology_versions"
+
+    # Named so migration 044 and autogenerate agree on the constraint identity.
+    __table_args__ = (
+        UniqueConstraint("version", name="uq_ontology_versions_version"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
