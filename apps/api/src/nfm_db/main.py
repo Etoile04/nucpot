@@ -19,6 +19,7 @@ from nfm_db.api.v1 import (
     design,
     dft,
     extraction,
+    extraction_gaps,
     feedback,
     health,
     kg,
@@ -298,6 +299,7 @@ app.include_router(feedback.router, prefix="/api/v1", tags=["反馈"])
 app.include_router(reference_values.router, prefix="/api/v1", tags=["参考值"])
 app.include_router(reference_gaps.router, prefix="/api/v1", tags=["参考值缺口"])
 app.include_router(extraction.router, prefix="/api/v1", tags=["信息抽取"])
+app.include_router(extraction_gaps.router, prefix="/api/v1", tags=["提取缺口管理"])
 app.include_router(viz.router, prefix="/api/v1", tags=["可视化"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["本体管理"])
 app.include_router(ontology_version.router, prefix="/api/v1", tags=["本体版本管理"])
