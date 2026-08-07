@@ -201,5 +201,22 @@ describe("useForceGraph", () => {
     await waitFor(() => {
       expect(result.current.isRunning).toBe(false)
     })
+    expect(result.current.error).toBeInstanceOf(Error)
+    expect(result.current.error?.message).toContain("d3-force transitive API missing")
+  })
+
+  it("does not set isRunning for empty data (NFM-2608 empty-data guard)", () => {
+    const EMPTY_DATA: GraphData = { nodes: [], edges: [] }
+
+    const { result } = renderHook(() =>
+      useForceGraph(EMPTY_DATA, 800, 600),
+    )
+
+    // Must NOT enter running state — createSimulation returns null for
+    // empty data and the old code never cleared isRunning.
+    expect(result.current.isRunning).toBe(false)
+    expect(result.current.error).toBeNull()
+    expect(result.current.simNodes).toHaveLength(0)
+    expect(result.current.simEdges).toHaveLength(0)
   })
 })
