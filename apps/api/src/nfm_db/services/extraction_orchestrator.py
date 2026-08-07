@@ -497,8 +497,15 @@ class ExtractionOrchestrator:
                     try:
                         import os
                         os.unlink(tmp_path)
-                    except OSError:
-                        pass
+                    except OSError as exc:
+                        # Tempfile already removed (e.g. by another code
+                        # path) or filesystem race — non-fatal cleanup, but
+                        # record it so a future operator can correlate.
+                        logger.debug(
+                            "could not remove temp chunk file %s: %s",
+                            tmp_path,
+                            exc,
+                        )
 
             # Tag every result with the originating chunk for traceability.
             for item in chunk_results:
