@@ -54,6 +54,7 @@ async def _seed_ontology(
     session: AsyncSession,
     *,
     version_id: uuid.UUID | None = None,
+    ontology_data: dict | None = None,
 ) -> OntologyVersion:
     """Insert a minimal OntologyVersion row."""
     user = await _seed_user(session)
@@ -62,6 +63,7 @@ async def _seed_ontology(
         version=f"1.0.0-{uuid.uuid4().hex[:8]}",
         status="published",
         created_by=user.id,
+        ontology_data=ontology_data,
     )
     session.add(ov)
     await session.flush()
@@ -511,7 +513,119 @@ def test_extraction_gap_paths_registered_in_openapi() -> None:
     assert "/api/v1/extraction-gaps" in paths
     assert "/api/v1/extraction-gaps/{gap_id}" in paths
     assert "/api/v1/extraction-gaps/{gap_id}/status" in paths
+    assert "/api/v1/extraction-gaps/recall/{ontology_version_id}" in paths
 
     list_op = paths["/api/v1/extraction-gaps"]["get"]
     components = schema.get("components", {}).get("schemas", {})
     assert "ExtractionGapResponse" in components
+    assert "RecallMetricsResponse" in components
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/extraction-gaps/recall/{ontology_version_id} — recall
+# ---------------------------------------------------------------------------
+
+
+_RECALL_ONTOLOGY_DATA = {
+    "entity_types": [
+        {
+            "name": "NuclearMaterial",
+            "properties": ["density", "melting_point"],
+        },
+        {
+            "name": "Isotope",
+            "properties": [
+                {"name": "half_life", "datatype": "float"},
+            ],
+        },
+    ],
+    "relation_types": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_recall_returns_correct_shape(async_client, db_session) -> None:
+    """GET /recall/{ov_id} returns all RecallMetricsResponse fields."""
+    ov = await _seed_ontology(
+        db_session, ontology_data=_RECALL_ONTOLOGY_DATA,
+    )
+    await _seed_gap(
+        db_session,
+        ontology_version_id=ov.id,
+        gap_status="open",
+    )
+
+    response = await async_client.get(
+        f"/api/v1/extraction-gaps/recall/{ov.id}",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ontology_version_id"] == str(ov.id)
+    assert body["total_expected"] == 3
+    assert body["total_gaps"] == 1
+    assert body["open_gaps"] == 1
+    assert body["filled_gaps"] == 0
+    assert body["wont_fix_gaps"] == 0
+    assert "recall_rate" in body
+    assert isinstance(body["recall_rate"], float)
+    assert "computed_at" in body
+    assert isinstance(body["computed_at"], str)
+
+
+@pytest.mark.asyncio
+async def test_recall_404_for_unknown_ontology(async_client) -> None:
+    """GET /recall/{unknown_id} returns 404."""
+    response = await async_client.get(
+        f"/api/v1/extraction-gaps/recall/{uuid.uuid4()}",
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recall_no_gaps_returns_full_recall(
+    async_client, db_session,
+) -> None:
+    """No gaps → recall_rate = 1.0."""
+    ov = await _seed_ontology(
+        db_session, ontology_data=_RECALL_ONTOLOGY_DATA,
+    )
+
+    response = await async_client.get(
+        f"/api/v1/extraction-gaps/recall/{ov.id}",
+    )
+    assert response.status_code == 200
+    assert response.json()["recall_rate"] == 1.0
+    assert response.json()["total_expected"] == 3
+    assert response.json()["total_gaps"] == 0
+
+
+@pytest.mark.asyncio
+async def test_recall_mixed_gaps_correct_rate(
+    async_client, db_session,
+) -> None:
+    """1 open + 1 filled out of 3 expected → recall = (3-1)/3 ≈ 0.667."""
+    ov = await _seed_ontology(
+        db_session, ontology_data=_RECALL_ONTOLOGY_DATA,
+    )
+    await _seed_gap(
+        db_session,
+        ontology_version_id=ov.id,
+        gap_status="open",
+    )
+    await _seed_gap(
+        db_session,
+        ontology_version_id=ov.id,
+        property_name="melting_point",
+        gap_status="filled",
+    )
+
+    response = await async_client.get(
+        f"/api/v1/extraction-gaps/recall/{ov.id}",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_expected"] == 3
+    assert body["total_gaps"] == 2
+    assert body["open_gaps"] == 1
+    assert body["filled_gaps"] == 1
+    assert body["recall_rate"] == pytest.approx(2 / 3)

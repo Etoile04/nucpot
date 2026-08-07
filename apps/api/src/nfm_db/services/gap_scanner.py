@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
@@ -43,6 +43,15 @@ from nfm_db.models import (
     OntologyVersion,
 )
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES
+
+__all__ = [
+    "GapScanResult",
+    "GapScanService",
+    "RecallMetrics",
+    "compute_recall",
+    "extract_entity_types",
+    "iter_property_names",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +134,140 @@ def chunk_content_mentions_property(content: str, property_name: str) -> bool:
     return property_name.strip().lower() in content.lower()
 
 
+def extract_entity_types(ov: OntologyVersion) -> list[dict[str, Any]]:
+    """Return ``entity_types`` list from the ontology JSON blob.
+
+    Module-level helper so both ``GapScanService`` and ``compute_recall``
+    can count expected properties without instantiating the service.
+
+    Falls back to an empty list for ``None``/missing payloads.
+    """
+    data = ov.ontology_data
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("entity_types") or []
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict)]
+
+
+def _count_expected_properties(entity_types: list[dict[str, Any]]) -> int:
+    """Count total expected (entity_type, property) pairs.
+
+    Reuses :func:`iter_property_names` for property normalisation.
+    """
+    count = 0
+    for entity_type_dict in entity_types:
+        name = entity_type_dict.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        for _prop_name in iter_property_names(
+            entity_type_dict.get("properties"),
+        ):
+            count += 1
+    return count
+
+
 # ---------------------------------------------------------------------------
-# GapScanService
+# Recall computation (NFM-2614 / NFM-2575-T4)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RecallMetrics:
+    """Aggregated recall statistics for a single ontology version.
+
+    Attributes:
+        ontology_version_id: The ontology version these metrics cover.
+        total_expected: Total (entity_type, property) pairs declared.
+        total_gaps: Total gap records across all statuses.
+        open_gaps: Gaps with status ``open``.
+        filled_gaps: Gaps with status ``filled``.
+        wont_fix_gaps: Gaps with status ``wont_fix``.
+        recall_rate: Fraction of expected properties that are covered
+            (not open or filling).  Range [0.0, 1.0].
+        computed_at: Timestamp when these metrics were calculated.
+    """
+
+    ontology_version_id: uuid.UUID
+    total_expected: int
+    total_gaps: int
+    open_gaps: int
+    filled_gaps: int
+    wont_fix_gaps: int
+    recall_rate: float
+    computed_at: datetime
+
+
+async def compute_recall(
+    session: AsyncSession,
+    ontology_version_id: uuid.UUID,
+) -> RecallMetrics:
+    """Compute recall metrics for an ontology version.
+
+    Reads the ontology schema to count total expected properties, then
+    counts gap records grouped by status.  Recall rate is defined as::
+
+        recall = (total_expected - open_gaps - filling_gaps) / total_expected
+
+    Both ``open`` and ``filling`` gaps are treated as "uncovered" in the
+    numerator.  ``filled`` and ``wont_fix`` gaps count as covered.
+
+    Edge case: when *total_expected* is 0, returns *recall_rate = 1.0*.
+
+    Raises:
+        ValueError: If the *ontology_version_id* does not exist.
+    """
+    # Load OntologyVersion — raise ValueError if not found.
+    stmt = select(OntologyVersion).where(
+        OntologyVersion.id == ontology_version_id,
+    )
+    result = await session.execute(stmt)
+    ov = result.scalar_one_or_none()
+    if ov is None:
+        raise ValueError(
+            f"OntologyVersion not found: {ontology_version_id}",
+        )
+
+    # Count expected properties from ontology schema.
+    entity_types = extract_entity_types(ov)
+    total_expected = _count_expected_properties(entity_types)
+
+    # Count gap records grouped by status.
+    gap_stmt = (
+        select(ExtractionGap.gap_status, func.count())
+        .where(ExtractionGap.ontology_version_id == ontology_version_id)
+        .group_by(ExtractionGap.gap_status)
+    )
+    gap_rows = (await session.execute(gap_stmt)).all()
+
+    status_counts: dict[str, int] = {row[0]: row[1] for row in gap_rows}
+    open_gaps = status_counts.get("open", 0)
+    filled_gaps = status_counts.get("filled", 0)
+    wont_fix_gaps = status_counts.get("wont_fix", 0)
+    filling_gaps = status_counts.get("filling", 0)
+
+    total_gaps = open_gaps + filled_gaps + wont_fix_gaps + filling_gaps
+
+    # Recall = covered / total_expected.
+    # Covered = total_expected - open - filling (both count as missing).
+    if total_expected == 0:
+        recall_rate = 1.0
+    else:
+        recall_rate = (
+            (total_expected - open_gaps - filling_gaps) / total_expected
+        )
+
+    return RecallMetrics(
+        ontology_version_id=ontology_version_id,
+        total_expected=total_expected,
+        total_gaps=total_gaps,
+        open_gaps=open_gaps,
+        filled_gaps=filled_gaps,
+        wont_fix_gaps=wont_fix_gaps,
+        recall_rate=recall_rate,
+        computed_at=datetime.now(UTC),
+    )
 
 
 class GapScanService:
@@ -278,16 +418,9 @@ class GapScanService:
     def _entity_types(ov: OntologyVersion) -> list[dict[str, Any]]:
         """Return ``entity_types`` list from the ontology JSON blob.
 
-        Falls back to an empty list for ``None``/missing payloads; this
-        is one of the AC #5 guarantees (empty ontology → no errors).
+        Delegates to the module-level :func:`extract_entity_types`.
         """
-        data = ov.ontology_data
-        if not isinstance(data, dict):
-            return []
-        raw = data.get("entity_types") or []
-        if not isinstance(raw, list):
-            return []
-        return [e for e in raw if isinstance(e, dict)]
+        return extract_entity_types(ov)
 
     @staticmethod
     def _iter_expected_pairs(

@@ -26,9 +26,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models import ExtractionChunk, ExtractionGap
+from nfm_db.models import ExtractionChunk, ExtractionGap, OntologyVersion
 from nfm_db.models.extraction_gap import EXTRACTION_GAP_STATUSES
 from nfm_db.schemas.extraction_gap import ExtractionGapResponse
+from nfm_db.services.gap_scanner import RecallMetrics, compute_recall
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,23 @@ class GapStatusUpdateRequest(BaseModel):
     status: str = Field(
         description="Target status: filling | filled | wont_fix.",
     )
+
+
+class RecallMetricsResponse(BaseModel):
+    """JSON-serializable response for the recall endpoint.
+
+    Maps :class:`RecallMetrics` fields to wire-safe types (UUID→str,
+    datetime→ISO 8601).
+    """
+
+    ontology_version_id: str
+    total_expected: int
+    total_gaps: int
+    open_gaps: int
+    filled_gaps: int
+    wont_fix_gaps: int
+    recall_rate: float
+    computed_at: str
 
 
 # Statuses the PATCH endpoint will accept on the wire.
@@ -389,3 +407,51 @@ async def update_extraction_gap_status(
     )
 
     return _to_response(gap, chunk)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/extraction-gaps/recall/{ontology_version_id} — recall
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/extraction-gaps/recall/{ontology_version_id}",
+    response_model=RecallMetricsResponse,
+    summary="查询召回率",
+    description=(
+        "计算指定本体版本的召回率指标。召回率 = "
+        "（总预期属性 - 未覆盖缺口）/ 总预期属性。\n\n"
+        "Compute recall metrics for an ontology version. "
+        "Recall rate = (total expected - uncovered gaps) / total expected."
+    ),
+)
+async def get_recall_metrics(
+    ontology_version_id: uuid.UUID = Path(
+        ...,
+        description="Ontology version id to compute recall for.",
+    ),
+    session: AsyncSession = Depends(get_db),
+) -> RecallMetricsResponse:
+    """Return aggregated recall metrics for an ontology version.
+
+    Errors:
+    - 404 — ontology_version_id not found (translated from ValueError).
+    """
+    try:
+        metrics = await compute_recall(session, ontology_version_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return RecallMetricsResponse(
+        ontology_version_id=str(metrics.ontology_version_id),
+        total_expected=metrics.total_expected,
+        total_gaps=metrics.total_gaps,
+        open_gaps=metrics.open_gaps,
+        filled_gaps=metrics.filled_gaps,
+        wont_fix_gaps=metrics.wont_fix_gaps,
+        recall_rate=metrics.recall_rate,
+        computed_at=metrics.computed_at.isoformat(),
+    )
