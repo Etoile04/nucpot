@@ -15,7 +15,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nfm_db.services.gap_scanner import GapScanResult as _GapScanResult
+from nfm_db.services.gap_scanner import GapScanResult
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ class GapScanResultResponse(BaseModel):
 
     @classmethod
     def from_domain(
-        cls, result: _GapScanResult,
+        cls, result: GapScanResult,
     ) -> "GapScanResultResponse":
         """Build a response from a service-layer :class:`GapScanResult`."""
         return cls(
@@ -116,5 +116,6 @@ class GapScanResultResponse(BaseModel):
 
 __all__ = [
     "ExtractionGapResponse",
+    "GapScanResult",
     "GapScanResultResponse",
 ]
