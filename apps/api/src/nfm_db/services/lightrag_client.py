@@ -22,6 +22,31 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_HOST = "localhost"
 _DEFAULT_PORT = 9621
+
+# ---------------------------------------------------------------------------
+# Timeouts (NFM-2565)
+# ---------------------------------------------------------------------------
+# Read and write paths have very different latency budgets, so they no longer
+# share a single constant.
+#
+#   query  — serves a *synchronous user request* (api/v1/kg.py semantic search).
+#            The caller already degrades to Postgres full-text search on
+#            LightRAGClientError, so a short ceiling costs nothing but the
+#            LightRAG answer; a long one costs the user a blank screen. The
+#            previous shared 60s meant a stalled sidecar blocked the browser for
+#            a full minute before the (fast, working) fallback ran — the real
+#            cause of the long-standing "LightRAG query timeout" reports.
+#
+#   ingest — runs in a fire-and-forget background task
+#            (kg_lightrag_sync.fire_ingest_to_lightrag). Nobody is waiting, and
+#            entity extraction over a large document legitimately takes minutes.
+#            Cutting this to seconds would turn working ingests into failures.
+_DEFAULT_QUERY_TIMEOUT = 8.0
+_DEFAULT_INGEST_TIMEOUT = 300.0
+
+# Retained for backward compatibility: callers that pass ``timeout=`` explicitly
+# still override both paths, and the transport-level default keeps the old
+# value for any request that specifies neither.
 _DEFAULT_TIMEOUT = 60.0
 
 
@@ -65,11 +90,45 @@ class LightRAGClient:
         *,
         host: str | None = None,
         port: int | None = None,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float | None = None,
+        query_timeout: float | None = None,
+        ingest_timeout: float | None = None,
     ) -> None:
+        """Construct a client.
+
+        Args:
+            host: LightRAG host; falls back to ``NFM_LIGHTRAG_HOST``.
+            port: LightRAG port; falls back to ``NFM_LIGHTRAG_PORT``.
+            timeout: Legacy single-value override. When given it applies to
+                **both** query and ingest, preserving the pre-NFM-2565
+                behaviour for existing callers and tests.
+            query_timeout: Per-request ceiling for :meth:`query` and
+                :meth:`health_check`. Defaults to 8s.
+            ingest_timeout: Per-request ceiling for :meth:`ingest`.
+                Defaults to 300s.
+        """
         self.host = host or os.environ.get("NFM_LIGHTRAG_HOST", _DEFAULT_HOST)
         self.port = port or int(os.environ.get("NFM_LIGHTRAG_PORT", str(_DEFAULT_PORT)))
-        self.timeout = timeout
+
+        # An explicit ``timeout=`` collapses both paths onto that value.
+        self.query_timeout = (
+            query_timeout
+            if query_timeout is not None
+            else timeout
+            if timeout is not None
+            else _DEFAULT_QUERY_TIMEOUT
+        )
+        self.ingest_timeout = (
+            ingest_timeout
+            if ingest_timeout is not None
+            else timeout
+            if timeout is not None
+            else _DEFAULT_INGEST_TIMEOUT
+        )
+        # ``self.timeout`` stays the transport-level default so attribute reads
+        # in existing code keep working.
+        self.timeout = timeout if timeout is not None else _DEFAULT_TIMEOUT
+
         self._base_url = f"http://{self.host}:{self.port}"
         self._http_client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -92,7 +151,10 @@ class LightRAGClient:
         Connection errors and non-200 responses both return False.
         """
         try:
-            response = await self._http_client.get("/health")
+            response = await self._http_client.get(
+                "/health",
+                timeout=self.query_timeout,
+            )
             return response.status_code == 200
         except httpx.HTTPError:
             logger.warning(
@@ -133,6 +195,7 @@ class LightRAGClient:
             response = await self._http_client.post(
                 "/documents/text",
                 json=payload,
+                timeout=self.ingest_timeout,
             )
             response.raise_for_status()
             return response.json()
@@ -177,6 +240,7 @@ class LightRAGClient:
             response = await self._http_client.post(
                 "/query",
                 json=payload,
+                timeout=self.query_timeout,
             )
             response.raise_for_status()
             return response.json()
