@@ -128,4 +128,4 @@ def test_blog_role_column_is_native_pg_enum() -> None:
     assert col_type.native_enum is True, "blog_role enum must be native on PG"
     assert col_type.name == "blog_role_enum"
     # values_callable yields the lowercase labels the DB enum was created with.
-    assert set(col_type.enums) == {"admin", "editor", "reviewer"}
+    assert set(col_type.enums) == {"admin", "editor", "reviewer", "domain_expert"}
