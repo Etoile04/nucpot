@@ -124,6 +124,10 @@ from nfm_db.models.entity_merge import (  # noqa: E402
 from nfm_db.models.extraction_chunk import (  # noqa: E402
     ExtractionChunk,
 )
+from nfm_db.models.extraction_gap import (  # noqa: E402
+    EXTRACTION_GAP_STATUSES,
+    ExtractionGap,
+)
 from nfm_db.models.extraction_figure import (  # noqa: E402
     ExtractionFigure,
 )
@@ -262,6 +266,8 @@ __all__ = [
     "EntityMergeLog",
     "ExecutionStatus",
     "ExtractionChunk",
+    "EXTRACTION_GAP_STATUSES",
+    "ExtractionGap",
     "ExtractionFigure",
     "ExtractionJob",
     "ExtractionStep",
