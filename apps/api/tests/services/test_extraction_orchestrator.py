@@ -814,6 +814,190 @@ class TestStepQualityGate:
         # not been skipped via the stale hash.
         assert called.get("count") == len(_mapped_properties())
 
+    @pytest.mark.asyncio
+    async def test_step_quality_gate_skipped_on_run_when_map_skip_restores_context(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """Skip path must restore ``_context`` from persisted step metadata.
+
+        End-to-end repro of the NFM-2600 P2 finding (escalated by the
+        CPO review): when ``_execute_step`` skips a step, it currently
+        returns without restoring ``self._context`` from the existing
+        step's ``metadata_``. The downstream step therefore computes
+        its input_hash against an empty ``_context`` rather than the
+        real upstream payload — so the skip detector fails to find a
+        matching prior row and the step re-executes.
+
+        Repro:
+        1. A previous run produced ``map`` step with
+           ``metadata_["mapped_properties"] = M1`` (real payload).
+        2. Same previous run produced ``quality_gate`` step whose
+           ``input_hash`` is the SHA-256 of ``mapped_properties=M1``.
+        3. Re-run the orchestrator over the same job.
+        4. ``map`` should skip (its input_hash over ``raw_extractions=[]``
+           matches the prior row).
+        5. ``quality_gate`` should ALSO skip — its hash over the
+           restored ``mapped_properties=M1`` matches the prior row.
+
+        Current behaviour (bug): ``map`` skip does not restore
+        ``_context["mapped_properties"]`` so ``quality_gate``'s hash is
+        computed against ``[]``, does NOT match the prior row, and the
+        step re-executes (wasting a quality_gate run AND polluting the
+        downstream ``gap_scan``).
+
+        Mirrors the structural pattern of
+        ``test_step_map_skipped_when_hash_matches`` (which already
+        proves the same skip-restore behaviour for the ``map`` step
+        itself, but cannot catch the cross-step regression because
+        ``map`` produces its own hash input).
+        """
+        job = await _create_job(session=db_session)
+
+        # Pre-seed a completed ``map`` step whose persisted
+        # ``mapped_properties`` payload is non-empty. The orchestrator
+        # on re-run will compute the ``map`` hash over
+        # ``raw_extractions=[]`` (because no content is provided), so
+        # the pre-seeded hash must match that empty-input hash for
+        # ``map`` to skip.
+        mapped = _mapped_properties()
+        map_existing_hash = compute_input_hash({
+            "step_type": "map",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "raw_extractions": [],
+        })
+        map_completed = ExtractionStep(
+            job_id=job.id,
+            step_type="map",
+            status="completed",
+            input_hash=map_existing_hash,
+            metadata_={
+                "input_count": 0,
+                "mapped_count": len(mapped),
+                "cache_level": None,
+                "mapped_properties": list(mapped),
+            },
+        )
+        db_session.add(map_completed)
+
+        # Pre-seed a completed ``quality_gate`` step whose hash was
+        # computed against the REAL ``mapped_properties`` payload.
+        qg_existing_hash = compute_input_hash({
+            "step_type": "quality_gate",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "mapped_properties": mapped,
+        })
+        qg_completed = ExtractionStep(
+            job_id=job.id,
+            step_type="quality_gate",
+            status="completed",
+            input_hash=qg_existing_hash,
+            metadata_={
+                "staged": len(mapped),
+                "rejected": 0,
+                "duplicates": 0,
+            },
+        )
+        db_session.add(qg_completed)
+
+        # Pre-seed a completed ``gap_scan`` step so the orchestrator's
+        # ``_context["passed_properties"]`` skip-detection path is not
+        # the variable under test (it has its own latent bug).
+        gap_existing_hash = compute_input_hash({
+            "step_type": "gap_scan",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "staged_properties": [],
+        })
+        db_session.add(
+            ExtractionStep(
+                job_id=job.id,
+                step_type="gap_scan",
+                status="completed",
+                input_hash=gap_existing_hash,
+                metadata_={"input_hash": gap_existing_hash, "non_fatal": True},
+            ),
+        )
+        await db_session.flush()
+
+        # Pre-seed a completed ``extract`` step with empty chunks
+        # so the orchestrator on re-run skips extract (its hash over
+        # ``chunk_ids=[]`` matches the prior row).
+        extract_existing_hash = compute_input_hash({
+            "step_type": "extract",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "chunk_ids": [],
+            "extract_figures": False,
+        })
+        db_session.add(
+            ExtractionStep(
+                job_id=job.id,
+                step_type="extract",
+                status="completed",
+                input_hash=extract_existing_hash,
+            ),
+        )
+        await db_session.flush()
+
+        # Stub QualityGateService so we can detect a re-execution.
+        # If the step is correctly skipped, ``called`` stays empty.
+        called: dict = {}
+
+        class _FakeBulk:
+            accepted: list = []
+            rejected: list = []
+            duplicates: list = []
+
+        class _FakeGate:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def process_bulk(self, values):
+                called["count"] = len(values)
+                return _FakeBulk()
+
+            async def stage_record(self, *a, **kw) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_orchestrator.QualityGateService",
+            _FakeGate,
+        )
+
+        # Run with no content — upstream will skip; quality_gate
+        # should ALSO skip because the persisted ``map`` step's
+        # ``mapped_properties`` are restored to ``_context``.
+        orchestrator = ExtractionOrchestrator(db_session, job)
+        await orchestrator.run()
+
+        # QualityGateService.process_bulk must NOT have been invoked —
+        # the step was skipped, not re-run on an empty payload.
+        assert "count" not in called, (
+            "quality_gate re-ran despite its prior row's hash matching "
+            "after a restored context. _execute_step's skip path is "
+            "not restoring _context from the existing step's metadata_."
+        )
+
+        # And there must be a ``skipped`` row for quality_gate whose
+        # hash matches the pre-seeded completed row.
+        quality_gate_rows = (
+            await db_session.execute(
+                select(ExtractionStep).where(
+                    ExtractionStep.job_id == job.id,
+                    ExtractionStep.step_type == "quality_gate",
+                )
+            )
+        ).scalars().all()
+        statuses = sorted(r.status for r in quality_gate_rows)
+        assert statuses == ["completed", "skipped"], (
+            f"Expected one completed + one skipped quality_gate row; "
+            f"got {statuses}. The skip path is broken."
+        )
+        skipped_row = next(r for r in quality_gate_rows if r.status == "skipped")
+        assert skipped_row.input_hash == qg_existing_hash
+
 
 # ---------------------------------------------------------------------------
 # _step_map — NFM-2587 (T2)
