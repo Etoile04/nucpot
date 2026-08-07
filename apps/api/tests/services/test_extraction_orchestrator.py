@@ -479,17 +479,31 @@ class TestStepQualityGate:
     async def test_step_quality_gate_skipped_when_hash_matches(
         self, db_session,
     ) -> None:
-        """Pre-existing completed step with matching hash skips re-run."""
+        """Pre-existing completed step with matching hash skips re-run.
+
+        The expected hash must include ``mapped_properties`` so the
+        pre-seeded row matches the orchestrator's content-aware hash
+        (NFM-2600). Otherwise the orchestrator would not detect the
+        prior completion and would re-run the step.
+
+        Calls ``_execute_step('quality_gate')`` directly rather than
+        ``run()`` so the chunk/extract/map steps do not overwrite
+        the seeded ``mapped_properties`` context (which the map step
+        would normally replace with its own output).
+        """
         job = await _create_job(session=db_session)
         orchestrator = ExtractionOrchestrator(db_session, job)
-        orchestrator._context["mapped_properties"] = _mapped_properties()
+        mapped = _mapped_properties()
+        orchestrator._context["mapped_properties"] = list(mapped)
 
         # Pre-seed a completed quality_gate step with the hash the
-        # orchestrator will compute.
+        # orchestrator will compute — including the content-aware
+        # ``mapped_properties`` (NFM-2600).
         existing_hash = compute_input_hash({
             "step_type": "quality_gate",
             "source_reference": job.source_reference,
             "source_type": job.source_type,
+            "mapped_properties": mapped,
         })
         completed = ExtractionStep(
             job_id=job.id,
@@ -510,8 +524,8 @@ class TestStepQualityGate:
         ).scalars().all()
         assert len(pre_rows) == 0
 
-        # Run the orchestrator — quality_gate should be skipped.
-        await orchestrator.run()
+        # Run only the quality_gate step — should be skipped.
+        await orchestrator._execute_step("quality_gate")
 
         # No staging rows should have been written (the step was skipped).
         post_rows = (
@@ -659,6 +673,146 @@ class TestStepQualityGate:
             )
         ).scalars().all()
         assert len(post_steps) == 0
+
+    @pytest.mark.asyncio
+    async def test_step_quality_gate_input_hash_includes_mapped_properties(
+        self, db_session,
+    ) -> None:
+        """AC: quality_gate's input_hash is the SHA-256 of the mapped_properties it gates.
+
+        Without ``mapped_properties`` in the hash, a re-run whose
+        upstream ``_step_map`` produced different properties would
+        reuse a stale ``quality_gate`` result. Mirrors the content-aware
+        hash pattern used by ``_step_map`` (see
+        ``test_step_map_input_hash_includes_raw_extractions``) and
+        ``_step_gap_scan`` (see
+        ``test_gap_scan_input_hash_matches_staged_properties``).
+
+        Regression: NFM-2600 — quality_gate's input_hash was missing
+        ``mapped_properties`` and therefore could not detect upstream
+        map-step changes.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        orchestrator._context["mapped_properties"] = _mapped_properties()
+        hash_a = compute_input_hash(
+            orchestrator._build_step_params("quality_gate"),
+        )
+
+        changed = [{**_mapped_properties()[0], "value": 9.99}]
+        orchestrator._context["mapped_properties"] = changed
+        hash_b = compute_input_hash(
+            orchestrator._build_step_params("quality_gate"),
+        )
+
+        assert hash_a != hash_b
+
+    @pytest.mark.asyncio
+    async def test_step_quality_gate_input_hash_matches_mapped_properties(
+        self, db_session,
+    ) -> None:
+        """AC: input_hash on the quality_gate step equals SHA-256(params).
+
+        Confirms that the params dict built by ``_build_step_params``
+        literally contains the ``mapped_properties`` content (not
+        only metadata), so the hash is content-addressed and changes
+        deterministically when ``_step_map`` produces different
+        output.
+
+        Regression: NFM-2600.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        mapped = _mapped_properties()
+        orchestrator._context["mapped_properties"] = list(mapped)
+
+        expected_hash = compute_input_hash({
+            "step_type": "quality_gate",
+            "source_reference": job.source_reference,
+            "source_type": job.source_type,
+            "mapped_properties": mapped,
+        })
+
+        actual_hash = compute_input_hash(
+            orchestrator._build_step_params("quality_gate"),
+        )
+
+        assert actual_hash == expected_hash
+        assert len(actual_hash) == 64  # SHA-256 hex
+
+    @pytest.mark.asyncio
+    async def test_step_quality_gate_not_skipped_when_mapped_properties_differ(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """A quality_gate completed on different mapped_properties must not skip.
+
+        End-to-end repro from NFM-2600:
+        1. A previous run quality-gated mapped_properties M1.
+        2. This run has different upstream output M2.
+        3. The skip detector must NOT find a matching prior step,
+           so quality_gate must actually run.
+
+        Without ``mapped_properties`` in the params hash, the stale
+        row would match and the step would be skipped, causing
+        downstream stages to consume stale results.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        # Seed upstream so chunk/extract/map don't try real I/O.
+        orchestrator._context["raw_extractions"] = []
+        orchestrator._context["chunks"] = []
+
+        # A previous run quality-gated a DIFFERENT set of properties.
+        orchestrator._context["mapped_properties"] = [
+            {**_mapped_properties()[0], "value": 1.11},
+        ]
+        stale_hash = compute_input_hash(
+            orchestrator._build_step_params("quality_gate"),
+        )
+        db_session.add(
+            ExtractionStep(
+                job_id=job.id,
+                step_type="quality_gate",
+                status="completed",
+                input_hash=stale_hash,
+            ),
+        )
+        await db_session.flush()
+
+        # This run has new mapped_properties, so quality_gate must run.
+        orchestrator._context["mapped_properties"] = _mapped_properties()
+
+        called: dict = {}
+
+        class _FakeBulk:
+            accepted: list = []
+            rejected: list = []
+            duplicates: list = []
+
+        class _FakeGate:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def process_bulk(self, values):
+                called["count"] = len(values)
+                return _FakeBulk()
+
+            async def stage_record(self, *a, **kw):
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_orchestrator.QualityGateService",
+            _FakeGate,
+        )
+
+        await orchestrator._execute_step("quality_gate")
+
+        # The step must have actually run on the new mapped_properties,
+        # not been skipped via the stale hash.
+        assert called.get("count") == len(_mapped_properties())
 
 
 # ---------------------------------------------------------------------------
