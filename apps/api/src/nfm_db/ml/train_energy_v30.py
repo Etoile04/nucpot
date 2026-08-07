@@ -285,7 +285,7 @@ def main() -> None:
 
     # Train
     model = train_model(X_train, y_train, X_test, y_test)
-    metrics: dict[str, object] = evaluate(model, X_test, y_test)
+    metrics: dict[str, float] = evaluate(model, X_test, y_test)
 
     # Train metrics for overfitting check
     train_metrics = evaluate(model, X_train, y_train)
@@ -305,13 +305,14 @@ def main() -> None:
     metrics["cv_rmse"] = round(float(np.mean(cv_metrics["rmse"])), 6)
     metrics["cv_mae"] = round(float(np.mean(cv_metrics["mae"])), 6)
 
-    # Feature importance
+    # Feature importance (widen type to allow list values)
     importance = model.feature_importances_
     paired = sorted(
         zip(ENERGY_V11_FEATURE_NAMES, importance, strict=True),
         key=lambda x: -x[1],
     )
-    metrics["feature_importance"] = [
+    all_metrics: dict[str, object] = metrics  # type: ignore[assignment]
+    all_metrics["feature_importance"] = [
         {"name": name, "importance": round(float(imp), 4)}
         for name, imp in paired
     ]
@@ -335,7 +336,7 @@ def main() -> None:
         "random_state": RANDOM_STATE,
         "feature_names": ENERGY_V11_FEATURE_NAMES,
         "dataset_source": "NFM-1540 PathB Star-xingyi (2,909 unique PBE compositions)",
-        **metrics,
+        **all_metrics,
     }
 
     # Save model artifact
@@ -346,7 +347,7 @@ def main() -> None:
     artifact = {
         "model": model,
         "version": MODEL_VERSION,
-        "metrics": metrics,
+        "metrics": all_metrics,
         "feature_names": ENERGY_V11_FEATURE_NAMES,
     }
     joblib.dump(artifact, model_path)
