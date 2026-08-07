@@ -258,7 +258,11 @@ async def test_publish_first_version(async_client, domain_expert_headers, db_ses
 @pytest.mark.no_auto_auth
 async def test_publish_patch_bump(async_client, domain_expert_headers, db_session):
     await _create_version(db_session, version="0.1.0", status="published")
-    ov2 = await _create_version(db_session, version="0.1.0", status="draft")
+    # The draft needs a version string distinct from the published 0.1.0 row:
+    # ontology_versions.version is UNIQUE. publish_version() recomputes the
+    # version from the latest *published* row and overwrites this placeholder,
+    # so its value does not affect the assertion below.
+    ov2 = await _create_version(db_session, version="0.0.0-draft", status="draft")
     await db_session.commit()
 
     resp = await async_client.post(
@@ -274,7 +278,11 @@ async def test_publish_patch_bump(async_client, domain_expert_headers, db_sessio
 @pytest.mark.no_auto_auth
 async def test_publish_minor_bump(async_client, domain_expert_headers, db_session):
     await _create_version(db_session, version="0.1.0", status="published")
-    ov2 = await _create_version(db_session, version="0.1.0", status="draft")
+    # The draft needs a version string distinct from the published 0.1.0 row:
+    # ontology_versions.version is UNIQUE. publish_version() recomputes the
+    # version from the latest *published* row and overwrites this placeholder,
+    # so its value does not affect the assertion below.
+    ov2 = await _create_version(db_session, version="0.0.0-draft", status="draft")
     await db_session.commit()
 
     resp = await async_client.post(
@@ -290,7 +298,11 @@ async def test_publish_minor_bump(async_client, domain_expert_headers, db_sessio
 @pytest.mark.no_auto_auth
 async def test_publish_major_bump(async_client, domain_expert_headers, db_session):
     await _create_version(db_session, version="0.1.0", status="published")
-    ov2 = await _create_version(db_session, version="0.1.0", status="draft")
+    # The draft needs a version string distinct from the published 0.1.0 row:
+    # ontology_versions.version is UNIQUE. publish_version() recomputes the
+    # version from the latest *published* row and overwrites this placeholder,
+    # so its value does not affect the assertion below.
+    ov2 = await _create_version(db_session, version="0.0.0-draft", status="draft")
     await db_session.commit()
 
     resp = await async_client.post(
