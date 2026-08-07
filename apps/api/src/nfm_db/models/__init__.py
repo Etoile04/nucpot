@@ -121,11 +121,17 @@ from nfm_db.models.entity_merge import (  # noqa: E402
     EntityMergeLog,
     MatchMethod,
 )
+from nfm_db.models.extraction_chunk import (  # noqa: E402
+    ExtractionChunk,
+)
 from nfm_db.models.extraction_figure import (  # noqa: E402
     ExtractionFigure,
 )
 from nfm_db.models.extraction_job import (  # noqa: E402
     ExtractionJob,
+)
+from nfm_db.models.extraction_step import (  # noqa: E402
+    ExtractionStep,
 )
 from nfm_db.models.extraction_result import (  # noqa: E402
     ExtractionResult,
@@ -240,8 +246,10 @@ __all__ = [
     "DefectType",
     "EntityMergeLog",
     "ExecutionStatus",
+    "ExtractionChunk",
     "ExtractionFigure",
     "ExtractionJob",
+    "ExtractionStep",
     "ExtractionResult",
     "Feedback",
     "FeedbackStatus",
