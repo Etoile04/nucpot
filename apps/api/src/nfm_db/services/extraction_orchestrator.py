@@ -229,6 +229,13 @@ class ExtractionOrchestrator:
             params["chunk_ids"] = chunk_ids
             params["extract_figures"] = bool(kwargs.get("extract_figures", False))
 
+        if step_type == "gap_scan":
+            # gap_scan's input is the staged_properties carried forward
+            # from _step_quality_gate. Include them so skip detection
+            # is content-aware (NFM-2568-T5).
+            staged = self._context.get("passed_properties") or []
+            params["staged_properties"] = staged
+
         return params
 
     async def _fail_job(self, error_message: str) -> None:
