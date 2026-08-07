@@ -232,8 +232,8 @@ class ExtractionOrchestrator:
         Per-step mapping (kept in lockstep with what each step writes
         to ``_context``):
         - ``map``: ``metadata_["mapped_properties"]`` → ``_context["mapped_properties"]``
-        - ``quality_gate``: ``metadata_["staged"|"rejected"|"duplicates"]`` →
-          ``_context["quality_gate_result"]``
+        - ``quality_gate``: ``metadata_["staged"|"rejected"|"duplicates"|"passed_properties"]`` →
+          ``_context["quality_gate_result"]`` + ``_context["passed_properties"]``
         - ``gap_scan``: no ``_context`` consumer downstream; nothing to restore.
 
         Steps ``chunk`` and ``extract`` do not persist to ``metadata_``
@@ -268,6 +268,11 @@ class ExtractionOrchestrator:
                     "rejected": metadata.get("rejected", 0),
                     "duplicates": metadata.get("duplicates", 0),
                 }
+                # Restore staged property payloads so gap_scan can
+                # compute a content-aware input_hash on skip (NFM-2606).
+                restored_props = metadata.get("passed_properties")
+                if restored_props is not None:
+                    self._context["passed_properties"] = list(restored_props)
 
     def _build_step_params(
         self,
@@ -626,6 +631,7 @@ class ExtractionOrchestrator:
             staged_count = 0
             rejected_count = 0
             duplicate_count = 0
+            passed_properties: list[dict[str, Any]] = []
 
             if mapped_properties:
                 gate = QualityGateService(self._session)
@@ -645,14 +651,20 @@ class ExtractionOrchestrator:
                         fill_batch_id=fill_batch_id,
                     )
                     staged_count += 1
+                    passed_properties.append(matching_raw)
 
                 rejected_count = len(bulk_result.rejected)
                 duplicate_count = len(bulk_result.duplicates)
+
+            # Persist staged property payloads so gap_scan can consume
+            # them and skip-restore can rehydrate them (NFM-2606).
+            self._context["passed_properties"] = passed_properties
 
             step.metadata_ = {
                 "staged": staged_count,
                 "rejected": rejected_count,
                 "duplicates": duplicate_count,
+                "passed_properties": passed_properties,
             }
             # Persist the metadata column so callers and tests that
             # ``session.refresh(step)`` after the call see the new
