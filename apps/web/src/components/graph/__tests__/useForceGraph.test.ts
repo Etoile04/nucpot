@@ -57,7 +57,7 @@ const LARGE_DATA: GraphData = {
   })),
   edges: Array.from({ length: 300 }, (_, i) => ({
     id: `e${i}`,
-    source: `n${i}`,
+    source: `n${i % 250}`,
     target: `n${(i + 1) % 250}`,
   })),
 }
@@ -218,5 +218,53 @@ describe("useForceGraph", () => {
     expect(result.current.error).toBeNull()
     expect(result.current.simNodes).toHaveLength(0)
     expect(result.current.simEdges).toHaveLength(0)
+  })
+
+  it("filters out edges with dangling source/target node references (NFM-2616)", () => {
+    // The backend may return edges that reference nodes no longer in the
+    // graph (e.g. deleted nodes whose edges weren't cascaded).  d3-force
+    // would throw "node not found" for these — the hook must silently
+    // drop them instead.
+    const DANGLING_EDGE_DATA: GraphData = {
+      nodes: [
+        { id: "n1", label: "Uranium", type: "material" },
+        { id: "n2", label: "Density", type: "property" },
+      ],
+      edges: [
+        { id: "e1", source: "n1", target: "n2" },
+        { id: "e2", source: "dead-node-uuid", target: "n1" },
+        { id: "e3", source: "n2", target: "another-missing-uuid" },
+      ],
+    }
+
+    const { result } = renderHook(() =>
+      useForceGraph(DANGLING_EDGE_DATA, 800, 600),
+    )
+
+    // Only the valid edge (n1→n2) should survive; two dangling edges dropped.
+    expect(result.current.simNodes).toHaveLength(2)
+    expect(result.current.simEdges).toHaveLength(1)
+    expect(result.current.simEdges[0]?.id).toBe("e1")
+
+    // No error — dangling edges are silently discarded.
+    expect(result.current.error).toBeNull()
+  })
+
+  it("filters out all edges when every edge has a dangling reference (NFM-2616)", () => {
+    const ALL_DANGLING: GraphData = {
+      nodes: [{ id: "n1", label: "Solo", type: "default" }],
+      edges: [
+        { id: "e1", source: "ghost-a", target: "n1" },
+        { id: "e2", source: "n1", target: "ghost-b" },
+      ],
+    }
+
+    const { result } = renderHook(() =>
+      useForceGraph(ALL_DANGLING, 800, 600),
+    )
+
+    expect(result.current.simNodes).toHaveLength(1)
+    expect(result.current.simEdges).toHaveLength(0)
+    expect(result.current.error).toBeNull()
   })
 })

@@ -123,7 +123,15 @@ export function useForceGraph(
   /** Initialize simulation when data changes. */
   useEffect(() => {
     const nodes = data.nodes.map((n) => buildSimNode(n, w, h))
-    const edges = data.edges.map((e) => buildSimEdge(e))
+
+    // NFM-2616: drop edges whose source/target reference nodes that
+    // don't exist in the current dataset.  d3-force would throw
+    // "node not found" for these, causing a console error on every
+    // page load when the backend returns stale edge references.
+    const nodeIds = new Set(nodes.map((n) => n.id))
+    const edges = data.edges
+      .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+      .map((e) => buildSimEdge(e))
 
     nodesRef.current = nodes
     edgesRef.current = edges
