@@ -782,43 +782,32 @@ class TestStepMap:
     async def test_step_map_skipped_when_hash_matches(
         self, db_session, monkeypatch,
     ) -> None:
-        """Pre-existing completed map step with matching hash is skipped."""
+        """AC: a duplicate run over unchanged input skips the map step.
+
+        Derives the hash from a real first run rather than hard-coding
+        it, so the test stays honest if the step's input params change.
+        """
         job = await _create_job(session=db_session)
-        orchestrator = ExtractionOrchestrator(db_session, job)
-        orchestrator._context["raw_extractions"] = _raw_extractions()
 
-        # Pre-seed a completed map step with the hash the orchestrator
-        # would compute.
-        existing_hash = compute_input_hash({
-            "step_type": "map",
-            "source_reference": job.source_reference,
-            "source_type": job.source_type,
-        })
-        completed = ExtractionStep(
-            job_id=job.id,
-            step_type="map",
-            status="completed",
-            input_hash=existing_hash,
-        )
-        db_session.add(completed)
-        await db_session.flush()
+        calls = {"n": 0}
 
-        # If the step is skipped, _apply_property_mapping must NOT be
-        # called.  Use a sentinel that raises if invoked.
-        def _should_not_run(*a, **kw):
-            raise AssertionError(
-                "_apply_property_mapping should be skipped on hash match",
-            )
+        def _counting_map(raw_properties, cache_level):
+            calls["n"] += 1
+            return list(raw_properties)
 
         monkeypatch.setattr(
             "nfm_db.services.extraction_pipeline._apply_property_mapping",
-            _should_not_run,
+            _counting_map,
         )
 
-        await orchestrator.run()
+        # First run: map executes and records its input_hash.
+        await ExtractionOrchestrator(db_session, job).run()
+        assert calls["n"] == 1
 
-        # There should be 1 original completed step + 1 new skipped row
-        # for 'map' (and 4 more for chunk, extract, quality_gate, gap_scan).
+        # Second run over the same job with unchanged input must skip map.
+        await ExtractionOrchestrator(db_session, job).run()
+        assert calls["n"] == 1, "map re-ran despite an unchanged input hash"
+
         map_rows = (
             await db_session.execute(
                 select(ExtractionStep).where(
@@ -832,7 +821,7 @@ class TestStepMap:
         completed_rows = [r for r in map_rows if r.status == "completed"]
         assert len(skipped) == 1
         assert len(completed_rows) == 1
-        assert skipped[0].input_hash == existing_hash
+        assert skipped[0].input_hash == completed_rows[0].input_hash
 
     @pytest.mark.asyncio
     async def test_step_map_passes_cache_level_through(
@@ -869,6 +858,69 @@ class TestStepMap:
         # Metadata should also reflect the cache level.
         await db_session.refresh(step)
         assert step.metadata_["cache_level"] == "L3"
+
+    @pytest.mark.asyncio
+    async def test_step_map_input_hash_includes_raw_extractions(
+        self, db_session,
+    ) -> None:
+        """AC: map's input_hash is the SHA-256 of the extractions it maps.
+
+        Without the extractions in the hash, a re-run whose ``extract``
+        step produced different properties would reuse a stale ``map``
+        result.  Mirrors the content-addressing gap_scan already has.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        orchestrator._context["raw_extractions"] = _raw_extractions()
+        hash_a = compute_input_hash(orchestrator._build_step_params("map"))
+
+        changed = [{**_raw_extractions()[0], "value": 9.99}]
+        orchestrator._context["raw_extractions"] = changed
+        hash_b = compute_input_hash(orchestrator._build_step_params("map"))
+
+        assert hash_a != hash_b
+
+    @pytest.mark.asyncio
+    async def test_step_map_not_skipped_when_raw_extractions_differ(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """A map step completed on different input must not suppress a re-map."""
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        # A previous run mapped a DIFFERENT set of extractions.
+        orchestrator._context["raw_extractions"] = [
+            {**_raw_extractions()[0], "value": 1.11},
+        ]
+        stale_hash = compute_input_hash(orchestrator._build_step_params("map"))
+        db_session.add(
+            ExtractionStep(
+                job_id=job.id,
+                step_type="map",
+                status="completed",
+                input_hash=stale_hash,
+            ),
+        )
+        await db_session.flush()
+
+        # This run has new extractions, so map must actually run.
+        orchestrator._context["raw_extractions"] = _raw_extractions()
+
+        called: dict = {}
+
+        def _spy(raw_properties, cache_level):
+            called["count"] = len(raw_properties)
+            return list(raw_properties)
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_pipeline._apply_property_mapping",
+            _spy,
+        )
+
+        await orchestrator._execute_step("map")
+
+        assert called.get("count") == len(_raw_extractions())
 
 
 # ---------------------------------------------------------------------------
