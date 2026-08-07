@@ -535,6 +535,131 @@ class TestStepQualityGate:
         ).scalars().all()
         assert len(skipped_rows) == 1
 
+    @pytest.mark.asyncio
+    async def test_step_quality_gate_failure_records_error_and_halts(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """On failure: step.status='failed', error_message set, raises.
+
+        Mirrors ``TestStepMap::test_step_map_failure_records_error_and_halts``.
+        When ``QualityGateService.process_bulk`` raises, the step row
+        must record the failure (status='failed', error_message includes
+        the exception class+message, completed_at set) and the exception
+        must propagate so ``run()`` can halt the pipeline.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+        # Simulate Step 3 (map) output.
+        orchestrator._context["mapped_properties"] = _mapped_properties()
+
+        step = ExtractionStep(
+            job_id=job.id,
+            step_type="quality_gate",
+            status="running",
+            input_hash="deadbeef",
+        )
+        db_session.add(step)
+        await db_session.flush()
+
+        class _BrokenGate:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def process_bulk(self, values):
+                raise RuntimeError("quality gate unavailable")
+
+            async def stage_record(self, *a, **kw):
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_orchestrator.QualityGateService",
+            _BrokenGate,
+        )
+
+        with pytest.raises(RuntimeError, match="quality gate unavailable"):
+            await orchestrator._step_quality_gate(step)
+
+        await db_session.refresh(step)
+
+        assert step.status == "failed"
+        assert step.error_message is not None
+        assert "quality gate unavailable" in step.error_message
+        assert "RuntimeError" in step.error_message
+        assert step.completed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_step_quality_gate_failure_inside_run_halts_pipeline(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """End-to-end: _step_quality_gate failure causes job.status='failed'.
+
+        Mirrors ``TestStepMap::test_step_map_failure_inside_run_halts_pipeline``.
+        A broken ``QualityGateService`` must surface as a failed job and
+        the quality_gate step row must carry the failure metadata; the
+        downstream ``gap_scan`` step must not run.
+
+        ``_apply_property_mapping`` is monkey-patched so ``_step_map``
+        produces a non-empty mapped list — otherwise ``_step_quality_gate``
+        short-circuits on empty input and the broken gate is never
+        invoked.
+        """
+        job = await _create_job(session=db_session)
+
+        def _passthrough_map(raw_properties, cache_level):
+            # Make map produce the same input as the broken gate will
+            # see, so the gate failure is the only failure in the
+            # pipeline.
+            return _mapped_properties()
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_pipeline._apply_property_mapping",
+            _passthrough_map,
+        )
+
+        class _BrokenGate:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def process_bulk(self, values):
+                raise ValueError("bad gate config")
+
+            async def stage_record(self, *a, **kw):
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_orchestrator.QualityGateService",
+            _BrokenGate,
+        )
+
+        result = await ExtractionOrchestrator(db_session, job).run()
+
+        assert result.status == "failed"
+        assert "bad gate config" in (result.error_message or "")
+
+        # The quality_gate step should be marked failed.
+        qg_step = (
+            await db_session.execute(
+                select(ExtractionStep).where(
+                    ExtractionStep.job_id == job.id,
+                    ExtractionStep.step_type == "quality_gate",
+                )
+            )
+        ).scalar_one()
+        assert qg_step.status == "failed"
+        assert "ValueError" in (qg_step.error_message or "")
+        assert qg_step.completed_at is not None
+
+        # Steps after quality_gate (gap_scan) must not have been created.
+        post_steps = (
+            await db_session.execute(
+                select(ExtractionStep).where(
+                    ExtractionStep.job_id == job.id,
+                    ExtractionStep.step_type == "gap_scan",
+                )
+            )
+        ).scalars().all()
+        assert len(post_steps) == 0
+
 
 # ---------------------------------------------------------------------------
 # _step_map — NFM-2587 (T2)

@@ -521,57 +521,75 @@ class ExtractionOrchestrator:
 
         Counts of staged / rejected / duplicate records are persisted
         on the step's metadata_ field for operator inspection.
-        Failures propagate to :meth:``run`` which marks the step
-        failed and halts the pipeline (the orchestrator's outer
-        _execute_step handles error recording).
+
+        On failure this step itself records the failure on the step
+        row (``status='failed'``, ``error_message``, ``completed_at``)
+        before re-raising, mirroring ``_step_map``. ``run()`` then
+        halts the pipeline via ``_fail_job``; the orchestrator's outer
+        ``_execute_step`` does NOT record errors itself — it only sets
+        ``status='completed'`` on the success path.
         """
         mapped_properties: list[dict[str, Any]] = list(
             self._context.get("mapped_properties", []),
         )
 
-        # Lazy import to avoid a top-level cycle (extraction_pipeline
-        # already imports the orchestrator module indirectly).
-        from nfm_db.services.extraction_pipeline import _find_matching
+        try:
+            # Lazy import to avoid a top-level cycle (extraction_pipeline
+            # already imports the orchestrator module indirectly).
+            from nfm_db.services.extraction_pipeline import _find_matching
 
-        staged_count = 0
-        rejected_count = 0
-        duplicate_count = 0
+            staged_count = 0
+            rejected_count = 0
+            duplicate_count = 0
 
-        if mapped_properties:
-            gate = QualityGateService(self._session)
-            bulk_result = await gate.process_bulk(mapped_properties)
+            if mapped_properties:
+                gate = QualityGateService(self._session)
+                bulk_result = await gate.process_bulk(mapped_properties)
 
-            fill_batch_id = self._job.id
+                fill_batch_id = self._job.id
 
-            for gate_result in bulk_result.accepted:
-                matching_raw = _find_matching(
-                    mapped_properties, gate_result.dedup_hash,
-                )
-                if matching_raw is None:
-                    continue
-                await gate.stage_record(
-                    matching_raw,
-                    gate_result,
-                    fill_batch_id=fill_batch_id,
-                )
-                staged_count += 1
+                for gate_result in bulk_result.accepted:
+                    matching_raw = _find_matching(
+                        mapped_properties, gate_result.dedup_hash,
+                    )
+                    if matching_raw is None:
+                        continue
+                    await gate.stage_record(
+                        matching_raw,
+                        gate_result,
+                        fill_batch_id=fill_batch_id,
+                    )
+                    staged_count += 1
 
-            rejected_count = len(bulk_result.rejected)
-            duplicate_count = len(bulk_result.duplicates)
+                rejected_count = len(bulk_result.rejected)
+                duplicate_count = len(bulk_result.duplicates)
 
-        step.metadata_ = {
-            "staged": staged_count,
-            "rejected": rejected_count,
-            "duplicates": duplicate_count,
-        }
-        self._session.add(step)
-        await self._session.flush()
+            step.metadata_ = {
+                "staged": staged_count,
+                "rejected": rejected_count,
+                "duplicates": duplicate_count,
+            }
+            self._session.add(step)
+            await self._session.flush()
 
-        self._context["quality_gate_result"] = {
-            "staged": staged_count,
-            "rejected": rejected_count,
-            "duplicates": duplicate_count,
-        }
+            self._context["quality_gate_result"] = {
+                "staged": staged_count,
+                "rejected": rejected_count,
+                "duplicates": duplicate_count,
+            }
+        except Exception as exc:
+            logger.exception(
+                "Step 'quality_gate' failed for job %s", self._job.id,
+            )
+            # Record the failure on the step record itself, then
+            # re-raise so ``run()`` halts the pipeline and marks the
+            # job as failed. We do NOT swallow the exception.
+            step.status = "failed"
+            step.error_message = f"{type(exc).__name__}: {exc}"
+            step.completed_at = datetime.now(UTC)
+            self._session.add(step)
+            await self._session.flush()
+            raise
 
     async def _step_gap_scan(
         self,
