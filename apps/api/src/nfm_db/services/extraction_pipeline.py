@@ -38,6 +38,75 @@ from nfm_db.services.health_event_emitter import (
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 from nfm_db.services.quality_gate import QualityGateService
 
+# ---------------------------------------------------------------------------
+# Chunking constants (NFM-1366 P3, daily reflection 2026-08-06 §2.2)
+# ---------------------------------------------------------------------------
+# When source content exceeds the model's context window, split it into
+# chunks and extract from each independently. The limit below is
+# conservative: it assumes qwen3.6:35b (32K char budget per PR #686's
+# _MODEL_CONTEXT_CHARS), minus ~3K for system_prompt + user_message
+# prefix, times 0.8 safety margin.
+_CHUNK_MAX_CHARS = 20_000  # max chars of source content per LLM call
+
+
+def _chunk_content(content: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str]:
+    """Split *content* into chunks ≤ *max_chars*, preferring paragraph
+    boundaries (``\\n\\n``) to avoid mid-sentence cuts.
+
+    Returns at least one chunk (may be > max_chars if a single paragraph
+    exceeds the limit — that paragraph is hard-split as a last resort).
+
+    This function is deliberately model-agnostic: the caller decides when
+    to chunk (by comparing len(content) to the known budget). The chunk
+    size is intentionally conservative so it works for any 32K-context
+    model without per-model tuning.
+    """
+    if len(content) <= max_chars:
+        return [content]
+
+    chunks: list[str] = []
+    paragraphs = content.split("\n\n")
+    current = ""
+
+    for para in paragraphs:
+        candidate = f"{current}\n\n{para}" if current else para
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            # Flush current chunk if non-empty
+            if current:
+                chunks.append(current)
+                current = ""
+            # If the paragraph itself is too long, hard-split it
+            if len(para) > max_chars:
+                # Hard-split: walk through the paragraph with a moving cursor,
+                # breaking at sentence boundaries where possible. Avoids the
+                # mutation-during-iteration bug that an earlier range-based
+                # version had (mutating `para` inside range(0, len(para))
+                # silently dropped content).
+                remaining = para
+                while remaining:
+                    if len(remaining) <= max_chars:
+                        chunks.append(remaining)
+                        break
+                    piece = remaining[:max_chars]
+                    last_period = piece.rfind(". ")
+                    if last_period > max_chars // 2:
+                        # Break after the last sentence boundary in the window
+                        piece = remaining[: last_period + 1]
+                        remaining = remaining[last_period + 1 :]
+                    else:
+                        # No good sentence boundary — hard cut
+                        remaining = remaining[max_chars:]
+                    chunks.append(piece)
+            else:
+                current = para
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
 logger = logging.getLogger(__name__)
 
 # DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
@@ -344,32 +413,50 @@ async def ontofuel_extract(
         # Build system prompt
         system_prompt = build_extraction_system_prompt()
 
-        # Build user message with optional element filter
-        user_message = (
-            f"Extract all nuclear material properties from the following file:\n\n{content}"
-        )
-        if element_systems:
-            user_message = (
-                f"Extract properties for these element systems only: "
-                f"{', '.join(element_systems)}\n\n"
-                f"Source file:\n\n{content}"
+        # Call LLM — with chunking for large inputs (NFM-1366 P3)
+        # If content exceeds the model's context window, split into
+        # chunks and extract from each, then merge results.
+        chunks = _chunk_content(content)
+        if len(chunks) > 1:
+            logger.info(
+                "LLM extraction: content_len=%d split into %d chunks (max %d chars each)",
+                len(content),
+                len(chunks),
+                _CHUNK_MAX_CHARS,
             )
 
-        # Call LLM
-        raw_result = await call_llm(
-            system_prompt=system_prompt,
-            user_message=user_message,
-        )
+        all_raw_properties: list[dict[str, Any]] = []
+        for idx, chunk in enumerate(chunks):
+            chunk_message = (
+                f"Extract all nuclear material properties from the following file"
+                f"{f' (part {idx + 1} of {len(chunks)})' if len(chunks) > 1 else ''}:\n\n{chunk}"
+            )
+            if element_systems:
+                chunk_message = (
+                    f"Extract properties for these element systems only: "
+                    f"{', '.join(element_systems)}\n\n"
+                    f"Source file"
+                    f"{f' (part {idx + 1} of {len(chunks)})' if len(chunks) > 1 else ''}:\n\n{chunk}"
+                )
 
-        # Parse response — expect a list of dicts
-        if isinstance(raw_result, list):
-            raw_properties = raw_result
-        elif isinstance(raw_result, dict) and "properties" in raw_result:
-            raw_properties = raw_result["properties"]
-        elif isinstance(raw_result, dict) and "data" in raw_result:
-            raw_properties = raw_result["data"]
-        else:
-            raw_properties = [raw_result] if raw_result else []
+            raw_result = await call_llm(
+                system_prompt=system_prompt,
+                user_message=chunk_message,
+            )
+
+            # Parse response — expect a list of dicts
+            if isinstance(raw_result, list):
+                chunk_properties = raw_result
+            elif isinstance(raw_result, dict) and "properties" in raw_result:
+                chunk_properties = raw_result["properties"]
+            elif isinstance(raw_result, dict) and "data" in raw_result:
+                chunk_properties = raw_result["data"]
+            else:
+                chunk_properties = [raw_result] if raw_result else []
+
+            all_raw_properties.extend(chunk_properties)
+
+        raw_properties = all_raw_properties
 
         # Post-process with PhaseMapper and PropertyCategory
         return _post_process_extracted(raw_properties, source_reference)

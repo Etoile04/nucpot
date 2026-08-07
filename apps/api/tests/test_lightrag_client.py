@@ -394,3 +394,157 @@ class TestLifecycle:
                 async with client:
                     raise RuntimeError("boom")
             mock_close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Timeout split (NFM-2565)
+# ---------------------------------------------------------------------------
+
+
+class TestTimeoutSplit:
+    """query and ingest must not share a single timeout budget.
+
+    Before NFM-2565 both paths used one 60s constant. A stalled sidecar
+    therefore blocked the *synchronous* semantic-search request for a full
+    minute before ``RAGProviderSelector`` fell back to Postgres FTS — the
+    fallback worked, but the user saw a blank screen for 60s.
+    """
+
+    def test_defaults_are_split(self) -> None:
+        """Query budget must be far tighter than the ingest budget."""
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            _DEFAULT_INGEST_TIMEOUT,
+            _DEFAULT_QUERY_TIMEOUT,
+            LightRAGClient,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        assert client.query_timeout == _DEFAULT_QUERY_TIMEOUT
+        assert client.ingest_timeout == _DEFAULT_INGEST_TIMEOUT
+        assert client.query_timeout < client.ingest_timeout
+        # A user-facing request must not be allowed to hang for a minute.
+        assert client.query_timeout <= 10.0
+
+    def test_explicit_timeout_collapses_both(self) -> None:
+        """Legacy ``timeout=`` keeps applying to both paths (back-compat)."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621, timeout=42.0)
+
+        assert client.query_timeout == 42.0
+        assert client.ingest_timeout == 42.0
+        assert client.timeout == 42.0
+
+    def test_per_path_overrides(self) -> None:
+        """Each path can be tuned independently."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(
+            host="localhost",
+            port=9621,
+            query_timeout=3.0,
+            ingest_timeout=600.0,
+        )
+
+        assert client.query_timeout == 3.0
+        assert client.ingest_timeout == 600.0
+
+    @pytest.mark.asyncio
+    async def test_query_request_uses_query_timeout(self) -> None:
+        """The /query POST must carry the query budget, not the ingest one."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = lambda: {"response": "ok"}
+        mock_response.raise_for_status = lambda: None
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "post",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_post:
+            await client.query(query="what is UO2?")
+
+        assert mock_post.call_args.kwargs["timeout"] == client.query_timeout
+
+    @pytest.mark.asyncio
+    async def test_ingest_request_uses_ingest_timeout(self) -> None:
+        """The /documents/text POST must carry the generous ingest budget."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = lambda: {"track_id": "t-1"}
+        mock_response.raise_for_status = lambda: None
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "post",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_post:
+            await client.ingest(text="[Material] UO2")
+
+        assert mock_post.call_args.kwargs["timeout"] == client.ingest_timeout
+
+    @pytest.mark.asyncio
+    async def test_health_check_uses_query_timeout(self) -> None:
+        """Health probes gate user-facing routing, so they use the fast budget."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "get",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_get:
+            assert await client.health_check() is True
+
+        assert mock_get.call_args.kwargs["timeout"] == client.query_timeout
+
+
+class TestQueryTimeoutDegradesToFallback:
+    """A slow sidecar must degrade to Postgres FTS, not surface an error."""
+
+    @pytest.mark.asyncio
+    async def test_selector_falls_back_on_query_timeout(self) -> None:
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            LightRAGClient,
+        )
+        from nfm_db.services.rag_provider import (  # type: ignore[import-untyped]
+            RAGProviderSelector,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        db_session = AsyncMock()
+
+        selector = RAGProviderSelector(lightrag_client=client, db_session=db_session)
+
+        fallback_result = AsyncMock()
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ReadTimeout("Timed out"),
+            ),
+            patch.object(
+                selector._fallback,  # type: ignore[attr-defined]
+                "query",
+                new_callable=AsyncMock,
+                return_value=fallback_result,
+            ) as mock_fallback,
+        ):
+            result = await selector.query(query="what is UO2?")
+
+        mock_fallback.assert_awaited_once()
+        assert result is fallback_result
