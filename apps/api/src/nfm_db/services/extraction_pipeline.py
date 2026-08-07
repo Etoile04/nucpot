@@ -554,6 +554,37 @@ async def trigger_extraction(
     endpoint hand out a job_id immediately for status polling
     (2026-07-28 follow-up).
     """
+    # NFM-2568-T1: Feature-flag routing to V2 orchestrator.
+    # When enabled, delegates to the step-based orchestrator and
+    # returns immediately — legacy code below is untouched.
+    from nfm_db.config import get_settings
+
+    settings = get_settings()
+    if settings.extraction_v2_enabled:
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_orchestrator import (
+            ExtractionOrchestrator,
+        )
+
+        if job_id is None:
+            job_id = _generate_job_id()
+        orm_job = ORMExtractionJob(
+            source_reference=source_reference,
+            source_type=source_type,
+            extract_figures=extract_figures,
+            extract_tables=extract_tables,
+        )
+        session.add(orm_job)
+        await session.flush()
+
+        orchestrator = ExtractionOrchestrator(session, orm_job)
+        return await orchestrator.run(
+            element_systems=element_systems,
+            cache_level=cache_level,
+            max_confidence=max_confidence,
+        )
+
+    # --- Legacy pipeline (unchanged when flag is False) ---
     if job_id is None:
         job_id = _generate_job_id()
     fill_batch_id = str(uuid.uuid4())
