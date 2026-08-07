@@ -31,6 +31,20 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../../"),
+  // NFM-2608: d3 packages use bare ESM imports (e.g. "import {dispatch}
+  // from 'd3-dispatch'") that resolve through pnpm's virtual store at
+  // build time but may produce browser chunks that can't resolve their
+  // transitive deps at runtime. transpilePackages forces Next.js to
+  // compile these through its own pipeline, which correctly bundles
+  // all transitive ESM imports into the client chunk.
+  transpilePackages: [
+    "d3-force",
+    "d3-dispatch",
+    "d3-quadtree",
+    "d3-timer",
+    "d3-zoom",
+    "d3-selection",
+  ],
   async headers() {
     return [
       {
