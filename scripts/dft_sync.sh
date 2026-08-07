@@ -32,7 +32,7 @@
 #   DFT_SYNC_DB_NAME          Postgres database          (default: nfm_db)
 #   DFT_SYNC_SOURCE_TAG       Source provenance tag      (default: NFM-1540-PathB-Star-xingyi)
 #   DFT_SYNC_LOCK_FILE        flock lock file            (default: /tmp/dft_sync.lock)
-#   DFT_SYNC_PROCESSED_FILE   Manifest of processed     (default: /tmp/dft_sync_processed.txt)
+#   DFT_SYNC_PROCESSED_FILE   Manifest of processed     (default: $HOME/.local/share/dft_sync/processed.txt)
 #   DFT_DRY_RUN               Set to 1 to skip actual   (default: unset)
 #                             SCP / import / SQL steps
 # =============================================================================
@@ -51,7 +51,7 @@ DB_USER="${DFT_SYNC_DB_USER:-nfm}"
 DB_NAME="${DFT_SYNC_DB_NAME:-nfm_db}"
 SOURCE_TAG="${DFT_SYNC_SOURCE_TAG:-NFM-1540-PathB-Star-xingyi}"
 LOCK_FILE="${DFT_SYNC_LOCK_FILE:-/tmp/dft_sync.lock}"
-PROCESSED_FILE="${DFT_SYNC_PROCESSED_FILE:-/tmp/dft_sync_processed.txt}"
+PROCESSED_FILE="${DFT_SYNC_PROCESSED_FILE:-$HOME/.local/share/dft_sync/processed.txt}"
 DRY_RUN="${DFT_DRY_RUN:-0}"
 
 # ---------------------------------------------------------------------------
@@ -122,6 +122,7 @@ check_prerequisites() {
 
 ensure_dirs() {
   mkdir -p "$LOCAL_SYNC_DIR"
+  mkdir -p "$(dirname "$PROCESSED_FILE")"
   touch "$PROCESSED_FILE"
 }
 
@@ -133,7 +134,7 @@ list_new_remote_files() {
   local remote_listing
   # shellcheck disable=SC2029
   remote_listing=$(ssh -o BatchMode=yes -o ConnectTimeout=30 \
-    "$REMOTE_HOST" "find $REMOTE_BASE -name 'results.json' -type f" 2>/dev/null || true)
+    "$REMOTE_HOST" "find \"$REMOTE_BASE\" -name 'results.json' -type f" 2>/dev/null || true)
 
   if [ -z "$remote_listing" ]; then
     log "No results.json files found on $REMOTE_HOST under $REMOTE_BASE" >&2
@@ -166,7 +167,7 @@ pull_file() {
   # Derive a unique local name from the path structure:
   #   ~/dft_pipeline/scaleup/U-100/results.json → U-100_results.json
   local relative
-  relative=$(echo "$remote_file" | sed "s|.*/scaleup/||")
+  relative="${remote_file#$REMOTE_BASE/}"
   local dir_part
   dir_part=$(dirname "$relative")
   local local_name="${dir_part}_$(basename "$relative")"
