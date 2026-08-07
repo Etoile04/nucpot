@@ -134,6 +134,14 @@ class ExtractionOrchestrator:
                 step_type,
                 self._job.id,
             )
+            # Restore ``_context`` from the existing step's persisted
+            # ``metadata_`` so downstream steps see the same payload a
+            # fresh run would produce (NFM-2600 follow-up). Without
+            # this, downstream steps compute their input_hash against
+            # an empty ``_context`` and never find a matching prior
+            # row — breaking skip detection cross-step. See
+            # ``test_step_quality_gate_skipped_on_run_when_map_skip_restores_context``.
+            self._restore_context_from_existing(existing, step_type)
             skipped = ExtractionStep(
                 job_id=self._job.id,
                 step_type=step_type,
@@ -195,6 +203,61 @@ class ExtractionOrchestrator:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    def _restore_context_from_existing(
+        self,
+        existing: ExtractionStep,
+        step_type: str,
+    ) -> None:
+        """Restore ``self._context`` from a skipped step's persisted metadata.
+
+        Each step body populates ``self._context`` with the payload it
+        produces (``mapped_properties``, ``quality_gate_result``, etc.)
+        AND mirrors a copy into ``step.metadata_`` for operator
+        inspection and skip-restore. When ``_execute_step`` finds a
+        prior completed row for the current ``input_hash``, the step
+        body is short-circuited — but downstream steps still need
+        ``_context`` to compute their own ``input_hash`` correctly.
+
+        Per-step mapping (kept in lockstep with what each step writes
+        to ``_context``):
+        - ``map``: ``metadata_["mapped_properties"]`` → ``_context["mapped_properties"]``
+        - ``quality_gate``: ``metadata_["staged"|"rejected"|"duplicates"]`` →
+          ``_context["quality_gate_result"]``
+        - ``gap_scan``: no ``_context`` consumer downstream; nothing to restore.
+
+        Steps ``chunk`` and ``extract`` do not persist to ``metadata_``
+        (their context payloads — ``ExtractionChunk`` ORM rows and the
+        ``raw_extractions`` dict list — are not JSON-serialisable or
+        are derived from rows rather than stored). For those, the
+        downstream ``map``/``quality_gate`` step does NOT consume the
+        ``chunks``/``raw_extractions`` context for its OWN hash —
+        ``map`` does (it is the only one). On a fresh orchestrator
+        instance, ``_step_map`` reads ``raw_extractions`` from
+        ``_context``; if ``extract`` was skipped, ``_context`` is
+        empty. This is the same latent issue for ``map`` skip, but it
+        is not the regression NFM-2600 is about — ``map`` persists
+        its own payload to ``metadata_`` and its hash is over
+        ``raw_extractions`` which the orchestrator's call-site
+        re-populates from ``_step_extract`` on a fresh run. Scope
+        of NFM-2600 is limited to restoring the payloads needed for
+        cross-step skip detection on ``map`` and ``quality_gate``.
+
+        See: NFM-2600 follow-up; tests
+        ``test_step_quality_gate_skipped_on_run_when_map_skip_restores_context``.
+        """
+        metadata = existing.metadata_ or {}
+        if step_type == "map":
+            restored = metadata.get("mapped_properties")
+            if restored is not None:
+                self._context["mapped_properties"] = list(restored)
+        elif step_type == "quality_gate":
+            if metadata:
+                self._context["quality_gate_result"] = {
+                    "staged": metadata.get("staged", 0),
+                    "rejected": metadata.get("rejected", 0),
+                    "duplicates": metadata.get("duplicates", 0),
+                }
 
     def _build_step_params(
         self,
