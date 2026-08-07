@@ -208,6 +208,8 @@ class ExtractionOrchestrator:
           source text changes.
         - ``extract``: includes the sorted ``chunk_ids`` for the job so the
           hash changes when chunks are added/removed.
+        - ``map``: includes the ``raw_extractions`` being mapped so the hash
+          changes when the extract step produces different properties.
         """
         params: dict[str, Any] = {
             "step_type": step_type,
@@ -228,6 +230,13 @@ class ExtractionOrchestrator:
             )
             params["chunk_ids"] = chunk_ids
             params["extract_figures"] = bool(kwargs.get("extract_figures", False))
+
+        if step_type == "map":
+            # map's input is the raw_extractions carried forward from
+            # _step_extract. Include them so skip detection is
+            # content-aware (NFM-2568-T2): a re-run whose extractions
+            # changed must not reuse a stale mapping.
+            params["raw_extractions"] = self._context.get("raw_extractions") or []
 
         if step_type == "gap_scan":
             # gap_scan's input is the staged_properties carried forward
