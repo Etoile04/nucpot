@@ -539,6 +539,7 @@ async def trigger_extraction(
     extract_figures: bool = False,
     extract_tables: bool = False,
     job_id: str | None = None,
+    ontology_version_id: uuid.UUID | None = None,
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -547,6 +548,7 @@ async def trigger_extraction(
     2. Property mapping (normalize names → NFMD conventions)
     3. Quality gate: dedup, range validate, confidence route
     4. Stage passing values to _ref_gap_fill_staging
+    4b. Optional: auto-reopen wont_fix gaps (when ontology_version_id is set)
     5. Optional: gap re-scan to close the loop
 
     Returns the job tracker with current status.  If *job_id* is
@@ -754,6 +756,40 @@ async def trigger_extraction(
                 logger.info("Job %s: gap re-scan completed after %d staged", job_id, staged)
             except Exception:
                 logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
+
+        # Stage 4b: Auto-reopen wont_fix gaps (NFM-2582).
+        # When the extraction was triggered by a new ontology version,
+        # check whether any previously wont_fix gaps now have matching
+        # extraction results and reopen them.
+        if ontology_version_id is not None and mapped:
+            try:
+                from nfm_db.services.gap_reopen_service import (
+                    check_and_reopen_wont_fix_gaps,
+                )
+
+                extraction_results = [
+                    {"item_type": "property", "item_data": item}
+                    for item in mapped
+                ]
+                reopen_result = await check_and_reopen_wont_fix_gaps(
+                    session,
+                    new_ontology_version_id=ontology_version_id,
+                    extraction_results=extraction_results,
+                )
+                if reopen_result.gaps_reopened > 0:
+                    logger.info(
+                        "Job %s: auto-reopened %d wont_fix gaps "
+                        "(ontology_version=%s)",
+                        job_id,
+                        reopen_result.gaps_reopened,
+                        ontology_version_id,
+                    )
+            except Exception:
+                logger.warning(
+                    "Job %s: wont_fix gap auto-reopen failed (non-fatal)",
+                    job_id,
+                    exc_info=True,
+                )
 
         # Stage 5: Build KG nodes/edges from extracted properties
         # This bridges the gap between the extraction pipeline and the
