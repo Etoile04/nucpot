@@ -176,9 +176,24 @@ from nfm_db.models.md_verification import (  # noqa: E402
     PotentialFittingResult,
     VerificationResultMD,
 )
+from nfm_db.models.knowledge_gap import (  # noqa: E402
+    GapStatus,
+    GapType,
+    KnowledgeGap,
+    KNOWLEDGE_GAP_STATUSES,
+    KNOWLEDGE_GAP_TYPES,
+)
 from nfm_db.models.ontology import (  # noqa: E402
     KEntityType,
     KRelationType,
+)
+from nfm_db.models.ontology_version import (  # noqa: E402
+    ONTOLOGY_VERSION_STATUSES,
+    OntologyVersion,
+)
+from nfm_db.models.re_extraction_queue import (  # noqa: E402
+    RE_EXTRACTION_STATUSES,
+    ReExtractionQueue,
 )
 from nfm_db.models.potential import Potential  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
@@ -255,6 +270,8 @@ __all__ = [
     "FeedbackStatus",
     "FeedbackType",
     "FittingMethod",
+    "GapStatus",
+    "GapType",
     "HPCFailoverEvent",
     "HealthEvent",
     "HealthEvent",
@@ -267,6 +284,9 @@ __all__ = [
     "JobType",
     "KEntityType",
     "KGEdge",
+    "KnowledgeGap",
+    "KNOWLEDGE_GAP_STATUSES",
+    "KNOWLEDGE_GAP_TYPES",
     "KGNode",
     "KGReviewQueue",
     "KRelationType",
@@ -278,11 +298,15 @@ __all__ = [
     "MaterialCategory",
     "MaterialComposition",
     "MeasurementCondition",
+    "ONTOLOGY_VERSION_STATUSES",
     "OntologyIdMap",
+    "OntologyVersion",
     "Permission",
     "PostStatus",
     "Potential",
     "PotentialFittingResult",
+    "RE_EXTRACTION_STATUSES",
+    "ReExtractionQueue",
     "Priority",
     "PropertyCategory",
     "PropertyMeasurement",
