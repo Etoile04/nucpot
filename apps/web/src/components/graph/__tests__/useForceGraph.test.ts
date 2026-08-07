@@ -178,4 +178,28 @@ describe("useForceGraph", () => {
     expect(result.current.simEdges).toHaveLength(300)
     expect(result.current.isRunning).toBe(true)
   })
+
+  it("clears isRunning when d3-force setup throws after dynamic import (NFM-2608)", async () => {
+    // Simulate the canary-2026-08-07 regression: the dynamic import of
+    // d3-force succeeds but a transitive API call (e.g. forceLink) rejects.
+    // createSimulation() is async, so the throw becomes a rejected promise.
+    // The hook must NOT leave isRunning stuck on true — otherwise the
+    // GraphCanvas overlay hangs on "Computing layout…" indefinitely.
+    const { forceLink } = await import("d3-force")
+    vi.mocked(forceLink).mockImplementationOnce(() => {
+      throw new Error("d3-force transitive API missing")
+    })
+
+    const { result } = renderHook(() =>
+      useForceGraph(SMALL_DATA, 800, 600),
+    )
+
+    // Initially the hook sets isRunning=true while waiting for the simulation.
+    expect(result.current.isRunning).toBe(true)
+
+    // Give the rejected promise a chance to settle.
+    await waitFor(() => {
+      expect(result.current.isRunning).toBe(false)
+    })
+  })
 })

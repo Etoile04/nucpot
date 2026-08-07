@@ -55,6 +55,7 @@ export interface UseForceGraphReturn {
   readonly viewport: GraphViewport
   readonly selection: GraphSelection
   readonly isRunning: boolean
+  readonly error: Error | null
   readonly setViewport: (v: GraphViewport) => void
   readonly selectNode: (id: string | null) => void
   readonly hoverNode: (id: string | null) => void
@@ -79,6 +80,7 @@ export function useForceGraph(
     hoveredId: null,
   })
   const [isRunning, setIsRunning] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
 
   const nodesRef = useRef<SimNode[]>([])
   const edgesRef = useRef<SimEdge[]>([])
@@ -132,10 +134,28 @@ export function useForceGraph(
 
     let cancelled = false
 
-    createSimulation().then((sim) => {
-      if (cancelled || !sim) return
-      simRef.current = sim
-    })
+    createSimulation().then(
+      (sim) => {
+        if (cancelled || !sim) return
+        simRef.current = sim
+        setError(null)
+      },
+      (err: unknown) => {
+        // NFM-2608: if d3-force setup rejects (e.g. a transitive API is
+        // missing after a dep bump), the simulation never starts and
+        // isRunning would stay true forever — hanging the "Computing
+        // layout…" overlay. Clear the busy state and surface the error
+        // so the UI can render a fallback instead of an indefinite spinner.
+        if (cancelled) return
+        const wrapped =
+          err instanceof Error ? err : new Error("Force layout failed")
+        setError(wrapped)
+        setIsRunning(false)
+        if (typeof console !== "undefined") {
+          console.error("useForceGraph: layout setup failed", wrapped)
+        }
+      },
+    )
 
     return () => {
       cancelled = true
@@ -180,6 +200,7 @@ export function useForceGraph(
       viewport,
       selection,
       isRunning,
+      error,
       setViewport: setViewportCb,
       selectNode,
       hoverNode,
@@ -193,6 +214,7 @@ export function useForceGraph(
       viewport,
       selection,
       isRunning,
+      error,
       setViewportCb,
       selectNode,
       hoverNode,
