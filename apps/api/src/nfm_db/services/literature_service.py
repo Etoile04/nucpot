@@ -316,28 +316,63 @@ async def _extract_via_mineru_vlm(
         vision = VisionClient()
 
         async def _vlm_call(messages: list[dict[str, Any]], *, timeout: float) -> str:
-            """Plain async callable → OpenAI-compat /v1/chat/completions."""
+            """Plain async callable → OpenAI-compat /v1/chat/completions.
+
+            Important: the caller (`vlm_extract` / `vlm_verify` in
+            `mineru_vision_extractor.py`) builds multimodal messages with both
+            `text` and `image_url` content parts — the VLM cannot see the
+            image unless those parts reach the wire. Pass `messages` through
+            verbatim; the canonical payload shape lives in
+            `VisionClient._http_call`.
+
+            An earlier version of this adapter normalized content to plain
+            text, silently dropping `image_url` parts. That bug shipped to
+            prod as a "100% HIGH" verification rate while the model was
+            actually captioning from the text prompt alone. Guarded here:
+            if any input message contains a non-text part, assert at least
+            one `image_url` reaches the payload. If normalization logic is
+            ever reintroduced, that assertion will fire rather than silently
+            regress.
+            """
             import httpx
 
             url = vision.base_url.rstrip("/") + "/chat/completions"
-            normalized = []
-            for m in messages:
-                content = m.get("content", "")
-                if isinstance(content, list):
-                    text_parts = [
-                        p.get("text", "")
-                        for p in content
-                        if p.get("type") == "text"
-                    ]
-                    content = "\n".join([t for t in text_parts if t])
-                normalized.append({"role": m["role"], "content": content})
             payload = {
                 "model": vision.model,
-                "messages": normalized,
+                "messages": messages,
                 "max_tokens": 1500,
                 "temperature": 0.0,
                 "stream": False,
             }
+
+            # Defensive guard: a non-text part in input must reach output.
+            # Without this, anyone "simplifying" the payload back to a text
+            # string would silently strip images again (the bug this comment
+            # is here to prevent recurring).
+            def _has_non_text_part(_msgs: list[dict[str, Any]]) -> bool:
+                for _m in _msgs:
+                    _c = _m.get("content")
+                    if isinstance(_c, list):
+                        for _p in _c:
+                            if _p.get("type") != "text":
+                                return True
+                return False
+
+            def _payload_has_image_url(_payload: dict[str, Any]) -> bool:
+                for _m in _payload.get("messages", []):
+                    _c = _m.get("content")
+                    if isinstance(_c, list):
+                        for _p in _c:
+                            if _p.get("type") == "image_url":
+                                return True
+                return False
+
+            if _has_non_text_part(messages) and not _payload_has_image_url(payload):
+                raise ValueError(
+                    "_vlm_call: input contains a non-text part (image_url) "
+                    "but the outgoing payload does not — image would be "
+                    "silently dropped. Refusing to send the request."
+                )
             async with httpx.AsyncClient(timeout=timeout) as c:
                 resp = await c.post(
                     url,

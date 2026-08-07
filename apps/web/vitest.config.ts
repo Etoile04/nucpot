@@ -25,6 +25,13 @@ export default defineConfig({
     env: {
       BLOG_CONTENT_DIR: path.join(__dirname, "content", "blog", "__test__"),
     },
+    // Workaround for CI-only flakes (e.g. PR #679 NodeDetailContent#14 Retry).
+    // Reproduced 10/10 PASS locally; the race is suspected to be in React 18
+    // microtask ordering between the node fetch and the relations fetch
+    // (gated on state.status === 'success'). A retry gives one extra attempt
+    // for the race to settle. **Workaround, not a fix** — see issue #685 for
+    // root-cause analysis. Keep retry=1 to minimise noise.
+    retry: 1,
   },
   resolve: {
     conditions: ["development"],

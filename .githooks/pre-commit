@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — local convenience hook mirroring the CI ruff gate
+#
+# This hook is INERT until a user opts in. CI is the enforcing gate.
+# Same posture as .githooks/commit-msg: fast feedback, not control.
+#
+# Enable (one-time, per clone and per worktree):
+#   git config core.hooksPath .githooks
+#
+# Why this exists (NFM-2538 / daily-reflection 2026-08-06):
+#   CI runs `uv run ruff check src tests` over the WHOLE tree
+#   (.github/workflows/ci.yml, production-deployment.yml). The recurring
+#   failure mode is linting only the files you happened to touch, declaring
+#   "CI green", and then eating a red build on a file you never opened:
+#     - PR #669 — ruff I001 (import sort)
+#     - PR #679 — ruff F841 (unused variable)
+#   Both were the same root cause: local verification command != CI command.
+#   This hook removes the discrepancy by running the exact CI invocation.
+#
+# Deliberately NOT --fix: a hook that rewrites files under you during commit
+# produces staged/unstaged drift and commits code you never read. Report and
+# refuse; let the human choose the fix.
+#
+# Scope note: CI lints a fresh checkout, which contains TRACKED files only.
+# So we lint the files git has in the index, not `src tests` off the working
+# tree — otherwise an untracked scratch file (e.g. an unstaged ML script under
+# src/) fails the hook on an error CI would never see. Verified 2026-08-06:
+# `ruff check src tests` reported F401 in an untracked file while all 517
+# tracked files passed.
+#
+# Bypass (audited, same as any hook): git commit --no-verify
+#   Note that CI will still fail — bypassing buys you nothing but a later
+#   round trip.
+#
+# Exit 0 on pass, non-zero with a diagnostic on fail.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+api_dir="${repo_root}/apps/api"
+
+# Only meaningful where the Python project lives. If apps/api is absent
+# (sparse checkout, docs-only clone), this hook has nothing to assert.
+if [[ ! -f "${api_dir}/pyproject.toml" ]]; then
+    exit 0
+fi
+
+# Skip when the commit touches no Python under apps/api. Keeps docs/frontend
+# commits fast; the CI gate still covers the tree on push.
+if git diff --cached --name-only --diff-filter=ACMR \
+    | grep -qE '^apps/api/(src|tests)/.*\.py$'; then
+    :
+else
+    exit 0
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-commit: uv not found on PATH — skipping ruff (CI will still enforce)." >&2
+    exit 0
+fi
+
+echo "pre-commit: ruff check over index-tracked src/ tests/ (mirrors CI)…" >&2
+if ! (cd "${api_dir}" \
+        && git ls-files -z --cached 'src/*.py' 'tests/*.py' \
+        | xargs -0 --no-run-if-empty uv run ruff check); then
+    cat >&2 <<'EOF'
+pre-commit: ruff failed on tracked files — CI runs the same checks, so this WILL be red.
+pre-commit: fix with:  cd apps/api && uv run ruff check src tests --fix
+pre-commit: bypass with --no-verify only if you intend to fix it before pushing.
+EOF
+    exit 1
+fi
+
+exit 0
