@@ -42,7 +42,6 @@ class OntologyVersion(TimestampMixin, Base):
     # --- Version identity ---
     version: Mapped[str] = mapped_column(
         String(50),
-        unique=True,
         nullable=False,
         comment="Semver version string, e.g. 1.2.0.",
     )

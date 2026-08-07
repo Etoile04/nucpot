@@ -307,12 +307,14 @@ def require_ingest_authority():
 require_admin = require_blog_role(BlogRole.ADMIN)
 require_editor = require_blog_role(BlogRole.ADMIN, BlogRole.EDITOR)
 require_reviewer = require_blog_role(BlogRole.ADMIN, BlogRole.REVIEWER)
+require_domain_expert = require_blog_role(BlogRole.ADMIN, BlogRole.DOMAIN_EXPERT)
 
 __all__ = [
     "get_current_active_user",
     "get_current_user",
     "require_admin",
     "require_blog_role",
+    "require_domain_expert",
     "require_editor",
     "require_ingest_authority",
     "require_permission",
