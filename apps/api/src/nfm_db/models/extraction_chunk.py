@@ -8,6 +8,7 @@ to downstream extraction and mapping steps.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy import ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
