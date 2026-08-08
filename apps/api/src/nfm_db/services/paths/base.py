@@ -7,7 +7,6 @@ implement, and the frozen :class:`DispatchResult` dataclass returned by
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
