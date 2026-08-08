@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import DataCollectionRequest, OntologyVersion

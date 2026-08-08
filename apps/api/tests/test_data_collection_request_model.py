@@ -29,7 +29,6 @@ from nfm_db.schemas.data_collection_request import (
     DataCollectionRequestResponse,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -325,7 +324,7 @@ class TestCoverageMetricsResponseSchema:
 
     def test_coverage_rate_bounds(self) -> None:
         """coverage_rate must be in [0, 1]."""
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             CoverageMetricsResponse(
                 ontology_version_id=uuid.uuid4(),
                 total_requests=1,
