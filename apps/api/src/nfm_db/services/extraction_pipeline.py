@@ -623,11 +623,23 @@ async def trigger_extraction(
 
         if job_id is None:
             job_id = _generate_job_id()
+        # NFM-2667: wire ontology provenance onto the persisted ORM row.
+        # PR #711 (NFM-2640) only updated the in-memory dataclass; the ORM
+        # row was always created with NULL ontology columns, defeating the
+        # migration.  Mirror the legacy path's discovery and pass the
+        # values into the constructor so session.add + flush persist them.
+        published_ov = await _get_latest_published_ontology(session)
+        ontology_version_id = published_ov.id if published_ov is not None else None
+        ontology_version_str = (
+            published_ov.version if published_ov is not None else None
+        )
         orm_job = ORMExtractionJob(
             source_reference=source_reference,
             source_type=source_type,
             extract_figures=extract_figures,
             extract_tables=extract_tables,
+            ontology_version_id=ontology_version_id,
+            ontology_version_str=ontology_version_str,
         )
         session.add(orm_job)
         await session.flush()
