@@ -17,6 +17,7 @@ with HTTP 409.  ``resolved_at`` is set when transitioning to a terminal state.
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -25,8 +26,6 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import math
 
 from nfm_db.api.v1.auth import require_domain_expert
 from nfm_db.database import get_db

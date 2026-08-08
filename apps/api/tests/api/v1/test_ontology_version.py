@@ -320,8 +320,6 @@ async def test_publish_concurrent_version_conflict_returns_409(
     async_client, domain_expert_headers, db_session, monkeypatch,
 ):
     """Concurrent publish that hits unique version constraint returns 409 (NFM-2634)."""
-    from unittest.mock import AsyncMock, patch
-
     from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
     await _create_version(db_session, version="0.1.0", status="published")
