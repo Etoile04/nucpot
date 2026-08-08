@@ -45,6 +45,14 @@ DISPATCH_STATUSES: tuple[str, ...] = (
     "failed",
 )
 
+# Allowed dispatched_path values (added via migration 050).
+DISPATCH_PATHS: tuple[str, ...] = (
+    "literature",
+    "dft",
+    "external_db",
+    "cascade",
+)
+
 
 class DataCollectionRequest(TimestampMixin, Base):
     """A data-collection request tied to an ontology coverage gap (NFM-2619).
@@ -171,6 +179,14 @@ class DataCollectionRequest(TimestampMixin, Base):
         Index(
             "ix_dcr_material_system",
             "material_system",
+        ),
+        Index(
+            "ix_dcr_dispatch_status",
+            "dispatch_status",
+        ),
+        Index(
+            "ix_dcr_dispatched_path",
+            "dispatched_path",
         ),
     )
 

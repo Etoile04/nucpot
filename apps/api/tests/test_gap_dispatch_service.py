@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
@@ -86,19 +85,37 @@ def _make_fill_path_mock(
 
 def _make_dcr(
     *,
-    ontology_version_id: uuid.UUID,
+    ontology_version_id: uuid.UUID | None = None,
+    entity_type: str = "NuclearMaterial",
+    property_: str = "thermal_conductivity",
+    material_system: str = "UO2",
     source_preference: str = "any",
     status: str = "open",
+    urgency: int = 0,
     dispatched_at: datetime | None = None,
     dispatch_status: str | None = None,
 ) -> DataCollectionRequest:
-    """Build a DataCollectionRequest for testing."""
+    """Build a DataCollectionRequest for testing.
+
+    ``ontology_version_id`` defaults to a fresh UUID. The default SQLite
+    in-memory backend used by these tests does not enforce FK constraints,
+    so callers that only exercise dispatch logic can rely on the default.
+    Tests that join against an OntologyVersion row should pass an explicit
+    ``ontology_version_id`` (typically returned by ``_ensure_ontology_version``).
+
+    ``entity_type``, ``property_``, ``material_system`` are exposed so batch
+    tests can vary the (ov, entity_type, property, material_system) tuple —
+    the production schema has a unique index on that combination.
+    """
+    if ontology_version_id is None:
+        ontology_version_id = uuid.uuid4()
     return DataCollectionRequest(
         id=uuid.uuid4(),
         ontology_version_id=ontology_version_id,
-        entity_type="NuclearMaterial",
-        property="thermal_conductivity",
-        material_system="UO2",
+        entity_type=entity_type,
+        property=property_,
+        material_system=material_system,
+        urgency=urgency,
         source_preference=source_preference,
         status=status,
         requested_at=datetime.now(UTC),
@@ -449,7 +466,8 @@ class TestDispatchStateUpdates:
         db_session: AsyncSession,
     ) -> None:
         """Successful dispatch sets dispatched_at, path, status, reference."""
-        dcr = _make_dcr(source_preference="literature")
+        ov_id = await _ensure_ontology_version(db_session)
+        dcr = _make_dcr(ontology_version_id=ov_id, source_preference="literature")
         await _persist_dcr(dcr, db_session)
 
         mock_path = _make_fill_path_mock(
@@ -473,7 +491,8 @@ class TestDispatchStateUpdates:
         db_session: AsyncSession,
     ) -> None:
         """Failed dispatch sets dispatch_status='failed'."""
-        dcr = _make_dcr(source_preference="literature")
+        ov_id = await _ensure_ontology_version(db_session)
+        dcr = _make_dcr(ontology_version_id=ov_id, source_preference="literature")
         await _persist_dcr(dcr, db_session)
 
         mock_path = _make_fill_path_mock(
@@ -508,7 +527,9 @@ class TestDispatchIdempotency:
         db_session: AsyncSession,
     ) -> None:
         """Already-dispatched DCR is skipped without calling fill paths."""
+        ov_id = await _ensure_ontology_version(db_session)
         dcr = _make_dcr(
+            ontology_version_id=ov_id,
             source_preference="literature",
             dispatched_at=datetime.now(UTC),
             dispatch_status="running",
@@ -531,7 +552,9 @@ class TestDispatchIdempotency:
         db_session: AsyncSession,
     ) -> None:
         """DCR with dispatch_status='success' is skipped."""
+        ov_id = await _ensure_ontology_version(db_session)
         dcr = _make_dcr(
+            ontology_version_id=ov_id,
             source_preference="dft",
             dispatched_at=datetime.now(UTC),
             dispatch_status="success",
@@ -562,10 +585,15 @@ class TestDispatchBatch:
         db_session: AsyncSession,
     ) -> None:
         """dispatch_batch processes open DCRs up to the limit."""
-        ov_id = uuid.uuid4()
-        for _ in range(3):
-            dcr = _make_dcr(source_preference="literature")
-            dcr.ontology_version_id = ov_id
+        ov_id = await _ensure_ontology_version(db_session)
+        for i in range(3):
+            dcr = _make_dcr(
+                ontology_version_id=ov_id,
+                entity_type=f"NuclearMaterial-{i}",
+                property_=f"thermal_conductivity-{i}",
+                material_system=f"UO2-{i}",
+                source_preference="literature",
+            )
             await _persist_dcr(dcr, db_session)
 
         mock_lit = _make_fill_path_mock(data_found=True, path_name="literature")
@@ -587,10 +615,15 @@ class TestDispatchBatch:
         db_session: AsyncSession,
     ) -> None:
         """dispatch_batch only processes up to `limit` DCRs."""
-        ov_id = uuid.uuid4()
-        for _ in range(5):
-            dcr = _make_dcr(source_preference="literature")
-            dcr.ontology_version_id = ov_id
+        ov_id = await _ensure_ontology_version(db_session)
+        for i in range(5):
+            dcr = _make_dcr(
+                ontology_version_id=ov_id,
+                entity_type=f"NuclearMaterial-{i}",
+                property_=f"thermal_conductivity-{i}",
+                material_system=f"UO2-{i}",
+                source_preference="literature",
+            )
             await _persist_dcr(dcr, db_session)
 
         mock_lit = _make_fill_path_mock(data_found=True, path_name="literature")
@@ -611,18 +644,29 @@ class TestDispatchBatch:
         db_session: AsyncSession,
     ) -> None:
         """dispatch_batch skips DCRs that are not open."""
-        ov_id = uuid.uuid4()
+        ov_id = await _ensure_ontology_version(db_session)
 
-        dcr_open = _make_dcr(source_preference="literature")
-        dcr_open.ontology_version_id = ov_id
+        dcr_open = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            material_system="UO2",
+        )
         await _persist_dcr(dcr_open, db_session)
 
-        dcr_ip = _make_dcr(source_preference="literature", status="in_progress")
-        dcr_ip.ontology_version_id = ov_id
+        dcr_ip = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            status="in_progress",
+            material_system="Zr",
+        )
         await _persist_dcr(dcr_ip, db_session)
 
-        dcr_done = _make_dcr(source_preference="literature", status="completed")
-        dcr_done.ontology_version_id = ov_id
+        dcr_done = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            status="completed",
+            material_system="U",
+        )
         await _persist_dcr(dcr_done, db_session)
 
         mock_lit = _make_fill_path_mock(data_found=True, path_name="literature")
@@ -643,18 +687,22 @@ class TestDispatchBatch:
         db_session: AsyncSession,
     ) -> None:
         """dispatch_batch skips DCRs that are open but already dispatched."""
-        ov_id = uuid.uuid4()
+        ov_id = await _ensure_ontology_version(db_session)
 
-        dcr_fresh = _make_dcr(source_preference="literature")
-        dcr_fresh.ontology_version_id = ov_id
+        dcr_fresh = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            material_system="UO2",
+        )
         await _persist_dcr(dcr_fresh, db_session)
 
         dcr_dispatched = _make_dcr(
+            ontology_version_id=ov_id,
             source_preference="literature",
+            material_system="Zr",
             dispatched_at=datetime.now(UTC),
             dispatch_status="success",
         )
-        dcr_dispatched.ontology_version_id = ov_id
         await _persist_dcr(dcr_dispatched, db_session)
 
         mock_lit = _make_fill_path_mock(data_found=True, path_name="literature")
@@ -675,7 +723,7 @@ class TestDispatchBatch:
         db_session: AsyncSession,
     ) -> None:
         """dispatch_batch returns empty list when no open DCRs exist."""
-        ov_id = uuid.uuid4()
+        ov_id = await _ensure_ontology_version(db_session)
 
         svc = GapDispatchService(db_session, fill_paths={})
         results = await svc.dispatch_batch(ontology_version_id=ov_id, limit=10)
@@ -688,21 +736,30 @@ class TestDispatchBatch:
         db_session: AsyncSession,
     ) -> None:
         """dispatch_batch processes higher urgency DCRs first."""
-        ov_id = uuid.uuid4()
+        ov_id = await _ensure_ontology_version(db_session)
 
-        dcr_low = _make_dcr(source_preference="literature")
-        dcr_low.ontology_version_id = ov_id
-        dcr_low.urgency = 1
+        dcr_low = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            material_system="UO2",
+            urgency=1,
+        )
         await _persist_dcr(dcr_low, db_session)
 
-        dcr_high = _make_dcr(source_preference="literature")
-        dcr_high.ontology_version_id = ov_id
-        dcr_high.urgency = 10
+        dcr_high = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            material_system="Zr",
+            urgency=10,
+        )
         await _persist_dcr(dcr_high, db_session)
 
-        dcr_med = _make_dcr(source_preference="literature")
-        dcr_med.ontology_version_id = ov_id
-        dcr_med.urgency = 5
+        dcr_med = _make_dcr(
+            ontology_version_id=ov_id,
+            source_preference="literature",
+            material_system="U",
+            urgency=5,
+        )
         await _persist_dcr(dcr_med, db_session)
 
         mock_lit = _make_fill_path_mock(data_found=True, path_name="literature")
@@ -732,7 +789,8 @@ class TestDCRStatusTransition:
         db_session: AsyncSession,
     ) -> None:
         """Dispatch transitions DCR from open to in_progress."""
-        dcr = _make_dcr(source_preference="literature", status="open")
+        ov_id = await _ensure_ontology_version(db_session)
+        dcr = _make_dcr(ontology_version_id=ov_id, source_preference="literature", status="open")
         await _persist_dcr(dcr, db_session)
 
         mock_path = _make_fill_path_mock(data_found=True, path_name="literature")
@@ -750,7 +808,8 @@ class TestDCRStatusTransition:
         db_session: AsyncSession,
     ) -> None:
         """DCR already in_progress still gets dispatch columns updated."""
-        dcr = _make_dcr(source_preference="literature", status="in_progress")
+        ov_id = await _ensure_ontology_version(db_session)
+        dcr = _make_dcr(ontology_version_id=ov_id, source_preference="literature", status="in_progress")
         await _persist_dcr(dcr, db_session)
 
         mock_path = _make_fill_path_mock(
