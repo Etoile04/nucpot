@@ -21,11 +21,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import uuid as _uuid
+
 from nfm_db.services.extraction_pipeline import (
     ExtractionJob,
     JobStatus,
     _apply_property_mapping,
     _find_matching,
+    _get_latest_published_ontology,
     _is_stub_mode,
     _job_store,
     _load_source_content,
@@ -971,3 +974,244 @@ class TestTriggerExtraction:
             total = job.staged_count + job.rejected_count + job.duplicate_count
             assert total == job.extracted_count
             assert total == 3
+
+
+# ---------------------------------------------------------------------------
+# NFM-2640: Ontology prompt integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetLatestPublishedOntology:
+    """Tests for _get_latest_published_ontology helper (NFM-2640)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_published_ontology(self) -> None:
+        """Helper returns None when no OntologyVersion has status='published'."""
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_published_ontology(self) -> None:
+        """Helper returns the OntologyVersion with most recent created_at."""
+        mock_session = AsyncMock()
+        ov_id = _uuid.uuid4()
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "1.2.0"
+        mock_ov.ontology_data = {
+            "entity_types": [{"name": "NuclearFuel"}],
+            "relation_types": [{"name": "contains"}],
+        }
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is mock_ov
+        assert result.version == "1.2.0"
+
+
+class TestOntologyPromptInPipeline:
+    """Tests for ontology-aware prompt selection in ontofuel_extract (NFM-2640)."""
+
+    @pytest.mark.asyncio
+    async def test_uses_ontology_prompt_when_published_version_exists(
+        self,
+    ) -> None:
+        """Pipeline uses build_ontology_extraction_prompt when ontology found."""
+        mock_session = AsyncMock()
+        ov_id = _uuid.uuid4()
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "2.0.0"
+        mock_ov.ontology_data = {
+            "entity_types": [{"name": "UO2Fuel"}],
+            "relation_types": [],
+        }
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        ontology_prompt = "ONTOLOGY-AWARE PROMPT NuclearFuel"
+        static_prompt = "STATIC PROMPT"
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}, clear=False),
+            patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_ontology_extraction_prompt",
+                return_value=ontology_prompt,
+            ) as mock_ontology_prompt,
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value=static_prompt,
+            ),
+            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock) as mock_llm,
+            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="# Test"),
+        ):
+            mock_llm.return_value = []
+
+            await ontofuel_extract(
+                source_reference="/fake/file.md",
+                source_type="file",
+                db=mock_session,
+            )
+
+            mock_ontology_prompt.assert_called_once_with(mock_ov)
+            mock_llm.assert_called_once()
+            call_kwargs = mock_llm.call_args
+            assert call_kwargs.kwargs["system_prompt"] == ontology_prompt
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_static_prompt_when_no_ontology_published(
+        self,
+    ) -> None:
+        """Pipeline uses build_extraction_system_prompt when no ontology published."""
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        static_prompt = "STATIC BASE PROMPT"
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}, clear=False),
+            patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value=static_prompt,
+            ),
+            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock) as mock_llm,
+            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="# Test"),
+        ):
+            mock_llm.return_value = []
+
+            await ontofuel_extract(
+                source_reference="/fake/file.md",
+                source_type="file",
+                db=mock_session,
+            )
+
+            mock_llm.assert_called_once()
+            call_kwargs = mock_llm.call_args
+            assert call_kwargs.kwargs["system_prompt"] == static_prompt
+
+    @pytest.mark.asyncio
+    async def test_pipeline_skips_ontology_query_when_db_is_none(self) -> None:
+        """Pipeline uses static prompt when db session is None (file-only path)."""
+        static_prompt = "STATIC BASE PROMPT"
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}, clear=False),
+            patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value=static_prompt,
+            ),
+            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock) as mock_llm,
+            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="# Test"),
+        ):
+            mock_llm.return_value = []
+
+            await ontofuel_extract(
+                source_reference="/fake/file.md",
+                source_type="file",
+                db=None,
+            )
+
+            mock_llm.assert_called_once()
+            call_kwargs = mock_llm.call_args
+            assert call_kwargs.kwargs["system_prompt"] == static_prompt
+
+
+class TestOntologyJobProvenance:
+    """Tests for ontology provenance on ExtractionJob (NFM-2640)."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_sets_ontology_provenance_when_published(
+        self,
+    ) -> None:
+        """trigger_extraction sets job.ontology fields when ontology is published."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        ov_id = _uuid.uuid4()
+
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "1.0.0"
+        mock_ov.ontology_data = {"entity_types": [], "relation_types": []}
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
+            patch("nfm_db.services.extraction_pipeline.GapScanService"),
+        ):
+            mock_qg = mock_qg_cls.return_value
+            mock_qg.process_bulk = AsyncMock(
+                return_value=MagicMock(accepted=[], rejected=[], duplicates=[]),
+            )
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+            assert job.ontology_version_id == ov_id
+            assert job.ontology_version_str == "1.0.0"
+
+    @pytest.mark.asyncio
+    async def test_trigger_ontology_provenance_none_when_not_published(
+        self,
+    ) -> None:
+        """trigger_extraction leaves job.ontology fields None when no ontology."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
+            patch("nfm_db.services.extraction_pipeline.GapScanService"),
+        ):
+            mock_qg = mock_qg_cls.return_value
+            mock_qg.process_bulk = AsyncMock(
+                return_value=MagicMock(accepted=[], rejected=[], duplicates=[]),
+            )
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+            assert job.ontology_version_id is None
+            assert job.ontology_version_str is None
