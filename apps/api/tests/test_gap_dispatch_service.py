@@ -21,11 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.models.data_collection_request import DataCollectionRequest
 from nfm_db.models.ontology_version import OntologyVersion
 from nfm_db.models.user import User
-from nfm_db.services.gap_dispatch_service import (
-    DispatchResult,
-    FillPath,
-    GapDispatchService,
-)
+from nfm_db.services.gap_dispatch_service import GapDispatchService
+from nfm_db.services.paths.base import DISPATCH_PATHS, DispatchResult, GapFillPath
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,10 +65,22 @@ def _make_fill_path_mock(
     reference: str | None = "job-123",
     error: str | None = None,
     path_name: str = "mock_path",
+    can_handle_result: bool = True,
 ) -> AsyncMock:
-    """Build a mock FillPath with configurable execute return."""
-    mock = AsyncMock(spec=FillPath)
-    mock.name = path_name
+    """Build a mock GapFillPath with configurable can_handle + execute return.
+
+    Args:
+        data_found: Returned in the DispatchResult's ``data_found`` field.
+        success: Returned in the DispatchResult's ``success`` field.
+        reference: Returned in the DispatchResult's ``reference`` field.
+        error: Returned in the DispatchResult's ``error`` field.
+        path_name: The fill-path name embedded in the DispatchResult.
+        can_handle_result: Value the mock's ``can_handle`` returns. Defaults
+            to ``True``; cascade tests that need to skip a handler set
+            ``can_handle_result=False``.
+    """
+    mock = AsyncMock(spec=GapFillPath)
+    mock.can_handle = AsyncMock(return_value=can_handle_result)
     result = DispatchResult(
         success=success,
         path=path_name,
@@ -178,20 +187,24 @@ class TestDispatchResult:
 # ---------------------------------------------------------------------------
 
 
-class TestFillPathProtocol:
-    """Test that fill path implementations satisfy the protocol."""
+class TestGapFillPathProtocol:
+    """Test that fill path implementations satisfy the canonical protocol."""
 
     def test_mock_satisfies_protocol(self) -> None:
-        """A mock with name and execute() satisfies the FillPath protocol."""
-        mock = AsyncMock(spec=FillPath)
-        mock.name = "test"
+        """A mock with can_handle() and execute() satisfies GapFillPath."""
+        mock = AsyncMock(spec=GapFillPath)
+        mock.can_handle = AsyncMock(return_value=True)
         mock.execute = AsyncMock(
             return_value=DispatchResult(
                 success=True, path="test", reference=None, error=None, data_found=True,
             ),
         )
-        assert hasattr(mock, "name")
+        assert hasattr(mock, "can_handle")
         assert hasattr(mock, "execute")
+
+    def test_canonical_dispatch_paths_tuple(self) -> None:
+        """Canonical DISPATCH_PATHS is a tuple of (literature, dft, external_db)."""
+        assert DISPATCH_PATHS == ("literature", "dft", "external_db")
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +463,72 @@ class TestDispatchCascade:
         assert result.success is False
         assert result.data_found is False
         assert result.path == "cascade"
+
+    @pytest.mark.asyncio
+    async def test_cascade_skips_handler_whose_can_handle_is_false(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Cascade skips a handler whose can_handle() returns False."""
+        ov_id = await _ensure_ontology_version(db_session)
+        dcr = _make_dcr(ontology_version_id=ov_id, source_preference="any")
+        await _persist_dcr(dcr, db_session)
+
+        mock_ext = _make_fill_path_mock(
+            data_found=True,
+            can_handle_result=False,
+            path_name="external_db",
+        )
+        mock_lit = _make_fill_path_mock(
+            data_found=True, reference="lit-ref-1", path_name="literature",
+        )
+
+        paths = {
+            "external_db": mock_ext,
+            "literature": mock_lit,
+            "dft": _make_fill_path_mock(path_name="dft"),
+        }
+
+        svc = GapDispatchService(db_session, fill_paths=paths)
+        result = await svc.dispatch(dcr)
+
+        # external_db skipped (can_handle=False); literature handled it.
+        assert result.success is True
+        assert result.data_found is True
+        assert result.path == "literature"
+        mock_ext.execute.assert_not_called()
+        mock_lit.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cascade_skips_all_handlers_when_no_can_handle(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Cascade with all can_handle()=False leaves dispatched_path='cascade'."""
+        ov_id = await _ensure_ontology_version(db_session)
+        dcr = _make_dcr(ontology_version_id=ov_id, source_preference="any")
+        await _persist_dcr(dcr, db_session)
+
+        paths = {
+            "external_db": _make_fill_path_mock(
+                can_handle_result=False, path_name="external_db",
+            ),
+            "literature": _make_fill_path_mock(
+                can_handle_result=False, path_name="literature",
+            ),
+            "dft": _make_fill_path_mock(
+                can_handle_result=False, path_name="dft",
+            ),
+        }
+
+        svc = GapDispatchService(db_session, fill_paths=paths)
+        result = await svc.dispatch(dcr)
+
+        # None of the execute() paths ran; cascade is recorded.
+        assert result.path == "cascade"
+        assert result.success is False
+        for mock in paths.values():
+            mock.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
