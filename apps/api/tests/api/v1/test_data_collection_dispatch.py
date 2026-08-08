@@ -1,10 +1,12 @@
 """API endpoint tests for dispatch routes (NFM-2651).
 
-Tests all 4 dispatch endpoints:
+Tests all 3 dispatch endpoints added by NFM-2651:
 1. POST /api/v1/data-collection/dispatch -- trigger batch dispatch
 2. GET  /api/v1/data-collection/dispatch/status -- paginated dispatch status
 3. POST /api/v1/data-collection/dispatch/{id}/retry -- retry failed dispatch
-4. POST /api/v1/data-collection/{id}/dispatch -- per-request dispatch (NFM-2662)
+
+Per-request dispatch (`POST /api/v1/data-collection/{id}/dispatch`) is
+covered separately under NFM-2662.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ from nfm_db.models import DataCollectionRequest, OntologyVersion
 from nfm_db.services.gap_dispatch_service import DispatchResult
 
 BASE = "/api/v1/data-collection/dispatch"
-DC_BASE = "/api/v1/data-collection"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -466,172 +467,4 @@ async def test_retry_dispatch_failure_returns_500(
 
 
 # ---------------------------------------------------------------------------
-# 4. POST /data-collection/{id}/dispatch -- per-request dispatch (NFM-2662)
-# ---------------------------------------------------------------------------
 
-_RESPONSE_KEYS = {
-    "dispatched_at",
-    "dispatched_path",
-    "dispatch_status",
-    "result_reference",
-}
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_wires_to_service_and_persists(
-    async_client, db_session,
-) -> None:
-    """Real service run: endpoint persists dispatch columns and returns them.
-
-    No fill paths are registered, so the router resolves no handler for
-    ``source_preference='literature'`` and records a failed dispatch. That is
-    still a complete round-trip through GapDispatchService, so it proves the
-    endpoint is wired to the service rather than fabricating a response.
-    """
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(
-        db_session,
-        ov=ov,
-        property_name="density",
-        source_preference="literature",
-    )
-
-    resp = await async_client.post(f"{DC_BASE}/{req.id}/dispatch")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert set(data) == _RESPONSE_KEYS
-    assert data["dispatched_at"] is not None
-    assert data["dispatched_path"] == "literature"
-    assert data["dispatch_status"] == "failed"
-
-    await db_session.refresh(req)
-    assert req.dispatched_at is not None
-    assert req.dispatched_path == "literature"
-    assert req.dispatch_status == "failed"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_success_returns_persisted_columns(
-    async_client, db_session, monkeypatch,
-) -> None:
-    """A successful dispatch returns the DCR's persisted dispatch columns."""
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(db_session, ov=ov, property_name="density")
-
-    async def _fake_dispatch(dcr: DataCollectionRequest) -> DispatchResult:
-        dcr.dispatched_at = datetime.now(UTC)
-        dcr.dispatched_path = "external_db"
-        dcr.dispatch_status = "success"
-        dcr.result_reference = "matproj:mp-1234"
-        return _mock_dispatch_result(
-            success=True,
-            path="external_db",
-            reference="matproj:mp-1234",
-        )
-
-    monkeypatch.setattr(
-        "nfm_db.api.v1.data_collection.GapDispatchService.dispatch",
-        AsyncMock(side_effect=_fake_dispatch),
-    )
-
-    resp = await async_client.post(f"{DC_BASE}/{req.id}/dispatch")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert set(data) == _RESPONSE_KEYS
-    assert data["dispatch_status"] == "success"
-    assert data["dispatched_path"] == "external_db"
-    assert data["result_reference"] == "matproj:mp-1234"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_not_found(async_client, db_session) -> None:
-    """Returns 404 for a non-existent request ID."""
-    resp = await async_client.post(f"{DC_BASE}/{uuid.uuid4()}/dispatch")
-
-    assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_already_dispatched_conflicts(
-    async_client, db_session,
-) -> None:
-    """Returns 409 when dispatched_at is already set (idempotency rule)."""
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(
-        db_session,
-        ov=ov,
-        property_name="density",
-        dispatch_status="success",
-        dispatched_path="external_db",
-        dispatched_at=datetime.now(UTC),
-    )
-
-    resp = await async_client.post(f"{DC_BASE}/{req.id}/dispatch")
-
-    assert resp.status_code == 409
-    assert "already dispatched" in resp.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_applies_source_preference_override(
-    async_client, db_session,
-) -> None:
-    """An override replaces source_preference before routing, and persists."""
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(
-        db_session,
-        ov=ov,
-        property_name="density",
-        source_preference="literature",
-    )
-
-    resp = await async_client.post(
-        f"{DC_BASE}/{req.id}/dispatch",
-        json={"source_preference_override": "dft"},
-    )
-
-    assert resp.status_code == 200
-    assert resp.json()["dispatched_path"] == "dft"
-
-    await db_session.refresh(req)
-    assert req.source_preference == "dft"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_rejects_invalid_override(
-    async_client, db_session,
-) -> None:
-    """An unknown source_preference_override is rejected without dispatching."""
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(db_session, ov=ov, property_name="density")
-
-    resp = await async_client.post(
-        f"{DC_BASE}/{req.id}/dispatch",
-        json={"source_preference_override": "carrier_pigeon"},
-    )
-
-    assert resp.status_code == 422
-
-    await db_session.refresh(req)
-    assert req.dispatched_at is None
-
-
-@pytest.mark.asyncio
-async def test_dispatch_one_service_failure_returns_500(
-    async_client, db_session, monkeypatch,
-) -> None:
-    """A dispatch exception surfaces as a 500 rather than a 200."""
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(db_session, ov=ov, property_name="density")
-
-    monkeypatch.setattr(
-        "nfm_db.api.v1.data_collection.GapDispatchService.dispatch",
-        AsyncMock(side_effect=RuntimeError("dispatch exploded")),
-    )
-
-    resp = await async_client.post(f"{DC_BASE}/{req.id}/dispatch")
-
-    assert resp.status_code == 500
-    assert "dispatch exploded" in resp.json()["detail"]
