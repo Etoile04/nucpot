@@ -316,6 +316,52 @@ async def test_publish_major_bump(async_client, domain_expert_headers, db_sessio
 
 @pytest.mark.asyncio
 @pytest.mark.no_auto_auth
+async def test_publish_concurrent_version_conflict_returns_409(
+    async_client, domain_expert_headers, db_session, monkeypatch,
+):
+    """Concurrent publish that hits unique version constraint returns 409 (NFM-2634)."""
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+    await _create_version(db_session, version="0.1.0", status="published")
+    ov = await _create_version(db_session, version="0.0.0-draft", status="draft")
+    await db_session.commit()
+
+    # Patch session.commit to raise IntegrityError on first call, simulating
+    # a concurrent publish that already inserted the same version string.
+    real_commit = db_session.commit
+    call_count = 0
+
+    async def _commit_side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise SAIntegrityError(
+                "insert",
+                {},
+                Exception(
+                    'duplicate key value violates unique constraint '
+                    '"uq_ontology_versions_version"'
+                ),
+            )
+        return await real_commit(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "commit", _commit_side_effect)
+
+    resp = await async_client.post(
+        f"{BASE}/{ov.id}/publish",
+        json={"changelog": "concurrent publish"},
+        headers=domain_expert_headers,
+    )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"].lower()
+    assert "version" in detail
+    assert "conflict" in detail or "already exists" in detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
 async def test_publish_rejects_without_changelog(
     async_client, domain_expert_headers, db_session,
 ):
