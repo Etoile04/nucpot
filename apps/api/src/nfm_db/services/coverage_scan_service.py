@@ -278,19 +278,23 @@ class CoverageScanService:
             if (et, pn) not in covered_set
         ]
 
+        # Batch-load existing DataCollectionRequests to avoid N+1 per-row SELECTs
+        existing_stmt = select(
+            DataCollectionRequest.entity_type,
+            DataCollectionRequest.property,
+        ).where(
+            DataCollectionRequest.ontology_version_id == ontology_version_id,
+            DataCollectionRequest.material_system == material_system,
+        )
+        existing_rows = (await self._session.execute(existing_stmt)).all()
+        existing_keys: set[tuple[str, str]] = {
+            (row.entity_type, row.property) for row in existing_rows
+        }
+
         # Create DataCollectionRequest for each uncovered property
         requests_created = 0
         for up in uncovered_properties:
-            existing_stmt = select(DataCollectionRequest).where(
-                DataCollectionRequest.ontology_version_id == ontology_version_id,
-                DataCollectionRequest.entity_type == up.entity_type,
-                DataCollectionRequest.property == up.property_name,
-                DataCollectionRequest.material_system == material_system,
-            )
-            existing = (
-                await self._session.execute(existing_stmt)
-            ).scalar_one_or_none()
-            if existing is not None:
+            if (up.entity_type, up.property_name) in existing_keys:
                 continue
 
             dcr = DataCollectionRequest(
