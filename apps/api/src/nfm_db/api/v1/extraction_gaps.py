@@ -197,7 +197,7 @@ async def list_extraction_gaps(
         description="Page size (1-200, default 50).",
     ),
     session: AsyncSession = Depends(get_db),
-    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[arg-type]
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
 ) -> ApiResponse[PaginatedResponse[ExtractionGapResponse]]:
     """Paginated extraction-gap listing.
 
@@ -313,7 +313,7 @@ async def list_extraction_gaps(
 async def get_extraction_gap(
     gap_id: uuid.UUID = Path(..., description="Extraction gap id."),
     session: AsyncSession = Depends(get_db),
-    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[arg-type]
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
 ) -> ExtractionGapResponse:
     """Return a single extraction gap, including chunk source_reference."""
     gap = await _load_gap_or_404(session, gap_id)
@@ -354,7 +354,7 @@ async def update_extraction_gap_status(
     payload: GapStatusUpdateRequest,
     gap_id: uuid.UUID = Path(..., description="Extraction gap id."),
     session: AsyncSession = Depends(get_db),
-    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[arg-type]
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
 ) -> ExtractionGapResponse:
     """Apply a status transition to a single gap.
 
@@ -451,7 +451,7 @@ async def get_recall_metrics(
         description="Ontology version id to compute recall for.",
     ),
     session: AsyncSession = Depends(get_db),
-    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[arg-type]
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
 ) -> ApiResponse[RecallMetricsResponse]:
     """Return aggregated recall metrics for an ontology version.
 
