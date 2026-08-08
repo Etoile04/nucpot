@@ -53,15 +53,40 @@ else
     exit 0
 fi
 
-if ! command -v uv >/dev/null 2>&1; then
-    echo "pre-commit: uv not found on PATH — skipping ruff (CI will still enforce)." >&2
+# Resolve a ruff binary WITHOUT letting `uv run` build the project (NFM-2566).
+#
+# `uv run ruff` implies `--project`, so in an environment with no `.venv` — every
+# fresh `git worktree add`, which is exactly how the Paperclip execution policy
+# runs agent work — it first creates the venv and runs
+# `Building nfm-db-api @ file:///.../apps/api`. That build copies the source tree
+# to a staging dir, and the ruff process reading the file list concurrently sees
+# paths that momentarily do not resolve:
+#
+#     E902 No such file or directory (os error 2)
+#     --> tests/test_optimizer.py:1:1
+#
+# The named files exist in both the index and the working tree; re-running the
+# identical command right after (venv now warm) passes. The failure is therefore
+# intermittent and, worse, blames arbitrary innocent files — a developer's first
+# assumption is that their own change broke something.
+#
+# Prefer an already-installed ruff and fall back to `uvx`, which runs the tool
+# in an isolated ephemeral environment and never builds this project.
+if [[ -x "${api_dir}/.venv/bin/ruff" ]]; then
+    ruff_cmd=("${api_dir}/.venv/bin/ruff")
+elif command -v ruff >/dev/null 2>&1; then
+    ruff_cmd=(ruff)
+elif command -v uvx >/dev/null 2>&1; then
+    ruff_cmd=(uvx ruff)
+else
+    echo "pre-commit: no ruff and no uvx on PATH — skipping (CI will still enforce)." >&2
     exit 0
 fi
 
 echo "pre-commit: ruff check over index-tracked src/ tests/ (mirrors CI)…" >&2
 if ! (cd "${api_dir}" \
         && git ls-files -z --cached 'src/*.py' 'tests/*.py' \
-        | xargs -0 --no-run-if-empty uv run ruff check); then
+        | xargs -0 --no-run-if-empty "${ruff_cmd[@]}" check); then
     cat >&2 <<'EOF'
 pre-commit: ruff failed on tracked files — CI runs the same checks, so this WILL be red.
 pre-commit: fix with:  cd apps/api && uv run ruff check src tests --fix

@@ -382,6 +382,8 @@ omit = [
     "../apps/web/src/components/ui/*",
     "../apps/mcp-server/*",
     "../apps/nfm-md-runner/*",
+    # ML training scripts — offline tooling, not covered by API test suite
+    "*/ml/train_*.py",
     # Alembic version scripts and migration test fixtures
     "*/migrations/versions/*",
     # Tests aren't part of the core module set

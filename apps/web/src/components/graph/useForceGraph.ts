@@ -55,6 +55,7 @@ export interface UseForceGraphReturn {
   readonly viewport: GraphViewport
   readonly selection: GraphSelection
   readonly isRunning: boolean
+  readonly error: Error | null
   readonly setViewport: (v: GraphViewport) => void
   readonly selectNode: (id: string | null) => void
   readonly hoverNode: (id: string | null) => void
@@ -79,6 +80,7 @@ export function useForceGraph(
     hoveredId: null,
   })
   const [isRunning, setIsRunning] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
 
   const nodesRef = useRef<SimNode[]>([])
   const edgesRef = useRef<SimEdge[]>([])
@@ -128,14 +130,47 @@ export function useForceGraph(
     setSimNodes([...nodes])
     setSimEdges([...edges])
     setSelection({ nodeId: null, hoveredId: null })
+
+    // NFM-2608: don't enter running state when there are no nodes.
+    // createSimulation returns null for empty data, and neither the
+    // success nor error handler would clear isRunning — causing the
+    // "Computing layout…" overlay to hang forever.
+    if (nodes.length === 0) {
+      setIsRunning(false)
+      setError(null)
+      return
+    }
+
     setIsRunning(true)
 
     let cancelled = false
 
-    createSimulation().then((sim) => {
-      if (cancelled || !sim) return
-      simRef.current = sim
-    })
+    createSimulation().then(
+      (sim) => {
+        if (cancelled || !sim) return
+        simRef.current = sim
+        setError(null)
+      },
+      (err: unknown) => {
+        // NFM-2608: if d3-force setup rejects (e.g. a transitive API
+        // fails to resolve in the browser bundle), the simulation
+        // never starts and isRunning would stay true forever — hanging
+        // the "Computing layout…" overlay. Clear the busy state and
+        // surface the error so the UI can render a fallback instead.
+        if (cancelled) return
+        const wrapped =
+          err instanceof Error ? err : new Error("Force layout failed")
+        setError(wrapped)
+        setIsRunning(false)
+        if (typeof console !== "undefined") {
+          console.error(
+            "[NFM-2608] useForceGraph: layout setup failed",
+            wrapped,
+            { cause: (err instanceof Error ? err.cause : undefined) },
+          )
+        }
+      },
+    )
 
     return () => {
       cancelled = true
@@ -180,6 +215,7 @@ export function useForceGraph(
       viewport,
       selection,
       isRunning,
+      error,
       setViewport: setViewportCb,
       selectNode,
       hoverNode,
@@ -193,6 +229,7 @@ export function useForceGraph(
       viewport,
       selection,
       isRunning,
+      error,
       setViewportCb,
       selectNode,
       hoverNode,

@@ -2,6 +2,7 @@
 """Unit tests for mineru_vision_extractor (NFM-1366 follow-up)."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 
@@ -11,6 +12,7 @@ from PIL import Image
 from nfm_db.services.mineru_vision_extractor import (
     ExtractionResult,
     FigureRef,
+    _process_figures_parallel,
     extract_figures_with_mineru,
     image_to_base64_jpeg,
     parse_figure_refs,
@@ -345,3 +347,159 @@ async def test_extract_figures_with_mineru_no_zip_raises():
             vlm_client=_StubClient("{}", "{}"),
             mineru_client=client,
         )
+
+
+# ---------------------------------------------------------------------------
+# _process_figures_parallel (P2: NFM-1366 batched VLM calls)
+# ---------------------------------------------------------------------------
+
+
+class _CountingClient:
+    """Stub client that tracks concurrent call count."""
+
+    def __init__(
+        self,
+        extract_response: str = '{"type":"plot","title":"X"}',
+        verify_response: str = '{"accuracy":"high","issues":[]}',
+    ) -> None:
+        self.extract_response = extract_response
+        self.verify_response = verify_response
+        self.active_calls = 0
+        self.max_concurrent = 0
+        self.total_calls = 0
+        self._lock = asyncio.Lock()
+
+    async def __call__(self, messages, *, timeout):
+        async with self._lock:
+            self.active_calls += 1
+            self.total_calls += 1
+            if self.active_calls > self.max_concurrent:
+                self.max_concurrent = self.active_calls
+        try:
+            await asyncio.sleep(0.01)  # simulate network round-trip
+            content = ""
+            for m in messages:
+                c = m.get("content", "")
+                if isinstance(c, list):
+                    c = "\n".join(
+                        p.get("text", "") for p in c if p.get("type") == "text"
+                    )
+                content += c
+            if "accuracy" in content.lower() or "extracted data" in content.lower():
+                return self.verify_response
+            return self.extract_response
+        finally:
+            async with self._lock:
+                self.active_calls -= 1
+
+
+def _make_refs(n: int) -> list[FigureRef]:
+    """Build n dummy FigureRef objects with valid PNG bytes."""
+    palette = ["red", "green", "blue", "yellow", "purple", "orange", "cyan", "magenta", "pink", "brown"]
+    return [
+        FigureRef(
+            image_bytes=_make_image_bytes(palette[i % len(palette)], size=(50, 50)),
+            image_ref=f"images/test{i}.jpg",
+            figure_numbers=[str(i + 1)],
+            kind="figure",
+        )
+        for i in range(n)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_figures_parallel_runs_all():
+    """All refs should produce an ExtractionResult, in input order."""
+    refs = _make_refs(5)
+    client = _CountingClient()
+
+    results = await _process_figures_parallel(client, refs, concurrency=3)
+
+    assert len(results) == 5
+    for i, r in enumerate(results):
+        assert r.figure_ref is refs[i]
+        assert r.extracted is not None
+        assert r.verification is not None
+        assert r.extracted["type"] == "plot"
+        assert r.verification["accuracy"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_process_figures_parallel_respects_concurrency_cap():
+    """Max in-flight calls must not exceed the concurrency limit."""
+    refs = _make_refs(10)
+    client = _CountingClient()
+
+    await _process_figures_parallel(client, refs, concurrency=3)
+
+    assert client.max_concurrent <= 3, (
+        f"Concurrency cap violated: max={client.max_concurrent}"
+    )
+    assert client.total_calls == 20, (
+        f"Expected 20 VLM calls (10 figs * extract+verify), got {client.total_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_figures_parallel_handles_vlm_failure():
+    """When vlm_extract returns None, verify is skipped, no exception raised."""
+    refs = _make_refs(2)
+    client = _CountingClient(
+        extract_response="not json at all",  # parse_vlm_json returns None
+        verify_response='{"accuracy":"high","issues":[]}',
+    )
+
+    results = await _process_figures_parallel(client, refs, concurrency=2)
+
+    assert len(results) == 2
+    for r in results:
+        assert r.extracted is None  # parse failed → no extracted
+        assert r.verification is None  # verify is skipped when extracted is None
+        assert r.extract_elapsed >= 0
+
+
+@pytest.mark.asyncio
+async def test_process_figures_parallel_handles_client_exception():
+    """When VLM client raises, that ref yields extracted=None, others succeed."""
+
+    class _BoomClient:
+        def __init__(self):
+            self.call_idx = 0
+
+        async def __call__(self, messages, *, timeout):
+            self.call_idx += 1
+            if self.call_idx == 2:  # fail the verify call of the first ref
+                raise RuntimeError("simulated VLM 502")
+            content = ""
+            for m in messages:
+                c = m.get("content", "")
+                if isinstance(c, list):
+                    c = "\n".join(
+                        p.get("text", "") for p in c if p.get("type") == "text"
+                    )
+                content += c
+            if "accuracy" in content.lower():
+                return '{"accuracy":"high","issues":[]}'
+            return '{"type":"plot","title":"X"}'
+
+    refs = _make_refs(2)
+    client = _BoomClient()
+    results = await _process_figures_parallel(client, refs, concurrency=2)
+
+    assert len(results) == 2
+    # The boom happens during the verify call of ref[0]; ref[0]'s outer
+    # try/except catches it and yields extracted=None. ref[1] still succeeds
+    # because gather() runs tasks independently.
+    failed = [r for r in results if r.extracted is None]
+    succeeded = [r for r in results if r.extracted is not None]
+    assert len(failed) >= 1
+    assert len(succeeded) >= 1
+
+
+@pytest.mark.asyncio
+async def test_process_figures_parallel_empty():
+    """Empty input → empty output, no calls made."""
+    client = _CountingClient()
+    results = await _process_figures_parallel(client, [], concurrency=2)
+    assert results == []
+    assert client.total_calls == 0
