@@ -327,7 +327,7 @@ def build_extraction_system_prompt() -> str:
 
 
 def build_ontology_extraction_prompt(
-    ontology_version: OntologyVersion,  # type: ignore[valid-type]
+    ontology_version: OntologyVersion,
 ) -> str:
     """Build the extraction system prompt with ontology context injected.
 
