@@ -16,12 +16,12 @@ See test_extraction_pipeline.py for the main test suite.
 from __future__ import annotations
 
 import os
+import uuid as _uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-import uuid as _uuid
 
 from nfm_db.services.extraction_pipeline import (
     ExtractionJob,
