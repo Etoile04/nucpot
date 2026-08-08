@@ -12,6 +12,10 @@ from typing import Protocol, runtime_checkable
 
 from nfm_db.models.data_collection_request import DataCollectionRequest
 
+# Canonical path names and lifecycle statuses for the gap-dispatch router.
+DISPATCH_PATHS: tuple[str, ...] = ("literature", "dft", "external_db")
+DISPATCH_STATUSES: tuple[str, ...] = ("pending", "running", "success", "failed")
+
 
 @dataclass(frozen=True)
 class DispatchResult:

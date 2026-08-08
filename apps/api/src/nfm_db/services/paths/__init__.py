@@ -18,9 +18,16 @@ Public API::
 
 from __future__ import annotations
 
-from nfm_db.services.paths.base import DispatchResult, GapFillPath
+from nfm_db.services.paths.base import (
+    DISPATCH_PATHS,
+    DISPATCH_STATUSES,
+    DispatchResult,
+    GapFillPath,
+)
 
 __all__ = [
+    "DISPATCH_PATHS",
+    "DISPATCH_STATUSES",
     "DispatchResult",
     "GapFillPath",
 ]

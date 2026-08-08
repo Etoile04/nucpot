@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from nfm_db.services.paths import (
+    DISPATCH_PATHS,
+    DISPATCH_STATUSES,
     DFTFillPath,
     DispatchResult,
     ExternalDBFillPath,
@@ -61,3 +63,24 @@ class TestDispatchResultFrozen:
         assert result.success is False
         assert result.error == "something broke"
         assert result.data_found is False
+
+
+class TestDispatchConstants:
+    """Verify the canonical dispatch path and status constant tuples."""
+
+    def test_dispatch_paths_is_tuple(self) -> None:
+        assert isinstance(DISPATCH_PATHS, tuple)
+
+    def test_dispatch_paths_contents(self) -> None:
+        assert set(DISPATCH_PATHS) == {"literature", "dft", "external_db"}
+
+    def test_dispatch_statuses_is_tuple(self) -> None:
+        assert isinstance(DISPATCH_STATUSES, tuple)
+
+    def test_dispatch_statuses_contents(self) -> None:
+        assert set(DISPATCH_STATUSES) == {
+            "pending",
+            "running",
+            "success",
+            "failed",
+        }
