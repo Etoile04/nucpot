@@ -1,9 +1,9 @@
 """Integration tests for ``/api/v1/extraction-gaps`` endpoints (NFM-2599).
 
 Covers:
-  - GET   /api/v1/extraction-gaps              — paginated + filtered list
-  - GET   /api/v1/extraction-gaps/{gap_id}     — detail with chunk source_reference
-  - PATCH /api/v1/extraction-gaps/{gap_id}/status — status transitions + 409 + 404
+  - GET   /api/v1/extraction-gaps              - paginated + filtered list
+  - GET   /api/v1/extraction-gaps/{gap_id}     - detail with chunk source_reference
+  - PATCH /api/v1/extraction-gaps/{gap_id}/status - status transitions + 409 + 404
 
 OpenAPI registration is asserted via ``app.openapi()``.
 """
@@ -127,18 +127,18 @@ async def _seed_gap(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/extraction-gaps — list
+# GET /api/v1/extraction-gaps - list
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_list_requires_ontology_version_id(async_client) -> None:
+async def test_list_requires_ontology_version_id(async_client, domain_expert_headers) -> None:
     response = await async_client.get("/api/v1/extraction-gaps")
     assert response.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_list_returns_envelope(async_client, db_session) -> None:
+async def test_list_returns_envelope(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     response = await async_client.get(
         "/api/v1/extraction-gaps",
@@ -157,7 +157,7 @@ async def test_list_returns_envelope(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_filters_by_entity_type(async_client, db_session) -> None:
+async def test_list_filters_by_entity_type(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     await _seed_gap(
         db_session, ontology_version_id=ov.id, entity_type="NuclearMaterial",
@@ -180,7 +180,7 @@ async def test_list_filters_by_entity_type(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_filters_by_gap_status(async_client, db_session) -> None:
+async def test_list_filters_by_gap_status(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     await _seed_gap(
         db_session,
@@ -209,7 +209,7 @@ async def test_list_filters_by_gap_status(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_filters_by_job_id(async_client, db_session) -> None:
+async def test_list_filters_by_job_id(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     job = await _seed_job(db_session)
     chunk = await _seed_chunk(db_session, job_id=job.id)
@@ -239,7 +239,7 @@ async def test_list_filters_by_job_id(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_pagination_limit_and_offset(async_client, db_session) -> None:
+async def test_list_pagination_limit_and_offset(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     for i in range(7):
         await _seed_gap(
@@ -289,12 +289,12 @@ async def test_list_rejects_invalid_gap_status(async_client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/extraction-gaps/{gap_id} — detail
+# GET /api/v1/extraction-gaps/{gap_id} - detail
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_detail_returns_gap(async_client, db_session) -> None:
+async def test_detail_returns_gap(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(db_session, ontology_version_id=ov.id)
 
@@ -313,7 +313,7 @@ async def test_detail_returns_gap(async_client, db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_detail_includes_chunk_source_reference(
-    async_client, db_session
+    async_client, db_session, domain_expert_headers
 ) -> None:
     ov = await _seed_ontology(db_session)
     job = await _seed_job(db_session)
@@ -342,12 +342,12 @@ async def test_detail_404_on_missing(async_client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# PATCH /api/v1/extraction-gaps/{gap_id}/status — transitions
+# PATCH /api/v1/extraction-gaps/{gap_id}/status - transitions
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_patch_open_to_filling_succeeds(async_client, db_session) -> None:
+async def test_patch_open_to_filling_succeeds(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
         db_session, ontology_version_id=ov.id, gap_status="open"
@@ -364,7 +364,7 @@ async def test_patch_open_to_filling_succeeds(async_client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_open_to_wont_fix_succeeds(async_client, db_session) -> None:
+async def test_patch_open_to_wont_fix_succeeds(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
         db_session, ontology_version_id=ov.id, gap_status="open"
@@ -382,7 +382,7 @@ async def test_patch_open_to_wont_fix_succeeds(async_client, db_session) -> None
 
 @pytest.mark.asyncio
 async def test_patch_filling_to_filled_sets_resolved_at(
-    async_client, db_session
+    async_client, db_session, domain_expert_headers
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
@@ -401,7 +401,7 @@ async def test_patch_filling_to_filled_sets_resolved_at(
 
 @pytest.mark.asyncio
 async def test_patch_filling_to_wont_fix_sets_resolved_at(
-    async_client, db_session
+    async_client, db_session, domain_expert_headers
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
@@ -419,7 +419,7 @@ async def test_patch_filling_to_wont_fix_sets_resolved_at(
 
 
 @pytest.mark.asyncio
-async def test_patch_open_to_filled_rejected(async_client, db_session) -> None:
+async def test_patch_open_to_filled_rejected(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
         db_session, ontology_version_id=ov.id, gap_status="open"
@@ -435,7 +435,7 @@ async def test_patch_open_to_filled_rejected(async_client, db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_filled_is_immutable_returns_409(
-    async_client, db_session
+    async_client, db_session, domain_expert_headers
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
@@ -451,7 +451,7 @@ async def test_patch_filled_is_immutable_returns_409(
 
 @pytest.mark.asyncio
 async def test_patch_wont_fix_is_immutable_returns_409(
-    async_client, db_session
+    async_client, db_session, domain_expert_headers
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
@@ -467,7 +467,7 @@ async def test_patch_wont_fix_is_immutable_returns_409(
 
 @pytest.mark.asyncio
 async def test_patch_same_terminal_status_returns_409(
-    async_client, db_session
+    async_client, db_session, domain_expert_headers
 ) -> None:
     """Transitioning filled -> filled is rejected (terminal is immutable)."""
     ov = await _seed_ontology(db_session)
@@ -521,7 +521,7 @@ def test_extraction_gap_paths_registered_in_openapi() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/extraction-gaps/recall/{ontology_version_id} — recall
+# GET /api/v1/extraction-gaps/recall/{ontology_version_id} - recall
 # ---------------------------------------------------------------------------
 
 
@@ -543,7 +543,7 @@ _RECALL_ONTOLOGY_DATA = {
 
 
 @pytest.mark.asyncio
-async def test_recall_returns_correct_shape(async_client, db_session) -> None:
+async def test_recall_returns_correct_shape(async_client, db_session, domain_expert_headers) -> None:
     """GET /recall/{ov_id} returns all RecallMetricsResponse fields."""
     ov = await _seed_ontology(
         db_session, ontology_data=_RECALL_ONTOLOGY_DATA,
