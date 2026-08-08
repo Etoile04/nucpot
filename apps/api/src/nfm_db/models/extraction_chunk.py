@@ -52,7 +52,7 @@ class ExtractionChunk(TimestampMixin, Base):
     )
 
     # --- Source offsets ---
-    source_span: Mapped[dict | None] = mapped_column(
+    source_span: Mapped[dict[str, Any] | None] = mapped_column(
         CompatJSONB,
         default=None,
         nullable=True,

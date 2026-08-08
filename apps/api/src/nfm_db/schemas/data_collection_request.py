@@ -53,7 +53,7 @@ class DataCollectionRequestResponse(BaseModel):
         default=None,
         description="When the request reached a terminal status (UTC).",
     )
-    metadata_: dict | None = Field(
+    metadata_: dict[str, Any] | None = Field(
         default=None,
         description="Flexible metadata bag.",
     )

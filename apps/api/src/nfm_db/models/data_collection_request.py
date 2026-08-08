@@ -114,7 +114,7 @@ class DataCollectionRequest(TimestampMixin, Base):
     )
 
     # --- Flexible metadata ---
-    metadata_: Mapped[dict | None] = mapped_column(
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         CompatJSONB,
         nullable=True,
         comment="Flexible metadata bag.",

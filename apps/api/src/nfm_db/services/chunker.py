@@ -210,7 +210,7 @@ def _segment_sections(text: str) -> list[tuple[int, int]]:
     return segments
 
 
-_SEGMENTERS: dict[StrategyName, type] = {  # type: ignore[type-arg]
+_SEGMENTERS: dict[StrategyName, Callable[[str], list[tuple[int, int]]]] = {
     "paragraph": _segment_paragraphs,
     "sentence": _segment_sentences,
     "section": _segment_sections,

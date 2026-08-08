@@ -65,7 +65,7 @@ def _bump_semver(current: str, level: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
-def _validate_ontology_data(data: dict) -> None:
+def _validate_ontology_data(data: dict[str, Any]) -> None:
     """Validate that ontology JSON has required top-level keys.
 
     Returns 422-compatible error detail if validation fails.
@@ -292,7 +292,7 @@ async def publish_version(
     if latest_published is None:
         new_version = _INITIAL_VERSION
     else:
-        new_version = _bump_semver(latest_published.version, body.bump)
+        new_version = _bump_semver(latest_published.version, body.bump or "patch")
 
     version.version = new_version
     version.status = "published"

@@ -119,7 +119,7 @@ class KnowledgeGap(TimestampMixin, Base):
     )
 
     # --- Flexible metadata ---
-    metadata_: Mapped[dict | None] = mapped_column(
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         CompatJSONB,
         default=None,
         nullable=True,

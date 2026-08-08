@@ -290,7 +290,7 @@ async def trigger_scan(
     body: CoverageScanRequest,
     _current_user: Annotated[User, Depends(get_current_active_user)],
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, Any]:
     """Run a coverage scan and return the result summary."""
     svc = CoverageScanService(session)
     try:

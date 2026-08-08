@@ -713,7 +713,7 @@ class ExtractionOrchestrator:
         and mirrored into ``step.metadata_['input_hash']`` for
         operator-visible traceability.
         """
-        staged_properties: list = self._context.get("passed_properties") or []
+        staged_properties: list[dict[str, Any]] = self._context.get("passed_properties") or []
 
         # SHA-256 of the JSON-serialized staged_properties — same
         # canonicalization as :func:`compute_input_hash` so the two
