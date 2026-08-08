@@ -155,6 +155,11 @@ ROLE_INFO = {
             Permission.REVIEW_POST,
         ],
     },
+    BlogRole.DOMAIN_EXPERT: {
+        "display_name": "Domain Expert",
+        "description": "Can manage ontology versions, trigger re-extraction, and adjudicate data quality",
+        "permissions": [],
+    },
 }
 
 

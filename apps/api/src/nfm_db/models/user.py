@@ -20,6 +20,7 @@ class BlogRole(str, enum.Enum):
     ADMIN = "admin"
     EDITOR = "editor"
     REVIEWER = "reviewer"
+    DOMAIN_EXPERT = "domain_expert"
 
 
 class Permission(str, enum.Enum):
@@ -66,7 +67,7 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint(
-            "blog_role IN ('admin', 'editor', 'reviewer')",
+            "blog_role IN ('admin', 'editor', 'reviewer', 'domain_expert')",
             name="check_blog_role",
         ),
     )

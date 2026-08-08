@@ -393,6 +393,21 @@ async def reviewer_user(db_session: AsyncSession):
 
 
 @pytest.fixture
+async def domain_expert_user(db_session: AsyncSession):
+    """Create a domain_expert user for testing."""
+    user = User(
+        username="domain_expert",
+        email="domain_expert@example.com",
+        hashed_password="hashed_password_here",
+        blog_role=BlogRole.DOMAIN_EXPERT,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
 async def admin_headers(admin_user: User):
     """Create headers with admin authentication token."""
     token = create_access_token(data={"sub": str(admin_user.id)})
@@ -410,6 +425,13 @@ async def editor_headers(editor_user: User):
 async def reviewer_headers(reviewer_user: User):
     """Create headers with reviewer authentication token."""
     token = create_access_token(data={"sub": str(reviewer_user.id)})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def domain_expert_headers(domain_expert_user: User):
+    """Create headers with domain_expert authentication token."""
+    token = create_access_token(data={"sub": str(domain_expert_user.id)})
     return {"Authorization": f"Bearer {token}"}
 
 

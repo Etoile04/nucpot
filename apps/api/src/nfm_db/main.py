@@ -15,10 +15,12 @@ from nfm_db.api.v1 import (
     blog,
     composition,
     conflict,
+    data_collection,
     dedup,
     design,
     dft,
     extraction,
+    extraction_gaps,
     feedback,
     health,
     kg,
@@ -28,9 +30,11 @@ from nfm_db.api.v1 import (
     materials,
     md_verification,
     ontology,
+    ontology_version,
     potentials,
     prediction,
     properties,
+    re_extraction,
     reference_gaps,
     reference_values,
     review,
@@ -296,8 +300,12 @@ app.include_router(feedback.router, prefix="/api/v1", tags=["反馈"])
 app.include_router(reference_values.router, prefix="/api/v1", tags=["参考值"])
 app.include_router(reference_gaps.router, prefix="/api/v1", tags=["参考值缺口"])
 app.include_router(extraction.router, prefix="/api/v1", tags=["信息抽取"])
+app.include_router(extraction_gaps.router, prefix="/api/v1", tags=["提取缺口管理"])
 app.include_router(viz.router, prefix="/api/v1", tags=["可视化"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["本体管理"])
+app.include_router(ontology_version.router, prefix="/api/v1", tags=["本体版本管理"])
+app.include_router(data_collection.router, prefix="/api/v1", tags=["数据采集管理"])
+app.include_router(re_extraction.router, prefix="/api/v1", tags=["重新提取管理"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["领域专家审核"])
 app.include_router(md_verification.router, prefix="/api/v1/md-verification", tags=["MD 验证"])
 app.include_router(auth_endpoints, prefix="/api/v1", tags=["认证"])

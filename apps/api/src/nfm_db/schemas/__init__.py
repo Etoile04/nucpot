@@ -12,6 +12,10 @@ from nfm_db.schemas.extraction import (  # noqa: F401
     ExtractionTriggerRequest,
     ExtractionTriggerResponse,
 )
+from nfm_db.schemas.extraction_gap import (  # noqa: F401
+    ExtractionGapResponse,
+    GapScanResultResponse,
+)
 from nfm_db.schemas.material import (  # noqa: F401
     MaterialAliasCreate,
     MaterialAliasResponse,

@@ -6,11 +6,16 @@ and feeds the summary endpoint.
 
 Design reference: NFM-54 Section 2.1 (GET /api/reference-gaps),
 Section 2.3 (POST /api/reference-gaps/scan).
+
+.. deprecated:: NFM-2620
+   Use :mod:`nfm_db.services.coverage_scan_service.CoverageScanService`
+   for ontology-driven coverage analysis instead.
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -138,6 +143,12 @@ class GapScanService:
         session: AsyncSession,
         target_tuples: list[dict[str, str | None]] | None = None,
     ) -> None:
+        warnings.warn(
+            "GapScanService is deprecated. "
+            "Use CoverageScanService from coverage_scan_service instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._session = session
         self._targets = target_tuples or _DEFAULT_TARGET_TUPLES
 
