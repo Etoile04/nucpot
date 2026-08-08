@@ -56,6 +56,12 @@ class TestExternalDBCanHandle:
         req = _make_request(source_preference="dft")
         assert await handler.can_handle(req) is False
 
+    @pytest.mark.asyncio
+    async def test_external_db_fill_can_handle_unknown_source(self) -> None:
+        handler = ExternalDBFillPath(session=AsyncMock())
+        req = _make_request(source_preference="unknown_source")
+        assert await handler.can_handle(req) is False
+
 
 class TestExternalDBExecute:
 
