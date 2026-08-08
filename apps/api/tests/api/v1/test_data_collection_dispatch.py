@@ -393,3 +393,69 @@ async def test_retry_non_failed_rejected(async_client, db_session) -> None:
     assert "expected 'failed'" in detail
 
 
+
+# ---------------------------------------------------------------------------
+# Dispatch failure paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_captures_per_request_error(
+    async_client, db_session, monkeypatch,
+) -> None:
+    """A dispatch exception is captured per-request instead of failing the batch."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data([]),
+    )
+    req = await _seed_request(db_session, ov=ov, property_name="density")
+
+    monkeypatch.setattr(
+        "nfm_db.api.v1.data_collection.GapDispatchService.dispatch",
+        AsyncMock(side_effect=RuntimeError("provider exploded")),
+    )
+
+    resp = await async_client.post(
+        f"{BASE}",
+        params={"ontology_version_id": str(ov.id), "limit": 10},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dispatched_count"] == 1
+    item = data["results"][0]
+    assert item["request_id"] == str(req.id)
+    assert item["success"] is False
+    assert item["path"] == "error"
+    assert item["data_found"] is False
+    assert "provider exploded" in item["error"]
+
+
+@pytest.mark.asyncio
+async def test_retry_dispatch_failure_returns_500(
+    async_client, db_session, monkeypatch,
+) -> None:
+    """A dispatch exception during retry surfaces as a 500."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data([]),
+    )
+    req = await _seed_request(
+        db_session,
+        ov=ov,
+        property_name="density",
+        status="in_progress",
+        dispatch_status="failed",
+        dispatched_path="literature",
+        dispatched_at=datetime.now(UTC),
+    )
+
+    monkeypatch.setattr(
+        "nfm_db.api.v1.data_collection.GapDispatchService.dispatch",
+        AsyncMock(side_effect=RuntimeError("retry exploded")),
+    )
+
+    resp = await async_client.post(f"{BASE}/{req.id}/retry")
+
+    assert resp.status_code == 500
+    assert "retry exploded" in resp.json()["detail"]
