@@ -112,7 +112,7 @@ async def check_and_reopen_wont_fix_gaps(
     stmt = select(KnowledgeGap).where(
         KnowledgeGap.status == GapStatus.WONT_FIX.value,
     )
-    result: Result[tuple[KnowledgeGap]] = await session.execute(stmt)
+    result = await session.execute(stmt)  # type: ignore[assignment]
     wont_fix_gaps = list(result.scalars().all())
 
     reopened_keys: list[str] = []
