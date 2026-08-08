@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import (
@@ -298,7 +299,18 @@ async def publish_version(
     version.status = "published"
     version.changelog = body.changelog
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Version string '{new_version}' already exists. "
+                "Concurrent publish detected — retry."
+            ),
+        ) from None
+
     await session.refresh(version)
     return OntologyVersionRead.model_validate(version)
 

@@ -5,9 +5,9 @@ Listing, detail, and status-transition API for the
 
 Endpoints
 ---------
-- GET   /api/v1/extraction-gaps                — paginated + filtered list
-- GET   /api/v1/extraction-gaps/{gap_id}       — detail with chunk source_reference
-- PATCH /api/v1/extraction-gaps/{gap_id}/status — status transition
+- GET   /api/v1/extraction-gaps                - paginated + filtered list
+- GET   /api/v1/extraction-gaps/{gap_id}       - detail with chunk source_reference
+- PATCH /api/v1/extraction-gaps/{gap_id}/status - status transition
 
 Status lifecycle: ``open -> filling|wont_fix`` ; ``filling -> filled|wont_fix``.
 Terminal statuses (``filled``, ``wont_fix``) are immutable and reject updates
@@ -17,17 +17,21 @@ with HTTP 409.  ``resolved_at`` is set when transitioning to a terminal state.
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.api.v1.auth import require_domain_expert
 from nfm_db.database import get_db
-from nfm_db.models import ExtractionChunk, ExtractionGap
+from nfm_db.models import ExtractionChunk, ExtractionGap, User
 from nfm_db.models.extraction_gap import EXTRACTION_GAP_STATUSES
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.extraction_gap import ExtractionGapResponse
 from nfm_db.services.gap_scanner import compute_recall
 
@@ -39,13 +43,6 @@ router = APIRouter(tags=["提取缺口管理"])
 # ---------------------------------------------------------------------------
 # Request / response envelopes
 # ---------------------------------------------------------------------------
-
-
-class ExtractionGapListResponse(BaseModel):
-    """Paginated list envelope returned by the list endpoint."""
-
-    data: list[ExtractionGapResponse]
-    meta: dict[str, int]
 
 
 class GapStatusUpdateRequest(BaseModel):
@@ -81,7 +78,7 @@ class RecallMetricsResponse(BaseModel):
 # Statuses the PATCH endpoint will accept on the wire.
 _PATCHABLE_STATUSES: frozenset[str] = frozenset({"filling", "filled", "wont_fix"})
 
-# Statuses considered terminal — once reached, the row is immutable.
+# Statuses considered terminal - once reached, the row is immutable.
 _TERMINAL_STATUSES: frozenset[str] = frozenset({"filled", "wont_fix"})
 
 # Allowed transitions: source -> set of permitted target statuses.
@@ -99,14 +96,20 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 
 
 async def _load_gap_or_404(
-    session: AsyncSession, gap_id: uuid.UUID,
+    session: AsyncSession,
+    gap_id: uuid.UUID,
+    *,
+    lock: bool = False,
 ) -> ExtractionGap:
-    """Fetch a single gap, raising 404 if absent."""
-    gap = (
-        await session.execute(
-            select(ExtractionGap).where(ExtractionGap.id == gap_id),
-        )
-    ).scalar_one_or_none()
+    """Fetch a single gap, raising 404 if absent.
+
+    When ``lock=True``, acquires a row-level ``SELECT … FOR UPDATE``
+    so that concurrent status-update requests serialize correctly.
+    """
+    stmt = select(ExtractionGap).where(ExtractionGap.id == gap_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    gap = (await session.execute(stmt)).scalar_one_or_none()
     if gap is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -144,13 +147,13 @@ def _to_response(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/extraction-gaps — list
+# GET /api/v1/extraction-gaps - list
 # ---------------------------------------------------------------------------
 
 
 @router.get(
     "/extraction-gaps",
-    response_model=ExtractionGapListResponse,
+    response_model=ApiResponse[PaginatedResponse[ExtractionGapResponse]],
     summary="列出提取缺口",
     description=(
         "分页查询提取缺口，支持按本体版本、实体类型、缺口状态、所属任务筛选。\n\n"
@@ -161,7 +164,7 @@ def _to_response(
 async def list_extraction_gaps(
     ontology_version_id: uuid.UUID = Query(
         ...,
-        description="Ontology version id — required for all list queries.",
+        description="Ontology version id - required for all list queries.",
     ),
     entity_type: str | None = Query(
         default=None,
@@ -182,28 +185,30 @@ async def list_extraction_gaps(
             "the given extraction job."
         ),
     ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number (1-based, default 1).",
+    ),
     limit: int = Query(
         default=50,
         ge=1,
         le=200,
         description="Page size (1-200, default 50).",
     ),
-    offset: int = Query(
-        default=0,
-        ge=0,
-        description="Page offset (default 0).",
-    ),
     session: AsyncSession = Depends(get_db),
-) -> ExtractionGapListResponse:
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
+) -> ApiResponse[PaginatedResponse[ExtractionGapResponse]]:
     """Paginated extraction-gap listing.
 
     Implements the API contract from the issue spec:
 
     - ``ontology_version_id`` (UUID, required)
     - ``entity_type``, ``gap_status`` (open|filling|filled|wont_fix), ``job_id`` optional
-    - ``limit`` (default 50, max 200), ``offset`` (default 0)
-    - Response envelope: ``{ data: [...], meta: { total, limit, offset } }``
+    - ``limit`` (default 50, max 200), ``page`` (default 1)
+    - Response envelope: ``ApiResponse[PaginatedResponse[ExtractionGapResponse]]``
     """
+    offset = (page - 1) * limit
     if gap_status is not None and gap_status not in EXTRACTION_GAP_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -222,7 +227,7 @@ async def list_extraction_gaps(
     join_chunk = job_id is not None
 
     if join_chunk:
-        # ``job_id`` filter — fetch candidate chunk_ids via a subquery
+        # ``job_id`` filter - fetch candidate chunk_ids via a subquery
         # against extraction_chunks (cheaper than a full JOIN when the
         # chunk set is small relative to the gap set).
         chunk_ids = (
@@ -233,9 +238,15 @@ async def list_extraction_gaps(
             )
         ).scalars().all()
         if not chunk_ids:
-            return ExtractionGapListResponse(
-                data=[],
-                meta={"total": 0, "limit": limit, "offset": offset},
+            return ApiResponse(
+                success=True,
+                data=PaginatedResponse(
+                    items=[],
+                    total=0,
+                    page=page,
+                    limit=limit,
+                    pages=0,
+                ),
             )
         where_clauses.append(ExtractionGap.chunk_id.in_(chunk_ids))
 
@@ -270,14 +281,21 @@ async def list_extraction_gaps(
     items = [
         _to_response(row, chunks_by_id.get(row.chunk_id) if row.chunk_id else None) for row in rows
     ]
-    return ExtractionGapListResponse(
-        data=items,
-        meta={"total": int(total), "limit": limit, "offset": offset},
+    pages = math.ceil(total / limit) if total > 0 else 0
+    return ApiResponse(
+        success=True,
+        data=PaginatedResponse(
+            items=items,
+            total=int(total),
+            page=page,
+            limit=limit,
+            pages=pages,
+        ),
     )
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/extraction-gaps/{gap_id} — detail
+# GET /api/v1/extraction-gaps/{gap_id} - detail
 # ---------------------------------------------------------------------------
 
 
@@ -295,6 +313,7 @@ async def list_extraction_gaps(
 async def get_extraction_gap(
     gap_id: uuid.UUID = Path(..., description="Extraction gap id."),
     session: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
 ) -> ExtractionGapResponse:
     """Return a single extraction gap, including chunk source_reference."""
     gap = await _load_gap_or_404(session, gap_id)
@@ -313,7 +332,7 @@ async def get_extraction_gap(
 
 
 # ---------------------------------------------------------------------------
-# PATCH /api/v1/extraction-gaps/{gap_id}/status — transition
+# PATCH /api/v1/extraction-gaps/{gap_id}/status - transition
 # ---------------------------------------------------------------------------
 
 
@@ -335,15 +354,16 @@ async def update_extraction_gap_status(
     payload: GapStatusUpdateRequest,
     gap_id: uuid.UUID = Path(..., description="Extraction gap id."),
     session: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
 ) -> ExtractionGapResponse:
     """Apply a status transition to a single gap.
 
     Errors:
-    - 404 — gap_id not found.
-    - 422 — body.status not in {filling, filled, wont_fix}.
-    - 400 — body.status is a valid target but the transition is not
+    - 404 - gap_id not found.
+    - 422 - body.status not in {filling, filled, wont_fix}.
+    - 400 - body.status is a valid target but the transition is not
       permitted from the gap's current state (e.g. open → filled).
-    - 409 — gap is already in a terminal state.
+    - 409 - gap is already in a terminal state.
     """
     target = payload.status
     if target not in _PATCHABLE_STATUSES:
@@ -355,7 +375,7 @@ async def update_extraction_gap_status(
             ),
         )
 
-    gap = await _load_gap_or_404(session, gap_id)
+    gap = await _load_gap_or_404(session, gap_id, lock=True)
 
     if gap.gap_status in _TERMINAL_STATUSES:
         raise HTTPException(
@@ -373,7 +393,7 @@ async def update_extraction_gap_status(
             detail=(
                 f"Invalid transition '{gap.gap_status}' → '{target}'. "
                 f"Allowed targets from '{gap.gap_status}': "
-                f"{', '.join(sorted(allowed_targets)) or '(none — terminal)'}"
+                f"{', '.join(sorted(allowed_targets)) or '(none - terminal)'}"
             ),
         )
 
@@ -410,13 +430,13 @@ async def update_extraction_gap_status(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/extraction-gaps/recall/{ontology_version_id} — recall
+# GET /api/v1/extraction-gaps/recall/{ontology_version_id} - recall
 # ---------------------------------------------------------------------------
 
 
 @router.get(
     "/extraction-gaps/recall/{ontology_version_id}",
-    response_model=RecallMetricsResponse,
+    response_model=ApiResponse[RecallMetricsResponse],
     summary="查询召回率",
     description=(
         "计算指定本体版本的召回率指标。召回率 = "
@@ -431,11 +451,12 @@ async def get_recall_metrics(
         description="Ontology version id to compute recall for.",
     ),
     session: AsyncSession = Depends(get_db),
-) -> RecallMetricsResponse:
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
+) -> ApiResponse[RecallMetricsResponse]:
     """Return aggregated recall metrics for an ontology version.
 
     Errors:
-    - 404 — ontology_version_id not found (translated from ValueError).
+    - 404 - ontology_version_id not found (translated from ValueError).
     """
     try:
         metrics = await compute_recall(session, ontology_version_id)
@@ -445,13 +466,16 @@ async def get_recall_metrics(
             detail=str(exc),
         ) from exc
 
-    return RecallMetricsResponse(
-        ontology_version_id=str(metrics.ontology_version_id),
-        total_expected=metrics.total_expected,
-        total_gaps=metrics.total_gaps,
-        open_gaps=metrics.open_gaps,
-        filled_gaps=metrics.filled_gaps,
-        wont_fix_gaps=metrics.wont_fix_gaps,
-        recall_rate=metrics.recall_rate,
-        computed_at=metrics.computed_at.isoformat(),
+    return ApiResponse(
+        success=True,
+        data=RecallMetricsResponse(
+            ontology_version_id=str(metrics.ontology_version_id),
+            total_expected=metrics.total_expected,
+            total_gaps=metrics.total_gaps,
+            open_gaps=metrics.open_gaps,
+            filled_gaps=metrics.filled_gaps,
+            wont_fix_gaps=metrics.wont_fix_gaps,
+            recall_rate=metrics.recall_rate,
+            computed_at=metrics.computed_at.isoformat(),
+        ),
     )

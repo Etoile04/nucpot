@@ -6,15 +6,33 @@ with dynamic Phase 2A rules injection:
 - Standard property names from property_mapping.json
 - Phase identification rules from phase_rules.py
 
+NFM-2639 adds ontology-driven extraction prompt injection.
+
 Public API:
     build_extraction_system_prompt() -> str
+    build_ontology_extraction_prompt(ontology_version) -> str
 """
 
 from __future__ import annotations
 
-__all__ = ["build_extraction_system_prompt"]
+import logging
+from typing import TYPE_CHECKING, Any
+
+__all__ = [
+    "ONTOLOGY_CONTEXT_BUDGET_CHARS",
+    "build_extraction_system_prompt",
+    "build_ontology_extraction_prompt",
+]
 
 from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory
+
+if TYPE_CHECKING:
+    from nfm_db.models.ontology_version import OntologyVersion
+
+logger = logging.getLogger(__name__)
+
+# ~8000 chars ≈ ~2000 tokens (CJK-heavy content).
+ONTOLOGY_CONTEXT_BUDGET_CHARS = 8000
 
 # ---------------------------------------------------------------------------
 # Phase 2A dynamic injection helpers
@@ -60,6 +78,128 @@ def _build_standard_names_block() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Ontology context builder (NFM-2639)
+# ---------------------------------------------------------------------------
+
+
+def _build_entity_type_lines(entity_type: dict[str, Any]) -> list[str]:
+    """Build bullet lines for a single entity type."""
+    lines = [f"### {entity_type['name']}"]
+    description = entity_type.get("description")
+    if description:
+        lines.append(f"   {description}")
+    required_properties = entity_type.get("required_properties")
+    if required_properties:
+        props_str = ", ".join(required_properties)
+        lines.append(f"   必需属性: {props_str}")
+    return lines
+
+
+def _build_relation_type_lines(relation_type: dict[str, Any]) -> list[str]:
+    """Build bullet lines for a single relation type."""
+    lines = [f"- **{relation_type['name']}**"]
+    description = relation_type.get("description")
+    if description:
+        lines.append(f"  {description}")
+    source_types = relation_type.get("source_types")
+    target_types = relation_type.get("target_types")
+    if source_types and target_types:
+        constraints = " → ".join(
+            [", ".join(source_types), ", ".join(target_types)]
+        )
+        lines.append(f"  约束: {constraints}")
+    return lines
+
+
+def _build_ontology_context_block(
+    ontology_data: dict[str, Any],
+    budget: int = ONTOLOGY_CONTEXT_BUDGET_CHARS,
+) -> str:
+    """Build the ontology context block from ontology_data JSONB.
+
+    Generates sections for entity types and relation types.
+    If the full block exceeds *budget* characters, truncates by dropping
+    required_properties details and keeps only names + descriptions.
+
+    Returns an empty string when ontology_data is empty or missing.
+    """
+    entity_types_raw: list[dict[str, Any]] = ontology_data.get("entity_types", [])
+    relation_types_raw: list[dict[str, Any]] = ontology_data.get("relation_types", [])
+
+    if not entity_types_raw and not relation_types_raw:
+        return ""
+
+    # --- Full block (with required_properties) ---
+    lines = ["## 本体定义 (Ontology)", ""]
+    if entity_types_raw:
+        lines.append("### 实体类型 (Entity Types)")
+        lines.append("")
+        for et in entity_types_raw:
+            lines.extend(_build_entity_type_lines(et))
+            lines.append("")
+
+    if relation_types_raw:
+        lines.append("### 关系类型 (Relation Types)")
+        lines.append("")
+        for rt in relation_types_raw:
+            lines.extend(_build_relation_type_lines(rt))
+
+    full_block = "\n".join(lines)
+
+    # --- Budget enforcement ---
+    if len(full_block) <= budget:
+        return full_block
+
+    # Truncation path: drop required_properties, keep names + descriptions
+    logger.warning(
+        "Ontology context exceeds budget (%d > %d chars); "
+        "truncating to names + descriptions only.",
+        len(full_block),
+        budget,
+    )
+
+    lines_truncated = ["## 本体定义 (Ontology)", ""]
+    if entity_types_raw:
+        lines_truncated.append("### 实体类型 (Entity Types)")
+        lines_truncated.append("")
+        for et in entity_types_raw:
+            lines_truncated.append(f"- {et['name']}")
+            desc = et.get("description")
+            if desc:
+                lines_truncated.append(f"  {desc}")
+            lines_truncated.append("")
+
+    if relation_types_raw:
+        lines_truncated.append("### 关系类型 (Relation Types)")
+        lines_truncated.append("")
+        for rt in relation_types_raw:
+            lines_truncated.append(f"- {rt['name']}")
+            desc = rt.get("description")
+            if desc:
+                lines_truncated.append(f"  {desc}")
+            src = rt.get("source_types")
+            tgt = rt.get("target_types")
+            if src and tgt:
+                lines_truncated.append(
+                    f"  {', '.join(src)} → {', '.join(tgt)}"
+                )
+            lines_truncated.append("")
+
+    truncated_block = "\n".join(lines_truncated)
+
+    # If still over budget, hard-truncate at budget boundary
+    if len(truncated_block) > budget:
+        truncated_block = truncated_block[:budget] + "\n... (truncated)"
+        logger.warning(
+            "Ontology context still over budget after truncation; "
+            "hard-clipping to %d chars.",
+            budget,
+        )
+
+    return truncated_block
+
+
+# ---------------------------------------------------------------------------
 # System prompt template (compressed SKILL.md)
 # ---------------------------------------------------------------------------
 
@@ -99,6 +239,8 @@ context → confidence → reference
   "reference": "Author, Paper Title"
 }}
 ```
+
+{ontology_context_block}
 
 {categories_block}
 
@@ -175,4 +317,46 @@ def build_extraction_system_prompt() -> str:
     return _PROMPT_TEMPLATE.format(
         categories_block=categories_block,
         standard_names_block=standard_names_block,
+        ontology_context_block="",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ontology-driven prompt builder (NFM-2639)
+# ---------------------------------------------------------------------------
+
+
+def build_ontology_extraction_prompt(
+    ontology_version: OntologyVersion,
+) -> str:
+    """Build the extraction system prompt with ontology context injected.
+
+    Wraps the base prompt template with an ontology context block
+    derived from ``ontology_version.ontology_data`` JSONB.
+
+    The pipeline (T3) is responsible for querying the DB and passing
+    the OntologyVersion object — this function does NOT import ORM models
+    at runtime (uses TYPE_CHECKING).
+
+    Args:
+        ontology_version: An OntologyVersion ORM instance with
+            ``ontology_data`` populated.
+
+    Returns:
+        Complete system prompt string ready for LLM consumption.
+    """
+    ontology_data: dict[str, Any] | None = ontology_version.ontology_data
+
+    if not ontology_data:
+        ontology_context_block = ""
+    else:
+        ontology_context_block = _build_ontology_context_block(ontology_data)
+
+    categories_block = _build_categories_block()
+    standard_names_block = _build_standard_names_block()
+
+    return _PROMPT_TEMPLATE.format(
+        categories_block=categories_block,
+        standard_names_block=standard_names_block,
+        ontology_context_block=ontology_context_block,
     )

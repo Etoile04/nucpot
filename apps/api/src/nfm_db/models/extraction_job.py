@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
@@ -100,6 +100,18 @@ class ExtractionJob(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+    # --- Ontology version tracking (NFM-2638) ---
+    ontology_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ontology_versions.id"),
+        nullable=True,
+        comment="FK to the OntologyVersion used for prompt generation.",
+    )
+    ontology_version_str: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="Denormalized semver string, e.g. 1.2.0, for easy querying.",
     )
 
     # --- Multimodal extraction flags (preserved from the stub) ---
