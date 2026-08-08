@@ -41,6 +41,11 @@ router = APIRouter(tags=["本体版本管理"])
 # Default initial semver when no published version exists yet.
 _INITIAL_VERSION = "0.1.0"
 
+# Prefix for draft version strings.  Drafts get a UUID suffix so they
+# never collide with the UNIQUE constraint or with migration-seeded rows.
+# ``publish_version()`` overwrites this with the real semver at publish time.
+_DRAFT_VERSION_PREFIX = "0.0.0-draft-"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,6 +82,21 @@ def _validate_ontology_data(data: dict[str, Any]) -> None:
         raise ValueError(
             f"Ontology JSON missing required keys: {', '.join(sorted(missing))}"
         )
+
+
+def _next_draft_version() -> str:
+    """Return a unique version string for a new draft ontology.
+
+    Uses a ``0.0.0-draft-<uuid8>`` pattern that is guaranteed to be
+    unique across calls and distinct from any published semver.  The
+    draft version is a placeholder — ``publish_version()`` overwrites it
+    with the real semver at publish time.
+
+    This prevents UNIQUE constraint collisions when creating multiple
+    drafts or when a migration-seeded ``0.1.0`` row already exists
+    (NFM-2597).
+    """
+    return f"{_DRAFT_VERSION_PREFIX}{uuid.uuid4().hex[:8]}"
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +211,7 @@ async def create_draft(
 ) -> OntologyVersionRead:
     """Create a new draft ontology version."""
     version = OntologyVersion(
-        version=_INITIAL_VERSION,
+        version=_next_draft_version(),
         status="draft",
         changelog=body.changelog,
         ontology_data=body.ontology_data,
@@ -337,7 +357,7 @@ async def upload_ontology(
         ) from exc
 
     version = OntologyVersion(
-        version=_INITIAL_VERSION,
+        version=_next_draft_version(),
         status="draft",
         changelog=body.changelog,
         ontology_data=body.ontology_data,

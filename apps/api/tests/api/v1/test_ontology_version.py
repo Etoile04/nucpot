@@ -162,7 +162,7 @@ async def test_create_draft_domain_expert_ok(
     assert resp.status_code == 201
     data = resp.json()
     assert data["status"] == "draft"
-    assert data["version"] == "0.1.0"
+    assert data["version"].startswith("0.0.0-draft-")
     assert data["changelog"] == "initial"
 
 
@@ -524,3 +524,97 @@ async def test_reviewer_cannot_create_draft(async_client, reviewer_headers):
         BASE, json={"changelog": "nope"}, headers=reviewer_headers,
     )
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# NFM-2597 regression — draft version uniqueness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_two_consecutive_uploads_succeed(async_client, domain_expert_headers):
+    """Two consecutive uploads must both return 201 (NFM-2597)."""
+    resp1 = await async_client.post(
+        f"{BASE}/upload",
+        json={"ontology_data": _VALID_ONTOLOGY, "changelog": "first"},
+        headers=domain_expert_headers,
+    )
+    assert resp1.status_code == 201
+
+    resp2 = await async_client.post(
+        f"{BASE}/upload",
+        json={"ontology_data": _VALID_ONTOLOGY, "changelog": "second"},
+        headers=domain_expert_headers,
+    )
+    assert resp2.status_code == 201
+
+    # Each upload must produce a distinct version string.
+    assert resp1.json()["version"] != resp2.json()["version"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_upload_succeeds_with_existing_published_010(
+    async_client, domain_expert_headers, db_session,
+):
+    """Upload must not collide with migration-044 seed row '0.1.0' (NFM-2597)."""
+    await _create_version(db_session, version="0.1.0", status="published")
+    await db_session.commit()
+
+    resp = await async_client.post(
+        f"{BASE}/upload",
+        json={"ontology_data": _VALID_ONTOLOGY, "changelog": "post-seed"},
+        headers=domain_expert_headers,
+    )
+    assert resp.status_code == 201
+    # The draft must NOT claim version 0.1.0 (that belongs to the seed row).
+    assert resp.json()["version"] != "0.1.0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_two_consecutive_create_drafts_succeed(
+    async_client, domain_expert_headers, db_session,
+):
+    """Two consecutive POST /ontology/versions calls must both return 201."""
+    resp1 = await async_client.post(
+        BASE, json={"changelog": "first"}, headers=domain_expert_headers,
+    )
+    assert resp1.status_code == 201
+
+    resp2 = await async_client.post(
+        BASE, json={"changelog": "second"}, headers=domain_expert_headers,
+    )
+    assert resp2.status_code == 201
+
+    assert resp1.json()["version"] != resp2.json()["version"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_create_draft_succeeds_with_existing_published_010(
+    async_client, domain_expert_headers, db_session,
+):
+    """create_draft must not collide with migration-044 seed row '0.1.0'."""
+    await _create_version(db_session, version="0.1.0", status="published")
+    await db_session.commit()
+
+    resp = await async_client.post(
+        BASE, json={"changelog": "post-seed"}, headers=domain_expert_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["version"] != "0.1.0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_draft_version_starts_with_draft_prefix(
+    async_client, domain_expert_headers,
+):
+    """Draft versions should carry a '0.0.0-draft-' prefix (NFM-2597)."""
+    resp = await async_client.post(
+        BASE, json={"changelog": "prefix check"}, headers=domain_expert_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["version"].startswith("0.0.0-draft-")
