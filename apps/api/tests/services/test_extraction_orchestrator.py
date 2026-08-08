@@ -14,7 +14,6 @@ Covers:
 
 from __future__ import annotations
 
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,11 +23,10 @@ from nfm_db.models.extraction_job import ExtractionJob
 from nfm_db.models.extraction_step import ExtractionStep
 from nfm_db.models.ref_gap_fill import RefGapFillStaging
 from nfm_db.services.extraction_orchestrator import (
-    ExtractionOrchestrator,
     _PIPELINE_STEPS,
+    ExtractionOrchestrator,
     compute_input_hash,
 )
-
 
 # ---------------------------------------------------------------------------
 # compute_input_hash unit tests

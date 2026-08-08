@@ -27,7 +27,6 @@ from nfm_db.services.extraction_orchestrator import (
     compute_input_hash,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -344,7 +343,7 @@ class TestStepExtract:
                 ),
             )
 
-        assert "raw_extractions" in orchestrator._context  # noqa: E501
+        assert "raw_extractions" in orchestrator._context
         results = orchestrator._context["raw_extractions"]
         assert isinstance(results, list)
         assert len(results) >= 1

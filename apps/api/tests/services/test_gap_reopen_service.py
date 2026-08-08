@@ -15,11 +15,9 @@ from sqlalchemy import select
 
 from nfm_db.models.knowledge_gap import GapStatus, KnowledgeGap
 from nfm_db.services.gap_reopen_service import (
-    ReopenResult,
     _build_target_key,
     check_and_reopen_wont_fix_gaps,
 )
-
 
 # ---------------------------------------------------------------------------
 # _build_target_key unit tests

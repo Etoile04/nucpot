@@ -1,7 +1,10 @@
 """Ontology-driven extraction gap scanner."""
 from __future__ import annotations
+
 from typing import Any
+
 from nfm_db.services.gap_scanner import GapScanService
+
 
 class ExtractionGapScanner(GapScanService):
     """Scan extraction chunks against ontology expectations."""

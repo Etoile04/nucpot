@@ -7,7 +7,7 @@ detection and persists ``error_message`` on failure, halting the
 pipeline.
 
 This is a skeleton: step bodies are stubs that will be filled in by
-subsequent tasks (T2–T6).
+subsequent tasks (T2-T6).
 """
 
 from __future__ import annotations
@@ -343,7 +343,7 @@ class ExtractionOrchestrator:
         await self._session.flush()
 
     # ------------------------------------------------------------------
-    # Step stubs (skeleton — real implementations in T2–T6)
+    # Step stubs (skeleton -- real implementations in T2-T6)
     # ------------------------------------------------------------------
 
     async def _step_chunk(

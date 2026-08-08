@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nfm_db.services.gap_scanner import GapScanResult
 
-
 # ---------------------------------------------------------------------------
 # ExtractionGapResponse — API shape for a single gap record
 # ---------------------------------------------------------------------------
@@ -104,7 +103,7 @@ class GapScanResultResponse(BaseModel):
     @classmethod
     def from_domain(
         cls, result: GapScanResult,
-    ) -> "GapScanResultResponse":
+    ) -> GapScanResultResponse:
         """Build a response from a service-layer :class:`GapScanResult`."""
         return cls(
             total_expected=result.total_expected,

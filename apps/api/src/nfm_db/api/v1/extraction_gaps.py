@@ -26,10 +26,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models import ExtractionChunk, ExtractionGap, OntologyVersion
+from nfm_db.models import ExtractionChunk, ExtractionGap
 from nfm_db.models.extraction_gap import EXTRACTION_GAP_STATUSES
 from nfm_db.schemas.extraction_gap import ExtractionGapResponse
-from nfm_db.services.gap_scanner import RecallMetrics, compute_recall
+from nfm_db.services.gap_scanner import compute_recall
 
 logger = logging.getLogger(__name__)
 

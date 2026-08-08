@@ -25,7 +25,6 @@ from nfm_db.models import (
 )
 from nfm_db.models.user import BlogRole
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -515,7 +514,7 @@ def test_extraction_gap_paths_registered_in_openapi() -> None:
     assert "/api/v1/extraction-gaps/{gap_id}/status" in paths
     assert "/api/v1/extraction-gaps/recall/{ontology_version_id}" in paths
 
-    list_op = paths["/api/v1/extraction-gaps"]["get"]
+    _list_op = paths["/api/v1/extraction-gaps"]["get"]
     components = schema.get("components", {}).get("schemas", {})
     assert "ExtractionGapResponse" in components
     assert "RecallMetricsResponse" in components

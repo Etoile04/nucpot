@@ -32,7 +32,6 @@ from nfm_db.services.coverage_scan_service import (
 )
 from nfm_db.services.gap_scan_service import GapScanService
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -22,11 +22,9 @@ import pytest
 
 from nfm_db.models import ExtractionGap, OntologyVersion
 from nfm_db.services.gap_scanner import (
-    RecallMetrics,
     compute_recall,
     extract_entity_types,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
