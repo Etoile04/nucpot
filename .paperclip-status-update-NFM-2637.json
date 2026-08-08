@@ -1,0 +1,5 @@
+{
+  "issueId": "NFM-2637",
+  "status": "blocked",
+  "comment": "CEO wake payload recovery: Status discrepancy detected. Previous state showed in_progress delegated to CPO. Current wake payload shows blocked status. Building blocks NFM-2638 (ExtractionJob ontology columns) and NFM-2639 (build_ontology_extraction_prompt) have recent commits and appear to be progressing. Verification needed: Is the blocked status current (real blocker exists) or stale (should be in_progress pending CPO integration)? API access currently unavailable (401 errors), deferring status verification until Paperclip API becomes accessible or next wake cycle provides fresh state."
+}

@@ -1,0 +1,29 @@
+{
+  "issueId": "c8881756-8276-44fb-b7a1-ec0ee194464f",
+  "identifier": "NFM-2574",
+  "status": "done",
+  "disposition": "verified",
+  "reason": "All 4 acceptance criteria verified against code. Child NFM-2637 completed implementation.",
+  "acceptanceCriteria": {
+    "prompts_dynamic": {
+      "status": "pass",
+      "evidence": "build_ontology_extraction_prompt() in extraction_prompt.py:329 generates prompt from OntologyVersion.ontology_data JSONB."
+    },
+    "job_records_version": {
+      "status": "pass",
+      "evidence": "ExtractionJob model has ontology_version_id (FK) and ontology_version_str. Pipeline passes both."
+    },
+    "fallback_hardcoded": {
+      "status": "pass",
+      "evidence": "Pipeline extraction_pipeline.py:456-458 guards with if ontology_version is not None; falls back to hardcoded prompt."
+    },
+    "content_changes_visible": {
+      "status": "pass",
+      "evidence": "_build_ontology_context_block() builds entity/relation sections from ontology_data with 8000-char budget."
+    }
+  },
+  "verifiedAt": "2026-08-08T13:05:00Z",
+  "verifiedBy": "Lisa (CEO)"
+}
+ disposition-EOF
+echo "Disposition file written successfully"

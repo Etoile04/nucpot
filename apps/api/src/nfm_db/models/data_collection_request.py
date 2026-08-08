@@ -37,6 +37,14 @@ SOURCE_PREFERENCES: tuple[str, ...] = (
     "any",
 )
 
+# Allowed dispatch_status values (added via migration 050).
+DISPATCH_STATUSES: tuple[str, ...] = (
+    "pending",
+    "running",
+    "success",
+    "failed",
+)
+
 
 class DataCollectionRequest(TimestampMixin, Base):
     """A data-collection request tied to an ontology coverage gap (NFM-2619).
@@ -119,6 +127,28 @@ class DataCollectionRequest(TimestampMixin, Base):
         CompatJSONB,
         nullable=True,
         comment="Flexible metadata bag.",
+    )
+
+    # --- Dispatch tracking (added via migration 050) ---
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the DCR was dispatched to a fill path.",
+    )
+    dispatched_path: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="Resolved fill path: literature | dft | external_db | cascade.",
+    )
+    dispatch_status: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="pending | running | success | failed.",
+    )
+    result_reference: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="External job/task reference (celery ID, etc.).",
     )
 
     __table_args__ = (
