@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import get_current_active_user
+from nfm_db.api.v1.auth import get_current_active_user, require_domain_expert
 from nfm_db.database import get_db
 from nfm_db.models import DataCollectionRequest, User
 from nfm_db.models.data_collection_request import DATA_COLLECTION_REQUEST_STATUSES
@@ -288,7 +288,7 @@ async def get_coverage(
 )
 async def trigger_scan(
     body: CoverageScanRequest,
-    _current_user: Annotated[User, Depends(get_current_active_user)],
+    _current_user: Annotated[User, Depends(require_domain_expert)],
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Run a coverage scan and return the result summary."""
