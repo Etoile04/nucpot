@@ -390,10 +390,50 @@ jobs:
         run: |
           python3 -m pytest tools/pre-deploy-assert-smoke/test_assert.py -v
 
+      # ===================================================================
+      # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
+      # `desktop` → docker-credential-desktop tries to prompt for the
+      # keychain in a non-interactive runner session and FAILS. Override
+      # to `DOCKER_CONFIG=/tmp/empty-docker-config` so neither buildkit
+      # nor classic docker invokes any credential helper, then pre-pull
+      # both images via classic `docker pull` (which honors shell proxy
+      # vars). buildkit then reuses the local cache without needing
+      # network. See memory: nucpot-deploy / docker-pull-via-keychain pitfall.
+      # ===================================================================
+      - name: Pre-pull images without credential helper (NFM-2564)
+        env:
+          DOCKER_CONFIG: /tmp/no-cred-docker-config
+          HTTP_PROXY: http://127.0.0.1:7892
+          HTTPS_PROXY: http://127.0.0.1:7892
+          NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          # Minimal config — no credsStore, no proxies (proxy is via env).
+          cat > "$DOCKER_CONFIG/config.json" <<'EOF'
+          {
+            "auths": {},
+            "proxies": {
+              "default": {
+                "httpProxy": "http://127.0.0.1:7892",
+                "httpsProxy": "http://127.0.0.1:7892",
+                "noProxy": "localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16"
+              }
+            }
+          }
+          EOF
+          # Pre-pull so buildkit reuses the local cache.
+          docker pull alpine:3.20
+          docker pull pgvector/pgvector:pg16
+          docker image ls alpine:3.20 pgvector/pgvector:pg16
+
       - name: Run smoke.sh (live Docker + postgres)
         # Simulates NFM-2135: DB stamped to revision X, image lacks X,
         # verify workflow refuses with the distinct exit code + log names X.
         # Then verifies the success path: image has X → exit 0.
+        # DOCKER_CONFIG inherits from pre-pull step so buildkit skips the
+        # keychain prompt.
+        env:
+          DOCKER_CONFIG: /tmp/no-cred-docker-config
         run: |
           bash tools/pre-deploy-assert-smoke/smoke.sh
 
