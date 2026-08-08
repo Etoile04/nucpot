@@ -19,9 +19,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 __all__ = [
-    "ONTOLOGY_CONTEXT_BUDGET_CHARS",
     "build_extraction_system_prompt",
     "build_ontology_extraction_prompt",
+    "ONTOLOGY_CONTEXT_BUDGET_CHARS",
 ]
 
 from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory
@@ -327,7 +327,7 @@ def build_extraction_system_prompt() -> str:
 
 
 def build_ontology_extraction_prompt(
-    ontology_version: OntologyVersion,
+    ontology_version: OntologyVersion,  # type: ignore[valid-type]
 ) -> str:
     """Build the extraction system prompt with ontology context injected.
 

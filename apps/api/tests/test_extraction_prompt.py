@@ -10,18 +10,18 @@ Tests validate:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from dataclasses import field as dataclass_field
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
 from nfm_db.core.property_catalog import PropertyCategory
 from nfm_db.services.extraction_prompt import (
-    ONTOLOGY_CONTEXT_BUDGET_CHARS,
     build_extraction_system_prompt,
     build_ontology_extraction_prompt,
+    ONTOLOGY_CONTEXT_BUDGET_CHARS,
 )
+
 
 # ---------------------------------------------------------------------------
 # Lightweight stand-in for OntologyVersion (avoids DB in unit tests)
@@ -32,7 +32,7 @@ from nfm_db.services.extraction_prompt import (
 class _FakeOntologyVersion:
     """Mimics OntologyVersion.ontology_data access pattern."""
 
-    ontology_data: dict[str, Any] | None = dataclass_field(default_factory=dict)
+    ontology_data: dict[str, Any] | None = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
