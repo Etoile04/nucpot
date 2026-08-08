@@ -5,10 +5,80 @@ Tests validate:
 - Phase 2A rules (PropertyCategory, PhaseMapper, standard names) are injected
 - Output JSON schema matches ExtractedProperty exactly
 - Token count stays under 4000 tokens
+- Ontology-driven extraction prompt (NFM-2639)
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import pytest
+
 from nfm_db.core.property_catalog import PropertyCategory
-from nfm_db.services.extraction_prompt import build_extraction_system_prompt
+from nfm_db.services.extraction_prompt import (
+    build_extraction_system_prompt,
+    build_ontology_extraction_prompt,
+    ONTOLOGY_CONTEXT_BUDGET_CHARS,
+)
+
+
+# ---------------------------------------------------------------------------
+# Lightweight stand-in for OntologyVersion (avoids DB in unit tests)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _FakeOntologyVersion:
+    """Mimics OntologyVersion.ontology_data access pattern."""
+
+    ontology_data: dict[str, Any] | None = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures for ontology prompt tests
+# ---------------------------------------------------------------------------
+
+_MINIMAL_ONTOLOGY: dict[str, Any] = {
+    "entity_types": [
+        {
+            "name": "NuclearFuel",
+            "description": "Base class for nuclear fuels",
+            "required_properties": ["name", "composition"],
+        },
+    ],
+    "relation_types": [
+        {
+            "name": "contains",
+            "source_types": ["Material"],
+            "target_types": ["Element"],
+            "description": "Material composition relationship",
+        },
+    ],
+}
+
+
+def _large_ontology(n_entity_types: int = 50) -> dict[str, Any]:
+    """Build an ontology payload that exceeds the context budget."""
+    entity_types = []
+    for i in range(n_entity_types):
+        entity_types.append(
+            {
+                "name": f"EntityType_{i:03d}",
+                "description": f"A verbose description for entity type {i} " * 5,
+                "required_properties": [f"prop_{j}" for j in range(10)],
+            }
+        )
+    relation_types = [
+        {
+            "name": f"Relation_{i:03d}",
+            "source_types": [f"EntityType_{j:03d}" for j in range(3)],
+            "target_types": [f"EntityType_{j:03d}" for j in range(3, 6)],
+            "description": f"Relation description {i}",
+        }
+        for i in range(20)
+    ]
+    return {"entity_types": entity_types, "relation_types": relation_types}
 
 # ---------------------------------------------------------------------------
 # Section presence tests (§0 through §15)
@@ -244,3 +314,142 @@ class TestPromptStructure:
         assert "{" in self.prompt and "}" in self.prompt
         # Should have at least one string value in quotes
         assert '"' in self.prompt
+
+
+# ---------------------------------------------------------------------------
+# Ontology-driven extraction prompt tests (NFM-2639)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildOntologyExtractionPrompt:
+    """Validate build_ontology_extraction_prompt() against AC."""
+
+    def test_returns_string(self) -> None:
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert isinstance(prompt, str)
+        assert len(prompt) > 500
+
+    def test_contains_entity_types(self) -> None:
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert "NuclearFuel" in prompt
+
+    def test_contains_relation_types(self) -> None:
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert "contains" in prompt
+
+    def test_ontology_context_block_injected(self) -> None:
+        """Ontology context block must appear between output format and field rules."""
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        # Verify the ontology section heading exists
+        assert "本体" in prompt or "Ontology" in prompt
+
+    def test_fallback_still_works(self) -> None:
+        """Existing build_extraction_system_prompt() must remain unchanged."""
+        prompt = build_extraction_system_prompt()
+        assert isinstance(prompt, str)
+        assert len(prompt) > 500
+        # Must contain key sections from original template
+        assert "property_category" in prompt
+        assert "JSON" in prompt
+
+    def test_exported_in_all(self) -> None:
+        """build_ontology_extraction_prompt must be importable."""
+        from nfm_db.services.extraction_prompt import __all__
+
+        assert "build_ontology_extraction_prompt" in __all__
+
+    def test_entity_descriptions_included(self) -> None:
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert "Base class for nuclear fuels" in prompt
+
+    def test_required_properties_included(self) -> None:
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert "name" in prompt
+        assert "composition" in prompt
+
+    def test_relation_constraints_included(self) -> None:
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert "Material" in prompt
+        assert "Element" in prompt
+
+
+class TestOntologyContextBudget:
+    """Validate token budget enforcement and truncation."""
+
+    def test_budget_constant_is_positive(self) -> None:
+        assert ONTOLOGY_CONTEXT_BUDGET_CHARS > 0
+
+    def test_truncation_when_over_budget(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Large ontology must be truncated and log a warning."""
+        large_data = _large_ontology(n_entity_types=50)
+        ov = _FakeOntologyVersion(ontology_data=large_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        # Must still return a valid prompt
+        assert isinstance(prompt, str)
+        assert len(prompt) > 500
+
+        # A warning about truncation must be logged
+        truncation_warnings = [
+            r for r in caplog.records if "truncat" in r.message.lower()
+        ]
+        assert len(truncation_warnings) >= 1, (
+            "Expected a truncation warning for oversized ontology data"
+        )
+
+    def test_entity_names_survive_truncation(self) -> None:
+        """Even when truncated, entity type names must be present."""
+        large_data = _large_ontology(n_entity_types=50)
+        ov = _FakeOntologyVersion(ontology_data=large_data)
+        prompt = build_ontology_extraction_prompt(ov)
+        # At least the first few entity names should survive
+        assert "EntityType_000" in prompt
+
+    def test_context_block_within_budget(self) -> None:
+        """Minimal ontology context must fit within budget."""
+        ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
+        prompt = build_ontology_extraction_prompt(ov)
+        # The ontology context block portion should be within budget
+        # We can't easily isolate it, but the full prompt should be reasonable
+        token_estimate = len(prompt) / 3.0
+        assert token_estimate < 6000, (
+            f"Prompt too large: ~{token_estimate:.0f} tokens ({len(prompt)} chars)"
+        )
+
+
+class TestOntologyExtractionNullSafety:
+    """Edge cases for ontology data."""
+
+    def test_none_ontology_data(self) -> None:
+        """None ontology_data should produce prompt without ontology section."""
+        ov = _FakeOntologyVersion(ontology_data=None)
+        prompt = build_ontology_extraction_prompt(ov)
+        assert isinstance(prompt, str)
+        # Should still have the base prompt sections
+        assert "property_category" in prompt
+
+    def test_empty_ontology_data(self) -> None:
+        """Empty ontology_data should produce prompt without ontology section."""
+        ov = _FakeOntologyVersion(ontology_data={})
+        prompt = build_ontology_extraction_prompt(ov)
+        assert isinstance(prompt, str)
+        assert "property_category" in prompt
+
+    def test_missing_entity_types_key(self) -> None:
+        """Missing entity_types key should not crash."""
+        ov = _FakeOntologyVersion(ontology_data={"relation_types": []})
+        prompt = build_ontology_extraction_prompt(ov)
+        assert isinstance(prompt, str)
+
+    def test_missing_relation_types_key(self) -> None:
+        """Missing relation_types key should not crash."""
+        ov = _FakeOntologyVersion(ontology_data={"entity_types": []})
+        prompt = build_ontology_extraction_prompt(ov)
+        assert isinstance(prompt, str)
