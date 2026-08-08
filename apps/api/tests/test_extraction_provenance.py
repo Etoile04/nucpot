@@ -229,6 +229,7 @@ def test_alembic_has_a_single_head() -> None:
         "045_add_re_extraction_queue",
         "046_add_knowledge_gaps",
         "047_extraction_gap",
+        "048_data_collection_request",
     }
 
 
