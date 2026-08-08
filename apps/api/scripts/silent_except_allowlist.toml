@@ -18,4 +18,8 @@
 # the silent except at that line is acceptable. Empty file is valid on
 # `main` (the AC is ≥13 unsuppressed findings, not zero total).
 
-# (no entries — add with justification when suppressing a documented case)
+[[allowlist]]
+path = "apps/api/src/nfm_db/services/extraction_orchestrator.py"
+line = 500
+category = "pass"
+justification = "Temp-file cleanup in finally block: os.unlink failure is irrelevant; the file may already be gone or unreadable, and the pipeline result is independent of cleanup success."
