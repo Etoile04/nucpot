@@ -25,6 +25,7 @@ from nfm_db.schemas.data_collection_request import (
     DataCollectionRequestResponse,
 )
 from nfm_db.services.coverage_scan_service import CoverageScanService
+from nfm_db.services.gap_dispatch_service import DEFAULT_BATCH_LIMIT, DispatchResult, GapDispatchService
 
 router = APIRouter(tags=["数据采集管理"])
 
@@ -321,3 +322,205 @@ async def trigger_scan(
         "requests_created": result.requests_created,
         "scan_duration_ms": result.scan_duration_ms,
     }
+
+
+# ---------------------------------------------------------------------------
+# Dispatch response schemas
+# ---------------------------------------------------------------------------
+
+
+class DispatchResponseItem(BaseModel):
+    """Single dispatch result paired with a DCR ID."""
+
+    request_id: uuid.UUID
+    success: bool
+    path: str | None = None
+    reference: str | None = None
+    error: str | None = None
+    data_found: bool = False
+
+
+class DispatchBatchResponse(BaseModel):
+    """Response for POST /data-collection/dispatch."""
+
+    dispatched_count: int
+    results: list[DispatchResponseItem]
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/dispatch — trigger batch dispatch
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/data-collection/dispatch",
+    response_model=DispatchBatchResponse,
+    summary="Trigger gap dispatch",
+    description=(
+        "Select open, undispatched DataCollectionRequests and dispatch them "
+        "through the gap-fill router."
+    ),
+)
+async def trigger_dispatch(
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    ontology_version_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_BATCH_LIMIT, ge=1, le=100),
+    session: AsyncSession = Depends(get_db),
+) -> DispatchBatchResponse:
+    """Select open undispatched DCRs and dispatch each individually."""
+    stmt = select(DataCollectionRequest).where(
+        DataCollectionRequest.status == "open",
+        DataCollectionRequest.dispatched_at.is_(None),
+    )
+    if ontology_version_id is not None:
+        stmt = stmt.where(
+            DataCollectionRequest.ontology_version_id == ontology_version_id,
+        )
+    stmt = stmt.order_by(DataCollectionRequest.urgency.desc()).limit(limit)
+    dcrs = list((await session.execute(stmt)).scalars().all())
+
+    svc = GapDispatchService(session)
+    paired: list[tuple[uuid.UUID, DispatchResult]] = []
+    for dcr in dcrs:
+        try:
+            r = await svc.dispatch(dcr)
+            paired.append((dcr.id, r))
+        except Exception as exc:
+            paired.append((
+                dcr.id,
+                DispatchResult(
+                    success=False,
+                    path="error",
+                    reference=None,
+                    error=f"Dispatch error for {dcr.id}: {exc}",
+                    data_found=False,
+                ),
+            ))
+    await session.commit()
+
+    results = [
+        DispatchResponseItem(
+            request_id=req_id,
+            success=r.success,
+            path=r.path,
+            reference=r.reference,
+            error=r.error,
+            data_found=r.data_found,
+        )
+        for req_id, r in paired
+    ]
+    return DispatchBatchResponse(
+        dispatched_count=len(results),
+        results=results,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /data-collection/dispatch/status — paginated dispatch status
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/data-collection/dispatch/status",
+    response_model=PaginatedResponse[DataCollectionRequestResponse],
+    summary="List dispatch status",
+    description="Paginated list of dispatched DataCollectionRequests.",
+)
+async def list_dispatch_status(
+    _current_user: Annotated[User, Depends(get_current_active_user)],
+    pagination: PaginationParams = Depends(PaginationParams),
+    dispatch_status_filter: str | None = Query(
+        default=None,
+        alias="dispatch_status",
+        description="Filter by dispatch_status.",
+    ),
+    dispatched_path_filter: str | None = Query(
+        default=None,
+        alias="dispatched_path",
+        description="Filter by dispatched_path.",
+    ),
+    session: AsyncSession = Depends(get_db),
+) -> PaginatedResponse[DataCollectionRequestResponse]:
+    """Return paginated dispatch status for dispatched DCRs."""
+    query = select(DataCollectionRequest).where(
+        DataCollectionRequest.dispatched_at.is_not(None),
+    ).order_by(DataCollectionRequest.dispatched_at.desc())
+
+    if dispatch_status_filter is not None:
+        query = query.where(
+            DataCollectionRequest.dispatch_status == dispatch_status_filter,
+        )
+    if dispatched_path_filter is not None:
+        query = query.where(
+            DataCollectionRequest.dispatched_path == dispatched_path_filter,
+        )
+
+    count_result = await session.execute(
+        select(func.count()).select_from(query.subquery()),
+    )
+    total = count_result.scalar_one()
+
+    paginated_query = query.offset(pagination.offset).limit(pagination.per_page)
+    result = await session.execute(paginated_query)
+    items = [
+        DataCollectionRequestResponse.model_validate(r)
+        for r in result.scalars().all()
+    ]
+
+    return PaginatedResponse(
+        items=items,
+        total=total,
+        page=pagination.page,
+        limit=pagination.per_page,
+        pages=pagination.pages(total),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/dispatch/{id}/retry — retry failed dispatch
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/data-collection/dispatch/{request_id}/retry",
+    response_model=DataCollectionRequestResponse,
+    summary="Retry a failed dispatch",
+    description="Re-dispatch a DataCollectionRequest that previously failed.",
+)
+async def retry_dispatch(
+    request_id: uuid.UUID,
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    session: AsyncSession = Depends(get_db),
+) -> DataCollectionRequestResponse:
+    """Retry dispatch for a failed DCR."""
+    result = await session.execute(
+        select(DataCollectionRequest).where(DataCollectionRequest.id == request_id),
+    )
+    req = result.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"DataCollectionRequest {request_id} not found.",
+        )
+    if req.dispatch_status != "failed":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Cannot retry: dispatch_status is {req.dispatch_status!r}, "
+                "expected 'failed'."
+            ),
+        )
+
+    svc = GapDispatchService(session)
+    try:
+        await svc.dispatch(req)
+    except Exception as exc:
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Retry dispatch failed: {exc}",
+        ) from exc
+
+    await session.commit()
+    await session.refresh(req)
+    return DataCollectionRequestResponse.model_validate(req)

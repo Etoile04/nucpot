@@ -58,6 +58,25 @@ class DataCollectionRequestResponse(BaseModel):
         default=None,
         description="Flexible metadata bag.",
     )
+    dispatched_at: datetime | None = Field(
+        default=None,
+        description="When the request was dispatched to a fill path (UTC).",
+    )
+    dispatched_path: str | None = Field(
+        default=None,
+        description="Fill path used: literature | dft | external_db | cascade.",
+        max_length=50,
+    )
+    dispatch_status: str | None = Field(
+        default=None,
+        description="Dispatch lifecycle: pending | running | success | failed.",
+        max_length=20,
+    )
+    result_reference: str | None = Field(
+        default=None,
+        description="External reference (celery_task_id, external_ref, etc.).",
+        max_length=500,
+    )
     created_at: datetime
     updated_at: datetime
 

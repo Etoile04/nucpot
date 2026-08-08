@@ -86,6 +86,10 @@ class TestDataCollectionRequestMetadata:
             "requested_at",
             "completed_at",
             "metadata_",
+            "dispatched_at",
+            "dispatched_path",
+            "dispatch_status",
+            "result_reference",
             "created_at",
             "updated_at",
         }
