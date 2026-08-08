@@ -11,21 +11,28 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import get_current_active_user, require_domain_expert
 from nfm_db.database import get_db
 from nfm_db.models import DataCollectionRequest, User
-from nfm_db.models.data_collection_request import DATA_COLLECTION_REQUEST_STATUSES
+from nfm_db.models.data_collection_request import (
+    DATA_COLLECTION_REQUEST_STATUSES,
+    SOURCE_PREFERENCES,
+)
 from nfm_db.schemas.common import PaginatedResponse, PaginationParams
 from nfm_db.schemas.data_collection_request import (
     CoverageMetricsResponse,
     DataCollectionRequestResponse,
 )
 from nfm_db.services.coverage_scan_service import CoverageScanService
-from nfm_db.services.gap_dispatch_service import DEFAULT_BATCH_LIMIT, DispatchResult, GapDispatchService
+from nfm_db.services.gap_dispatch_service import (
+    DEFAULT_BATCH_LIMIT,
+    DispatchResult,
+    GapDispatchService,
+)
 
 router = APIRouter(tags=["数据采集管理"])
 
@@ -524,3 +531,99 @@ async def retry_dispatch(
     await session.commit()
     await session.refresh(req)
     return DataCollectionRequestResponse.model_validate(req)
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/{id}/dispatch — dispatch a single request (NFM-2662)
+# ---------------------------------------------------------------------------
+
+
+class PerRequestDispatchRequest(BaseModel):
+    """Optional body for POST /data-collection/{request_id}/dispatch."""
+
+    source_preference_override: str | None = Field(
+        default=None,
+        description=(
+            "Override the stored source_preference before routing. "
+            f"One of: {', '.join(SOURCE_PREFERENCES)}."
+        ),
+    )
+
+    @field_validator("source_preference_override")
+    @classmethod
+    def _validate_source_preference(cls, value: str | None) -> str | None:
+        """Reject overrides outside the canonical source_preference set."""
+        if value is not None and value not in SOURCE_PREFERENCES:
+            raise ValueError(
+                f"source_preference_override must be one of "
+                f"{list(SOURCE_PREFERENCES)}, got {value!r}.",
+            )
+        return value
+
+
+class PerRequestDispatchResponse(BaseModel):
+    """Persisted dispatch columns after a single-request dispatch."""
+
+    dispatched_at: datetime
+    dispatched_path: str
+    dispatch_status: str
+    result_reference: str | None = None
+
+
+@router.post(
+    "/data-collection/{request_id}/dispatch",
+    response_model=PerRequestDispatchResponse,
+    summary="Dispatch a single data collection request",
+    description=(
+        "Route one DataCollectionRequest through the gap-fill dispatcher and "
+        "return its persisted dispatch columns. Requests that were already "
+        "dispatched are rejected with 409."
+    ),
+)
+async def dispatch_single_request(
+    request_id: uuid.UUID,
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    body: PerRequestDispatchRequest | None = None,
+    session: AsyncSession = Depends(get_db),
+) -> PerRequestDispatchResponse:
+    """Dispatch one DCR and return the columns the dispatcher persisted."""
+    result = await session.execute(
+        select(DataCollectionRequest).where(DataCollectionRequest.id == request_id),
+    )
+    req = result.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"DataCollectionRequest {request_id} not found.",
+        )
+    if req.dispatched_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"DataCollectionRequest {request_id} was already dispatched at "
+                f"{req.dispatched_at.isoformat()} "
+                f"(dispatch_status={req.dispatch_status!r})."
+            ),
+        )
+
+    if body is not None and body.source_preference_override is not None:
+        req.source_preference = body.source_preference_override
+
+    svc = GapDispatchService(session)
+    try:
+        await svc.dispatch(req)
+    except Exception as exc:
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dispatch failed for {request_id}: {exc}",
+        ) from exc
+
+    await session.commit()
+    await session.refresh(req)
+    return PerRequestDispatchResponse(
+        dispatched_at=req.dispatched_at,
+        dispatched_path=req.dispatched_path,
+        dispatch_status=req.dispatch_status,
+        result_reference=req.result_reference,
+    )
