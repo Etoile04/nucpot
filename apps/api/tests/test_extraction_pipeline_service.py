@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import uuid as _uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1214,3 +1215,131 @@ class TestOntologyJobProvenance:
             )
             assert job.ontology_version_id is None
             assert job.ontology_version_str is None
+
+
+# ---------------------------------------------------------------------------
+# V2-path ORMExtractionJob ontology provenance (NFM-2667)
+# ---------------------------------------------------------------------------
+
+
+class _FakeV2Orchestrator:
+    """Captures the orm_job passed to ExtractionOrchestrator and short-circuits run().
+
+    Used by NFM-2667 tests to inspect the ORM object that the V2 path of
+    ``trigger_extraction`` constructs.  We never want to actually drive the
+    orchestrator — only verify what it receives.
+    """
+
+    instances: list[Any] = []  # populated with each orm_job received
+
+    def __init__(self, session: Any, orm_job: Any) -> None:
+        self._session = session
+        self._job = orm_job
+        type(self).instances.append(orm_job)
+
+    async def run(self, **_kwargs: Any) -> Any:
+        return MagicMock()
+
+
+class TestV2PathOntologyProvenanceOnORM:
+    """Regression tests for NFM-2667.
+
+    When ``extraction_v2_enabled`` is True, ``trigger_extraction`` builds an
+    ``ORMExtractionJob`` and calls ``session.add`` + ``session.flush``.  The
+    ontology provenance columns (``ontology_version_id`` and
+    ``ontology_version_str``) MUST be wired from ``_get_latest_published_ontology``
+    onto the ORM object — otherwise the provenance advertised by NFM-2637 is
+    dead-letter: every persisted row has NULL ontology columns.
+
+    These tests verify the V2 path's wiring (the bug fix).  The legacy
+    dataclass path is covered by ``TestOntologyJobProvenance`` above.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_captured_jobs(self) -> None:
+        _FakeV2Orchestrator.instances.clear()
+
+    @pytest.mark.asyncio
+    async def test_v2_orm_job_populates_ontology_when_published(self) -> None:
+        """V2 path: ORMExtractionJob ontology fields are set when an ontology is published."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.flush = AsyncMock()
+        # session.add is synchronous on AsyncSession (it just marks the
+        # object for insertion; the real await happens on flush).
+        mock_session.add = MagicMock()
+        ov_id = _uuid.uuid4()
+
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "1.2.3"
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_settings = MagicMock()
+        mock_settings.extraction_v2_enabled = True
+
+        with (
+            patch(
+                "nfm_db.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch(
+                "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
+                _FakeV2Orchestrator,
+            ),
+        ):
+            await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+
+        assert len(_FakeV2Orchestrator.instances) == 1, (
+            "V2 path must construct exactly one ORMExtractionJob per trigger"
+        )
+        orm_job = _FakeV2Orchestrator.instances[0]
+        assert orm_job.ontology_version_id == ov_id
+        assert orm_job.ontology_version_str == "1.2.3"
+
+    @pytest.mark.asyncio
+    async def test_v2_orm_job_ontology_none_when_not_published(self) -> None:
+        """V2 path: ORMExtractionJob ontology fields stay None when no ontology is published."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.flush = AsyncMock()
+        # session.add is synchronous on AsyncSession — see comment in test above.
+        mock_session.add = MagicMock()
+
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_settings = MagicMock()
+        mock_settings.extraction_v2_enabled = True
+
+        with (
+            patch(
+                "nfm_db.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch(
+                "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
+                _FakeV2Orchestrator,
+            ),
+        ):
+            await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+
+        assert len(_FakeV2Orchestrator.instances) == 1
+        orm_job = _FakeV2Orchestrator.instances[0]
+        assert orm_job.ontology_version_id is None
+        assert orm_job.ontology_version_str is None
