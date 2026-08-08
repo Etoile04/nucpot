@@ -26,9 +26,14 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.services.extraction_prompt import build_extraction_system_prompt
+from nfm_db.models.ontology_version import OntologyVersion
+from nfm_db.services.extraction_prompt import (
+    build_extraction_system_prompt,
+    build_ontology_extraction_prompt,
+)
 from nfm_db.services.gap_scan_service import GapScanService
 from nfm_db.services.health_event_emitter import (
     SEVERITY_WARNING,
@@ -37,6 +42,39 @@ from nfm_db.services.health_event_emitter import (
 )
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 from nfm_db.services.quality_gate import QualityGateService
+
+# ---------------------------------------------------------------------------
+# Ontology version query helper (NFM-2640)
+# ---------------------------------------------------------------------------
+
+
+async def _get_latest_published_ontology(
+    session: AsyncSession,
+) -> OntologyVersion | None:
+    """Query the latest published OntologyVersion.
+
+    Returns the OntologyVersion with ``status='published'`` ordered by
+    ``created_at DESC``, or ``None`` if no published version exists.
+
+    Gracefully returns ``None`` on DB errors so that the pipeline falls
+    back to the static prompt rather than crashing.
+    """
+    stmt = (
+        select(OntologyVersion)
+        .where(OntologyVersion.status == "published")
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )
+    try:
+        result = await session.execute(stmt)
+        return result.scalars().first()
+    except Exception:
+        logger.warning(
+            "Failed to query latest published ontology; falling back to static prompt",
+            exc_info=True,
+        )
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Chunking constants (NFM-1366 P3, daily reflection 2026-08-06 §2.2)
@@ -179,6 +217,9 @@ class ExtractionJob:
     conflict_strategy: str = "prefer_vlm"
     figures: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
     tables: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
+    # Ontology version provenance (NFM-2640)
+    ontology_version_id: uuid.UUID | None = None
+    ontology_version_str: str | None = None
 
 
 # Thread-safe in-memory store (access via async session in prod)
@@ -410,8 +451,20 @@ async def ontofuel_extract(
         if source_type != "datasource":
             content = _load_source_content(source_reference)
 
-        # Build system prompt
-        system_prompt = build_extraction_system_prompt()
+        # Build system prompt — ontology-aware when a published version exists
+        if db is not None:
+            ontology_version = await _get_latest_published_ontology(db)
+            if ontology_version is not None:
+                system_prompt = build_ontology_extraction_prompt(ontology_version)
+                logger.info(
+                    "Ontology-driven prompt: version=%s (id=%s)",
+                    ontology_version.version,
+                    ontology_version.id,
+                )
+            else:
+                system_prompt = build_extraction_system_prompt()
+        else:
+            system_prompt = build_extraction_system_prompt()
 
         # Call LLM — with chunking for large inputs (NFM-1366 P3)
         # If content exceeds the model's context window, split into
@@ -603,6 +656,15 @@ async def trigger_extraction(
         extract_tables=extract_tables,
     )
     _job_store[job_id] = job
+
+    # NFM-2640: Query latest published ontology and set provenance on job
+    published_ov = await _get_latest_published_ontology(session)
+    if published_ov is not None:
+        _update_job(
+            job,
+            ontology_version_id=published_ov.id,
+            ontology_version_str=published_ov.version,
+        )
 
     try:
         # Defense-in-depth: validate DOI format at pipeline entry (NFM-636)
