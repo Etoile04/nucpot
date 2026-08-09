@@ -114,6 +114,28 @@ class DataCollectionRequest(TimestampMixin, Base):
         comment="When the request reached a terminal status.",
     )
 
+    # --- Dispatch tracking (NFM-2659) ---
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the request was dispatched to a gap-fill path.",
+    )
+    dispatch_status: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="running | success | failed",
+    )
+    dispatched_path: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="Name of the gap-fill path used for dispatch.",
+    )
+    result_reference: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="External reference produced by the fill path.",
+    )
+
     # --- Flexible metadata ---
     metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         CompatJSONB,
