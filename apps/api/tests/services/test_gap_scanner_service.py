@@ -163,7 +163,7 @@ async def test_creates_gap_for_missing_property(db_session) -> None:
     ).scalars().all()
     assert len(rows) == 1
     gap = rows[0]
-    assert gap.ontology_version_id == ov.id
+    assert gap.ontology_version == ov.version
     assert gap.entity_type == "NuclearMaterial"
     assert gap.property == "melting_point"
     assert gap.gap_status == "open"
@@ -189,7 +189,7 @@ async def test_dedup_existing_open_gap_is_skipped(db_session) -> None:
 
     # Pre-seed an open gap.
     existing = ExtractionGap(
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="Material",
         property="density",
         gap_status="open",
@@ -222,7 +222,7 @@ async def test_dedup_filled_gap_is_not_reopened(db_session) -> None:
     await _seed_chunk(db_session, job_id=job.id, content="no relevant value")
 
     existing = ExtractionGap(
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="Material",
         property="density",
         gap_status="filled",
@@ -251,7 +251,7 @@ async def test_dedup_filling_gap_not_disturbed(db_session) -> None:
     await _seed_chunk(db_session, job_id=job.id, content="no value here")
 
     existing = ExtractionGap(
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="Material",
         property="density",
         gap_status="filling",
@@ -280,7 +280,7 @@ async def test_dedup_wont_fix_gap_not_disturbed(db_session) -> None:
     await _seed_chunk(db_session, job_id=job.id, content="no value here")
 
     existing = ExtractionGap(
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="Material",
         property="density",
         gap_status="wont_fix",

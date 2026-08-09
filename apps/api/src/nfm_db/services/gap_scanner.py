@@ -274,7 +274,7 @@ async def compute_recall(
     # Count gap records grouped by status.
     gap_stmt = (
         select(ExtractionGap.gap_status, func.count())
-        .where(ExtractionGap.ontology_version_id == ontology_version_id)
+        .where(ExtractionGap.ontology_version == ov.version)
         .group_by(ExtractionGap.gap_status)
     )
     gap_rows = (await session.execute(gap_stmt)).all()
@@ -511,7 +511,7 @@ async def compute_literature_recall(
         ExtractionGap.property,
         ExtractionGap.gap_status,
     ).where(
-        ExtractionGap.ontology_version_id == ontology_version_id,
+        ExtractionGap.ontology_version == ov.version,
         ExtractionGap.chunk_id.in_(chunk_ids),
         ExtractionGap.gap_status.in_(_UNCOVERED_STATUSES),
     )
@@ -555,7 +555,7 @@ async def compute_ontology_coverage(
     """
     from nfm_db.models.source import DataSource
 
-    await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
+    ov = await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
 
     lit_stmt = select(DataSource.id, DataSource.doi).where(
         DataSource.source_type == "literature",
@@ -589,7 +589,7 @@ async def compute_ontology_coverage(
         ExtractionGap.property,
         ExtractionGap.chunk_id,
     ).where(
-        ExtractionGap.ontology_version_id == ontology_version_id,
+        ExtractionGap.ontology_version == ov.version,
         ExtractionGap.gap_status.in_(_UNCOVERED_STATUSES),
     )
     gap_rows = (await session.execute(gap_stmt)).all()
@@ -664,7 +664,7 @@ class GapScanService:
         ov = await self._load_ontology(ontology_version_id)
         chunks = await self._load_chunks(job_id)
         existing = await self._load_existing_gaps(
-            ontology_version_id=ontology_version_id,
+            ontology_version=ov.version,
         )
 
         total_expected = 0
@@ -684,7 +684,7 @@ class GapScanService:
             ):
                 continue
             new_gap = ExtractionGap(
-                ontology_version_id=ov.id,
+                ontology_version=ov.version,
                 entity_type=entity_type,
                 property=property_name,
                 gap_status="open",
@@ -1186,7 +1186,7 @@ class GapScanService:
     async def _load_existing_gaps(
         self,
         *,
-        ontology_version_id: uuid.UUID,
+        ontology_version: str,
     ) -> list[ExtractionGap]:
         """Existing gaps for this ontology version (any status).
 
@@ -1194,7 +1194,7 @@ class GapScanService:
         the gap set per ontology version is small.
         """
         stmt = select(ExtractionGap).where(
-            ExtractionGap.ontology_version_id == ontology_version_id,
+            ExtractionGap.ontology_version == ontology_version,
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
