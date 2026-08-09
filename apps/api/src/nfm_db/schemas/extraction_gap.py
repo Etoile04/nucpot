@@ -51,6 +51,14 @@ class ExtractionGapResponse(BaseModel):
         default=None,
         description="Extraction chunk being processed when gap was found.",
     )
+    source_span: dict[str, int] | None = Field(
+        default=None,
+        description=(
+            "Character offsets {start, end} into the source file "
+            "for direct text retrieval. Populated from the linked "
+            "ExtractionChunk when available."
+        ),
+    )
     gap_status: str = Field(
         description="open | filling | filled | wont_fix.",
         max_length=20,

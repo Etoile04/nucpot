@@ -233,6 +233,7 @@ class CoverageScanService:
         self,
         ontology_version_id: uuid.UUID,
         material_system: str = "unspecified",
+        source_preference: str = "any",
     ) -> CoverageScanResult:
         """Run a full coverage scan and create DataCollectionRequest rows.
 
@@ -243,6 +244,8 @@ class CoverageScanService:
         Args:
             ontology_version_id: The ontology version to scan.
             material_system: Material system label for created requests.
+            source_preference: Source preference for created requests
+                (literature | dft | external_db | any).  Defaults to "any".
 
         Returns:
             CoverageScanResult with metrics and creation count.
@@ -303,7 +306,7 @@ class CoverageScanService:
                 property=up.property_name,
                 material_system=material_system,
                 urgency=0,
-                source_preference="any",
+                source_preference=source_preference,
                 status="open",
             )
             self._session.add(dcr)

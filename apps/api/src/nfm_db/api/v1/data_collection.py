@@ -25,6 +25,7 @@ from nfm_db.schemas.data_collection_request import (
     DataCollectionRequestResponse,
 )
 from nfm_db.services.coverage_scan_service import CoverageScanService
+from nfm_db.services.gap_dispatch_service import GapDispatchService
 
 router = APIRouter(tags=["数据采集管理"])
 
@@ -321,3 +322,45 @@ async def trigger_scan(
         "requests_created": result.requests_created,
         "scan_duration_ms": result.scan_duration_ms,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/requests/{id}/dispatch — dispatch to collection path
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/data-collection/requests/{request_id}/dispatch",
+    response_model=DataCollectionRequestResponse,
+    summary="Dispatch a data collection request",
+    description=(
+        "Dispatch a DataCollectionRequest to its collection path based on "
+        "source_preference (literature | dft | external_db | any). "
+        "Transitions the request from 'open' to 'in_progress'."
+    ),
+)
+async def dispatch_request(
+    request_id: uuid.UUID,
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    session: AsyncSession = Depends(get_db),
+) -> DataCollectionRequestResponse:
+    """Dispatch a DataCollectionRequest to the appropriate collection path."""
+    svc = GapDispatchService(session)
+    try:
+        await svc.dispatch_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    await session.commit()
+
+    # Reload the request to return the updated state.
+    result = await session.execute(
+        select(DataCollectionRequest).where(
+            DataCollectionRequest.id == request_id,
+        ),
+    )
+    req = result.scalar_one()
+    return DataCollectionRequestResponse.model_validate(req)

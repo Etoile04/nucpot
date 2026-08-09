@@ -20,6 +20,7 @@ import logging
 import math
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path as FsPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -137,6 +138,9 @@ def _to_response(
                 chunk.source_reference if chunk is not None else None
             ),
             "chunk_id": gap.chunk_id,
+            "source_span": (
+                chunk.source_span if chunk is not None else None
+            ),
             "gap_status": gap.gap_status,
             "detected_at": gap.detected_at,
             "resolved_at": gap.resolved_at,
@@ -477,5 +481,127 @@ async def get_recall_metrics(
             wont_fix_gaps=metrics.wont_fix_gaps,
             recall_rate=metrics.recall_rate,
             computed_at=metrics.computed_at.isoformat(),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/extraction-gaps/{gap_id}/source-text — offset-based read
+# ---------------------------------------------------------------------------
+
+
+class SourceTextResponse(BaseModel):
+    """Response for the source-text endpoint."""
+
+    gap_id: uuid.UUID
+    chunk_id: uuid.UUID | None = None
+    source_reference: str | None = None
+    source_span: dict[str, int] | None = None
+    snippet: str | None = None
+    available: bool = False
+    error: str | None = None
+
+
+@router.get(
+    "/extraction-gaps/{gap_id}/source-text",
+    response_model=ApiResponse[SourceTextResponse],
+    summary="按偏移量直读源文本",
+    description=(
+        "用关联 chunk 的 source_span 偏移量从原始源文件中直接读取文本片段。"
+        "当 chunk 的 source_reference 指向一个可读取的文件路径且 source_span "
+        "包含 {start, end} 偏移量时，返回对应的文本片段。\n\n"
+        "Read source text by offset. Uses the linked chunk's source_span "
+        "to directly read the corresponding text from the source file."
+    ),
+)
+async def get_gap_source_text(
+    gap_id: uuid.UUID = Path(..., description="Extraction gap id."),
+    session: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
+) -> ApiResponse[SourceTextResponse]:
+    """Return the source text snippet using offset-based direct read.
+
+    Looks up the gap's linked ExtractionChunk, reads the source file
+    referenced by ``chunk.source_reference``, and extracts the text at
+    ``chunk.source_span`` offsets.
+
+    Errors:
+    - 404 - gap_id not found.
+    - 200 with ``available=false`` when chunk has no source_span or
+      the source file cannot be read.
+    """
+    gap = await _load_gap_or_404(session, gap_id)
+
+    if gap.chunk_id is None:
+        return ApiResponse(
+            success=True,
+            data=SourceTextResponse(
+                gap_id=gap_id,
+                available=False,
+                error="Gap has no linked chunk.",
+            ),
+        )
+
+    chunk = (
+        await session.execute(
+            select(ExtractionChunk).where(
+                ExtractionChunk.id == gap.chunk_id,
+            ),
+        )
+    ).scalar_one_or_none()
+
+    if chunk is None:
+        return ApiResponse(
+            success=True,
+            data=SourceTextResponse(
+                gap_id=gap_id,
+                available=False,
+                error="Linked chunk not found.",
+            ),
+        )
+
+    span = chunk.source_span
+    source_ref = chunk.source_reference
+
+    if not span or "start" not in span or "end" not in span:
+        return ApiResponse(
+            success=True,
+            data=SourceTextResponse(
+                gap_id=gap_id,
+                chunk_id=chunk.id,
+                source_reference=source_ref,
+                available=False,
+                error="Chunk has no source_span offsets.",
+            ),
+        )
+
+    snippet: str | None = None
+    error: str | None = None
+
+    if source_ref:
+        path = FsPath(source_ref)
+        if path.is_file():
+            try:
+                content = path.read_text(encoding="utf-8")
+                start = span["start"]
+                end = span["end"]
+                snippet = content[start:end]
+            except Exception as exc:
+                error = f"Failed to read source file: {exc}"
+        else:
+            error = f"Source file not found: {source_ref}"
+    else:
+        error = "Chunk has no source_reference (file path)."
+
+    return ApiResponse(
+        success=True,
+        data=SourceTextResponse(
+            gap_id=gap_id,
+            chunk_id=chunk.id,
+            source_reference=source_ref,
+            source_span=span,
+            snippet=snippet,
+            available=snippet is not None,
+            error=error,
         ),
     )
