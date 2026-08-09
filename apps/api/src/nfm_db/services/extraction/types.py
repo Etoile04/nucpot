@@ -13,7 +13,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Allowed chunk-type classifications (NFM-2679 spec).
 CHUNK_TYPES: tuple[str, ...] = (
     "raw_text",
