@@ -1,11 +1,13 @@
 """API endpoint tests for DataCollectionRequest routes (NFM-2621).
 
-Tests all 5 data collection endpoints:
+Tests all 6 data collection endpoints:
 1. GET  /api/v1/data-collection/requests -- paginated list
 2. GET  /api/v1/data-collection/requests/{id} -- detail
 3. PATCH /api/v1/data-collection/requests/{id}/status -- status transition
 4. GET  /api/v1/data-collection/coverage/{ontology_version_id} -- coverage metrics
 5. POST /api/v1/data-collection/scan -- trigger scan
+6. POST /api/v1/data-collection/{request_id}/dispatch -- per-request dispatch
+   (NFM-2662)
 """
 
 from __future__ import annotations
@@ -455,3 +457,156 @@ async def test_trigger_scan_idempotent(async_client, db_session) -> None:
     )
     assert resp2.status_code == 200
     assert resp2.json()["requests_created"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 6. POST /data-collection/{request_id}/dispatch -- per-request dispatch
+#    (NFM-2662)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_request_with_source(
+    session,
+    *,
+    ov: OntologyVersion,
+    source_preference: str,
+    status: str = "open",
+    property_name: str = "density",
+) -> DataCollectionRequest:
+    """Create a DCR with a specific source_preference (no Celery/HTTP needed)."""
+    req = DataCollectionRequest(
+        ontology_version_id=ov.id,
+        entity_type="NuclearMaterial",
+        property=property_name,
+        material_system="UO2",
+        status=status,
+        source_preference=source_preference,
+    )
+    session.add(req)
+    await session.flush()
+    await session.refresh(req)
+    return req
+
+
+@pytest.mark.asyncio
+async def test_dispatch_request_returns_spec_shape(async_client, db_session) -> None:
+    """NFM-2662: dispatch returns {dispatched_at, dispatched_path,
+    dispatch_status, result_reference} and persists DCR state."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data([]),
+    )
+    req = await _seed_request_with_source(
+        db_session,
+        ov=ov,
+        source_preference="dft",
+    )
+
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Spec shape: exactly these four keys (no more, no less).
+    assert set(data.keys()) == {
+        "dispatched_at",
+        "dispatched_path",
+        "dispatch_status",
+        "result_reference",
+    }
+    assert data["dispatched_path"] == "dft"
+    assert data["dispatch_status"] == "dispatched"
+    assert data["result_reference"] is not None
+    assert isinstance(data["dispatched_at"], str)  # serialized datetime
+    assert "T" in data["dispatched_at"]  # ISO 8601
+
+
+@pytest.mark.asyncio
+async def test_dispatch_request_persists_dcr_state(async_client, db_session) -> None:
+    """NFM-2662: dispatch transitions the DCR to in_progress and stores
+    dispatch metadata in metadata_["dispatch"]."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data([]),
+    )
+    req = await _seed_request_with_source(
+        db_session,
+        ov=ov,
+        source_preference="dft",
+    )
+
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
+    assert resp.status_code == 200
+
+    # Reload the DCR and verify persisted state.
+    await db_session.refresh(req)
+    assert req.status == "in_progress"
+    assert req.metadata_ is not None
+    assert "dispatch" in req.metadata_
+    dispatch_meta = req.metadata_["dispatch"]
+    assert dispatch_meta["path_taken"] == "dft"
+    assert dispatch_meta["dispatch_status"] == "dispatched"
+    assert "dispatched_at" in dispatch_meta
+
+
+@pytest.mark.asyncio
+async def test_dispatch_request_not_found(async_client, db_session) -> None:
+    """NFM-2662: 404 when the DataCollectionRequest does not exist.
+
+    Also verifies the response is from the new endpoint, not FastAPI's
+    default 404 for unmatched routes (which returns {"detail": "Not Found"}).
+    """
+    random_id = uuid.uuid4()
+    resp = await async_client.post(f"{BASE}/{random_id}/dispatch")
+
+    assert resp.status_code == 404
+    detail = resp.json().get("detail", "")
+    assert str(random_id) in detail, (
+        "Expected endpoint-specific 404 with the request id in the detail; "
+        f"got {detail!r} (likely FastAPI default 404)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_request_already_dispatched_returns_409(
+    async_client, db_session,
+) -> None:
+    """NFM-2662: 409 (idempotency rule) when the DCR is already dispatched."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data([]),
+    )
+    req = await _seed_request_with_source(
+        db_session,
+        ov=ov,
+        source_preference="dft",
+        status="in_progress",  # already dispatched
+    )
+
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_dispatch_request_legacy_route_still_works(
+    async_client, db_session,
+) -> None:
+    """NFM-2662: the pre-existing /requests/{request_id}/dispatch route still
+    returns the full DCR payload (it is not affected by the new endpoint)."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data([]),
+    )
+    req = await _seed_request_with_source(
+        db_session,
+        ov=ov,
+        source_preference="dft",
+    )
+
+    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Legacy endpoint returns DataCollectionRequestResponse (includes 'id').
+    assert "id" in data
+    assert data["status"] == "in_progress"
+
