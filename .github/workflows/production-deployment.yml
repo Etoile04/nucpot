@@ -339,9 +339,12 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
-            export DOCKER_CONFIG=/tmp/no-cred-docker-config
-            mkdir -p "\$DOCKER_CONFIG"
-            printf '%s\n' '{' '  "auths": {},' '  "proxies": {' '    "default": {' '      "httpProxy": "http://127.0.0.1:7892",' '      "httpsProxy": "http://127.0.0.1:7892",' '      "noProxy": "localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16"' '    }' '  }' '}' > "\$DOCKER_CONFIG/config.json"
+            # Strip credsStore from ~/.docker/config.json to prevent
+            # docker-credential-desktop from prompting for the locked keychain.
+            DOCKER_CFG="\$HOME/.docker/config.json"
+            cp "\$DOCKER_CFG" "\$DOCKER_CFG.bak"
+            python3 -c "import json,pathlib; p=pathlib.Path('\$DOCKER_CFG'); c=json.loads(p.read_text()); c.pop('credsStore',None); p.write_text(json.dumps(c,indent=2))"
+            trap 'cp "\$DOCKER_CFG.bak" "\$DOCKER_CFG"' EXIT
             git pull origin main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
@@ -411,27 +414,27 @@ jobs:
       # ===================================================================
       - name: Pre-pull images without credential helper (NFM-2564)
         env:
-          DOCKER_CONFIG: /tmp/no-cred-docker-config
           HTTP_PROXY: http://127.0.0.1:7892
           HTTPS_PROXY: http://127.0.0.1:7892
           NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
         run: |
-          mkdir -p "$DOCKER_CONFIG"
-          # Minimal config — no credsStore, no proxies (proxy is via env).
-          # Write JSON via printf to avoid heredoc indentation issues inside YAML.
-          printf '%s\n' \
-            '{' \
-            '  "auths": {},' \
-            '  "proxies": {' \
-            '    "default": {' \
-            '      "httpProxy": "http://127.0.0.1:7892",' \
-            '      "httpsProxy": "http://127.0.0.1:7892",' \
-            '      "noProxy": "localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16"' \
-            '    }' \
-            '  }' \
-            '}' > "$DOCKER_CONFIG/config.json"
-          # Verify the config was written correctly.
-          python3 -m json.tool "$DOCKER_CONFIG/config.json" > /dev/null
+          # Docker Desktop on macOS stores credsStore="desktop" in
+          # ~/.docker/config.json. When the keychain is locked during a
+          # non-interactive CI session, docker-credential-desktop prompts
+          # and fails. DOCKER_CONFIG override does NOT work reliably with
+          # Docker Desktop — it still reads ~/.docker/config.json for the
+          # credsStore directive. Fix: backup the original config, strip
+          # credsStore, restore at the end.
+          DOCKER_CFG="$HOME/.docker/config.json"
+          cp "$DOCKER_CFG" "$DOCKER_CFG.bak"
+          python3 -c "
+          import json, pathlib
+          p = pathlib.Path('$DOCKER_CFG')
+          cfg = json.loads(p.read_text())
+          cfg.pop('credsStore', None)
+          p.write_text(json.dumps(cfg, indent=2))
+          "
+          trap 'cp "$DOCKER_CFG.bak" "$DOCKER_CFG"' EXIT
           # Pre-pull so buildkit reuses the local cache.
           docker pull alpine:3.20
           docker pull pgvector/pgvector:pg16
