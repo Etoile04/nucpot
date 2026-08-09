@@ -425,7 +425,7 @@ class GapDispatchService:
 from nfm_db.services.celery_app import celery_app  # noqa: E402
 
 
-@celery_app.task(  # type: ignore[misc]
+@celery_app.task(  # type: ignore[misc, untyped-decorator]
     bind=True,
     name="nfm_db.services.gap_dispatch_service.process_gap_literature_task",
     max_retries=2,
