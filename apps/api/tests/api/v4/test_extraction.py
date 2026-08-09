@@ -69,9 +69,12 @@ async def test_submit_extraction_success(async_client) -> None:
     job = _make_job(status=JobStatus.QUEUED)
 
     with patch(
-        "nfm_db.api.v4.extraction.trigger_extraction",
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         new_callable=AsyncMock,
         return_value=job,
+    ), patch(
+        "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+        return_value=False,
     ):
         response = await async_client.post(
             "/api/v4/extraction/submit",
@@ -99,7 +102,7 @@ async def test_submit_extraction_with_multimodal_options(async_client) -> None:
     job = _make_job(status=JobStatus.QUEUED)
 
     with patch(
-        "nfm_db.api.v4.extraction.trigger_extraction",
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         new_callable=AsyncMock,
         return_value=job,
     ) as mock_trigger:
@@ -131,9 +134,12 @@ async def test_submit_extraction_url_source(async_client) -> None:
     job = _make_job(source_type="url", source_reference="https://example.com/paper.pdf")
 
     with patch(
-        "nfm_db.api.v4.extraction.trigger_extraction",
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         new_callable=AsyncMock,
         return_value=job,
+    ), patch(
+        "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+        return_value=False,
     ):
         response = await async_client.post(
             "/api/v4/extraction/submit",
@@ -211,9 +217,12 @@ async def test_submit_extraction_valid_doi_formats(async_client) -> None:
     job = _make_job()
 
     with patch(
-        "nfm_db.api.v4.extraction.trigger_extraction",
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         new_callable=AsyncMock,
         return_value=job,
+    ), patch(
+        "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+        return_value=False,
     ):
         for doi in valid_dois:
             response = await async_client.post(
@@ -234,9 +243,12 @@ async def test_submit_extraction_doi_check_skipped_for_non_doi(async_client) -> 
     job = _make_job(source_type="file")
 
     with patch(
-        "nfm_db.api.v4.extraction.trigger_extraction",
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         new_callable=AsyncMock,
         return_value=job,
+    ), patch(
+        "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+        return_value=False,
     ):
         # A non-DOI-like string is fine for file source_type
         response = await async_client.post(
@@ -259,9 +271,12 @@ async def test_submit_extraction_pipeline_failure(async_client) -> None:
     )
 
     with patch(
-        "nfm_db.api.v4.extraction.trigger_extraction",
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         new_callable=AsyncMock,
         return_value=job,
+    ), patch(
+        "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+        return_value=False,
     ):
         response = await async_client.post(
             "/api/v4/extraction/submit",
