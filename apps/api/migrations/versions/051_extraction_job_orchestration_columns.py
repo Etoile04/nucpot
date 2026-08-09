@@ -101,7 +101,10 @@ def upgrade() -> None:
             "conflict_strategy",
             sa.String(length=20),
             nullable=False,
-            server_default=sa.text("'prefer_vlm'"),
+            # Auto-quoted by Alembic on PG (``'prefer_vlm'``); the JSONB
+            # columns below need ``sa.text("'[]'::jsonb")`` because PG
+            # requires an explicit type-cast for a bare ``[]`` literal.
+            server_default="prefer_vlm",
         ),
     )
     op.add_column(

@@ -307,11 +307,25 @@ class TestExtractionJobToDict:
             figures=[]
             tables=[]
 
-        NOTE: After NFM-2745 mapped the columns onto the ORM, SQLAlchemy
-        applies Python-side ``default=`` on INSERT — not on instance
-        construction. So this test now flushes the row through ``db_session``
-        first so the defaults are actually populated before the helper
-        reads them. This is the same observation that produced NFM-2746
+        Two layers of defaults are exercised here:
+
+        1. **Python-side defaults** — ``ExtractionJob.__init__`` (NFM-2745,
+           see ``models/extraction_job.py``) explicitly applies
+           ``setdefault(...)`` for the 6 non-nullable columns so
+           transient ORM instances carry the contract defaults *before*
+           INSERT.  Without that override, ``getattr(orm_job, name)``
+           would return ``None`` for unset mapped attributes (SQLAlchemy
+           2.0's default ``__init__`` only fires ``Column.default`` at
+           INSERT-flush time).
+        2. **Server-side defaults** — ``flush()`` + ``refresh()`` round-
+           trips the row through the SQLite schema so the test catches
+           drift between the ORM ``server_default=...`` arguments and
+           the migration's DDL ``DEFAULT`` clauses.  If a future migration
+           forgets a ``server_default`` on a ``NOT NULL`` column, the
+           INSERT raises and this test fails loudly instead of silently
+           leaving the contract's defaults undefined at the DB level.
+
+        This is the same observation that produced NFM-2746
         (Phase B / transient-ORM default semantics).
         """
         from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
