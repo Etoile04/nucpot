@@ -86,13 +86,20 @@ async def _seed_job(
     source_reference: str | None = None,
     source_type: str = "doi",
     status: str = "completed",
+    ontology_version_id: uuid.UUID | None = None,
 ) -> ExtractionJob:
-    """Create an ExtractionJob tagged with a literature proxy."""
+    """Create an ExtractionJob tagged with a literature proxy.
+
+    * ``ontology_version_id`` -- ties the job to a specific
+      OntologyVersion.  Required for the NFM-2697-T3 regression test
+      that asserts ``compute_coverage`` is per-OV scoped.
+    """
     job = ExtractionJob(
         corpus_id=corpus_id,
         source_reference=source_reference,
         source_type=source_type,
         status=status,
+        ontology_version_id=ontology_version_id,
     )
     session.add(job)
     await session.flush()
@@ -161,6 +168,7 @@ async def test_scan_literature_creates_gaps_for_missing_properties(
         db_session,
         corpus_id=str(literature_id),
         source_reference="10.1000/example",
+        ontology_version_id=ov.id,
     )
     db_session.add(
         ExtractionChunk(
@@ -404,7 +412,7 @@ async def test_compute_coverage_all_fully_covered_is_one(
     db_session,
 ) -> None:
     """Two literatures, both fully covered → coverage_rate = 1.0."""
-    await _seed_ontology_version(
+    ov = await _seed_ontology_version(
         db_session,
         version="1.0.0",
         entity_types=[{"name": "Material", "properties": ["density"]}],
@@ -414,6 +422,7 @@ async def test_compute_coverage_all_fully_covered_is_one(
             db_session,
             corpus_id=str(uuid.uuid4()),
             source_reference="src",
+            ontology_version_id=ov.id,
         )
     await db_session.flush()
 
@@ -439,11 +448,13 @@ async def test_compute_coverage_partial_fraction(db_session) -> None:
         db_session,
         corpus_id=str(literature_with_gap_id),
         source_reference="bad",
+        ontology_version_id=ov.id,
     )
     await _seed_job(
         db_session,
         corpus_id=str(literature_clean_id),
         source_reference="clean",
+        ontology_version_id=ov.id,
     )
     # Link the gap to a chunk in bad_job so coverage can attribute it
     # to bad_job's literature (the only path until T1 adds
@@ -483,3 +494,214 @@ async def test_compute_coverage_unknown_ontology_raises(
     svc = GapScanService(db_session)
     with pytest.raises(ValueError, match="OntologyVersion not found"):
         await svc.compute_coverage(ontology_version="missing")
+
+
+# ---------------------------------------------------------------------------
+# CR-rejected regression: compute_coverage must be per-OV scoped
+# (NFM-2697-T3 bug fix; CR comment 7d9c688a-fed1-497f-bf7c-2ecc4d61954e)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compute_coverage_is_per_ontology_version_scoped(
+    db_session,
+) -> None:
+    """Two OVs, each with its own literature: coverage reports per-OV totals.
+
+    Regression for the CR revert-probe.  Prior to the fix,
+    ``_literature_ids_for_ontology`` loaded every ``ExtractionJob`` row
+    without an OV filter, so both OVs reported the same union of all
+    literatures and identical coverage rates.  After the fix each OV's
+    coverage reflects only its own ExtractionJob rows.
+    """
+    entity_types = [{"name": "Material", "properties": ["density"]}]
+    ov_a = await _seed_ontology_version(
+        db_session, version="1.0.0", entity_types=entity_types,
+    )
+    ov_b = await _seed_ontology_version(
+        db_session, version="2.0.0", entity_types=entity_types,
+    )
+
+    # OV-A owns literature_a only.
+    literature_a = uuid.uuid4()
+    await _seed_job(
+        db_session,
+        corpus_id=str(literature_a),
+        source_reference="src-a",
+        ontology_version_id=ov_a.id,
+    )
+    # OV-B owns literature_b only.
+    literature_b = uuid.uuid4()
+    await _seed_job(
+        db_session,
+        corpus_id=str(literature_b),
+        source_reference="src-b",
+        ontology_version_id=ov_b.id,
+    )
+    await db_session.flush()
+
+    svc = GapScanService(db_session)
+
+    cov_a = await svc.compute_coverage(ontology_version="1.0.0")
+    cov_b = await svc.compute_coverage(ontology_version="2.0.0")
+
+    # Each OV must see only its own literature, NOT the union.
+    assert cov_a.literature_total == 1, (
+        f"OV 1.0.0 expected literature_total=1 (just literature_a), "
+        f"got {cov_a.literature_total}"
+    )
+    assert cov_b.literature_total == 1, (
+        f"OV 2.0.0 expected literature_total=1 (just literature_b), "
+        f"got {cov_b.literature_total}"
+    )
+    # Fully covered (no gaps attached to either literature yet).
+    assert cov_a.literature_fully_covered == 1
+    assert cov_b.literature_fully_covered == 1
+    assert cov_a.coverage_rate == 1.0
+    assert cov_b.coverage_rate == 1.0
+
+
+@pytest.mark.asyncio
+async def test_compute_coverage_per_ov_does_not_count_other_ovs_gaps(
+    db_session,
+) -> None:
+    """Gaps tied to OV-B's job must not bleed into OV-A's coverage.
+
+    Reinforces the per-OV scoping for the open-gap attribution query.
+    """
+    entity_types = [{"name": "Material", "properties": ["density"]}]
+    ov_a = await _seed_ontology_version(
+        db_session, version="1.0.0", entity_types=entity_types,
+    )
+    ov_b = await _seed_ontology_version(
+        db_session, version="2.0.0", entity_types=entity_types,
+    )
+
+    literature_a = uuid.uuid4()
+    literature_b = uuid.uuid4()
+    job_a = await _seed_job(
+        db_session,
+        corpus_id=str(literature_a),
+        source_reference="src-a",
+        ontology_version_id=ov_a.id,
+    )
+    bad_job_b = await _seed_job(
+        db_session,
+        corpus_id=str(literature_b),
+        source_reference="src-b",
+        ontology_version_id=ov_b.id,
+    )
+    bad_chunk_b = ExtractionChunk(
+        job_id=bad_job_b.id,
+        content="missing density",
+        chunk_index=0,
+        token_count=2,
+    )
+    db_session.add(bad_chunk_b)
+    # Job-A also has a chunk so the literature attribution join finds it.
+    db_session.add(
+        ExtractionChunk(
+            job_id=job_a.id,
+            content="some density mention",
+            chunk_index=0,
+            token_count=3,
+        ),
+    )
+    await db_session.flush()
+    # An open gap tied to OV-B's chunk must NOT count for OV-A.
+    db_session.add(
+        ExtractionGap(
+            ontology_version_id=ov_b.id,
+            entity_type="Material",
+            property="density",
+            gap_status="open",
+            chunk_id=bad_chunk_b.id,
+        ),
+    )
+    await db_session.flush()
+
+    svc = GapScanService(db_session)
+    cov_a = await svc.compute_coverage(ontology_version="1.0.0")
+    cov_b = await svc.compute_coverage(ontology_version="2.0.0")
+
+    # OV-A: only literature_a, no OV-A gaps -> fully covered.
+    assert cov_a.literature_total == 1
+    assert cov_a.literature_fully_covered == 1
+    assert cov_a.coverage_rate == 1.0
+    assert cov_a.gap_distribution == {}
+
+    # OV-B: only literature_b, but has a gap -> not fully covered.
+    assert cov_b.literature_total == 1
+    assert cov_b.literature_fully_covered == 0
+    assert cov_b.coverage_rate == 0.0
+    assert cov_b.gap_distribution == {("Material", "density"): 1}
+
+
+@pytest.mark.asyncio
+async def test_scan_literature_per_ov_does_not_match_other_ovs_jobs(
+    db_session,
+) -> None:
+    """scan_literature must scope jobs to the requested OV only.
+
+    Without the OV filter on the job lookup, scanning a literature
+    under OV-A would also pull in jobs tagged with OV-B that happen
+    to share a corpus_id, producing false matches.
+    """
+    entity_types = [{"name": "Material", "properties": ["density"]}]
+    ov_a = await _seed_ontology_version(
+        db_session, version="1.0.0", entity_types=entity_types,
+    )
+    ov_b = await _seed_ontology_version(
+        db_session, version="2.0.0", entity_types=entity_types,
+    )
+
+    literature_id = uuid.uuid4()
+    # Job tagged with OV-A whose chunk mentions density -> present.
+    job_a = await _seed_job(
+        db_session,
+        corpus_id=str(literature_id),
+        source_reference="src-a",
+        ontology_version_id=ov_a.id,
+    )
+    db_session.add(
+        ExtractionChunk(
+            job_id=job_a.id,
+            content="density is 7.85",
+            chunk_index=0,
+            token_count=4,
+        ),
+    )
+    # Job tagged with OV-B under the same literature id but a chunk
+    # WITHOUT density -> should not be matched under OV-A scan.
+    job_b = await _seed_job(
+        db_session,
+        corpus_id=str(literature_id),
+        source_reference="src-b",
+        ontology_version_id=ov_b.id,
+    )
+    db_session.add(
+        ExtractionChunk(
+            job_id=job_b.id,
+            content="no value here",
+            chunk_index=0,
+            token_count=3,
+        ),
+    )
+    await db_session.flush()
+
+    svc = GapScanService(db_session)
+    # Scan under OV-A: job_a's chunk mentions density, so no gap.
+    gaps_a = await svc.scan_literature(
+        literature_id=literature_id,
+        ontology_version="1.0.0",
+    )
+    assert gaps_a == []
+
+    # Scan under OV-B: job_b's chunk has no density -> gap created.
+    gaps_b = await svc.scan_literature(
+        literature_id=literature_id,
+        ontology_version="2.0.0",
+    )
+    assert len(gaps_b) == 1
+    assert gaps_b[0].ontology_version_id == ov_b.id
+    assert gaps_b[0].property == "density"

@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
@@ -427,18 +427,24 @@ class GapScanService:
         * Resolves ``ontology_version`` (semver string) to an
           ``OntologyVersion`` row; raises ``ValueError`` when absent.
         * Identifies all ``ExtractionJob`` rows that belong to
-          ``literature_id`` (currently via ``corpus_id`` / soft-match —
-          the T1 migration adds a real ``literature_id`` column on
-          ``extraction_gaps`` and the ``literature`` table; T2 aligns the
-          model.  The integration task NFM-2736 will switch this filter
-          to use the FK directly).
+          ``literature_id`` AND are tagged with this OV
+          (``ExtractionJob.ontology_version_id``) so that jobs scoped to
+          other ontology versions do not pollute the per-literature scan.
+          (Until T1 adds a real ``literature_id`` column on
+          ``extraction_gaps``, literature identity is approximated by
+          ``ExtractionJob.corpus_id`` / ``source_reference`` — the
+          integration task NFM-2736 will switch this to use the FK.)
         * Loads chunks for those jobs and computes expected
           (entity_type, property) pairs from the ontology schema.
         * Dedups against pre-existing ``ExtractionGap`` rows for this
-          ontology version.  When ``only_open=True`` (default), rows with
-          status ``open`` or ``filling`` are reused; ``filled`` and
-          ``wont_fix`` rows remain untouched (matching the
-          ``scan_for_gaps`` dedup contract).
+          ontology version.  When ``only_open=True`` (default), every
+          status (``open``/``filling``/``filled``/``wont_fix``) blocks
+          creation — matching the existing ``scan_for_gaps`` contract.
+          When ``only_open=False``, only active gaps
+          (``open``/``filling``) block; ``filled``/``wont_fix`` rows
+          are treated as historical and do NOT block creation of a
+          fresh gap (callers can use this to re-open a previously
+          resolved gap after, e.g., a content re-extraction).
         * When ``persist=False`` (dry-run), builds the candidate rows in
           memory without adding them to the session or flushing the
           underlying gap-scan audit ``ExtractionStep``.
@@ -452,7 +458,11 @@ class GapScanService:
         ov = await self._resolve_ontology_version(ontology_version)
 
         literature_str = str(literature_id)
+        # Scope jobs to this OV so jobs under a different ontology
+        # version do not bleed in.  corpus_id / source_reference are
+        # soft-ids (T1 bridge) but the OV FK is authoritative.
         jobs_stmt = select(ExtractionJob).where(
+            ExtractionJob.ontology_version_id == ov.id,
             (ExtractionJob.corpus_id == literature_str)
             | (ExtractionJob.source_reference == literature_str),
         )
@@ -477,6 +487,15 @@ class GapScanService:
             (await self._session.execute(existing_stmt)).scalars().all(),
         )
 
+        # Pick which statuses count as "already tracked" for creation
+        # gating.  When ``only_open=True`` (default) every status blocks
+        # creation; when ``only_open=False`` only active statuses block.
+        blocking_statuses: frozenset[str] = (
+            frozenset({"open", "filling", "filled", "wont_fix"})
+            if only_open
+            else frozenset({"open", "filling"})
+        )
+
         entity_types = self._entity_types(ov)
         result: list[ExtractionGap] = []
 
@@ -485,25 +504,21 @@ class GapScanService:
         ):
             if self._is_present(property_name, chunks):
                 continue
-            if self._already_tracked(
+            tracked = self._find_tracked(
                 existing, entity_type, property_name,
-            ):
-                # Reuse the tracked row — no duplicate.
-                # Per ADR spec: "re-running with only_open=True returns
-                # existing rows".  We return the tracked gap regardless of
-                # status (the caller can filter on the returned list).
-                # ``only_open`` therefore only gates whether NEW gaps are
-                # created when the tracked row is `filled`/`wont_fix` —
-                # currently we never re-open a closed gap, matching the
-                # existing ``scan_for_gaps`` dedup contract.
-                for gap in existing:
-                    if (
-                        gap.entity_type == entity_type
-                        and gap.property == property_name
-                    ):
-                        result.append(gap)
-                        break
-                continue
+            )
+            if tracked is not None:
+                if tracked.gap_status in blocking_statuses:
+                    # Active blocking row → return it without creating.
+                    result.append(tracked)
+                    continue
+                if only_open:
+                    # Closed row but default mode still treats it as
+                    # already-tracked (no re-opening).
+                    result.append(tracked)
+                    continue
+                # only_open=False and the tracked row is closed → fall
+                # through to create a fresh open gap.
 
             new_gap = ExtractionGap(
                 ontology_version_id=ov.id,
@@ -517,9 +532,6 @@ class GapScanService:
 
         if persist:
             await self._session.flush()
-            # Reload rows that were just persisted so the returned list
-            # has DB-assigned ids; pre-existing rows already have ids.
-            await self._session.refresh(new_gap) if False else None  # no-op
 
         return result
 
@@ -589,8 +601,6 @@ class GapScanService:
         # counted: they're attributed to any literature that has at least
         # one job in this OV's corpus.  This is documented in the
         # ``scan_literature`` docstring as a T1-bridge limitation.
-        from sqlalchemy import or_
-
         gap_stmt = (
             select(ExtractionGap.gap_status, func.count())
             .where(
@@ -672,7 +682,11 @@ class GapScanService:
         gap_distribution: dict[tuple[str, str], int] = {}
 
         # Load all open/filling gaps for this OV in one query, group by
-        # literature soft-id via the joined chunk → job.
+        # literature soft-id via the joined chunk → job.  The job-side
+        # OV filter (via the inner where on ExtractionJob) is required so
+        # that gaps from other OVs do not bleed into this OV's coverage
+        # via the OUTER join (a chunk/job from OV-B must not match a gap
+        # tied to OV-A).
         lit_gaps_stmt = (
             select(ExtractionGap, ExtractionChunk.job_id, ExtractionJob)
             .join(
@@ -688,6 +702,12 @@ class GapScanService:
             .where(
                 ExtractionGap.ontology_version_id == ov.id,
                 ExtractionGap.gap_status.in_(("open", "filling")),
+            )
+            .where(
+                or_(
+                    ExtractionJob.id.is_(None),
+                    ExtractionJob.ontology_version_id == ov.id,
+                ),
             )
         )
         rows = (await self._session.execute(lit_gaps_stmt)).all()
@@ -762,14 +782,21 @@ class GapScanService:
     ) -> set[str]:
         """Return the distinct set of literature soft-ids for an OV.
 
-        Until T1 adds the real ``literature_id`` FK on ``extraction_gaps``,
-        literature identity is approximated by ``ExtractionJob.corpus_id``
-        (preferred) falling back to ``source_reference``.  This is enough
-        for the ADR Section 2 contract (``coverage_rate`` and
-        ``gap_distribution``) and will be replaced by direct FK joins when
-        NFM-2736 merges T1+T2+T3.
+        Scoped to the requested ontology version via
+        ``ExtractionJob.ontology_version_id == ov.id`` — without that
+        filter every OV would see the union of all jobs in the DB and
+        coverage reports would be silently identical across OVs.
+
+        Until T1 adds the real ``literature_id`` FK on
+        ``extraction_gaps``, literature identity is approximated by
+        ``ExtractionJob.corpus_id`` (preferred) falling back to
+        ``source_reference``.  This is enough for the ADR Section 2
+        contract (``coverage_rate`` and ``gap_distribution``) and will be
+        replaced by direct FK joins when NFM-2736 merges T1+T2+T3.
         """
-        stmt = select(ExtractionJob.corpus_id, ExtractionJob.source_reference)
+        stmt = select(
+            ExtractionJob.corpus_id, ExtractionJob.source_reference,
+        ).where(ExtractionJob.ontology_version_id == ov.id)
         rows = (await self._session.execute(stmt)).all()
         lit_set: set[str] = set()
         for corpus_id, source_reference in rows:
@@ -873,13 +900,27 @@ class GapScanService:
         "already tracked" — the spec says none of them should be re-
         inserted, reopened, or duplicated.
         """
+        return (
+            GapScanService._find_tracked(
+                existing, entity_type, property_name,
+            )
+            is not None
+        )
+
+    @staticmethod
+    def _find_tracked(
+        existing: Iterable[ExtractionGap],
+        entity_type: str,
+        property_name: str,
+    ) -> ExtractionGap | None:
+        """Return the existing gap for (entity, property), or None."""
         for gap in existing:
             if (
                 gap.entity_type == entity_type
                 and gap.property == property_name
             ):
-                return True
-        return False
+                return gap
+        return None
 
 
 # ---------------------------------------------------------------------------
