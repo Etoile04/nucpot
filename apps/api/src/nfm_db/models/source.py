@@ -5,7 +5,7 @@ Stores literature references with author management.
 """
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from nfm_db.models import Base, TimestampMixin
+from nfm_db.models import Base, CompatJSONB, TimestampMixin
 
 if TYPE_CHECKING:
     from nfm_db.models.property import Dataset
@@ -56,6 +56,15 @@ class DataSource(TimestampMixin, Base):
     )
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # -- Flexible metadata bag (NFM-2649) --------------------------------
+    # Used by the gap-fill dispatch path handlers to store placeholder
+    # search keywords, query IDs, and other per-instance state.
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        CompatJSONB,
+        nullable=True,
+        comment="Flexible metadata bag.",
+    )
 
     # -- relationships --
     authors: Mapped[list["Author"]] = relationship(
