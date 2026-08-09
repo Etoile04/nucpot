@@ -55,17 +55,18 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
 
     called = {"legacy": 0}
 
-    from datetime import UTC, datetime
+    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
 
-    class FakeJob:
-        status = type("S", (), {"value": "completed"})()
-        job_id = "fake-job-id"
-        created_at = datetime.now(UTC)
-        error_message = None
+    fake_job = ExtractionJob(
+        job_id="fake-job-id",
+        source_reference="foo.md",
+        source_type="file",
+        status=JobStatus.COMPLETED,
+    )
 
     async def fake_legacy(*args, **kwargs):
         called["legacy"] += 1
-        return FakeJob()
+        return fake_job
 
     # Stub AsyncSession instance so the typeguard in the dispatch accepts it.
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -151,24 +152,21 @@ async def test_trigger_extraction_pipeline_v2_raises_not_implemented(monkeypatch
 
 @pytest.mark.asyncio
 async def test_trigger_extraction_pipeline_legacy_returns_normalized_dict(monkeypatch):
-    """Legacy path returns a normalized dict with consistent keys."""
+    """Legacy path returns the NFM-2743 / D3 canonical 24-key dict."""
     import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
 
     monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: False)
 
-    from datetime import UTC, datetime
     from unittest.mock import AsyncMock, patch
 
-    fake_job = type(
-        "Job",
-        (),
-        {
-            "status": type("S", (), {"value": "queued"})(),
-            "job_id": "test-job-123",
-            "created_at": datetime.now(UTC),
-            "error_message": None,
-        },
-    )()
+    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+
+    fake_job = ExtractionJob(
+        job_id="test-job-123",
+        source_reference="foo.md",
+        source_type="file",
+        status=JobStatus.QUEUED,
+    )
 
     with patch(
         "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
@@ -189,3 +187,19 @@ async def test_trigger_extraction_pipeline_legacy_returns_normalized_dict(monkey
     assert result["job_id"] == "test-job-123"
     assert result["created_at"] is not None
     assert result["error_message"] is None
+    # D3 seam — the helper exposes the full canonical key set, not just
+    # the four ad-hoc keys the previous inline normalization emitted.
+    # (NFM-2743 AC: ``assert set(from_dataclass) == set(from_orm)``.)
+    assert len(result) == 24, (
+        f"Expected 24 canonical keys, got {len(result)}: {set(result)!r}"
+    )
+    for required_key in (
+        "job_id", "source_reference", "source_type", "status",
+        "error_message", "created_at", "started_at", "completed_at",
+        "fill_batch_id", "extracted_count", "staged_count", "rejected_count",
+        "element_systems", "cache_level", "max_confidence",
+        "conflict_strategy", "figures", "tables",
+        "extract_figures", "extract_tables", "confidence_threshold",
+        "figure_types", "ontology_version_id", "ontology_version_str",
+    ):
+        assert required_key in result, f"Missing canonical key: {required_key}"

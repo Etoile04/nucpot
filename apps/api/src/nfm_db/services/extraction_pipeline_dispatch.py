@@ -29,7 +29,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.config import get_settings
-from nfm_db.services.extraction_pipeline import trigger_extraction
+from nfm_db.services.extraction_pipeline import (
+    _extraction_job_to_dict,
+    trigger_extraction,
+)
 
 
 @lru_cache(maxsize=1)
@@ -102,9 +105,8 @@ async def trigger_extraction_pipeline(
         job_id=kwargs.get("job_id"),
         ontology_version_id=kwargs.get("ontology_version_id"),
     )
-    return {
-        "status": job.status.value,
-        "job_id": job.job_id,
-        "created_at": job.created_at,
-        "error_message": job.error_message,
-    }
+    # NFM-2743 / D3 — the single serialization boundary. Both the
+    # legacy dataclass path (default OFF) and any future ORM path
+    # converge on this 24-key canonical dict so call-sites never have
+    # to branch on the V2 flag.
+    return _extraction_job_to_dict(job)
