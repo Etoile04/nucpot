@@ -1,5 +1,8 @@
 """Application configuration via environment variables."""
 
+from __future__ import annotations
+
+import functools
 import os
 
 from pydantic_settings import BaseSettings
@@ -59,3 +62,25 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached application settings."""
     return Settings()
+
+
+# ---------------------------------------------------------------------------
+# Feature flag helpers
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=1)
+def is_extraction_v2_enabled() -> bool:
+    """Return True if the EXTRACTION_PIPELINE_V2 feature flag is enabled.
+
+    Reads ``NFM_EXTRACTION_V2_ENABLED`` from the environment via the
+    cached ``Settings`` instance. Default ``False`` — the legacy
+    extraction pipeline remains the default for every caller that does
+    not explicitly opt in.
+
+    The result is cached for the process lifetime (one entry). Restart
+    the process to flip the flag.
+
+    NFM-2680 / NFM-2677-B1 (strangler-fig pipeline decomposition).
+    """
+    return get_settings().extraction_v2_enabled

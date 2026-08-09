@@ -40,7 +40,7 @@ from nfm_db.schemas.extraction import (
 from nfm_db.services.extraction_pipeline import (
     JobStatus,
     get_job,
-    trigger_extraction,
+    trigger_extraction_dispatch,
 )
 
 logger = logging.getLogger(__name__)
@@ -246,7 +246,10 @@ async def submit_extraction(
                 "(e.g., 10.1016/j.nucengdes.2020.110756)",
             )
     # Pass original reference to pipeline (preserve user input in job record)
-    job = await trigger_extraction(
+    # NFM-2680 / NFM-2677-B1: route through dispatch wrapper so the
+    # EXTRACTION_PIPELINE_V2 flag can opt in to the V2 orchestrator
+    # without modifying trigger_extraction() internals.
+    job = await trigger_extraction_dispatch(
         session=session,
         source_reference=payload.source_reference,
         source_type=payload.source_type,

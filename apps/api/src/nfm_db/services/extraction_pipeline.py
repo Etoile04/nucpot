@@ -29,6 +29,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.config import is_extraction_v2_enabled
 from nfm_db.models.ontology_version import OntologyVersion
 from nfm_db.services.extraction_prompt import (
     build_extraction_system_prompt,
@@ -581,6 +582,82 @@ def _stub_extraction_results(source: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+async def trigger_extraction_dispatch(
+    session: AsyncSession,
+    *,
+    source_reference: str,
+    source_type: str,
+    element_systems: list[str] | None = None,
+    cache_level: str | None = None,
+    max_confidence: str | None = None,
+    extract_figures: bool = False,
+    extract_tables: bool = False,
+    job_id: str | None = None,
+    ontology_version_id: uuid.UUID | None = None,
+) -> ExtractionJob:
+    """Strangler-fig dispatch wrapper for the extraction pipeline.
+
+    Reads the ``EXTRACTION_PIPELINE_V2`` feature flag via
+    :func:`nfm_db.config.is_extraction_v2_enabled` and routes the call:
+
+    - **Flag OFF (default)** → legacy :func:`trigger_extraction` runs
+      unchanged. This is the strangler-fig safety net: every caller
+      that does not explicitly opt in keeps the existing behaviour.
+    - **Flag ON** → constructs an ``ExtractionOrchestrator`` from the
+      same inputs and runs it. The legacy function is NOT invoked.
+
+    NFM-2680 / NFM-2677-B1 (strangler-fig pipeline decomposition).
+    """
+    if is_extraction_v2_enabled():
+        # V2 orchestrator path. Mirrors the legacy ORM row construction
+        # so downstream consumers see the same provenance columns.
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_orchestrator import (
+            ExtractionOrchestrator,
+        )
+
+        if job_id is None:
+            job_id = _generate_job_id()
+        # NFM-2667: discover ontology provenance and persist it on the
+        # ORM row (session.add + flush). Mirrors the legacy dataclass
+        # path so callers that read ontology columns keep working.
+        published_ov = await _get_latest_published_ontology(session)
+        ov_id = published_ov.id if published_ov is not None else None
+        ov_str = published_ov.version if published_ov is not None else None
+
+        orm_job = ORMExtractionJob(
+            source_reference=source_reference,
+            source_type=source_type,
+            extract_figures=extract_figures,
+            extract_tables=extract_tables,
+            ontology_version_id=ov_id,
+            ontology_version_str=ov_str,
+        )
+        session.add(orm_job)
+        await session.flush()
+
+        orchestrator = ExtractionOrchestrator(session, orm_job)
+        return await orchestrator.run(
+            element_systems=element_systems,
+            cache_level=cache_level,
+            max_confidence=max_confidence,
+        )
+
+    # Legacy path — call the unchanged trigger_extraction() function.
+    return await trigger_extraction(
+        session=session,
+        source_reference=source_reference,
+        source_type=source_type,
+        element_systems=element_systems,
+        cache_level=cache_level,
+        max_confidence=max_confidence,
+        extract_figures=extract_figures,
+        extract_tables=extract_tables,
+        job_id=job_id,
+        ontology_version_id=ontology_version_id,
+    )
+
+
 async def trigger_extraction(
     session: AsyncSession,
     *,
@@ -608,49 +685,13 @@ async def trigger_extraction(
     provided, the new job reuses it — letting the HTTP trigger
     endpoint hand out a job_id immediately for status polling
     (2026-07-28 follow-up).
+
+    This is the **legacy** extraction pipeline.  For new callers that
+    want the strangler-fig routing between legacy and the V2
+    orchestrator, use :func:`trigger_extraction_dispatch` instead.
+
+    NFM-2680 / NFM-2677-B1.
     """
-    # NFM-2568-T1: Feature-flag routing to V2 orchestrator.
-    # When enabled, delegates to the step-based orchestrator and
-    # returns immediately — legacy code below is untouched.
-    from nfm_db.config import get_settings
-
-    settings = get_settings()
-    if settings.extraction_v2_enabled:
-        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
-        from nfm_db.services.extraction_orchestrator import (
-            ExtractionOrchestrator,
-        )
-
-        if job_id is None:
-            job_id = _generate_job_id()
-        # NFM-2667: wire ontology provenance onto the persisted ORM row.
-        # PR #711 (NFM-2640) only updated the in-memory dataclass; the ORM
-        # row was always created with NULL ontology columns, defeating the
-        # migration.  Mirror the legacy path's discovery and pass the
-        # values into the constructor so session.add + flush persist them.
-        published_ov = await _get_latest_published_ontology(session)
-        ontology_version_id = published_ov.id if published_ov is not None else None
-        ontology_version_str = (
-            published_ov.version if published_ov is not None else None
-        )
-        orm_job = ORMExtractionJob(
-            source_reference=source_reference,
-            source_type=source_type,
-            extract_figures=extract_figures,
-            extract_tables=extract_tables,
-            ontology_version_id=ontology_version_id,
-            ontology_version_str=ontology_version_str,
-        )
-        session.add(orm_job)
-        await session.flush()
-
-        orchestrator = ExtractionOrchestrator(session, orm_job)
-        return await orchestrator.run(
-            element_systems=element_systems,
-            cache_level=cache_level,
-            max_confidence=max_confidence,
-        )
-
     # --- Legacy pipeline (unchanged when flag is False) ---
     if job_id is None:
         job_id = _generate_job_id()
