@@ -41,14 +41,18 @@ def is_extraction_v2_enabled() -> bool:
 
 
 async def _run_v2_pipeline(**kwargs: Any) -> Any:
-    """Run the V2 orchestrator path.
+    """Run the V2 orchestrator path (NFM-2677).
 
-    Kept as a module-level coroutine so tests can monkeypatch this
-    symbol directly without importing the orchestrator.  Returns the
-    resulting :class:`ExtractionJob` ORM row.
+    Creates the parent :class:`ExtractionJob` ORM row, then hands the
+    session off to the new step-based ``ExtractionOrchestratorV2``
+    (NFM-2677 B7).  Kept as a module-level coroutine so tests can
+    monkeypatch this symbol directly.
     """
-    from nfm_db.services.extraction_orchestrator import ExtractionOrchestrator
     from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+    from nfm_db.services.extraction import ExtractionChunk
+    from nfm_db.services.extraction_orchestrator_v2 import (
+        ExtractionOrchestratorV2,
+    )
 
     session = kwargs.pop("session", None)
     if session is None:
@@ -65,8 +69,19 @@ async def _run_v2_pipeline(**kwargs: Any) -> Any:
     session.add(orm_job)
     await session.flush()
 
-    orchestrator = ExtractionOrchestrator(session, orm_job)
-    return await orchestrator.run(**kwargs)
+    # The V2 orchestrator runs the 5 strangler-fig steps on a single
+    # initial ExtractionChunk.  Real source-content loading is deferred
+    # to a follow-up task; for now an empty raw_text chunk is enough
+    # to exercise the pipeline scaffold.
+    initial = ExtractionChunk(
+        content="",
+        chunk_type="raw_text",
+        _source_span=(0, 0),
+        metadata={"source_reference": kwargs.get("source_reference")},
+    )
+    orchestrator = ExtractionOrchestratorV2(session)
+    await orchestrator.run(initial)
+    return orm_job
 
 
 async def trigger_extraction_pipeline(
