@@ -1,14 +1,15 @@
 """Re-extraction queue API endpoints (NFM-2581 / NFM-2573-T4).
 
 Allows domain experts to trigger re-extraction of corpora when an ontology
-version upgrades.  Actual extraction pipeline integration is out of scope —
-these endpoints only manage the queue lifecycle.
+version upgrades.  Queue entries are consumed by the re_extraction_worker
+module which dispatches actual extraction pipeline runs.
 
 Endpoints:
   - POST /ontology/versions/{id}/re-extract — trigger re-extraction for selected corpora
   - GET  /re-extraction/queue — list queue entries
   - GET  /re-extraction/queue/{id} — get queue entry status
   - POST /re-extraction/queue/{id}/cancel — cancel a pending entry
+  - POST /re-extraction/queue/{id}/process — manually process a single entry
 """
 
 from __future__ import annotations
@@ -310,6 +311,74 @@ async def cancel_re_extraction(
         "cancel_re_extraction: entry_id=%s user=%s",
         entry_id,
         current_user.username,
+    )
+
+    return _row_to_item(entry)
+
+
+# ---------------------------------------------------------------------------
+# POST /re-extraction/queue/{id}/process — manually process a single entry
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/re-extraction/queue/{entry_id}/process",
+    response_model=ReExtractionQueueItem,
+    summary="处理重新提取任务",
+    description=(
+        "手动触发处理单个重新提取队列条目。需要 domain_expert 角色。\n\n"
+        "Manually process a single re-extraction queue entry by invoking "
+        "the extraction pipeline. Requires domain_expert role."
+    ),
+)
+async def process_re_extraction_entry(
+    entry_id: UUID,
+    current_user: Annotated[User, Depends(require_domain_expert)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ReExtractionQueueItem:
+    """Process a single re-extraction queue entry.
+
+    Invokes the re_extraction_worker to run the extraction pipeline
+    for this entry's corpus against the specified ontology version.
+    Updates the entry status to running, then completed/failed.
+    """
+    from nfm_db.services.re_extraction_worker import process_single_entry
+
+    entry = (
+        await session.execute(
+            select(ReExtractionQueue).where(ReExtractionQueue.id == entry_id)
+        )
+    ).scalar_one_or_none()
+
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Re-extraction queue entry '{entry_id}' not found.",
+        )
+
+    if entry.status not in ("pending", "failed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot process entry in status '{entry.status}'. "
+                "Only 'pending' or 'failed' entries can be processed."
+            ),
+        )
+
+    try:
+        entry = await process_single_entry(session, entry_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    await session.refresh(entry)
+
+    logger.info(
+        "process_re_extraction_entry: entry_id=%s user=%s status=%s",
+        entry_id,
+        current_user.username,
+        entry.status,
     )
 
     return _row_to_item(entry)

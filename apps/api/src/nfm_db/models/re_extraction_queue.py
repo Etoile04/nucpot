@@ -4,8 +4,9 @@ Queue entries that track re-extraction jobs triggered when an ontology
 version upgrades.  Domain experts select corpora to re-extract against a
 newer ontology version; each selection produces a row in this table.
 
-Actual extraction pipeline integration is out of scope — this model and
-its API surface only manage the queue lifecycle.
+Entries are consumed by ``re_extraction_worker.process_re_extraction_queue()``
+or the ``POST /re-extraction/queue/{id}/process`` API endpoint, which invoke
+the ExtractionOrchestrator pipeline for each source file in the corpus.
 """
 
 from __future__ import annotations
