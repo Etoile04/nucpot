@@ -1,10 +1,10 @@
-"""Add dispatch tracking columns to data_collection_requests.
+"""Add dispatch tracking columns to data_collection_requests (NFM-2659).
 
 Adds 4 nullable columns:
 - dispatched_at (DateTime(tz), nullable)
-- dispatched_path (String(50), nullable) — literature/dft/external_db/cascade
-- dispatch_status (String(20), nullable) — pending/running/success/failed
-- result_reference (String(500), nullable) — celery_task_id/external_ref
+- dispatch_status (String(20), nullable) — running | success | failed
+- dispatched_path (String(200), nullable) — gap-fill path name
+- result_reference (String(500), nullable) — external reference from fill path
 
 All nullable for backward compatibility. Reversible downgrade drops all 4.
 
@@ -30,7 +30,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "data_collection_requests",
-        sa.Column("dispatched_path", sa.String(50), nullable=True),
+        sa.Column("dispatched_path", sa.String(200), nullable=True),
     )
     op.add_column(
         "data_collection_requests",

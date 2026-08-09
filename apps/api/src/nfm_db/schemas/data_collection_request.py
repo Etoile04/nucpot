@@ -54,6 +54,24 @@ class DataCollectionRequestResponse(BaseModel):
         default=None,
         description="When the request reached a terminal status (UTC).",
     )
+    dispatched_at: datetime | None = Field(
+        default=None,
+        description="When the request was dispatched to a gap-fill path (UTC).",
+    )
+    dispatch_status: str | None = Field(
+        default=None,
+        description="Dispatch status: running | success | failed.",
+    )
+    dispatched_path: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Name of the gap-fill path used for dispatch.",
+    )
+    result_reference: str | None = Field(
+        default=None,
+        max_length=500,
+        description="External reference produced by the fill path.",
+    )
     metadata_: dict[str, Any] | None = Field(
         default=None,
         description="Flexible metadata bag.",
