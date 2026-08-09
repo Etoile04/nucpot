@@ -1,6 +1,7 @@
 """Application configuration via environment variables."""
 
 import os
+from functools import lru_cache
 
 from pydantic_settings import BaseSettings
 
@@ -49,6 +50,15 @@ class Settings(BaseSettings):
     # When True, trigger_extraction() delegates to ExtractionOrchestrator.
     # When False (default), legacy pipeline runs unchanged.
     extraction_v2_enabled: bool = False
+    # NFM-2677-B1: strangler-fig pipeline decomposition flag.
+    # Gates the new step-based pipeline (B3 orchestrator) that replaces
+    # the monolithic ``trigger_extraction()``. Lives at the call-site via
+    # ``extraction_pipeline_dispatch.trigger_extraction_pipeline`` so
+    # the legacy function is left untouched.  When True, the dispatch
+    # wrapper routes to the B3 V2 orchestrator; when False (default),
+    # the legacy pipeline runs unchanged — the strangler-fig guarantees
+    # no behavior change for existing callers.
+    extraction_pipeline_v2: bool = False
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
@@ -59,3 +69,18 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached application settings."""
     return Settings()
+
+
+@lru_cache(maxsize=1)
+def is_extraction_v2_enabled() -> bool:
+    """Return the cached value of ``Settings.extraction_pipeline_v2``.
+
+    The strangler-fig dispatch wrapper (see
+    :mod:`nfm_db.services.extraction_pipeline_dispatch`) calls this on
+    every job submission, so the lookup must be cheap and side-effect
+    free.  ``@lru_cache`` collapses repeated reads into a single
+    ``Settings`` parse per process.  Tests that mutate
+    ``NFM_EXTRACTION_PIPELINE_V2`` MUST call
+    ``is_extraction_v2_enabled.cache_clear()`` to flush the cache.
+    """
+    return get_settings().extraction_pipeline_v2

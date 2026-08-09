@@ -40,7 +40,9 @@ from nfm_db.schemas.extraction import (
 from nfm_db.services.extraction_pipeline import (
     JobStatus,
     get_job,
-    trigger_extraction,
+)
+from nfm_db.services.extraction_pipeline_dispatch import (
+    trigger_extraction_pipeline,
 )
 
 logger = logging.getLogger(__name__)
@@ -245,8 +247,12 @@ async def submit_extraction(
                 "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
                 "(e.g., 10.1016/j.nucengdes.2020.110756)",
             )
-    # Pass original reference to pipeline (preserve user input in job record)
-    job = await trigger_extraction(
+    # NFM-2677-B1: route through the strangler-fig dispatch wrapper.
+    # When EXTRACTION_PIPELINE_V2 is OFF (default) this calls the
+    # legacy trigger_extraction() unchanged; when ON it routes to the
+    # B3 V2 orchestrator.  The legacy function is intentionally
+    # untouched per the B1 constraint.
+    job = await trigger_extraction_pipeline(
         session=session,
         source_reference=payload.source_reference,
         source_type=payload.source_type,
