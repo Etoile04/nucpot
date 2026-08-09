@@ -107,7 +107,7 @@ async def test_batch_dispatch_no_open_requests(
     async_client, db_session,
 ) -> None:
     """Returns empty list when no open requests exist."""
-    ov = await _seed_version(db_session)
+    await _seed_version(db_session)
 
     with patch(
         "nfm_db.api.v1.data_collection.GapDispatchService",
@@ -480,7 +480,12 @@ async def test_list_dispatch_status_populates_derived_fields(
 async def test_list_dispatch_status_pagination(
     async_client, db_session,
 ) -> None:
-    """Pagination metadata is correct."""
+    """Pagination metadata reflects the FULL filtered set across all pages.
+
+    Regression test for the filter-after-pagination bug: total/pages must
+    describe the complete filtered result set (not the per-page slice).
+    With 5 dispatched requests and per_page=2 we expect total=5, pages=3.
+    """
     ov = await _seed_version(db_session)
     ts = datetime(2026, 1, 1, tzinfo=UTC)
     for i in range(5):
@@ -491,8 +496,8 @@ async def test_list_dispatch_status_pagination(
             metadata_=_dispatch_metadata(dispatched_at=ts),
         )
 
-    # PaginationParams uses ``per_page`` (default 20), not ``limit``.
-    # Page 1 of size 2 — only 2 rows come back, even though 5 exist.
+    # Page 1 of size 2 — only 2 rows come back, but total/pages must
+    # describe the full 5-row filtered set.
     resp = await async_client.get(
         f"{BASE}/dispatch/status",
         params={"page": 1, "per_page": 2},
@@ -502,14 +507,141 @@ async def test_list_dispatch_status_pagination(
     data = resp.json()
     assert data["page"] == 1
     assert data["limit"] == 2
-    # pages is computed from filtered_total (post-filter count), so with
-    # 2 surviving items and per_page=2, pages == 1.  The endpoint applies
-    # pagination BEFORE the dispatched_at filter, so a different page
-    # could see fewer rows even with 5 dispatched requests in the DB.
-    assert data["pages"] == 1  # ceil(2 / 2)
-    # total reflects the filtered count on this page slice, not the
-    # unfiltered global total.
+    assert data["total"] == 5
+    assert data["pages"] == 3  # ceil(5 / 2)
+    assert len(data["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_dispatch_status_pagination_walks_all_pages(
+    async_client, db_session,
+) -> None:
+    """Walking page 1 → page 2 → page 3 yields every dispatched row exactly once.
+
+    Regression test for the filter-after-pagination bug: each page must
+    be derived from a filter applied BEFORE offset/limit, so consecutive
+    pages do not overlap and no row is dropped.
+    """
+    ov = await _seed_version(db_session)
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    seeded_ids: list[uuid.UUID] = []
+    for i in range(5):
+        req = await _seed_request(
+            db_session,
+            ov=ov,
+            property_name=f"prop_{i}",
+            metadata_=_dispatch_metadata(dispatched_at=ts),
+        )
+        seeded_ids.append(req.id)
+
+    seen: list[str] = []
+    for page in (1, 2, 3):
+        resp = await async_client.get(
+            f"{BASE}/dispatch/status",
+            params={"page": page, "per_page": 2},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["page"] == page
+        assert data["total"] == 5
+        assert data["pages"] == 3
+        seen.extend(item["id"] for item in data["items"])
+
+    assert sorted(seen) == sorted(str(i) for i in seeded_ids)
+    assert len(seen) == len(set(seen))  # no duplicates across pages
+
+
+@pytest.mark.asyncio
+async def test_list_dispatch_status_filter_combined_with_pagination(
+    async_client, db_session,
+) -> None:
+    """Filters AND pagination compose: total counts the filtered set."""
+    ov = await _seed_version(db_session)
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+
+    # 3 dispatched requests with path='dft'.
+    dft_ids: list[uuid.UUID] = []
+    for i in range(3):
+        req = await _seed_request(
+            db_session,
+            ov=ov,
+            property_name=f"dft_{i}",
+            metadata_=_dispatch_metadata(dispatched_at=ts, path="dft"),
+        )
+        dft_ids.append(req.id)
+
+    # 4 dispatched requests with path='literature'.
+    lit_ids: list[uuid.UUID] = []
+    for i in range(4):
+        req = await _seed_request(
+            db_session,
+            ov=ov,
+            property_name=f"lit_{i}",
+            metadata_=_dispatch_metadata(
+                dispatched_at=ts, path="literature",
+            ),
+        )
+        lit_ids.append(req.id)
+
+    resp = await async_client.get(
+        f"{BASE}/dispatch/status",
+        params={"dispatched_path": "dft", "page": 1, "per_page": 2},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # total counts the 3 dft rows, not 7 (global) or 2 (per-page slice).
+    assert data["total"] == 3
+    assert data["pages"] == 2  # ceil(3 / 2)
+    assert {item["id"] for item in data["items"]} == {str(i) for i in dft_ids[:2]}
+
+    # Page 2 returns the remaining dft row (not a literature row).
+    resp2 = await async_client.get(
+        f"{BASE}/dispatch/status",
+        params={"dispatched_path": "dft", "page": 2, "per_page": 2},
+    )
+    data2 = resp2.json()
+    assert data2["total"] == 3
+    assert {item["id"] for item in data2["items"]} == {str(dft_ids[2])}
+    # And nothing leaked from the literature set.
+    leaked = {str(i) for i in lit_ids} & {item["id"] for item in data2["items"]}
+    assert not leaked
+
+
+@pytest.mark.asyncio
+async def test_list_dispatch_status_filter_excludes_undispatched_from_count(
+    async_client, db_session,
+) -> None:
+    """Total excludes undispatched rows; they are not 'filtered out later'."""
+    ov = await _seed_version(db_session)
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+
+    # 2 dispatched + 5 undispatched = 7 total rows in the table.
+    for i in range(2):
+        await _seed_request(
+            db_session,
+            ov=ov,
+            property_name=f"dispatched_{i}",
+            metadata_=_dispatch_metadata(dispatched_at=ts),
+        )
+    for i in range(5):
+        await _seed_request(
+            db_session,
+            ov=ov,
+            property_name=f"undispatched_{i}",
+            metadata_={"note": "no dispatch sub-key"},
+        )
+
+    resp = await async_client.get(
+        f"{BASE}/dispatch/status",
+        params={"page": 1, "per_page": 2},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Only the 2 dispatched rows are part of the filtered universe.
     assert data["total"] == 2
+    assert data["pages"] == 1
     assert len(data["items"]) == 2
 
 

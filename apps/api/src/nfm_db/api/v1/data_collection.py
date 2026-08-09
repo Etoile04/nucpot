@@ -25,7 +25,7 @@ from nfm_db.schemas.data_collection_request import (
     DataCollectionRequestResponse,
 )
 from nfm_db.services.coverage_scan_service import CoverageScanService
-from nfm_db.services.gap_dispatch_service import GapDispatchService, DispatchResult
+from nfm_db.services.gap_dispatch_service import DispatchResult, GapDispatchService
 
 router = APIRouter(tags=["数据采集管理"])
 
@@ -446,7 +446,7 @@ async def batch_dispatch(
                     detail=str(exc)[:500],
                 ),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Best-effort: record the error and continue with the next request.
             items.append(
                 BatchDispatchResultItem(
@@ -495,19 +495,19 @@ async def list_dispatch_status(
     status/path filtering is performed client-side after materializing
     rows.  This keeps the query portable to SQLite (used in tests) and
     avoids requiring a GIN index on the metadata column.
+
+    Filtering is applied BEFORE pagination so ``total``/``pages`` reflect
+    the full filtered set rather than the current page slice.  A coarse
+    ``metadata_ IS NOT NULL`` pre-filter keeps us from materializing rows
+    that never had any metadata bag to begin with.
     """
     base_query = (
         select(DataCollectionRequest)
+        .where(DataCollectionRequest.metadata_.is_not(None))
         .order_by(DataCollectionRequest.created_at.desc())
     )
 
-    count_result = await session.execute(
-        select(func.count()).select_from(base_query.subquery()),
-    )
-    total_raw = count_result.scalar_one()
-
-    paginated_query = base_query.offset(pagination.offset).limit(pagination.per_page)
-    result = await session.execute(paginated_query)
+    result = await session.execute(base_query)
     rows = result.scalars().all()
 
     items = [
@@ -524,8 +524,9 @@ async def list_dispatch_status(
         items = [i for i in items if i.dispatched_path == dispatched_path]
 
     filtered_total = len(items)
+    offset = pagination.offset
+    page_slice = items[offset : offset + pagination.per_page]
 
-    page_slice = items[: pagination.per_page]
     return PaginatedResponse(
         items=page_slice,
         total=filtered_total,
