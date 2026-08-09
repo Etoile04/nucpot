@@ -23,16 +23,24 @@ that toggle the env var between cases must call
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.config import get_settings
+from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+from nfm_db.services.extraction import ExtractionChunk
+from nfm_db.services.extraction_orchestrator_v2 import ExtractionOrchestratorV2
 from nfm_db.services.extraction_pipeline import (
     _extraction_job_to_dict,
     trigger_extraction,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -45,25 +53,86 @@ def is_extraction_v2_enabled() -> bool:
     return bool(get_settings().extraction_v2_enabled)
 
 
-async def _run_v2_pipeline(**kwargs: Any) -> dict[str, Any]:
-    """Run the V2 orchestrator path (NFM-2677).
+async def _run_v2_pipeline(
+    source_reference: str,
+    source_type: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Run the V2 orchestrator path (NFM-2677, NFM-2686).
 
-    .. note::
+    Creates a parent ``ExtractionJob`` ORM row, loads the source
+    content, feeds it through the 5-step strangler-fig pipeline
+    (RawTextLoader → SectionSegmenter → EntityExtractor →
+    PropertyNormalizer → ChunkBuilder), persists every intermediate
+    chunk, and returns the canonical 24-key dict via
+    ``_extraction_job_to_dict``.
 
-       Content loading (fetching the actual document text before
-       feeding the pipeline) is **not yet implemented**.  Raising
-       :class:`NotImplementedError` prevents silent zero-result
-       extractions when the flag is toggled ON prematurely.  Once
-       ``RawTextLoader`` gains production document-fetch wiring this
-       guard is replaced with the real content-loading logic.
-
-    Kept as a module-level coroutine so tests can monkeypatch this
-    symbol directly.
+    Content loading reads the file at *source_reference* (for
+    ``source_type="file"``).  Other source types (``doi``, ``url``,
+    ``datasource``) are not yet supported and raise ``ValueError``.
     """
-    raise NotImplementedError(
-        "V2 pipeline content loading not yet implemented. "
-        "The EXTRACTION_PIPELINE_V2 flag must remain OFF until "
-        "RawTextLoader has production document-fetch wiring."
+    session = kwargs.get("session")
+    if not isinstance(session, AsyncSession):
+        raise TypeError(
+            "V2 pipeline requires an AsyncSession via session=..."
+        )
+
+    # --- Load source content ---
+    content = _load_v2_content(source_reference, source_type)
+
+    # --- Create parent ExtractionJob for FK provenance ---
+    parent_job = ORMExtractionJob(
+        source_reference=source_reference,
+        source_type=source_type,
+        status="processing",
+    )
+    session.add(parent_job)
+    await session.flush()
+
+    # --- Build initial chunk and run the orchestrator ---
+    initial_chunk = ExtractionChunk(
+        content=content,
+        chunk_type="raw_text",
+        _source_span=(0, len(content)),
+        metadata={},
+    )
+    orchestrator = ExtractionOrchestratorV2(
+        session, job_id=parent_job.id,
+    )
+    finals = await orchestrator.run(initial_chunk)
+
+    # --- Mark job completed ---
+    parent_job.status = "completed"
+    parent_job.completed_at = datetime.now(UTC)
+    await session.flush()
+
+    logger.info(
+        "V2 pipeline completed: job=%s, source=%s, final_chunks=%d",
+        parent_job.id,
+        source_reference,
+        len(finals),
+    )
+
+    return _extraction_job_to_dict(parent_job)
+
+
+def _load_v2_content(source_reference: str, source_type: str) -> str:
+    """Load document content for the V2 pipeline.
+
+    Currently supports only ``source_type="file"`` (reads the file at
+    *source_reference*).  Other types raise ``ValueError``.
+    """
+    if source_type == "file":
+        path = Path(source_reference)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Source file not found: {source_reference}"
+            )
+        return path.read_text(encoding="utf-8")
+
+    raise ValueError(
+        f"V2 pipeline does not yet support source_type={source_type!r}. "
+        "Only 'file' is currently supported."
     )
 
 
