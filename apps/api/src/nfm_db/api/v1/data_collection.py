@@ -364,3 +364,96 @@ async def dispatch_request(
     )
     req = result.scalar_one()
     return DataCollectionRequestResponse.model_validate(req)
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/{request_id}/dispatch -- per-request dispatch
+# (NFM-2662)
+#
+# This is the architecture-aligned per-request endpoint: it returns the
+# flat DispatchResult shape ({dispatched_at, dispatched_path,
+# dispatch_status, result_reference}) sourced from the persisted
+# DataCollectionRequest state.  The legacy /requests/{request_id}/dispatch
+# route above continues to return the full DCR payload.
+# ---------------------------------------------------------------------------
+
+
+def _parse_dispatched_at(raw: str) -> datetime:
+    """Parse the ISO 8601 ``dispatched_at`` written by ``GapDispatchService``.
+
+    Falls back to ``datetime.now(UTC)`` if the value is missing or malformed,
+    so the response is always well-formed.
+    """
+    try:
+        return datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return datetime.now(UTC)
+
+
+@router.post(
+    "/data-collection/{request_id}/dispatch",
+    summary="Dispatch a DataCollectionRequest (per-request, architecture-aligned)",
+    description=(
+        "Dispatch a single DataCollectionRequest by ID.  Returns the flat "
+        "DispatchResult shape (dispatched_at, dispatched_path, "
+        "dispatch_status, result_reference) sourced from the persisted "
+        "DataCollectionRequest state.  Returns 404 if the DCR does not "
+        "exist and 409 if it has already been dispatched."
+    ),
+)
+async def dispatch_request_per_request(
+    request_id: uuid.UUID,
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Dispatch a single DataCollectionRequest and return the spec-shaped result."""
+    # Pre-flight: detect 409 (already dispatched) BEFORE handing off to the
+    # service so the idempotency rule is explicit at the API boundary.
+    existing = await session.execute(
+        select(DataCollectionRequest).where(
+            DataCollectionRequest.id == request_id,
+        ),
+    )
+    req = existing.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"DataCollectionRequest {request_id} not found.",
+        )
+    if req.status != "open":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"DataCollectionRequest {request_id} is already dispatched "
+                f"(status={req.status!r})."
+            ),
+        )
+
+    svc = GapDispatchService(session)
+    try:
+        await svc.dispatch_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    await session.commit()
+
+    # Reload to read the persisted dispatch metadata.
+    refreshed = await session.execute(
+        select(DataCollectionRequest).where(
+            DataCollectionRequest.id == request_id,
+        ),
+    )
+    dispatched = refreshed.scalar_one()
+    dispatch_meta = (dispatched.metadata_ or {}).get("dispatch") or {}
+
+    return {
+        "dispatched_at": _parse_dispatched_at(
+            str(dispatch_meta.get("dispatched_at", "")),
+        ),
+        "dispatched_path": str(dispatch_meta.get("path_taken", "")),
+        "dispatch_status": str(dispatch_meta.get("dispatch_status", "")),
+        "result_reference": str(dispatch_meta.get("detail", "")) or None,
+    }
