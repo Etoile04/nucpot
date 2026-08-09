@@ -16,11 +16,9 @@ from unittest.mock import patch
 
 import pytest
 
-
 # These imports DO NOT YET EXIST — RED signal.
 from nfm_db.services.extraction_pipeline_dispatch import (
     is_extraction_v2_enabled,
-    trigger_extraction_pipeline,
 )
 
 
@@ -117,4 +115,65 @@ def test_is_extraction_v2_enabled_is_cached():
     )
     # If @lru_cache is applied, .cache_info / .cache_clear exist.
     assert hasattr(is_extraction_v2_enabled, "cache_info")
+
+
+@pytest.mark.asyncio
+async def test_trigger_extraction_pipeline_v2_end_to_end(db_session, monkeypatch):
+    """NFM-2705 defect 4: full dispatcher path with V2 ON persists
+    chunks joined to the parent extraction_jobs row.
+
+    Forces the flag ON, then calls the public ``trigger_extraction_pipeline``
+    entry point (the one the V4 production caller
+    ``api/v4/extraction.py:submit_extraction`` is now wired to) and
+    verifies the round-trip:
+
+    * parent ``ExtractionJob`` row exists with the right
+      ``source_reference`` / ``source_type``
+    * at least one ``ExtractionChunk`` row landed in
+      ``extraction_chunks`` joined to that parent by ``job_id``
+    """
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    # Force ON regardless of host env.
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+    # Clear the lru_cache so the test doesn't read a stale env binding.
+    try:
+        dispatch_mod.is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
+    orm_job = await dispatch_mod.trigger_extraction_pipeline(
+        session=db_session,
+        source_reference="10.5555/end-to-end-test",
+        source_type="doi",
+        extract_figures=False,
+        extract_tables=False,
+    )
+
+    # Parent row persisted with the right identity.
+    assert orm_job.id is not None
+    assert orm_job.source_reference == "10.5555/end-to-end-test"
+    assert orm_job.source_type == "doi"
+
+    # Chunks were flushed with job_id FK back to the parent.
+    from sqlalchemy import select
+
+    from nfm_db.models.extraction_chunk import ExtractionChunk as ORMChunk
+    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+    result = await db_session.execute(
+        select(ORMChunk).where(ORMChunk.job_id == orm_job.id)
+    )
+    persisted = list(result.scalars().all())
+    assert persisted, (
+        "no extraction_chunks rows landed for the V2 dispatcher run; "
+        "defect 1 (zero-row _persist) is back"
+    )
+
+    # Join sanity: every chunk points at the parent ExtractionJob.
+    parent = await db_session.get(ORMExtractionJob, orm_job.id)
+    assert parent is not None
+    assert parent.id == orm_job.id
+    for chunk in persisted:
+        assert chunk.job_id == parent.id
     assert hasattr(is_extraction_v2_enabled, "cache_clear")

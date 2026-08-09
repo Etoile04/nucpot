@@ -79,7 +79,7 @@ async def _run_v2_pipeline(**kwargs: Any) -> Any:
         _source_span=(0, 0),
         metadata={"source_reference": kwargs.get("source_reference")},
     )
-    orchestrator = ExtractionOrchestratorV2(session)
+    orchestrator = ExtractionOrchestratorV2(session, job_id=orm_job.id)
     await orchestrator.run(initial)
     return orm_job
 

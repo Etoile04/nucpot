@@ -1,4 +1,4 @@
-"""V2 extraction orchestrator (NFM-2677 B7).
+"""V2 extraction orchestrator (NFM-2677 B7, NFM-2705 follow-up).
 
 Composes the five strangler-fig steps into a single pipeline and
 persists every emitted chunk to the ORM ``extraction_chunks``
@@ -8,25 +8,27 @@ when ``EXTRACTION_PIPELINE_V2`` is enabled.
 Pipeline shape::
 
     RawTextLoader  (fan-in: 1 chunk)
-          │
-          ▼
+          |
+          v
     SectionSegmenter  (fan-out: N section chunks)
-          │
-          ▼ (per section)
-    EntityExtractor → PropertyNormalizer → ChunkBuilder
-          │
-          ▼
+          |
+          v (per section)
+    EntityExtractor -> PropertyNormalizer -> ChunkBuilder
+          |
+          v
     list[ExtractionChunk]   (chunk_type="final")
 
-Each emitted chunk is wrapped in a small ``_PersistTarget`` that
-carries both the in-memory chunk_type and the ORM row fields, then
-added to the session.  The orchestrator does not commit — it leaves
-that to the caller's transaction boundary.
+Each emitted chunk is converted to an :class:`ExtractionChunk` ORM row
+and added to the session directly (no wrapper dataclass -- NFM-2705
+defect 1).  Every row carries the parent ``job_id`` so the NOT NULL FK
+to ``extraction_jobs`` is satisfied at flush (NFM-2705 defect 2).
+The orchestrator does not commit -- it leaves that to the caller's
+transaction boundary.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,26 +45,20 @@ from nfm_db.services.extraction.steps.section_segmenter import (
 )
 
 
-@dataclass
-class _PersistTarget:
-    """Wraps an ORM row with the in-memory chunk_type for inspection.
+class ExtractionOrchestratorV2:
+    """Composes the 5 strangler-fig steps with ORM persistence.
 
-    The orchestrator uses ``session.add(target)`` so the persistence
-    layer can flush the row in the caller's transaction.  The
-    ``chunk_type`` attribute is in-memory only — the ORM row already
-    carries the same content via the ``content`` column, but the
-    in-memory type drives routing decisions in the orchestrator.
+    The orchestrator must be constructed with the UUID of a *persisted*
+    parent ``ExtractionJob`` -- every chunk row carries ``job_id`` so
+    the ``extraction_chunks.job_id`` NOT NULL FK is satisfied at the
+    first ``session.flush()``.
     """
 
-    row: ORMChunk
-    chunk_type: str
-
-
-class ExtractionOrchestratorV2:
-    """Composes the 5 strangler-fig steps with ORM persistence."""
-
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, *, job_id: uuid.UUID,
+    ) -> None:
         self._session = session
+        self._job_id = job_id
         # Materialize the step instances once.
         self._loader = RawTextLoader()
         self._segmenter = SectionSegmenter()
@@ -122,8 +118,14 @@ class ExtractionOrchestratorV2:
         index: int,
         step_name: str | None = None,
     ) -> None:
-        """Convert an in-memory ExtractionChunk to an ORM row, wrap
-        it for inspection, and add it to the session."""
+        """Convert an in-memory ``ExtractionChunk`` to an ORM row and
+        add it to the session.
+
+        The row carries ``job_id=self._job_id`` so the NOT NULL FK
+        to ``extraction_jobs`` is satisfied at flush (NFM-2705 defect 2).
+        ``source_span`` JSONB shape mirrors the ORM column comment:
+        ``{"start": int, "end": int}``.
+        """
         row = ORMChunk(
             content=chunk.content,
             source_span={
@@ -132,11 +134,6 @@ class ExtractionOrchestratorV2:
             },
             chunk_index=index,
             token_count=None,
+            job_id=self._job_id,
         )
-        target = _PersistTarget(row=ORMChunk(
-            content=chunk.content,
-            source_span={"start": chunk._source_span[0], "end": chunk._source_span[1]},
-            chunk_index=index,
-            token_count=None,
-        ), chunk_type=chunk.chunk_type)
-        self._session.add(target)
+        self._session.add(row)

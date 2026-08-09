@@ -245,30 +245,60 @@ async def submit_extraction(
                 "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
                 "(e.g., 10.1016/j.nucengdes.2020.110756)",
             )
-    # Pass original reference to pipeline (preserve user input in job record)
-    job = await trigger_extraction(
-        session=session,
-        source_reference=payload.source_reference,
-        source_type=payload.source_type,
-        element_systems=payload.element_systems,
-        cache_level=payload.cache_level,
-        max_confidence=payload.max_confidence,
+    # Pass original reference to pipeline (preserve user input in job record).
+    # Strangler-fig routing (NFM-2705 defect 4): the dispatch wrapper
+    # transparently forwards to either the legacy trigger_extraction()
+    # (default OFF, EXTRACTION_PIPELINE_V2=0) or the V2
+    # ExtractionOrchestratorV2 path (NFM-2677) when the flag is ON.
+    from nfm_db.services.extraction_pipeline_dispatch import (
+        is_extraction_v2_enabled,
+        trigger_extraction_pipeline,
     )
+
+    if is_extraction_v2_enabled():
+        # V2 path returns the ORM ExtractionJob row; the dispatch
+        # wrapper has already flushed a parent row + the chunk rows.
+        orm_job = await trigger_extraction_pipeline(
+            session=session,
+            source_reference=payload.source_reference,
+            source_type=payload.source_type,
+            extract_figures=payload.extract_figures,
+            extract_tables=payload.extract_tables,
+        )
+        status_value = orm_job.status
+        job_id_value = str(orm_job.id)
+        created_at_value = orm_job.created_at
+        error_message_value = orm_job.error_message
+    else:
+        legacy_job = await trigger_extraction(
+            session=session,
+            source_reference=payload.source_reference,
+            source_type=payload.source_type,
+            element_systems=payload.element_systems,
+            cache_level=payload.cache_level,
+            max_confidence=payload.max_confidence,
+        )
+        status_value = legacy_job.status.value
+        job_id_value = legacy_job.job_id
+        created_at_value = legacy_job.created_at
+        error_message_value = legacy_job.error_message
 
     return JSONResponse(
         status_code=202,
         content={
             "success": True,
             "data": V4SubmitResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                message="Extraction job queued successfully."
-                if job.status != JobStatus.FAILED
-                else f"Extraction failed: {job.error_message}",
-                error_message=job.error_message,
-                created_at=job.created_at,
+                job_id=job_id_value,
+                source_reference=payload.source_reference,
+                source_type=payload.source_type,
+                status=status_value,
+                message=(
+                    "Extraction job queued successfully."
+                    if status_value != JobStatus.FAILED
+                    else f"Extraction failed: {error_message_value}"
+                ),
+                error_message=error_message_value,
+                created_at=created_at_value,
             ).model_dump(mode="json"),
         },
     )
