@@ -312,6 +312,7 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            git config pull.rebase false
             git pull origin main
 
             echo "===> Checking .env.prod <-> docker/.env.prod key drift..."
@@ -339,6 +340,7 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            git config pull.rebase false
             # Strip credsStore from ~/.docker/config.json to prevent
             # docker-credential-desktop from prompting for the locked keychain.
             DOCKER_CFG="\$HOME/.docker/config.json"
@@ -435,9 +437,15 @@ jobs:
           p.write_text(json.dumps(cfg, indent=2))
           "
           trap 'cp "$DOCKER_CFG.bak" "$DOCKER_CFG"' EXIT
-          # Pre-pull so buildkit reuses the local cache.
-          docker pull alpine:3.20
-          docker pull pgvector/pgvector:pg16
+          # Skip pull if images already cached locally — avoids triggering
+          # docker-credential-desktop keychain prompt in non-interactive CI.
+          for img in alpine:3.20 pgvector/pgvector:pg16; do
+            if docker image inspect "$img" > /dev/null 2>&1; then
+              echo "Image $img already cached, skipping pull"
+            else
+              docker pull "$img"
+            fi
+          done
           docker image ls alpine:3.20 pgvector/pgvector:pg16
 
       - name: Run smoke.sh (live Docker + postgres)
@@ -495,6 +503,7 @@ jobs:
             export PROD_IMAGE_TAG="${{ github.sha }}"
             echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
+            git config pull.rebase false
             git pull origin main
 
             # Build the 3 distinct images (D1, NFM-2148). The api image is
