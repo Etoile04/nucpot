@@ -8,7 +8,35 @@ chunk without re-walking the entities list.
 
 from __future__ import annotations
 
+from typing import Any
+
 from nfm_db.services.extraction import ExtractionChunk, ExtractionStep
+
+
+def _as_span_pair(span: Any) -> tuple[int, int]:
+    """Normalize a source_span into a ``(start, end)`` int tuple.
+
+    Tolerates three shapes emitted by upstream pipeline steps:
+
+    * ``tuple[int, int]`` — the canonical NFM-2685 contract. Pass-through.
+    * ``list[int]`` — coerced to tuple for hashability.
+    * ``dict`` with ``"start"`` and ``"end"`` keys — emitted by the
+      PR #730 SectionSegmenter integration. Naive ``tuple(dict)``
+      yields the *keys* ``("start", "end")``; we must read by key.
+
+    The returned tuple is suitable for ``ExtractionChunk._source_span``,
+    which validates as a 2-tuple of non-negative ints.
+    """
+    if isinstance(span, tuple):
+        return span
+    if isinstance(span, list):
+        return (span[0], span[1])
+    if isinstance(span, dict):
+        return (span["start"], span["end"])
+    raise TypeError(
+        f"_as_span_pair: unsupported source_span shape "
+        f"{type(span).__name__!r}; expected tuple, list, or dict"
+    )
 
 
 class ChunkBuilder(ExtractionStep):
@@ -29,10 +57,15 @@ class ChunkBuilder(ExtractionStep):
             "property_count": len(entities.get("properties", [])),
             "measurement_count": len(entities.get("measurements", [])),
         }
+        # Defensive normalization (NFM-2740): the SectionSegmenter
+        # integration (PR #730) hands us dict-shaped spans. The
+        # ExtractionChunk constructor requires a tuple, so normalize
+        # here before delegating to the validator.
+        normalized_span = _as_span_pair(input_chunk._source_span)
         return ExtractionChunk(
             content=input_chunk.content,
             chunk_type="final",
-            _source_span=input_chunk._source_span,
+            _source_span=normalized_span,
             metadata={**input_chunk.metadata, "summary": summary},
             parent_chunk_id=input_chunk.parent_chunk_id,
         )
