@@ -6,6 +6,7 @@ records, computing coverage rate metrics, and triggering coverage scans.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -28,6 +29,7 @@ from nfm_db.services.coverage_scan_service import CoverageScanService
 from nfm_db.services.gap_dispatch_service import GapDispatchService
 
 router = APIRouter(tags=["数据采集管理"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +389,10 @@ def _parse_dispatched_at(raw: str) -> datetime:
     try:
         return datetime.fromisoformat(raw)
     except (TypeError, ValueError):
+        logger.warning(
+            "Could not parse dispatched_at timestamp %r; falling back to now(UTC)",
+            raw,
+        )
         return datetime.now(UTC)
 
 
@@ -409,6 +415,9 @@ async def dispatch_request_per_request(
     """Dispatch a single DataCollectionRequest and return the spec-shaped result."""
     # Pre-flight: detect 409 (already dispatched) BEFORE handing off to the
     # service so the idempotency rule is explicit at the API boundary.
+    # NOTE: This SELECT-then-dispatch pattern has a TOCTOU window — concurrent
+    # requests could race past this check.  The GapDispatchService is the
+    # authority on idempotency and handles duplicate dispatches internally.
     existing = await session.execute(
         select(DataCollectionRequest).where(
             DataCollectionRequest.id == request_id,
