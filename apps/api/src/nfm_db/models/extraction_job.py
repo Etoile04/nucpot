@@ -193,14 +193,14 @@ class ExtractionJob(TimestampMixin, Base):
     figures: Mapped[list[dict[str, Any]]] = mapped_column(
         CompatJSONB,
         nullable=False,
-        default=list,
+        default=list,  # callable factory, not mutable default — SQLAlchemy invokes it per-instance
         server_default="[]",
         comment="Multimodal extraction figures captured for this job.",
     )
     tables: Mapped[list[dict[str, Any]]] = mapped_column(
         CompatJSONB,
         nullable=False,
-        default=list,
+        default=list,  # callable factory, not mutable default — SQLAlchemy invokes it per-instance
         server_default="[]",
         comment="Multimodal extraction tables captured for this job.",
     )
