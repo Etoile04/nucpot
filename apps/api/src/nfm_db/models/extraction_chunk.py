@@ -378,7 +378,7 @@ class ExtractionChunk(TimestampMixin, Base):
         token_estimate: int | None = None,
         metadata_: dict[str, Any] | None = None,
         source_reference: str | None = None,
-    ) -> "ExtractionChunk":
+    ) -> ExtractionChunk:
         """Idempotent upsert keyed by ``(job_id, step_name, source_span_hash)``.
 
         On first call for a given triple, a new row is created (added to
@@ -396,7 +396,7 @@ class ExtractionChunk(TimestampMixin, Base):
         validate_source_span(source_span)
         span_hash = compute_source_span_hash(job_id, step_name, source_span)
 
-        existing = (
+        existing: ExtractionChunk | None = (
             session.query(cls)
             .filter(
                 cls.job_id == job_id,
