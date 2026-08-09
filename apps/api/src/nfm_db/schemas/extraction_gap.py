@@ -1,4 +1,4 @@
-"""Pydantic schemas for extraction gap tracking (NFM-2586 / NFM-2575-T2).
+"""Pydantic schemas for extraction gap tracking (NFM-2586 / NFM-2697).
 
 API response shapes for ``ExtractionGap`` (the persistent gap record
 created by ``GapScanService``) and for the ``GapScanResult`` summary
@@ -32,8 +32,19 @@ class ExtractionGapResponse(BaseModel):
     id: uuid.UUID = Field(
         description="Globally unique gap identifier (UUID v4).",
     )
-    ontology_version_id: uuid.UUID = Field(
-        description="Ontology version that defines the expected schema.",
+    ontology_version: str = Field(
+        description=(
+            "Ontology version that defines the expected schema, "
+            "e.g. 'v2.1.0'."
+        ),
+        max_length=50,
+    )
+    literature_id: str | None = Field(
+        default=None,
+        description=(
+            "Source literature the gap was detected against (stringified "
+            "UUID).  Nullable during the NFM-2697-T1 backfill."
+        ),
     )
     entity_type: str = Field(
         description="Entity type, e.g. NuclearMaterial, Isotope.",

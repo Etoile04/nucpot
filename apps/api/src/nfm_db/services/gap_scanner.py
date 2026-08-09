@@ -234,10 +234,13 @@ async def compute_recall(
     entity_types = extract_entity_types(ov)
     total_expected = _count_expected_properties(entity_types)
 
-    # Count gap records grouped by status.
+    # Count gap records grouped by status.  Filter on the TEXT semver
+    # stored in ``ExtractionGap.ontology_version`` rather than the UUID
+    # of the OntologyVersion row (NFM-2697 — the column is denormalized
+    # so dumps/imports stay deterministic across ontology re-rolls).
     gap_stmt = (
         select(ExtractionGap.gap_status, func.count())
-        .where(ExtractionGap.ontology_version_id == ontology_version_id)
+        .where(ExtractionGap.ontology_version == ov.version)
         .group_by(ExtractionGap.gap_status)
     )
     gap_rows = (await session.execute(gap_stmt)).all()
@@ -303,7 +306,7 @@ class GapScanService:
         ov = await self._load_ontology(ontology_version_id)
         chunks = await self._load_chunks(job_id)
         existing = await self._load_existing_gaps(
-            ontology_version_id=ontology_version_id,
+            ontology_version=ov.version,
         )
 
         total_expected = 0
@@ -323,7 +326,7 @@ class GapScanService:
             ):
                 continue
             new_gap = ExtractionGap(
-                ontology_version_id=ov.id,
+                ontology_version=ov.version,
                 entity_type=entity_type,
                 property=property_name,
                 gap_status="open",
@@ -402,15 +405,17 @@ class GapScanService:
     async def _load_existing_gaps(
         self,
         *,
-        ontology_version_id: uuid.UUID,
+        ontology_version: str,
     ) -> list[ExtractionGap]:
         """Existing gaps for this ontology version (any status).
 
         Used by deduplication.  Reads once and indexes in-memory because
-        the gap set per ontology version is small.
+        the gap set per ontology version is small.  NFM-2697: filters on
+        the TEXT semver stored in ``ExtractionGap.ontology_version``
+        rather than the OntologyVersion UUID FK.
         """
         stmt = select(ExtractionGap).where(
-            ExtractionGap.ontology_version_id == ontology_version_id,
+            ExtractionGap.ontology_version == ontology_version,
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

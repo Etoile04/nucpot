@@ -92,15 +92,20 @@ async def _seed_version(
 async def _seed_gap(
     session,
     *,
-    ontology_version_id: uuid.UUID,
+    ov: OntologyVersion,
     entity_type: str = "NuclearMaterial",
     property_name: str = "density",
     gap_status: str = "open",
 ) -> ExtractionGap:
-    """Insert a minimal ExtractionGap row."""
+    """Insert a minimal ExtractionGap row.
+
+    NFM-2697: gaps are keyed on the ontology semver (TEXT) rather than
+    the OntologyVersion UUID; ``ov.version`` is read from the seeded
+    OntologyVersion row.
+    """
     gap = ExtractionGap(
         id=uuid.uuid4(),
-        ontology_version_id=ontology_version_id,
+        ontology_version=ov.version,
         entity_type=entity_type,
         property=property_name,
         gap_status=gap_status,
@@ -120,11 +125,11 @@ async def test_all_gaps_open_recall_reflects_missing(db_session) -> None:
     """2 expected props, 2 open gaps → recall = 0.0."""
     ov = await _seed_version(db_session)
     await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open",
+        db_session, ov=ov, gap_status="open",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         property_name="melting_point",
         gap_status="open",
     )
@@ -144,11 +149,11 @@ async def test_all_gaps_filled_recall_is_one(db_session) -> None:
     """2 expected props, 2 filled gaps → recall = 1.0."""
     ov = await _seed_version(db_session)
     await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="filled",
+        db_session, ov=ov, gap_status="filled",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         property_name="melting_point",
         gap_status="filled",
     )
@@ -169,26 +174,26 @@ async def test_mixed_statuses_recall_correct(db_session) -> None:
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         property_name="density",
         gap_status="open",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         property_name="melting_point",
         gap_status="filling",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         entity_type="Isotope",
         property_name="half_life",
         gap_status="filled",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         entity_type="Isotope",
         property_name="decay_mode",
         gap_status="wont_fix",
@@ -210,11 +215,11 @@ async def test_wont_fix_counts_as_covered(db_session) -> None:
     """wont_fix gaps should NOT be subtracted from recall numerator."""
     ov = await _seed_version(db_session)
     await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="wont_fix",
+        db_session, ov=ov, gap_status="wont_fix",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         property_name="melting_point",
         gap_status="wont_fix",
     )
@@ -231,7 +236,7 @@ async def test_filling_counts_as_uncovered(db_session) -> None:
     ov = await _seed_version(db_session)
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         gap_status="filling",
     )
 
@@ -298,7 +303,7 @@ async def test_partial_gaps_only_some_properties_have_gaps(
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ov=ov,
         property_name="density",
         gap_status="open",
     )

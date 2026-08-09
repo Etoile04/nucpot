@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.main import app
@@ -107,16 +108,40 @@ async def _seed_chunk(
 async def _seed_gap(
     session: AsyncSession,
     *,
-    ontology_version_id: uuid.UUID,
+    ontology_version: str | None = None,
+    ontology_version_id: uuid.UUID | None = None,
+    literature_id: str | None = None,
     entity_type: str = "NuclearMaterial",
     property_name: str = "density",
     gap_status: str = "open",
     chunk_id: uuid.UUID | None = None,
 ) -> ExtractionGap:
-    """Insert a minimal ExtractionGap row."""
+    """Insert a minimal ExtractionGap row.
+
+    NFM-2697: gaps are keyed by the ontology semver (TEXT) rather than
+    the OntologyVersion UUID.  ``ontology_version_id`` is accepted as a
+    legacy kwarg and translated to its published version string when
+    provided; callers that already know the version string should pass
+    ``ontology_version=...`` directly.
+    """
+    if ontology_version is None and ontology_version_id is not None:
+        from nfm_db.models import OntologyVersion
+        ov = (
+            await session.execute(
+                select(OntologyVersion).where(
+                    OntologyVersion.id == ontology_version_id,
+                ),
+            )
+        ).scalar_one()
+        ontology_version = ov.version
+    if ontology_version is None:
+        ontology_version = "v1.0.0"
     gap = ExtractionGap(
         id=uuid.uuid4(),
-        ontology_version_id=ontology_version_id,
+        ontology_version=ontology_version,
+        literature_id=(
+            uuid.UUID(literature_id) if literature_id else None
+        ),
         entity_type=entity_type,
         property=property_name,
         gap_status=gap_status,
@@ -433,7 +458,7 @@ async def test_detail_returns_gap(async_client, db_session, domain_expert_header
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == str(gap.id)
-    assert body["ontology_version_id"] == str(ov.id)
+    assert body["ontology_version"] == ov.version
     assert body["entity_type"] == "NuclearMaterial"
     assert body["property"] == "density"
     assert body["gap_status"] == "open"

@@ -131,7 +131,12 @@ def _to_response(
     return ExtractionGapResponse.model_validate(
         {
             "id": gap.id,
-            "ontology_version_id": gap.ontology_version_id,
+            "ontology_version": gap.ontology_version,
+            "literature_id": (
+                str(gap.literature_id)
+                if gap.literature_id is not None
+                else None
+            ),
             "entity_type": gap.entity_type,
             "property": gap.property,
             "source_reference": (
@@ -222,8 +227,29 @@ async def list_extraction_gaps(
             ),
         )
 
+    # Resolve the ontology version UUID to its TEXT semver.  NFM-2697
+    # stores gaps against the version string so dumps/imports stay
+    # deterministic across ontology re-rolls; 404 if the UUID does not
+    # exist (instead of silently returning zero rows).
+    from nfm_db.models import OntologyVersion
+    ov_row = (
+        await session.execute(
+            select(OntologyVersion).where(
+                OntologyVersion.id == ontology_version_id,
+            ),
+        )
+    ).scalar_one_or_none()
+    if ov_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"OntologyVersion '{ontology_version_id}' not found.",
+        )
+    ontology_version_str = ov_row.version
+
     # Build the WHERE clause incrementally.
-    where_clauses = [ExtractionGap.ontology_version_id == ontology_version_id]
+    where_clauses = [
+        ExtractionGap.ontology_version == ontology_version_str,
+    ]
     if entity_type is not None:
         where_clauses.append(ExtractionGap.entity_type == entity_type)
     if gap_status is not None:
