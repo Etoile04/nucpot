@@ -37,6 +37,7 @@ from nfm_db.services.extraction_pipeline import (
     _update_job,
     ontofuel_extract,
     trigger_extraction,
+    trigger_extraction_dispatch,
 )
 
 # ---------------------------------------------------------------------------
@@ -1253,6 +1254,11 @@ class TestV2PathOntologyProvenanceOnORM:
 
     These tests verify the V2 path's wiring (the bug fix).  The legacy
     dataclass path is covered by ``TestOntologyJobProvenance`` above.
+
+    Note (NFM-2680): the V2 path is the ``trigger_extraction_dispatch``
+    wrapper, not the legacy ``trigger_extraction`` function.  The legacy
+    function is unchanged when the flag is False; the dispatch wrapper
+    is the canonical flag-routed entry point.
     """
 
     @pytest.fixture(autouse=True)
@@ -1292,7 +1298,7 @@ class TestV2PathOntologyProvenanceOnORM:
                 _FakeV2Orchestrator,
             ),
         ):
-            await trigger_extraction(
+            await trigger_extraction_dispatch(
                 mock_session,
                 source_reference="test_source",
                 source_type="file",
@@ -1333,7 +1339,7 @@ class TestV2PathOntologyProvenanceOnORM:
                 _FakeV2Orchestrator,
             ),
         ):
-            await trigger_extraction(
+            await trigger_extraction_dispatch(
                 mock_session,
                 source_reference="test_source",
                 source_type="file",
