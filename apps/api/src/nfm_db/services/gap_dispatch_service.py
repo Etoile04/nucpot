@@ -1,474 +1,329 @@
-"""GapDispatchService — three-path data-collection dispatcher (NFM-2621).
+"""Gap dispatch service: route DataCollectionRequests to fill paths (NFM-2650).
 
-Dispatches a ``DataCollectionRequest`` to one of three collection paths
-based on its ``source_preference`` field:
+Thin router over the canonical :class:`GapFillPath` protocol defined in
+:mod:`nfm_db.services.paths.base`.  This module must NOT redefine
+:class:`DispatchResult` or ``DISPATCH_PATHS`` -- those live in the canonical
+``paths/base`` module so all handlers, the router, and downstream consumers
+agree on the contract.
 
-- **literature** — schedules a Celery task via *literature_dispatcher*.
-- **dft** — creates a ``DFTCalculation`` row marked ``pending``.
-- **external_db** — queries external data sources for the property.
-- **any** — tries paths in priority order: literature → external_db → dft.
+Routing rules (from ADR-NFM-2577):
 
-The service transitions the ``DataCollectionRequest`` from ``open`` to
-``in_progress`` and records which path was taken in ``metadata_``.
+    literature  → LiteratureFillPath
+    dft         → DFTFillPath
+    external_db → ExternalDBFillPath
+    any         → Cascade: external_db → literature → dft (skip handlers
+                  whose :meth:`GapFillPath.can_handle` returns ``False``;
+                  stop at first :attr:`DispatchResult.data_found` ``True``)
 
-Follows existing service patterns: frozen dataclass for results,
-``AsyncSession`` injection, and lazy imports for Celery to keep unit
-tests broker-free.
+Usage::
+
+    svc = GapDispatchService(session, fill_paths=paths)
+    result = await svc.dispatch(dcr)
+    results = await svc.dispatch_batch(ontology_version_id=ov_id)
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models import DataCollectionRequest, DFTCalculation
-from nfm_db.models.data_collection_request import SOURCE_PREFERENCES
-
-__all__ = [
-    "DispatchResult",
-    "GapDispatchService",
-]
+from nfm_db.models.data_collection_request import DataCollectionRequest
+from nfm_db.services.paths.base import (
+    DISPATCH_PATHS,
+    DISPATCH_STATUSES,
+    DispatchResult,
+    GapFillPath,
+)
 
 logger = logging.getLogger(__name__)
 
-#: Priority order for ``source_preference='any'``.
-_ANY_PRIORITY: tuple[str, ...] = ("literature", "external_db", "dft")
+# Cascade priority order for source_preference='any'.
+CASCADE_ORDER: tuple[str, ...] = ("external_db", "literature", "dft")
 
+# Default batch limit for dispatch_batch().
+DEFAULT_BATCH_LIMIT: int = 10
 
-@dataclass(frozen=True)
-class DispatchResult:
-    """Outcome of a single ``dispatch_request`` invocation.
-
-    Attributes:
-        request_id: The DataCollectionRequest that was dispatched.
-        path_taken: Which collection path was used
-            (literature | dft | external_db).
-        status: ``"dispatched"`` on success, ``"failed"`` otherwise.
-        detail: Human-readable detail (task id, DFT calculation id, etc.).
-        metadata: Additional structured information about the dispatch.
-    """
-
-    request_id: uuid.UUID
-    path_taken: str
-    status: str
-    detail: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+# Literal stored in ``dispatched_path`` when cascade mode was used.
+_CASCADE_PATH_LABEL: str = "cascade"
 
 
 class GapDispatchService:
-    """Dispatches DataCollectionRequests to collection paths.
+    """Routes DataCollectionRequests to the correct fill path.
+
+    Supports single-path routing by ``source_preference`` and cascade mode
+    (``source_preference='any'``) that walks handlers in priority order,
+    skipping any whose :meth:`GapFillPath.can_handle` returns ``False``.
 
     Usage::
 
-        svc = GapDispatchService(session)
-        result = await svc.dispatch_request(request_id)
+        svc = GapDispatchService(session, fill_paths=paths)
+        result = await svc.dispatch(dcr)
+        batch = await svc.dispatch_batch(ontology_version_id=ov_id, limit=10)
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        fill_paths: dict[str, GapFillPath] | None = None,
+    ) -> None:
         self._session = session
+        self._paths: dict[str, GapFillPath] = fill_paths or {}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    async def dispatch_request(
+    async def dispatch(
         self,
-        request_id: uuid.UUID,
+        dcr: DataCollectionRequest,
     ) -> DispatchResult:
-        """Dispatch a DataCollectionRequest to the appropriate collection path.
+        """Route a single DCR by its ``source_preference``.
 
-        Reads ``source_preference`` from the request and routes to the
-        matching path.  Transitions the request status from ``open`` to
-        ``in_progress``.
+        Idempotency: if ``dispatched_at`` is already set on *dcr*, the
+        request is skipped without invoking any fill path.
 
         Args:
-            request_id: The DataCollectionRequest ID to dispatch.
+            dcr: The DataCollectionRequest to dispatch.
 
         Returns:
-            DispatchResult describing what happened.
-
-        Raises:
-            ValueError: If the request does not exist or is not in
-                ``open`` status.
+            DispatchResult with success/failure and path info.
         """
-        req = await self._load_request(request_id)
-
-        preference = req.source_preference
-        if preference not in SOURCE_PREFERENCES:
-            raise ValueError(
-                f"Invalid source_preference {preference!r} on request "
-                f"{request_id}.",
+        # Idempotency: skip already-dispatched requests.
+        if dcr.dispatched_at is not None:
+            logger.info(
+                "Skipping already-dispatched DCR %s (dispatched_path=%s)",
+                dcr.id,
+                dcr.dispatched_path,
+            )
+            return DispatchResult(
+                success=False,
+                path=dcr.dispatched_path or "unknown",
+                reference=dcr.result_reference,
+                error=f"DCR {dcr.id}: already dispatched",
+                data_found=False,
             )
 
-        result: DispatchResult
-        if preference == "any":
-            result = await self._dispatch_any(req)
-        else:
-            result = await self._dispatch_single(req, preference)
+        # Mark dispatch as running.
+        dcr.dispatched_at = datetime.now(UTC)
+        dcr.dispatch_status = "running"
+        dcr.status = "in_progress"
 
-        # Transition open → in_progress and record dispatch metadata.
-        req.status = "in_progress"
-        existing_meta: dict[str, Any] = dict(req.metadata_ or {})
-        existing_meta["dispatch"] = {
-            "path_taken": result.path_taken,
-            "dispatch_status": result.status,
-            "detail": result.detail,
-            "dispatched_at": datetime.now(UTC).isoformat(),
-            **result.metadata,
-        }
-        req.metadata_ = existing_meta
+        if dcr.source_preference == "any":
+            result = await self._dispatch_cascade(dcr)
+        else:
+            result = await self._dispatch_single(dcr)
+
+        # Persist DCR state based on result.
+        dcr.dispatched_path = result.path
+        dcr.dispatch_status = "success" if result.success else "failed"
+        if result.reference:
+            dcr.result_reference = result.reference
 
         await self._session.flush()
+
+        log_fn = logger.info if result.success else logger.warning
+        log_fn(
+            "Dispatched DCR %s → path=%s success=%s data_found=%s",
+            dcr.id,
+            result.path,
+            result.success,
+            result.data_found,
+        )
+
         return result
 
+    async def dispatch_batch(
+        self,
+        ontology_version_id: uuid.UUID,
+        limit: int = DEFAULT_BATCH_LIMIT,
+    ) -> list[DispatchResult]:
+        """Batch dispatch open, undispatched DCRs for an ontology version.
+
+        Selects up to ``limit`` open DCRs whose ``dispatched_at`` is ``NULL``
+        (i.e. they have never been routed to a fill path), ordered by
+        urgency descending, and dispatches each one.
+
+        Args:
+            ontology_version_id: The ontology version to process.
+            limit: Maximum number of DCRs to dispatch (default 10).
+
+        Returns:
+            List of DispatchResult for each dispatched DCR.
+        """
+        stmt = (
+            select(DataCollectionRequest)
+            .where(
+                DataCollectionRequest.ontology_version_id == ontology_version_id,
+                DataCollectionRequest.status == "open",
+                DataCollectionRequest.dispatched_at.is_(None),
+            )
+            .order_by(DataCollectionRequest.urgency.desc())
+            .limit(limit)
+        )
+
+        result = await self._session.execute(stmt)
+        dcrs = list(result.scalars().all())
+
+        if not dcrs:
+            logger.debug(
+                "No open undispatched DCRs for ontology_version=%s",
+                ontology_version_id,
+            )
+            return []
+
+        logger.info(
+            "Batch dispatching %d DCRs for ontology_version=%s (limit=%d)",
+            len(dcrs),
+            ontology_version_id,
+            limit,
+        )
+
+        results: list[DispatchResult] = []
+        for dcr in dcrs:
+            try:
+                results.append(await self.dispatch(dcr))
+            except Exception:
+                logger.exception(
+                    "Error dispatching DCR %s in batch",
+                    dcr.id,
+                )
+                results.append(
+                    DispatchResult(
+                        success=False,
+                        path="error",
+                        reference=None,
+                        error=f"Unexpected error dispatching DCR {dcr.id}",
+                        data_found=False,
+                    )
+                )
+
+        return results
+
     # ------------------------------------------------------------------
-    # Path dispatchers
+    # Private helpers
     # ------------------------------------------------------------------
 
     async def _dispatch_single(
         self,
-        req: DataCollectionRequest,
-        path: str,
+        dcr: DataCollectionRequest,
     ) -> DispatchResult:
-        """Dispatch to a single, explicitly-chosen path."""
-        if path == "literature":
-            return await self._dispatch_literature(req)
-        if path == "dft":
-            return await self._dispatch_dft(req)
-        if path == "external_db":
-            return await self._dispatch_external_db(req)
-        # Should be unreachable due to earlier validation.
-        raise ValueError(f"Unknown dispatch path: {path!r}")
+        """Dispatch a DCR to a single fill path by ``source_preference``.
 
-    async def _dispatch_any(self, req: DataCollectionRequest) -> DispatchResult:
-        """Try paths in priority order: literature → external_db → dft.
-
-        The first path that succeeds (does not raise) is used.  If a path
-        is attempted but fails, the error is logged and the next path is
-        tried.  If all paths fail, a failed DispatchResult is returned.
+        The service trusts the handler's own ``can_handle``/``execute`` to
+        reject inappropriate requests -- per the architectural contract
+        (ADR-NFM-2577) the handler, not the router, owns that decision.
         """
-        errors: list[dict[str, str]] = []
-        for path in _ANY_PRIORITY:
-            try:
-                result = await self._dispatch_single(req, path)
-            except Exception as exc:  # intentional fallthrough to next path
-                logger.warning(
-                    "Dispatch path %r failed for request %s: %s",
-                    path,
-                    req.id,
-                    exc,
+        pref = dcr.source_preference
+        path = self._paths.get(pref)
+
+        if path is None:
+            return DispatchResult(
+                success=False,
+                path=pref,
+                reference=None,
+                error=f"No fill path registered for source_preference='{pref}'",
+                data_found=False,
+            )
+
+        return await path.execute(dcr)
+
+    async def _dispatch_cascade(
+        self,
+        dcr: DataCollectionRequest,
+    ) -> DispatchResult:
+        """Cascade: try external_db → literature → dft in priority order.
+
+        - Skip a handler whose :meth:`can_handle` returns ``False`` (do not
+          call ``execute()`` on it).
+        - Stop at the first handler whose ``execute()`` returns
+          ``data_found=True``.
+        - When no handler finds data, return ``path='cascade'`` so the DCR
+          row records that cascade mode was attempted.
+        """
+        last_result: DispatchResult | None = None
+        any_executed = False
+
+        for path_name in CASCADE_ORDER:
+            path = self._paths.get(path_name)
+            if path is None:
+                logger.debug(
+                    "Cascade: fill path '%s' not registered, skipping",
+                    path_name,
                 )
-                errors.append({"path": path, "error": str(exc)[:500]})
                 continue
 
-            if result.status == "dispatched":
+            if not await path.can_handle(dcr):
+                logger.debug(
+                    "Cascade: path '%s' cannot handle DCR %s, skipping",
+                    path_name,
+                    dcr.id,
+                )
+                continue
+
+            try:
+                result = await path.execute(dcr)
+            except Exception:
+                logger.exception(
+                    "Cascade: path '%s' raised exception for DCR %s",
+                    path_name,
+                    dcr.id,
+                )
+                last_result = DispatchResult(
+                    success=False,
+                    path=path_name,
+                    reference=None,
+                    error=f"Exception in path '{path_name}'",
+                    data_found=False,
+                )
+                continue
+
+            any_executed = True
+            last_result = result
+
+            if result.data_found:
                 return result
 
-            # Path returned a non-failed result but status indicates issue;
-            # record and continue.
-            errors.append(
-                {"path": path, "error": result.detail or "no detail"},
+            logger.debug(
+                "Cascade: path '%s' found no data for DCR %s, trying next",
+                path_name,
+                dcr.id,
             )
 
+        if not any_executed and last_result is None:
+            # No registered path accepted the request at all.
+            return DispatchResult(
+                success=False,
+                path=_CASCADE_PATH_LABEL,
+                reference=None,
+                error="No cascade path accepted the request",
+                data_found=False,
+            )
+
+        # Either every executed path returned no data, or some path
+        # raised.  Record cascade mode on the DCR row.
         return DispatchResult(
-            request_id=req.id,
-            path_taken="any",
-            status="failed",
-            detail="All dispatch paths failed",
-            metadata={"attempts": errors},
-        )
-
-    # ------------------------------------------------------------------
-    # Individual path implementations
-    # ------------------------------------------------------------------
-
-    async def _dispatch_literature(
-        self,
-        req: DataCollectionRequest,
-    ) -> DispatchResult:
-        """Schedule a Celery literature-processing task for the request.
-
-        We create (or reuse) a placeholder DataSource is not necessary
-        here — the literature dispatcher expects a *datasource_id*.
-        Since a DataCollectionRequest is not itself a DataSource, we
-        pass the request id through as the payload and let the worker
-        decide how to handle it.  A dedicated gap-collection task name
-        is used so the worker can route it appropriately.
-        """
-        # Lazy import so unit tests don't need the Celery broker.
-        from celery.exceptions import CeleryError
-
-        from nfm_db.services.celery_app import celery_app
-
-        task_name = (
-            "nfm_db.services.gap_dispatch_service.process_gap_literature_task"
-        )
-        queue = "literature_processing"
-
-        logger.info(
-            "Dispatching request %s to literature path (task=%s)",
-            req.id,
-            task_name,
-        )
-        try:
-            async_result = celery_app.send_task(
-                task_name,
-                kwargs={
-                    "request_id": str(req.id),
-                    "entity_type": req.entity_type,
-                    "property": req.property,
-                    "material_system": req.material_system,
-                },
-                queue=queue,
-            )
-        except CeleryError:
-            logger.exception(
-                "Celery broker error dispatching literature task for "
-                "request %s",
-                req.id,
-            )
-            raise
-        except Exception:
-            logger.exception(
-                "Unexpected error dispatching literature task for request %s",
-                req.id,
-            )
-            raise
-
-        task_id = getattr(async_result, "id", None) or str(async_result)
-        logger.info(
-            "Scheduled literature task_id=%s for request %s",
-            task_id,
-            req.id,
-        )
-        return DispatchResult(
-            request_id=req.id,
-            path_taken="literature",
-            status="dispatched",
-            detail=f"Celery task {task_id} scheduled",
-            metadata={
-                "task_id": task_id,
-                "task_name": task_name,
-                "queue": queue,
-            },
-        )
-
-    async def _dispatch_dft(
-        self,
-        req: DataCollectionRequest,
-    ) -> DispatchResult:
-        """Create a DFTCalculation record marked as ``pending``.
-
-        The calculation is linked to the DataCollectionRequest via the
-        ``computation_metadata`` JSON bag (no direct FK exists).  Sensible
-        defaults are used for required fields (functional, cutoff_energy)
-        so that the domain expert can refine them later.
-        """
-        calc = DFTCalculation(
-            calculation_id=f"gap-{req.id}",
-            functional="PBE",  # sensible default; editable later
-            cutoff_energy=520.0,  # eV; typical for actinide systems
-            status="pending",
-            source="gap_dispatch",
-            computation_metadata={
-                "data_collection_request_id": str(req.id),
-                "entity_type": req.entity_type,
-                "property": req.property,
-                "material_system": req.material_system,
-                "urgency": req.urgency,
-            },
-            notes=(
-                f"Auto-created by GapDispatchService for "
-                f"{req.entity_type}.{req.property} ({req.material_system})"
+            success=last_result.success if last_result else False,
+            path=_CASCADE_PATH_LABEL,
+            reference=last_result.reference if last_result else None,
+            error=(
+                last_result.error
+                if last_result
+                else "All cascade paths exhausted"
             ),
-        )
-        self._session.add(calc)
-        await self._session.flush()
-
-        logger.info(
-            "Created DFTCalculation %s (pending) for request %s",
-            calc.id,
-            req.id,
-        )
-        return DispatchResult(
-            request_id=req.id,
-            path_taken="dft",
-            status="dispatched",
-            detail=f"DFTCalculation {calc.id} created as pending",
-            metadata={"dft_calculation_id": str(calc.id)},
+            data_found=False,
         )
 
-    async def _dispatch_external_db(
-        self,
-        req: DataCollectionRequest,
-    ) -> DispatchResult:
-        """Query external data sources for the requested property.
 
-        Iterates over all configured external sources (NIST IPR, OpenKIM,
-        Materials Project) and collects results.  The raw results are
-        stored in the request ``metadata_`` bag for later processing.
-        """
-        from nfm_db.services.external_data_sources import (
-            ExternalDataSourceClient,
-        )
-
-        logger.info(
-            "Dispatching request %s to external_db path",
-            req.id,
-        )
-
-        formula = req.material_system
-        property_name = req.property
-
-        results: dict[str, Any] = {}
-        client = ExternalDataSourceClient()
-        try:
-            # Query all sources; collect whatever comes back.
-            nist_result = await client.query_nist_ipr(
-                formula=formula,
-                property_name=property_name,
-            )
-            if nist_result is not None:
-                results["nist_ipr"] = nist_result
-
-            openkim_result = await client.query_openkim(
-                species=formula,
-                property_name=property_name,
-            )
-            if openkim_result is not None:
-                results["openkim"] = openkim_result
-
-            mp_result = await client.query_materials_project(
-                formula=formula,
-                property_name=property_name,
-            )
-            if mp_result is not None:
-                results["materials_project"] = mp_result
-        finally:
-            await client.close()
-
-        source_count = len(results)
-        detail = (
-            f"Queried 3 external sources, {source_count} returned data"
-        )
-
-        logger.info(
-            "External DB dispatch for request %s: %d/%d sources returned data",
-            req.id,
-            source_count,
-            3,
-        )
-        return DispatchResult(
-            request_id=req.id,
-            path_taken="external_db",
-            status="dispatched",
-            detail=detail,
-            metadata={"external_results": results},
-        )
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    async def _load_request(
-        self,
-        request_id: uuid.UUID,
-    ) -> DataCollectionRequest:
-        """Load and validate a DataCollectionRequest.
-
-        Args:
-            request_id: The request ID to load.
-
-        Returns:
-            The DataCollectionRequest ORM object.
-
-        Raises:
-            ValueError: If the request is not found or not in ``open``
-                status.
-        """
-        result = await self._session.execute(
-            select(DataCollectionRequest).where(
-                DataCollectionRequest.id == request_id,
-            ),
-        )
-        req = result.scalar_one_or_none()
-        if req is None:
-            raise ValueError(
-                f"DataCollectionRequest not found: {request_id}",
-            )
-        if req.status != "open":
-            raise ValueError(
-                f"DataCollectionRequest {request_id} is in status "
-                f"{req.status!r}, expected 'open'.",
-            )
-        return req
-
-
-# ---------------------------------------------------------------------------
-# Celery task for gap-driven literature processing
-# ---------------------------------------------------------------------------
-#
-# This task is a thin wrapper around the existing literature processing
-# pipeline.  When a gap dispatch chooses the *literature* path, the task
-# is sent to the ``literature_processing`` queue.  The worker then
-# triggers a literature search/extraction for the specific property gap.
-#
-# The task body is lazy-imported so that the dispatcher module imports
-# cleanly even in test environments without the full service layer.
-
-from nfm_db.services.celery_app import celery_app  # noqa: E402
-
-
-@celery_app.task(  # type: ignore[untyped-decorator]
-    bind=True,
-    name="nfm_db.services.gap_dispatch_service.process_gap_literature_task",
-    max_retries=2,
-    default_retry_delay=30,
-    autoretry_for=(ConnectionError, IOError, TimeoutError),
-    retry_backoff=True,
-    retry_backoff_max=300,
-    retry_jitter=True,
-    acks_late=True,
-)
-def process_gap_literature_task(
-    self: Any,
-    request_id: str,
-    entity_type: str,
-    property: str,
-    material_system: str,
-) -> dict[str, Any]:
-    """Celery task: process a literature gap-collection request.
-
-    This task is sent by :meth:`GapDispatchService._dispatch_literature`.
-    It performs a literature search for the specified property gap and
-    is expected to populate the knowledge base accordingly.
-
-    The actual search/extraction logic is delegated to the literature
-    service layer (imported lazily).
-    """
-    logger.info(
-        "process_gap_literature_task started request_id=%s "
-        "entity=%s property=%s material=%s task_id=%s",
-        request_id,
-        entity_type,
-        property,
-        material_system,
-        self.request.id,
-    )
-    # The full literature-gap search pipeline will be implemented in a
-    # follow-up ticket.  For now we log and return a placeholder so the
-    # task is well-formed and the worker can acknowledge it.
-    return {
-        "request_id": request_id,
-        "status": "queued",
-        "message": (
-            "Literature gap processing queued; search pipeline pending "
-            "implementation."
-        ),
-    }
+__all__ = [
+    "CASCADE_ORDER",
+    "DEFAULT_BATCH_LIMIT",
+    "DISPATCH_PATHS",
+    "DISPATCH_STATUSES",
+    "DispatchResult",
+    "GapDispatchService",
+    "GapFillPath",
+]
