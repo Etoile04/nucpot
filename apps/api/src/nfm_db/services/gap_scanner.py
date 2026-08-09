@@ -440,7 +440,7 @@ async def compute_literature_recall(
     ov = await _load_ontology_or_value_error(session, ontology_version_id)
 
     chunks_by_doi = await _collect_chunks_for_dois(session, [ds.doi])
-    chunk_ids: list[uuid.UUID] = chunks_by_doi.get(ds.doi, [])
+    chunk_ids: list[uuid.UUID] = chunks_by_doi.get(ds.doi or "", [])
 
     entity_types = extract_entity_types(ov)
     expected_slots = _count_expected_properties(entity_types)

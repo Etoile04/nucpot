@@ -481,7 +481,7 @@ async def get_recall_metrics(
             detail=str(exc),
         ) from exc
 
-    body = ApiResponse(
+    body: ApiResponse[RecallMetricsResponse] = ApiResponse(
         success=True,
         data=RecallMetricsResponse(
             ontology_version_id=str(metrics.ontology_version_id),
