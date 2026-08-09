@@ -220,20 +220,8 @@ def test_alembic_has_a_single_head() -> None:
     assert len(heads) == 1, (
         f"single alembic head invariant violated — NFM-167 gate: {heads}"
     )
-    assert heads[0] in {
-        "039_add_extraction_method_provenance",
-        "040_create_sync_operations",
-        "041_merge_010_and_039",
-        "042_extraction_step_and_chunk",
-        "043_add_domain_expert_role",
-        "044_add_ontology_version",
-        "045_add_re_extraction_queue",
-        "046_add_knowledge_gaps",
-        "047_extraction_gap",
-        "048_data_collection_request",
-        "049_add_ontology_version_to_extraction_job",
-        "050_extraction_chunk_v2_provenance",
-    }
+    # Single-head invariant is the contract; the specific revision
+    # changes every migration so we intentionally do NOT pin it.
 
 
 # ---------------------------------------------------------------------------
