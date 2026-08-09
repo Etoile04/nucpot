@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
-from nfm_db.models import DFTCalculation, DataCollectionRequest, OntologyVersion
+from nfm_db.models import DataCollectionRequest, DFTCalculation, OntologyVersion
 
 BASE = "/api/v1/data-collection"
 

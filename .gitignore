@@ -12,6 +12,9 @@ __pycache__/
 .ruff_cache/
 htmlcov/
 .coverage
+coverage.json
+coverage.xml
+coverage.xml
 .env
 .env.local
 .env.*.local
