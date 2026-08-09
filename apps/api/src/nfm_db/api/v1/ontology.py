@@ -19,15 +19,16 @@ from datetime import UTC
 from email.utils import format_datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import require_editor
+from nfm_db.api.v1.auth import require_admin_or_domain_expert, require_editor
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.user import User
-from nfm_db.schemas.common import PaginationParams
+from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.ontology import OntologyGraphResponse
 from nfm_db.schemas.ontology_query import (
     NodeNeighborsResponse,
@@ -38,6 +39,7 @@ from nfm_db.schemas.ontology_query import (
     ShortestPathResponse,
     SyncResponse,
 )
+from nfm_db.services.gap_scanner import compute_ontology_coverage
 from nfm_db.services.ontology_service import (
     HARD_MAX_NODES,
     CorpusNotFoundError,
@@ -397,4 +399,76 @@ async def sync_corpus_graph(
         nodes_synced=sync_stats.nodes_synced,
         edges_synced=sync_stats.edges_synced,
         duration_ms=sync_stats.duration_ms,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/ontology/{version}/coverage (NFM-2697-T4 / ADR §3)
+# ---------------------------------------------------------------------------
+
+
+class OntologyCoverageResponse(BaseModel):
+    """Per-ontology coverage metrics (NFM-2697-T4 ADR §3)."""
+
+    coverage_rate: float = Field(
+        ...,
+        description="Fraction of literature rows that are fully covered (0.0-1.0).",
+    )
+    literature_total: int = Field(
+        ...,
+        description="Distinct literature rows with at least one job processed.",
+    )
+    literature_fully_covered: int = Field(
+        ...,
+        description="Subset of literature_total with zero open/filling gaps.",
+    )
+    gap_distribution: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Counts of open/filling gaps aggregated as "
+            "{f'{entity_type}.{property}': int} across all literature."
+        ),
+    )
+
+
+@router.get(
+    "/ontology/{version_id}/coverage",
+    response_model=ApiResponse[OntologyCoverageResponse],
+    summary="Per-ontology coverage metrics",
+    description=(
+        "计算指定本体版本的覆盖率指标（按文献维度聚合）。\n\n"
+        "Compute per-ontology coverage metrics with a per-literature "
+        "breakdown: coverage_rate, literature_total, "
+        "literature_fully_covered, and gap_distribution."
+    ),
+)
+async def get_ontology_coverage(
+    version_id: uuid.UUID = Path(
+        ...,
+        description="Ontology version id to measure coverage for.",
+    ),
+    session: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(require_admin_or_domain_expert)] = ...,  # type: ignore[assignment]
+) -> ApiResponse[OntologyCoverageResponse]:
+    """Return per-ontology coverage with literature breakdown.
+
+    Errors:
+    - 404: ontology version not found (translated from ValueError).
+    """
+    try:
+        result = await compute_ontology_coverage(session, version_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return ApiResponse(
+        success=True,
+        data=OntologyCoverageResponse(
+            coverage_rate=result.coverage_rate,
+            literature_total=result.literature_total,
+            literature_fully_covered=result.literature_fully_covered,
+            gap_distribution=dict(result.gap_distribution),
+        ),
     )

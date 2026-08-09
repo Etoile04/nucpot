@@ -24,12 +24,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ontology_version import OntologyVersion
+
+if TYPE_CHECKING:
+    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.services.extraction_prompt import (
     build_extraction_system_prompt,
     build_ontology_extraction_prompt,
@@ -241,6 +244,111 @@ def _update_job(job: ExtractionJob, **kwargs: Any) -> None:
     for key, value in kwargs.items():
         if hasattr(job, key):
             setattr(job, key, value)
+
+
+# ---------------------------------------------------------------------------
+# Serialization boundary (NFM-2743, D3)
+# ---------------------------------------------------------------------------
+
+
+def _extraction_job_to_dict(
+    job: ExtractionJob | OrmExtractionJob,
+) -> dict[str, Any]:
+    """Normalize either job representation to the canonical dict shape.
+
+    The dataclass :class:`ExtractionJob` (in-memory orchestration/request
+    state) and the ORM :class:`ExtractionJob` (in
+    ``models/extraction_job.py`` — ingestion/results state) model
+    different lifecycle stages and have a 10-field gap. The dict — not
+    either class — is the stable public interface for callers. This
+    helper is the single point both paths converge on so call-sites
+    (e.g. ``trigger_extraction_pipeline``) never need their own
+    branch on ``is_extraction_v2_enabled``.
+
+    Binding contract (NFM-2743 AC):
+
+    - ``job_id`` is the canonical key. Dataclass reads ``job.job_id``
+      (already ``str``); ORM reads ``job.id`` (``uuid.UUID``) and
+      ``str()``-coerces it. The output is ALWAYS ``str``, never
+      ``uuid.UUID`` — this is the exact confusion that produced PR
+      #726's CI failures.
+    - ``status`` is the ``str`` value. Dataclass carries the
+      :class:`JobStatus` enum (``StrEnum``) and we read ``.value``;
+      ORM carries the raw string column value.
+    - ``created_at`` / ``started_at`` / ``completed_at`` are
+      ISO-8601 strings or ``None`` — never raw ``datetime``.
+    - The 10 dataclass-only fields (``fill_batch_id``,
+      ``extracted_count``, ``staged_count``, ``rejected_count``,
+      ``element_systems``, ``cache_level``, ``max_confidence``,
+      ``conflict_strategy``, ``figures``, ``tables``) are emitted with
+      their documented defaults on the ORM path so the key set is
+      IDENTICAL regardless of input type.
+
+    See ``docs/architecture/ADR-NFM-2739-extraction-job-dual-class.md``
+    for the full field diff and the deferred migration to a single
+    ORM row (NFM-2739).
+    """
+    # --- Identity: job_id is always str (NFM-2743 contract point 1) ---
+    # The dataclass has ``job_id`` (str); the ORM has ``id`` (UUID).
+    # They are disjoint — no current shape has both.
+    if hasattr(job, "job_id"):
+        job_id = str(job.job_id)
+    else:
+        job_id = str(job.id)
+
+    # --- Status: str value (contract point 2) ---
+    # Ducktyped via ``.value``: JobStatus (StrEnum) has ``.value``;
+    # plain str (ORM column value) does not. ``str(job.status).value``
+    # would fall through correctly too, but the ``.value`` test is
+    # what the contract asks for and matches the dispatch's existing
+    # ``job.status.value`` access pattern.
+    if hasattr(job.status, "value"):
+        status = job.status.value
+    else:
+        # ORM path — ``status`` is already a str column value.
+        status = str(job.status)
+
+    # --- Datetimes: ISO-8601 strings or None (contract point 3) ---
+    def _iso(dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt is not None else None
+
+    # --- The 10 dataclass-only fields with documented ORM defaults ---
+    # (contract point 4 — emitted on BOTH paths so the key set is
+    # identical regardless of input type)
+    return {
+        # Identity
+        "job_id": job_id,
+        # Provenance (12 common fields + created_at = 13)
+        "source_reference": job.source_reference,
+        "source_type": job.source_type,
+        # Status + error
+        "status": status,
+        "error_message": job.error_message,
+        # Timestamps
+        "created_at": _iso(job.created_at),
+        "started_at": _iso(job.started_at),
+        "completed_at": _iso(job.completed_at),
+        # Request-side counts (ORM defaults to 0)
+        "fill_batch_id": getattr(job, "fill_batch_id", None),
+        "extracted_count": getattr(job, "extracted_count", 0),
+        "staged_count": getattr(job, "staged_count", 0),
+        "rejected_count": getattr(job, "rejected_count", 0),
+        # Request-side parameters (ORM defaults to None / "prefer_vlm" / [])
+        "element_systems": getattr(job, "element_systems", None),
+        "cache_level": getattr(job, "cache_level", None),
+        "max_confidence": getattr(job, "max_confidence", None),
+        "conflict_strategy": getattr(job, "conflict_strategy", "prefer_vlm"),
+        "figures": getattr(job, "figures", []),
+        "tables": getattr(job, "tables", []),
+        # Multimodal extraction flags
+        "extract_figures": job.extract_figures,
+        "extract_tables": job.extract_tables,
+        "confidence_threshold": job.confidence_threshold,
+        "figure_types": job.figure_types,
+        # Ontology provenance
+        "ontology_version_id": job.ontology_version_id,
+        "ontology_version_str": job.ontology_version_str,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -208,6 +208,337 @@ class TestExtractionJob:
 
 
 # ---------------------------------------------------------------------------
+# _extraction_job_to_dict serialization boundary (NFM-2743, D3)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractionJobToDict:
+    """NFM-2743 / D3 — single serialization boundary.
+
+    The dataclass :class:`ExtractionJob` (in-memory orchestration/request
+    state) and the ORM :class:`ExtractionJob` (in
+    ``models/extraction_job.py`` — ingestion/results state) model
+    different lifecycle stages and have a 10-field gap. The dict — not
+    either class — is the stable public interface for callers. These
+    tests lock the contract so the dispatch wrapper and any future
+    V2 path can rely on the same shape.
+
+    See ``docs/architecture/ADR-NFM-2739-extraction-job-dual-class.md``
+    for the field diff and the deferred migration to a single ORM row.
+    """
+
+    def test_dataclass_and_orm_return_identical_key_set(self) -> None:
+        """The returned dict key set MUST be identical regardless of input.
+
+        Regression guard for the whole D3 seam — call-sites that switch
+        on key presence will silently break if either path adds or
+        drops a key.
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="dc-1",
+            source_reference="src.md",
+            source_type="file",
+        )
+        orm_job = ORMExtractionJob(
+            source_reference="src.md",
+            source_type="file",
+        )
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000001")
+
+        dc_dict = _extraction_job_to_dict(dc_job)
+        orm_dict = _extraction_job_to_dict(orm_job)
+
+        assert set(dc_dict.keys()) == set(orm_dict.keys()), (
+            f"Key-set mismatch: dataclass-only={set(dc_dict) - set(orm_dict)} "
+            f"orm-only={set(orm_dict) - set(dc_dict)}"
+        )
+
+    def test_job_id_is_str_for_dataclass(self) -> None:
+        """Dataclass ``job_id`` is already a ``str`` — must round-trip as-is."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="plain-str-id", source_reference="s", source_type="file",
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["job_id"] == "plain-str-id"
+        assert isinstance(d["job_id"], str)
+
+    def test_job_id_is_str_for_orm_uuid(self) -> None:
+        """ORM ``id`` is a ``uuid.UUID`` — must be coerced to ``str``.
+
+        This is the exact confusion that produced PR #726's CI failures
+        (NFM-2743 motivation). The helper is the single resolution point.
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000099")
+
+        d = _extraction_job_to_dict(orm_job)
+
+        assert d["job_id"] == "00000000-0000-0000-0000-000000000099"
+        assert isinstance(d["job_id"], str)
+        assert not isinstance(d["job_id"], UUID)  # explicit: NEVER raw UUID
+
+    @pytest.mark.asyncio
+    async def test_orm_gap_field_defaults(self, db_session: Any) -> None:
+        """The 10 dataclass-only fields must emit documented defaults on ORM path.
+
+        Per the binding contract in NFM-2743:
+
+            fill_batch_id=None
+            extracted_count=0
+            staged_count=0
+            rejected_count=0
+            element_systems=None
+            cache_level=None
+            max_confidence=None
+            conflict_strategy="prefer_vlm"
+            figures=[]
+            tables=[]
+
+        Two layers of defaults are exercised here:
+
+        1. **Python-side defaults** — ``ExtractionJob.__init__`` (NFM-2745,
+           see ``models/extraction_job.py``) explicitly applies
+           ``setdefault(...)`` for the 6 non-nullable columns so
+           transient ORM instances carry the contract defaults *before*
+           INSERT.  Without that override, ``getattr(orm_job, name)``
+           would return ``None`` for unset mapped attributes (SQLAlchemy
+           2.0's default ``__init__`` only fires ``Column.default`` at
+           INSERT-flush time).
+        2. **Server-side defaults** — ``flush()`` + ``refresh()`` round-
+           trips the row through the SQLite schema so the test catches
+           drift between the ORM ``server_default=...`` arguments and
+           the migration's DDL ``DEFAULT`` clauses.  If a future migration
+           forgets a ``server_default`` on a ``NOT NULL`` column, the
+           INSERT raises and this test fails loudly instead of silently
+           leaving the contract's defaults undefined at the DB level.
+
+        This is the same observation that produced NFM-2746
+        (Phase B / transient-ORM default semantics).
+        """
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        db_session.add(orm_job)
+        await db_session.flush()
+        # Reset the instance state so post-flush values are loaded from
+        # the SQLite schema (rather than reading from the pre-flush
+        # Python-side attributes).
+        await db_session.refresh(orm_job)
+        d = _extraction_job_to_dict(orm_job)
+
+        assert d["fill_batch_id"] is None
+        assert d["extracted_count"] == 0
+        assert d["staged_count"] == 0
+        assert d["rejected_count"] == 0
+        assert d["element_systems"] is None
+        assert d["cache_level"] is None
+        assert d["max_confidence"] is None
+        assert d["conflict_strategy"] == "prefer_vlm"
+        assert d["figures"] == []
+        assert d["tables"] == []
+
+    def test_orm_fill_batch_id_is_str_not_uuid(self) -> None:
+        """NFM-2745 AC-3 — ORM ``fill_batch_id`` column type must be ``String``.
+
+        The dataclass field is ``str | None`` and ``api/v4/extraction.py``
+        parses it via ``uuid.UUID(job.fill_batch_id)`` (a string). If the
+        ORM column were typed as ``Uuid``/``UUID``, ``getattr(job,
+        "fill_batch_id")`` would return a ``uuid.UUID`` and leak a
+        non-JSON-serializable object into the canonical dict — the exact
+        bug class that produced PR #726's CI failures on ``job.id``.
+
+        This test inspects the *mapped* column type (not just instance
+        attribute setting) so it fails if the column is wired with the
+        wrong type.
+        """
+        from sqlalchemy import String as SAString
+        from sqlalchemy.dialects import postgresql
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+        col = ORMExtractionJob.__table__.columns["fill_batch_id"]
+
+        # Must be a String family column (String, String(64), VARCHAR, etc.).
+        assert isinstance(col.type, SAString), (
+            f"fill_batch_id must be String, got {type(col.type).__name__}: "
+            f"{col.type!r}"
+        )
+        # Explicit: NEVER a Postgres UUID type — that would coerce values to
+        # uuid.UUID and break JSON serialization.
+        assert not isinstance(col.type, postgresql.UUID), (
+            f"fill_batch_id must NOT be Postgres UUID, got {col.type!r}"
+        )
+        # The dataclass contract binds ``fill_batch_id`` to ``str | None``.
+        # The mapper must allow string values to round-trip as str.
+        assert "fill_batch_id" in ORMExtractionJob.__table__.columns
+
+    @pytest.mark.asyncio
+    async def test_orm_columns_round_trip_non_default_values(
+        self, db_session: Any
+    ) -> None:
+        """NFM-2745 AC-5 — all 10 new ORM columns must be wired through the DB.
+
+        A test that only sets instance attributes and reads them back
+        (``test_orm_gap_field_defaults``) does NOT prove the columns are
+        mapped — ``getattr(job, "fill_batch_id", None)`` returns ``None``
+        via the fallback, and arbitrary instance attribute assignment is
+        permitted by SQLAlchemy whether or not the column exists.
+
+        This test:
+
+        1. Builds an ORM job with all 10 new fields set to NON-default
+           values.
+        2. Persists it through ``db_session`` (the SQLite test fixture
+           creates the schema from ``Base.metadata`` — if any column is
+           missing from the mapper, the INSERT raises).
+        3. Reads the row back through a fresh ``select(...)`` and passes
+           it through ``_extraction_job_to_dict`` to confirm the helper
+           sees the **real** values, not getattr fallback defaults.
+        """
+        from sqlalchemy import select
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(
+            source_reference="s",
+            source_type="file",
+            fill_batch_id="fb-round-trip-987",
+            extracted_count=42,
+            staged_count=17,
+            rejected_count=3,
+            element_systems=["Fe-Cr", "Ni-based"],
+            cache_level="L2",
+            max_confidence="0.87",
+            conflict_strategy="prefer_db",
+            figures=[{"id": "fig-1", "caption": "Phase diagram"}],
+            tables=[{"id": "tbl-1", "caption": "Composition"}],
+        )
+        db_session.add(orm_job)
+        await db_session.flush()
+        # Reset the in-memory state so the post-flush attributes are
+        # loaded from the SQLite schema (rather than the pre-flush values
+        # sitting on the instance).
+        await db_session.refresh(orm_job)
+
+        row_id = orm_job.id
+
+        # Build a fresh instance from the persisted row (forces a real
+        # SQL read rather than relying on the still-mapped instance).
+        persisted = (
+            await db_session.execute(
+                select(ORMExtractionJob).where(ORMExtractionJob.id == row_id)
+            )
+        ).scalar_one()
+
+        d = _extraction_job_to_dict(persisted)
+
+        # Real values must round-trip — NOT getattr fallback defaults.
+        assert d["fill_batch_id"] == "fb-round-trip-987"
+        assert d["extracted_count"] == 42
+        assert d["staged_count"] == 17
+        assert d["rejected_count"] == 3
+        assert d["element_systems"] == ["Fe-Cr", "Ni-based"]
+        assert d["cache_level"] == "L2"
+        assert d["max_confidence"] == "0.87"
+        assert d["conflict_strategy"] == "prefer_db"
+        assert d["figures"] == [{"id": "fig-1", "caption": "Phase diagram"}]
+        assert d["tables"] == [{"id": "tbl-1", "caption": "Composition"}]
+
+        # Sanity: dataclass key-set identity guard (NFM-2745 AC-4).
+        dc_job = ExtractionJob(
+            job_id="dc-1",
+            source_reference="s",
+            source_type="file",
+            fill_batch_id="fb-round-trip-987",
+            extracted_count=42,
+            staged_count=17,
+            rejected_count=3,
+            element_systems=["Fe-Cr", "Ni-based"],
+            cache_level="L2",
+            max_confidence="0.87",
+            conflict_strategy="prefer_db",
+            figures=[{"id": "fig-1", "caption": "Phase diagram"}],
+            tables=[{"id": "tbl-1", "caption": "Composition"}],
+        )
+        dc_dict = _extraction_job_to_dict(dc_job)
+        assert set(dc_dict.keys()) == set(d.keys())
+        assert len(dc_dict) == 24
+        assert len(d) == 24
+        assert dc_dict["fill_batch_id"] == d["fill_batch_id"]
+        assert dc_dict["extracted_count"] == d["extracted_count"]
+        assert dc_dict["conflict_strategy"] == d["conflict_strategy"]
+        assert dc_dict["figures"] == d["figures"]
+
+    def test_status_is_str_value_for_dataclass_enum(self) -> None:
+        """``status`` must be the ``str`` value, not the ``JobStatus`` enum member."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="j1",
+            source_reference="s",
+            source_type="file",
+            status=JobStatus.RUNNING,
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["status"] == "running"
+        assert isinstance(d["status"], str)
+
+    def test_datetimes_are_iso8601_strings(self) -> None:
+        """``created_at``, ``started_at``, ``completed_at`` MUST be ISO-8601 strings."""
+        from datetime import UTC, datetime
+
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        now = datetime.now(UTC)
+        dc_job = ExtractionJob(
+            job_id="j1",
+            source_reference="s",
+            source_type="file",
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        for key in ("created_at", "started_at", "completed_at"):
+            assert isinstance(d[key], str), f"{key}={d[key]!r} should be str"
+            assert datetime.fromisoformat(d[key]) == now, (
+                f"{key} did not round-trip via fromisoformat"
+            )
+
+    def test_none_datetimes_remain_none(self) -> None:
+        """``None`` datetimes stay ``None`` (do NOT become ``'None'`` strings)."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(job_id="j1", source_reference="s", source_type="file")
+        # Reset the auto-set fields so the helper must handle None cleanly.
+        dc_job.started_at = None
+        dc_job.completed_at = None
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["started_at"] is None
+        assert d["completed_at"] is None
+        # created_at is auto-set by default_factory and MUST still emit a str.
+        assert isinstance(d["created_at"], str)
+
+
+# ---------------------------------------------------------------------------
 # _update_job tests
 # ---------------------------------------------------------------------------
 
