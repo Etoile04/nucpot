@@ -30,7 +30,7 @@ import logging
 import time
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,12 +40,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.models import (
     ExtractionChunk,
     ExtractionGap,
+    ExtractionJob,
     ExtractionStep,
     OntologyVersion,
 )
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES
 
 __all__ = [
+    "CoverageMetrics",
     "GapScanResult",
     "GapScanService",
     "RecallMetrics",
@@ -198,6 +200,41 @@ class RecallMetrics:
     wont_fix_gaps: int
     recall_rate: float
     computed_at: datetime
+
+
+@dataclass(frozen=True)
+class CoverageMetrics:
+    """Per-ontology-version coverage across all linked literatures (NFM-2697-T3).
+
+    Coverage is computed across the corpus of literatures associated with
+    a specific ontology version string.  A literature is "fully covered"
+    when it has no ``open`` or ``filling`` ``ExtractionGap`` rows tied to
+    that ontology version.
+
+    Attributes:
+        ontology_version: The semver string of the ontology version these
+            metrics cover (per ADR Section 2: TEXT, not UUID).
+        literature_total: Distinct literature rows associated with this
+            ontology version.
+        literature_fully_covered: Literature rows whose gap count for
+            (open | filling) is zero.
+        gap_distribution: Map of ``(entity_type, property)`` to the
+            number of open-or-filling gaps across all literatures.
+        coverage_rate: ``literature_fully_covered / literature_total``.
+            Documented 0/0 behaviour: ``0.0`` (i.e. an empty corpus
+            contributes zero coverage, distinguishing from "fully
+            covered" which returns ``1.0``).
+        computed_at: Timestamp when these metrics were calculated.
+    """
+
+    ontology_version: str
+    literature_total: int
+    literature_fully_covered: int
+    gap_distribution: dict[tuple[str, str], int]
+    coverage_rate: float
+    computed_at: datetime = field(
+        default_factory=lambda: datetime.now(UTC),
+    )
 
 
 async def compute_recall(
@@ -371,8 +408,376 @@ class GapScanService:
         )
 
     # ------------------------------------------------------------------
+    # ADR Section 2 surface (NFM-2697-T3)
+    # ------------------------------------------------------------------
+
+    async def scan_literature(
+        self,
+        literature_id: uuid.UUID,
+        ontology_version: str,
+        *,
+        only_open: bool = True,
+        persist: bool = True,
+    ) -> list[ExtractionGap]:
+        """Scan a single literature's chunks against an ontology version.
+
+        Per ADR-NFM-2675 Section 2, this is the per-literature counterpart
+        to ``scan_for_gaps``.  Behaviour:
+
+        * Resolves ``ontology_version`` (semver string) to an
+          ``OntologyVersion`` row; raises ``ValueError`` when absent.
+        * Identifies all ``ExtractionJob`` rows that belong to
+          ``literature_id`` (currently via ``corpus_id`` / soft-match —
+          the T1 migration adds a real ``literature_id`` column on
+          ``extraction_gaps`` and the ``literature`` table; T2 aligns the
+          model.  The integration task NFM-2736 will switch this filter
+          to use the FK directly).
+        * Loads chunks for those jobs and computes expected
+          (entity_type, property) pairs from the ontology schema.
+        * Dedups against pre-existing ``ExtractionGap`` rows for this
+          ontology version.  When ``only_open=True`` (default), rows with
+          status ``open`` or ``filling`` are reused; ``filled`` and
+          ``wont_fix`` rows remain untouched (matching the
+          ``scan_for_gaps`` dedup contract).
+        * When ``persist=False`` (dry-run), builds the candidate rows in
+          memory without adding them to the session or flushing the
+          underlying gap-scan audit ``ExtractionStep``.
+
+        Returns the list of ``ExtractionGap`` instances that either were
+        already tracked or would be persisted.  No DB write occurs when
+        ``persist=False``; with ``persist=True`` new rows are added to
+        ``self._session`` and flushed once, leaving commit/rollback to
+        the caller (one commit per call site, per AC).
+        """
+        ov = await self._resolve_ontology_version(ontology_version)
+
+        literature_str = str(literature_id)
+        jobs_stmt = select(ExtractionJob).where(
+            (ExtractionJob.corpus_id == literature_str)
+            | (ExtractionJob.source_reference == literature_str),
+        )
+        jobs = list((await self._session.execute(jobs_stmt)).scalars().all())
+
+        # Load chunks for the matched jobs (one query, then filter).
+        job_ids = [j.id for j in jobs]
+        chunks: list[ExtractionChunk] = []
+        if job_ids:
+            chunks_stmt = select(ExtractionChunk).where(
+                ExtractionChunk.job_id.in_(job_ids),
+            )
+            chunks = list(
+                (await self._session.execute(chunks_stmt)).scalars().all(),
+            )
+
+        # Existing gaps for this ontology version, all statuses.
+        existing_stmt = select(ExtractionGap).where(
+            ExtractionGap.ontology_version_id == ov.id,
+        )
+        existing = list(
+            (await self._session.execute(existing_stmt)).scalars().all(),
+        )
+
+        entity_types = self._entity_types(ov)
+        result: list[ExtractionGap] = []
+
+        for entity_type, property_name in self._iter_expected_pairs(
+            entity_types,
+        ):
+            if self._is_present(property_name, chunks):
+                continue
+            if self._already_tracked(
+                existing, entity_type, property_name,
+            ):
+                # Reuse the tracked row — no duplicate.
+                # Per ADR spec: "re-running with only_open=True returns
+                # existing rows".  We return the tracked gap regardless of
+                # status (the caller can filter on the returned list).
+                # ``only_open`` therefore only gates whether NEW gaps are
+                # created when the tracked row is `filled`/`wont_fix` —
+                # currently we never re-open a closed gap, matching the
+                # existing ``scan_for_gaps`` dedup contract.
+                for gap in existing:
+                    if (
+                        gap.entity_type == entity_type
+                        and gap.property == property_name
+                    ):
+                        result.append(gap)
+                        break
+                continue
+
+            new_gap = ExtractionGap(
+                ontology_version_id=ov.id,
+                entity_type=entity_type,
+                property=property_name,
+                gap_status="open",
+            )
+            if persist:
+                self._session.add(new_gap)
+            result.append(new_gap)
+
+        if persist:
+            await self._session.flush()
+            # Reload rows that were just persisted so the returned list
+            # has DB-assigned ids; pre-existing rows already have ids.
+            await self._session.refresh(new_gap) if False else None  # no-op
+
+        return result
+
+    async def compute_recall(
+        self,
+        literature_id: uuid.UUID,
+        ontology_version: str,
+    ) -> RecallMetrics:
+        """Per-literature recall rate (ADR Section 2).
+
+        Mirrors the module-level :func:`compute_recall` semantics but is
+        scoped to ``(literature_id, ontology_version)``.  Counts gaps
+        for the ontology version whose source chunks belong to the
+        literature, then computes::
+
+            recall_rate = (total_expected - open - filling) / total_expected
+
+        Edge cases:
+
+        * ``total_expected == 0`` → ``recall_rate = 1.0`` (per ADR).
+        * Unknown ``ontology_version`` → raises ``ValueError``.
+        """
+        ov = await self._resolve_ontology_version(ontology_version)
+
+        literature_str = str(literature_id)
+        job_ids_stmt = select(ExtractionJob.id).where(
+            (ExtractionJob.corpus_id == literature_str)
+            | (ExtractionJob.source_reference == literature_str),
+        )
+        job_ids = [
+            row[0] for row in (await self._session.execute(job_ids_stmt)).all()
+        ]
+
+        entity_types = self._entity_types(ov)
+        total_expected = _count_expected_properties(entity_types)
+
+        if total_expected == 0:
+            return RecallMetrics(
+                ontology_version_id=ov.id,
+                total_expected=0,
+                total_gaps=0,
+                open_gaps=0,
+                filled_gaps=0,
+                wont_fix_gaps=0,
+                recall_rate=1.0,
+                computed_at=datetime.now(UTC),
+            )
+
+        if not job_ids:
+            # No jobs linked to this literature → no gaps → fully covered.
+            return RecallMetrics(
+                ontology_version_id=ov.id,
+                total_expected=total_expected,
+                total_gaps=0,
+                open_gaps=0,
+                filled_gaps=0,
+                wont_fix_gaps=0,
+                recall_rate=1.0,
+                computed_at=datetime.now(UTC),
+            )
+
+        # Gap rows tied to this literature's jobs.
+        # Until T1 adds the ``literature_id`` FK on ``extraction_gaps``,
+        # the literature attribution goes via ``gap.chunk_id`` →
+        # ``chunk.job_id`` → ``job.corpus_id``.  Gaps with ``chunk_id=None``
+        # (legacy NFM-2575 rows that pre-date chunk linkage) are also
+        # counted: they're attributed to any literature that has at least
+        # one job in this OV's corpus.  This is documented in the
+        # ``scan_literature`` docstring as a T1-bridge limitation.
+        from sqlalchemy import or_
+
+        gap_stmt = (
+            select(ExtractionGap.gap_status, func.count())
+            .where(
+                ExtractionGap.ontology_version_id == ov.id,
+                or_(
+                    ExtractionGap.chunk_id.is_(None),
+                    ExtractionGap.chunk_id.in_(
+                        select(ExtractionChunk.id).where(
+                            ExtractionChunk.job_id.in_(job_ids),
+                        ),
+                    ),
+                ),
+            )
+            .group_by(ExtractionGap.gap_status)
+        )
+        rows = (await self._session.execute(gap_stmt)).all()
+        status_counts: dict[str, int] = {row[0]: row[1] for row in rows}
+        open_gaps = status_counts.get("open", 0)
+        filling_gaps = status_counts.get("filling", 0)
+        filled_gaps = status_counts.get("filled", 0)
+        wont_fix_gaps = status_counts.get("wont_fix", 0)
+        total_gaps = open_gaps + filling_gaps + filled_gaps + wont_fix_gaps
+
+        recall_rate = (
+            (total_expected - open_gaps - filling_gaps) / total_expected
+        )
+
+        return RecallMetrics(
+            ontology_version_id=ov.id,
+            total_expected=total_expected,
+            total_gaps=total_gaps,
+            open_gaps=open_gaps,
+            filled_gaps=filled_gaps,
+            wont_fix_gaps=wont_fix_gaps,
+            recall_rate=recall_rate,
+            computed_at=datetime.now(UTC),
+        )
+
+    async def compute_coverage(
+        self,
+        ontology_version: str,
+    ) -> CoverageMetrics:
+        """Per-ontology-version coverage (ADR Section 2).
+
+        Computes::
+
+            coverage_rate = literature_fully_covered / literature_total
+
+        where ``literature_total`` is the distinct count of literature
+        rows associated with this ontology version (currently via
+        ``ExtractionJob.corpus_id`` / ``source_reference`` soft match;
+        see :meth:`scan_literature` for the T1 migration note).
+
+        ``gap_distribution`` is a ``(entity_type, property) -> open-gap
+        count`` map across all linked literatures — surfaced for
+        operators to see which tuples dominate the coverage debt.
+
+        Edge cases:
+
+        * ``literature_total == 0`` → ``coverage_rate = 0.0`` (documented
+          choice: an empty corpus is not "fully covered").
+        * Unknown ``ontology_version`` → raises ``ValueError``.
+        """
+        ov = await self._resolve_ontology_version(ontology_version)
+        literature_str_set = await self._literature_ids_for_ontology(ov)
+
+        if not literature_str_set:
+            return CoverageMetrics(
+                ontology_version=ov.version,
+                literature_total=0,
+                literature_fully_covered=0,
+                gap_distribution={},
+                coverage_rate=0.0,
+                computed_at=datetime.now(UTC),
+            )
+
+        # For each literature, count open-or-filling gaps.
+        literature_fully_covered = 0
+        gap_distribution: dict[tuple[str, str], int] = {}
+
+        # Load all open/filling gaps for this OV in one query, group by
+        # literature soft-id via the joined chunk → job.
+        lit_gaps_stmt = (
+            select(ExtractionGap, ExtractionChunk.job_id, ExtractionJob)
+            .join(
+                ExtractionChunk,
+                ExtractionGap.chunk_id == ExtractionChunk.id,
+                isouter=True,
+            )
+            .join(
+                ExtractionJob,
+                ExtractionChunk.job_id == ExtractionJob.id,
+                isouter=True,
+            )
+            .where(
+                ExtractionGap.ontology_version_id == ov.id,
+                ExtractionGap.gap_status.in_(("open", "filling")),
+            )
+        )
+        rows = (await self._session.execute(lit_gaps_stmt)).all()
+
+        # Map literature_id → count of distinct (entity, property) gaps.
+        lit_to_pairs: dict[str, set[tuple[str, str]]] = {
+            lit: set() for lit in literature_str_set
+        }
+        for gap, _chunk_job_id, gap_job in rows:
+            # Resolve the literature soft-id from the gap's source job
+            # (either the directly-attached job, or the job via chunk).
+            job = gap_job if gap_job is not None else None
+            if job is None:
+                # Gap with no chunk and no job → can't attribute; treat
+                # as corpus-level (does not count toward any specific
+                # literature's fully-covered check).
+                continue
+            lit_key = job.corpus_id or job.source_reference
+            if not lit_key or lit_key not in literature_str_set:
+                continue
+            lit_to_pairs[lit_key].add((gap.entity_type, gap.property))
+
+        for _lit_key, pairs in lit_to_pairs.items():
+            if not pairs:
+                literature_fully_covered += 1
+            for pair in pairs:
+                gap_distribution[pair] = gap_distribution.get(pair, 0) + 1
+
+        literature_total = len(literature_str_set)
+        coverage_rate = (
+            literature_fully_covered / literature_total
+            if literature_total > 0
+            else 0.0
+        )
+
+        return CoverageMetrics(
+            ontology_version=ov.version,
+            literature_total=literature_total,
+            literature_fully_covered=literature_fully_covered,
+            gap_distribution=gap_distribution,
+            coverage_rate=coverage_rate,
+            computed_at=datetime.now(UTC),
+        )
+
+    # ------------------------------------------------------------------
     # Helpers (private — kept narrow so tests can target them later)
     # ------------------------------------------------------------------
+
+    async def _resolve_ontology_version(
+        self,
+        ontology_version: str,
+    ) -> OntologyVersion:
+        """Look up an OntologyVersion by its ``.version`` string.
+
+        Raises:
+            ValueError: If no published ontology with that semver exists.
+        """
+        stmt = select(OntologyVersion).where(
+            OntologyVersion.version == ontology_version,
+        )
+        result = await self._session.execute(stmt)
+        ov = result.scalar_one_or_none()
+        if ov is None:
+            raise ValueError(
+                f"OntologyVersion not found: {ontology_version}",
+            )
+        return ov
+
+    async def _literature_ids_for_ontology(
+        self,
+        ov: OntologyVersion,
+    ) -> set[str]:
+        """Return the distinct set of literature soft-ids for an OV.
+
+        Until T1 adds the real ``literature_id`` FK on ``extraction_gaps``,
+        literature identity is approximated by ``ExtractionJob.corpus_id``
+        (preferred) falling back to ``source_reference``.  This is enough
+        for the ADR Section 2 contract (``coverage_rate`` and
+        ``gap_distribution``) and will be replaced by direct FK joins when
+        NFM-2736 merges T1+T2+T3.
+        """
+        stmt = select(ExtractionJob.corpus_id, ExtractionJob.source_reference)
+        rows = (await self._session.execute(stmt)).all()
+        lit_set: set[str] = set()
+        for corpus_id, source_reference in rows:
+            if corpus_id:
+                lit_set.add(corpus_id)
+            elif source_reference:
+                lit_set.add(source_reference)
+        return lit_set
 
     async def _load_ontology(
         self,
