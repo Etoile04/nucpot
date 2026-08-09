@@ -1,9 +1,21 @@
 """Flag-verification tests for ``Settings.extraction_v2_enabled`` — NFM-2698.
 
-These tests verify that the *real* ``trigger_extraction()`` dispatch
-logic in :mod:`nfm_db.services.extraction_pipeline` actually routes to
-the V2 orchestrator branch when the flag is ON, and to the legacy
+These tests verify that the *real* ``trigger_extraction_dispatch()``
+wrapper in :mod:`nfm_db.services.extraction_pipeline` actually routes
+to the V2 orchestrator branch when the flag is ON, and to the legacy
 dataclass branch when the flag is OFF.
+
+NFM-2680 architectural note
+---------------------------
+
+``trigger_extraction_dispatch()`` is the canonical flag-routed entry
+point introduced by NFM-2680 (strangler-fig dispatch wrapper). The
+legacy ``trigger_extraction()`` function is intentionally legacy-only
+(per NFM-2680 AC: "No modification to ``trigger_extraction()``
+internals"). The wrapper reads the flag via the module-level
+:func:`nfm_db.config.is_extraction_v2_enabled` helper, which is
+``lru_cache``-d. Tests below call the wrapper (not the legacy
+function) so the flag is actually consulted.
 
 Why this matters (see ``[[flag-default-off-blinds-tests]]``)
 ------------------------------------------------------------
@@ -30,10 +42,10 @@ must NOT produce:
 The flag is explicitly overridden via ``monkeypatch.setattr`` on
 ``nfm_db.config.get_settings`` so the test does
 NOT depend on the default value (which the design intentionally
-leaves as False).  Note: ``trigger_extraction`` does
-``from nfm_db.config import get_settings`` *inside the function body*
-(local import), so the patch target is ``nfm_db.config.get_settings``
-(the source module), not the consumer module.
+leaves as False).  Because :func:`nfm_db.config.is_extraction_v2_enabled`
+is ``lru_cache``-d, the autouse ``_reset_flag_cache`` fixture below
+clears that cache before AND after each test so the patched
+``get_settings`` is actually consulted.
 """
 
 from __future__ import annotations
@@ -80,6 +92,29 @@ def _reset_recorder() -> None:
     _RecordingOrchestrator.instances.clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_flag_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the cached flag value before and after each test for isolation.
+
+    NFM-2680: ``is_extraction_v2_enabled`` is ``lru_cache``-d (one
+    entry for the process lifetime). Tests below monkeypatch
+    ``nfm_db.config.get_settings`` to override the flag; without
+    clearing the cache, an earlier test's value would still be
+    returned and the monkeypatch would be silently ignored.
+    """
+    from nfm_db.config import is_extraction_v2_enabled
+
+    try:
+        is_extraction_v2_enabled.cache_clear()
+    except AttributeError:
+        pass
+    yield
+    try:
+        is_extraction_v2_enabled.cache_clear()
+    except AttributeError:
+        pass
+
+
 def _build_session() -> AsyncMock:
     """Return an AsyncMock session matching AsyncSession semantics."""
     session = AsyncMock()
@@ -102,8 +137,8 @@ def _build_session() -> AsyncMock:
 
 @pytest.mark.unit
 class TestExtractionV2FlagRoutesToOrchestrator:
-    """With ``extraction_v2_enabled=True``, ``trigger_extraction`` must
-    construct an :class:`ExtractionOrchestrator` and call ``.run()``.
+    """With ``extraction_v2_enabled=True``, ``trigger_extraction_dispatch``
+    must construct an :class:`ExtractionOrchestrator` and call ``.run()``.
 
     The legacy branch's artifacts (``_job_store``) MUST NOT be touched.
     """
@@ -114,7 +149,7 @@ class TestExtractionV2FlagRoutesToOrchestrator:
     ) -> None:
         from nfm_db.services import extraction_pipeline as legacy_module
 
-        # Override the settings getter that ``trigger_extraction`` uses.
+        # Override the settings getter that ``is_extraction_v2_enabled`` reads.
         monkeypatch.setattr(
             "nfm_db.config.get_settings",
             lambda: _make_settings(flag=True),
@@ -126,7 +161,7 @@ class TestExtractionV2FlagRoutesToOrchestrator:
             "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
             _RecordingOrchestrator,
         ):
-            job = await legacy_module.trigger_extraction(
+            job = await legacy_module.trigger_extraction_dispatch(
                 session,
                 source_reference="doi:10.1234/flag-verification",
                 source_type="doi",
@@ -167,7 +202,7 @@ class TestExtractionV2FlagRoutesToOrchestrator:
             "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
             _RecordingOrchestrator,
         ):
-            await legacy_module.trigger_extraction(
+            await legacy_module.trigger_extraction_dispatch(
                 session,
                 source_reference="doi:10.1234/v2-add",
                 source_type="doi",
@@ -187,8 +222,8 @@ class TestExtractionV2FlagRoutesToOrchestrator:
 
 @pytest.mark.unit
 class TestExtractionV2FlagRoutesToLegacy:
-    """With ``extraction_v2_enabled=False``, ``trigger_extraction`` must
-    execute the legacy dataclass pipeline and NEVER construct an
+    """With ``extraction_v2_enabled=False``, ``trigger_extraction_dispatch``
+    must execute the legacy dataclass pipeline and NEVER construct an
     :class:`ExtractionOrchestrator`.
 
     The legacy branch writes the ``ExtractionJob`` to ``_job_store``
@@ -227,7 +262,7 @@ class TestExtractionV2FlagRoutesToLegacy:
             # re-raising.  We don't assert on the exception here — the
             # branch's identity is proven by ``_job_store`` being
             # populated BEFORE the exception fired.
-            await legacy_module.trigger_extraction(
+            await legacy_module.trigger_extraction_dispatch(
                 session,
                 source_reference=sentinel_key,
                 source_type="doi",
@@ -295,7 +330,7 @@ class TestExtractionV2FlagRoutesToLegacy:
             ):
                 # Same outer try/except as above — exception is
                 # absorbed into a FAILED job status, NOT re-raised.
-                await legacy_module.trigger_extraction(
+                await legacy_module.trigger_extraction_dispatch(
                     session,
                     source_reference="doi:10.1234/legacy-no-orch",
                     source_type="doi",
@@ -368,7 +403,7 @@ class TestExtractionV2FlagMutualExclusion:
             _FailingOrchestrator,
         ):
             with pytest.raises(RuntimeError, match="forced: orchestrator run failed"):
-                await legacy_module.trigger_extraction(
+                await legacy_module.trigger_extraction_dispatch(
                     session,
                     source_reference=sentinel_key,
                     source_type="doi",
@@ -423,7 +458,7 @@ class TestExtractionV2FlagMutualExclusion:
                 # the actual proof: ``_Sentinel.instantiated`` stays
                 # False if the legacy branch never imported the
                 # orchestrator class.
-                await legacy_module.trigger_extraction(
+                await legacy_module.trigger_extraction_dispatch(
                     session,
                     source_reference="doi:10.1234/legacy-no-sentinel",
                     source_type="doi",
