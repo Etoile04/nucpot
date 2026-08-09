@@ -6,30 +6,35 @@ records, computing coverage rate metrics, and triggering coverage scans.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import get_current_active_user, require_domain_expert
 from nfm_db.database import get_db
 from nfm_db.models import DataCollectionRequest, User
-from nfm_db.models.data_collection_request import DATA_COLLECTION_REQUEST_STATUSES
+from nfm_db.models.data_collection_request import (
+    DATA_COLLECTION_REQUEST_STATUSES,
+    SOURCE_PREFERENCES,
+)
 from nfm_db.schemas.common import PaginatedResponse, PaginationParams
 from nfm_db.schemas.data_collection_request import (
     CoverageMetricsResponse,
     DataCollectionRequestResponse,
 )
 from nfm_db.services.coverage_scan_service import CoverageScanService
-from nfm_db.services.gap_dispatch_service import GapDispatchService
+from nfm_db.services.gap_dispatch_service import (
+    DEFAULT_BATCH_LIMIT,
+    DispatchResult,
+    GapDispatchService,
+)
 
 router = APIRouter(tags=["数据采集管理"])
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -327,142 +332,298 @@ async def trigger_scan(
 
 
 # ---------------------------------------------------------------------------
-# POST /data-collection/requests/{id}/dispatch — dispatch to collection path
+# Dispatch response schemas
+# ---------------------------------------------------------------------------
+
+
+class DispatchResponseItem(BaseModel):
+    """Single dispatch result paired with a DCR ID."""
+
+    request_id: uuid.UUID
+    success: bool
+    path: str | None = None
+    reference: str | None = None
+    error: str | None = None
+    data_found: bool = False
+
+
+class DispatchBatchResponse(BaseModel):
+    """Response for POST /data-collection/dispatch."""
+
+    dispatched_count: int
+    results: list[DispatchResponseItem]
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/dispatch — trigger batch dispatch
 # ---------------------------------------------------------------------------
 
 
 @router.post(
-    "/data-collection/requests/{request_id}/dispatch",
-    response_model=DataCollectionRequestResponse,
-    summary="Dispatch a data collection request",
+    "/data-collection/dispatch",
+    response_model=DispatchBatchResponse,
+    summary="Trigger gap dispatch",
     description=(
-        "Dispatch a DataCollectionRequest to its collection path based on "
-        "source_preference (literature | dft | external_db | any). "
-        "Transitions the request from 'open' to 'in_progress'."
+        "Select open, undispatched DataCollectionRequests and dispatch them "
+        "through the gap-fill router."
     ),
 )
-async def dispatch_request(
+async def trigger_dispatch(
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    ontology_version_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=DEFAULT_BATCH_LIMIT, ge=1, le=100),
+    session: AsyncSession = Depends(get_db),
+) -> DispatchBatchResponse:
+    """Select open undispatched DCRs and dispatch each individually."""
+    stmt = select(DataCollectionRequest).where(
+        DataCollectionRequest.status == "open",
+        DataCollectionRequest.dispatched_at.is_(None),
+    )
+    if ontology_version_id is not None:
+        stmt = stmt.where(
+            DataCollectionRequest.ontology_version_id == ontology_version_id,
+        )
+    stmt = stmt.order_by(DataCollectionRequest.urgency.desc()).limit(limit)
+    dcrs = list((await session.execute(stmt)).scalars().all())
+
+    svc = GapDispatchService(session)
+    paired: list[tuple[uuid.UUID, DispatchResult]] = []
+    for dcr in dcrs:
+        try:
+            r = await svc.dispatch(dcr)
+            paired.append((dcr.id, r))
+        except Exception as exc:
+            paired.append((
+                dcr.id,
+                DispatchResult(
+                    success=False,
+                    path="error",
+                    reference=None,
+                    error=f"Dispatch error for {dcr.id}: {exc}",
+                    data_found=False,
+                ),
+            ))
+    await session.commit()
+
+    results = [
+        DispatchResponseItem(
+            request_id=req_id,
+            success=r.success,
+            path=r.path,
+            reference=r.reference,
+            error=r.error,
+            data_found=r.data_found,
+        )
+        for req_id, r in paired
+    ]
+    return DispatchBatchResponse(
+        dispatched_count=len(results),
+        results=results,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /data-collection/dispatch/status — paginated dispatch status
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/data-collection/dispatch/status",
+    response_model=PaginatedResponse[DataCollectionRequestResponse],
+    summary="List dispatch status",
+    description="Paginated list of dispatched DataCollectionRequests.",
+)
+async def list_dispatch_status(
+    _current_user: Annotated[User, Depends(get_current_active_user)],
+    pagination: PaginationParams = Depends(PaginationParams),
+    dispatch_status_filter: str | None = Query(
+        default=None,
+        alias="dispatch_status",
+        description="Filter by dispatch_status.",
+    ),
+    dispatched_path_filter: str | None = Query(
+        default=None,
+        alias="dispatched_path",
+        description="Filter by dispatched_path.",
+    ),
+    session: AsyncSession = Depends(get_db),
+) -> PaginatedResponse[DataCollectionRequestResponse]:
+    """Return paginated dispatch status for dispatched DCRs."""
+    query = select(DataCollectionRequest).where(
+        DataCollectionRequest.dispatched_at.is_not(None),
+    ).order_by(DataCollectionRequest.dispatched_at.desc())
+
+    if dispatch_status_filter is not None:
+        query = query.where(
+            DataCollectionRequest.dispatch_status == dispatch_status_filter,
+        )
+    if dispatched_path_filter is not None:
+        query = query.where(
+            DataCollectionRequest.dispatched_path == dispatched_path_filter,
+        )
+
+    count_result = await session.execute(
+        select(func.count()).select_from(query.subquery()),
+    )
+    total = count_result.scalar_one()
+
+    paginated_query = query.offset(pagination.offset).limit(pagination.per_page)
+    result = await session.execute(paginated_query)
+    items = [
+        DataCollectionRequestResponse.model_validate(r)
+        for r in result.scalars().all()
+    ]
+
+    return PaginatedResponse(
+        items=items,
+        total=total,
+        page=pagination.page,
+        limit=pagination.per_page,
+        pages=pagination.pages(total),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/dispatch/{id}/retry — retry failed dispatch
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/data-collection/dispatch/{request_id}/retry",
+    response_model=DataCollectionRequestResponse,
+    summary="Retry a failed dispatch",
+    description="Re-dispatch a DataCollectionRequest that previously failed.",
+)
+async def retry_dispatch(
     request_id: uuid.UUID,
     _current_user: Annotated[User, Depends(require_domain_expert)],
     session: AsyncSession = Depends(get_db),
 ) -> DataCollectionRequestResponse:
-    """Dispatch a DataCollectionRequest to the appropriate collection path."""
-    svc = GapDispatchService(session)
-    try:
-        await svc.dispatch_request(request_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-
-    await session.commit()
-
-    # Reload the request to return the updated state.
+    """Retry dispatch for a failed DCR."""
     result = await session.execute(
-        select(DataCollectionRequest).where(
-            DataCollectionRequest.id == request_id,
-        ),
+        select(DataCollectionRequest).where(DataCollectionRequest.id == request_id),
     )
-    req = result.scalar_one()
-    return DataCollectionRequestResponse.model_validate(req)
-
-
-# ---------------------------------------------------------------------------
-# POST /data-collection/{request_id}/dispatch -- per-request dispatch
-# (NFM-2662)
-#
-# This is the architecture-aligned per-request endpoint: it returns the
-# flat DispatchResult shape ({dispatched_at, dispatched_path,
-# dispatch_status, result_reference}) sourced from the persisted
-# DataCollectionRequest state.  The legacy /requests/{request_id}/dispatch
-# route above continues to return the full DCR payload.
-# ---------------------------------------------------------------------------
-
-
-def _parse_dispatched_at(raw: str) -> datetime:
-    """Parse the ISO 8601 ``dispatched_at`` written by ``GapDispatchService``.
-
-    Falls back to ``datetime.now(UTC)`` if the value is missing or malformed,
-    so the response is always well-formed.
-    """
-    try:
-        return datetime.fromisoformat(raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Could not parse dispatched_at timestamp %r; falling back to now(UTC)",
-            raw,
-        )
-        return datetime.now(UTC)
-
-
-@router.post(
-    "/data-collection/{request_id}/dispatch",
-    summary="Dispatch a DataCollectionRequest (per-request, architecture-aligned)",
-    description=(
-        "Dispatch a single DataCollectionRequest by ID.  Returns the flat "
-        "DispatchResult shape (dispatched_at, dispatched_path, "
-        "dispatch_status, result_reference) sourced from the persisted "
-        "DataCollectionRequest state.  Returns 404 if the DCR does not "
-        "exist and 409 if it has already been dispatched."
-    ),
-)
-async def dispatch_request_per_request(
-    request_id: uuid.UUID,
-    _current_user: Annotated[User, Depends(require_domain_expert)],
-    session: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    """Dispatch a single DataCollectionRequest and return the spec-shaped result."""
-    # Pre-flight: detect 409 (already dispatched) BEFORE handing off to the
-    # service so the idempotency rule is explicit at the API boundary.
-    # NOTE: This SELECT-then-dispatch pattern has a TOCTOU window — concurrent
-    # requests could race past this check.  The GapDispatchService is the
-    # authority on idempotency and handles duplicate dispatches internally.
-    existing = await session.execute(
-        select(DataCollectionRequest).where(
-            DataCollectionRequest.id == request_id,
-        ),
-    )
-    req = existing.scalar_one_or_none()
+    req = result.scalar_one_or_none()
     if req is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"DataCollectionRequest {request_id} not found.",
         )
-    if req.status != "open":
+    if req.dispatch_status != "failed":
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                f"DataCollectionRequest {request_id} is already dispatched "
-                f"(status={req.status!r})."
+                f"Cannot retry: dispatch_status is {req.dispatch_status!r}, "
+                "expected 'failed'."
             ),
         )
 
     svc = GapDispatchService(session)
     try:
-        await svc.dispatch_request(request_id)
-    except ValueError as exc:
+        await svc.dispatch(req)
+    except Exception as exc:
+        await session.commit()
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Retry dispatch failed: {exc}",
         ) from exc
 
     await session.commit()
+    await session.refresh(req)
+    return DataCollectionRequestResponse.model_validate(req)
 
-    # Reload to read the persisted dispatch metadata.
-    refreshed = await session.execute(
-        select(DataCollectionRequest).where(
-            DataCollectionRequest.id == request_id,
+
+# ---------------------------------------------------------------------------
+# POST /data-collection/{id}/dispatch — dispatch a single request (NFM-2662)
+# ---------------------------------------------------------------------------
+
+
+class PerRequestDispatchRequest(BaseModel):
+    """Optional body for POST /data-collection/{request_id}/dispatch."""
+
+    source_preference_override: str | None = Field(
+        default=None,
+        description=(
+            "Override the stored source_preference before routing. "
+            f"One of: {', '.join(SOURCE_PREFERENCES)}."
         ),
     )
-    dispatched = refreshed.scalar_one()
-    dispatch_meta = (dispatched.metadata_ or {}).get("dispatch") or {}
 
-    return {
-        "dispatched_at": _parse_dispatched_at(
-            str(dispatch_meta.get("dispatched_at", "")),
-        ),
-        "dispatched_path": str(dispatch_meta.get("path_taken", "")),
-        "dispatch_status": str(dispatch_meta.get("dispatch_status", "")),
-        "result_reference": str(dispatch_meta.get("detail", "")) or None,
-    }
+    @field_validator("source_preference_override")
+    @classmethod
+    def _validate_source_preference(cls, value: str | None) -> str | None:
+        """Reject overrides outside the canonical source_preference set."""
+        if value is not None and value not in SOURCE_PREFERENCES:
+            raise ValueError(
+                f"source_preference_override must be one of "
+                f"{list(SOURCE_PREFERENCES)}, got {value!r}.",
+            )
+        return value
+
+
+class PerRequestDispatchResponse(BaseModel):
+    """Persisted dispatch columns after a single-request dispatch."""
+
+    dispatched_at: datetime
+    dispatched_path: str
+    dispatch_status: str
+    result_reference: str | None = None
+
+
+@router.post(
+    "/data-collection/{request_id}/dispatch",
+    response_model=PerRequestDispatchResponse,
+    summary="Dispatch a single data collection request",
+    description=(
+        "Route one DataCollectionRequest through the gap-fill dispatcher and "
+        "return its persisted dispatch columns. Requests that were already "
+        "dispatched are rejected with 409."
+    ),
+)
+async def dispatch_single_request(
+    request_id: uuid.UUID,
+    _current_user: Annotated[User, Depends(require_domain_expert)],
+    body: PerRequestDispatchRequest | None = None,
+    session: AsyncSession = Depends(get_db),
+) -> PerRequestDispatchResponse:
+    """Dispatch one DCR and return the columns the dispatcher persisted."""
+    result = await session.execute(
+        select(DataCollectionRequest).where(DataCollectionRequest.id == request_id),
+    )
+    req = result.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"DataCollectionRequest {request_id} not found.",
+        )
+    if req.dispatched_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"DataCollectionRequest {request_id} was already dispatched at "
+                f"{req.dispatched_at.isoformat()} "
+                f"(dispatch_status={req.dispatch_status!r})."
+            ),
+        )
+
+    if body is not None and body.source_preference_override is not None:
+        req.source_preference = body.source_preference_override
+
+    svc = GapDispatchService(session)
+    try:
+        await svc.dispatch(req)
+    except Exception as exc:
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dispatch failed for {request_id}: {exc}",
+        ) from exc
+
+    await session.commit()
+    await session.refresh(req)
+    return PerRequestDispatchResponse(
+        dispatched_at=req.dispatched_at,
+        dispatched_path=req.dispatched_path,
+        dispatch_status=req.dispatch_status,
+        result_reference=req.result_reference,
+    )
