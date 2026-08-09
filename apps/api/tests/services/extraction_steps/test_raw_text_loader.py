@@ -11,8 +11,6 @@ EXIST — the failing import is itself the RED signal.
 
 from __future__ import annotations
 
-import pytest
-
 # RED: this import will fail until B2 ships.
 from nfm_db.services.extraction import ExtractionChunk
 from nfm_db.services.extraction.steps.raw_text_loader import RawTextLoader

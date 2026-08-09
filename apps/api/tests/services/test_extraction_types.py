@@ -17,7 +17,6 @@ import pytest
 # The failing import is itself the RED signal.
 from nfm_db.services.extraction import ExtractionChunk, ExtractionStep
 
-
 # ---------------------------------------------------------------------------
 # ExtractionChunk construction + value semantics
 # ---------------------------------------------------------------------------
