@@ -658,6 +658,17 @@ class GapScanService:
         count`` map across all linked literatures — surfaced for
         operators to see which tuples dominate the coverage debt.
 
+        **Corpus-level gaps.**  A gap row with ``chunk_id IS NULL``
+        cannot be attributed to one literature: an *absent* property has
+        no chunk to blame, and migration 047's UNIQUE index is the
+        3-tuple ``(ontology_version_id, entity_type, property)``, so one
+        row represents that debt for the entire ontology version.
+        :meth:`scan_literature` emits exactly these rows.  They are
+        counted against **every** literature in the OV, matching
+        :meth:`compute_recall`, so that the two methods can never
+        disagree on identical data.  NFM-2736 (T1+T2) replaces this with
+        a real ``literature_id`` FK and per-literature attribution.
+
         Edge cases:
 
         * ``literature_total == 0`` → ``coverage_rate = 0.0`` (documented
@@ -717,18 +728,35 @@ class GapScanService:
             lit: set() for lit in literature_str_set
         }
         for gap, _chunk_job_id, gap_job in rows:
-            # Resolve the literature soft-id from the gap's source job
-            # (either the directly-attached job, or the job via chunk).
-            job = gap_job if gap_job is not None else None
-            if job is None:
-                # Gap with no chunk and no job → can't attribute; treat
-                # as corpus-level (does not count toward any specific
-                # literature's fully-covered check).
+            pair = (gap.entity_type, gap.property)
+            if gap_job is None:
+                # Corpus-level gap: the row has no chunk, so there is no
+                # job to attribute it to.  ``scan_literature`` produces
+                # exactly these rows — an *absent* property has no chunk
+                # to blame, and migration 047's UNIQUE index is the
+                # 3-tuple (ontology_version_id, entity_type, property),
+                # so a single row carries that (entity, property) debt
+                # for the whole ontology version.
+                #
+                # ``compute_recall`` already counts these rows against
+                # every literature in the OV (the ``chunk_id.is_(None)``
+                # branch of its query).  Count them the same way here so
+                # the two methods cannot report contradictory answers on
+                # identical data.  Previously they were dropped, which
+                # made every ``scan_literature`` gap invisible to
+                # coverage (recall 0.0 vs coverage 1.0) and left
+                # ``gap_distribution`` permanently empty.
+                #
+                # NFM-2736 (T1+T2 integration) adds the real
+                # ``literature_id`` FK, at which point gaps become
+                # genuinely per-literature and this branch goes away.
+                for pairs in lit_to_pairs.values():
+                    pairs.add(pair)
                 continue
-            lit_key = job.corpus_id or job.source_reference
+            lit_key = gap_job.corpus_id or gap_job.source_reference
             if not lit_key or lit_key not in literature_str_set:
                 continue
-            lit_to_pairs[lit_key].add((gap.entity_type, gap.property))
+            lit_to_pairs[lit_key].add(pair)
 
         for _lit_key, pairs in lit_to_pairs.items():
             if not pairs:

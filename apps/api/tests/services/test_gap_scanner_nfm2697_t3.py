@@ -705,3 +705,144 @@ async def test_scan_literature_per_ov_does_not_match_other_ovs_jobs(
     assert len(gaps_b) == 1
     assert gaps_b[0].ontology_version_id == ov_b.id
     assert gaps_b[0].property == "density"
+
+
+# ---------------------------------------------------------------------------
+# CPO-rejected regression: scan_literature output must be VISIBLE to
+# compute_coverage (NFM-2733 product-acceptance defect).
+#
+# Root cause: ``scan_literature`` creates gaps with ``chunk_id=None``
+# (there is no chunk to blame for an *absent* property, and migration
+# 047's UNIQUE index is the 3-tuple (ontology_version_id, entity_type,
+# property) -- so a gap row is corpus-level, not per-literature, until
+# T1 adds ``literature_id``).  ``compute_recall`` already counts those
+# null-chunk rows for every literature in the OV (gap_scanner.py:609),
+# but ``compute_coverage`` silently dropped them, so the two methods
+# reported contradictory answers on identical data.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_literature_with_empty_chunk(
+    session,
+    *,
+    ov: OntologyVersion,
+    content: str,
+) -> uuid.UUID:
+    """Seed a literature whose single chunk mentions none of the props."""
+    literature_id = uuid.uuid4()
+    job = await _seed_job(
+        session,
+        corpus_id=str(literature_id),
+        source_reference=f"ref-{literature_id}",
+        ontology_version_id=ov.id,
+    )
+    session.add(
+        ExtractionChunk(
+            job_id=job.id,
+            content=content,
+            chunk_index=0,
+            token_count=4,
+        ),
+    )
+    await session.flush()
+    return literature_id
+
+
+@pytest.mark.asyncio
+async def test_scan_literature_gaps_are_visible_to_compute_coverage(
+    db_session,
+) -> None:
+    """recall and coverage must not contradict each other on identical data.
+
+    CPO probe: one OV, two literatures, each missing the same two
+    properties.  Before the fix this produced recall=0.0 for both
+    literatures while compute_coverage reported rate=1.0 (100% covered)
+    and an empty gap_distribution.
+    """
+    ov = await _seed_ontology_version(
+        db_session,
+        version="1.0.0",
+        entity_types=[
+            {"name": "Material", "properties": ["density", "melting_point"]},
+        ],
+    )
+    lit_a = await _seed_literature_with_empty_chunk(
+        db_session, ov=ov, content="no relevant values here",
+    )
+    lit_b = await _seed_literature_with_empty_chunk(
+        db_session, ov=ov, content="also nothing useful",
+    )
+
+    svc = GapScanService(db_session)
+    gaps = await svc.scan_literature(
+        literature_id=lit_a, ontology_version="1.0.0",
+    )
+    assert len(gaps) == 2, "both properties are missing -> two gaps"
+    assert all(g.chunk_id is None for g in gaps)
+
+    recall_a = await svc.compute_recall(
+        literature_id=lit_a, ontology_version="1.0.0",
+    )
+    recall_b = await svc.compute_recall(
+        literature_id=lit_b, ontology_version="1.0.0",
+    )
+    coverage = await svc.compute_coverage(ontology_version="1.0.0")
+
+    # Both literatures have zero recall -- the gaps are real.
+    assert recall_a.open_gaps == 2
+    assert recall_a.recall_rate == 0.0
+    assert recall_b.open_gaps == 2
+    assert recall_b.recall_rate == 0.0
+
+    # ...therefore neither literature may be reported as fully covered.
+    assert coverage.literature_total == 2
+    assert coverage.literature_fully_covered == 0
+    assert coverage.coverage_rate == 0.0
+
+    # gap_distribution must surface the debt, not be permanently empty.
+    assert coverage.gap_distribution == {
+        ("Material", "density"): 2,
+        ("Material", "melting_point"): 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_compute_coverage_agrees_with_recall_when_fully_covered(
+    db_session,
+) -> None:
+    """Control: when no gaps exist, both methods report full coverage."""
+    ov = await _seed_ontology_version(
+        db_session,
+        version="1.0.0",
+        entity_types=[{"name": "Material", "properties": ["density"]}],
+    )
+    literature_id = uuid.uuid4()
+    job = await _seed_job(
+        db_session,
+        corpus_id=str(literature_id),
+        source_reference="covered",
+        ontology_version_id=ov.id,
+    )
+    db_session.add(
+        ExtractionChunk(
+            job_id=job.id,
+            content="The density is 10.5 g/cm3.",
+            chunk_index=0,
+            token_count=8,
+        ),
+    )
+    await db_session.flush()
+
+    svc = GapScanService(db_session)
+    gaps = await svc.scan_literature(
+        literature_id=literature_id, ontology_version="1.0.0",
+    )
+    assert gaps == []
+
+    recall = await svc.compute_recall(
+        literature_id=literature_id, ontology_version="1.0.0",
+    )
+    coverage = await svc.compute_coverage(ontology_version="1.0.0")
+    assert recall.recall_rate == 1.0
+    assert coverage.coverage_rate == 1.0
+    assert coverage.gap_distribution == {}
