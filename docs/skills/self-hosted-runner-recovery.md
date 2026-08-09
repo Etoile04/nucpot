@@ -164,6 +164,91 @@ gh api repos/Etoile04/nucpot/actions/runners \
   --jq '.runners[] | select(.name=="wenjiedeMac-Studio") | "\(.name) status=\(.status) busy=\(.busy)"'
 ```
 
+## Failure Mode 2 — Network timeout (NFM-2754)
+
+`actions/setup-python@v7` downloads the Python tarball from
+`github.com` (IP `20.205.243.166`). If the runner host cannot reach
+GitHub, the download hangs and eventually fails:
+
+```
+Download from "https://github.com/actions/python-versions/releases/download/3.12.10-.../python-3.12.10-darwin-arm64.tar.gz"
+socket hang up
+socket hang up
+##[error]connect ETIMEDOUT 20.205.243.166:443
+```
+
+### Diagnosis
+
+```bash
+# 1. Confirm the runner can reach github.com.
+curl -sS --connect-timeout 10 https://github.com > /dev/null && echo reachable || echo unreachable
+
+# 2. Check DNS resolution.
+nslookup github.com
+
+# 3. Check for proxy / VPN interference.
+echo $https_proxy $HTTPS_PROXY $ALL_PROXY
+scutil --proxy
+```
+
+### Root causes
+
+- Transient ISP / DNS outage on the Mac Studio's network.
+- VPN or proxy drop that the runner depends on for egress.
+- macOS firewall rule blocking outbound HTTPS.
+- GFW / regional connectivity restriction (this runner is in China).
+
+### Recovery
+
+Network timeouts are **transient by nature** — no host-level fix required.
+Wait for connectivity to restore, then re-trigger the workflow:
+
+```bash
+gh workflow run prod-deploy-event-collector.yml \
+  --repo Etoile04/nucpot --ref main
+```
+
+GitHub Actions cron does **not** backfill missed triggers — every skipped
+15-minute window is lost. The `workflow_run` trigger resumes
+automatically once the runner is back online and a `Production Deployment`
+completes. The primary 5-min bash collector (`Collect Production Deploy
+Events`) is unaffected because it does not download from GitHub.
+
+## Failure Mode 3 — Missing /Users/runner (NFM-2754)
+
+On this host the runner service runs as `lwj04` (not a dedicated
+`runner` macOS user). The directory `/Users/runner` does not exist and
+the `runner` user is not registered in DirectoryService. However,
+`actions/setup-python@v7` hardcodes its default `RUNNER_TOOL_CACHE` to
+`/Users/runner/hostedtoolcache`, causing:
+
+```
+##[error]mkdir: /Users/runner: Permission denied
+```
+
+### Workaround (applied in NFM-2754)
+
+Set `RUNNER_TOOL_CACHE` in the workflow env to a `lwj04`-writable path:
+
+```yaml
+env:
+  RUNNER_TOOL_CACHE: /Users/lwj04/actions-runner-production/toolcache
+```
+
+This is a workflow-level workaround, not a host-level fix. It
+eliminates the need for a `/Users/runner` directory or `runner` user.
+
+### Canonical fix (optional)
+
+If you prefer the standard runner layout:
+
+1. Create the `runner` macOS user and `/Users/runner` home (Option B
+   above).
+2. Re-register the runner service under that user.
+
+This is more work and not required — the `RUNNER_TOOL_CACHE` env-var
+override is sufficient and avoids sudo.
+
 ## Prevention
 
 Two small follow-ups worth doing once the host is healthy:
@@ -178,22 +263,22 @@ Two small follow-ups worth doing once the host is healthy:
    GHA step in `production-deployment.yml`:
 
    ```yaml
-   - name: Sanity-check runner home is writable
+   - name: Sanity-check runner toolcache is writable
      run: |
-       test -w "$HOME" || {
-         echo "::error::runner home $HOME not writable; toolcache setup will fail."
-         echo "::error::See docs/skills/self-hosted-runner-recovery.md."
-         exit 1
-       }
+       mkdir -p "${RUNNER_TOOL_CACHE:-$HOME/hostedtoolcache}" 2>/dev/null \
+       || echo "::warning::RUNNER_TOOL_CACHE not writable; setup-* actions may fail."
    ```
 
-   This turns the next `/Users/runner` regression into a **before**
-   `setup-python` failure with a clear runbook pointer, instead of a
-   cryptic `mkdir` failure midway through tarball install.
+   This turns the next toolcache regression into an early, descriptive
+   warning instead of a cryptic failure midway through setup.
 
 ## Related
 
-- NFM-2243 — initial failure report (2026-07-30 collector cron failure).
+- NFM-2243 — initial failure report (2026-07-30 collector cron failure,
+  `mkdir` permission denied on `/Users/runner`).
+- NFM-2754 — recurrence (2026-08-09): network ETIMEDOUT followed by
+  same `/Users/runner` permission failure. Fixed with
+  `RUNNER_TOOL_CACHE` env-var override.
 - `docs/architecture/ADR-KR3-prod-emission.md` — C6.1 OKR collector
   architecture and recovery semantics for partial sync-state.
 - `docs/skills/post-merge-ci-recovery.md` — wider post-merge verification

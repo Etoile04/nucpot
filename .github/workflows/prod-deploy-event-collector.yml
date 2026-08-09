@@ -58,6 +58,11 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
       PYTHONPATH: ${{ github.workspace }}
+      # The runner service runs as lwj04, not a dedicated runner user.
+      # actions/setup-python defaults RUNNER_TOOL_CACHE to
+      # /Users/runner/hostedtoolcache which doesn't exist on this host.
+      # Override to a lwj04-writable path (NFM-2754).
+      RUNNER_TOOL_CACHE: /Users/lwj04/actions-runner-production/toolcache
     steps:
       - name: Checkout
         uses: actions/checkout@v7
