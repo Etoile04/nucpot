@@ -34,12 +34,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
     ExtractionChunk,
     ExtractionGap,
+    ExtractionJob,
     ExtractionStep,
     OntologyVersion,
 )
@@ -268,6 +269,330 @@ async def compute_recall(
         wont_fix_gaps=wont_fix_gaps,
         recall_rate=recall_rate,
         computed_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-literature recall + per-ontology coverage (NFM-2697-T4 / ADR §3)
+# ---------------------------------------------------------------------------
+#
+# These two helpers back the new spec-mandated endpoints:
+#
+#   GET /api/v1/literature/{id}/recall?ontology_version=vN
+#     -> 200 { recall_rate, extracted_slots, expected_slots, gaps: [...] }
+#
+#   GET /api/v1/ontology/{version}/coverage
+#     -> 200 { coverage_rate, literature_total, literature_fully_covered,
+#              gap_distribution: {entity_type+property: int} }
+#
+# Both treat gaps with status ``open`` or ``filling`` as "uncovered";
+# ``filled`` / ``wont_fix`` count as covered.
+#
+# A literature row is linked to its chunks via ``ExtractionJob.corpus_id``
+# matching the DataSource's ``doi`` (cast to string) — the literature
+# upload pipeline stores the corpus slug in the job's ``corpus_id`` column
+# and the same value in the DataSource's ``doi`` so the two sides can be
+# joined cheaply.
+#
+# If a future migration moves this linkage to a first-class column on
+# ExtractionGap (e.g. ``literature_id``) the helpers below can be
+# re-pointed without changing the public endpoint contracts.
+
+
+@dataclass(frozen=True)
+class LiteratureRecallItem:
+    """One open/filling gap surfaced in the per-literature recall response."""
+
+    entity_type: str
+    property: str
+    gap_status: str
+
+
+@dataclass(frozen=True)
+class LiteratureRecall:
+    """Per-literature recall payload (NFM-2697-T4 ADR §3).
+
+    Attributes:
+        literature_id: The DataSource id (literature row) these metrics cover.
+        ontology_version_id: The ontology version the recall is measured
+            against.
+        recall_rate: ``extracted_slots / expected_slots`` (clamped to
+            ``[0.0, 1.0]``).  ``1.0`` when ``expected_slots == 0``.
+        extracted_slots: ``expected_slots`` minus the count of open /
+            filling gaps linked to the literature's chunks.
+        expected_slots: Total (entity_type, property) pairs declared by the
+            ontology version.
+        gaps: Per-gap detail (open/filling only).
+    """
+
+    literature_id: uuid.UUID
+    ontology_version_id: uuid.UUID
+    recall_rate: float
+    extracted_slots: int
+    expected_slots: int
+    gaps: list[LiteratureRecallItem]
+
+
+@dataclass(frozen=True)
+class OntologyCoverage:
+    """Per-ontology coverage payload (NFM-2697-T4 ADR §3).
+
+    Attributes:
+        ontology_version_id: The ontology version these metrics cover.
+        coverage_rate: ``literature_fully_covered / literature_total``
+            (clamped to ``[0.0, 1.0]``).  ``1.0`` when
+            ``literature_total == 0``.
+        literature_total: Distinct DataSource (literature) rows that have
+            at least one ExtractionJob whose ``corpus_id`` matches the
+            DataSource's ``doi`` (i.e. the literature has been processed
+            against this ontology).
+        literature_fully_covered: Subset of ``literature_total`` whose
+            chunks carry zero open/filling gaps.
+        gap_distribution: ``{f"{entity_type}.{property}": int}`` counts of
+            every open/filling gap observed across the ontology's
+            literature set, regardless of which literature owns the gap.
+    """
+
+    ontology_version_id: uuid.UUID
+    coverage_rate: float
+    literature_total: int
+    literature_fully_covered: int
+    gap_distribution: dict[str, int]
+
+
+_UNCOVERED_STATUSES: frozenset[str] = frozenset({"open", "filling"})
+
+
+async def _load_ontology_or_value_error(
+    session: AsyncSession,
+    ontology_version_id: uuid.UUID,
+) -> OntologyVersion:
+    """Resolve an OntologyVersion, raising ``ValueError`` if not found.
+
+    Centralised so both new helpers translate the missing-row case
+    identically (callers raise 404 from the ValueError).
+    """
+    stmt = select(OntologyVersion).where(
+        OntologyVersion.id == ontology_version_id,
+    )
+    result = await session.execute(stmt)
+    ov = result.scalar_one_or_none()
+    if ov is None:
+        raise ValueError(
+            f"OntologyVersion not found: {ontology_version_id}",
+        )
+    return ov
+
+
+async def _collect_chunks_for_dois(
+    session: AsyncSession,
+    dois: list[str],
+) -> dict[str, list[uuid.UUID]]:
+    """Return ``{doi: [chunk_id, ...]}`` for the given corpus DOIs.
+
+    Joins ``ExtractionJob.corpus_id`` to ``DataSource.doi``.  Returns an
+    empty mapping if no jobs match (no literature has been processed
+    against this corpus yet).
+    """
+    if not dois:
+        return {}
+    stmt = select(ExtractionChunk.id, ExtractionJob.corpus_id).join(
+        ExtractionJob, ExtractionJob.id == ExtractionChunk.job_id,
+    ).where(ExtractionJob.corpus_id.in_(dois))
+    rows = (await session.execute(stmt)).all()
+    grouped: dict[str, list[uuid.UUID]] = {}
+    for chunk_id, corpus_id in rows:
+        grouped.setdefault(corpus_id, []).append(chunk_id)
+    return grouped
+
+
+async def _collect_processed_corpora(session: AsyncSession) -> list[str]:
+    """Return distinct ``corpus_id`` strings from non-null job rows."""
+    stmt = select(distinct(ExtractionJob.corpus_id)).where(
+        ExtractionJob.corpus_id.isnot(None),
+    )
+    return [row[0] for row in (await session.execute(stmt)).all() if row[0]]
+
+
+async def compute_literature_recall(
+    session: AsyncSession,
+    literature_id: uuid.UUID,
+    ontology_version_id: uuid.UUID,
+) -> LiteratureRecall:
+    """Compute per-literature recall for ``(literature, ontology_version)``.
+
+    Looks up the DataSource and joins through ``ExtractionJob.corpus_id ==
+    DataSource.doi`` to find the literature's chunks; counts open/filling
+    gaps on those chunks against the ontology's expected (entity_type,
+    property) pairs.
+
+    Raises:
+        ValueError: if *literature_id* or *ontology_version_id* does not
+            exist (callers map to HTTP 404).
+    """
+    from nfm_db.models.source import DataSource
+
+    ds_stmt = select(DataSource).where(DataSource.id == literature_id)
+    ds = (await session.execute(ds_stmt)).scalar_one_or_none()
+    if ds is None:
+        raise ValueError(f"Literature not found: {literature_id}")
+
+    ov = await _load_ontology_or_value_error(session, ontology_version_id)
+
+    chunks_by_doi = await _collect_chunks_for_dois(session, [ds.doi or ""])
+    chunk_ids: list[uuid.UUID] = chunks_by_doi.get(ds.doi or "", [])
+
+    entity_types = extract_entity_types(ov)
+    expected_slots = _count_expected_properties(entity_types)
+
+    if expected_slots == 0:
+        return LiteratureRecall(
+            literature_id=literature_id,
+            ontology_version_id=ontology_version_id,
+            recall_rate=1.0,
+            extracted_slots=0,
+            expected_slots=0,
+            gaps=[],
+        )
+
+    if not chunk_ids:
+        # No chunks observed for this literature.  Per ADR §3 we treat
+        # "no recorded gaps" as full coverage of the declared schema:
+        # recall = 1.0, extracted = expected.  Callers that need a
+        # "haven't been processed yet" signal can detect this via
+        # ``expected_slots > 0 and not gaps and not chunk_ids``.
+        return LiteratureRecall(
+            literature_id=literature_id,
+            ontology_version_id=ontology_version_id,
+            recall_rate=1.0,
+            extracted_slots=expected_slots,
+            expected_slots=expected_slots,
+            gaps=[],
+        )
+
+    gap_stmt = select(
+        ExtractionGap.entity_type,
+        ExtractionGap.property,
+        ExtractionGap.gap_status,
+    ).where(
+        ExtractionGap.ontology_version_id == ontology_version_id,
+        ExtractionGap.chunk_id.in_(chunk_ids),
+        ExtractionGap.gap_status.in_(_UNCOVERED_STATUSES),
+    )
+    rows = (await session.execute(gap_stmt)).all()
+    gap_items = [
+        LiteratureRecallItem(
+            entity_type=row.entity_type,
+            property=row.property,
+            gap_status=row.gap_status,
+        )
+        for row in rows
+    ]
+
+    open_count = len(gap_items)
+    extracted_slots = max(expected_slots - open_count, 0)
+    recall_rate = extracted_slots / expected_slots
+
+    return LiteratureRecall(
+        literature_id=literature_id,
+        ontology_version_id=ontology_version_id,
+        recall_rate=recall_rate,
+        extracted_slots=extracted_slots,
+        expected_slots=expected_slots,
+        gaps=gap_items,
+    )
+
+
+async def compute_ontology_coverage(
+    session: AsyncSession,
+    ontology_version_id: uuid.UUID,
+) -> OntologyCoverage:
+    """Compute per-ontology coverage with per-literature breakdown.
+
+    Counts distinct literature rows that have at least one ExtractionJob
+    whose ``corpus_id`` matches the literature's ``doi``; a literature is
+    "fully covered" when none of its chunks have open/filling gaps for
+    this ontology version.
+
+    Raises:
+        ValueError: if *ontology_version_id* does not exist.
+    """
+    from nfm_db.models.source import DataSource
+
+    await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
+
+    lit_stmt = select(DataSource.id, DataSource.doi).where(
+        DataSource.source_type == "literature",
+    )
+    lit_rows = (await session.execute(lit_stmt)).all()
+    lit_id_by_doi: dict[str, uuid.UUID] = {
+        doi: lid for lid, doi in lit_rows if doi
+    }
+
+    processed_corpora = set(await _collect_processed_corpora(session))
+    processed_lit_ids: list[uuid.UUID] = [
+        lit_id_by_doi[doi]
+        for doi in processed_corpora
+        if doi in lit_id_by_doi
+    ]
+
+    if not processed_lit_ids:
+        return OntologyCoverage(
+            ontology_version_id=ontology_version_id,
+            coverage_rate=1.0,
+            literature_total=0,
+            literature_fully_covered=0,
+            gap_distribution={},
+        )
+
+    relevant_dois = [doi for doi in processed_corpora if doi in lit_id_by_doi]
+    chunks_by_doi = await _collect_chunks_for_dois(session, relevant_dois)
+
+    gap_stmt = select(
+        ExtractionGap.entity_type,
+        ExtractionGap.property,
+        ExtractionGap.chunk_id,
+    ).where(
+        ExtractionGap.ontology_version_id == ontology_version_id,
+        ExtractionGap.gap_status.in_(_UNCOVERED_STATUSES),
+    )
+    gap_rows = (await session.execute(gap_stmt)).all()
+
+    gaps_by_chunk: dict[uuid.UUID | None, list[tuple[str, str]]] = {}
+    for row in gap_rows:
+        gaps_by_chunk.setdefault(row.chunk_id, []).append(
+            (row.entity_type, row.property),
+        )
+
+    gap_distribution: dict[str, int] = {}
+    for pairs in gaps_by_chunk.values():
+        for et, pn in pairs:
+            key = f"{et}.{pn}"
+            gap_distribution[key] = gap_distribution.get(key, 0) + 1
+
+    literature_fully_covered = 0
+    for lit_id in processed_lit_ids:
+        doi = next((d for d, lid in lit_id_by_doi.items() if lid == lit_id), None)
+        if doi is None:
+            continue
+        lit_chunk_ids = chunks_by_doi.get(doi, [])
+        if any(cid in gaps_by_chunk for cid in lit_chunk_ids):
+            continue
+        literature_fully_covered += 1
+
+    literature_total = len(processed_lit_ids)
+    coverage_rate = (
+        literature_fully_covered / literature_total
+        if literature_total > 0
+        else 1.0
+    )
+
+    return OntologyCoverage(
+        ontology_version_id=ontology_version_id,
+        coverage_rate=coverage_rate,
+        literature_total=literature_total,
+        literature_fully_covered=literature_fully_covered,
+        gap_distribution=gap_distribution,
     )
 
 
