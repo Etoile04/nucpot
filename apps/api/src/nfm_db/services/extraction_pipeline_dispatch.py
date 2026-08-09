@@ -26,6 +26,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from nfm_db.config import get_settings
 from nfm_db.services.extraction_pipeline import trigger_extraction
 
@@ -102,8 +104,13 @@ async def trigger_extraction_pipeline(
             **kwargs,
         )
     # Legacy path — unchanged.
+    legacy_session = kwargs.get("session")
+    if not isinstance(legacy_session, AsyncSession):
+        raise TypeError(
+            "Legacy trigger_extraction requires an AsyncSession via session=..."
+        )
     return await trigger_extraction(
-        session=kwargs.get("session"),
+        session=legacy_session,
         source_reference=source_reference,
         source_type=source_type,
         element_systems=kwargs.get("element_systems"),

@@ -64,6 +64,10 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
         called["legacy"] += 1
         return {"routed": "legacy", "args": args, "kwargs": kwargs}
 
+    # Stub AsyncSession instance so the typeguard in the dispatch accepts it.
+    from sqlalchemy.ext.asyncio import AsyncSession
+    fake_legacy_session = AsyncSession()
+
     monkeypatch.setattr(
         "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
         fake_legacy,
@@ -75,6 +79,7 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
         dispatch_mod.trigger_extraction_pipeline(
             source_reference="foo.md",
             source_type="file",
+            session=fake_legacy_session,
         )
     )
     assert called["legacy"] == 1
