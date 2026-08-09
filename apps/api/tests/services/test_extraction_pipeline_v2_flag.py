@@ -16,11 +16,6 @@ from unittest.mock import patch
 
 import pytest
 
-# These imports DO NOT YET EXIST — RED signal.
-from nfm_db.services.extraction_pipeline_dispatch import (
-    is_extraction_v2_enabled,
-)
-
 
 def test_is_extraction_v2_enabled_defaults_off():
     """No env var set → False."""
@@ -60,9 +55,17 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
 
     called = {"legacy": 0}
 
+    from datetime import UTC, datetime
+
+    class FakeJob:
+        status = type("S", (), {"value": "completed"})()
+        job_id = "fake-job-id"
+        created_at = datetime.now(UTC)
+        error_message = None
+
     async def fake_legacy(*args, **kwargs):
         called["legacy"] += 1
-        return {"routed": "legacy", "args": args, "kwargs": kwargs}
+        return FakeJob()
 
     # Stub AsyncSession instance so the typeguard in the dispatch accepts it.
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,7 +86,8 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
         )
     )
     assert called["legacy"] == 1
-    assert result["routed"] == "legacy"
+    assert result["status"] == "completed"
+    assert result["job_id"] == "fake-job-id"
 
 
 def test_trigger_extraction_pipeline_on_routes_to_v2(monkeypatch):
@@ -123,62 +127,65 @@ def test_is_extraction_v2_enabled_is_cached():
 
 
 @pytest.mark.asyncio
-async def test_trigger_extraction_pipeline_v2_end_to_end(db_session, monkeypatch):
-    """NFM-2705 defect 4: full dispatcher path with V2 ON persists
-    chunks joined to the parent extraction_jobs row.
+async def test_trigger_extraction_pipeline_v2_raises_not_implemented(monkeypatch):
+    """V2 path raises NotImplementedError until content loading is wired.
 
-    Forces the flag ON, then calls the public ``trigger_extraction_pipeline``
-    entry point (the one the V4 production caller
-    ``api/v4/extraction.py:submit_extraction`` is now wired to) and
-    verifies the round-trip:
-
-    * parent ``ExtractionJob`` row exists with the right
-      ``source_reference`` / ``source_type``
-    * at least one ``ExtractionChunk`` row landed in
-      ``extraction_chunks`` joined to that parent by ``job_id``
+    The flag-default-off guard prevents accidental zero-result runs in
+    production.  Once RawTextLoader gains production document-fetch
+    wiring this test is replaced with a real round-trip.
     """
     import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
 
-    # Force ON regardless of host env.
     monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
-    # Clear the lru_cache so the test doesn't read a stale env binding.
     try:
         dispatch_mod.is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
     except AttributeError:
         pass
 
-    orm_job = await dispatch_mod.trigger_extraction_pipeline(
-        session=db_session,
-        source_reference="10.5555/end-to-end-test",
-        source_type="doi",
-        extract_figures=False,
-        extract_tables=False,
-    )
+    with pytest.raises(NotImplementedError, match="content loading not yet implemented"):
+        await dispatch_mod.trigger_extraction_pipeline(
+            source_reference="10.5555/not-implemented-test",
+            source_type="doi",
+        )
 
-    # Parent row persisted with the right identity.
-    assert orm_job.id is not None
-    assert orm_job.source_reference == "10.5555/end-to-end-test"
-    assert orm_job.source_type == "doi"
 
-    # Chunks were flushed with job_id FK back to the parent.
-    from sqlalchemy import select
+@pytest.mark.asyncio
+async def test_trigger_extraction_pipeline_legacy_returns_normalized_dict(monkeypatch):
+    """Legacy path returns a normalized dict with consistent keys."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
 
-    from nfm_db.models.extraction_chunk import ExtractionChunk as ORMChunk
-    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: False)
 
-    result = await db_session.execute(
-        select(ORMChunk).where(ORMChunk.job_id == orm_job.id)
-    )
-    persisted = list(result.scalars().all())
-    assert persisted, (
-        "no extraction_chunks rows landed for the V2 dispatcher run; "
-        "defect 1 (zero-row _persist) is back"
-    )
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, patch
 
-    # Join sanity: every chunk points at the parent ExtractionJob.
-    parent = await db_session.get(ORMExtractionJob, orm_job.id)
-    assert parent is not None
-    assert parent.id == orm_job.id
-    for chunk in persisted:
-        assert chunk.job_id == parent.id
-    assert hasattr(is_extraction_v2_enabled, "cache_clear")
+    fake_job = type(
+        "Job",
+        (),
+        {
+            "status": type("S", (), {"value": "queued"})(),
+            "job_id": "test-job-123",
+            "created_at": datetime.now(UTC),
+            "error_message": None,
+        },
+    )()
+
+    with patch(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
+        new_callable=AsyncMock,
+        return_value=fake_job,
+    ):
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        fake_session = AsyncSession()
+        result = await dispatch_mod.trigger_extraction_pipeline(
+            source_reference="foo.md",
+            source_type="file",
+            session=fake_session,
+        )
+
+    assert isinstance(result, dict)
+    assert result["status"] == "queued"
+    assert result["job_id"] == "test-job-123"
+    assert result["created_at"] is not None
+    assert result["error_message"] is None

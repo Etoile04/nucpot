@@ -40,7 +40,6 @@ from nfm_db.schemas.extraction import (
 from nfm_db.services.extraction_pipeline import (
     JobStatus,
     get_job,
-    trigger_extraction,
 )
 
 logger = logging.getLogger(__name__)
@@ -246,42 +245,28 @@ async def submit_extraction(
                 "(e.g., 10.1016/j.nucengdes.2020.110756)",
             )
     # Pass original reference to pipeline (preserve user input in job record).
-    # Strangler-fig routing (NFM-2705 defect 4): the dispatch wrapper
-    # transparently forwards to either the legacy trigger_extraction()
-    # (default OFF, EXTRACTION_PIPELINE_V2=0) or the V2
-    # ExtractionOrchestratorV2 path (NFM-2677) when the flag is ON.
+    # Strangler-fig routing: the dispatch wrapper transparently forwards
+    # to either the legacy trigger_extraction() (default OFF) or the V2
+    # ExtractionOrchestratorV2 (when the flag is ON).  The wrapper returns
+    # a normalized dict so the endpoint needs no flag branching of its own.
     from nfm_db.services.extraction_pipeline_dispatch import (
-        is_extraction_v2_enabled,
         trigger_extraction_pipeline,
     )
 
-    if is_extraction_v2_enabled():
-        # V2 path returns the ORM ExtractionJob row; the dispatch
-        # wrapper has already flushed a parent row + the chunk rows.
-        orm_job = await trigger_extraction_pipeline(
-            session=session,
-            source_reference=payload.source_reference,
-            source_type=payload.source_type,
-            extract_figures=payload.extract_figures,
-            extract_tables=payload.extract_tables,
-        )
-        status_value = orm_job.status
-        job_id_value = str(orm_job.id)
-        created_at_value = orm_job.created_at
-        error_message_value = orm_job.error_message
-    else:
-        legacy_job = await trigger_extraction(
-            session=session,
-            source_reference=payload.source_reference,
-            source_type=payload.source_type,
-            element_systems=payload.element_systems,
-            cache_level=payload.cache_level,
-            max_confidence=payload.max_confidence,
-        )
-        status_value = legacy_job.status.value
-        job_id_value = legacy_job.job_id
-        created_at_value = legacy_job.created_at
-        error_message_value = legacy_job.error_message
+    result = await trigger_extraction_pipeline(
+        session=session,
+        source_reference=payload.source_reference,
+        source_type=payload.source_type,
+        element_systems=payload.element_systems,
+        cache_level=payload.cache_level,
+        max_confidence=payload.max_confidence,
+        extract_figures=payload.extract_figures,
+        extract_tables=payload.extract_tables,
+    )
+    status_value = result["status"]
+    job_id_value = result["job_id"]
+    created_at_value = result["created_at"]
+    error_message_value = result["error_message"]
 
     return JSONResponse(
         status_code=202,

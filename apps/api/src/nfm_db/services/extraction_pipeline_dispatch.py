@@ -45,57 +45,38 @@ def is_extraction_v2_enabled() -> bool:
 async def _run_v2_pipeline(**kwargs: Any) -> Any:
     """Run the V2 orchestrator path (NFM-2677).
 
-    Creates the parent :class:`ExtractionJob` ORM row, then hands the
-    session off to the new step-based ``ExtractionOrchestratorV2``
-    (NFM-2677 B7).  Kept as a module-level coroutine so tests can
-    monkeypatch this symbol directly.
+    .. note::
+
+       Content loading (fetching the actual document text before
+       feeding the pipeline) is **not yet implemented**.  Raising
+       :class:`NotImplementedError` prevents silent zero-result
+       extractions when the flag is toggled ON prematurely.  Once
+       ``RawTextLoader`` gains production document-fetch wiring this
+       guard is replaced with the real content-loading logic.
+
+    Kept as a module-level coroutine so tests can monkeypatch this
+    symbol directly.
     """
-    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
-    from nfm_db.services.extraction import ExtractionChunk
-    from nfm_db.services.extraction_orchestrator_v2 import (
-        ExtractionOrchestratorV2,
+    raise NotImplementedError(
+        "V2 pipeline content loading not yet implemented. "
+        "The EXTRACTION_PIPELINE_V2 flag must remain OFF until "
+        "RawTextLoader has production document-fetch wiring."
     )
-
-    session = kwargs.pop("session", None)
-    if session is None:
-        raise ValueError(
-            "V2 pipeline dispatch requires a DB session via session=..."
-        )
-
-    orm_job = ORMExtractionJob(
-        source_reference=kwargs.get("source_reference"),
-        source_type=kwargs.get("source_type"),
-        extract_figures=bool(kwargs.get("extract_figures", False)),
-        extract_tables=bool(kwargs.get("extract_tables", False)),
-    )
-    session.add(orm_job)
-    await session.flush()
-
-    # The V2 orchestrator runs the 5 strangler-fig steps on a single
-    # initial ExtractionChunk.  Real source-content loading is deferred
-    # to a follow-up task; for now an empty raw_text chunk is enough
-    # to exercise the pipeline scaffold.
-    initial = ExtractionChunk(
-        content="",
-        chunk_type="raw_text",
-        _source_span=(0, 0),
-        metadata={"source_reference": kwargs.get("source_reference")},
-    )
-    orchestrator = ExtractionOrchestratorV2(session, job_id=orm_job.id)
-    await orchestrator.run(initial)
-    return orm_job
 
 
 async def trigger_extraction_pipeline(
     source_reference: str,
     source_type: str,
     **kwargs: Any,
-) -> Any:
+) -> dict[str, Any]:
     """Single entry point that routes to legacy or V2 based on the flag.
 
-    Mirrors the public signature of the legacy ``trigger_extraction``
-    so call-sites (e.g. ``api/v4/extraction.py``) can swap with no
-    additional changes beyond import path.
+    Returns a **normalized dict** with consistent keys so call-sites
+    (e.g. ``api/v4/extraction.py``) never need their own
+    ``is_extraction_v2_enabled`` branching::
+
+        {"status": str, "job_id": str,
+         "created_at": datetime | None, "error_message": str | None}
     """
     if is_extraction_v2_enabled():
         return await _run_v2_pipeline(
@@ -109,7 +90,7 @@ async def trigger_extraction_pipeline(
         raise TypeError(
             "Legacy trigger_extraction requires an AsyncSession via session=..."
         )
-    return await trigger_extraction(
+    job = await trigger_extraction(
         session=legacy_session,
         source_reference=source_reference,
         source_type=source_type,
@@ -121,3 +102,9 @@ async def trigger_extraction_pipeline(
         job_id=kwargs.get("job_id"),
         ontology_version_id=kwargs.get("ontology_version_id"),
     )
+    return {
+        "status": job.status.value,
+        "job_id": job.job_id,
+        "created_at": job.created_at,
+        "error_message": job.error_message,
+    }
