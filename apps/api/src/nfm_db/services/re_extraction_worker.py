@@ -24,7 +24,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import Corpus, ExtractionJob, OntologyVersion, ReExtractionQueue
-from nfm_db.models.re_extraction_queue import RE_EXTRACTION_STATUSES
 from nfm_db.services.extraction_orchestrator import ExtractionOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -71,7 +70,7 @@ async def process_re_extraction_queue(
         try:
             await _process_single_entry(session, entry)
             summary["completed"] += 1
-        except Exception as exc:  # noqa: BLE001 — worker must not abort
+        except Exception as exc:  # worker must not abort on single entry failure
             logger.exception(
                 "process_re_extraction_queue: entry %s failed: %s",
                 entry.id,
