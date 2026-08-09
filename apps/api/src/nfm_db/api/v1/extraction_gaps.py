@@ -24,6 +24,7 @@ from pathlib import Path as FsPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -441,12 +442,18 @@ async def update_extraction_gap_status(
 @router.get(
     "/extraction-gaps/recall/{ontology_version_id}",
     response_model=ApiResponse[RecallMetricsResponse],
-    summary="查询召回率",
+    deprecated=True,
+    summary="查询召回率 (DEPRECATED — use /api/v1/ontology/{version}/coverage)",
     description=(
-        "计算指定本体版本的召回率指标。召回率 = "
-        "（总预期属性 - 未覆盖缺口）/ 总预期属性。\n\n"
-        "Compute recall metrics for an ontology version. "
-        "Recall rate = (total expected - uncovered gaps) / total expected."
+        "**DEPRECATED** as of NFM-2697-T4.  Use the spec-mandated "
+        "``GET /api/v1/ontology/{version_id}/coverage`` endpoint instead; "
+        "this route returns aggregated per-ontology recall metrics but is "
+        "superseded by the new ADR-§3 coverage endpoint that adds a "
+        "per-literature breakdown.  A ``Deprecation`` response header "
+        "points to the new URL.  Kept functional for at least one release "
+        "so existing clients do not break.\n\n"
+        "Calculate recall for the given ontology version.  Recall rate = "
+        "(total expected - uncovered gaps) / total expected."
     ),
 )
 async def get_recall_metrics(
@@ -456,8 +463,12 @@ async def get_recall_metrics(
     ),
     session: AsyncSession = Depends(get_db),
     _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
-) -> ApiResponse[RecallMetricsResponse]:
-    """Return aggregated recall metrics for an ontology version.
+) -> JSONResponse:
+    """Return aggregated recall metrics for an ontology version (deprecated).
+
+    Emits a ``Deprecation`` HTTP response header and an RFC 8288 ``Link``
+    header pointing at the spec-mandated
+    ``/api/v1/ontology/{version}/coverage`` successor endpoint.
 
     Errors:
     - 404 - ontology_version_id not found (translated from ValueError).
@@ -470,7 +481,7 @@ async def get_recall_metrics(
             detail=str(exc),
         ) from exc
 
-    return ApiResponse(
+    body = ApiResponse(
         success=True,
         data=RecallMetricsResponse(
             ontology_version_id=str(metrics.ontology_version_id),
@@ -482,6 +493,17 @@ async def get_recall_metrics(
             recall_rate=metrics.recall_rate,
             computed_at=metrics.computed_at.isoformat(),
         ),
+    )
+    return JSONResponse(
+        content=body.model_dump(mode="json"),
+        headers={
+            "Deprecation": (
+                f'true; successor="/api/v1/ontology/{ontology_version_id}/coverage"'
+            ),
+            "Link": (
+                f'</api/v1/ontology/{ontology_version_id}/coverage>; rel="successor-version"'
+            ),
+        },
     )
 
 

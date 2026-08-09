@@ -27,13 +27,13 @@ import math
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import require_editor
+from nfm_db.api.v1.auth import require_domain_expert, require_editor
 from nfm_db.database import get_db
 from nfm_db.models.extraction_figure import ExtractionFigure
 from nfm_db.models.extraction_result import ExtractionResult
@@ -50,6 +50,7 @@ from nfm_db.schemas.literature import (
     LiteratureStatusResponse,
     LiteratureUploadResponse,
 )
+from nfm_db.services.gap_scanner import compute_literature_recall
 from nfm_db.services.provenance import parse_provenance
 from nfm_db.services.storage import get_storage
 
@@ -860,3 +861,94 @@ async def get_literature_file(
     }.get(ext, "application/octet-stream")
 
     return Response(content=data, media_type=content_type)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/literature/{id}/recall (NFM-2697-T4 / ADR §3)
+# ---------------------------------------------------------------------------
+
+
+class LiteratureGapItem(BaseModel):
+    """One open/filling gap surfaced in the per-literature recall payload."""
+
+    entity_type: str
+    property: str
+    gap_status: str
+
+
+class LiteratureRecallResponse(BaseModel):
+    """Per-literature recall metrics (NFM-2697-T4 ADR §3)."""
+
+    recall_rate: float = Field(
+        ...,
+        description="Fraction of expected properties covered (0.0-1.0).",
+    )
+    extracted_slots: int = Field(
+        ...,
+        description="Number of (entity_type, property) pairs covered.",
+    )
+    expected_slots: int = Field(
+        ...,
+        description="Total (entity_type, property) pairs declared by the ontology.",
+    )
+    gaps: list[LiteratureGapItem] = Field(
+        default_factory=list,
+        description="Per-gap detail for every open/filling gap linked to this literature.",
+    )
+
+
+@router.get(
+    "/{literature_id}/recall",
+    response_model=ApiResponse[LiteratureRecallResponse],
+    summary="Per-literature recall metrics",
+    description=(
+        "计算指定文献相对于指定本体版本的召回率。\n\n"
+        "Compute per-literature recall metrics: recall_rate, "
+        "extracted_slots, expected_slots, and the list of open/filling "
+        "gaps linked to this literature's chunks."
+    ),
+)
+async def get_literature_recall(
+    literature_id: uuid.UUID = Path(
+        ...,
+        description="Literature (DataSource) id.",
+    ),
+    ontology_version: uuid.UUID = Query(
+        ...,
+        description="Ontology version id to measure recall against.",
+    ),
+    session: AsyncSession = Depends(get_db),
+    _current_user: Annotated[User, Depends(require_domain_expert)] = ...,  # type: ignore[assignment]
+) -> ApiResponse[LiteratureRecallResponse]:
+    """Return per-literature recall for ``(literature, ontology_version)``.
+
+    Errors:
+    - 404: literature_id or ontology_version not found.
+    - 422: ontology_version query param missing (FastAPI validation).
+    """
+    try:
+        result = await compute_literature_recall(
+            session, literature_id, ontology_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return ApiResponse(
+        success=True,
+        data=LiteratureRecallResponse(
+            recall_rate=result.recall_rate,
+            extracted_slots=result.extracted_slots,
+            expected_slots=result.expected_slots,
+            gaps=[
+                LiteratureGapItem(
+                    entity_type=g.entity_type,
+                    property=g.property,
+                    gap_status=g.gap_status,
+                )
+                for g in result.gaps
+            ],
+        ),
+    )
