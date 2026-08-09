@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
+from collections.abc import Generator
 from pathlib import Path
 
 # Ensure repo-root scripts/ is importable for phase gate and eval scripts.
@@ -227,6 +228,25 @@ def _reenable_rate_limit_overrides(request) -> None:
         app.dependency_overrides.pop(_core_get_user, None)
 
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_v2_flag_cache() -> Generator[None, None, None]:
+    """Prevent EXTRACTION_PIPELINE_V2 lru_cache from leaking across tests.
+
+    Tests that set ``NFM_EXTRACTION_V2_ENABLED=true`` (e.g.
+    ``test_extraction_v2_flag_verification``) can poison the cache for
+    subsequent V4 API tests that route through the dispatcher.
+    """
+    try:
+        from nfm_db.services.extraction_pipeline_dispatch import (
+            is_extraction_v2_enabled,
+        )
+        is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
+        yield
+        is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
+    except ImportError:
+        yield
 
 
 @pytest.fixture

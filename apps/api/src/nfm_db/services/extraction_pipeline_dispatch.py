@@ -42,7 +42,7 @@ def is_extraction_v2_enabled() -> bool:
     return bool(get_settings().extraction_v2_enabled)
 
 
-async def _run_v2_pipeline(**kwargs: Any) -> Any:
+async def _run_v2_pipeline(**kwargs: Any) -> dict[str, Any]:
     """Run the V2 orchestrator path (NFM-2677).
 
     .. note::
