@@ -228,15 +228,19 @@ the `runner` user is not registered in DirectoryService. However,
 
 ### Workaround (applied in NFM-2754)
 
-Set `RUNNER_TOOL_CACHE` in the workflow env to a `lwj04`-writable path:
+Replace `actions/setup-python@v7` with a plain `python3 --version`
+check. The collector uses only stdlib imports (no pip dependencies),
+so the system Python installed via Homebrew (`python3`) is sufficient.
+The `setup-python` action hardcodes `RUNNER_TOOL_CACHE` to
+`/Users/runner/hostedtoolcache` and ignores workflow-level env overrides
+on self-hosted runners — the only way to fix it at the action level
+would be to create `/Users/runner` (requires sudo) or re-register the
+runner under a dedicated user.
 
 ```yaml
-env:
-  RUNNER_TOOL_CACHE: /Users/lwj04/actions-runner-production/toolcache
+- name: Set up Python
+  run: python3 --version
 ```
-
-This is a workflow-level workaround, not a host-level fix. It
-eliminates the need for a `/Users/runner` directory or `runner` user.
 
 ### Canonical fix (optional)
 
