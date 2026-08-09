@@ -207,3 +207,99 @@ class TestSectionSegmenterExecution:
         await step.execute(ctx)
 
         assert ctx.values == original_values
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — CR #1 (boundary \n provenance) and CR #2 (numbered
+# over-match) on PR #730.  These tests fail on the original implementation
+# and lock in the fix.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSectionSegmenterCRRegressions:
+    """Regression tests for Code Review findings on PR #730."""
+
+    @pytest.mark.asyncio
+    async def test_boundary_section_does_not_start_with_newline(self) -> None:
+        """CR #1: a heading-initiated section must not start with the
+        boundary ``\\n`` (it semantically belongs to the previous section
+        as the paragraph separator, not to the new heading's content).
+        """
+        from nfm_db.pipeline.section_segmenter import SectionSegmenter
+
+        step = SectionSegmenter()
+        text = "para 1\n# Heading\nstuff"
+        ctx = StepContext(job_id="job-1", values={"raw_text": text})
+
+        result = await step.execute(ctx)
+
+        sections = result.outputs["sections"]
+        assert len(sections) == 2
+        # The second section is the heading; it must not start with \n.
+        assert not sections[1]["content"].startswith("\n")
+        # And the heading's content should begin with the heading marker.
+        assert sections[1]["content"].startswith("# Heading")
+
+    @pytest.mark.asyncio
+    async def test_boundary_section_starts_at_heading_marker(self) -> None:
+        """CR #1 (provenance): the heading section's source_span.start
+        must point at the ``#`` character, not at the preceding ``\\n``.
+        """
+        from nfm_db.pipeline.section_segmenter import SectionSegmenter
+
+        step = SectionSegmenter()
+        text = "para 1\n# Heading\nstuff"
+        ctx = StepContext(job_id="job-1", values={"raw_text": text})
+
+        result = await step.execute(ctx)
+
+        sections = result.outputs["sections"]
+        # Confirm the heading-section start aligns with the '#' in text.
+        hash_pos = text.index("#")
+        assert sections[1]["source_span"]["start"] == hash_pos
+
+    @pytest.mark.asyncio
+    async def test_year_like_number_at_line_start_not_a_boundary(self) -> None:
+        """CR #2: a 4-digit year at line start (e.g. ``2023. We did X``)
+        must NOT be treated as a numbered section.  ``d{1,3}`` (≤ 3
+        digits) is the key constraint: a 4-digit year fails to match the
+        numbered-section pattern, so the document falls through to
+        paragraph splitting.
+        """
+        from nfm_db.pipeline.section_segmenter import _SECTION_BOUNDARY
+
+        text = "\n2023. We did important work this year."
+        matches = list(_SECTION_BOUNDARY.finditer(text))
+        assert matches == [], (
+            f"_SECTION_BOUNDARY should not match year-like numbers, "
+            f"got: {[text[m.start():m.end()] for m in matches]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_lowercase_numbered_line_not_a_boundary(self) -> None:
+        """CR #2: a numbered line whose title starts with a lowercase
+        letter (e.g. ``1. the new normal``) is prose, not a section
+        header.  The ``[A-Z]`` constraint on the title's first char
+        blocks this.
+        """
+        from nfm_db.pipeline.section_segmenter import _SECTION_BOUNDARY
+
+        text = "\n1. the new normal in 2024."
+        matches = list(_SECTION_BOUNDARY.finditer(text))
+        assert matches == [], (
+            f"_SECTION_BOUNDARY should not match lowercase-titled lines, "
+            f"got: {[text[m.start():m.end()] for m in matches]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_numbered_section_with_capital_title_still_matches(self) -> None:
+        """Sanity check that the tightened regex still recognises the
+        cases it is meant to recognise (``1. Introduction``,
+        ``2) Methods``).
+        """
+        from nfm_db.pipeline.section_segmenter import _SECTION_BOUNDARY
+
+        for text in ("\n1. Introduction", "\n2) Methods", "\n10. Results"):
+            matches = list(_SECTION_BOUNDARY.finditer(text))
+            assert matches, f"expected boundary match in {text!r}"

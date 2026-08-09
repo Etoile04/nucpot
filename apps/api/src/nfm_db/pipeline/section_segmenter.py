@@ -29,9 +29,16 @@ __all__ = ["SectionSegmenter"]
 # Matches ``\\n`` immediately before:
 #   - Markdown headings (``# Title``, ``## Sub``, …)
 #   - Numbered sections (``1. Title``, ``2) Title``, …)
+#
+# Numbered-section pattern is constrained on two axes (CR #2 on PR #730):
+#   1. ``\\d{1,3}`` — at most 3 digits, so 4-digit years (``2023.``) at
+#      line start are NOT treated as section headers.
+#   2. ``[A-Z]`` — the title's first character must be uppercase, so a
+#      lowercase-prefixed numbered line (``1. the new normal``) is read
+#      as prose, not a header.
 _SECTION_BOUNDARY = re.compile(
     r"\n(?=#{1,6}\s)"
-    r"|\n(?=\d+[.)]\s+\S)"
+    r"|\n(?=\d{1,3}[.)]\s+[A-Z])"
 )
 
 # ---------------------------------------------------------------------------
@@ -140,6 +147,12 @@ def _split_by_boundaries(
     structural marker.  Sections are contiguous: the concatenation of
     all ``content`` fields exactly reproduces *text*.
 
+    Provenance handling (CR #1 on PR #730): the boundary ``\\n`` is the
+    paragraph separator, so it belongs to the *previous* section's
+    trailing content, NOT to the new heading's leading content.  We
+    therefore end each section at ``m.end()`` and start the next section
+    at ``m.end()`` (one past the ``\\n``).
+
     Returns an empty list when *pattern* finds no matches.
     """
     matches = list(pattern.finditer(text))
@@ -149,16 +162,18 @@ def _split_by_boundaries(
 
     sections: list[dict[str, Any]] = []
 
-    # Text before the first boundary.
-    start, end = 0, matches[0].start()
+    # Text before the first boundary (includes the boundary \n).
+    start, end = 0, matches[0].end()
     sections.append(
         {"content": text[start:end], "source_span": {"start": start, "end": end}}
     )
 
-    # Each boundary-initiated section.
+    # Each boundary-initiated section (starts AFTER the boundary \n).
     for i, m in enumerate(matches):
-        start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        start = m.end()
+        end = (
+            matches[i + 1].end() if i + 1 < len(matches) else len(text)
+        )
         sections.append(
             {"content": text[start:end], "source_span": {"start": start, "end": end}}
         )
