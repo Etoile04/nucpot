@@ -231,6 +231,7 @@ def test_alembic_has_a_single_head() -> None:
         "047_extraction_gap",
         "048_data_collection_request",
         "049_add_ontology_version_to_extraction_job",
+        "050_extraction_chunk_v2_provenance",
     }
 
 
