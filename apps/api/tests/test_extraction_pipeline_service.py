@@ -208,6 +208,179 @@ class TestExtractionJob:
 
 
 # ---------------------------------------------------------------------------
+# _extraction_job_to_dict serialization boundary (NFM-2743, D3)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractionJobToDict:
+    """NFM-2743 / D3 — single serialization boundary.
+
+    The dataclass :class:`ExtractionJob` (in-memory orchestration/request
+    state) and the ORM :class:`ExtractionJob` (in
+    ``models/extraction_job.py`` — ingestion/results state) model
+    different lifecycle stages and have a 10-field gap. The dict — not
+    either class — is the stable public interface for callers. These
+    tests lock the contract so the dispatch wrapper and any future
+    V2 path can rely on the same shape.
+
+    See ``docs/architecture/ADR-NFM-2739-extraction-job-dual-class.md``
+    for the field diff and the deferred migration to a single ORM row.
+    """
+
+    def test_dataclass_and_orm_return_identical_key_set(self) -> None:
+        """The returned dict key set MUST be identical regardless of input.
+
+        Regression guard for the whole D3 seam — call-sites that switch
+        on key presence will silently break if either path adds or
+        drops a key.
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="dc-1",
+            source_reference="src.md",
+            source_type="file",
+        )
+        orm_job = ORMExtractionJob(
+            source_reference="src.md",
+            source_type="file",
+        )
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000001")
+
+        dc_dict = _extraction_job_to_dict(dc_job)
+        orm_dict = _extraction_job_to_dict(orm_job)
+
+        assert set(dc_dict.keys()) == set(orm_dict.keys()), (
+            f"Key-set mismatch: dataclass-only={set(dc_dict) - set(orm_dict)} "
+            f"orm-only={set(orm_dict) - set(dc_dict)}"
+        )
+
+    def test_job_id_is_str_for_dataclass(self) -> None:
+        """Dataclass ``job_id`` is already a ``str`` — must round-trip as-is."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="plain-str-id", source_reference="s", source_type="file",
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["job_id"] == "plain-str-id"
+        assert isinstance(d["job_id"], str)
+
+    def test_job_id_is_str_for_orm_uuid(self) -> None:
+        """ORM ``id`` is a ``uuid.UUID`` — must be coerced to ``str``.
+
+        This is the exact confusion that produced PR #726's CI failures
+        (NFM-2743 motivation). The helper is the single resolution point.
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000099")
+
+        d = _extraction_job_to_dict(orm_job)
+
+        assert d["job_id"] == "00000000-0000-0000-0000-000000000099"
+        assert isinstance(d["job_id"], str)
+        assert not isinstance(d["job_id"], UUID)  # explicit: NEVER raw UUID
+
+    def test_orm_gap_field_defaults(self) -> None:
+        """The 10 dataclass-only fields must emit documented defaults on ORM path.
+
+        Per the binding contract in NFM-2743:
+
+            fill_batch_id=None
+            extracted_count=0
+            staged_count=0
+            rejected_count=0
+            element_systems=None
+            cache_level=None
+            max_confidence=None
+            conflict_strategy="prefer_vlm"
+            figures=[]
+            tables=[]
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        orm_job.id = UUID(int=1)
+        d = _extraction_job_to_dict(orm_job)
+
+        assert d["fill_batch_id"] is None
+        assert d["extracted_count"] == 0
+        assert d["staged_count"] == 0
+        assert d["rejected_count"] == 0
+        assert d["element_systems"] is None
+        assert d["cache_level"] is None
+        assert d["max_confidence"] is None
+        assert d["conflict_strategy"] == "prefer_vlm"
+        assert d["figures"] == []
+        assert d["tables"] == []
+
+    def test_status_is_str_value_for_dataclass_enum(self) -> None:
+        """``status`` must be the ``str`` value, not the ``JobStatus`` enum member."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="j1",
+            source_reference="s",
+            source_type="file",
+            status=JobStatus.RUNNING,
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["status"] == "running"
+        assert isinstance(d["status"], str)
+
+    def test_datetimes_are_iso8601_strings(self) -> None:
+        """``created_at``, ``started_at``, ``completed_at`` MUST be ISO-8601 strings."""
+        from datetime import UTC, datetime
+
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        now = datetime.now(UTC)
+        dc_job = ExtractionJob(
+            job_id="j1",
+            source_reference="s",
+            source_type="file",
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        for key in ("created_at", "started_at", "completed_at"):
+            assert isinstance(d[key], str), f"{key}={d[key]!r} should be str"
+            assert datetime.fromisoformat(d[key]) == now, (
+                f"{key} did not round-trip via fromisoformat"
+            )
+
+    def test_none_datetimes_remain_none(self) -> None:
+        """``None`` datetimes stay ``None`` (do NOT become ``'None'`` strings)."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(job_id="j1", source_reference="s", source_type="file")
+        # Reset the auto-set fields so the helper must handle None cleanly.
+        dc_job.started_at = None
+        dc_job.completed_at = None
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["started_at"] is None
+        assert d["completed_at"] is None
+        # created_at is auto-set by default_factory and MUST still emit a str.
+        assert isinstance(d["created_at"], str)
+
+
+# ---------------------------------------------------------------------------
 # _update_job tests
 # ---------------------------------------------------------------------------
 
