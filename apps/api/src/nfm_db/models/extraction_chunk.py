@@ -32,7 +32,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
@@ -366,9 +367,9 @@ class ExtractionChunk(TimestampMixin, Base):
         self.source_span = value
 
     @classmethod
-    def upsert_by_span_hash(
+    async def upsert_by_span_hash(
         cls,
-        session: Any,
+        session: AsyncSession,
         *,
         job_id: uuid.UUID,
         step_name: str,
@@ -392,19 +393,21 @@ class ExtractionChunk(TimestampMixin, Base):
         is raised for invalid input. V1 callers that don't supply
         ``step_name`` cannot use this helper and should construct
         :class:`ExtractionChunk` directly.
+
+        Must be ``await``-ed — the application exposes only
+        :class:`AsyncSession`, and SQLAlchemy's async session has no
+        ``.query()`` method.
         """
         validate_source_span(source_span)
         span_hash = compute_source_span_hash(job_id, step_name, source_span)
 
-        existing: ExtractionChunk | None = (
-            session.query(cls)
-            .filter(
-                cls.job_id == job_id,
-                cls.step_name == step_name,
-                cls.source_span_hash == span_hash,
-            )
-            .one_or_none()
+        stmt = select(cls).where(
+            cls.job_id == job_id,
+            cls.step_name == step_name,
+            cls.source_span_hash == span_hash,
         )
+        result = await session.execute(stmt)
+        existing: ExtractionChunk | None = result.scalar_one_or_none()
         if existing is not None:
             return existing
 

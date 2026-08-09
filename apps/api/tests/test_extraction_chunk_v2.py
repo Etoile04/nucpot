@@ -6,19 +6,22 @@ Covers the V2 model additions:
   * ``token_estimate`` (V2 token count, distinct from V1 ``token_count``)
   * ``metadata_`` JSON
   * ``_source_span`` property + ``validate_source_span`` helper
-  * Idempotent ``upsert_by_span_hash`` classmethod
+  * Idempotent ``upsert_by_span_hash`` classmethod (async, AsyncSession)
   * Partial unique index on (job_id, step_name, source_span_hash)
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 import pytest
-from sqlalchemy import JSON, create_engine, select
+from sqlalchemy import JSON, select
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from nfm_db.models import Base, ExtractionJob
 from nfm_db.models.extraction_chunk import (
@@ -30,18 +33,18 @@ from nfm_db.models.extraction_chunk import (
 )
 
 
-def _sqlite_compat_create_all(engine) -> None:
-    """Create all tables on a SQLite engine, swapping JSONB for JSON.
+def _sqlite_compat_create_all(sync_conn, metadata) -> None:
+    """Create all tables on a SQLite connection, swapping JSONB for JSON.
 
     Mirrors the conftest's ``_replace_jsonb`` helper so this test file
     can stand alone without depending on the conftest's private
-    helpers.
+    helpers. Callable shape matches ``conn.run_sync``'s expectation.
     """
-    for table in Base.metadata.tables.values():
+    for table in metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, PG_JSONB):
                 col.type = JSON()
-    Base.metadata.create_all(engine)
+    metadata.create_all(sync_conn)
 
 
 # ---------------------------------------------------------------------------
@@ -209,26 +212,37 @@ class TestComputeSourceSpanHash:
 
 
 # ---------------------------------------------------------------------------
-# Model CRUD & upsert (in-memory SQLite)
+# Model CRUD & upsert (in-memory SQLite, AsyncSession — matches the app)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def session() -> Any:
-    engine = create_engine("sqlite:///:memory:")
-    _sqlite_compat_create_all(engine)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    try:
-        yield s
-    finally:
-        s.close()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+async def session() -> AsyncSession:
+    """Async in-memory SQLite session that mirrors the app's real session type.
+
+    The app exposes only ``AsyncSession`` (``nfm_db.database.get_db``); the
+    previous sync ``Session`` fixture let ``upsert_by_span_hash``'s sync
+    ``session.query()`` call pass tests but crash in production. This
+    fixture exercises the same shape that ships.
+    """
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(_sqlite_compat_create_all, Base.metadata)
+    factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with factory() as s:
+        try:
+            yield s
+        finally:
+            pass
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
 
 
 @pytest.fixture()
-def job(session: Any) -> ExtractionJob:
+async def job(session: AsyncSession) -> ExtractionJob:
     job = ExtractionJob(
         id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
         source_reference="test-doc",
@@ -236,13 +250,13 @@ def job(session: Any) -> ExtractionJob:
         status="completed",
     )
     session.add(job)
-    session.commit()
+    await session.commit()
     return job
 
 
 class TestCreate:
-    def test_create_minimal_v2_chunk(
-        self, session: Any, job: ExtractionJob
+    async def test_create_minimal_v2_chunk(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         chunk = ExtractionChunk(
             job_id=job.id,
@@ -253,9 +267,9 @@ class TestCreate:
             chunk_index=0,
         )
         session.add(chunk)
-        session.commit()
+        await session.commit()
 
-        loaded = session.get(ExtractionChunk, chunk.id)
+        loaded = await session.get(ExtractionChunk, chunk.id)
         assert loaded is not None
         assert loaded.content == "hello world"
         assert loaded.step_name == "chunk"
@@ -270,8 +284,8 @@ class TestCreate:
         assert loaded.metadata_ is None
         assert loaded.token_count is None  # V1 column still nullable
 
-    def test_create_with_token_estimate_and_metadata(
-        self, session: Any, job: ExtractionJob
+    async def test_create_with_token_estimate_and_metadata(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         meta = {"model": "claude-opus-4.8", "prompt_version": 3}
         chunk = ExtractionChunk(
@@ -289,16 +303,16 @@ class TestCreate:
             metadata_=meta,
         )
         session.add(chunk)
-        session.commit()
+        await session.commit()
 
-        loaded = session.get(ExtractionChunk, chunk.id)
+        loaded = await session.get(ExtractionChunk, chunk.id)
         assert loaded is not None
         assert loaded.token_estimate == 50
         assert loaded.metadata_ == meta
         assert loaded.step_name == "extract"
 
-    def test_v1_chunk_without_step_name_still_insertable(
-        self, session: Any, job: ExtractionJob
+    async def test_v1_chunk_without_step_name_still_insertable(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         """V1 chunker rows lack step_name / source_span_hash / metadata_
         and must remain insertable for backward compatibility."""
@@ -310,8 +324,8 @@ class TestCreate:
             token_count=3,  # V1 column
         )
         session.add(chunk)
-        session.commit()
-        loaded = session.get(ExtractionChunk, chunk.id)
+        await session.commit()
+        loaded = await session.get(ExtractionChunk, chunk.id)
         assert loaded is not None
         assert loaded.step_name is None
         assert loaded.source_span_hash is None
@@ -320,8 +334,8 @@ class TestCreate:
 
 
 class TestSourceSpanProperty:
-    def test_setter_validates_v2_schema(
-        self, session: Any, job: ExtractionJob
+    async def test_setter_validates_v2_schema(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         chunk = ExtractionChunk(
             job_id=job.id,
@@ -338,8 +352,8 @@ class TestSourceSpanProperty:
             "section_id": "s",
         }
 
-    def test_setter_rejects_negative_offset(
-        self, session: Any, job: ExtractionJob
+    async def test_setter_rejects_negative_offset(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         chunk = ExtractionChunk(
             job_id=job.id,
@@ -357,11 +371,11 @@ class TestSourceSpanProperty:
 
 
 class TestUpsertBySpanHash:
-    def test_first_call_creates(
-        self, session: Any, job: ExtractionJob
+    async def test_first_call_creates(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         span = {"start_offset": 0, "end_offset": 10, "section_id": None}
-        chunk = ExtractionChunk.upsert_by_span_hash(
+        chunk = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -369,7 +383,7 @@ class TestUpsertBySpanHash:
             source_span=span,
             chunk_index=0,
         )
-        session.commit()
+        await session.commit()
 
         assert chunk.id is not None
         assert chunk.content == "first"
@@ -377,11 +391,11 @@ class TestUpsertBySpanHash:
         assert chunk.source_span_hash is not None
         assert len(chunk.source_span_hash) == 64
 
-    def test_second_call_with_same_triple_returns_same_row(
-        self, session: Any, job: ExtractionJob
+    async def test_second_call_with_same_triple_returns_same_row(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         span = {"start_offset": 0, "end_offset": 10, "section_id": None}
-        first = ExtractionChunk.upsert_by_span_hash(
+        first = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -389,14 +403,14 @@ class TestUpsertBySpanHash:
             source_span=span,
             chunk_index=0,
         )
-        session.commit()
+        await session.commit()
         first_id = first.id
 
         # A second call with the same (job_id, step_name, source_span)
         # must return the existing row — even if the caller passed
         # different content / chunk_index that would have been the
         # write payload on a fresh insert.
-        second = ExtractionChunk.upsert_by_span_hash(
+        second = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -404,16 +418,16 @@ class TestUpsertBySpanHash:
             source_span=span,
             chunk_index=99,
         )
-        session.commit()
+        await session.commit()
 
         assert second.id == first_id
         assert second.content == "first"
         assert second.chunk_index == 0
 
-    def test_different_span_creates_new_row(
-        self, session: Any, job: ExtractionJob
+    async def test_different_span_creates_new_row(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
-        first = ExtractionChunk.upsert_by_span_hash(
+        first = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -425,9 +439,9 @@ class TestUpsertBySpanHash:
             },
             chunk_index=0,
         )
-        session.commit()
+        await session.commit()
 
-        second = ExtractionChunk.upsert_by_span_hash(
+        second = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -439,17 +453,17 @@ class TestUpsertBySpanHash:
             },
             chunk_index=1,
         )
-        session.commit()
+        await session.commit()
 
         assert first.id != second.id
         assert first.content == "A"
         assert second.content == "B"
 
-    def test_different_step_name_creates_new_row(
-        self, session: Any, job: ExtractionJob
+    async def test_different_step_name_creates_new_row(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         span = {"start_offset": 0, "end_offset": 10, "section_id": None}
-        first = ExtractionChunk.upsert_by_span_hash(
+        first = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -457,9 +471,9 @@ class TestUpsertBySpanHash:
             source_span=span,
             chunk_index=0,
         )
-        session.commit()
+        await session.commit()
 
-        second = ExtractionChunk.upsert_by_span_hash(
+        second = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="extract",
@@ -467,15 +481,15 @@ class TestUpsertBySpanHash:
             source_span=span,
             chunk_index=0,
         )
-        session.commit()
+        await session.commit()
 
         assert first.id != second.id
 
-    def test_upsert_rejects_negative_start_offset(
-        self, session: Any, job: ExtractionJob
+    async def test_upsert_rejects_negative_start_offset(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         with pytest.raises(SourceSpanValidationError):
-            ExtractionChunk.upsert_by_span_hash(
+            await ExtractionChunk.upsert_by_span_hash(
                 session,
                 job_id=job.id,
                 step_name="chunk",
@@ -488,11 +502,11 @@ class TestUpsertBySpanHash:
                 chunk_index=0,
             )
 
-    def test_upsert_rejects_negative_end_offset(
-        self, session: Any, job: ExtractionJob
+    async def test_upsert_rejects_negative_end_offset(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         with pytest.raises(SourceSpanValidationError):
-            ExtractionChunk.upsert_by_span_hash(
+            await ExtractionChunk.upsert_by_span_hash(
                 session,
                 job_id=job.id,
                 step_name="chunk",
@@ -505,12 +519,12 @@ class TestUpsertBySpanHash:
                 chunk_index=0,
             )
 
-    def test_upsert_passes_through_token_estimate_and_metadata(
-        self, session: Any, job: ExtractionJob
+    async def test_upsert_passes_through_token_estimate_and_metadata(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         span = {"start_offset": 0, "end_offset": 10, "section_id": None}
         meta = {"prompt": "v1"}
-        chunk = ExtractionChunk.upsert_by_span_hash(
+        chunk = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="extract",
@@ -520,15 +534,15 @@ class TestUpsertBySpanHash:
             token_estimate=42,
             metadata_=meta,
         )
-        session.commit()
+        await session.commit()
         assert chunk.token_estimate == 42
         assert chunk.metadata_ == meta
 
-    def test_upsert_returns_queryable_row(
-        self, session: Any, job: ExtractionJob
+    async def test_upsert_returns_queryable_row(
+        self, session: AsyncSession, job: ExtractionJob
     ) -> None:
         span = {"start_offset": 0, "end_offset": 10, "section_id": None}
-        chunk = ExtractionChunk.upsert_by_span_hash(
+        chunk = await ExtractionChunk.upsert_by_span_hash(
             session,
             job_id=job.id,
             step_name="chunk",
@@ -536,17 +550,75 @@ class TestUpsertBySpanHash:
             source_span=span,
             chunk_index=0,
         )
-        session.commit()
+        await session.commit()
 
-        rows = (
-            session.execute(
-                select(ExtractionChunk).where(
-                    ExtractionChunk.job_id == job.id,
-                    ExtractionChunk.step_name == "chunk",
-                )
+        result = await session.execute(
+            select(ExtractionChunk).where(
+                ExtractionChunk.job_id == job.id,
+                ExtractionChunk.step_name == "chunk",
             )
-            .scalars()
-            .all()
         )
+        rows = result.scalars().all()
         assert len(rows) == 1
         assert rows[0].id == chunk.id
+
+
+# ---------------------------------------------------------------------------
+# AsyncSession shape regression test (NFM-2741 / Code Reviewer P1 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestUpsertRunsAgainstAsyncSession:
+    """P1 regression: ``upsert_by_span_hash`` must run against the same
+    AsyncSession type the application uses. The pre-fix implementation
+    called ``session.query(...)`` which raises
+    ``AttributeError: 'AsyncSession' object has no attribute 'query'``
+    on the real session.
+    """
+
+    async def test_works_against_real_async_session_factory(
+        self, session: AsyncSession, job: ExtractionJob
+    ) -> None:
+        # Sanity: the session handed to us by the fixture is exactly
+        # the AsyncSession class the production session factory uses.
+        assert isinstance(session, AsyncSession)
+
+        span = {"start_offset": 0, "end_offset": 10, "section_id": None}
+        chunk = await ExtractionChunk.upsert_by_span_hash(
+            session,
+            job_id=job.id,
+            step_name="chunk",
+            content="async-shape",
+            source_span=span,
+            chunk_index=0,
+        )
+        await session.commit()
+        await session.refresh(chunk)
+        assert chunk.id is not None
+        assert chunk.source_span == span
+        # Idempotent on the same triple — caller-supplied content is ignored.
+        again = await ExtractionChunk.upsert_by_span_hash(
+            session,
+            job_id=job.id,
+            step_name="chunk",
+            content="ignored",
+            source_span=span,
+            chunk_index=99,
+        )
+        assert again.id == chunk.id
+
+    async def test_no_session_query_call(self) -> None:
+        """Static guard: the method body must not call ``session.query``.
+
+        The original defect was a sync ``session.query(cls)`` call inside
+        an otherwise async-friendly classmethod. We re-check the source
+        here so a future refactor cannot reintroduce the same shape.
+        """
+        import inspect
+
+        from nfm_db.models import extraction_chunk as _ec
+
+        source = inspect.getsource(_ec.ExtractionChunk.upsert_by_span_hash)
+        assert "session.query(" not in source, (
+            "upsert_by_span_hash must use async session.execute(select(...))"
+        )
