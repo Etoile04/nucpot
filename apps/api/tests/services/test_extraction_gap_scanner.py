@@ -62,8 +62,8 @@ def _make_session() -> Mock:
 def _make_ontology(
     ontology_data: dict[str, Any] | None,
 ) -> Mock:
-    """Build a mock OntologyVersion exposing ``id`` + ``ontology_data``."""
-    return Mock(id=uuid4(), ontology_data=ontology_data)
+    """Build a mock OntologyVersion exposing ``id``, ``version``, and ``ontology_data``."""
+    return Mock(id=uuid4(), version="1.0.0", ontology_data=ontology_data)
 
 
 def _added_gaps(session: Mock) -> list[ExtractionGap]:
@@ -202,7 +202,7 @@ async def test_scan_finds_gaps_when_chunks_missing_properties() -> None:
     assert pairs == expected_missing
     for gap in added:
         assert gap.gap_status == "open"
-        assert gap.ontology_version_id == ontology.id
+        assert gap.ontology_version == ontology.version
         assert gap.chunk_id is None
 
 
