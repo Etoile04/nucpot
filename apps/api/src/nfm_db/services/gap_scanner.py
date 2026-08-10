@@ -511,7 +511,11 @@ async def compute_literature_recall(
         ExtractionGap.property,
         ExtractionGap.gap_status,
     ).where(
+<<<<<<< HEAD
         ExtractionGap.ontology_version == ov.version,
+=======
+        ExtractionGap.ontology_version_id == ontology_version_id,
+>>>>>>> origin/NFM-2734-nfm-2697-t4-api-endpoints-per-adr-section-3
         ExtractionGap.chunk_id.in_(chunk_ids),
         ExtractionGap.gap_status.in_(_UNCOVERED_STATUSES),
     )
@@ -555,7 +559,11 @@ async def compute_ontology_coverage(
     """
     from nfm_db.models.source import DataSource
 
+<<<<<<< HEAD
     ov = await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
+=======
+    await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
+>>>>>>> origin/NFM-2734-nfm-2697-t4-api-endpoints-per-adr-section-3
 
     lit_stmt = select(DataSource.id, DataSource.doi).where(
         DataSource.source_type == "literature",
@@ -589,7 +597,11 @@ async def compute_ontology_coverage(
         ExtractionGap.property,
         ExtractionGap.chunk_id,
     ).where(
+<<<<<<< HEAD
         ExtractionGap.ontology_version == ov.version,
+=======
+        ExtractionGap.ontology_version_id == ontology_version_id,
+>>>>>>> origin/NFM-2734-nfm-2697-t4-api-endpoints-per-adr-section-3
         ExtractionGap.gap_status.in_(_UNCOVERED_STATUSES),
     )
     gap_rows = (await session.execute(gap_stmt)).all()
