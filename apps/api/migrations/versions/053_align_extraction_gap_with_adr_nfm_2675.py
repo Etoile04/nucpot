@@ -42,30 +42,22 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # ---------------------------------------------------------------
-    # 1. Add new columns (nullable -- backfill next)
+    # 1. Add new columns (nullable -- backfill next).
+    # Idempotent: prod DB may have run part of this before the
+    # alembic_version was rolled back.
     # ---------------------------------------------------------------
-    op.add_column(
-        "extraction_gaps",
-        sa.Column(
-            "literature_id",
-            sa.Uuid(),
-            sa.ForeignKey("data_sources.id", ondelete="SET NULL"),
-            nullable=True,
-            comment="Literature (data_sources) row this gap was detected in.",
-        ),
+    op.execute(
+        "ALTER TABLE extraction_gaps "
+        "ADD COLUMN IF NOT EXISTS literature_id UUID REFERENCES data_sources(id) ON DELETE SET NULL"
     )
-    op.add_column(
-        "extraction_gaps",
-        sa.Column(
-            "ontology_version_tmp",
-            sa.String(50),
-            nullable=True,
-            comment="Temporary column for backfill.",
-        ),
+    op.execute(
+        "ALTER TABLE extraction_gaps "
+        "ADD COLUMN IF NOT EXISTS ontology_version_tmp VARCHAR(50)"
     )
 
     # ---------------------------------------------------------------
-    # 2. Backfill ontology_version_tmp from ontology_versions.version
+    # 2. Backfill ontology_version_tmp from ontology_versions.version.
+    # Skip rows that already have ontology_version_tmp populated.
     # ---------------------------------------------------------------
     op.execute(
         """
@@ -73,57 +65,62 @@ def upgrade() -> None:
         SET ontology_version_tmp = ov.version
         FROM ontology_versions ov
         WHERE eg.ontology_version_id = ov.id
+          AND eg.ontology_version_tmp IS NULL
         """
     )
 
     # ---------------------------------------------------------------
     # 3. Swap columns: drop old, rename new
     # ---------------------------------------------------------------
-    # Drop old indexes first (they reference ontology_version_id)
-    op.drop_index("ix_extraction_gaps_ontology_version_id", table_name="extraction_gaps")
-    op.drop_index("ix_extraction_gaps_ov_entity_property", table_name="extraction_gaps")
+    # Drop old indexes first. Use raw SQL with IF EXISTS so this
+    # migration is idempotent against production databases whose
+    # indexes may have been created with slightly different names
+    # (e.g. SQLAlchemy create_all() vs alembic apply -- prod has
+    # `uq_extraction_gaps_ov_entity_prop` not
+    # `ix_extraction_gaps_ov_entity_property`).
+    op.execute("DROP INDEX IF EXISTS ix_extraction_gaps_ontology_version_id")
+    op.execute("DROP INDEX IF EXISTS ix_extraction_gaps_ov_entity_property")
+    # Also drop the prod-named unique index in case alembic-create never ran
+    op.execute("DROP INDEX IF EXISTS uq_extraction_gaps_ov_entity_prop")
 
-    # Drop FK constraint on ontology_version_id, then the column
-    op.drop_constraint(
-        "extraction_gaps_ontology_version_id_fkey",
-        "extraction_gaps",
-        type_="foreignkey",
+    # Drop FK constraint on ontology_version_id, then the column.
+    # Both idempotent: prod may already lack the FK if a prior partial
+    # upgrade removed it before alembic_version was rolled back.
+    op.execute(
+        "ALTER TABLE extraction_gaps "
+        "DROP CONSTRAINT IF EXISTS extraction_gaps_ontology_version_id_fkey"
     )
-    op.drop_column("extraction_gaps", "ontology_version_id")
+    op.execute("ALTER TABLE extraction_gaps DROP COLUMN IF EXISTS ontology_version_id")
 
     # Rename temporary column to canonical name
-    op.alter_column(
-        "extraction_gaps",
-        "ontology_version_tmp",
-        new_column_name="ontology_version",
-        existing_type=sa.String(50),
-        nullable=False,
-        comment="Ontology version semver string, e.g. v2.1.0.",
+    op.execute(
+        "ALTER TABLE extraction_gaps "
+        "RENAME COLUMN ontology_version_tmp TO ontology_version"
+    )
+    op.execute(
+        "ALTER TABLE extraction_gaps "
+        "ALTER COLUMN ontology_version SET NOT NULL"
     )
 
     # ---------------------------------------------------------------
     # 4. Add new indexes and UNIQUE constraint
     # ---------------------------------------------------------------
     # Index on ontology_version (TEXT) for recall/coverage queries
-    op.create_index(
-        "ix_extraction_gaps_ontology_version",
-        "extraction_gaps",
-        ["ontology_version"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_extraction_gaps_ontology_version "
+        "ON extraction_gaps (ontology_version)"
     )
 
     # Index on literature_id for per-literature recall queries
-    op.create_index(
-        "ix_extraction_gaps_literature_id",
-        "extraction_gaps",
-        ["literature_id"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_extraction_gaps_literature_id "
+        "ON extraction_gaps (literature_id)"
     )
 
     # 5-tuple UNIQUE constraint per ADR Section 1
-    op.create_index(
-        "ix_extraction_gaps_ov_entity_prop_lit_chunk",
-        "extraction_gaps",
-        ["ontology_version", "entity_type", "property", "literature_id", "chunk_id"],
-        unique=True,
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_extraction_gaps_ov_entity_prop_lit_chunk "
+        "ON extraction_gaps (ontology_version, entity_type, property, literature_id, chunk_id)"
     )
 
 
