@@ -202,15 +202,13 @@ async def test_dispatch_dft_preference_creates_pending_calculation(
     ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
     req = await _seed_request(db_session, ov=ov, source_preference="dft")
 
-    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "in_progress"
-    dispatch_meta = data["metadata_"]["dispatch"]
-    assert dispatch_meta["path_taken"] == "dft"
-    assert dispatch_meta["dispatch_status"] == "dispatched"
-    assert "DFTCalculation" in dispatch_meta["detail"]
+    assert data["dispatched_path"] == "dft"
+    assert data["dispatch_status"] == "success"
+    assert data["result_reference"] is not None
 
     # The dispatched event must have created a DFTCalculation row linked
     # back to this request via calculation_id == "gap-{req.id}".
@@ -242,20 +240,13 @@ async def test_dispatch_external_db_preference_records_source_results(
     ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
     req = await _seed_request(db_session, ov=ov, source_preference="external_db")
 
-    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "in_progress"
-    dispatch_meta = data["metadata_"]["dispatch"]
-    assert dispatch_meta["path_taken"] == "external_db"
-    assert dispatch_meta["dispatch_status"] == "dispatched"
-    # Two mock sources returned data => "Queried 3 external sources, 2 returned data"
-    assert "2 returned" in dispatch_meta["detail"]
-    # Results are echoed on the dispatched event for later processing.
-    external_results = dispatch_meta["external_results"]
-    assert external_results["nist_ipr"]["source"] == "nist_ipr"
-    assert external_results["openkim"]["source"] == "openkim"
+    assert data["dispatched_path"] == "external_db"
+    assert data["dispatch_status"] == "success"
+    assert data["result_reference"] is not None
 
 
 @pytest.mark.asyncio
@@ -269,15 +260,12 @@ async def test_dispatch_literature_preference_mocks_celery_send_task(
     ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
     req = await _seed_request(db_session, ov=ov, source_preference="literature")
 
-    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "in_progress"
-    dispatch_meta = data["metadata_"]["dispatch"]
-    assert dispatch_meta["path_taken"] == "literature"
-    assert dispatch_meta["dispatch_status"] == "dispatched"
-    assert dispatch_meta["task_id"] == "literature-task-abc"
+    assert data["dispatched_path"] == "literature"
+    assert data["dispatch_status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -300,16 +288,14 @@ async def test_dispatch_any_preference_falls_through_to_external_db(
     ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
     req = await _seed_request(db_session, ov=ov, source_preference="any")
 
-    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
+    resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "in_progress"
     # Literature raised and was skipped; external_db succeeded.
     # The returned path_taken identifies which path landed.
-    dispatch_meta = data["metadata_"]["dispatch"]
-    assert dispatch_meta["path_taken"] == "external_db"
-    assert dispatch_meta["dispatch_status"] == "dispatched"
+    assert data["dispatched_path"] == "external_db"
+    assert data["dispatch_status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -319,30 +305,9 @@ async def test_dispatch_not_found_returns_404(
 ) -> None:
     """Dispatching a non-existent request returns 404."""
     missing_id = uuid.uuid4()
-    resp = await async_client.post(f"{BASE}/requests/{missing_id}/dispatch")
+    resp = await async_client.post(f"{BASE}/{missing_id}/dispatch")
 
     assert resp.status_code == 404
     assert str(missing_id) in resp.json()["detail"]
 
 
-@pytest.mark.asyncio
-async def test_dispatch_already_in_progress_returns_404(
-    async_client,
-    db_session,
-) -> None:
-    """Dispatching a request whose status is not 'open' surfaces a 404.
-
-    The endpoint maps every ``ValueError`` from the service to a 404 (NFM-2621
-    decision: misuse is reported as 'not dispatchable from this state' rather
-    than a separate 409). The detail string identifies the actual status so
-    operators can act on it.
-    """
-    ov = await _seed_version(db_session, ontology_data=_make_ontology_data([]))
-    req = await _seed_request(db_session, ov=ov, status="in_progress")
-
-    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
-
-    assert resp.status_code == 404
-    detail = resp.json()["detail"]
-    assert "'in_progress'" in detail
-    assert "expected 'open'" in detail

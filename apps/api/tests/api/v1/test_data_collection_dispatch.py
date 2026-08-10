@@ -483,7 +483,7 @@ async def test_dispatch_one_wires_to_service_and_persists(
 ) -> None:
     """Real service run: endpoint persists dispatch columns and returns them.
 
-    No fill paths are registered, so the router resolves no handler for
+    With fill paths now registered, the handler resolves
     ``source_preference='literature'`` and records a failed dispatch. That is
     still a complete round-trip through GapDispatchService, so it proves the
     endpoint is wired to the service rather than fabricating a response.
@@ -503,12 +503,12 @@ async def test_dispatch_one_wires_to_service_and_persists(
     assert set(data) == _RESPONSE_KEYS
     assert data["dispatched_at"] is not None
     assert data["dispatched_path"] == "literature"
-    assert data["dispatch_status"] == "failed"
+    assert data["dispatch_status"] == "success"
 
     await db_session.refresh(req)
     assert req.dispatched_at is not None
     assert req.dispatched_path == "literature"
-    assert req.dispatch_status == "failed"
+    assert req.dispatch_status == "success"
 
 
 @pytest.mark.asyncio

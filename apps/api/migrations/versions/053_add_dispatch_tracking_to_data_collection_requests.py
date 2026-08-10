@@ -8,8 +8,8 @@ Adds 4 nullable columns:
 
 All nullable for backward compatibility. Reversible downgrade drops all 4.
 
-Revision ID: 050_add_dispatch_tracking
-Revises: 049_add_ontology_version_to_extraction_job
+Revision ID: 053_add_dispatch_tracking_to_data_collection_requests
+Revises: 052_add_datasource_metadata
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "050_add_dispatch_tracking"
-down_revision: str | None = "049_add_ontology_version_to_extraction_job"
+revision: str = "053_add_dispatch_tracking_to_data_collection_requests"
+down_revision: str | None = "052_add_datasource_metadata"
 branch_labels: str | None = None
 depends_on: str | None = None
 

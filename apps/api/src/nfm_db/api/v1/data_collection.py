@@ -33,6 +33,30 @@ from nfm_db.services.gap_dispatch_service import (
     DispatchResult,
     GapDispatchService,
 )
+from nfm_db.services.paths import (
+    DFTFillPath,
+    ExternalDBFillPath,
+    GapFillPath,
+    LiteratureFillPath,
+)
+
+
+def _build_fill_paths(
+    session: AsyncSession,
+) -> dict[str, GapFillPath]:
+    """Instantiate all concrete fill-path handlers keyed by ``source_preference``.
+
+    Used by ``dispatch_single_request`` so the per-request route routes to the
+    real handlers instead of falling through ``GapDispatchService`` with an
+    empty ``fill_paths`` dict (which would short-circuit every dispatch with
+    ``"No fill path registered"``).
+    """
+    return {
+        "literature": LiteratureFillPath(session=session),
+        "dft": DFTFillPath(session=session),
+        "external_db": ExternalDBFillPath(session=session),
+    }
+
 
 router = APIRouter(tags=["数据采集管理"])
 
@@ -386,7 +410,7 @@ async def trigger_dispatch(
     stmt = stmt.order_by(DataCollectionRequest.urgency.desc()).limit(limit)
     dcrs = list((await session.execute(stmt)).scalars().all())
 
-    svc = GapDispatchService(session)
+    svc = GapDispatchService(session, fill_paths=_build_fill_paths(session))
     paired: list[tuple[uuid.UUID, DispatchResult]] = []
     for dcr in dcrs:
         try:
@@ -609,7 +633,7 @@ async def dispatch_single_request(
     if body is not None and body.source_preference_override is not None:
         req.source_preference = body.source_preference_override
 
-    svc = GapDispatchService(session)
+    svc = GapDispatchService(session, fill_paths=_build_fill_paths(session))
     try:
         await svc.dispatch(req)
     except Exception as exc:

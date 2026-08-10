@@ -21,7 +21,17 @@ from nfm_db.models.data_collection_request import DataCollectionRequest
 logger = logging.getLogger(__name__)
 
 
+# Canonical path names and lifecycle statuses for the gap-dispatch router.
+# These constants are shared across gap_dispatch_service, gap_dispatch_router,
+# and downstream consumers so the router agrees with the handlers and the
+# data-collection request models on what values are valid.
+DISPATCH_PATHS: tuple[str, ...] = ("literature", "dft", "external_db")
+DISPATCH_STATUSES: tuple[str, ...] = ("pending", "running", "success", "failed")
+
+
 __all__ = [
+    "DISPATCH_PATHS",
+    "DISPATCH_STATUSES",
     "DispatchResult",
     "GapFillPath",
 ]

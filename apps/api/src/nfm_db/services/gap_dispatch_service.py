@@ -256,7 +256,7 @@ class GapDispatchService:
                 )
                 continue
 
-            if not await path.can_handle(dcr):
+            if not path.can_handle(dcr.source_preference):
                 logger.debug(
                     "Cascade: path '%s' cannot handle DCR %s, skipping",
                     path_name,

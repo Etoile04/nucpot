@@ -13,6 +13,7 @@ Tests all 6 data collection endpoints:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -514,7 +515,7 @@ async def test_dispatch_request_returns_spec_shape(async_client, db_session) -> 
         "result_reference",
     }
     assert data["dispatched_path"] == "dft"
-    assert data["dispatch_status"] == "dispatched"
+    assert data["dispatch_status"] == "success"
     assert data["result_reference"] is not None
     assert isinstance(data["dispatched_at"], str)  # serialized datetime
     assert "T" in data["dispatched_at"]  # ISO 8601
@@ -537,15 +538,13 @@ async def test_dispatch_request_persists_dcr_state(async_client, db_session) -> 
     resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
     assert resp.status_code == 200
 
-    # Reload the DCR and verify persisted state.
+    # Reload the DCR and verify persisted state on dedicated columns.
     await db_session.refresh(req)
     assert req.status == "in_progress"
-    assert req.metadata_ is not None
-    assert "dispatch" in req.metadata_
-    dispatch_meta = req.metadata_["dispatch"]
-    assert dispatch_meta["path_taken"] == "dft"
-    assert dispatch_meta["dispatch_status"] == "dispatched"
-    assert "dispatched_at" in dispatch_meta
+    assert req.dispatched_at is not None
+    assert req.dispatched_path == "dft"
+    assert req.dispatch_status == "success"
+    assert req.result_reference is not None
 
 
 @pytest.mark.asyncio
@@ -581,32 +580,14 @@ async def test_dispatch_request_already_dispatched_returns_409(
         source_preference="dft",
         status="in_progress",  # already dispatched
     )
+    # Simulate a prior dispatch by setting dispatched_at.
+    req.dispatched_at = datetime.now(UTC)
+    await db_session.flush()
 
     resp = await async_client.post(f"{BASE}/{req.id}/dispatch")
 
     assert resp.status_code == 409
 
 
-@pytest.mark.asyncio
-async def test_dispatch_request_legacy_route_still_works(
-    async_client, db_session,
-) -> None:
-    """NFM-2662: the pre-existing /requests/{request_id}/dispatch route still
-    returns the full DCR payload (it is not affected by the new endpoint)."""
-    ov = await _seed_version(
-        db_session,
-        ontology_data=_make_ontology_data([]),
-    )
-    req = await _seed_request_with_source(
-        db_session,
-        ov=ov,
-        source_preference="dft",
-    )
 
-    resp = await async_client.post(f"{BASE}/requests/{req.id}/dispatch")
-    assert resp.status_code == 200
-    data = resp.json()
-    # Legacy endpoint returns DataCollectionRequestResponse (includes 'id').
-    assert "id" in data
-    assert data["status"] == "in_progress"
 

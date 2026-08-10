@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +80,7 @@ def _make_fill_path_mock(
             ``can_handle_result=False``.
     """
     mock = AsyncMock(spec=GapFillPath)
-    mock.can_handle = AsyncMock(return_value=can_handle_result)
+    mock.can_handle = MagicMock(return_value=can_handle_result)
     result = DispatchResult(
         success=success,
         path=path_name,
