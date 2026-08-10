@@ -43,11 +43,17 @@ die()  { err "$*"; exit 1; }
 
 # KR-3 instrumentation (NFM-2042): the deploy event is assembled on EXIT so
 # every terminal path in cmd_deploy emits exactly one line (constraint C1).
-# These globals are reset at the entry of every cmd_deploy.
+# NFM-2771 extended the trap to also fire on HUP/INT/TERM so GHA
+# cancellation (which propagates SIGTERM via appleboy/ssh-action → drone-ssh
+# → sshd → remote bash → SIGHUP) still emits. These globals are reset at
+# the entry of every cmd_deploy.
 _DEPLOY_EVENT_ARMED="false"
 _DEPLOY_EVENT_FIRST_POLL=""
 _DEPLOY_EVENT_ROLLBACK="false"
 _DEPLOY_EVENT_DURATION_START_MS=""
+_DEPLOY_EVENT_EMITTED="false"
+_DEPLOY_EVENT_BUILD_OK="false"
+_DEPLOY_EVENT_SIGNALED="false"
 
 require_env_file() {
   [ -f "$ENV_FILE" ] || die "docker/.env.staging not found. Run: cp docker/.env.staging.example docker/.env.staging  (then fill in secrets)"
@@ -123,13 +129,26 @@ record_good() {
 _emit_staging_deploy_event() {
   # Snapshot the deploy status before any trap bookkeeping changes `$?`.
   local rc=$?
+  _deploy_event_trace "exit_trap_fired rc=$rc"
   if [ "${_DEPLOY_EVENT_ARMED}" != "true" ]; then
     return 0
   fi
   # Disarm so nested commands (eg. another deploy invocation inside the same
-  # shell) cannot double-emit.
+  # shell, or the EXIT trap firing after the HUP/INT/TERM trap has already
+  # emitted) cannot double-emit.
   _DEPLOY_EVENT_ARMED="false"
-  trap - EXIT
+  trap - EXIT HUP INT TERM
+  # ADR-KR3-A1 §C2: a build failure that was NOT triggered by a
+  # cancellation signal stays out of the denominator. We only skip if
+  # the build did not succeed AND no signal arrived — any cancelled or
+  # otherwise signalled deploy attempt emits an event so KR-3 reflects
+  # the real failure rate.
+  if [ "${_DEPLOY_EVENT_BUILD_OK}" != "true" ] \
+       && [ "${_DEPLOY_EVENT_SIGNALED:-false}" != "true" ]; then
+    _deploy_event_trace "skip_c2_build_failed_no_signal"
+    return 0
+  fi
+  _DEPLOY_EVENT_EMITTED="true"
 
   local now_ms
   now_ms="$(deploy_event_now_ms)"
@@ -138,9 +157,14 @@ _emit_staging_deploy_event() {
     duration_ms=$(( now_ms - _DEPLOY_EVENT_DURATION_START_MS ))
   fi
 
-  # first_pass_success: the deploy command returned zero and no rollback ran.
+  # first_pass_success: the deploy returned zero, no rollback ran, AND no
+  # cancellation signal arrived. A signal cancellation must record
+  # first_pass_success=false even though the signal-trap command itself
+  # returned zero (the trap command succeeds after we explicitly exit 143).
   local first_pass="false"
-  if [ "$rc" -eq 0 ] && [ "${_DEPLOY_EVENT_ROLLBACK}" = "false" ]; then
+  if [ "$rc" -eq 0 ] \
+       && [ "${_DEPLOY_EVENT_ROLLBACK}" = "false" ] \
+       && [ "${_DEPLOY_EVENT_SIGNALED:-false}" != "true" ]; then
     first_pass="true"
   fi
 
@@ -171,13 +195,38 @@ snapshot_rollback_target() {
 # ---- commands ---------------------------------------------------------------
 cmd_deploy() {
   load_env_file
-  # Reset event state for this invocation. The trap is armed only once the
-  # deploy reaches the health gate, so build/up failures stay out of the
-  # denominator (ADR-KR3-A1 C2).
+  # Reset event state for this invocation. NFM-2771: ARM the EXIT trap at
+  # cmd_deploy entry and add HUP/INT/TERM signal traps so a GH Action
+  # cancellation during any phase of the deploy lifecycle still emits an
+  # event. ADR-KR3-A1 §C2 keeps non-signal build failures out of the
+  # denominator — we distinguish via _DEPLOY_EVENT_SIGNALED.
   _DEPLOY_EVENT_ARMED="false"
   _DEPLOY_EVENT_FIRST_POLL=""
   _DEPLOY_EVENT_ROLLBACK="false"
   _DEPLOY_EVENT_DURATION_START_MS=""
+  _DEPLOY_EVENT_EMITTED="false"
+  _DEPLOY_EVENT_BUILD_OK="false"
+  _DEPLOY_EVENT_SIGNALED="false"
+
+  # NFM-2771: arm the EXIT trap immediately after state reset and add
+  # HUP/INT/TERM signal traps so a GH Action cancellation during the
+  # pre-build phases (env load, snapshot, verify-cloudflared-token) also
+  # reaches the trap. GHA cancellation propagates SIGTERM via
+  # appleboy/ssh-action → drone-ssh → sshd → remote bash → SIGHUP, so the
+  # narrow EXIT-only signal set never reached the JSONL before this fix.
+  # The disarm-and-skip logic in _emit_staging_deploy_event enforces C2
+  # for non-signal build failures.
+  _DEPLOY_EVENT_ARMED="true"
+  _DEPLOY_EVENT_DURATION_START_MS="$(deploy_event_now_ms)"
+  _deploy_event_trace "armed_at_entry"
+  trap _emit_staging_deploy_event EXIT
+  # The signal trap explicitly exits so bash terminates as soon as the
+  # cancellation is observed. Without this, bash's default behaviour on
+  # a trapped signal is to run the trap and CONTINUE execution, which
+  # leaves the deploy script blocked in a foreground wait() until the
+  # in-flight subprocess (eg. `sleep 30` from a build stub) finishes
+  # naturally — long after the GH Action job has been torn down.
+  trap '_DEPLOY_EVENT_SIGNALED=true; _emit_staging_deploy_event; trap - EXIT; exit 143' HUP INT TERM
 
   log "Deploying NFM-DB staging stack (tag=${STAGING_IMAGE_TAG:-latest})..."
 
@@ -191,16 +240,16 @@ cmd_deploy() {
   "$PROJECT_ROOT/scripts/verify-cloudflared-token.sh" "$ENV_FILE"
 
   log "Building images..."
-  compose build
+  if compose build; then
+    _DEPLOY_EVENT_BUILD_OK="true"
+    _deploy_event_trace "build_ok"
+  else
+    _deploy_event_trace "build_failed"
+    return 1
+  fi
 
   log "Bringing stack up (api runs alembic migrations on start)..."
   compose up -d --remove-orphans
-
-  # Arm the EXIT trap at the health-gate boundary. This records every health
-  # outcome while excluding build/up failures, dry-runs, and other commands.
-  _DEPLOY_EVENT_ARMED="true"
-  _DEPLOY_EVENT_DURATION_START_MS="$(deploy_event_now_ms)"
-  trap _emit_staging_deploy_event EXIT
 
   if wait_for_health "new deploy"; then
     record_good
