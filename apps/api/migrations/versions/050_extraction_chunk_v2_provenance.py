@@ -37,31 +37,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add V2 columns and partial unique index to extraction_chunks."""
-    op.add_column(
-        "extraction_chunks",
-        sa.Column("step_name", sa.String(length=100), nullable=True),
-    )
-    op.add_column(
-        "extraction_chunks",
-        sa.Column("source_span_hash", sa.String(length=64), nullable=True),
-    )
-    op.add_column(
-        "extraction_chunks",
-        sa.Column("token_estimate", sa.Integer(), nullable=True),
-    )
-    op.add_column(
-        "extraction_chunks",
-        sa.Column("metadata_", JSONB, nullable=True),
-    )
-    op.create_index(
-        "ix_extraction_chunks_v2_idempotency",
-        "extraction_chunks",
-        ["job_id", "step_name", "source_span_hash"],
-        unique=True,
-        postgresql_where=sa.text(
-            "step_name IS NOT NULL AND source_span_hash IS NOT NULL"
-        ),
+    """Add V2 columns and partial unique index to extraction_chunks.
+
+    Idempotent: uses raw SQL with IF NOT EXISTS so this migration can
+    run against production databases that may have a partial state from
+    a prior crashed deploy (NFM-2731 prod migration 053 crash).
+    """
+    op.execute("ALTER TABLE extraction_chunks ADD COLUMN IF NOT EXISTS step_name VARCHAR(100)")
+    op.execute("ALTER TABLE extraction_chunks ADD COLUMN IF NOT EXISTS source_span_hash VARCHAR(64)")
+    op.execute("ALTER TABLE extraction_chunks ADD COLUMN IF NOT EXISTS token_estimate INTEGER")
+    op.execute("ALTER TABLE extraction_chunks ADD COLUMN IF NOT EXISTS metadata_ JSONB")
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_extraction_chunks_v2_idempotency "
+        "ON extraction_chunks (job_id, step_name, source_span_hash) "
+        "WHERE step_name IS NOT NULL AND source_span_hash IS NOT NULL"
     )
 
 
