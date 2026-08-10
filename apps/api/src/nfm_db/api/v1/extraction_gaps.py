@@ -20,7 +20,6 @@ import logging
 import math
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path as FsPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -30,12 +29,18 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_domain_expert
+from nfm_db.config import get_settings
+from nfm_db.core.path_safety import PathNotAllowedError, safe_resolve
 from nfm_db.database import get_db
 from nfm_db.models import ExtractionChunk, ExtractionGap, User
 from nfm_db.models.extraction_gap import EXTRACTION_GAP_STATUSES
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.extraction_gap import ExtractionGapResponse
 from nfm_db.services.gap_scanner import compute_recall
+
+# NFM-2781 HOTFIX CR1: dedicated security logger so path-traversal
+# rejections are auditable but not mixed with business info logs.
+_security_logger = logging.getLogger("nfm_db.security")
 
 logger = logging.getLogger(__name__)
 
@@ -617,7 +622,37 @@ async def get_gap_source_text(
     error: str | None = None
 
     if source_ref:
-        path = FsPath(source_ref)
+        # NFM-2781 HOTFIX CR1: sandbox the source path against an
+        # allowlist (``Settings.source_base``) before any filesystem
+        # access.  Anything outside the allowlist is rejected — the
+        # response is a generic "outside allowlist" message that does
+        # NOT echo the attempted path, but the security logger captures
+        # the full attempt for audit.
+        try:
+            path = safe_resolve(source_ref, get_settings().source_base)
+        except PathNotAllowedError as exc:
+            _security_logger.warning(
+                "source-text path traversal rejected "
+                "user_id=%s chunk_id=%s attempted_path=%s reason=%s",
+                getattr(_current_user, "id", None),
+                chunk.id,
+                exc.attempted_path,
+                exc.reason,
+            )
+            # Redact source_reference from the response — the attempt
+            # path is captured in the security log only.
+            return ApiResponse(
+                success=True,
+                data=SourceTextResponse(
+                    gap_id=gap_id,
+                    chunk_id=chunk.id,
+                    source_reference=None,
+                    source_span=span,
+                    available=False,
+                    error="Source path outside allowlist",
+                ),
+            )
+
         if path.is_file():
             try:
                 content = path.read_text(encoding="utf-8")
