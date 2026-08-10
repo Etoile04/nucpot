@@ -5,8 +5,18 @@ const FALLBACK_URL = "/ontology-viewer/data/nvl_ontology_data.json"
 // NFM-2786: default to the Docker-internal service DNS to avoid the
 // silent localhost:8100 → host-port-8000 (Honcho) misroute.  Local
 // dev (API outside Docker) must set API_SERVER_URL explicitly.
+const DOCKER_INTERNAL_API = "http://nucpot-prod-api:8000"
+
 function getApiServerUrl(): string {
-  return process.env.API_SERVER_URL ?? "http://nucpot-prod-api:8000"
+  const url = process.env.API_SERVER_URL ?? DOCKER_INTERNAL_API
+  if (!process.env.API_SERVER_URL) {
+    console.warn(
+      "[ontology-proxy] API_SERVER_URL is not set — proxy targets " +
+      "the Docker-internal service DNS (nucpot-prod-api:8000). " +
+      "For local dev outside Docker, set API_SERVER_URL explicitly.",
+    )
+  }
+  return url
 }
 
 /** Corpus IDs must be a safe slug — matches backend CORPUS_ID_PATTERN. */
@@ -70,6 +80,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     })
   } catch (error: unknown) {
     clearTimeout(timeout)
+
+    // Distinguish Docker DNS unreachability from backend-down errors
+    // to aid local dev debugging (NFM-2786 review item 4).
+    const message = error instanceof Error ? error.message : String(error)
+    const code = (error as { code?: string }).code
+    const apiServerUrl = getApiServerUrl()
+
+    if (code === "ENOTFOUND" && apiServerUrl.includes("nucpot-prod-api")) {
+      console.error(
+        "[ontology-proxy] Docker service DNS 'nucpot-prod-api' is not " +
+        "resolvable. Are you running outside Docker? Set API_SERVER_URL " +
+        "explicitly. Original error: " + message,
+      )
+    } else if (code === "ECONNREFUSED") {
+      console.error(
+        "[ontology-proxy] Backend refused connection at " + apiServerUrl +
+        ". The API server may not be running. Original error: " + message,
+      )
+    }
+
     return serviceUnavailable()
   }
 }

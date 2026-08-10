@@ -16,31 +16,60 @@ import type { KgGraphApiResponse } from "./materials-api"
 export async function fetchFullGraph(
   limit = 100,
 ): Promise<KgGraphApiResponse> {
-  // NFM-2786: the previous `http://localhost:8000` fallback silently
-  // hit Honcho (which occupies host port 8000 in the current stack),
-  // returning 404 to the SSR fetch.  Default to the Docker-internal
-  // service DNS so SSR calls resolve correctly inside any container.
-  // Local dev MUST set API_SERVER_URL explicitly when running the API
-  // outside Docker on a non-default host port.
+  const DOCKER_INTERNAL_API = "http://nucpot-prod-api:8000"
   const backendUrl =
-    process.env.API_SERVER_URL ?? "http://nucpot-prod-api:8000"
+    process.env.API_SERVER_URL ?? DOCKER_INTERNAL_API
 
-  const url = `${backendUrl}/api/v1/kg/graph?limit=${limit}`
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 60 },
-  })
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch KG graph: ${response.status} ${response.statusText}`,
+  if (!process.env.API_SERVER_URL) {
+    console.warn(
+      "[kg-graph-api] API_SERVER_URL is not set — SSR fetch targets " +
+      "the Docker-internal service DNS (nucpot-prod-api:8000). " +
+      "For local dev outside Docker, set API_SERVER_URL explicitly.",
     )
   }
 
-  const json = await response.json()
-  // Backend wraps the payload in { success, data: { nodes, edges } }.
-  // Unwrap so mapSubgraphResponse receives nodes/edges at the top level.
-  return (json.data ?? json) as KgGraphApiResponse
+  const url = `${backendUrl}/api/v1/kg/graph?limit=${limit}`
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      next: { revalidate: 60 },
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `KG graph API returned ${response.status} ${response.statusText}` +
+        ` for ${url}`,
+      )
+    }
+
+    const json = await response.json()
+    // Backend wraps the payload in { success, data: { nodes, edges } }.
+    // Unwrap so mapSubgraphResponse receives nodes/edges at the top level.
+    return (json.data ?? json) as KgGraphApiResponse
+  } catch (error: unknown) {
+    // Distinguish Docker DNS unreachability from backend-down errors
+    // to aid local dev debugging (NFM-2786 review item 4).
+    const message = error instanceof Error ? error.message : String(error)
+    const code = (error as { code?: string }).code
+
+    if (code === "ENOTFOUND" && backendUrl.includes("nucpot-prod-api")) {
+      throw new Error(
+        `[kg-graph-api] Docker service DNS "nucpot-prod-api" is not resolvable. ` +
+        `Are you running outside Docker? Set API_SERVER_URL explicitly ` +
+        `(e.g. API_SERVER_URL=http://localhost:8001). Original: ${message}`,
+      )
+    }
+
+    if (code === "ECONNREFUSED") {
+      throw new Error(
+        `[kg-graph-api] Backend refused connection at ${backendUrl}. ` +
+        `The API server may not be running. Original: ${message}`,
+      )
+    }
+
+    throw error
+  }
 }
 
 /** Fetch and map full graph to GraphData format. */
