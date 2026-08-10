@@ -225,8 +225,8 @@ async def list_extraction_gaps(
         )
 
     # Resolve ontology_version_id UUID to the semver TEXT stored in
-    # extraction_gaps.ontology_version (ADR-NFM-2675 §1 migration 052).
-    import nfm_db.models.ontology_version as _ov_mod  # noqa: N814
+    # extraction_gaps.ontology_version (ADR-NFM-2675 §1 migration 053).
+    import nfm_db.models.ontology_version as _ov_mod
     _OV = _ov_mod.OntologyVersion
 
     ov_row = (await session.execute(

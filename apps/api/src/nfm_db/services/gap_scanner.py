@@ -805,7 +805,7 @@ class GapScanService:
 
         # Existing gaps for this ontology version, all statuses.
         existing_stmt = select(ExtractionGap).where(
-            ExtractionGap.ontology_version_id == ov.id,
+            ExtractionGap.ontology_version == ov.version,
         )
         existing = list(
             (await self._session.execute(existing_stmt)).scalars().all(),
@@ -845,7 +845,7 @@ class GapScanService:
                 # through to create a fresh open gap.
 
             new_gap = ExtractionGap(
-                ontology_version_id=ov.id,
+                ontology_version=ov.version,
                 entity_type=entity_type,
                 property=property_name,
                 gap_status="open",
@@ -928,7 +928,7 @@ class GapScanService:
         gap_stmt = (
             select(ExtractionGap.gap_status, func.count())
             .where(
-                ExtractionGap.ontology_version_id == ov.id,
+                ExtractionGap.ontology_version == ov.version,
                 or_(
                     ExtractionGap.chunk_id.is_(None),
                     ExtractionGap.chunk_id.in_(
@@ -1035,7 +1035,7 @@ class GapScanService:
                 isouter=True,
             )
             .where(
-                ExtractionGap.ontology_version_id == ov.id,
+                ExtractionGap.ontology_version == ov.version,
                 ExtractionGap.gap_status.in_(("open", "filling")),
             )
             .where(

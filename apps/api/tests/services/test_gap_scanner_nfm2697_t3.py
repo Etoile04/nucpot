@@ -192,7 +192,7 @@ async def test_scan_literature_creates_gaps_for_missing_properties(
     assert gap.entity_type == "Material"
     assert gap.property == "melting_point"
     assert gap.gap_status == "open"
-    assert gap.ontology_version_id == ov.id
+    assert gap.ontology_version == ov.version
 
 
 @pytest.mark.asyncio
@@ -216,7 +216,7 @@ async def test_scan_literature_is_idempotent_with_existing_gap(
     )
     db_session.add(
         ExtractionGap(
-            ontology_version_id=ov.id,
+            ontology_version=ov.version,
             entity_type="Material",
             property="density",
             gap_status="filled",
@@ -353,7 +353,7 @@ async def test_compute_recall_partial_coverage_fraction(
     ).scalars().one()
     db_session.add(
         ExtractionGap(
-            ontology_version_id=ov.id,
+            ontology_version=ov.version,
             entity_type="Material",
             property="density",
             gap_status="open",
@@ -469,7 +469,7 @@ async def test_compute_coverage_partial_fraction(db_session) -> None:
     await db_session.flush()
     db_session.add(
         ExtractionGap(
-            ontology_version_id=ov.id,
+            ontology_version=ov.version,
             entity_type="Material",
             property="density",
             gap_status="open",
@@ -611,7 +611,7 @@ async def test_compute_coverage_per_ov_does_not_count_other_ovs_gaps(
     # An open gap tied to OV-B's chunk must NOT count for OV-A.
     db_session.add(
         ExtractionGap(
-            ontology_version_id=ov_b.id,
+            ontology_version=ov_b.version,
             entity_type="Material",
             property="density",
             gap_status="open",
@@ -703,7 +703,7 @@ async def test_scan_literature_per_ov_does_not_match_other_ovs_jobs(
         ontology_version="2.0.0",
     )
     assert len(gaps_b) == 1
-    assert gaps_b[0].ontology_version_id == ov_b.id
+    assert gaps_b[0].ontology_version == ov_b.version
     assert gaps_b[0].property == "density"
 
 

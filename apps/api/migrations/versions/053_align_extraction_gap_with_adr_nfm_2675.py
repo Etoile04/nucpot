@@ -34,8 +34,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "052_align_extraction_gap_with_adr_nfm_2675"
-down_revision: str | Sequence[str] | None = "051_extraction_job_orchestration_columns"
+revision: str = "053_align_extraction_gap_with_adr_nfm_2675"
+down_revision: str | Sequence[str] | None = "052_add_datasource_metadata"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
