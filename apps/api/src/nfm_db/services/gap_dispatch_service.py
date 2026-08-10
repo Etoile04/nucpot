@@ -18,6 +18,7 @@ tests broker-free.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -207,7 +208,7 @@ class GapDispatchService:
         from nfm_db.services.celery_app import celery_app
 
         task_name = (
-            "nfm_db.services.gap_dispatch_service.process_gap_literature_task"
+            "nfm_db.tasks.gap_literature_task.process_gap_literature_task"
         )
         queue = "literature_processing"
 
@@ -310,9 +311,15 @@ class GapDispatchService:
     ) -> DispatchResult:
         """Query external data sources for the requested property.
 
-        Iterates over all configured external sources (NIST IPR, OpenKIM,
-        Materials Project) and collects results.  The raw results are
-        stored in the request ``metadata_`` bag for later processing.
+        NFM-2781 CR4: the three external queries (NIST IPR, OpenKIM,
+        Materials Project) are kicked off in parallel via
+        :func:`asyncio.gather` with ``return_exceptions=True``.  A slow
+        or failing source no longer blocks the other two — each result
+        is processed independently and an exception in one query is
+        logged + skipped without sinking the others.
+
+        Latency on cold path drops from ``~3 * single_source`` to
+        ``~max(sources)``.
         """
         from nfm_db.services.external_data_sources import (
             ExternalDataSourceClient,
@@ -329,27 +336,44 @@ class GapDispatchService:
         results: dict[str, Any] = {}
         client = ExternalDataSourceClient()
         try:
-            # Query all sources; collect whatever comes back.
-            nist_result = await client.query_nist_ipr(
+            # Schedule all three queries concurrently. ``return_exceptions=True``
+            # keeps one slow source from cancelling the others — we
+            # surface each exception inline below.
+            nist_task = client.query_nist_ipr(
                 formula=formula,
                 property_name=property_name,
             )
-            if nist_result is not None:
-                results["nist_ipr"] = nist_result
-
-            openkim_result = await client.query_openkim(
+            openkim_task = client.query_openkim(
                 species=formula,
                 property_name=property_name,
             )
-            if openkim_result is not None:
-                results["openkim"] = openkim_result
-
-            mp_result = await client.query_materials_project(
+            mp_task = client.query_materials_project(
                 formula=formula,
                 property_name=property_name,
             )
-            if mp_result is not None:
-                results["materials_project"] = mp_result
+
+            gathered = await asyncio.gather(
+                nist_task,
+                openkim_task,
+                mp_task,
+                return_exceptions=True,
+            )
+
+            for source_name, value in zip(
+                ("nist_ipr", "openkim", "materials_project"),
+                gathered,
+                strict=False,
+            ):
+                if isinstance(value, BaseException):
+                    logger.warning(
+                        "External source %s failed for request %s: %s",
+                        source_name,
+                        req.id,
+                        value,
+                    )
+                    continue
+                if value is not None:
+                    results[source_name] = value
         finally:
             await client.close()
 
@@ -410,65 +434,8 @@ class GapDispatchService:
         return req
 
 
-# ---------------------------------------------------------------------------
-# Celery task for gap-driven literature processing
-# ---------------------------------------------------------------------------
-#
-# This task is a thin wrapper around the existing literature processing
-# pipeline.  When a gap dispatch chooses the *literature* path, the task
-# is sent to the ``literature_processing`` queue.  The worker then
-# triggers a literature search/extraction for the specific property gap.
-#
-# The task body is lazy-imported so that the dispatcher module imports
-# cleanly even in test environments without the full service layer.
-
-from nfm_db.services.celery_app import celery_app  # noqa: E402
-
-
-@celery_app.task(  # type: ignore[untyped-decorator]
-    bind=True,
-    name="nfm_db.services.gap_dispatch_service.process_gap_literature_task",
-    max_retries=2,
-    default_retry_delay=30,
-    autoretry_for=(ConnectionError, IOError, TimeoutError),
-    retry_backoff=True,
-    retry_backoff_max=300,
-    retry_jitter=True,
-    acks_late=True,
-)
-def process_gap_literature_task(
-    self: Any,
-    request_id: str,
-    entity_type: str,
-    property: str,
-    material_system: str,
-) -> dict[str, Any]:
-    """Celery task: process a literature gap-collection request.
-
-    This task is sent by :meth:`GapDispatchService._dispatch_literature`.
-    It performs a literature search for the specified property gap and
-    is expected to populate the knowledge base accordingly.
-
-    The actual search/extraction logic is delegated to the literature
-    service layer (imported lazily).
-    """
-    logger.info(
-        "process_gap_literature_task started request_id=%s "
-        "entity=%s property=%s material=%s task_id=%s",
-        request_id,
-        entity_type,
-        property,
-        material_system,
-        self.request.id,
-    )
-    # The full literature-gap search pipeline will be implemented in a
-    # follow-up ticket.  For now we log and return a placeholder so the
-    # task is well-formed and the worker can acknowledge it.
-    return {
-        "request_id": request_id,
-        "status": "queued",
-        "message": (
-            "Literature gap processing queued; search pipeline pending "
-            "implementation."
-        ),
-    }
+# NFM-2781 CR3: the Celery task that this dispatcher schedules lives
+# in :mod:`nfm_db.tasks.gap_literature_task`.  It used to be defined
+# here at module load, which violated the broker-free docstring above
+# (every importer of this module had to pay the Celery import cost).
+# The dispatcher now references the task by fully-qualified name only.
