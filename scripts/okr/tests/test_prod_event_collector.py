@@ -16,7 +16,7 @@ import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -171,7 +171,7 @@ class TestSyncState:
 def _make_run(run_id: int) -> Run:
     return Run(
         run_id=run_id,
-        created_at=datetime(2026, 7, 30, 12, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC),
         artifact_ids=(999,),
     )
 
@@ -231,7 +231,7 @@ class TestCollectAdvanceOnlyOnSuccess:
     def test_no_artifact_records_bad_run(self) -> None:
         run = Run(
             run_id=700,
-            created_at=datetime(2026, 7, 30, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC),
             artifact_ids=(),
         )
         backend = _FakeBackend(runs=[run], fragments={})
@@ -485,3 +485,62 @@ class TestResolveSshTarget:
                 assert "@" not in line or "NFMD" in line, (
                     "user@host literal found in argparse default for --ssh-target"
                 )
+
+
+class TestGhApiArgContract:
+    """Regression: NFM-2754 prod-deploy-event-collector 5+ failures since 2026-08-10T05:55Z.
+
+    The collector invokes ``gh api`` to discover workflow runs and download
+    artifacts. The implementation builds the subprocess argv by spreading
+    ``*args`` into the command list, which produces TWO positional arguments
+    after ``gh api``. ``gh api`` only accepts ONE endpoint positional — the
+    second arg is rejected with ``accepts 1 arg(s), received 2`` and the
+    collector iteration aborts. These tests pin the contract: the argv
+    passed to ``subprocess.run`` must contain exactly one endpoint string
+    per ``gh api`` call (concatenation is the fix).
+    """
+
+    def _capture(self, monkeypatch, stdout: str = "{}") -> list:
+        """Patch subprocess.run so _gh_api records the argv instead of
+        spawning gh. Returns the captured list (one entry per call)."""
+        captured: list = []
+        import subprocess as _sp
+
+        import prod_event_collector as _mod
+
+        def fake_run(cmd, *args, **kwargs):
+            captured.append(list(cmd))
+            return _sp.CompletedProcess(cmd, 0, stdout, "")
+
+        # _gh_api looks up ``subprocess`` via the module globals of
+        # prod_event_collector (it imported ``import subprocess`` at module
+        # top). Patch the same name the function resolves at call time.
+        monkeypatch.setattr(_mod.subprocess, "run", fake_run)
+        return captured
+
+    def test_single_endpoint_argv_for_actions_runs(self, monkeypatch) -> None:
+        captured = self._capture(monkeypatch, stdout='{"workflow_runs": []}')
+        from prod_event_collector import _gh_api
+        _gh_api("Etoile04/nucpot", "actions/runs?created=>=2026-08-10T00:00:00Z&per_page=100")
+        assert len(captured) == 1
+        cmd = captured[0]
+        assert cmd[0] == "gh"
+        assert cmd[1] == "api"
+        # Exactly one endpoint positional after the gh/api prefix, and it
+        # MUST be a single concatenated path, not two separate args.
+        assert len(cmd) == 3, (
+            f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
+        )
+        assert cmd[2] == "repos/Etoile04/nucpot/actions/runs?created=>=2026-08-10T00:00:00Z&per_page=100"
+
+    def test_single_endpoint_argv_for_artifacts(self, monkeypatch) -> None:
+        captured = self._capture(monkeypatch, stdout='{"artifacts": []}')
+        from prod_event_collector import _gh_api
+        _gh_api("Etoile04/nucpot", "actions/runs/12345/artifacts")
+        assert len(captured) == 1
+        cmd = captured[0]
+        assert cmd[:2] == ["gh", "api"]
+        assert len(cmd) == 3, (
+            f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
+        )
+        assert cmd[2] == "repos/Etoile04/nucpot/actions/runs/12345/artifacts"

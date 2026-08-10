@@ -44,10 +44,11 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from typing import Any, Protocol
 
 # Spec §3.1 schema — verbatim, do not extend or rename.
 SCHEMA_FIELDS = frozenset({
@@ -106,7 +107,7 @@ class SyncState:
         }, indent=2)
 
     @classmethod
-    def from_json(cls, text: str) -> "SyncState":
+    def from_json(cls, text: str) -> SyncState:
         try:
             obj = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError:
@@ -201,7 +202,15 @@ class Backend(Protocol):
 
 def _gh_api(repo: str, *args: str) -> Any:
     """Invoke ``gh api`` against the configured repo. Raises on non-zero exit."""
-    cmd = ["gh", "api", f"repos/{repo}", *args]
+    # ``gh api`` accepts a SINGLE endpoint positional. Concatenate any
+    # path/query parts so we never pass a second positional, which gh
+    # rejects with "accepts 1 arg(s), received 2". See NFM-2754.
+    if args:
+        suffix = "/".join(args).lstrip("/")
+        endpoint = f"repos/{repo}/{suffix}"
+    else:
+        endpoint = f"repos/{repo}"
+    cmd = ["gh", "api", endpoint]
     proc = subprocess.run(
         cmd, capture_output=True, text=True, check=False,
         env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", "")},
@@ -230,7 +239,7 @@ class GhBackend:
 
     def list_production_runs(self, since: datetime) -> list[Run]:
         # ``created=>=ISO`` filters server-side. Add 5-minute skew on top.
-        skewed = (since - timedelta(minutes=SYNC_SKEW_MINUTES)).astimezone(timezone.utc)
+        skewed = (since - timedelta(minutes=SYNC_SKEW_MINUTES)).astimezone(UTC)
         iso = skewed.strftime("%Y-%m-%dT%H:%M:%SZ")
         data = _gh_api(
             self.repo,
@@ -330,13 +339,13 @@ class GhBackend:
             '  fi',
             'fi',
             "",
-            f"# Decode + append each valid fragment as one JSONL line.",
+            "# Decode + append each valid fragment as one JSONL line.",
             f"echo '{payload_b64}' | base64 -d | jq -c '.[]' | while read -r item; do",
             '  TEXT="$(printf \'%s\' "$item" | jq -r \'.text\')"',
             '  printf \'%s\\n\' "$TEXT" >> "$MASTER"',
             'done',
             "",
-            f"# Advance the sync-state under the same lock.",
+            "# Advance the sync-state under the same lock.",
             f"echo '{state_b64}' | base64 -d > \"$STATE.tmp\"",
             'mv "$STATE.tmp" "$STATE"',
             "",
@@ -456,9 +465,9 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
         try:
             since = datetime.fromisoformat(state.last_synced_at.replace("Z", "+00:00"))
         except ValueError:
-            since = datetime.now(timezone.utc) - timedelta(minutes=SYNC_SKEW_MINUTES)
+            since = datetime.now(UTC) - timedelta(minutes=SYNC_SKEW_MINUTES)
     else:
-        since = datetime.now(timezone.utc) - timedelta(minutes=SYNC_SKEW_MINUTES)
+        since = datetime.now(UTC) - timedelta(minutes=SYNC_SKEW_MINUTES)
 
     runs = sorted(
         backend.list_production_runs(since),
@@ -524,7 +533,7 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
         # ``sorted(..., key=lambda r: r.run_id)`` above), so the
         # advance target is the highest run_id in ``pending``.
         next_state.last_synced_run_id = pending[-1][0]
-        next_state.last_synced_at = datetime.now(timezone.utc).strftime(
+        next_state.last_synced_at = datetime.now(UTC).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
         try:
