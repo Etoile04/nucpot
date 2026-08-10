@@ -56,7 +56,7 @@ class DispatchResult:
 
     success: bool
     path: str
-    reference: str
+    reference: str | None = None
     error: str | None = None
     data_found: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
