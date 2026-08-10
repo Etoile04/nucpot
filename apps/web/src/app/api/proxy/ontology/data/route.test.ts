@@ -97,12 +97,15 @@ describe("GET /api/proxy/ontology/data — upstream success", () => {
     )
   })
 
-  it("falls back to localhost:8100 when API_SERVER_URL is unset", async () => {
+  // NFM-2786: default to the Docker-internal service DNS instead of
+  // localhost:8100 (which silently misroutes to whichever process
+  // happens to occupy host port 8000 — Honcho in the current stack).
+  it("falls back to the Docker-internal service DNS when API_SERVER_URL is unset", async () => {
     delete process.env.API_SERVER_URL
     const req = makeRequest("/api/proxy/ontology/data?corpus=nuclear")
     await GET(req)
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:8100/api/v1/ontology/corpora/nuclear/graph",
+      "http://nucpot-prod-api:8000/api/v1/ontology/corpora/nuclear/graph",
       expect.anything(),
     )
   })

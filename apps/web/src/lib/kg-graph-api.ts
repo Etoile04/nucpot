@@ -16,8 +16,14 @@ import type { KgGraphApiResponse } from "./materials-api"
 export async function fetchFullGraph(
   limit = 100,
 ): Promise<KgGraphApiResponse> {
+  // NFM-2786: the previous `http://localhost:8000` fallback silently
+  // hit Honcho (which occupies host port 8000 in the current stack),
+  // returning 404 to the SSR fetch.  Default to the Docker-internal
+  // service DNS so SSR calls resolve correctly inside any container.
+  // Local dev MUST set API_SERVER_URL explicitly when running the API
+  // outside Docker on a non-default host port.
   const backendUrl =
-    process.env.API_SERVER_URL ?? "http://localhost:8000"
+    process.env.API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 
   const url = `${backendUrl}/api/v1/kg/graph?limit=${limit}`
   const response = await fetch(url, {
