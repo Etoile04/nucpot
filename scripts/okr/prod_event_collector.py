@@ -201,7 +201,8 @@ class Backend(Protocol):
 
 def _gh_api(repo: str, *args: str) -> Any:
     """Invoke ``gh api`` against the configured repo. Raises on non-zero exit."""
-    cmd = ["gh", "api", f"repos/{repo}", *args]
+    endpoint = "/".join([f"repos/{repo}", *args])
+    cmd = ["gh", "api", endpoint]
     proc = subprocess.run(
         cmd, capture_output=True, text=True, check=False,
         env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", "")},
