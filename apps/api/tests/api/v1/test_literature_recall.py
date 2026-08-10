@@ -126,7 +126,7 @@ async def _seed_chunk(
 async def _seed_gap(
     session: AsyncSession,
     *,
-    ontology_version_id: uuid.UUID,
+    ontology_version: str,
     entity_type: str = "NuclearMaterial",
     property_name: str = "density",
     gap_status: str = "open",
@@ -134,7 +134,7 @@ async def _seed_gap(
 ) -> ExtractionGap:
     gap = ExtractionGap(
         id=uuid.uuid4(),
-        ontology_version_id=ontology_version_id,
+        ontology_version=ontology_version,
         entity_type=entity_type,
         property=property_name,
         gap_status=gap_status,
@@ -283,7 +283,7 @@ async def test_literature_recall_includes_gaps_for_literature_chunks(
     # 1 open gap linked to the literature's chunk.
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="NuclearMaterial",
         property_name="density",
         gap_status="open",
@@ -292,7 +292,7 @@ async def test_literature_recall_includes_gaps_for_literature_chunks(
     # 1 filled gap (does not count as "uncovered").
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="NuclearMaterial",
         property_name="melting_point",
         gap_status="filled",

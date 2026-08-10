@@ -107,7 +107,7 @@ async def _seed_chunk(
 async def _seed_gap(
     session: AsyncSession,
     *,
-    ontology_version_id: uuid.UUID,
+    ontology_version: str,
     entity_type: str = "NuclearMaterial",
     property_name: str = "density",
     gap_status: str = "open",
@@ -116,7 +116,7 @@ async def _seed_gap(
     """Insert a minimal ExtractionGap row."""
     gap = ExtractionGap(
         id=uuid.uuid4(),
-        ontology_version_id=ontology_version_id,
+        ontology_version=ontology_version,
         entity_type=entity_type,
         property=property_name,
         gap_status=gap_status,
@@ -165,7 +165,7 @@ async def test_list_unauthenticated_returns_401(async_client, db_session) -> Non
 async def test_detail_unauthenticated_returns_401(async_client, db_session) -> None:
     """Unauthenticated GET /extraction-gaps/{id} returns 401."""
     ov = await _seed_ontology(db_session)
-    gap = await _seed_gap(db_session, ontology_version_id=ov.id)
+    gap = await _seed_gap(db_session, ontology_version=ov.version)
     response = await async_client.get(f"/api/v1/extraction-gaps/{gap.id}")
     assert response.status_code == 401
 
@@ -187,7 +187,7 @@ async def test_patch_status_unauthenticated_returns_401(async_client, db_session
     """Unauthenticated PATCH /extraction-gaps/{id}/status returns 401."""
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open",
+        db_session, ontology_version=ov.version, gap_status="open",
     )
     response = await async_client.patch(
         f"/api/v1/extraction-gaps/{gap.id}/status",
@@ -204,7 +204,7 @@ async def test_patch_status_non_expert_returns_403(
     """PATCH with editor (non-expert) role returns 403."""
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open",
+        db_session, ontology_version=ov.version, gap_status="open",
     )
     response = await async_client.patch(
         f"/api/v1/extraction-gaps/{gap.id}/status",
@@ -235,7 +235,7 @@ async def test_patch_status_domain_expert_succeeds(
     """PATCH with domain_expert role succeeds."""
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open",
+        db_session, ontology_version=ov.version, gap_status="open",
     )
     response = await async_client.patch(
         f"/api/v1/extraction-gaps/{gap.id}/status",
@@ -282,10 +282,10 @@ async def test_list_returns_envelope(async_client, db_session, domain_expert_hea
 async def test_list_filters_by_entity_type(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     await _seed_gap(
-        db_session, ontology_version_id=ov.id, entity_type="NuclearMaterial",
+        db_session, ontology_version=ov.version, entity_type="NuclearMaterial",
     )
     await _seed_gap(
-        db_session, ontology_version_id=ov.id, entity_type="Isotope",
+        db_session, ontology_version=ov.version, entity_type="Isotope",
     )
 
     response = await async_client.get(
@@ -307,12 +307,12 @@ async def test_list_filters_by_gap_status(async_client, db_session, domain_exper
     ov = await _seed_ontology(db_session)
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         gap_status="open",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="Isotope",
         property_name="half_life",
         gap_status="filled",
@@ -339,12 +339,12 @@ async def test_list_filters_by_job_id(async_client, db_session, domain_expert_he
     chunk = await _seed_chunk(db_session, job_id=job.id)
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         chunk_id=chunk.id,
     )
     other = await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         entity_type="Isotope",
         property_name="half_life",
     )
@@ -369,7 +369,7 @@ async def test_list_pagination_limit_and_offset(async_client, db_session, domain
     for i in range(7):
         await _seed_gap(
             db_session,
-            ontology_version_id=ov.id,
+            ontology_version=ov.version,
             property_name=f"prop_{i}",
         )
 
@@ -425,7 +425,7 @@ async def test_list_rejects_invalid_gap_status(async_client, domain_expert_heade
 @pytest.mark.asyncio
 async def test_detail_returns_gap(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
-    gap = await _seed_gap(db_session, ontology_version_id=ov.id)
+    gap = await _seed_gap(db_session, ontology_version=ov.version)
 
     response = await async_client.get(
         f"/api/v1/extraction-gaps/{gap.id}", headers=domain_expert_headers,
@@ -433,7 +433,7 @@ async def test_detail_returns_gap(async_client, db_session, domain_expert_header
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == str(gap.id)
-    assert body["ontology_version_id"] == str(ov.id)
+    assert body["ontology_version"] == ov.version
     assert body["entity_type"] == "NuclearMaterial"
     assert body["property"] == "density"
     assert body["gap_status"] == "open"
@@ -453,7 +453,7 @@ async def test_detail_includes_chunk_source_reference(
     )
     gap = await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         chunk_id=chunk.id,
     )
 
@@ -484,7 +484,7 @@ async def test_detail_404_on_missing(async_client, domain_expert_headers) -> Non
 async def test_patch_open_to_filling_succeeds(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open"
+        db_session, ontology_version=ov.version, gap_status="open"
     )
 
     response = await async_client.patch(
@@ -502,7 +502,7 @@ async def test_patch_open_to_filling_succeeds(async_client, db_session, domain_e
 async def test_patch_open_to_wont_fix_succeeds(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open"
+        db_session, ontology_version=ov.version, gap_status="open"
     )
 
     response = await async_client.patch(
@@ -522,7 +522,7 @@ async def test_patch_filling_to_filled_sets_resolved_at(
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="filling"
+        db_session, ontology_version=ov.version, gap_status="filling"
     )
 
     response = await async_client.patch(
@@ -542,7 +542,7 @@ async def test_patch_filling_to_wont_fix_sets_resolved_at(
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="filling"
+        db_session, ontology_version=ov.version, gap_status="filling"
     )
 
     response = await async_client.patch(
@@ -560,7 +560,7 @@ async def test_patch_filling_to_wont_fix_sets_resolved_at(
 async def test_patch_open_to_filled_rejected(async_client, db_session, domain_expert_headers) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="open"
+        db_session, ontology_version=ov.version, gap_status="open"
     )
 
     response = await async_client.patch(
@@ -578,7 +578,7 @@ async def test_patch_filled_is_immutable_returns_409(
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="filled"
+        db_session, ontology_version=ov.version, gap_status="filled"
     )
 
     response = await async_client.patch(
@@ -595,7 +595,7 @@ async def test_patch_wont_fix_is_immutable_returns_409(
 ) -> None:
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="wont_fix"
+        db_session, ontology_version=ov.version, gap_status="wont_fix"
     )
 
     response = await async_client.patch(
@@ -613,7 +613,7 @@ async def test_patch_same_terminal_status_returns_409(
     """Transitioning filled -> filled is rejected (terminal is immutable)."""
     ov = await _seed_ontology(db_session)
     gap = await _seed_gap(
-        db_session, ontology_version_id=ov.id, gap_status="filled"
+        db_session, ontology_version=ov.version, gap_status="filled"
     )
 
     response = await async_client.patch(
@@ -677,7 +677,7 @@ async def test_recall_returns_correct_shape(async_client, db_session, domain_exp
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         gap_status="open",
     )
 
@@ -742,12 +742,12 @@ async def test_recall_mixed_gaps_correct_rate(
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         gap_status="open",
     )
     await _seed_gap(
         db_session,
-        ontology_version_id=ov.id,
+        ontology_version=ov.version,
         property_name="melting_point",
         gap_status="filled",
     )
