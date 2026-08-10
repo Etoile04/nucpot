@@ -17,7 +17,18 @@ const DISABLE_API_REWRITE =
   process.env.DISABLE_API_REWRITE === "true" ||
   process.env.DISABLE_API_REWRITE === "1"
 
-const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://localhost:8100"
+// Default to the Docker-internal service DNS (resolves inside any
+// `nucpot-*` network) so the rewrite is correct in prod and staging
+// even when API_SERVER_URL is not explicitly set.  NFM-2786: the
+// previous `http://localhost:8100` default silently misrouted requests
+// to whichever process happened to occupy host port 8000 (Honcho in
+// the current stack), returning 404 with a Next.js HTML body.  Local
+// dev (running the API outside Docker on a different host port) MUST
+// set API_SERVER_URL explicitly — e.g.:
+//   API_SERVER_URL=http://localhost:8001 pnpm dev
+// (8001 is the host port mapped to the nucpot-prod-api container
+// in docker-compose.prod.yml; staging uses 8011.)
+const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 
 // LightRAG WebUI reverse-proxy target. In Docker prod this is the
 // LightRAG sidecar's built-in React SPA; in local dev it falls back
