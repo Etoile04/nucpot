@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # When True, trigger_extraction() delegates to ExtractionOrchestrator.
     # When False (default), legacy pipeline runs unchanged.
     extraction_v2_enabled: bool = False
+    # NFM-2781 HOTFIX CR1: allowlist base for
+    # ``get_gap_source_text``.  ``chunk.source_reference`` strings must
+    # resolve to a path inside this directory; anything outside is
+    # rejected by :func:`nfm_db.core.path_safety.safe_resolve`.  Wired
+    # via ``NFM_SOURCE_BASE`` env var.
+    source_base: str = "/var/nfm-data/sources/"
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
