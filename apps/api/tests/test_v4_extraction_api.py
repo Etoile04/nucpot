@@ -35,7 +35,15 @@ async def v4_client(db_session):
     so that the session-scoped auto-auth override (set in conftest.py) survives.
     Without this, v4 extraction endpoints that depend on ``require_editor`` would
     return 401 and the ``submitted_job_id`` fixture would KeyError on ``['data']``.
+
+    NFM-2739 Phase B: the V2 flag now defaults ON, so ``trigger_extraction_pipeline``
+    routes to the V2 orchestrator which requires real source files. These endpoint
+    tests exercise validation + response shape, not the V2 pipeline's I/O, so the
+    dispatch is stubbed to return a canonical completed-job dict.
     """
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, patch
+
     from nfm_db.database import get_db
 
     async def override_get_db():
@@ -43,9 +51,42 @@ async def v4_client(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+    async def _fake_dispatch(**kwargs):
+        from nfm_db.services.extraction_pipeline import (
+            ExtractionJob,
+            JobStatus,
+            _job_store,
+        )
+
+        source_reference = kwargs.get("source_reference", "")
+        source_type = kwargs.get("source_type", "")
+        job_id = "test-v2-job-id"
+        now = datetime.now(timezone.utc)
+        _job_store[job_id] = ExtractionJob(
+            job_id=job_id,
+            source_reference=source_reference,
+            source_type=source_type,
+            status=JobStatus.COMPLETED,
+            created_at=now,
+            completed_at=now,
+        )
+        return {
+            "status": "completed",
+            "job_id": job_id,
+            "source_reference": source_reference,
+            "source_type": source_type,
+            "error_message": None,
+            "created_at": now.isoformat(),
+            "completed_at": now.isoformat(),
+        }
+
+    with patch(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction_pipeline",
+        new=AsyncMock(side_effect=_fake_dispatch),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
     app.dependency_overrides.pop(get_db, None)
 

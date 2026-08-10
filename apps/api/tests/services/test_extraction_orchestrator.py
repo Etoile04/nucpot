@@ -267,12 +267,12 @@ def test_pipeline_steps_order() -> None:
 class TestFeatureFlagRouting:
     """Tests for EXTRACTION_V2_ENABLED feature flag."""
 
-    def test_flag_defaults_to_false(self) -> None:
-        """AC: Feature flag defaults to False."""
+    def test_flag_defaults_to_true(self) -> None:
+        """AC: Feature flag defaults to True (NFM-2739 Phase B cutover)."""
         from nfm_db.config import Settings
 
         s = Settings()
-        assert s.extraction_v2_enabled is False
+        assert s.extraction_v2_enabled is True
 
     def test_flag_enabled_via_env(self, monkeypatch) -> None:
         """Flag can be enabled via environment variable NFM_EXTRACTION_V2_ENABLED."""

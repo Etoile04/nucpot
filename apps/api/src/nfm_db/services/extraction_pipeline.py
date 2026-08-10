@@ -235,7 +235,41 @@ def _generate_job_id() -> str:
 
 
 def get_job(job_id: str) -> ExtractionJob | None:
-    """Retrieve a job by ID."""
+    """Retrieve a job by ID from the in-memory store (legacy V1 path).
+
+    .. deprecated:: NFM-2739
+        Use :func:`get_job_or_orm` for V2-compatible lookups that check
+        the ORM ``extraction_jobs`` table first.
+    """
+    return _job_store.get(job_id)
+
+
+async def get_job_or_orm(
+    job_id: str,
+    session: AsyncSession | None = None,
+) -> ExtractionJob | OrmExtractionJob | None:
+    """Retrieve a job by ID, checking the ORM table first then the in-memory store.
+
+    This is the V2-compatible replacement for :func:`get_job`. When a
+    ``session`` is provided it queries the ``extraction_jobs`` table by
+    primary key. If the ORM row exists it is returned directly.
+
+    Falls back to the in-memory ``_job_store`` when:
+    - ``session`` is ``None`` (no DB access possible), or
+    - the ORM lookup returns ``None`` (V1 legacy job or cross-process).
+    """
+    if session is not None:
+        try:
+            job_uuid = uuid.UUID(job_id)
+        except (ValueError, TypeError):
+            pass
+        else:
+            from nfm_db.models.extraction_job import (
+                ExtractionJob as OrmExtractionJob,
+            )
+            result = await session.get(OrmExtractionJob, job_uuid)
+            if result is not None:
+                return result
     return _job_store.get(job_id)
 
 

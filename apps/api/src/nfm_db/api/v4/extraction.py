@@ -39,7 +39,9 @@ from nfm_db.schemas.extraction import (
 )
 from nfm_db.services.extraction_pipeline import (
     JobStatus,
+    _extraction_job_to_dict,
     get_job,
+    get_job_or_orm,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,8 +156,8 @@ async def _get_job_properties(
     """
     from nfm_db.models.ref_gap_fill import RefGapFillStaging
 
-    job = get_job(job_id)
-    if job is None or job.fill_batch_id is None:
+    job = await get_job_or_orm(job_id, session)
+    if job is None or getattr(job, "fill_batch_id", None) is None:
         return []
 
     batch_uuid = uuid.UUID(job.fill_batch_id)
@@ -299,9 +301,12 @@ async def submit_extraction(
     summary="查询提取任务进度",
     description="轮询提取任务进度，包含详细的步骤追踪。\n\nPoll extraction job progress with detailed step tracking.",
 )
-async def get_extraction_status(job_id: str) -> JSONResponse:
+async def get_extraction_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_db),
+) -> JSONResponse:
     """轮询提取任务进度（含详细步骤追踪）。"""
-    job = get_job(job_id)
+    job = await get_job_or_orm(job_id, session)
 
     if job is None:
         return _error_response(
@@ -309,22 +314,25 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
             f"Extraction job '{job_id}' not found.",
         )
 
+    job_dict = _extraction_job_to_dict(job)
+    job_status = job_dict["status"]
+
     return JSONResponse(
         content={
             "success": True,
             "data": V4StatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                progress=_build_progress(job.status),
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
+                job_id=job_dict["job_id"],
+                source_reference=job_dict["source_reference"],
+                source_type=job_dict["source_type"],
+                status=job_status,
+                progress=_build_progress(JobStatus(job_status)),
+                extracted_count=job_dict["extracted_count"],
+                staged_count=job_dict["staged_count"],
+                rejected_count=job_dict["rejected_count"],
+                error_message=job_dict["error_message"],
+                created_at=job_dict["created_at"],
+                started_at=job_dict["started_at"],
+                completed_at=job_dict["completed_at"],
             ).model_dump(mode="json"),
         },
     )
@@ -349,7 +357,7 @@ async def get_extraction_result(
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """获取已完成任务的提取结果，支持分页。"""
-    job = get_job(job_id)
+    job = await get_job_or_orm(job_id, session)
 
     if job is None:
         return _error_response(
@@ -357,10 +365,12 @@ async def get_extraction_result(
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    # Handle both dataclass (JobStatus enum) and ORM (str) status.
+    job_status = job.status.value if hasattr(job.status, "value") else str(job.status)
+    if job_status != JobStatus.COMPLETED.value:
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{job_status}', not 'completed'. "
             "Results are only available for completed jobs.",
         )
 
@@ -387,13 +397,14 @@ async def get_extraction_result(
 
     properties = [_to_v4_property(p, job_id=job_id) for p in page_properties]
 
+    job_dict = _extraction_job_to_dict(job)
     return JSONResponse(
         content={
             "success": True,
             "data": V4ResultResponse(
-                source_reference=job.source_reference,
-                job_status=job.status.value,
-                total_extracted=job.extracted_count,
+                source_reference=job_dict["source_reference"],
+                job_status=job_dict["status"],
+                total_extracted=job_dict["extracted_count"],
                 properties=[p.model_dump(mode="json") for p in properties],
             ).model_dump(mode="json"),
             "meta": {
@@ -530,7 +541,7 @@ async def validate_extraction(
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """触发提取属性验证工作流。"""
-    job = get_job(job_id)
+    job = await get_job_or_orm(job_id, session)
 
     if job is None:
         return _error_response(
@@ -538,10 +549,12 @@ async def validate_extraction(
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    # Handle both dataclass (JobStatus enum) and ORM (str) status.
+    job_status = job.status.value if hasattr(job.status, "value") else str(job.status)
+    if job_status != JobStatus.COMPLETED.value:
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{job_status}', not 'completed'. "
             "Validation can only be triggered on completed jobs.",
         )
 

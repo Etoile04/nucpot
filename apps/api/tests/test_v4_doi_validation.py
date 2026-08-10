@@ -19,7 +19,15 @@ from nfm_db.main import app
 
 @pytest.fixture
 async def doi_client(db_session):
-    """Async test client for v4 DOI validation tests."""
+    """Async test client for v4 DOI validation tests.
+
+    NFM-2739 Phase B: V2 flag defaults ON; stub the dispatch so these
+    validation tests don't require real V2 file I/O.
+    """
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from nfm_db.database import get_db
 
     async def override_get_db():
         yield db_session
@@ -27,9 +35,24 @@ async def doi_client(db_session):
     app.dependency_overrides.pop(get_db, None)
     app.dependency_overrides[get_db] = override_get_db
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+    async def _fake_dispatch(**kwargs):
+        return {
+            "status": "completed",
+            "job_id": "test-v2-job-id",
+            "source_reference": kwargs.get("source_reference", ""),
+            "source_type": kwargs.get("source_type", ""),
+            "error_message": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    with patch(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction_pipeline",
+        new=AsyncMock(side_effect=_fake_dispatch),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
     app.dependency_overrides.pop(get_db, None)
 

@@ -413,12 +413,12 @@ class TestIngestStatusEndpoint:
         mock_celery.AsyncResult.return_value = mock_result
 
         with (
-            patch("nfm_db.api.v1.extraction.get_job", return_value=None),
+            patch("nfm_db.api.v1.extraction.get_job_or_orm", return_value=None),
             patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
         ):
             from nfm_db.api.v1.extraction import get_extraction_status
 
-            resp = await get_extraction_status(uuid4())
+            resp = await get_extraction_status(uuid4(), session=AsyncMock())
 
         assert resp["data"]["status"] == "processing"
 

@@ -17,8 +17,8 @@ from unittest.mock import patch
 import pytest
 
 
-def test_is_extraction_v2_enabled_defaults_off():
-    """No env var set → False."""
+def test_is_extraction_v2_enabled_defaults_on():
+    """No env var set → True (NFM-2739 Phase B cutover flipped the default)."""
     with patch.dict("os.environ", {}, clear=False):
         import os
 
@@ -30,7 +30,7 @@ def test_is_extraction_v2_enabled_defaults_off():
             is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
         except AttributeError:
             pass
-        assert is_extraction_v2_enabled() is False
+        assert is_extraction_v2_enabled() is True
 
 
 def test_is_extraction_v2_enabled_honours_env_var():

@@ -43,6 +43,19 @@ def _make_status_result(**overrides):
         "created_at": datetime.now(UTC),
         "started_at": datetime.now(UTC),
         "completed_at": None,
+        "fill_batch_id": None,
+        "element_systems": None,
+        "cache_level": None,
+        "max_confidence": None,
+        "conflict_strategy": "prefer_vlm",
+        "figures": [],
+        "tables": [],
+        "extract_figures": False,
+        "extract_tables": False,
+        "confidence_threshold": 0.5,
+        "figure_types": None,
+        "ontology_version_id": None,
+        "ontology_version_str": None,
     }
     defaults["status"] = MagicMock(value="completed")
     defaults.update(overrides)
@@ -224,7 +237,7 @@ async def test_trigger_returns_400_for_empty_source_type(mock_trigger, async_cli
 
 
 @pytest.mark.asyncio
-@patch("nfm_db.api.v1.extraction.get_job")
+@patch("nfm_db.api.v1.extraction.get_job_or_orm", new_callable=AsyncMock)
 async def test_status_returns_200_for_found_job(mock_get_job, async_client):
     """Status endpoint should return 200 with job details when job exists."""
     job_id = uuid4()
@@ -249,11 +262,9 @@ async def test_status_returns_200_for_found_job(mock_get_job, async_client):
     assert data["rejected_count"] == 2
     assert data["error_message"] is None
 
-    mock_get_job.assert_called_once_with(str(job_id))
-
 
 @pytest.mark.asyncio
-@patch("nfm_db.api.v1.extraction.get_job")
+@patch("nfm_db.api.v1.extraction.get_job_or_orm", new_callable=AsyncMock)
 async def test_status_returns_404_when_job_not_found(mock_get_job, async_client):
     """Status endpoint should return 404 when get_job returns None."""
     job_id = uuid4()
@@ -268,7 +279,7 @@ async def test_status_returns_404_when_job_not_found(mock_get_job, async_client)
 
 
 @pytest.mark.asyncio
-@patch("nfm_db.api.v1.extraction.get_job")
+@patch("nfm_db.api.v1.extraction.get_job_or_orm", new_callable=AsyncMock)
 async def test_status_with_valid_uuid_format(mock_get_job, async_client):
     """Status endpoint should handle standard UUID format correctly."""
     job_id = uuid4()

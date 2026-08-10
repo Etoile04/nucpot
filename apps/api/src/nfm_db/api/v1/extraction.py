@@ -28,7 +28,11 @@ from nfm_db.schemas.extraction import (
     ExtractionTriggerRequest,
 )
 from nfm_db.services.celery_app import celery_app
-from nfm_db.services.extraction_pipeline import get_job
+from nfm_db.services.extraction_pipeline import (
+    _extraction_job_to_dict,
+    get_job,
+    get_job_or_orm,
+)
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -197,29 +201,31 @@ async def trigger_extraction_job(
 )
 async def get_extraction_status(
     job_id: UUID,
+    session: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """查询提取任务执行状态。
 
     Returns current status, counts of extracted/staged/rejected properties,
     timestamps, and error message (if failed).
     """
-    job = get_job(str(job_id))
+    job = await get_job_or_orm(str(job_id), session)
 
     if job is not None:
+        job_dict = _extraction_job_to_dict(job)
         return {
             "success": True,
             "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
+                job_id=job_dict["job_id"],
+                source_reference=job_dict["source_reference"],
+                source_type=job_dict["source_type"],
+                status=job_dict["status"],
+                extracted_count=job_dict["extracted_count"],
+                staged_count=job_dict["staged_count"],
+                rejected_count=job_dict["rejected_count"],
+                error_message=job_dict["error_message"],
+                created_at=job_dict["created_at"],
+                started_at=job_dict["started_at"],
+                completed_at=job_dict["completed_at"],
             ).model_dump(),
         }
 
@@ -652,20 +658,21 @@ async def get_ingest_job_status(
     # Fallback: in-memory store for non-Celery / non-ingest jobs.
     job = get_job(job_id)
     if job is not None:
+        job_dict = _extraction_job_to_dict(job)
         return {
             "success": True,
             "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
+                job_id=job_dict["job_id"],
+                source_reference=job_dict["source_reference"],
+                source_type=job_dict["source_type"],
+                status=job_dict["status"],
+                extracted_count=job_dict["extracted_count"],
+                staged_count=job_dict["staged_count"],
+                rejected_count=job_dict["rejected_count"],
+                error_message=job_dict["error_message"],
+                created_at=job_dict["created_at"],
+                started_at=job_dict["started_at"],
+                completed_at=job_dict["completed_at"],
             ).model_dump(),
         }
 

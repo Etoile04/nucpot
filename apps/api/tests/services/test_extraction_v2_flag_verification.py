@@ -311,16 +311,16 @@ class TestExtractionV2FlagRoutesToLegacy:
 
 
 @pytest.mark.unit
-class TestExtractionV2FlagDefaultIsOff:
-    """The feature flag must default to ``False`` (strangler-fig contract)."""
+class TestExtractionV2FlagDefaultIsOn:
+    """The feature flag defaults to ``True`` after NFM-2739 Phase B cutover."""
 
-    def test_settings_default_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_settings_default_is_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NFM_EXTRACTION_V2_ENABLED", raising=False)
         from nfm_db.config import Settings
         settings = Settings()
-        assert settings.extraction_v2_enabled is False, (
-            "Flag default must remain False until the V2 orchestrator "
-            "has been independently validated (NFM-2698 acceptance)"
+        assert settings.extraction_v2_enabled is True, (
+            "Flag default must be True after NFM-2739 Phase B cutover "
+            "(the V2 orchestrator is now the canonical path)"
         )
 
     def test_settings_can_be_overridden_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:

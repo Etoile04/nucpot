@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # NFM-2568-T1: feature flag routing to V2 orchestrator.
     # When True, trigger_extraction() delegates to ExtractionOrchestrator.
     # When False (default), legacy pipeline runs unchanged.
-    extraction_v2_enabled: bool = False
+    extraction_v2_enabled: bool = True
     # NFM-2781 HOTFIX CR1: allowlist base for
     # ``get_gap_source_text``.  ``chunk.source_reference`` strings must
     # resolve to a path inside this directory; anything outside is

@@ -146,8 +146,13 @@ async def _run_legacy(raw: list[dict[str, Any]]) -> dict[str, Any]:
     bulk = _build_bulk_result_for(raw)
     gap = _build_gap_result(1)
 
+    # Force flag=False for legacy path (NFM-2739: default is now True)
+    from nfm_db.config import Settings
+    _legacy_settings = Settings(extraction_v2_enabled=False)
+
     with (
         patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+        patch("nfm_db.config.get_settings", return_value=_legacy_settings),
         patch(
             "nfm_db.services.extraction_pipeline.ontofuel_extract",
             new_callable=AsyncMock,
@@ -297,13 +302,13 @@ async def test_parity_flag_false_vs_flag_true_equivalent_results() -> None:
     assert legacy["status"] == new["status"]
 
 
-def test_parity_flag_default_is_false() -> None:
-    """The acceptance criterion — flag defaults to False (do NOT flip default)."""
+def test_parity_flag_default_is_true() -> None:
+    """The acceptance criterion — flag defaults to True (NFM-2739 Phase B cutover)."""
     from nfm_db.config import Settings
 
     os.environ.pop("NFM_EXTRACTION_V2_ENABLED", None)
     s = Settings()
-    assert s.extraction_v2_enabled is False
+    assert s.extraction_v2_enabled is True
 
 
 @pytest.mark.asyncio
