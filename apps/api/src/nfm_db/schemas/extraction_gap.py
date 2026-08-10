@@ -32,8 +32,13 @@ class ExtractionGapResponse(BaseModel):
     id: uuid.UUID = Field(
         description="Globally unique gap identifier (UUID v4).",
     )
-    ontology_version_id: uuid.UUID = Field(
-        description="Ontology version that defines the expected schema.",
+    ontology_version: str = Field(
+        description="Ontology version semver string, e.g. v2.1.0.",
+        max_length=50,
+    )
+    literature_id: uuid.UUID | None = Field(
+        default=None,
+        description="Literature (data_sources) row this gap was detected in.",
     )
     entity_type: str = Field(
         description="Entity type, e.g. NuclearMaterial, Isotope.",
