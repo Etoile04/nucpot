@@ -555,7 +555,7 @@ async def compute_ontology_coverage(
     """
     from nfm_db.models.source import DataSource
 
-ov = await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
+    ov = await _load_ontology_or_value_error(session, ontology_version_id)  # 404 check
 
     lit_stmt = select(DataSource.id, DataSource.doi).where(
         DataSource.source_type == "literature",
