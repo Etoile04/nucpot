@@ -1,18 +1,19 @@
 """ExtractionGap ORM model.
 
 Represents a gap detected during ontology-driven extraction for a specific
-entity type and property within an ontology version (NFM-2575-T1).
+entity type and property within an ontology version (NFM-2575-T1,
+aligned with ADR-NFM-2675 Section 1 via migration 052).
 
 Each row identifies a missing data point that the extraction pipeline
-could not fill.  Gaps are tied to a specific ontology version (which
-defines the schema of expected entities/properties) and optionally to
-the source chunk that was being processed when the gap was detected.
+could not fill.  Gaps are tied to a specific ontology version (by
+semver string) and optionally to a literature source and the chunk
+that was being processed when the gap was detected.
 
 Status lifecycle: open → filling → filled | wont_fix.
 
-A composite unique constraint on (ontology_version_id, entity_type,
-property) prevents duplicate gap records for the same ontology-entity-property
-combination.
+A composite unique constraint on (ontology_version, entity_type, property,
+literature_id, chunk_id) prevents duplicate gap records per the ADR
+Section 1 specification.
 """
 
 from __future__ import annotations
@@ -50,12 +51,19 @@ class ExtractionGap(TimestampMixin, Base):
         default=uuid.uuid4,
     )
 
-    # --- Ontology version reference ---
-    ontology_version_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey("ontology_versions.id", ondelete="CASCADE"),
+    # --- Ontology version reference (semver string, ADR §1) ---
+    ontology_version: Mapped[str] = mapped_column(
+        String(50),
         nullable=False,
-        comment="Ontology version that defines the expected schema.",
+        comment="Ontology version semver string, e.g. v2.1.0.",
+    )
+
+    # --- Literature reference (ADR §1) ---
+    literature_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("data_sources.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Literature (data_sources) row this gap was detected in.",
     )
 
     # --- Gap identity ---
@@ -108,10 +116,12 @@ class ExtractionGap(TimestampMixin, Base):
 
     __table_args__ = (
         Index(
-            "ix_extraction_gaps_ov_entity_property",
-            "ontology_version_id",
+            "ix_extraction_gaps_ov_entity_prop_lit_chunk",
+            "ontology_version",
             "entity_type",
             "property",
+            "literature_id",
+            "chunk_id",
             unique=True,
         ),
         Index(
@@ -123,8 +133,12 @@ class ExtractionGap(TimestampMixin, Base):
             "gap_status",
         ),
         Index(
-            "ix_extraction_gaps_ontology_version_id",
-            "ontology_version_id",
+            "ix_extraction_gaps_ontology_version",
+            "ontology_version",
+        ),
+        Index(
+            "ix_extraction_gaps_literature_id",
+            "literature_id",
         ),
     )
 
