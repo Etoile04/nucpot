@@ -126,10 +126,26 @@ Each reporter's individual filing task is in a child issue assigned to them.
 - {if any}
 ```
 
+## Hollow-filing gate (NFM-2454 — detected on Week 32)
+
+A child issue whose description is **≤ 1000 characters** is a **hollow filing**: the assignee
+checked out and closed `done` without filling the template. The per-responder template body
+itself is ~290 chars; a real filing is always >3.8k chars after substitution.
+
+**Before counting a child as "filed" in the close-out, apply this mechanical check:**
+
+1. `GET /api/companies/{cid}/issues/{childId}` — read the `description` field.
+2. If `len(description) <= 1000` → the child is **hollow**. It does NOT count as filed.
+3. List hollow children by identifier in the synthesis comment under a new `### Hollow filings` section.
+
+This gate prevents the board from reading "15/16 done" when the real number is 6/16. It was
+empirically validated on Week 32: 9 of 16 children were `done` with 292–310 char descriptions.
+
 ## Close-out (Fri 17:00, owner: Strategy Director)
 
+- **Apply the hollow-filing gate** (above) to every child before counting.
 - Roll all 16 child-issue reports into one synthesis comment on the parent.
-- Set parent status:
+- Set parent status (counts use **filed** = substantive filings only, not raw `done` count):
   - **≥13 of 16 filed** → `done` (target met)
   - **8–12 filed** → `in_review` with per-reporter gap list and CEO/CSO mention
   - **<8 filed** → `blocked` with full gap list and explicit `@CEO` mention
@@ -143,6 +159,9 @@ Each reporter's individual filing task is in a child issue assigned to them.
 ### Coverage
 - ✅ Filed: {names}
 - ❌ Missing: {names}
+
+### Hollow filings (closed `done` but template unmodified — do NOT count as filed)
+- {child identifier} — {reporter name} ({len(description)} chars)
 
 ### Cross-cutting themes
 - {themes extracted from filed reports}

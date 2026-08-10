@@ -173,10 +173,25 @@ A roll-up comment will be posted below this template by the close-out owner.
 
 ## 6. Close-out (the answer to the "3 days past window" defect)
 
+### 6.1 Hollow-filing gate (NFM-2454 — added after Week 32 detection)
+
+Before counting a child issue as "filed", the Strategy Director must apply this
+mechanical check:
+
+1. `GET /api/companies/{cid}/issues/{childId}` → read `description` field.
+2. `len(description) <= 1000` → **hollow filing**. Does not count as filed.
+3. List hollow children in the synthesis comment under `### Hollow filings`.
+
+Rationale: on Week 32, 9 of 16 children were `done` with 292–310 char descriptions
+(verbatim template). The board read "15/16 done" but the real number was 6/16.
+A substantive filing is always >3.8k chars.
+
+### 6.2 Close-out triggers
+
 | Trigger | Day | Time | Owner | Action |
 |---|---|---|---|---|
-| Auto | Friday | 17:00 Asia/Shanghai | Strategy Director | Synthesise reports into one roll-up comment on parent. Set parent status based on coverage. |
-| Threshold | Friday | 17:00 | Strategy Director | If ≥13 of 16 reporters filed → parent → `done`. If 8–12 → parent → `in_review` with gaps called out. If <8 → parent → `blocked` with explicit per-reporter gap list and `@CEO` mention. |
+| Auto | Friday | 17:00 Asia/Shanghai | Strategy Director | Apply hollow-filing gate. Synthesise reports into one roll-up comment on parent. Set parent status based on coverage (substantive filings only). |
+| Threshold | Friday | 17:00 | Strategy Director | If ≥13 of 16 reporters filed (substantive) → parent → `done`. If 8–12 → parent → `in_review` with gaps called out. If <8 → parent → `blocked` with explicit per-reporter gap list and `@CEO` mention. |
 | Hard stop | Saturday | 00:00 | Strategy Director | Even if coverage is thin, post the synthesis and set final disposition. Never let the issue rot. |
 
 Synthesis format:
@@ -187,6 +202,9 @@ Synthesis format:
 ### Coverage
 - ✅ Filed: {names}
 - ❌ Missing: {names}
+
+### Hollow filings (closed `done` but template unmodified — do NOT count as filed)
+- {child identifier} — {reporter name} ({len(description)} chars)
 
 ### Cross-cutting themes
 - {themes extracted from filed reports}
