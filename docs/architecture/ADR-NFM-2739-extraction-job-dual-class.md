@@ -85,6 +85,8 @@ never have to branch on `is_extraction_v2_enabled()` to read the response.
 | `ontology_version_id` | `uuid.UUID \| None` | — | Both classes carry this as `UUID \| None`. |
 | `ontology_version_str` | `str \| None` | — | |
 
+**Type stability.** The dict contract holds for any ORM `ExtractionJob` instance, including transient and un-flushed ones. `_extraction_job_to_dict` coalesces `None` from `Column(default=...)` to the documented default declared in §2.1's type column. Callers do not need to `session.refresh()` to honor the contract. (NFM-2747)
+
 ### 2.2 What is **out of scope** for this ADR
 
 - **Adding the 10 missing columns** to `extraction_jobs`. That migration is a separate
