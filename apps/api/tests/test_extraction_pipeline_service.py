@@ -484,6 +484,42 @@ class TestExtractionJobToDict:
         assert dc_dict["conflict_strategy"] == d["conflict_strategy"]
         assert dc_dict["figures"] == d["figures"]
 
+    def test_transient_orm_coalesces_none_to_defaults(self) -> None:
+        """NFM-2759 AC-2 — transient (unflushed) ORM instances must emit
+        documented defaults for the 10 gap fields, not None.
+
+        On transient ORM instances, mapped columns exist as attributes
+        but are ``None`` until INSERT fires the server-side default.
+        Without the ``_coalesce`` guard in ``_extraction_job_to_dict``,
+        ``getattr(job, "extracted_count", 0)`` returns ``None`` (the
+        attribute exists but is unset), violating the dict type contract
+        for non-optional fields (int, list[dict]).
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        # Build a transient ORM instance — NO flush, NO session.
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000001")
+
+        d = _extraction_job_to_dict(orm_job)
+
+        # All 10 gap fields must match documented defaults (not None).
+        assert d["fill_batch_id"] is None
+        assert d["extracted_count"] == 0, f"expected 0, got {d['extracted_count']!r}"
+        assert d["staged_count"] == 0, f"expected 0, got {d['staged_count']!r}"
+        assert d["rejected_count"] == 0, f"expected 0, got {d['rejected_count']!r}"
+        assert d["element_systems"] is None
+        assert d["cache_level"] is None
+        assert d["max_confidence"] is None
+        assert d["conflict_strategy"] == "prefer_vlm", (
+            f"expected 'prefer_vlm', got {d['conflict_strategy']!r}"
+        )
+        assert d["figures"] == [], f"expected [], got {d['figures']!r}"
+        assert d["tables"] == [], f"expected [], got {d['tables']!r}"
+
     def test_status_is_str_value_for_dataclass_enum(self) -> None:
         """``status`` must be the ``str`` value, not the ``JobStatus`` enum member."""
         from nfm_db.services.extraction_pipeline import _extraction_job_to_dict

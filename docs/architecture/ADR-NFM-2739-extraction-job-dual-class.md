@@ -85,6 +85,14 @@ never have to branch on `is_extraction_v2_enabled()` to read the response.
 | `ontology_version_id` | `uuid.UUID \| None` | — | Both classes carry this as `UUID \| None`. |
 | `ontology_version_str` | `str \| None` | — | |
 
+> **NFM-2759 note (NFM-2746 ruling):** On the ORM path, unset columns on
+> transient (unflushed) instances are coalesced to the documented default
+> via a `_coalesce(value, default)` guard inside `_extraction_job_to_dict`.
+> This ensures the dict type contract holds regardless of flush state —
+> SQLAlchemy 2.0 only fires `Column.default` / `server_default` at
+> INSERT time, so `getattr(job, name, default)` returns `None` (the
+> attribute exists but is unset) for transient instances.
+
 ### 2.2 What is **out of scope** for this ADR
 
 - **Adding the 10 missing columns** to `extraction_jobs`. That migration is a separate

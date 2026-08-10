@@ -312,6 +312,16 @@ def _extraction_job_to_dict(
     def _iso(dt: datetime | None) -> str | None:
         return dt.isoformat() if dt is not None else None
 
+    # --- Coalesce helper (NFM-2759 / NFM-2746 ruling) ---
+    # On transient (unflushed) ORM instances, mapped columns exist as
+    # attributes but are ``None`` until INSERT fires the server-side
+    # default.  Bare ``getattr(job, name, default)`` returns ``None``
+    # (the attribute *exists* but is unset), violating the dict type
+    # contract for non-optional fields (int, list[dict]).  This helper
+    # coalesces ``None`` back to the documented default.
+    def _coalesce(value: Any, default: Any) -> Any:
+        return value if value is not None else default
+
     # --- The 10 dataclass-only fields with documented ORM defaults ---
     # (contract point 4 — emitted on BOTH paths so the key set is
     # identical regardless of input type)
@@ -329,17 +339,19 @@ def _extraction_job_to_dict(
         "started_at": _iso(job.started_at),
         "completed_at": _iso(job.completed_at),
         # Request-side counts (ORM defaults to 0)
-        "fill_batch_id": getattr(job, "fill_batch_id", None),
-        "extracted_count": getattr(job, "extracted_count", 0),
-        "staged_count": getattr(job, "staged_count", 0),
-        "rejected_count": getattr(job, "rejected_count", 0),
+        "fill_batch_id": _coalesce(getattr(job, "fill_batch_id", None), None),
+        "extracted_count": _coalesce(getattr(job, "extracted_count", 0), 0),
+        "staged_count": _coalesce(getattr(job, "staged_count", 0), 0),
+        "rejected_count": _coalesce(getattr(job, "rejected_count", 0), 0),
         # Request-side parameters (ORM defaults to None / "prefer_vlm" / [])
-        "element_systems": getattr(job, "element_systems", None),
-        "cache_level": getattr(job, "cache_level", None),
-        "max_confidence": getattr(job, "max_confidence", None),
-        "conflict_strategy": getattr(job, "conflict_strategy", "prefer_vlm"),
-        "figures": getattr(job, "figures", []),
-        "tables": getattr(job, "tables", []),
+        "element_systems": _coalesce(getattr(job, "element_systems", None), None),
+        "cache_level": _coalesce(getattr(job, "cache_level", None), None),
+        "max_confidence": _coalesce(getattr(job, "max_confidence", None), None),
+        "conflict_strategy": _coalesce(
+            getattr(job, "conflict_strategy", "prefer_vlm"), "prefer_vlm"
+        ),
+        "figures": _coalesce(getattr(job, "figures", []), []),
+        "tables": _coalesce(getattr(job, "tables", []), []),
         # Multimodal extraction flags
         "extract_figures": job.extract_figures,
         "extract_tables": job.extract_tables,
