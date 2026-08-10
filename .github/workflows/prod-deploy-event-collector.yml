@@ -63,9 +63,13 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
+        # The runner service runs as lwj04 which has no /Users/runner
+        # directory and no sudo to create one. actions/setup-python@v7
+        # hardcodes RUNNER_TOOL_CACHE to /Users/runner/hostedtoolcache
+        # and fails. The collector uses only stdlib — no pip deps — so
+        # the system Python (installed via brew) is sufficient (NFM-2754).
+        run: |
+          python3 --version
 
       - name: Verify SSH key present
         run: |
