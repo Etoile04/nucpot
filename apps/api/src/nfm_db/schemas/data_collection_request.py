@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DataCollectionRequestResponse(BaseModel):
@@ -61,7 +61,71 @@ class DataCollectionRequestResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # --- Dispatch fields (NFM-2651) ---
+    # Populated from ``metadata_["dispatch"]`` by ``_populate_dispatch_fields``
+    # below.  Kept nullable because the ORM model has no dedicated columns
+    # for these — they are derived from the JSON metadata bag written by
+    # ``GapDispatchService.dispatch_request``.
+    dispatched_at: datetime | None = Field(
+        default=None,
+        description="When the request was dispatched (UTC).",
+    )
+    dispatched_path: str | None = Field(
+        default=None,
+        description="Collection path used (literature | dft | external_db).",
+    )
+    dispatch_status: str | None = Field(
+        default=None,
+        description="Dispatch outcome (dispatched | failed | pending).",
+    )
+    result_reference: str | None = Field(
+        default=None,
+        description="Reference ID for the dispatched task or calculation.",
+    )
+
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _populate_dispatch_fields(self) -> DataCollectionRequestResponse:
+        """Derive dispatch fields from ``metadata_["dispatch"]`` if present.
+
+        ``GapDispatchService`` writes dispatch state into the request's
+        ``metadata_`` JSONB bag under the ``"dispatch"`` key.  We pull
+        those values up to first-class fields so API consumers can read
+        them without parsing the metadata blob.
+
+        Only fills fields that are still ``None`` so explicit overrides
+        are preserved.
+        """
+        dispatch_meta = (self.metadata_ or {}).get("dispatch")
+        if not isinstance(dispatch_meta, dict):
+            return self
+
+        if self.dispatched_at is None and "dispatched_at" in dispatch_meta:
+            raw = dispatch_meta["dispatched_at"]
+            if isinstance(raw, str):
+                try:
+                    self.dispatched_at = datetime.fromisoformat(raw)
+                except ValueError:
+                    # Leave as None if the string isn't ISO-8601.
+                    pass
+            elif isinstance(raw, datetime):
+                self.dispatched_at = raw
+
+        if self.dispatched_path is None and "path_taken" in dispatch_meta:
+            self.dispatched_path = dispatch_meta["path_taken"]
+
+        if self.dispatch_status is None and "dispatch_status" in dispatch_meta:
+            self.dispatch_status = dispatch_meta["dispatch_status"]
+
+        if self.result_reference is None:
+            ref = dispatch_meta.get("task_id") or dispatch_meta.get(
+                "dft_calculation_id",
+            )
+            if ref is not None:
+                self.result_reference = str(ref)
+
+        return self
 
 
 class CoverageMetricsResponse(BaseModel):
