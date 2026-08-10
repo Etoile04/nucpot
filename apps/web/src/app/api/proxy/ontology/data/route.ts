@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 
 const FALLBACK_URL = "/ontology-viewer/data/nvl_ontology_data.json"
 
+// NFM-2786: default to the Docker-internal service DNS to avoid the
+// silent localhost:8100 → host-port-8000 (Honcho) misroute.  Local
+// dev (API outside Docker) must set API_SERVER_URL explicitly.
 function getApiServerUrl(): string {
-  return process.env.API_SERVER_URL ?? "http://localhost:8100"
+  return process.env.API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 }
 
 /** Corpus IDs must be a safe slug — matches backend CORPUS_ID_PATTERN. */
