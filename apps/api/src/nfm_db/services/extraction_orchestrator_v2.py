@@ -123,17 +123,25 @@ class ExtractionOrchestratorV2:
 
         The row carries ``job_id=self._job_id`` so the NOT NULL FK
         to ``extraction_jobs`` is satisfied at flush (NFM-2705 defect 2).
-        ``source_span`` JSONB shape mirrors the ORM column comment:
-        ``{"start": int, "end": int}``.
+
+        ``source_span`` JSONB uses the V2 schema keys
+        ``{"start_offset": int, "end_offset": int}`` so that
+        :func:`validate_source_span` and
+        :func:`compute_source_span_hash` work correctly.
+
+        When *step_name* is provided it is stored on the row,
+        enabling the per-step partial unique index used by
+        :meth:`ORMChunk.upsert_by_span_hash`.
         """
         row = ORMChunk(
             content=chunk.content,
             source_span={
-                "start": chunk._source_span[0],
-                "end": chunk._source_span[1],
+                "start_offset": chunk._source_span[0],
+                "end_offset": chunk._source_span[1],
             },
             chunk_index=index,
             token_count=None,
             job_id=self._job_id,
+            step_name=step_name,
         )
         self._session.add(row)
