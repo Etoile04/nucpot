@@ -23,7 +23,32 @@ from nfm_db.services.extraction_pipeline import (
     trigger_extraction,
 )
 
-pytestmark = pytest.mark.xfail(reason="NFM-1366: trigger_extraction() does not accept multimodal kwargs", strict=False)
+# NFM-2159: the previous module-level ``pytest.mark.xfail`` covered all 25 tests
+# with a single blanket reason, but only 7 of them still exercise an unimplemented
+# capability -- the other 18 had started passing and silently lost their regression
+# signal.  Markers are now applied per-test, with ``strict=True`` so that
+# implementing the underlying capability fails the suite until the marker is removed.
+#
+# Two limitations remain (both tracked by NFM-1366):
+#   1. ``trigger_extraction()`` accepts ``extract_figures``/``extract_tables`` but
+#      not ``figure_types``/``confidence_threshold``/``conflict_strategy``.
+#   2. ``multimodal_extraction.run_multimodal_extraction()`` is implemented but is
+#      never invoked from ``trigger_extraction()``, so the stage never runs.
+_XFAIL_UNSUPPORTED_KWARGS = pytest.mark.xfail(
+    reason=(
+        "NFM-1366: trigger_extraction() accepts extract_figures/extract_tables but "
+        "not figure_types/confidence_threshold/conflict_strategy (raises TypeError)"
+    ),
+    strict=True,
+)
+
+_XFAIL_STAGE_NOT_WIRED = pytest.mark.xfail(
+    reason=(
+        "NFM-1366: multimodal_extraction.run_multimodal_extraction() is implemented "
+        "but is never called from trigger_extraction(), so the stage never runs"
+    ),
+    strict=True,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -222,6 +247,7 @@ class TestTriggerExtractionMultimodalParams:
             assert job.extract_figures is True
             assert job.extract_tables is True
 
+    @_XFAIL_UNSUPPORTED_KWARGS
     @pytest.mark.asyncio
     async def test_figure_types_stored_on_job(self) -> None:
         mock_session = AsyncMock()
@@ -250,6 +276,7 @@ class TestTriggerExtractionMultimodalParams:
             )
             assert job.figure_types == ["line", "bar"]
 
+    @_XFAIL_UNSUPPORTED_KWARGS
     @pytest.mark.asyncio
     async def test_confidence_threshold_stored_on_job(self) -> None:
         mock_session = AsyncMock()
@@ -278,6 +305,7 @@ class TestTriggerExtractionMultimodalParams:
             )
             assert job.confidence_threshold == 0.75
 
+    @_XFAIL_UNSUPPORTED_KWARGS
     @pytest.mark.asyncio
     async def test_conflict_strategy_stored_on_job(self) -> None:
         mock_session = AsyncMock()
@@ -343,6 +371,7 @@ class TestTriggerExtractionMultimodalParams:
 class TestMultimodalStageStubMode:
     """Tests multimodal stage behavior in stub mode."""
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_stub_figures_populated(self) -> None:
         """In stub mode, extract_figures=True populates job.figures."""
@@ -376,6 +405,7 @@ class TestMultimodalStageStubMode:
             assert len(job.figures) > 0
             assert all("figure_type" in fig for fig in job.figures)
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_stub_tables_populated(self) -> None:
         """In stub mode, extract_tables=True populates job.tables."""
@@ -409,6 +439,7 @@ class TestMultimodalStageStubMode:
             assert len(job.tables) > 0
             assert all("figure_type" in tbl for tbl in job.tables)
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_stub_both_figures_and_tables(self) -> None:
         """In stub mode with both flags, both job.figures and job.tables populated."""
@@ -484,6 +515,7 @@ class TestMultimodalStageStubMode:
 class TestMultimodalStageFailure:
     """Tests that multimodal extraction failures don't fail the overall job."""
 
+    @_XFAIL_STAGE_NOT_WIRED
     @pytest.mark.asyncio
     async def test_vlm_failure_continues_pipeline(self) -> None:
         """When VLM extraction fails, the pipeline should still complete."""
