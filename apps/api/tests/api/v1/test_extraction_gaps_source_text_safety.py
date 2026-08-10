@@ -89,11 +89,11 @@ async def _seed_gap(
     session: AsyncSession,
     *,
     chunk_id: uuid.UUID | None,
-    ontology_version_id: uuid.UUID,
+    ontology_version: str,
 ) -> ExtractionGap:
     gap = ExtractionGap(
         chunk_id=chunk_id,
-        ontology_version_id=ontology_version_id,
+        ontology_version=ontology_version,
         entity_type="NuclearMaterial",
         property="density",
         gap_status="open",
@@ -134,7 +134,7 @@ class TestSourceTextPathSafety:
         )
         ov = await _seed_ontology(db_session)
         gap = await _seed_gap(
-            db_session, chunk_id=chunk.id, ontology_version_id=ov.id
+            db_session, chunk_id=chunk.id, ontology_version=ov.version
         )
         await db_session.commit()
 
@@ -162,7 +162,7 @@ class TestSourceTextPathSafety:
         )
         ov = await _seed_ontology(db_session)
         gap = await _seed_gap(
-            db_session, chunk_id=chunk.id, ontology_version_id=ov.id
+            db_session, chunk_id=chunk.id, ontology_version=ov.version
         )
         await db_session.commit()
 
@@ -198,7 +198,7 @@ class TestSourceTextPathSafety:
         )
         ov = await _seed_ontology(db_session)
         gap = await _seed_gap(
-            db_session, chunk_id=chunk.id, ontology_version_id=ov.id
+            db_session, chunk_id=chunk.id, ontology_version=ov.version
         )
         await db_session.commit()
 
@@ -234,7 +234,7 @@ class TestSourceTextPathSafety:
         )
         ov = await _seed_ontology(db_session)
         gap = await _seed_gap(
-            db_session, chunk_id=chunk.id, ontology_version_id=ov.id
+            db_session, chunk_id=chunk.id, ontology_version=ov.version
         )
         await db_session.commit()
 
