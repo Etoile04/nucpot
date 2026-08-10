@@ -128,26 +128,66 @@ def test_is_extraction_v2_enabled_is_cached():
 
 
 @pytest.mark.asyncio
-async def test_trigger_extraction_pipeline_v2_raises_not_implemented(monkeypatch):
-    """V2 path raises NotImplementedError until content loading is wired.
+async def test_trigger_extraction_pipeline_v2_runs_orchestrator(
+    monkeypatch, tmp_path, db_session,
+):
+    """V2 path runs the full 5-step orchestrator and returns the
+    canonical 24-key dict (NFM-2686).
 
-    The flag-default-off guard prevents accidental zero-result runs in
-    production.  Once RawTextLoader gains production document-fetch
-    wiring this test is replaced with a real round-trip.
+    Creates a temporary source file, calls the dispatcher with the V2
+    flag forced ON, and asserts the response has the expected shape
+    and the orchestrator persisted chunks to the DB.
     """
     import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
 
+    # Force V2 flag ON.
+    dispatch_mod.is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
     monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
-    try:
-        dispatch_mod.is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
 
-    with pytest.raises(NotImplementedError, match="content loading not yet implemented"):
-        await dispatch_mod.trigger_extraction_pipeline(
-            source_reference="10.5555/not-implemented-test",
-            source_type="doi",
+    # Create a source file with markdown content.
+    source_file = tmp_path / "test_material.md"
+    source_file.write_text(
+        "# UO2 Properties\n\n"
+        "## Introduction\n"
+        "UO2 is a nuclear fuel material.\n\n"
+        "## Thermophysical Data\n"
+        "Lattice constant: 5.47 angstrom\n"
+        "Melting point: 3100 K\n"
+        "Thermal conductivity: 8.0 W/(m-K)\n",
+        encoding="utf-8",
+    )
+
+    result = await dispatch_mod.trigger_extraction_pipeline(
+        source_reference=str(source_file),
+        source_type="file",
+        session=db_session,
+    )
+
+    # Response shape: canonical 24-key dict.
+    assert isinstance(result, dict)
+    assert result["status"] == "completed"
+    assert result["source_reference"] == str(source_file)
+    assert result["source_type"] == "file"
+    assert result["job_id"] is not None
+    assert result["error_message"] is None
+    assert result["created_at"] is not None
+    assert result["completed_at"] is not None
+
+    # Verify chunks were persisted via the orchestrator.
+    import uuid
+
+    from sqlalchemy import select
+
+    from nfm_db.models.extraction_chunk import ExtractionChunk as ORMChunk
+
+    job_uuid = uuid.UUID(result["job_id"])
+    job_chunks = (
+        await db_session.execute(
+            select(ORMChunk).where(ORMChunk.job_id == job_uuid)
         )
+    ).scalars().all()
+
+    assert len(job_chunks) >= 1, "V2 orchestrator should persist at least one chunk"
 
 
 @pytest.mark.asyncio

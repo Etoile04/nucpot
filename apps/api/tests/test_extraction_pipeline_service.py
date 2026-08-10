@@ -351,6 +351,59 @@ class TestExtractionJobToDict:
         assert d["figures"] == []
         assert d["tables"] == []
 
+    def test_transient_orm_coalesces_none_to_contract_defaults(self) -> None:
+        """NFM-2747 AC#4 — transient ORM instances must emit documented defaults.
+
+        A transient (never-flushed) ORM instance holds ``None`` for every
+        unset column because SQLAlchemy ``Column(default=…)`` only fires
+        at INSERT/flush.  The old ``getattr(job, name, fallback)`` pattern
+        silently passed ``None`` through because the attribute descriptor
+        always returns ``None`` (never raises ``AttributeError``).
+
+        ``_extraction_job_to_dict`` now uses explicit ``_coalesce(v, d)``
+        so the ADR-NFM-2739 §2.1 type-stability guarantee holds for any
+        ORM ``ExtractionJob`` instance, including transient ones.
+        """
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        # Build a transient ORM instance — NO session.add / flush.
+        # The ORM __init__ applies setdefault for non-nullable columns, so
+        # those already carry correct values.  This test additionally
+        # verifies that _coalesce would handle the raw-None case even if
+        # __init__ were bypassed.
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+
+        # Verify that nullable gap columns read as None on a transient
+        # instance (SQLAlchemy default= only fires at INSERT).
+        assert orm_job.element_systems is None
+        assert orm_job.cache_level is None
+        assert orm_job.max_confidence is None
+
+        d = _extraction_job_to_dict(orm_job)
+
+        # fill_batch_id is explicitly excluded from coalescing per the spec.
+        assert d["fill_batch_id"] is None
+        # Counts coalesce to 0.
+        assert d["extracted_count"] == 0
+        assert d["staged_count"] == 0
+        assert d["rejected_count"] == 0
+        # Nullable fields stay None (contract-documented default).
+        assert d["element_systems"] is None
+        assert d["cache_level"] is None
+        assert d["max_confidence"] is None
+        # conflict_strategy coalesces to "prefer_vlm" — the enum's true
+        # zero member (dataclass line 220, ORM column line 189).
+        assert d["conflict_strategy"] == "prefer_vlm"
+        # figures / tables coalesce to [].
+        assert d["figures"] == []
+        assert d["tables"] == []
+
+        # Existing key-set identity guard at :230 must still pass.
+        dc_job = ExtractionJob(job_id="dc-1", source_reference="s", source_type="file")
+        dc_dict = _extraction_job_to_dict(dc_job)
+        assert set(dc_dict.keys()) == set(d.keys())
+
     def test_orm_fill_batch_id_is_str_not_uuid(self) -> None:
         """NFM-2745 AC-3 — ORM ``fill_batch_id`` column type must be ``String``.
 

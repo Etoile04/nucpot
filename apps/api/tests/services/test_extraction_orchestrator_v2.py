@@ -181,9 +181,9 @@ async def test_orchestrator_persists_chunks_to_db(db_session):
 
         # source_span JSONB round-trip.
         assert chunk.source_span is not None
-        assert set(chunk.source_span.keys()) == {"start", "end"}
-        assert isinstance(chunk.source_span["start"], int)
-        assert isinstance(chunk.source_span["end"], int)
+        assert set(chunk.source_span.keys()) == {"start_offset", "end_offset"}
+        assert isinstance(chunk.source_span["start_offset"], int)
+        assert isinstance(chunk.source_span["end_offset"], int)
 
         # content survives the round-trip.
         assert isinstance(chunk.content, str)
@@ -208,11 +208,11 @@ def test_orchestrator_pipeline_order_is_correct():
     added = [call.args[0] for call in session.add.call_args_list]
     # The very first persisted row corresponds to the raw_text loader.
     first_span = added[0].source_span
-    assert first_span == {"start": 0, "end": 17}
+    assert first_span == {"start_offset": 0, "end_offset": 17}
     # Every persisted row is an ORMChunk carrying a non-null source_span
     # (NFM-2705 defect 1 — the wrapper used to swallow this attribute).
     for arg in added:
         assert isinstance(arg, ORMChunk)
         assert arg.source_span is not None
-        assert "start" in arg.source_span
-        assert "end" in arg.source_span
+        assert "start_offset" in arg.source_span
+        assert "end_offset" in arg.source_span
