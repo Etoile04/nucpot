@@ -7,11 +7,14 @@ the gap-scanner module).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 class DataCollectionRequestResponse(BaseModel):
@@ -108,7 +111,10 @@ class DataCollectionRequestResponse(BaseModel):
                     self.dispatched_at = datetime.fromisoformat(raw)
                 except ValueError:
                     # Leave as None if the string isn't ISO-8601.
-                    pass
+                    logger.warning(
+                        "data_collection.dispatch.dispatched_at unparseable: %r",
+                        raw,
+                    )
             elif isinstance(raw, datetime):
                 self.dispatched_at = raw
 
