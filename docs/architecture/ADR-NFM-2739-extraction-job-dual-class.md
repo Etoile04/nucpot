@@ -1,6 +1,6 @@
 # ADR-NFM-2739 — `ExtractionJob` dual-class debt, and the canonical dict serialization boundary
 
-- **Status:** Accepted (decision D3 implemented; column migration deferred to NFM-2739)
+- **Status:** Implemented (NFM-2739 Phase B cutover complete — V2 flag ON, ORM-first `get_job_or_orm`, dataclass deprecated)
 - **Date:** 2026-08-10
 - **Author:** Lead Engineer (per CTO architectural contract in NFM-2743)
 - **Issue:** NFM-2739 / NFM-2743 (D3 seam)
