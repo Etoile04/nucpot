@@ -251,6 +251,19 @@ def _update_job(job: ExtractionJob, **kwargs: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _coalesce(value: Any, default: Any) -> Any:
+    """Return *value* when it is not ``None``, else *default*.
+
+    Used by ``_extraction_job_to_dict`` to honour ADR-NFM-2739 §2.1's
+    type-stability guarantee: SQLAlchemy ``Column(default=…)`` only fires
+    at INSERT/flush, so transient ORM instances hold ``None`` for unset
+    columns.  The old ``getattr(job, name, fallback)`` pattern silently
+    passed ``None`` through because the attribute descriptor always
+    returns ``None`` (it never raises ``AttributeError``).
+    """
+    return value if value is not None else default
+
+
 def _extraction_job_to_dict(
     job: ExtractionJob | OrmExtractionJob,
 ) -> dict[str, Any]:
@@ -329,17 +342,24 @@ def _extraction_job_to_dict(
         "started_at": _iso(job.started_at),
         "completed_at": _iso(job.completed_at),
         # Request-side counts (ORM defaults to 0)
+        # NFM-2747: explicit None → default coalescing.  SQLAlchemy
+        # Column(default=…) only fires at INSERT/flush, so transient ORM
+        # instances return None from the attribute descriptor.  The old
+        # getattr(job, name, default) fallback never fired because the
+        # descriptor always returns None (never raises AttributeError).
         "fill_batch_id": getattr(job, "fill_batch_id", None),
-        "extracted_count": getattr(job, "extracted_count", 0),
-        "staged_count": getattr(job, "staged_count", 0),
-        "rejected_count": getattr(job, "rejected_count", 0),
+        "extracted_count": _coalesce(getattr(job, "extracted_count", None), 0),
+        "staged_count": _coalesce(getattr(job, "staged_count", None), 0),
+        "rejected_count": _coalesce(getattr(job, "rejected_count", None), 0),
         # Request-side parameters (ORM defaults to None / "prefer_vlm" / [])
         "element_systems": getattr(job, "element_systems", None),
         "cache_level": getattr(job, "cache_level", None),
         "max_confidence": getattr(job, "max_confidence", None),
-        "conflict_strategy": getattr(job, "conflict_strategy", "prefer_vlm"),
-        "figures": getattr(job, "figures", []),
-        "tables": getattr(job, "tables", []),
+        "conflict_strategy": _coalesce(
+            getattr(job, "conflict_strategy", None), "prefer_vlm"
+        ),
+        "figures": _coalesce(getattr(job, "figures", None), []),
+        "tables": _coalesce(getattr(job, "tables", None), []),
         # Multimodal extraction flags
         "extract_figures": job.extract_figures,
         "extract_tables": job.extract_tables,
