@@ -51,80 +51,22 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add 10 orchestration columns to extraction_jobs."""
-    op.add_column(
-        "extraction_jobs",
-        sa.Column("fill_batch_id", sa.String(length=64), nullable=True),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column(
-            "extracted_count",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-        ),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column(
-            "staged_count",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-        ),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column(
-            "rejected_count",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-        ),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column("element_systems", JSONB, nullable=True),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column("cache_level", sa.String(length=20), nullable=True),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column("max_confidence", sa.String(length=20), nullable=True),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column(
-            "conflict_strategy",
-            sa.String(length=20),
-            nullable=False,
-            # Auto-quoted by Alembic on PG (``'prefer_vlm'``); the JSONB
-            # columns below need ``sa.text("'[]'::jsonb")`` because PG
-            # requires an explicit type-cast for a bare ``[]`` literal.
-            server_default="prefer_vlm",
-        ),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column(
-            "figures",
-            JSONB,
-            nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
-        ),
-    )
-    op.add_column(
-        "extraction_jobs",
-        sa.Column(
-            "tables",
-            JSONB,
-            nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
-        ),
-    )
+    """Add 10 orchestration columns to extraction_jobs.
+
+    Idempotent: uses raw SQL with IF NOT EXISTS so this migration can
+    run against production databases that may have a partial state from
+    a prior crashed deploy (NFM-2731 prod migration 053 crash).
+    """
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS fill_batch_id VARCHAR(64)")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS extracted_count INTEGER NOT NULL DEFAULT 0")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS staged_count INTEGER NOT NULL DEFAULT 0")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS rejected_count INTEGER NOT NULL DEFAULT 0")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS element_systems JSONB")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS cache_level VARCHAR(20)")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS max_confidence VARCHAR(20)")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS conflict_strategy VARCHAR(20) NOT NULL DEFAULT 'prefer_vlm'")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS figures JSONB NOT NULL DEFAULT '[]'::jsonb")
+    op.execute("ALTER TABLE extraction_jobs ADD COLUMN IF NOT EXISTS tables JSONB NOT NULL DEFAULT '[]'::jsonb")
 
 
 def downgrade() -> None:
