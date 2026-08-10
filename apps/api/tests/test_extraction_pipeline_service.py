@@ -178,7 +178,14 @@ class TestExtractionJob:
         job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.status == JobStatus.QUEUED
 
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: ExtractionJob has no duplicate_count field; once the "
+            "duplicates-tracking shape lands the field defaults to 0 like "
+            "extracted_count/staged_count/rejected_count"
+        ),
+        strict=True,
+    )
     def test_counts_default_to_zero(self) -> None:
         job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.extracted_count == 0
@@ -1136,7 +1143,6 @@ class TestTriggerExtraction:
             assert job.staged_count == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
     async def test_pipeline_partial_when_rejected_exist(self) -> None:
         """Pipeline sets PARTIAL status when some results are rejected."""
         mock_session = AsyncMock()
@@ -1205,7 +1211,13 @@ class TestTriggerExtraction:
             assert _job_store[job.job_id] is job
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: trigger_extraction() does not yet set "
+            "ExtractionJob.duplicate_count from quality_gate.process_bulk().duplicates"
+        ),
+        strict=True,
+    )
     async def test_duplicates_tracked_separately_from_rejected(self) -> None:
         """Duplicates inflate duplicate_count, NOT rejected_count (NFM-637)."""
         mock_session = AsyncMock()
@@ -1256,7 +1268,13 @@ class TestTriggerExtraction:
             assert job.duplicate_count == 2
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: ExtractionJob.duplicate_count is not yet set when the "
+            "duplicates list is empty (should default to 0 alongside rejected_count)"
+        ),
+        strict=True,
+    )
     async def test_no_duplicates_yields_zero_duplicate_count(self) -> None:
         """When quality gate returns no duplicates, duplicate_count is 0."""
         mock_session = AsyncMock()
@@ -1308,7 +1326,13 @@ class TestTriggerExtraction:
             assert job.duplicate_count == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: ExtractionJob has no total_count field; the staged + rejected "
+            "+ duplicates sum assertion fails until the field is added"
+        ),
+        strict=True,
+    )
     async def test_total_accounts_for_staged_rejected_and_duplicates(self) -> None:
         """Total = staged + rejected + duplicates (no records lost)."""
         mock_session = AsyncMock()

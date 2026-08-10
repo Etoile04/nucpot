@@ -236,7 +236,6 @@ class TestExtractionResult:
     """Tests for the extraction result endpoint."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
     async def test_result_returns_404_for_unknown_job(self, v4_client: AsyncClient):
         response = await v4_client.get(
             "/api/v4/extraction/00000000-0000-0000-0000-000000000000/result"
@@ -247,7 +246,6 @@ class TestExtractionResult:
         assert "not found" in body["error"]
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
     async def test_result_returns_409_for_non_completed_job(self, v4_client: AsyncClient):
         """Accessing results on a running job must return 409 Conflict."""
         from nfm_db.services.extraction_pipeline import (
@@ -273,7 +271,6 @@ class TestExtractionResult:
             _job_store.pop(job_id, None)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
     async def test_result_returns_200_for_completed_job(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
@@ -303,7 +300,6 @@ class TestExtractionResult:
         assert meta["limit"] == 10
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
     async def test_result_returns_422_for_invalid_limit(
         self, v4_client: AsyncClient, submitted_job_id: str
     ):
@@ -615,7 +611,14 @@ class TestMultimodalSubmitWiring:
     """Tests that multimodal extraction options are passed through submit."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: V4 /extraction/submit endpoint does not yet pass "
+            "extract_figures/extract_tables/figure_types/confidence_threshold/"
+            "conflict_strategy through to the underlying trigger_extraction() call"
+        ),
+        strict=True,
+    )
     async def test_submit_passes_all_multimodal_options(self, v4_client: AsyncClient):
         """POST submit with all 5 multimodal fields stores them on the job."""
         payload = {
@@ -643,7 +646,6 @@ class TestMultimodalSubmitWiring:
         assert job.conflict_strategy == "merge"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
     async def test_submit_defaults_multimodal_fields(self, v4_client: AsyncClient):
         """Omitting multimodal fields uses correct defaults."""
         payload = {
@@ -669,7 +671,13 @@ class TestMultimodalResultWiring:
     """Tests that figures and tables are returned in result endpoint."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: V4 /extraction/{id}/result endpoint does not yet include "
+            "figures/tables in the response payload (multimodal stage never runs)"
+        ),
+        strict=True,
+    )
     async def test_result_includes_figures_and_tables(self, v4_client: AsyncClient):
         """GET result returns populated figures[] and tables[] from job data."""
         from nfm_db.services.extraction_pipeline import (
@@ -751,7 +759,6 @@ class TestMultimodalResultWiring:
             _job_store.pop(job_id, None)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: multimodal not implemented", strict=False)
     async def test_result_returns_empty_figures_tables_when_absent(self, v4_client: AsyncClient):
         """GET result returns empty arrays when job has no figures/tables (backward compat)."""
         from nfm_db.services.extraction_pipeline import (
