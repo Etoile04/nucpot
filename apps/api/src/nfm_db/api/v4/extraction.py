@@ -40,7 +40,6 @@ from nfm_db.schemas.extraction import (
 from nfm_db.services.extraction_pipeline import (
     JobStatus,
     get_job,
-    trigger_extraction,
 )
 
 logger = logging.getLogger(__name__)
@@ -245,30 +244,46 @@ async def submit_extraction(
                 "Invalid DOI format. DOIs must match pattern 10.NNNN/... "
                 "(e.g., 10.1016/j.nucengdes.2020.110756)",
             )
-    # Pass original reference to pipeline (preserve user input in job record)
-    job = await trigger_extraction(
+    # Pass original reference to pipeline (preserve user input in job record).
+    # Strangler-fig routing: the dispatch wrapper transparently forwards
+    # to either the legacy trigger_extraction() (default OFF) or the V2
+    # ExtractionOrchestratorV2 (when the flag is ON).  The wrapper returns
+    # a normalized dict so the endpoint needs no flag branching of its own.
+    from nfm_db.services.extraction_pipeline_dispatch import (
+        trigger_extraction_pipeline,
+    )
+
+    result = await trigger_extraction_pipeline(
         session=session,
         source_reference=payload.source_reference,
         source_type=payload.source_type,
         element_systems=payload.element_systems,
         cache_level=payload.cache_level,
         max_confidence=payload.max_confidence,
+        extract_figures=payload.extract_figures,
+        extract_tables=payload.extract_tables,
     )
+    status_value = result["status"]
+    job_id_value = result["job_id"]
+    created_at_value = result["created_at"]
+    error_message_value = result["error_message"]
 
     return JSONResponse(
         status_code=202,
         content={
             "success": True,
             "data": V4SubmitResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                message="Extraction job queued successfully."
-                if job.status != JobStatus.FAILED
-                else f"Extraction failed: {job.error_message}",
-                error_message=job.error_message,
-                created_at=job.created_at,
+                job_id=job_id_value,
+                source_reference=payload.source_reference,
+                source_type=payload.source_type,
+                status=status_value,
+                message=(
+                    "Extraction job queued successfully."
+                    if status_value != JobStatus.FAILED
+                    else f"Extraction failed: {error_message_value}"
+                ),
+                error_message=error_message_value,
+                created_at=created_at_value,
             ).model_dump(mode="json"),
         },
     )

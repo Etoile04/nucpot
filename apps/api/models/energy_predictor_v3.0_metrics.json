@@ -1,0 +1,123 @@
+{
+  "model_version": "v3.0",
+  "n_samples": 2909,
+  "n_train": 2327,
+  "n_test": 582,
+  "n_features": 20,
+  "random_state": 42,
+  "feature_names": [
+    "mo_equivalent",
+    "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
+    "vec",
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus",
+    "hr_valence_diff",
+    "dg_en_radius_distance",
+    "max_pair_en_diff",
+    "en_variance",
+    "volume_variance",
+    "d_electron_variance",
+    "bulk_modulus_variance"
+  ],
+  "dataset_source": "NFM-1540 PathB Star-xingyi (2,909 unique PBE compositions)",
+  "r2": 0.9858,
+  "rmse": 0.077557,
+  "mae": 0.038144,
+  "r2_train": 0.9819,
+  "rmse_train": 0.082466,
+  "mae_train": 0.039196,
+  "cv_r2": 0.9678,
+  "cv_r2_std": 0.0102,
+  "cv_rmse": 0.108608,
+  "cv_mae": 0.046255,
+  "feature_importance": [
+    {
+      "name": "dg_en_radius_distance",
+      "importance": 0.3635
+    },
+    {
+      "name": "max_pair_en_diff",
+      "importance": 0.1798
+    },
+    {
+      "name": "vec",
+      "importance": 0.059
+    },
+    {
+      "name": "avg_d_electron",
+      "importance": 0.0476
+    },
+    {
+      "name": "config_entropy",
+      "importance": 0.0378
+    },
+    {
+      "name": "avg_work_function",
+      "importance": 0.0365
+    },
+    {
+      "name": "bulk_modulus_variance",
+      "importance": 0.0364
+    },
+    {
+      "name": "avg_bulk_modulus",
+      "importance": 0.0291
+    },
+    {
+      "name": "u_density",
+      "importance": 0.0278
+    },
+    {
+      "name": "hr_valence_diff",
+      "importance": 0.0276
+    },
+    {
+      "name": "mo_equivalent",
+      "importance": 0.0246
+    },
+    {
+      "name": "bv_ratio",
+      "importance": 0.0242
+    },
+    {
+      "name": "lattice_distortion",
+      "importance": 0.022
+    },
+    {
+      "name": "d_electron_variance",
+      "importance": 0.0171
+    },
+    {
+      "name": "mixing_enthalpy",
+      "importance": 0.0155
+    },
+    {
+      "name": "allen_chi_diff",
+      "importance": 0.0132
+    },
+    {
+      "name": "avg_atomic_volume",
+      "importance": 0.0119
+    },
+    {
+      "name": "avg_allen_chi",
+      "importance": 0.0099
+    },
+    {
+      "name": "en_variance",
+      "importance": 0.0091
+    },
+    {
+      "name": "volume_variance",
+      "importance": 0.0074
+    }
+  ]
+}

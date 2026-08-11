@@ -514,9 +514,9 @@ async def test_roles_admin_success(async_client, admin_user) -> None:
     body = response.json()
     assert body["success"] is True
     roles = body["data"]
-    assert len(roles) == 3
+    assert len(roles) == 4
     role_values = {r["role"] for r in roles}
-    assert role_values == {"admin", "editor", "reviewer"}
+    assert role_values == {"admin", "editor", "reviewer", "domain_expert"}
 
 
 @pytest.mark.asyncio

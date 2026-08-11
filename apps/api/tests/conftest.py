@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
+from collections.abc import Generator
 from pathlib import Path
 
 # Ensure repo-root scripts/ is importable for phase gate and eval scripts.
@@ -229,6 +230,25 @@ def _reenable_rate_limit_overrides(request) -> None:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_v2_flag_cache() -> Generator[None, None, None]:
+    """Prevent EXTRACTION_PIPELINE_V2 lru_cache from leaking across tests.
+
+    Tests that set ``NFM_EXTRACTION_V2_ENABLED=true`` (e.g.
+    ``test_extraction_v2_flag_verification``) can poison the cache for
+    subsequent V4 API tests that route through the dispatcher.
+    """
+    try:
+        from nfm_db.services.extraction_pipeline_dispatch import (
+            is_extraction_v2_enabled,
+        )
+        is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
+        yield
+        is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
+    except ImportError:
+        yield
+
+
 @pytest.fixture
 async def db_session() -> AsyncSession:
     """Create an in-memory SQLite async session for testing."""
@@ -393,6 +413,21 @@ async def reviewer_user(db_session: AsyncSession):
 
 
 @pytest.fixture
+async def domain_expert_user(db_session: AsyncSession):
+    """Create a domain_expert user for testing."""
+    user = User(
+        username="domain_expert",
+        email="domain_expert@example.com",
+        hashed_password="hashed_password_here",
+        blog_role=BlogRole.DOMAIN_EXPERT,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
 async def admin_headers(admin_user: User):
     """Create headers with admin authentication token."""
     token = create_access_token(data={"sub": str(admin_user.id)})
@@ -410,6 +445,13 @@ async def editor_headers(editor_user: User):
 async def reviewer_headers(reviewer_user: User):
     """Create headers with reviewer authentication token."""
     token = create_access_token(data={"sub": str(reviewer_user.id)})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def domain_expert_headers(domain_expert_user: User):
+    """Create headers with domain_expert authentication token."""
+    token = create_access_token(data={"sub": str(domain_expert_user.id)})
     return {"Authorization": f"Bearer {token}"}
 
 

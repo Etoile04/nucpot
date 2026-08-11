@@ -25,10 +25,10 @@ SAMPLE_FEATURES = {
     "lattice_distortion": 0.03,
 }
 
-MOCK_V11_RESULT = {
+MOCK_V30_RESULT = {
     "predicted_energy": -0.35,
-    "confidence": 0.82,
-    "model_version": "v1.1",
+    "confidence": 0.98,
+    "model_version": "v3.0",
     "warnings": [],
 }
 
@@ -41,10 +41,10 @@ MOCK_V11_RESULT = {
 class TestPredictEnergyService:
     """Unit tests for the predict_energy service function."""
 
-    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
+    @patch("nfm_db.ml.prediction_service._predict_energy_v30")
     def test_predict_energy_returns_result_dict(self, mock_predict: MagicMock) -> None:
         """predict_energy returns dict with required keys when model available."""
-        mock_predict.return_value = MOCK_V11_RESULT
+        mock_predict.return_value = MOCK_V30_RESULT
 
         from nfm_db.ml.prediction_service import predict_energy
 
@@ -58,14 +58,14 @@ class TestPredictEnergyService:
         assert isinstance(result["predicted_energy"], float)
         assert 0 <= result["confidence"] <= 1
 
-    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
+    @patch("nfm_db.ml.prediction_service._predict_energy_v30")
     def test_predict_energy_rounds_energy_value(self, mock_predict: MagicMock) -> None:
         """predicted_energy should be rounded to 6 decimal places."""
-        # predict_energy_v11 rounds to 6 decimal places internally
+        # _predict_energy_v30 rounds to 6 decimal places internally
         mock_predict.return_value = {
             "predicted_energy": -0.345679,
             "confidence": 0.82,
-            "model_version": "v1.1",
+            "model_version": "v3.0",
             "warnings": [],
         }
 
@@ -76,7 +76,7 @@ class TestPredictEnergyService:
         assert result is not None
         assert result["predicted_energy"] == -0.345679
 
-    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
+    @patch("nfm_db.ml.prediction_service._predict_energy_v30")
     def test_predict_energy_returns_none_when_model_unavailable(
         self, mock_predict: MagicMock,
     ) -> None:
@@ -88,19 +88,19 @@ class TestPredictEnergyService:
         result = predict_energy(SAMPLE_FEATURES)
         assert result is None
 
-    @patch("nfm_db.ml.prediction_service.predict_energy_v11")
+    @patch("nfm_db.ml.prediction_service._predict_energy_v30")
     def test_predict_energy_includes_model_version(
         self, mock_predict: MagicMock,
     ) -> None:
         """Result dict should include the energy predictor version."""
-        mock_predict.return_value = MOCK_V11_RESULT
+        mock_predict.return_value = MOCK_V30_RESULT
 
         from nfm_db.ml.prediction_service import predict_energy
 
         result = predict_energy(SAMPLE_FEATURES)
 
         assert result is not None
-        assert result["model_version"] == "v1.1"
+        assert result["model_version"] == "v3.0"
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class TestPredictEnergyEndpoint:
         self, mock_predict: MagicMock,
     ) -> None:
         """POST /predict/energy returns 200 with predicted_energy."""
-        mock_predict.return_value = MOCK_V11_RESULT
+        mock_predict.return_value = MOCK_V30_RESULT
 
         from nfm_db.api.v1.prediction import predict_energy_endpoint
         from nfm_db.schemas.prediction import EnergyPredictRequest
@@ -132,7 +132,7 @@ class TestPredictEnergyEndpoint:
         assert response.success is True
         assert response.data is not None
         assert response.data.predicted_energy == -0.35
-        assert response.data.model_version == "v1.1"
+        assert response.data.model_version == "v3.0"
 
     @patch("nfm_db.api.v1.prediction.predict_energy")
     async def test_endpoint_raises_503_when_model_unavailable(
@@ -159,7 +159,7 @@ class TestPredictEnergyEndpoint:
         self, mock_predict: MagicMock,
     ) -> None:
         """Response body conforms to ApiResponse[EnergyPredictResponse]."""
-        mock_predict.return_value = MOCK_V11_RESULT
+        mock_predict.return_value = MOCK_V30_RESULT
 
         from nfm_db.api.v1.prediction import predict_energy_endpoint
         from nfm_db.schemas.common import ApiResponse
@@ -188,7 +188,7 @@ class TestPredictEnergyEndpoint:
         mock_predict.return_value = {
             "predicted_energy": -0.1,
             "confidence": 0.5,
-            "model_version": "v1.1",
+            "model_version": "v3.0",
             "warnings": [{"code": "low_confidence", "message": "low"}],
         }
 

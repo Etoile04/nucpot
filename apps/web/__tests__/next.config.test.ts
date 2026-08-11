@@ -99,18 +99,36 @@ describe("next.config.ts rewrites", () => {
     ])
   })
 
-  it("proxies /api/* to the fallback host + LightRAG when API_SERVER_URL is unset (local dev)", async () => {
+  it("proxies /api/* to the Docker-internal service DNS + LightRAG when API_SERVER_URL is unset (NFM-2786)", async () => {
     const config = await loadConfig({
-      // No API_SERVER_URL → uses API_SERVER_FALLBACK = http://localhost:8100
+      // No API_SERVER_URL → uses API_SERVER_FALLBACK = http://nucpot-prod-api:8000
+      // (Docker-internal DNS so the rewrite resolves inside any nucpot-*
+      // network even when the operator forgets to set the env var.)
     })
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual([
       {
         source: "/api/:path*",
-        destination: "http://localhost:8100/api/:path*",
+        destination: "http://nucpot-prod-api:8000/api/:path*",
       },
       ...lightragRewrites(),
     ])
+  })
+
+  // NFM-2786 regression guard: the previous default `http://localhost:8100`
+  // silently misrouted to whatever process occupied host port 8000 (Honcho
+  // in the current stack), returning 404 with a Next.js HTML body.  The
+  // default must NEVER collapse to `http://localhost:8000` (Honcho) or any
+  // other host-loopback port when API_SERVER_URL is unset.
+  it("never defaults the /api/* rewrite to http://localhost:8000 (Honcho collision guard)", async () => {
+    const config = await loadConfig({})
+    const rewrites = (await config.rewrites!()) as Array<{
+      source: string
+      destination: string
+    }>
+    const apiRewrite = rewrites.find((r) => r.source === "/api/:path*")
+    expect(apiRewrite).toBeDefined()
+    expect(apiRewrite!.destination).not.toMatch(/^http:\/\/localhost:8000(\/|$)/)
   })
 
   it("returns only LightRAG rewrites when API_SERVER_URL host matches NEXT_PUBLIC_APP_URL host (loop guard)", async () => {
@@ -134,6 +152,27 @@ describe("next.config.ts rewrites", () => {
         destination: "http://localhost:8000/api/:path*",
       },
       ...lightragRewrites(),
+    ])
+  })
+
+  // NFM-2547: Staging has no nginx upstream, so Next.js must proxy /api/*
+  // itself. API_SERVER_URL must be set and DISABLE_API_REWRITE must NOT be set.
+  // (Pre-NFM-2786 the fallback was localhost:8100; it is now the Docker-
+  // internal service DNS — staging still wants the explicit staging DNS
+  // name so the rewrite resolves inside the nucpot-staging-* network.)
+  it("proxies /api/* to staging API container + LightRAG (NFM-2547 staging config)", async () => {
+    const config = await loadConfig({
+      API_SERVER_URL: "http://nucpot-staging-api:8000",
+      LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621",
+      // DISABLE_API_REWRITE intentionally NOT set — staging needs the rewrite.
+    })
+    const rewrites = await config.rewrites!()
+    expect(rewrites).toEqual([
+      {
+        source: "/api/:path*",
+        destination: "http://nucpot-staging-api:8000/api/:path*",
+      },
+      ...lightragRewrites("http://nucpot-staging-lightrag:9621"),
     ])
   })
 })

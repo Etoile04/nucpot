@@ -157,6 +157,18 @@ _deploy_event_emit_impl() {
     return 0
   fi
 
+  # Flush file metadata and buffered writes to disk before the trap returns.
+  # GHA cancellation propagates SIGTERM via appleboy/ssh-action -> drone-ssh
+  # -> sshd -> remote bash; the parent sshd teardown can race the trap and
+  # drop the appended line if it is still sitting in the page cache. A
+  # synchronous `sync` forces the kernel to drain the page cache for $path
+  # before the trap exits, so the line is durable by the time the host sshd
+  # closes the session. Override via NFMD_SYNC_BIN for unit tests.
+  local sync_bin="${NFMD_SYNC_BIN:-sync}"
+  if [ -x "$sync_bin" ] || command -v "$sync_bin" >/dev/null 2>&1; then
+    "$sync_bin" "$path" 2>/dev/null || true
+  fi
+
   return 0
 }
 
@@ -168,4 +180,38 @@ deploy_event_emit() {
     deploy_event_warn "event writer failed unexpectedly (rc=$rc) — event not recorded."
   fi
   return 0
+}
+
+# Append a state-change trace line. NFM-2771 acceptance criterion:
+# the trap-armed-debug file must confirm _DEPLOY_EVENT_ARMED=true was
+# reached on every cancelled/failed path. NFM-2043's n-vs-history
+# sanity check reads this file when the JSONL count is suspiciously
+# low. Default path is <events-jsonl>.armed — sits next to the JSONL so
+# sanity checks can open both without scanning hidden files. Best-effort:
+# failures are silently ignored so the trap never aborts because the
+# trace write failed.
+_deploy_event_trace() {
+  local msg="${1:-}"
+  local trace_path="${NFMD_DEPLOY_EVENT_TRACE_PATH:-}"
+  if [ -z "$trace_path" ]; then
+    local events_path="${NFMD_DEPLOY_EVENTS_PATH:-}"
+    if [ -z "$events_path" ]; then
+      events_path="$(deploy_event_path 2>/dev/null || true)"
+    fi
+    if [ -n "$events_path" ]; then
+      trace_path="${events_path}.armed"
+    else
+      return 0
+    fi
+  fi
+  {
+    printf '%s msg=%s armed=%s first_poll=%s rollback=%s signaled=%s build_ok=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "$msg" \
+      "${_DEPLOY_EVENT_ARMED:-false}" \
+      "${_DEPLOY_EVENT_FIRST_POLL:-}" \
+      "${_DEPLOY_EVENT_ROLLBACK:-false}" \
+      "${_DEPLOY_EVENT_SIGNALED:-false}" \
+      "${_DEPLOY_EVENT_BUILD_OK:-false}"
+  } >> "$trace_path" 2>/dev/null || true
 }

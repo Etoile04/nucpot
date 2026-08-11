@@ -16,7 +16,9 @@ See test_extraction_pipeline.py for the main test suite.
 from __future__ import annotations
 
 import os
+import uuid as _uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +28,7 @@ from nfm_db.services.extraction_pipeline import (
     JobStatus,
     _apply_property_mapping,
     _find_matching,
+    _get_latest_published_ontology,
     _is_stub_mode,
     _job_store,
     _load_source_content,
@@ -175,7 +178,14 @@ class TestExtractionJob:
         job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.status == JobStatus.QUEUED
 
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: ExtractionJob has no duplicate_count field; once the "
+            "duplicates-tracking shape lands the field defaults to 0 like "
+            "extracted_count/staged_count/rejected_count"
+        ),
+        strict=True,
+    )
     def test_counts_default_to_zero(self) -> None:
         job = ExtractionJob(job_id="j1", source_reference="s1", source_type="file")
         assert job.extracted_count == 0
@@ -202,6 +212,390 @@ class TestExtractionJob:
         assert job.element_systems is None
         assert job.cache_level is None
         assert job.max_confidence is None
+
+
+# ---------------------------------------------------------------------------
+# _extraction_job_to_dict serialization boundary (NFM-2743, D3)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractionJobToDict:
+    """NFM-2743 / D3 — single serialization boundary.
+
+    The dataclass :class:`ExtractionJob` (in-memory orchestration/request
+    state) and the ORM :class:`ExtractionJob` (in
+    ``models/extraction_job.py`` — ingestion/results state) model
+    different lifecycle stages and have a 10-field gap. The dict — not
+    either class — is the stable public interface for callers. These
+    tests lock the contract so the dispatch wrapper and any future
+    V2 path can rely on the same shape.
+
+    See ``docs/architecture/ADR-NFM-2739-extraction-job-dual-class.md``
+    for the field diff and the deferred migration to a single ORM row.
+    """
+
+    def test_dataclass_and_orm_return_identical_key_set(self) -> None:
+        """The returned dict key set MUST be identical regardless of input.
+
+        Regression guard for the whole D3 seam — call-sites that switch
+        on key presence will silently break if either path adds or
+        drops a key.
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="dc-1",
+            source_reference="src.md",
+            source_type="file",
+        )
+        orm_job = ORMExtractionJob(
+            source_reference="src.md",
+            source_type="file",
+        )
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000001")
+
+        dc_dict = _extraction_job_to_dict(dc_job)
+        orm_dict = _extraction_job_to_dict(orm_job)
+
+        assert set(dc_dict.keys()) == set(orm_dict.keys()), (
+            f"Key-set mismatch: dataclass-only={set(dc_dict) - set(orm_dict)} "
+            f"orm-only={set(orm_dict) - set(dc_dict)}"
+        )
+
+    def test_job_id_is_str_for_dataclass(self) -> None:
+        """Dataclass ``job_id`` is already a ``str`` — must round-trip as-is."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="plain-str-id", source_reference="s", source_type="file",
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["job_id"] == "plain-str-id"
+        assert isinstance(d["job_id"], str)
+
+    def test_job_id_is_str_for_orm_uuid(self) -> None:
+        """ORM ``id`` is a ``uuid.UUID`` — must be coerced to ``str``.
+
+        This is the exact confusion that produced PR #726's CI failures
+        (NFM-2743 motivation). The helper is the single resolution point.
+        """
+        from uuid import UUID
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        orm_job.id = UUID("00000000-0000-0000-0000-000000000099")
+
+        d = _extraction_job_to_dict(orm_job)
+
+        assert d["job_id"] == "00000000-0000-0000-0000-000000000099"
+        assert isinstance(d["job_id"], str)
+        assert not isinstance(d["job_id"], UUID)  # explicit: NEVER raw UUID
+
+    @pytest.mark.asyncio
+    async def test_orm_gap_field_defaults(self, db_session: Any) -> None:
+        """The 10 dataclass-only fields must emit documented defaults on ORM path.
+
+        Per the binding contract in NFM-2743:
+
+            fill_batch_id=None
+            extracted_count=0
+            staged_count=0
+            rejected_count=0
+            element_systems=None
+            cache_level=None
+            max_confidence=None
+            conflict_strategy="prefer_vlm"
+            figures=[]
+            tables=[]
+
+        Two layers of defaults are exercised here:
+
+        1. **Python-side defaults** — ``ExtractionJob.__init__`` (NFM-2745,
+           see ``models/extraction_job.py``) explicitly applies
+           ``setdefault(...)`` for the 6 non-nullable columns so
+           transient ORM instances carry the contract defaults *before*
+           INSERT.  Without that override, ``getattr(orm_job, name)``
+           would return ``None`` for unset mapped attributes (SQLAlchemy
+           2.0's default ``__init__`` only fires ``Column.default`` at
+           INSERT-flush time).
+        2. **Server-side defaults** — ``flush()`` + ``refresh()`` round-
+           trips the row through the SQLite schema so the test catches
+           drift between the ORM ``server_default=...`` arguments and
+           the migration's DDL ``DEFAULT`` clauses.  If a future migration
+           forgets a ``server_default`` on a ``NOT NULL`` column, the
+           INSERT raises and this test fails loudly instead of silently
+           leaving the contract's defaults undefined at the DB level.
+
+        This is the same observation that produced NFM-2746
+        (Phase B / transient-ORM default semantics).
+        """
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+        db_session.add(orm_job)
+        await db_session.flush()
+        # Reset the instance state so post-flush values are loaded from
+        # the SQLite schema (rather than reading from the pre-flush
+        # Python-side attributes).
+        await db_session.refresh(orm_job)
+        d = _extraction_job_to_dict(orm_job)
+
+        assert d["fill_batch_id"] is None
+        assert d["extracted_count"] == 0
+        assert d["staged_count"] == 0
+        assert d["rejected_count"] == 0
+        assert d["element_systems"] is None
+        assert d["cache_level"] is None
+        assert d["max_confidence"] is None
+        assert d["conflict_strategy"] == "prefer_vlm"
+        assert d["figures"] == []
+        assert d["tables"] == []
+
+    def test_transient_orm_coalesces_none_to_contract_defaults(self) -> None:
+        """NFM-2747 AC#4 — transient ORM instances must emit documented defaults.
+
+        A transient (never-flushed) ORM instance holds ``None`` for every
+        unset column because SQLAlchemy ``Column(default=…)`` only fires
+        at INSERT/flush.  The old ``getattr(job, name, fallback)`` pattern
+        silently passed ``None`` through because the attribute descriptor
+        always returns ``None`` (never raises ``AttributeError``).
+
+        ``_extraction_job_to_dict`` now uses explicit ``_coalesce(v, d)``
+        so the ADR-NFM-2739 §2.1 type-stability guarantee holds for any
+        ORM ``ExtractionJob`` instance, including transient ones.
+        """
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        # Build a transient ORM instance — NO session.add / flush.
+        # The ORM __init__ applies setdefault for non-nullable columns, so
+        # those already carry correct values.  This test additionally
+        # verifies that _coalesce would handle the raw-None case even if
+        # __init__ were bypassed.
+        orm_job = ORMExtractionJob(source_reference="s", source_type="file")
+
+        # Verify that nullable gap columns read as None on a transient
+        # instance (SQLAlchemy default= only fires at INSERT).
+        assert orm_job.element_systems is None
+        assert orm_job.cache_level is None
+        assert orm_job.max_confidence is None
+
+        d = _extraction_job_to_dict(orm_job)
+
+        # fill_batch_id is explicitly excluded from coalescing per the spec.
+        assert d["fill_batch_id"] is None
+        # Counts coalesce to 0.
+        assert d["extracted_count"] == 0
+        assert d["staged_count"] == 0
+        assert d["rejected_count"] == 0
+        # Nullable fields stay None (contract-documented default).
+        assert d["element_systems"] is None
+        assert d["cache_level"] is None
+        assert d["max_confidence"] is None
+        # conflict_strategy coalesces to "prefer_vlm" — the enum's true
+        # zero member (dataclass line 220, ORM column line 189).
+        assert d["conflict_strategy"] == "prefer_vlm"
+        # figures / tables coalesce to [].
+        assert d["figures"] == []
+        assert d["tables"] == []
+
+        # Existing key-set identity guard at :230 must still pass.
+        dc_job = ExtractionJob(job_id="dc-1", source_reference="s", source_type="file")
+        dc_dict = _extraction_job_to_dict(dc_job)
+        assert set(dc_dict.keys()) == set(d.keys())
+
+    def test_orm_fill_batch_id_is_str_not_uuid(self) -> None:
+        """NFM-2745 AC-3 — ORM ``fill_batch_id`` column type must be ``String``.
+
+        The dataclass field is ``str | None`` and ``api/v4/extraction.py``
+        parses it via ``uuid.UUID(job.fill_batch_id)`` (a string). If the
+        ORM column were typed as ``Uuid``/``UUID``, ``getattr(job,
+        "fill_batch_id")`` would return a ``uuid.UUID`` and leak a
+        non-JSON-serializable object into the canonical dict — the exact
+        bug class that produced PR #726's CI failures on ``job.id``.
+
+        This test inspects the *mapped* column type (not just instance
+        attribute setting) so it fails if the column is wired with the
+        wrong type.
+        """
+        from sqlalchemy import String as SAString
+        from sqlalchemy.dialects import postgresql
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+        col = ORMExtractionJob.__table__.columns["fill_batch_id"]
+
+        # Must be a String family column (String, String(64), VARCHAR, etc.).
+        assert isinstance(col.type, SAString), (
+            f"fill_batch_id must be String, got {type(col.type).__name__}: "
+            f"{col.type!r}"
+        )
+        # Explicit: NEVER a Postgres UUID type — that would coerce values to
+        # uuid.UUID and break JSON serialization.
+        assert not isinstance(col.type, postgresql.UUID), (
+            f"fill_batch_id must NOT be Postgres UUID, got {col.type!r}"
+        )
+        # The dataclass contract binds ``fill_batch_id`` to ``str | None``.
+        # The mapper must allow string values to round-trip as str.
+        assert "fill_batch_id" in ORMExtractionJob.__table__.columns
+
+    @pytest.mark.asyncio
+    async def test_orm_columns_round_trip_non_default_values(
+        self, db_session: Any
+    ) -> None:
+        """NFM-2745 AC-5 — all 10 new ORM columns must be wired through the DB.
+
+        A test that only sets instance attributes and reads them back
+        (``test_orm_gap_field_defaults``) does NOT prove the columns are
+        mapped — ``getattr(job, "fill_batch_id", None)`` returns ``None``
+        via the fallback, and arbitrary instance attribute assignment is
+        permitted by SQLAlchemy whether or not the column exists.
+
+        This test:
+
+        1. Builds an ORM job with all 10 new fields set to NON-default
+           values.
+        2. Persists it through ``db_session`` (the SQLite test fixture
+           creates the schema from ``Base.metadata`` — if any column is
+           missing from the mapper, the INSERT raises).
+        3. Reads the row back through a fresh ``select(...)`` and passes
+           it through ``_extraction_job_to_dict`` to confirm the helper
+           sees the **real** values, not getattr fallback defaults.
+        """
+        from sqlalchemy import select
+
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        orm_job = ORMExtractionJob(
+            source_reference="s",
+            source_type="file",
+            fill_batch_id="fb-round-trip-987",
+            extracted_count=42,
+            staged_count=17,
+            rejected_count=3,
+            element_systems=["Fe-Cr", "Ni-based"],
+            cache_level="L2",
+            max_confidence="0.87",
+            conflict_strategy="prefer_db",
+            figures=[{"id": "fig-1", "caption": "Phase diagram"}],
+            tables=[{"id": "tbl-1", "caption": "Composition"}],
+        )
+        db_session.add(orm_job)
+        await db_session.flush()
+        # Reset the in-memory state so the post-flush attributes are
+        # loaded from the SQLite schema (rather than the pre-flush values
+        # sitting on the instance).
+        await db_session.refresh(orm_job)
+
+        row_id = orm_job.id
+
+        # Build a fresh instance from the persisted row (forces a real
+        # SQL read rather than relying on the still-mapped instance).
+        persisted = (
+            await db_session.execute(
+                select(ORMExtractionJob).where(ORMExtractionJob.id == row_id)
+            )
+        ).scalar_one()
+
+        d = _extraction_job_to_dict(persisted)
+
+        # Real values must round-trip — NOT getattr fallback defaults.
+        assert d["fill_batch_id"] == "fb-round-trip-987"
+        assert d["extracted_count"] == 42
+        assert d["staged_count"] == 17
+        assert d["rejected_count"] == 3
+        assert d["element_systems"] == ["Fe-Cr", "Ni-based"]
+        assert d["cache_level"] == "L2"
+        assert d["max_confidence"] == "0.87"
+        assert d["conflict_strategy"] == "prefer_db"
+        assert d["figures"] == [{"id": "fig-1", "caption": "Phase diagram"}]
+        assert d["tables"] == [{"id": "tbl-1", "caption": "Composition"}]
+
+        # Sanity: dataclass key-set identity guard (NFM-2745 AC-4).
+        dc_job = ExtractionJob(
+            job_id="dc-1",
+            source_reference="s",
+            source_type="file",
+            fill_batch_id="fb-round-trip-987",
+            extracted_count=42,
+            staged_count=17,
+            rejected_count=3,
+            element_systems=["Fe-Cr", "Ni-based"],
+            cache_level="L2",
+            max_confidence="0.87",
+            conflict_strategy="prefer_db",
+            figures=[{"id": "fig-1", "caption": "Phase diagram"}],
+            tables=[{"id": "tbl-1", "caption": "Composition"}],
+        )
+        dc_dict = _extraction_job_to_dict(dc_job)
+        assert set(dc_dict.keys()) == set(d.keys())
+        assert len(dc_dict) == 24
+        assert len(d) == 24
+        assert dc_dict["fill_batch_id"] == d["fill_batch_id"]
+        assert dc_dict["extracted_count"] == d["extracted_count"]
+        assert dc_dict["conflict_strategy"] == d["conflict_strategy"]
+        assert dc_dict["figures"] == d["figures"]
+
+    def test_status_is_str_value_for_dataclass_enum(self) -> None:
+        """``status`` must be the ``str`` value, not the ``JobStatus`` enum member."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(
+            job_id="j1",
+            source_reference="s",
+            source_type="file",
+            status=JobStatus.RUNNING,
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["status"] == "running"
+        assert isinstance(d["status"], str)
+
+    def test_datetimes_are_iso8601_strings(self) -> None:
+        """``created_at``, ``started_at``, ``completed_at`` MUST be ISO-8601 strings."""
+        from datetime import UTC, datetime
+
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        now = datetime.now(UTC)
+        dc_job = ExtractionJob(
+            job_id="j1",
+            source_reference="s",
+            source_type="file",
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+        )
+        d = _extraction_job_to_dict(dc_job)
+
+        for key in ("created_at", "started_at", "completed_at"):
+            assert isinstance(d[key], str), f"{key}={d[key]!r} should be str"
+            assert datetime.fromisoformat(d[key]) == now, (
+                f"{key} did not round-trip via fromisoformat"
+            )
+
+    def test_none_datetimes_remain_none(self) -> None:
+        """``None`` datetimes stay ``None`` (do NOT become ``'None'`` strings)."""
+        from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+
+        dc_job = ExtractionJob(job_id="j1", source_reference="s", source_type="file")
+        # Reset the auto-set fields so the helper must handle None cleanly.
+        dc_job.started_at = None
+        dc_job.completed_at = None
+        d = _extraction_job_to_dict(dc_job)
+
+        assert d["started_at"] is None
+        assert d["completed_at"] is None
+        # created_at is auto-set by default_factory and MUST still emit a str.
+        assert isinstance(d["created_at"], str)
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +1143,6 @@ class TestTriggerExtraction:
             assert job.staged_count == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
     async def test_pipeline_partial_when_rejected_exist(self) -> None:
         """Pipeline sets PARTIAL status when some results are rejected."""
         mock_session = AsyncMock()
@@ -818,7 +1211,13 @@ class TestTriggerExtraction:
             assert _job_store[job.job_id] is job
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: trigger_extraction() does not yet set "
+            "ExtractionJob.duplicate_count from quality_gate.process_bulk().duplicates"
+        ),
+        strict=True,
+    )
     async def test_duplicates_tracked_separately_from_rejected(self) -> None:
         """Duplicates inflate duplicate_count, NOT rejected_count (NFM-637)."""
         mock_session = AsyncMock()
@@ -869,7 +1268,13 @@ class TestTriggerExtraction:
             assert job.duplicate_count == 2
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: ExtractionJob.duplicate_count is not yet set when the "
+            "duplicates list is empty (should default to 0 alongside rejected_count)"
+        ),
+        strict=True,
+    )
     async def test_no_duplicates_yields_zero_duplicate_count(self) -> None:
         """When quality gate returns no duplicates, duplicate_count is 0."""
         mock_session = AsyncMock()
@@ -921,7 +1326,13 @@ class TestTriggerExtraction:
             assert job.duplicate_count == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="NFM-1366: pipeline shape changed", strict=False)
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-1366: ExtractionJob has no total_count field; the staged + rejected "
+            "+ duplicates sum assertion fails until the field is added"
+        ),
+        strict=True,
+    )
     async def test_total_accounts_for_staged_rejected_and_duplicates(self) -> None:
         """Total = staged + rejected + duplicates (no records lost)."""
         mock_session = AsyncMock()
@@ -971,3 +1382,372 @@ class TestTriggerExtraction:
             total = job.staged_count + job.rejected_count + job.duplicate_count
             assert total == job.extracted_count
             assert total == 3
+
+
+# ---------------------------------------------------------------------------
+# NFM-2640: Ontology prompt integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetLatestPublishedOntology:
+    """Tests for _get_latest_published_ontology helper (NFM-2640)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_published_ontology(self) -> None:
+        """Helper returns None when no OntologyVersion has status='published'."""
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_published_ontology(self) -> None:
+        """Helper returns the OntologyVersion with most recent created_at."""
+        mock_session = AsyncMock()
+        ov_id = _uuid.uuid4()
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "1.2.0"
+        mock_ov.ontology_data = {
+            "entity_types": [{"name": "NuclearFuel"}],
+            "relation_types": [{"name": "contains"}],
+        }
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is mock_ov
+        assert result.version == "1.2.0"
+
+
+class TestOntologyPromptInPipeline:
+    """Tests for ontology-aware prompt selection in ontofuel_extract (NFM-2640)."""
+
+    @pytest.mark.asyncio
+    async def test_uses_ontology_prompt_when_published_version_exists(
+        self,
+    ) -> None:
+        """Pipeline uses build_ontology_extraction_prompt when ontology found."""
+        mock_session = AsyncMock()
+        ov_id = _uuid.uuid4()
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "2.0.0"
+        mock_ov.ontology_data = {
+            "entity_types": [{"name": "UO2Fuel"}],
+            "relation_types": [],
+        }
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        ontology_prompt = "ONTOLOGY-AWARE PROMPT NuclearFuel"
+        static_prompt = "STATIC PROMPT"
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}, clear=False),
+            patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_ontology_extraction_prompt",
+                return_value=ontology_prompt,
+            ) as mock_ontology_prompt,
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value=static_prompt,
+            ),
+            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock) as mock_llm,
+            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="# Test"),
+        ):
+            mock_llm.return_value = []
+
+            await ontofuel_extract(
+                source_reference="/fake/file.md",
+                source_type="file",
+                db=mock_session,
+            )
+
+            mock_ontology_prompt.assert_called_once_with(mock_ov)
+            mock_llm.assert_called_once()
+            call_kwargs = mock_llm.call_args
+            assert call_kwargs.kwargs["system_prompt"] == ontology_prompt
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_static_prompt_when_no_ontology_published(
+        self,
+    ) -> None:
+        """Pipeline uses build_extraction_system_prompt when no ontology published."""
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        static_prompt = "STATIC BASE PROMPT"
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}, clear=False),
+            patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value=static_prompt,
+            ),
+            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock) as mock_llm,
+            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="# Test"),
+        ):
+            mock_llm.return_value = []
+
+            await ontofuel_extract(
+                source_reference="/fake/file.md",
+                source_type="file",
+                db=mock_session,
+            )
+
+            mock_llm.assert_called_once()
+            call_kwargs = mock_llm.call_args
+            assert call_kwargs.kwargs["system_prompt"] == static_prompt
+
+    @pytest.mark.asyncio
+    async def test_pipeline_skips_ontology_query_when_db_is_none(self) -> None:
+        """Pipeline uses static prompt when db session is None (file-only path)."""
+        static_prompt = "STATIC BASE PROMPT"
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "false"}, clear=False),
+            patch("nfm_db.services.extraction_pipeline.is_llm_configured", return_value=True),
+            patch(
+                "nfm_db.services.extraction_pipeline.build_extraction_system_prompt",
+                return_value=static_prompt,
+            ),
+            patch("nfm_db.services.extraction_pipeline.call_llm", new_callable=AsyncMock) as mock_llm,
+            patch("nfm_db.services.extraction_pipeline._load_source_content", return_value="# Test"),
+        ):
+            mock_llm.return_value = []
+
+            await ontofuel_extract(
+                source_reference="/fake/file.md",
+                source_type="file",
+                db=None,
+            )
+
+            mock_llm.assert_called_once()
+            call_kwargs = mock_llm.call_args
+            assert call_kwargs.kwargs["system_prompt"] == static_prompt
+
+
+class TestOntologyJobProvenance:
+    """Tests for ontology provenance on ExtractionJob (NFM-2640)."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_sets_ontology_provenance_when_published(
+        self,
+    ) -> None:
+        """trigger_extraction sets job.ontology fields when ontology is published."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        ov_id = _uuid.uuid4()
+
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "1.0.0"
+        mock_ov.ontology_data = {"entity_types": [], "relation_types": []}
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
+            patch("nfm_db.services.extraction_pipeline.GapScanService"),
+        ):
+            mock_qg = mock_qg_cls.return_value
+            mock_qg.process_bulk = AsyncMock(
+                return_value=MagicMock(accepted=[], rejected=[], duplicates=[]),
+            )
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+            assert job.ontology_version_id == ov_id
+            assert job.ontology_version_str == "1.0.0"
+
+    @pytest.mark.asyncio
+    async def test_trigger_ontology_provenance_none_when_not_published(
+        self,
+    ) -> None:
+        """trigger_extraction leaves job.ontology fields None when no ontology."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("nfm_db.services.extraction_pipeline.QualityGateService") as mock_qg_cls,
+            patch("nfm_db.services.extraction_pipeline.GapScanService"),
+        ):
+            mock_qg = mock_qg_cls.return_value
+            mock_qg.process_bulk = AsyncMock(
+                return_value=MagicMock(accepted=[], rejected=[], duplicates=[]),
+            )
+            job = await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+            assert job.ontology_version_id is None
+            assert job.ontology_version_str is None
+
+
+# ---------------------------------------------------------------------------
+# V2-path ORMExtractionJob ontology provenance (NFM-2667)
+# ---------------------------------------------------------------------------
+
+
+class _FakeV2Orchestrator:
+    """Captures the orm_job passed to ExtractionOrchestrator and short-circuits run().
+
+    Used by NFM-2667 tests to inspect the ORM object that the V2 path of
+    ``trigger_extraction`` constructs.  We never want to actually drive the
+    orchestrator — only verify what it receives.
+    """
+
+    instances: list[Any] = []  # populated with each orm_job received
+
+    def __init__(self, session: Any, orm_job: Any) -> None:
+        self._session = session
+        self._job = orm_job
+        type(self).instances.append(orm_job)
+
+    async def run(self, **_kwargs: Any) -> Any:
+        return MagicMock()
+
+
+class TestV2PathOntologyProvenanceOnORM:
+    """Regression tests for NFM-2667.
+
+    When ``extraction_v2_enabled`` is True, ``trigger_extraction`` builds an
+    ``ORMExtractionJob`` and calls ``session.add`` + ``session.flush``.  The
+    ontology provenance columns (``ontology_version_id`` and
+    ``ontology_version_str``) MUST be wired from ``_get_latest_published_ontology``
+    onto the ORM object — otherwise the provenance advertised by NFM-2637 is
+    dead-letter: every persisted row has NULL ontology columns.
+
+    These tests verify the V2 path's wiring (the bug fix).  The legacy
+    dataclass path is covered by ``TestOntologyJobProvenance`` above.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_captured_jobs(self) -> None:
+        _FakeV2Orchestrator.instances.clear()
+
+    @pytest.mark.asyncio
+    async def test_v2_orm_job_populates_ontology_when_published(self) -> None:
+        """V2 path: ORMExtractionJob ontology fields are set when an ontology is published."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.flush = AsyncMock()
+        # session.add is synchronous on AsyncSession (it just marks the
+        # object for insertion; the real await happens on flush).
+        mock_session.add = MagicMock()
+        ov_id = _uuid.uuid4()
+
+        mock_ov = MagicMock()
+        mock_ov.id = ov_id
+        mock_ov.version = "1.2.3"
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = mock_ov
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_settings = MagicMock()
+        mock_settings.extraction_v2_enabled = True
+
+        with (
+            patch(
+                "nfm_db.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch(
+                "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
+                _FakeV2Orchestrator,
+            ),
+        ):
+            await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+
+        assert len(_FakeV2Orchestrator.instances) == 1, (
+            "V2 path must construct exactly one ORMExtractionJob per trigger"
+        )
+        orm_job = _FakeV2Orchestrator.instances[0]
+        assert orm_job.ontology_version_id == ov_id
+        assert orm_job.ontology_version_str == "1.2.3"
+
+    @pytest.mark.asyncio
+    async def test_v2_orm_job_ontology_none_when_not_published(self) -> None:
+        """V2 path: ORMExtractionJob ontology fields stay None when no ontology is published."""
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.flush = AsyncMock()
+        # session.add is synchronous on AsyncSession — see comment in test above.
+        mock_session.add = MagicMock()
+
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = None
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_settings = MagicMock()
+        mock_settings.extraction_v2_enabled = True
+
+        with (
+            patch(
+                "nfm_db.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch(
+                "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
+                _FakeV2Orchestrator,
+            ),
+        ):
+            await trigger_extraction(
+                mock_session,
+                source_reference="test_source",
+                source_type="file",
+            )
+
+        assert len(_FakeV2Orchestrator.instances) == 1
+        orm_job = _FakeV2Orchestrator.instances[0]
+        assert orm_job.ontology_version_id is None
+        assert orm_job.ontology_version_str is None

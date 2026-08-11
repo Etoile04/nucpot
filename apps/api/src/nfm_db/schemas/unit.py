@@ -47,7 +47,7 @@ class UnitConversionCreate(BaseModel):
     source_unit_id: UUID
     target_unit_id: UUID
     factor: float = Field(..., gt=0)
-    offset: float = 0.0
+    offset_value: float = 0.0
 
 
 class UnitConversionUpdate(BaseModel):
@@ -56,7 +56,7 @@ class UnitConversionUpdate(BaseModel):
     source_unit_id: UUID | None = None
     target_unit_id: UUID | None = None
     factor: float | None = Field(None, gt=0)
-    offset: float | None = None
+    offset_value: float | None = None
 
 
 class UnitConversionResponse(BaseModel):
@@ -66,7 +66,7 @@ class UnitConversionResponse(BaseModel):
     source_unit_id: UUID
     target_unit_id: UUID
     factor: float
-    offset: float
+    offset_value: float
     created_at: datetime
     updated_at: datetime
 

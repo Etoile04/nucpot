@@ -181,7 +181,7 @@ class TestUnitConversionCreation:
             source_unit_id=c.id,
             target_unit_id=k.id,
             factor=1.0,
-            offset=273.15,
+            offset_value=273.15,
         )
         db_session.add(conv)
         await db_session.commit()
@@ -1068,7 +1068,7 @@ class TestSchemaValidation:
             source_unit_id="00000000-0000-0000-0000-000000000001",
             target_unit_id="00000000-0000-0000-0000-000000000002",
             factor=1.0,
-            offset=273.15,
+            offset_value=273.15,
         )
         assert float(schema.factor) == 1.0
 

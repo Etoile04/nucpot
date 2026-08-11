@@ -17,7 +17,18 @@ const DISABLE_API_REWRITE =
   process.env.DISABLE_API_REWRITE === "true" ||
   process.env.DISABLE_API_REWRITE === "1"
 
-const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://localhost:8100"
+// Default to the Docker-internal service DNS (resolves inside any
+// `nucpot-*` network) so the rewrite is correct in prod and staging
+// even when API_SERVER_URL is not explicitly set.  NFM-2786: the
+// previous `http://localhost:8100` default silently misrouted requests
+// to whichever process happened to occupy host port 8000 (Honcho in
+// the current stack), returning 404 with a Next.js HTML body.  Local
+// dev (running the API outside Docker on a different host port) MUST
+// set API_SERVER_URL explicitly — e.g.:
+//   API_SERVER_URL=http://localhost:8001 pnpm dev
+// (8001 is the host port mapped to the nucpot-prod-api container
+// in docker-compose.prod.yml; staging uses 8011.)
+const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 
 // LightRAG WebUI reverse-proxy target. In Docker prod this is the
 // LightRAG sidecar's built-in React SPA; in local dev it falls back
@@ -31,6 +42,20 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../../"),
+  // NFM-2608: d3 packages use bare ESM imports (e.g. "import {dispatch}
+  // from 'd3-dispatch'") that resolve through pnpm's virtual store at
+  // build time but may produce browser chunks that can't resolve their
+  // transitive deps at runtime. transpilePackages forces Next.js to
+  // compile these through its own pipeline, which correctly bundles
+  // all transitive ESM imports into the client chunk.
+  transpilePackages: [
+    "d3-force",
+    "d3-dispatch",
+    "d3-quadtree",
+    "d3-timer",
+    "d3-zoom",
+    "d3-selection",
+  ],
   async headers() {
     return [
       {

@@ -217,6 +217,98 @@ class UploadSessionCreate(BaseModel):
     total_chunks: int = Field(gt=0)
 
 
+# ---------------------------------------------------------------------------
+# Chunk Upload API (NFM-2024)
+# ---------------------------------------------------------------------------
+
+
+class UploadInitRequest(BaseModel):
+    """Payload for POST /api/v1/upload/init."""
+
+    resource_node_id: uuid.UUID
+    classification_level_id: uuid.UUID = Field(
+        description="FK to classification_levels.id (security label, §3.1.2)."
+    )
+    file_name: str = Field(min_length=1, max_length=500)
+    total_size: int = Field(gt=0, description="Total file size in bytes.")
+    sha256_full: str = Field(
+        min_length=64,
+        max_length=64,
+        description="Expected SHA-256 hex digest of the complete file.",
+    )
+    chunk_size: int = Field(
+        default=5 * 1024 * 1024,
+        gt=0,
+        le=100 * 1024 * 1024,
+        description="Chunk size in bytes (default 5MB, max 100MB).",
+    )
+
+
+class UploadInitResponse(BaseModel):
+    """Response from POST /api/v1/upload/init."""
+
+    session_id: uuid.UUID
+    resume_token: str
+    chunk_size: int
+    total_chunks: int
+    status: str
+
+
+class ChunkUploadRequest(BaseModel):
+    """Payload for POST /api/v1/upload/chunk."""
+
+    resume_token: str = Field(min_length=1, max_length=64)
+    chunk_index: int = Field(ge=0, description="Zero-based chunk index.")
+    sha256_chunk: str = Field(
+        min_length=64,
+        max_length=64,
+        description="SHA-256 hex digest of this chunk's data.",
+    )
+
+
+class ChunkUploadResponse(BaseModel):
+    """Response from POST /api/v1/upload/chunk."""
+
+    session_id: uuid.UUID
+    chunk_index: int
+    uploaded_chunks: int
+    total_chunks: int
+    status: str
+
+
+class UploadCompleteRequest(BaseModel):
+    """Payload for POST /api/v1/upload/complete."""
+
+    resume_token: str = Field(min_length=1, max_length=64)
+
+
+class UploadCompleteResponse(BaseModel):
+    """Response from POST /api/v1/upload/complete."""
+
+    session_id: uuid.UUID
+    status: str
+    sha256_full: str | None = None
+    error: str | None = None
+
+
+class UploadResumeRequest(BaseModel):
+    """Payload for POST /api/v1/upload/resume."""
+
+    resume_token: str = Field(min_length=1, max_length=64)
+
+
+class UploadResumeResponse(BaseModel):
+    """Response from POST /api/v1/upload/resume."""
+
+    session_id: uuid.UUID
+    status: str
+    total_chunks: int
+    uploaded_chunks: int
+    missing_chunks: list[int] = Field(
+        description="Zero-based indices of chunks not yet received."
+    )
+
+
 
 # ---------------------------------------------------------------------------
 # Ingest Log
@@ -250,6 +342,8 @@ class IngestLogCreate(BaseModel):
 
 
 __all__ = [
+    "ChunkUploadRequest",
+    "ChunkUploadResponse",
     "ClassificationLabel",
     "ClassificationLevelCreate",
     "ClassificationLevelRead",
@@ -265,6 +359,12 @@ __all__ = [
     "NodeType",
     "ResourceNodeCreate",
     "ResourceNodeRead",
+    "UploadCompleteRequest",
+    "UploadCompleteResponse",
+    "UploadInitRequest",
+    "UploadInitResponse",
+    "UploadResumeRequest",
+    "UploadResumeResponse",
     "UploadSessionCreate",
     "UploadSessionRead",
     "UploadSessionStatus",

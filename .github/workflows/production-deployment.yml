@@ -312,6 +312,7 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            git config pull.rebase false
             git pull origin main
 
             echo "===> Checking .env.prod <-> docker/.env.prod key drift..."
@@ -320,6 +321,8 @@ jobs:
           ENDSSH
 
       - name: Build candidate api image
+        env:
+          DOCKER_CONFIG: /tmp/no-cred-docker-config
         run: |
           # Compute CANDIDATE_TAG in the workflow shell (where $GITHUB_ENV is bound
           # by GitHub Actions) and pass it to the SSH heredoc. Writing to $GITHUB_ENV
@@ -329,10 +332,21 @@ jobs:
           CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
           echo "CANDIDATE_TAG=${CANDIDATE_TAG}" >> "$GITHUB_ENV"
 
+          # Ensure DOCKER_CONFIG exists on the remote host before SSH (NFM-2564).
+          # The SSH heredoc opens a new shell that does NOT inherit GHA env vars,
+          # so DOCKER_CONFIG must be set explicitly inside the heredoc to prevent
+          # docker-credential-desktop from prompting for the locked keychain.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            git config pull.rebase false
+            # Strip credsStore from ~/.docker/config.json to prevent
+            # docker-credential-desktop from prompting for the locked keychain.
+            DOCKER_CFG="\$HOME/.docker/config.json"
+            cp "\$DOCKER_CFG" "\$DOCKER_CFG.bak"
+            python3 -c "import json,pathlib; p=pathlib.Path('\$DOCKER_CFG'); c=json.loads(p.read_text()); c.pop('credsStore',None); p.write_text(json.dumps(c,indent=2))"
+            trap 'cp "\$DOCKER_CFG.bak" "\$DOCKER_CFG"' EXIT
             git pull origin main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
@@ -434,10 +448,58 @@ jobs:
           python3 -m pytest tools/pre-deploy-assert-smoke/test_assert.py -v
           python3 -m pytest tools/migration-on-main-assert/test_assert.py -v
 
+      # ===================================================================
+      # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
+      # `desktop` → docker-credential-desktop tries to prompt for the
+      # keychain in a non-interactive runner session and FAILS. Override
+      # to `DOCKER_CONFIG=/tmp/empty-docker-config` so neither buildkit
+      # nor classic docker invokes any credential helper, then pre-pull
+      # both images via classic `docker pull` (which honors shell proxy
+      # vars). buildkit then reuses the local cache without needing
+      # network. See memory: nucpot-deploy / docker-pull-via-keychain pitfall.
+      # ===================================================================
+      - name: Pre-pull images without credential helper (NFM-2564)
+        env:
+          HTTP_PROXY: http://127.0.0.1:7892
+          HTTPS_PROXY: http://127.0.0.1:7892
+          NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
+        run: |
+          # Docker Desktop on macOS stores credsStore="desktop" in
+          # ~/.docker/config.json. When the keychain is locked during a
+          # non-interactive CI session, docker-credential-desktop prompts
+          # and fails. DOCKER_CONFIG override does NOT work reliably with
+          # Docker Desktop — it still reads ~/.docker/config.json for the
+          # credsStore directive. Fix: backup the original config, strip
+          # credsStore, restore at the end.
+          DOCKER_CFG="$HOME/.docker/config.json"
+          cp "$DOCKER_CFG" "$DOCKER_CFG.bak"
+          python3 -c "
+          import json, pathlib
+          p = pathlib.Path('$DOCKER_CFG')
+          cfg = json.loads(p.read_text())
+          cfg.pop('credsStore', None)
+          p.write_text(json.dumps(cfg, indent=2))
+          "
+          trap 'cp "$DOCKER_CFG.bak" "$DOCKER_CFG"' EXIT
+          # Skip pull if images already cached locally — avoids triggering
+          # docker-credential-desktop keychain prompt in non-interactive CI.
+          for img in alpine:3.20 pgvector/pgvector:pg16; do
+            if docker image inspect "$img" > /dev/null 2>&1; then
+              echo "Image $img already cached, skipping pull"
+            else
+              docker pull "$img"
+            fi
+          done
+          docker image ls alpine:3.20 pgvector/pgvector:pg16
+
       - name: Run smoke.sh (live Docker + postgres)
         # Simulates NFM-2135: DB stamped to revision X, image lacks X,
         # verify workflow refuses with the distinct exit code + log names X.
         # Then verifies the success path: image has X → exit 0.
+        # DOCKER_CONFIG inherits from pre-pull step so buildkit skips the
+        # keychain prompt.
+        env:
+          DOCKER_CONFIG: /tmp/no-cred-docker-config
         run: |
           bash tools/pre-deploy-assert-smoke/smoke.sh
 
@@ -485,6 +547,7 @@ jobs:
             export PROD_IMAGE_TAG="${{ github.sha }}"
             echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
+            git config pull.rebase false
             git pull origin main
 
             # Build the 3 distinct images (D1, NFM-2148). The api image is

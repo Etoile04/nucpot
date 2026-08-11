@@ -47,6 +47,7 @@ from nfm_node_client.exceptions import (
     SyncStatusError,
     UploadError,
 )
+from nfm_node_client.hub_transport import HubTransport, HubTransportError, HttpHubTransport
 from nfm_node_client.offline_detector import ConnectionState, OfflineDetector
 from nfm_node_client.offline_queue import (
     OfflineQueue,
@@ -92,6 +93,9 @@ __all__ = [
     "Credentials",
     "HeartbeatError",
     "HeartbeatResponse",
+    "HubTransport",
+    "HubTransportError",
+    "HttpHubTransport",
     "NfmNodeClient",
     "NfmNodeClientError",
     "NodeType",

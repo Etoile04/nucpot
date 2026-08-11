@@ -24,20 +24,129 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.services.extraction_prompt import build_extraction_system_prompt
+from nfm_db.models.ontology_version import OntologyVersion
+
+if TYPE_CHECKING:
+    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+from nfm_db.services.extraction_prompt import (
+    build_extraction_system_prompt,
+    build_ontology_extraction_prompt,
+)
 from nfm_db.services.gap_scan_service import GapScanService
 from nfm_db.services.health_event_emitter import (
-    EVENT_VALIDATION_DROP,
     SEVERITY_WARNING,
     build_context,
-    emit_health_event,
+    emit_health_event_sync,
 )
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 from nfm_db.services.quality_gate import QualityGateService
+
+# ---------------------------------------------------------------------------
+# Ontology version query helper (NFM-2640)
+# ---------------------------------------------------------------------------
+
+
+async def _get_latest_published_ontology(
+    session: AsyncSession,
+) -> OntologyVersion | None:
+    """Query the latest published OntologyVersion.
+
+    Returns the OntologyVersion with ``status='published'`` ordered by
+    ``created_at DESC``, or ``None`` if no published version exists.
+
+    Gracefully returns ``None`` on DB errors so that the pipeline falls
+    back to the static prompt rather than crashing.
+    """
+    stmt = (
+        select(OntologyVersion)
+        .where(OntologyVersion.status == "published")
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )
+    try:
+        result = await session.execute(stmt)
+        return result.scalars().first()
+    except Exception:
+        logger.warning(
+            "Failed to query latest published ontology; falling back to static prompt",
+            exc_info=True,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Chunking constants (NFM-1366 P3, daily reflection 2026-08-06 §2.2)
+# ---------------------------------------------------------------------------
+# When source content exceeds the model's context window, split it into
+# chunks and extract from each independently. The limit below is
+# conservative: it assumes qwen3.6:35b (32K char budget per PR #686's
+# _MODEL_CONTEXT_CHARS), minus ~3K for system_prompt + user_message
+# prefix, times 0.8 safety margin.
+_CHUNK_MAX_CHARS = 20_000  # max chars of source content per LLM call
+
+
+def _chunk_content(content: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str]:
+    """Split *content* into chunks ≤ *max_chars*, preferring paragraph
+    boundaries (``\\n\\n``) to avoid mid-sentence cuts.
+
+    Returns at least one chunk (may be > max_chars if a single paragraph
+    exceeds the limit — that paragraph is hard-split as a last resort).
+
+    This function is deliberately model-agnostic: the caller decides when
+    to chunk (by comparing len(content) to the known budget). The chunk
+    size is intentionally conservative so it works for any 32K-context
+    model without per-model tuning.
+    """
+    if len(content) <= max_chars:
+        return [content]
+
+    chunks: list[str] = []
+    paragraphs = content.split("\n\n")
+    current = ""
+
+    for para in paragraphs:
+        candidate = f"{current}\n\n{para}" if current else para
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            # Flush current chunk if non-empty
+            if current:
+                chunks.append(current)
+                current = ""
+            # If the paragraph itself is too long, hard-split it
+            if len(para) > max_chars:
+                # Hard-split: walk through the paragraph with a moving cursor,
+                # breaking at sentence boundaries where possible. Avoids the
+                # mutation-during-iteration bug that an earlier range-based
+                # version had (mutating `para` inside range(0, len(para))
+                # silently dropped content).
+                remaining = para
+                while remaining:
+                    if len(remaining) <= max_chars:
+                        chunks.append(remaining)
+                        break
+                    piece = remaining[:max_chars]
+                    last_period = piece.rfind(". ")
+                    if last_period > max_chars // 2:
+                        # Break after the last sentence boundary in the window
+                        piece = remaining[: last_period + 1]
+                        remaining = remaining[last_period + 1 :]
+                    else:
+                        # No good sentence boundary — hard cut
+                        remaining = remaining[max_chars:]
+                    chunks.append(piece)
+            else:
+                current = para
+
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +220,9 @@ class ExtractionJob:
     conflict_strategy: str = "prefer_vlm"
     figures: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
     tables: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
+    # Ontology version provenance (NFM-2640)
+    ontology_version_id: uuid.UUID | None = None
+    ontology_version_str: str | None = None
 
 
 # Thread-safe in-memory store (access via async session in prod)
@@ -132,6 +244,131 @@ def _update_job(job: ExtractionJob, **kwargs: Any) -> None:
     for key, value in kwargs.items():
         if hasattr(job, key):
             setattr(job, key, value)
+
+
+# ---------------------------------------------------------------------------
+# Serialization boundary (NFM-2743, D3)
+# ---------------------------------------------------------------------------
+
+
+def _coalesce(value: Any, default: Any) -> Any:
+    """Return *value* when it is not ``None``, else *default*.
+
+    Used by ``_extraction_job_to_dict`` to honour ADR-NFM-2739 §2.1's
+    type-stability guarantee: SQLAlchemy ``Column(default=…)`` only fires
+    at INSERT/flush, so transient ORM instances hold ``None`` for unset
+    columns.  The old ``getattr(job, name, fallback)`` pattern silently
+    passed ``None`` through because the attribute descriptor always
+    returns ``None`` (it never raises ``AttributeError``).
+    """
+    return value if value is not None else default
+
+
+def _extraction_job_to_dict(
+    job: ExtractionJob | OrmExtractionJob,
+) -> dict[str, Any]:
+    """Normalize either job representation to the canonical dict shape.
+
+    The dataclass :class:`ExtractionJob` (in-memory orchestration/request
+    state) and the ORM :class:`ExtractionJob` (in
+    ``models/extraction_job.py`` — ingestion/results state) model
+    different lifecycle stages and have a 10-field gap. The dict — not
+    either class — is the stable public interface for callers. This
+    helper is the single point both paths converge on so call-sites
+    (e.g. ``trigger_extraction_pipeline``) never need their own
+    branch on ``is_extraction_v2_enabled``.
+
+    Binding contract (NFM-2743 AC):
+
+    - ``job_id`` is the canonical key. Dataclass reads ``job.job_id``
+      (already ``str``); ORM reads ``job.id`` (``uuid.UUID``) and
+      ``str()``-coerces it. The output is ALWAYS ``str``, never
+      ``uuid.UUID`` — this is the exact confusion that produced PR
+      #726's CI failures.
+    - ``status`` is the ``str`` value. Dataclass carries the
+      :class:`JobStatus` enum (``StrEnum``) and we read ``.value``;
+      ORM carries the raw string column value.
+    - ``created_at`` / ``started_at`` / ``completed_at`` are
+      ISO-8601 strings or ``None`` — never raw ``datetime``.
+    - The 10 dataclass-only fields (``fill_batch_id``,
+      ``extracted_count``, ``staged_count``, ``rejected_count``,
+      ``element_systems``, ``cache_level``, ``max_confidence``,
+      ``conflict_strategy``, ``figures``, ``tables``) are emitted with
+      their documented defaults on the ORM path so the key set is
+      IDENTICAL regardless of input type.
+
+    See ``docs/architecture/ADR-NFM-2739-extraction-job-dual-class.md``
+    for the full field diff and the deferred migration to a single
+    ORM row (NFM-2739).
+    """
+    # --- Identity: job_id is always str (NFM-2743 contract point 1) ---
+    # The dataclass has ``job_id`` (str); the ORM has ``id`` (UUID).
+    # They are disjoint — no current shape has both.
+    if hasattr(job, "job_id"):
+        job_id = str(job.job_id)
+    else:
+        job_id = str(job.id)
+
+    # --- Status: str value (contract point 2) ---
+    # Ducktyped via ``.value``: JobStatus (StrEnum) has ``.value``;
+    # plain str (ORM column value) does not. ``str(job.status).value``
+    # would fall through correctly too, but the ``.value`` test is
+    # what the contract asks for and matches the dispatch's existing
+    # ``job.status.value`` access pattern.
+    if hasattr(job.status, "value"):
+        status = job.status.value
+    else:
+        # ORM path — ``status`` is already a str column value.
+        status = str(job.status)
+
+    # --- Datetimes: ISO-8601 strings or None (contract point 3) ---
+    def _iso(dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt is not None else None
+
+    # --- The 10 dataclass-only fields with documented ORM defaults ---
+    # (contract point 4 — emitted on BOTH paths so the key set is
+    # identical regardless of input type)
+    return {
+        # Identity
+        "job_id": job_id,
+        # Provenance (12 common fields + created_at = 13)
+        "source_reference": job.source_reference,
+        "source_type": job.source_type,
+        # Status + error
+        "status": status,
+        "error_message": job.error_message,
+        # Timestamps
+        "created_at": _iso(job.created_at),
+        "started_at": _iso(job.started_at),
+        "completed_at": _iso(job.completed_at),
+        # Request-side counts (ORM defaults to 0)
+        # NFM-2747: explicit None → default coalescing.  SQLAlchemy
+        # Column(default=…) only fires at INSERT/flush, so transient ORM
+        # instances return None from the attribute descriptor.  The old
+        # getattr(job, name, default) fallback never fired because the
+        # descriptor always returns None (never raises AttributeError).
+        "fill_batch_id": getattr(job, "fill_batch_id", None),
+        "extracted_count": _coalesce(getattr(job, "extracted_count", None), 0),
+        "staged_count": _coalesce(getattr(job, "staged_count", None), 0),
+        "rejected_count": _coalesce(getattr(job, "rejected_count", None), 0),
+        # Request-side parameters (ORM defaults to None / "prefer_vlm" / [])
+        "element_systems": getattr(job, "element_systems", None),
+        "cache_level": getattr(job, "cache_level", None),
+        "max_confidence": getattr(job, "max_confidence", None),
+        "conflict_strategy": _coalesce(
+            getattr(job, "conflict_strategy", None), "prefer_vlm"
+        ),
+        "figures": _coalesce(getattr(job, "figures", None), []),
+        "tables": _coalesce(getattr(job, "tables", None), []),
+        # Multimodal extraction flags
+        "extract_figures": job.extract_figures,
+        "extract_tables": job.extract_tables,
+        "confidence_threshold": job.confidence_threshold,
+        "figure_types": job.figure_types,
+        # Ontology provenance
+        "ontology_version_id": job.ontology_version_id,
+        "ontology_version_str": job.ontology_version_str,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -342,35 +579,65 @@ async def ontofuel_extract(
         if source_type != "datasource":
             content = _load_source_content(source_reference)
 
-        # Build system prompt
-        system_prompt = build_extraction_system_prompt()
+        # Build system prompt — ontology-aware when a published version exists
+        if db is not None:
+            ontology_version = await _get_latest_published_ontology(db)
+            if ontology_version is not None:
+                system_prompt = build_ontology_extraction_prompt(ontology_version)
+                logger.info(
+                    "Ontology-driven prompt: version=%s (id=%s)",
+                    ontology_version.version,
+                    ontology_version.id,
+                )
+            else:
+                system_prompt = build_extraction_system_prompt()
+        else:
+            system_prompt = build_extraction_system_prompt()
 
-        # Build user message with optional element filter
-        user_message = (
-            f"Extract all nuclear material properties from the following file:\n\n{content}"
-        )
-        if element_systems:
-            user_message = (
-                f"Extract properties for these element systems only: "
-                f"{', '.join(element_systems)}\n\n"
-                f"Source file:\n\n{content}"
+        # Call LLM — with chunking for large inputs (NFM-1366 P3)
+        # If content exceeds the model's context window, split into
+        # chunks and extract from each, then merge results.
+        chunks = _chunk_content(content)
+        if len(chunks) > 1:
+            logger.info(
+                "LLM extraction: content_len=%d split into %d chunks (max %d chars each)",
+                len(content),
+                len(chunks),
+                _CHUNK_MAX_CHARS,
             )
 
-        # Call LLM
-        raw_result = await call_llm(
-            system_prompt=system_prompt,
-            user_message=user_message,
-        )
+        all_raw_properties: list[dict[str, Any]] = []
+        for idx, chunk in enumerate(chunks):
+            chunk_message = (
+                f"Extract all nuclear material properties from the following file"
+                f"{f' (part {idx + 1} of {len(chunks)})' if len(chunks) > 1 else ''}:\n\n{chunk}"
+            )
+            if element_systems:
+                chunk_message = (
+                    f"Extract properties for these element systems only: "
+                    f"{', '.join(element_systems)}\n\n"
+                    f"Source file"
+                    f"{f' (part {idx + 1} of {len(chunks)})' if len(chunks) > 1 else ''}:\n\n{chunk}"
+                )
 
-        # Parse response — expect a list of dicts
-        if isinstance(raw_result, list):
-            raw_properties = raw_result
-        elif isinstance(raw_result, dict) and "properties" in raw_result:
-            raw_properties = raw_result["properties"]
-        elif isinstance(raw_result, dict) and "data" in raw_result:
-            raw_properties = raw_result["data"]
-        else:
-            raw_properties = [raw_result] if raw_result else []
+            raw_result = await call_llm(
+                system_prompt=system_prompt,
+                user_message=chunk_message,
+            )
+
+            # Parse response — expect a list of dicts
+            if isinstance(raw_result, list):
+                chunk_properties = raw_result
+            elif isinstance(raw_result, dict) and "properties" in raw_result:
+                chunk_properties = raw_result["properties"]
+            elif isinstance(raw_result, dict) and "data" in raw_result:
+                chunk_properties = raw_result["data"]
+            else:
+                chunk_properties = [raw_result] if raw_result else []
+
+            all_raw_properties.extend(chunk_properties)
+
+        raw_properties = all_raw_properties
 
         # Post-process with PhaseMapper and PropertyCategory
         return _post_process_extracted(raw_properties, source_reference)
@@ -453,6 +720,7 @@ async def trigger_extraction(
     extract_figures: bool = False,
     extract_tables: bool = False,
     job_id: str | None = None,
+    ontology_version_id: uuid.UUID | None = None,
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -461,6 +729,7 @@ async def trigger_extraction(
     2. Property mapping (normalize names → NFMD conventions)
     3. Quality gate: dedup, range validate, confidence route
     4. Stage passing values to _ref_gap_fill_staging
+    4b. Optional: auto-reopen wont_fix gaps (when ontology_version_id is set)
     5. Optional: gap re-scan to close the loop
 
     Returns the job tracker with current status.  If *job_id* is
@@ -468,6 +737,49 @@ async def trigger_extraction(
     endpoint hand out a job_id immediately for status polling
     (2026-07-28 follow-up).
     """
+    # NFM-2568-T1: Feature-flag routing to V2 orchestrator.
+    # When enabled, delegates to the step-based orchestrator and
+    # returns immediately — legacy code below is untouched.
+    from nfm_db.config import get_settings
+
+    settings = get_settings()
+    if settings.extraction_v2_enabled:
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+        from nfm_db.services.extraction_orchestrator import (
+            ExtractionOrchestrator,
+        )
+
+        if job_id is None:
+            job_id = _generate_job_id()
+        # NFM-2667: wire ontology provenance onto the persisted ORM row.
+        # PR #711 (NFM-2640) only updated the in-memory dataclass; the ORM
+        # row was always created with NULL ontology columns, defeating the
+        # migration.  Mirror the legacy path's discovery and pass the
+        # values into the constructor so session.add + flush persist them.
+        published_ov = await _get_latest_published_ontology(session)
+        ontology_version_id = published_ov.id if published_ov is not None else None
+        ontology_version_str = (
+            published_ov.version if published_ov is not None else None
+        )
+        orm_job = ORMExtractionJob(
+            source_reference=source_reference,
+            source_type=source_type,
+            extract_figures=extract_figures,
+            extract_tables=extract_tables,
+            ontology_version_id=ontology_version_id,
+            ontology_version_str=ontology_version_str,
+        )
+        session.add(orm_job)
+        await session.flush()
+
+        orchestrator = ExtractionOrchestrator(session, orm_job)
+        return await orchestrator.run(
+            element_systems=element_systems,
+            cache_level=cache_level,
+            max_confidence=max_confidence,
+        )
+
+    # --- Legacy pipeline (unchanged when flag is False) ---
     if job_id is None:
         job_id = _generate_job_id()
     fill_batch_id = str(uuid.uuid4())
@@ -484,6 +796,15 @@ async def trigger_extraction(
         extract_tables=extract_tables,
     )
     _job_store[job_id] = job
+
+    # NFM-2640: Query latest published ontology and set provenance on job
+    published_ov = await _get_latest_published_ontology(session)
+    if published_ov is not None:
+        _update_job(
+            job,
+            ontology_version_id=published_ov.id,
+            ontology_version_str=published_ov.version,
+        )
 
     try:
         # Defense-in-depth: validate DOI format at pipeline entry (NFM-636)
@@ -638,6 +959,40 @@ async def trigger_extraction(
             except Exception:
                 logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
 
+        # Stage 4b: Auto-reopen wont_fix gaps (NFM-2582).
+        # When the extraction was triggered by a new ontology version,
+        # check whether any previously wont_fix gaps now have matching
+        # extraction results and reopen them.
+        if ontology_version_id is not None and mapped:
+            try:
+                from nfm_db.services.gap_reopen_service import (
+                    check_and_reopen_wont_fix_gaps,
+                )
+
+                extraction_results = [
+                    {"item_type": "property", "item_data": item}
+                    for item in mapped
+                ]
+                reopen_result = await check_and_reopen_wont_fix_gaps(
+                    session,
+                    new_ontology_version_id=ontology_version_id,
+                    extraction_results=extraction_results,
+                )
+                if reopen_result.gaps_reopened > 0:
+                    logger.info(
+                        "Job %s: auto-reopened %d wont_fix gaps "
+                        "(ontology_version=%s)",
+                        job_id,
+                        reopen_result.gaps_reopened,
+                        ontology_version_id,
+                    )
+            except Exception:
+                logger.warning(
+                    "Job %s: wont_fix gap auto-reopen failed (non-fatal)",
+                    job_id,
+                    exc_info=True,
+                )
+
         # Stage 5: Build KG nodes/edges from extracted properties
         # This bridges the gap between the extraction pipeline and the
         # knowledge graph review system. Without this stage, extracted
@@ -657,12 +1012,8 @@ async def trigger_extraction(
                     except (ValueError, AttributeError) as exc:
                         # Provenance is optional but losing it silently
                         # makes KG nodes untraceable to their source.
-                        # The outer function is async, so we ``await`` the
-                        # async emitter (NFM-2241 C2). The emitter opens
-                        # its own session, so the caller's transaction
-                        # state is irrelevant.
-                        await emit_health_event(
-                            event_type=EVENT_VALIDATION_DROP,
+                        emit_health_event_sync(
+                            event_type="validation_drop",
                             severity=SEVERITY_WARNING,
                             source_service="extraction_pipeline",
                             context=build_context(
@@ -687,6 +1038,35 @@ async def trigger_extraction(
             except Exception:
                 logger.warning(
                     "Job %s: KG build failed (non-fatal, staged data preserved)",
+                    job_id,
+                    exc_info=True,
+                )
+
+        # Stage 5b: Multimodal extraction (figures + tables)
+        # Runs after KG build so that text-extracted properties are already
+        # staged. VLM/OCR failures are non-fatal (caught inside
+        # run_multimodal_extraction). NFM-1366: previously dead code — the
+        # function existed but was never called from this pipeline.
+        if extract_figures or extract_tables:
+            try:
+                from nfm_db.services.multimodal_extraction import (
+                    run_multimodal_extraction,
+                )
+
+                await run_multimodal_extraction(job, text_props=mapped)
+
+                fig_count = len(job.figures)
+                tbl_count = len(job.tables)
+                logger.info(
+                    "Job %s: multimodal extraction completed — "
+                    "figures=%d tables=%d",
+                    job_id,
+                    fig_count,
+                    tbl_count,
+                )
+            except Exception:
+                logger.warning(
+                    "Job %s: multimodal extraction stage failed (non-fatal)",
                     job_id,
                     exc_info=True,
                 )

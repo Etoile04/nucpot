@@ -203,12 +203,25 @@ def test_migration_adds_no_server_default() -> None:
 
 
 def test_alembic_has_a_single_head() -> None:
-    """A second head would break the ``alembic upgrade head`` container start."""
+    """A second head would break the ``alembic upgrade head`` container start.
+
+    The single-head invariant (NFM-167 gate) is the actual test —
+    ``ScriptDirectory.get_heads()`` discovers the head dynamically so
+    this test stays stable as new migrations land.  An earlier version
+    pinned a hard-coded allow-list of acceptable heads (NFM-2029 era,
+    pre-reconvergence), which forced a manual edit on every migration;
+    see commit ``ffaab68f`` for the CI failure that exposed the cost.
+    """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config(str(_API_ROOT / "alembic.ini")))
-    assert script.get_heads() == ["039_add_extraction_method_provenance"] or "039_add_extraction_method_provenance" in script.get_heads()
+    heads = script.get_heads()
+    assert len(heads) == 1, (
+        f"single alembic head invariant violated — NFM-167 gate: {heads}"
+    )
+    # Single-head invariant is the contract; the specific revision
+    # changes every migration so we intentionally do NOT pin it.
 
 
 # ---------------------------------------------------------------------------

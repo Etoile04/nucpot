@@ -23,28 +23,72 @@ constraint mid-feature is out of scope for this story.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
-from nfm_db.models import HubNode, ResourceNode
-from nfm_db.schemas.common import ApiResponse, PaginatedResponse
+from nfm_db.models import HubNode, ResourceNode, SyncOperation
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.hub_nodes import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
     NodeStatusUpdate,
+    NodeSyncStatsResponse,
+    SyncDataItem,
+    SyncDataResponse,
+    SyncOperationRequest,
+    SyncOperationResponse,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hub/nodes", tags=["Hub 节点管理"])
+
+# ---------------------------------------------------------------------------
+# Auth: Hub token validation
+# ---------------------------------------------------------------------------
+# TODO(NFM-2029-auth): Replace shared-secret HUB_TOKEN with per-node JWT
+# credentials.  The current approach validates that callers possess the hub
+# token but cannot distinguish one resource node from another.  A follow-up
+# issue should introduce JWT-based auth where the token encodes the node_id,
+# allowing sync-data endpoints to derive node identity from the token
+# directly (eliminating the path-parameter trust issue flagged in CR #679).
+
+async def _require_hub_token(
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    """Reject requests that lack a valid ``Authorization: Bearer <token>``.
+
+    Returns ``None`` — this is a *gate* dependency, not an identity
+    provider.  It ensures the caller possesses the shared hub secret.
+
+    Reads ``HUB_TOKEN`` from the environment on every call rather than
+    capturing it at import time, so it stays fresh across app reloads
+    and mid-process env changes in tests (CR #679 finding 3).
+    """
+    hub_token: str | None = os.environ.get("HUB_TOKEN")
+    if hub_token is None:
+        # No token configured — gate is disabled (dev / test mode).
+        return
+    if authorization is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header required",
+        )
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0] != "Bearer" or parts[1] != hub_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid hub token",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +201,7 @@ async def register_node(
 )
 async def list_nodes(
     db: Annotated[AsyncSession, Depends(get_db)],
-    page: int = Query(1, ge=1, description="页码"),
-    limit: int = Query(20, ge=1, le=100, description="每页数量 (1..100)"),
+    params: Annotated[PaginationParams, Depends()],
     hub_node_id: uuid.UUID | None = Query(
         None, description="按所属 hub 节点过滤 (可选)",
     ),
@@ -171,12 +214,12 @@ async def list_nodes(
         count_stmt = count_stmt.where(ResourceNode.hub_node_id == hub_node_id)
 
     total = (await db.execute(count_stmt)).scalar() or 0
-    pages = (total + limit - 1) // limit if total else 0
+    pages = params.pages(total)
 
     stmt = (
         stmt.order_by(ResourceNode.created_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
+        .offset(params.offset)
+        .limit(params.per_page)
     )
     rows = (await db.execute(stmt)).scalars().all()
 
@@ -185,8 +228,8 @@ async def list_nodes(
         data=PaginatedResponse(
             items=[NodeResponse.model_validate(r) for r in rows],
             total=total,
-            page=page,
-            limit=limit,
+            page=params.page,
+            limit=params.per_page,
             pages=pages,
         ),
     )
@@ -266,6 +309,162 @@ async def receive_heartbeat(
     await db.commit()
     await db.refresh(node)
     return ApiResponse(success=True, data=NodeResponse.model_validate(node))
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /{node_id}/sync-data — durable incremental sync
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{node_id}/sync-data",
+    response_model=ApiResponse[SyncDataResponse],
+    summary="拉取节点增量同步数据",
+)
+async def fetch_sync_data(
+    node_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _auth: Annotated[None, Depends(_require_hub_token)],
+    since: int = Query(default=0, ge=0),
+) -> ApiResponse[SyncDataResponse]:
+    """Return operations with a monotonic sequence greater than ``since``."""
+    await _get_node_or_404(node_id, db)
+    rows = (
+        await db.execute(
+            select(SyncOperation)
+            .where(
+                SyncOperation.resource_node_id == node_id,
+                SyncOperation.sequence_no > since,
+            )
+            .order_by(SyncOperation.sequence_no.asc())
+            .limit(1000)
+        )
+    ).scalars().all()
+    watermark = rows[-1].sequence_no if rows else since
+    return ApiResponse(
+        success=True,
+        data=SyncDataResponse(
+            items=[SyncDataItem(**row.as_record()) for row in rows],
+            watermark=watermark,
+        ),
+    )
+
+
+@router.post(
+    "/{node_id}/sync-data",
+    response_model=ApiResponse[SyncOperationResponse],
+    summary="推送节点同步操作",
+)
+async def push_sync_data(
+    node_id: uuid.UUID,
+    body: SyncOperationRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _auth: Annotated[None, Depends(_require_hub_token)],
+) -> ApiResponse[SyncOperationResponse]:
+    """Idempotently persist one resource-node operation."""
+    # Validate the node exists (404 if it has not registered) and let the
+    # 404 surface from the helper, then discard the result.
+    await _get_node_or_404(node_id, db)
+    existing = (
+        await db.execute(
+            select(SyncOperation).where(
+                SyncOperation.resource_node_id == node_id,
+                SyncOperation.operation_id == body.operation_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return ApiResponse(
+            success=True,
+            data=SyncOperationResponse(
+                operation_id=existing.operation_id,
+                watermark=existing.sequence_no,
+                duplicate=True,
+            ),
+        )
+
+    operation = SyncOperation(
+        operation_id=body.operation_id,
+        resource_node_id=node_id,
+        op_type=body.op_type,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        payload=body.payload,
+        vector_clock=body.vector_clock,
+    )
+    db.add(operation)
+    await db.flush()
+    # Derive watermark from MAX(sequence_no) instead of writing to
+    # node.sync_watermark on every push.  This eliminates the read-
+    # modify-write race when concurrent POST requests arrive for the
+    # same node (CR #679 finding 2).
+    await db.commit()
+    await db.refresh(operation)
+    return ApiResponse(
+        success=True,
+        data=SyncOperationResponse(
+            operation_id=operation.operation_id,
+            watermark=operation.sequence_no,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /{node_id}/sync-stats — sync statistics for a node
+# ---------------------------------------------------------------------------
+
+
+def _derive_sync_status(
+    watermark: str | None,
+    heartbeat: str | None,
+    offline_since: str | None,
+) -> str:
+    """Derive a human-readable sync status from node fields."""
+    if offline_since is not None:
+        return "behind"
+    if watermark is None:
+        if heartbeat is not None:
+            return "syncing"
+        return "unknown"
+    if heartbeat is not None:
+        return "synced"
+    return "unknown"
+
+
+@router.get(
+    "/{node_id}/sync-stats",
+    response_model=ApiResponse[NodeSyncStatsResponse],
+    summary="获取节点同步统计",
+    description="Return sync statistics for a resource node, including conflict counts.",
+)
+async def get_node_sync_stats(
+    node_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ApiResponse[NodeSyncStatsResponse]:
+    """Return sync statistics for a resource node."""
+    node = await _get_node_or_404(node_id, db)
+
+    # NOTE: ConflictRecord has no FK to ResourceNode (only material_node_id
+    # and property_node_id referencing kg_nodes), so per-node conflict
+    # counts cannot be scoped here.  Conflict counts are available via the
+    # dedicated /api/v1/kg/conflicts endpoint instead.
+
+    sync_status = _derive_sync_status(
+        node.sync_watermark,
+        node.last_heartbeat,
+        node.offline_since,
+    )
+
+    return ApiResponse(
+        success=True,
+        data=NodeSyncStatsResponse(
+            node_id=node.id,
+            last_heartbeat=node.last_heartbeat,
+            sync_watermark=node.sync_watermark,
+            offline_since=node.offline_since,
+            sync_status=sync_status,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

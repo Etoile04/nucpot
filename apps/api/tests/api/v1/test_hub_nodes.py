@@ -248,26 +248,26 @@ class TestListNodes:
         assert all(item["hub_node_id"] == str(hub_a.id) for item in body["items"])
 
     @pytest.mark.asyncio
-    async def test_list_pagination_limit_max_100(
+    async def test_list_pagination_per_page_max_100(
         self,
         async_client: AsyncClient,
     ) -> None:
-        """AC-4: limit > 100 → 422."""
-        response = await async_client.get("/api/v1/hub/nodes/?limit=101")
+        """AC-4: per_page > 100 → 422."""
+        response = await async_client.get("/api/v1/hub/nodes/?per_page=101")
 
         assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
-    async def test_list_pagination_limit_0_returns_422(
+    async def test_list_pagination_per_page_0_returns_422(
         self,
         async_client: AsyncClient,
     ) -> None:
-        response = await async_client.get("/api/v1/hub/nodes/?limit=0")
+        response = await async_client.get("/api/v1/hub/nodes/?per_page=0")
 
         assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
-    async def test_list_pagination_custom_limit(
+    async def test_list_pagination_custom_per_page(
         self,
         async_client: AsyncClient,
         db_session: AsyncSession,
@@ -279,7 +279,7 @@ class TestListNodes:
             )
             assert resp.status_code == 201, resp.text
 
-        response = await async_client.get("/api/v1/hub/nodes/?limit=2&page=2")
+        response = await async_client.get("/api/v1/hub/nodes/?per_page=2&page=2")
 
         assert response.status_code == 200, response.text
         body = response.json()["data"]
@@ -485,6 +485,135 @@ class TestDeregisterNode:
     ) -> None:
         response = await async_client.delete(
             f"/api/v1/hub/nodes/{uuid.uuid4()}"
+        )
+
+        assert response.status_code == 404, response.text
+
+
+# ---------------------------------------------------------------------------
+# NFM-2030: GET /{node_id}/sync-stats
+# ---------------------------------------------------------------------------
+
+
+class TestSyncStats:
+    """GET /api/v1/hub/nodes/{node_id}/sync-stats — sync statistics."""
+
+    @pytest.mark.asyncio
+    async def test_sync_stats_returns_200_with_fields(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Freshly registered node returns sync-stats with correct shape."""
+        hub = await _create_hub(db_session)
+        reg = await async_client.post(
+            "/api/v1/hub/nodes/register", json=_register_payload(hub.id)
+        )
+        node_id = reg.json()["data"]["id"]
+
+        response = await async_client.get(
+            f"/api/v1/hub/nodes/{node_id}/sync-stats"
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["success"] is True
+        stats = body["data"]
+        assert stats["node_id"] == node_id
+        assert stats["last_heartbeat"] is None
+        assert stats["sync_watermark"] is None
+        assert stats["offline_since"] is None
+        assert stats["sync_status"] == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_sync_stats_with_heartbeat_returns_syncing(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Node with heartbeat but no watermark → syncing."""
+        hub = await _create_hub(db_session)
+        reg = await async_client.post(
+            "/api/v1/hub/nodes/register", json=_register_payload(hub.id)
+        )
+        node_id = reg.json()["data"]["id"]
+
+        # Send a heartbeat.
+        await async_client.post(
+            f"/api/v1/hub/nodes/{node_id}/heartbeat", json={}
+        )
+
+        response = await async_client.get(
+            f"/api/v1/hub/nodes/{node_id}/sync-stats"
+        )
+
+        assert response.status_code == 200, response.text
+        stats = response.json()["data"]
+        assert stats["sync_status"] == "syncing"
+        assert stats["last_heartbeat"] is not None
+
+    @pytest.mark.asyncio
+    async def test_sync_stats_with_watermark_returns_synced(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Node with heartbeat AND watermark → synced."""
+        hub = await _create_hub(db_session)
+        reg = await async_client.post(
+            "/api/v1/hub/nodes/register", json=_register_payload(hub.id)
+        )
+        node_id = reg.json()["data"]["id"]
+
+        # Heartbeat then set watermark.
+        await async_client.post(
+            f"/api/v1/hub/nodes/{node_id}/heartbeat", json={}
+        )
+        node = await db_session.get(ResourceNode, uuid.UUID(node_id))
+        assert node is not None
+        node.sync_watermark = datetime.now(UTC).isoformat()
+        await db_session.commit()
+
+        response = await async_client.get(
+            f"/api/v1/hub/nodes/{node_id}/sync-stats"
+        )
+
+        assert response.status_code == 200, response.text
+        stats = response.json()["data"]
+        assert stats["sync_status"] == "synced"
+
+    @pytest.mark.asyncio
+    async def test_sync_stats_offline_returns_behind(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Node with offline_since → behind."""
+        hub = await _create_hub(db_session)
+        reg = await async_client.post(
+            "/api/v1/hub/nodes/register", json=_register_payload(hub.id)
+        )
+        node_id = reg.json()["data"]["id"]
+        node = await db_session.get(ResourceNode, uuid.UUID(node_id))
+        assert node is not None
+        node.offline_since = datetime.now(UTC).isoformat()
+        await db_session.commit()
+
+        response = await async_client.get(
+            f"/api/v1/hub/nodes/{node_id}/sync-stats"
+        )
+
+        assert response.status_code == 200, response.text
+        stats = response.json()["data"]
+        assert stats["sync_status"] == "behind"
+
+    @pytest.mark.asyncio
+    async def test_sync_stats_missing_node_returns_404(
+        self,
+        async_client: AsyncClient,
+    ) -> None:
+        response = await async_client.get(
+            f"/api/v1/hub/nodes/{uuid.uuid4()}/sync-stats"
         )
 
         assert response.status_code == 404, response.text

@@ -1,9 +1,8 @@
 """End-to-end test that ``scripts/staging_deploy.sh deploy`` emits exactly one
-KR-3 event on the success path AND on the health-gate-failure path.
-
-NFM-2042 constraint C1: appending only on the success path means every failed
-deploy goes unrecorded and KR-3 is structurally incapable of detecting the
-failure mode it exists to measure. This test pins both paths.
+KR-3 event on every terminal path: success, health-gate failure, and
+cancelled (NFM-2771). NFM-2042 constraint C1 covers the first two; NFM-2771
+extends it to the GHA cancellation path which fires SIGTERM via
+appleboy/ssh-action → drone-ssh → sshd → remote bash → SIGHUP.
 
 Approach: build a tempdir that mimics the repo layout (so the script's
 ``$SCRIPT_DIR/lib/deploy_event.sh`` source resolves), install stub ``docker``
@@ -15,8 +14,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "staging_deploy.sh"
 LIB = REPO_ROOT / "scripts" / "lib" / "deploy_event.sh"
+VERIFY_CLOUDFLARED = REPO_ROOT / "scripts" / "verify-cloudflared-token.sh"
 
 
 def _make_stub(bin_dir: Path, name: str, body: str) -> Path:
@@ -51,6 +53,14 @@ def fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     shutil.copy(SCRIPT, scripts / "staging_deploy.sh")
     (scripts / "staging_deploy.sh").chmod(0o755)
     shutil.copytree(LIB.parent, scripts / "lib", dirs_exist_ok=True)
+    # NFM-2509 added a verify-cloudflared-token.sh call before the trap is
+    # armed; without a stub here the deploy script exits before the test
+    # can exercise the cancel/health paths.
+    if VERIFY_CLOUDFLARED.exists():
+        shutil.copy(VERIFY_CLOUDFLARED, scripts / "verify-cloudflared-token.sh")
+        (scripts / "verify-cloudflared-token.sh").chmod(0o755)
+    else:
+        _make_stub(scripts, "verify-cloudflared-token.sh", "exit 0\n")
 
     # Minimal env file so load_env_file doesn't die.
     (docker / ".env.staging").write_text("STAGING_IMAGE_TAG=latest\n")
@@ -223,3 +233,199 @@ printf '{{"status":"ok"}}' ''',
         assert event["first_pass_success"] is True
         assert event["rollback_triggered"] is False
         assert event["health_gate_first_poll_passed"] is True
+
+    # -- NFM-2771: cancel / signal coverage ----------------------------------
+
+    def _spawn_deploy(
+        self,
+        fake: Path,
+        bin_dir: Path,
+        events_path: Path,
+        *,
+        docker_body: str,
+        curl_body: str = "exit 22",
+    ) -> subprocess.Popen[str]:
+        _make_stub(bin_dir, "docker", docker_body)
+        _make_stub(bin_dir, "curl", curl_body)
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
+            "NFMD_DEPLOY_EVENTS_PATH": str(events_path),
+            "NFMD_SYNC_MARKER": str(events_path) + ".sync",
+            "STAGING_HEALTH_TIMEOUT": "3",
+            "STAGING_ROLLBACK_TAG": "prev",
+        }
+        # start_new_session=True puts the bash process in a new session
+        # and process group, so we can deliver signals to the whole group
+        # the way GHA cancellation does (runner SIGTERMs the job's process
+        # group, which includes any foreground child like `compose build`).
+        return subprocess.Popen(
+            ["bash", str(fake / "scripts" / "staging_deploy.sh"), "deploy"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+
+    @staticmethod
+    def _send_signal_to_group(proc: subprocess.Popen[str], sig: int) -> None:
+        """Send a signal to the process group, like GHA's runner does.
+
+        bash defers signal traps while waiting for a foreground child, so
+        sending only to the bash PID leaves the child running and the
+        trap deferred forever. GHA cancels the entire job process group;
+        we mirror that with os.killpg.
+        """
+        os.killpg(os.getpgid(proc.pid), sig)
+
+    @staticmethod
+    def _wait_or_kill(proc: subprocess.Popen[str], timeout: float) -> tuple[str, str]:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = proc.communicate()
+        return stdout, stderr
+
+    def test_cancelled_run_appends_event(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """NFM-2771: SIGTERM (GHA cancel / timeout) must still emit 1 event.
+
+        Before NFM-2771 the EXIT trap was armed only AFTER ``compose up``
+        succeeded and only fired on EXIT — never on HUP/INT/TERM. GHA
+        cancellation propagates SIGTERM via appleboy/ssh-action → drone-ssh
+        → sshd → remote bash → SIGHUP, so neither the late arming nor the
+        narrow signal set ever reached the JSONL.
+
+        The fix arms the trap at cmd_deploy entry and adds HUP/INT/TERM
+        so any cancellation during the deploy lifecycle emits exactly one
+        event with first_pass_success=false.
+        """
+        fake, bin_dir, events_path = fake_repo
+        proc = self._spawn_deploy(
+            fake,
+            bin_dir,
+            events_path,
+            docker_body="sleep 30\nexit 0\n",
+        )
+        # Give cmd_deploy time to source the lib, arm the trap, and reach
+        # the sleep stub. 0.5s is well past cmd_deploy entry on this fixture.
+        time.sleep(0.5)
+        self._send_signal_to_group(proc, signal.SIGTERM)
+        stdout, stderr = self._wait_or_kill(proc, timeout=10)
+
+        events = _read_events(events_path)
+        assert len(events) == 1, (
+            f"expected 1 event after SIGTERM, got {len(events)}: "
+            f"stdout={stdout!r} stderr={stderr!r}"
+        )
+        event = events[0]
+        assert event["environment"] == "staging"
+        assert event["first_pass_success"] is False
+        # Cancel before wait_for_health — first poll never ran, rollback
+        # was never attempted.
+        assert event["health_gate_first_poll_passed"] is False
+        assert event["rollback_triggered"] is False
+        assert event["skip_flag_used"] is False
+        assert event["duration_ms"] >= 0
+
+    def test_int_signal_appends_event(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """SIGINT (Ctrl-C / GHA abort API) is a sibling of SIGTERM; same
+        coverage requirement applies per the issue.
+        """
+        fake, bin_dir, events_path = fake_repo
+        proc = self._spawn_deploy(
+            fake,
+            bin_dir,
+            events_path,
+            docker_body="sleep 30\nexit 0\n",
+        )
+        time.sleep(0.5)
+        self._send_signal_to_group(proc, signal.SIGINT)
+        stdout, stderr = self._wait_or_kill(proc, timeout=10)
+
+        events = _read_events(events_path)
+        assert len(events) == 1, (
+            f"expected 1 event after SIGINT, got {len(events)}: "
+            f"stdout={stdout!r} stderr={stderr!r}"
+        )
+        assert events[0]["first_pass_success"] is False
+
+    def test_arm_armed_debug_file_records_state(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """AC#3: the trap-armed-debug sidecar confirms _DEPLOY_EVENT_ARMED
+        transitions are reachable on the cancellation path.
+
+        The script writes one line per state change to a sidecar file
+        alongside the JSONL. The test asserts that 'true' appears at least
+        once and 'false' appears (entry + post-emit disarms).
+        """
+        fake, bin_dir, events_path = fake_repo
+        proc = self._spawn_deploy(
+            fake,
+            bin_dir,
+            events_path,
+            docker_body="sleep 30\nexit 0\n",
+        )
+        time.sleep(0.5)
+        self._send_signal_to_group(proc, signal.SIGTERM)
+        self._wait_or_kill(proc, timeout=10)
+
+        debug_path = events_path.with_suffix(events_path.suffix + ".armed")
+        assert debug_path.exists(), (
+            "expected trap-armed-debug sidecar alongside JSONL — AC#3"
+        )
+        lines = [
+            ln
+            for ln in debug_path.read_text().splitlines()
+            if ln.strip()
+        ]
+        # At minimum: an entry reset, an armed transition (true), and a
+        # post-emit disarm (false). Loose bound to keep the test robust
+        # against extra logging from future extensions.
+        assert any("true" in ln for ln in lines), (
+            f"no 'true' state transition recorded: {lines!r}"
+        )
+        assert any("false" in ln for ln in lines), (
+            f"no 'false' state transition recorded: {lines!r}"
+        )
+
+    def test_sync_invoked_after_event_append(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """The JSONL writer must invoke ``sync`` after the append so the
+        drone-ssh subshell teardown cannot drop the line via buffered
+        I/O. NFMD_SYNC_BIN overrides the system ``sync`` binary for
+        tests; the stub touches a marker file the test asserts exists.
+        """
+        fake, bin_dir, events_path = fake_repo
+        # Install a stub `sync` BEFORE spawning the deploy: deploy_event.sh
+        # resolves the path at call time and re-execs the binary.
+        marker = events_path.with_suffix(events_path.suffix + ".sync")
+        _make_stub(
+            bin_dir,
+            "sync",
+            f"printf 1 > {marker}\n",
+        )
+        proc = self._spawn_deploy(
+            fake,
+            bin_dir,
+            events_path,
+            docker_body="sleep 30\nexit 0\n",
+        )
+        time.sleep(0.5)
+        self._send_signal_to_group(proc, signal.SIGTERM)
+        self._wait_or_kill(proc, timeout=10)
+
+        assert marker.exists(), (
+            "expected sync marker file after event append — "
+            "deploy_event_emit_impl did not invoke sync"
+        )

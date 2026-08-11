@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — local convenience hook mirroring the CI ruff gate
+#
+# This hook is INERT until a user opts in. CI is the enforcing gate.
+# Same posture as .githooks/commit-msg: fast feedback, not control.
+#
+# Enable (one-time, per clone and per worktree):
+#   git config core.hooksPath .githooks
+#
+# Why this exists (NFM-2538 / daily-reflection 2026-08-06):
+#   CI runs `uv run ruff check src tests` over the WHOLE tree
+#   (.github/workflows/ci.yml, production-deployment.yml). The recurring
+#   failure mode is linting only the files you happened to touch, declaring
+#   "CI green", and then eating a red build on a file you never opened:
+#     - PR #669 — ruff I001 (import sort)
+#     - PR #679 — ruff F841 (unused variable)
+#   Both were the same root cause: local verification command != CI command.
+#   This hook removes the discrepancy by running the exact CI invocation.
+#
+# Deliberately NOT --fix: a hook that rewrites files under you during commit
+# produces staged/unstaged drift and commits code you never read. Report and
+# refuse; let the human choose the fix.
+#
+# Scope note: CI lints a fresh checkout, which contains TRACKED files only.
+# So we lint the files git has in the index, not `src tests` off the working
+# tree — otherwise an untracked scratch file (e.g. an unstaged ML script under
+# src/) fails the hook on an error CI would never see. Verified 2026-08-06:
+# `ruff check src tests` reported F401 in an untracked file while all 517
+# tracked files passed.
+#
+# Bypass (audited, same as any hook): git commit --no-verify
+#   Note that CI will still fail — bypassing buys you nothing but a later
+#   round trip.
+#
+# Exit 0 on pass, non-zero with a diagnostic on fail.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+api_dir="${repo_root}/apps/api"
+
+# Only meaningful where the Python project lives. If apps/api is absent
+# (sparse checkout, docs-only clone), this hook has nothing to assert.
+if [[ ! -f "${api_dir}/pyproject.toml" ]]; then
+    exit 0
+fi
+
+# Skip when the commit touches no Python under apps/api. Keeps docs/frontend
+# commits fast; the CI gate still covers the tree on push.
+if git diff --cached --name-only --diff-filter=ACMR \
+    | grep -qE '^apps/api/(src|tests)/.*\.py$'; then
+    :
+else
+    exit 0
+fi
+
+# Resolve a ruff binary WITHOUT letting `uv run` build the project (NFM-2566).
+#
+# `uv run ruff` implies `--project`, so in an environment with no `.venv` — every
+# fresh `git worktree add`, which is exactly how the Paperclip execution policy
+# runs agent work — it first creates the venv and runs
+# `Building nfm-db-api @ file:///.../apps/api`. That build copies the source tree
+# to a staging dir, and the ruff process reading the file list concurrently sees
+# paths that momentarily do not resolve:
+#
+#     E902 No such file or directory (os error 2)
+#     --> tests/test_optimizer.py:1:1
+#
+# The named files exist in both the index and the working tree; re-running the
+# identical command right after (venv now warm) passes. The failure is therefore
+# intermittent and, worse, blames arbitrary innocent files — a developer's first
+# assumption is that their own change broke something.
+#
+# Prefer an already-installed ruff and fall back to `uvx`, which runs the tool
+# in an isolated ephemeral environment and never builds this project.
+if [[ -x "${api_dir}/.venv/bin/ruff" ]]; then
+    ruff_cmd=("${api_dir}/.venv/bin/ruff")
+elif command -v ruff >/dev/null 2>&1; then
+    ruff_cmd=(ruff)
+elif command -v uvx >/dev/null 2>&1; then
+    ruff_cmd=(uvx ruff)
+else
+    echo "pre-commit: no ruff and no uvx on PATH — skipping (CI will still enforce)." >&2
+    exit 0
+fi
+
+echo "pre-commit: ruff check over index-tracked src/ tests/ (mirrors CI)…" >&2
+# NFM-2598: Pathspecs MUST be repo-root-relative (apps/api/src, apps/api/tests).
+# Bare 'src/*.py' from inside apps/api/ matches repo-root src/ and tests/e2e/ that
+# don't exist under apps/api/, producing ruff E902 false positives in worktrees.
+# git -C ensures unambiguous resolution regardless of GIT_DIR / GIT_PREFIX
+# injected by the git hook runner.  perl(1) strips the apps/api/ prefix so ruff
+# (running from apps/api/ CWD) receives paths relative to its working directory.
+# grep -z exits 1 on empty input under set -euo pipefail; the || true guard
+# handles the (impossible under current early-exit guard) no-match case.
+if ! (cd "${api_dir}" \
+        && git -C "${repo_root}" ls-files -z --cached -- 'apps/api/src' 'apps/api/tests' \
+            | { grep -z '\.py$' || true; } \
+            | perl -0777 -pe 's|apps/api/||g' \
+            | xargs -0 --no-run-if-empty "${ruff_cmd[@]}" check); then
+    cat >&2 <<'EOF'
+pre-commit: ruff failed on tracked files — CI runs the same checks, so this WILL be red.
+pre-commit: fix with:  cd apps/api && uv run ruff check src tests --fix
+pre-commit: bypass with --no-verify only if you intend to fix it before pushing.
+EOF
+    exit 1
+fi
+
+exit 0
