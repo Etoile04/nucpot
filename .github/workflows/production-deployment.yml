@@ -354,6 +354,9 @@ jobs:
             # Docker layer cache served a migrations/ layer predating 036)
             echo "[diagnostic] git HEAD: $(git rev-parse --short HEAD)"
             echo "[diagnostic] 036 migration: $(ls apps/api/migrations/versions/036_* 2>/dev/null || echo 'NOT FOUND')"
+            # NFM-2502: do not inherit HTTP_PROXY for Docker build — apt uses
+            # CN mirrors directly; proxy can return transient 502 for .deb.
+            HTTP_PROXY= HTTPS_PROXY= \
             docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
 
             # Tag as :latest so deploy-prod's `up -d` (without --build)
@@ -560,6 +563,8 @@ jobs:
             # point; see the pre-deploy-assert job in this workflow.
             # --no-cache on all builds (NFM-2376 root cause: stale layer cache)
             echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
+            # NFM-2502: clear proxy for Docker build (apt/pip use CN mirrors directly)
+            HTTP_PROXY= HTTPS_PROXY= \
             docker build --no-cache -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
 
             echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
