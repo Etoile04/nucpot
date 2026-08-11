@@ -79,6 +79,8 @@ class BuildResult:
     nodes_matched: int = 0
     edges_created: int = 0
     review_queue_items: int = 0
+    ingest_nodes: tuple = ()
+    ingest_edges: tuple = ()
 
     @property
     def total_nodes_processed(self) -> int:
@@ -448,6 +450,8 @@ class GraphBuilder:
             nodes_matched=nodes_matched,
             edges_created=edges_created,
             review_queue_items=review_count,
+            ingest_nodes=tuple(new_nodes),
+            ingest_edges=tuple(new_edges),
         )
 
         logger.info(
@@ -458,9 +462,10 @@ class GraphBuilder:
             result.review_queue_items,
         )
 
-        # Post-processing: fire-and-forget LightRAG auto-ingest (NFM-1222)
-        if nodes_created > 0 or edges_created > 0:
-            self._fire_lightrag_ingest(new_nodes, new_edges)
+        # NOTE: LightRAG ingest is NOT fired here (NFM-2871).
+        # The caller (extraction_pipeline) must fire it AFTER session.commit()
+        # to prevent ghost entities on rollback. See BuildResult.ingest_nodes
+        # and BuildResult.ingest_edges.
 
         return result
 
