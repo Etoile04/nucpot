@@ -262,7 +262,7 @@ async def get_job_or_orm(
         try:
             job_uuid = uuid.UUID(job_id)
         except (ValueError, TypeError):
-            pass
+            logger.debug("job_id %r is not a valid UUID — skipping ORM lookup", job_id)
         else:
             from nfm_db.models.extraction_job import (
                 ExtractionJob as OrmExtractionJob,
