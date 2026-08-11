@@ -715,7 +715,6 @@ class TestLightRAGIngestAfterCommit:
         无新增实体". We model rollback by making commit() raise; the
         post-commit ingest guard must remain unentered.
         """
-        from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
 
         # Build a KG build branch that succeeds (so build_result is populated).
         # If build_result stayed None, the test would pass vacuously; we need
@@ -794,7 +793,6 @@ class TestLightRAGIngestAfterCommit:
         Without this guarantee a future refactor could move the fire call back
         inside the try block and reintroduce the ghost-entity regression.
         """
-        from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
 
         # Track call order: which ran first, commit or fire?
         call_order: list[str] = []
@@ -871,7 +869,6 @@ class TestLightRAGIngestAfterCommit:
         self, db_session: AsyncSession
     ):
         """Empty ingest_nodes/edges → fire is a no-op even on successful commit."""
-        from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
 
         # BuildResult with no ingest payload (e.g., no entities were extracted).
         mock_build_result = MagicMock()
