@@ -493,7 +493,7 @@ jobs:
               docker pull "$img"
             fi
           done
-          docker image ls alpine:3.20 pgvector/pgvector:pg16
+          docker image ls alpine:3.20 && docker image ls pgvector/pgvector:pg16
 
       - name: Run smoke.sh (live Docker + postgres)
         # Simulates NFM-2135: DB stamped to revision X, image lacks X,
