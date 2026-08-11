@@ -292,6 +292,7 @@ __all__ = [
     "GapType",
     "HPCFailoverEvent",
     "HealthEvent",
+    "HealthEvent",
     "HpcJob",
     "HpcJobStatus",
     "HubNode",

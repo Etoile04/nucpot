@@ -103,13 +103,6 @@ class ExtractionJob(TimestampMixin, Base):
         nullable=True,
     )
 
-    # --- LightRAG track_id (NFM-2881) ---
-    track_id: Mapped[str | None] = mapped_column(
-        String(255),
-        nullable=True,
-        comment="LightRAG ingest tracking ID for status polling.",
-    )
-
     # --- Ontology version tracking (NFM-2638) ---
     ontology_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("ontology_versions.id"),

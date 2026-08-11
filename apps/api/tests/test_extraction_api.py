@@ -6,7 +6,6 @@ Tests for POST /trigger and GET /status/{job_id}.
 from __future__ import annotations
 
 import asyncio
-import uuid
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -16,6 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.main import app
+from nfm_db.services.extraction_pipeline import (
+    JobStatus,
+    _generate_job_id,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -138,22 +141,21 @@ async def test_trigger_invalid_source_type(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_get_extraction_status_success(db_session: AsyncSession) -> None:
     """Status endpoint returns job details for a valid job."""
-    # Create an ORM job (NFM-3008 — dataclass + _job_store removed).
-    job_id = str(uuid4())
+    # First, manually create a job (simulate the trigger)
+    job_id = _generate_job_id()
 
-    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+    from nfm_db.services.extraction_pipeline import ExtractionJob, _job_store
 
-    job = ORMExtractionJob(
-        id=uuid.UUID(job_id),
+    job = ExtractionJob(
+        job_id=job_id,
         source_reference="test_source",
         source_type="file",
-        status="queued",
+        status=JobStatus.QUEUED,
         extracted_count=0,
         staged_count=0,
         rejected_count=0,
     )
-    db_session.add(job)
-    await db_session.commit()
+    _job_store[job_id] = job
 
     app.dependency_overrides[get_db] = _override_get_db(db_session)
     transport = ASGITransport(app=app)

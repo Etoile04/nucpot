@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
 
@@ -85,18 +85,6 @@ class OntologyVersion(TimestampMixin, Base):
         default=None,
         nullable=True,
         comment="The actual ontology schema content as JSON.",
-    )
-
-    # --- Back-populated from type tables (NFM-2873) ---
-    entity_types = relationship(
-        "KEntityType",
-        back_populates="ontology_version",
-        lazy="selectin",
-    )
-    relation_types = relationship(
-        "KRelationType",
-        back_populates="ontology_version",
-        lazy="selectin",
     )
 
     def __repr__(self) -> str:

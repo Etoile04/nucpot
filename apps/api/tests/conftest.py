@@ -245,8 +245,7 @@ def _clear_v2_flag_cache() -> Generator[None, None, None]:
         is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
         yield
         is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
-    except (ImportError, AttributeError):
-        # NFM-3008: is_extraction_v2_enabled was removed.
+    except ImportError:
         yield
 
 

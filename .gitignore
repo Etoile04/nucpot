@@ -53,6 +53,3 @@ apps/api/content/blog/
 docker/.deploy-events.jsonl
 docker/.deploy-events.jsonl.processed
 docker/.deploy-events.jsonl.quarantine/
-
-# pytest-benchmark artefacts
-.benchmarks/

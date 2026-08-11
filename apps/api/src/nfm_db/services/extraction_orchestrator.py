@@ -16,8 +16,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -55,35 +54,6 @@ def compute_input_hash(params: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _json_safe(value: Any) -> Any:
-    """Coerce values not natively JSON-serialisable into JSON-friendly forms.
-
-    The orchestrator's ``step.metadata_`` JSONB column rejects
-    ``uuid.UUID``, ``datetime``, ``date`` and ``Decimal`` objects.
-    ``_step_extract`` tags every raw extraction with ``chunk_id``
-    (UUID) and ``chunk_index``; downstream steps persist these dicts
-    into ``metadata_`` for operator inspection. Without coercion,
-    the JSONB insert raises ``Object of type UUID is not JSON
-    serializable`` and aborts the whole transaction (NFM-2909
-    fallout — the orchestrator only just started running under
-    ``extraction_v2_enabled=True`` because the loader now feeds it
-    content).
-    """
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, dict):
-        return {k: _json_safe(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
-    return value
-
-
 class ExtractionOrchestrator:
     """Step-based extraction pipeline orchestrator (NFM-2568-T1).
 
@@ -113,14 +83,6 @@ class ExtractionOrchestrator:
 
         Returns the job with updated status.  On any step failure the
         pipeline stops immediately and the error is recorded.
-
-        NFM-2909 follow-up: populates the ORM job's ``extracted_count``,
-        ``staged_count`` and ``rejected_count`` columns at the
-        run-level boundary so parity tests against the V1 dataclass
-        contract (``_update_job(..., extracted_count=N)``) hold under
-        the V2 orchestrator. The per-step contexts already carry
-        the right values; this method just promotes them to the ORM
-        row before the run-level completion flush.
         """
         self._job.status = "processing"
         self._job.started_at = datetime.now(UTC)
@@ -135,29 +97,6 @@ class ExtractionOrchestrator:
                     f"Step '{step_type}' failed: {exc}",
                 )
                 return self._job
-
-        # NFM-2909: surface step-context counts on the ORM job so the
-        # 24-key canonical dict and the parity gate see V1-equivalent
-        # extracted/staged/rejected counts. ``raw_extractions`` is
-        # populated by ``_step_extract``; ``quality_gate_result`` is
-        # populated by ``_step_quality_gate``.
-        self._job.extracted_count = len(
-            self._context.get("raw_extractions") or [],
-        )
-        qg_result = self._context.get("quality_gate_result") or {}
-        self._job.staged_count = int(qg_result.get("staged") or 0)
-        self._job.rejected_count = int(
-            (qg_result.get("rejected") or 0)
-            + (qg_result.get("duplicates") or 0)
-        )
-        # Mirror V1's ``_update_job(..., fill_batch_id=str(uuid.uuid4()))``
-        # — the ORM column defaults to NULL otherwise, which the
-        # staging-row-fill-batch-id parity check (and downstream
-        # callers expecting a string) reject. Use the job id (already
-        # a UUID) for the batch id, matching what _step_quality_gate
-        # passes into ``gate.stage_record(..., fill_batch_id=...)``.
-        if self._job.fill_batch_id is None:
-            self._job.fill_batch_id = str(self._job.id)
 
         self._job.status = "completed"
         self._job.completed_at = datetime.now(UTC)
@@ -640,15 +579,12 @@ class ExtractionOrchestrator:
         # queryable from the DB even if downstream steps fail.
         # ``metadata_`` uses the trailing-underscore column name to
         # avoid clashing with SQLAlchemy's MetaData class.
-        # Coerce non-JSON values (UUID / datetime / Decimal) via
-        # ``_json_safe`` so the JSONB insert doesn't blow up; see
-        # NFM-2909 follow-up — chunk_id UUIDs flow through here.
-        step.metadata_ = _json_safe({
+        step.metadata_ = {
             "input_count": len(raw_input),
             "mapped_count": len(mapped),
             "cache_level": cache_level,
             "mapped_properties": mapped,
-        })
+        }
         # Persist the metadata column so callers and tests that
         # ``session.refresh(step)`` after the call see the new
         # payload.  The step-row INSERT itself stays dirty until the
@@ -731,12 +667,12 @@ class ExtractionOrchestrator:
             # them and skip-restore can rehydrate them (NFM-2606).
             self._context["passed_properties"] = passed_properties
 
-            step.metadata_ = _json_safe({
+            step.metadata_ = {
                 "staged": staged_count,
                 "rejected": rejected_count,
                 "duplicates": duplicate_count,
                 "passed_properties": passed_properties,
-            })
+            }
             # Persist the metadata column so callers and tests that
             # ``session.refresh(step)`` after the call see the new
             # payload.  The step-row INSERT itself stays dirty until

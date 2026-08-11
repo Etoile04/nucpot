@@ -145,7 +145,6 @@ class TestOntoFuelExtraction:
     async def test_extraction_to_staging(
         self,
         client: AsyncClient,
-        db_session: AsyncSession,
     ):
         """Test extraction pipeline from trigger to staging.
 
@@ -179,20 +178,12 @@ class TestOntoFuelExtraction:
         else:
             # The background task may not have produced a job yet by
             # the time the response returns. Find the most recent job
-            # for this source_reference from the ORM store.
-            from sqlalchemy import select
-
-            from nfm_db.models.extraction_job import ExtractionJob
-
-            result = await db_session.execute(
-                select(ExtractionJob)
-                .where(ExtractionJob.source_reference == "test-lit-001")
-                .order_by(ExtractionJob.created_at.desc())
-                .limit(1)
-            )
-            orm_job = result.scalar_one_or_none()
-            if orm_job is not None:
-                job_id = str(orm_job.id)
+            # for this source_reference from the in-memory _job_store.
+            from nfm_db.services.extraction_pipeline import _job_store
+            for jid, job in _job_store.items():
+                if job.source_reference == "test-lit-001":
+                    job_id = jid
+                    break
             else:
                 pytest.skip("trigger_extraction background task did not create a job yet")
 
