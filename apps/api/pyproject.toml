@@ -346,6 +346,10 @@ markers = [
     "integration: Integration tests (require external services)",
     "golden: Golden regression tests",
     "performance: Performance benchmark tests",
+    # NFM-2893: V2 extraction regression vs. deterministic baseline.
+    # Run with: EXTRACTION_STUB_MODE=true pytest -m parity
+    # Skipped by default (see apps/api/tests/test_parity.py module guard).
+    "parity: Stub-mode regression parity vs. baseline fixtures",
 ]
 
 # NFM-2044 / KR-5.1: Core-module coverage emission (Cobertura XML at
