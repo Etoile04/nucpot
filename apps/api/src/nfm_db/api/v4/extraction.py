@@ -40,7 +40,6 @@ from nfm_db.schemas.extraction import (
 from nfm_db.services.extraction_pipeline import (
     JobStatus,
     _extraction_job_to_dict,
-    get_job,
     get_job_or_orm,
 )
 

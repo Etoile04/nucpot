@@ -12,6 +12,7 @@ Covers all 6 endpoints:
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -41,7 +42,7 @@ async def v4_client(db_session):
     tests exercise validation + response shape, not the V2 pipeline's I/O, so the
     dispatch is stubbed to return a canonical completed-job dict.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     from unittest.mock import AsyncMock, patch
 
     from nfm_db.database import get_db
@@ -61,7 +62,7 @@ async def v4_client(db_session):
         source_reference = kwargs.get("source_reference", "")
         source_type = kwargs.get("source_type", "")
         job_id = "test-v2-job-id"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _job_store[job_id] = ExtractionJob(
             job_id=job_id,
             source_reference=source_reference,

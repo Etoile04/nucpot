@@ -10,6 +10,8 @@ Requires EXTRACTION_STUB_MODE=true in the environment for stub mode tests.
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -24,7 +26,7 @@ async def doi_client(db_session):
     NFM-2739 Phase B: V2 flag defaults ON; stub the dispatch so these
     validation tests don't require real V2 file I/O.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     from unittest.mock import AsyncMock, patch
 
     async def override_get_db():
@@ -40,8 +42,8 @@ async def doi_client(db_session):
             "source_reference": kwargs.get("source_reference", ""),
             "source_type": kwargs.get("source_type", ""),
             "error_message": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
 
     with patch(

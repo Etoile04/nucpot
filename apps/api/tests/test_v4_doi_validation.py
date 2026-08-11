@@ -6,6 +6,8 @@ while valid DOI formats and other source_types are unaffected.
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -24,10 +26,9 @@ async def doi_client(db_session):
     NFM-2739 Phase B: V2 flag defaults ON; stub the dispatch so these
     validation tests don't require real V2 file I/O.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     from unittest.mock import AsyncMock, patch
 
-    from nfm_db.database import get_db
 
     async def override_get_db():
         yield db_session
@@ -42,8 +43,8 @@ async def doi_client(db_session):
             "source_reference": kwargs.get("source_reference", ""),
             "source_type": kwargs.get("source_type", ""),
             "error_message": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
 
     with patch(
