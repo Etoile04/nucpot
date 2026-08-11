@@ -12,13 +12,13 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, CompatJSONB, JSONArray, TimestampMixin
 
 if TYPE_CHECKING:
-    pass
+    from nfm_db.models.ontology_version import OntologyVersion
 
 
 class KEntityType(TimestampMixin, Base):
@@ -45,6 +45,11 @@ class KEntityType(TimestampMixin, Base):
         nullable=True,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ontology_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ontology_versions.id"),
+        nullable=True,
+        comment="FK to the OntologyVersion this type belongs to.",
+    )
 
     def __repr__(self) -> str:
         return f"<KEntityType id={self.id!s} name={self.name!r}>"
@@ -78,6 +83,11 @@ class KRelationType(TimestampMixin, Base):
         nullable=True,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ontology_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ontology_versions.id"),
+        nullable=True,
+        comment="FK to the OntologyVersion this type belongs to.",
+    )
 
     def __repr__(self) -> str:
         return f"<KRelationType id={self.id!s} name={self.name!r}>"
