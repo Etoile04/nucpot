@@ -344,12 +344,15 @@ class GraphBuilder:
         self,
         extracted_properties: list[dict[str, Any]],
         source_id: uuid.UUID | None = None,
+        extraction_job_id: uuid.UUID | None = None,
     ) -> BuildResult:
         """Build KG nodes and edges from extraction pipeline results.
 
         Args:
             extracted_properties: Raw property dicts from extraction_pipeline.
             source_id: Optional data source ID for provenance.
+            extraction_job_id: Optional ExtractionJob PK for LightRAG
+                track_id persistence (NFM-2881).
 
         Returns:
             BuildResult summary with counts.
@@ -460,7 +463,7 @@ class GraphBuilder:
 
         # Post-processing: fire-and-forget LightRAG auto-ingest (NFM-1222)
         if nodes_created > 0 or edges_created > 0:
-            self._fire_lightrag_ingest(new_nodes, new_edges)
+            self._fire_lightrag_ingest(new_nodes, new_edges, extraction_job_id=extraction_job_id)
 
         return result
 
@@ -682,10 +685,17 @@ class GraphBuilder:
         self,
         nodes: list[KGNode],
         edges: list[KGEdge],
+        extraction_job_id: uuid.UUID | None = None,
     ) -> None:
         """Fire-and-forget: serialize and ingest new KG data to LightRAG.
 
         Non-blocking — failures are logged but never propagate.
+
+        Args:
+            nodes: Newly created KGNode records.
+            edges: Newly created KGEdge records.
+            extraction_job_id: Optional ExtractionJob PK for track_id
+                persistence (NFM-2881).
         """
         try:
             from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
@@ -695,6 +705,7 @@ class GraphBuilder:
                 nodes=nodes,
                 edges=edges,
                 node_labels=node_labels,
+                extraction_job_id=extraction_job_id,
             )
         except Exception:
             logger.warning(

@@ -1024,6 +1024,7 @@ async def trigger_extraction(
                 build_result = await builder.build_from_extraction(
                     mapped,
                     source_id=kg_source_id,
+                    extraction_job_id=uuid.UUID(job_id) if job_id else None,
                 )
                 logger.info(
                     "Job %s: KG build completed — nodes_created=%d nodes_matched=%d "
