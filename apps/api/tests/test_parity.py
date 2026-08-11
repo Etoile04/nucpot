@@ -334,7 +334,7 @@ def test_v2_extraction_matches_baseline(fixture_id: str) -> None:
             )
         per_chunk_pairs: list[tuple[dict, dict]] = []
     else:
-        per_chunk_pairs = list(zip(expected_chunks, actual_jsonable, strict=False))
+        per_chunk_pairs = list(zip(expected_chunks, actual_jsonable))
 
     for chunk_idx, (exp_chunk, act_chunk) in enumerate(per_chunk_pairs):
         key_diff = _schema_key_diff(exp_chunk, act_chunk)
