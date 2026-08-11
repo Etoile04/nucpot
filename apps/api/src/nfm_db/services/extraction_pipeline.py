@@ -998,6 +998,7 @@ async def trigger_extraction(
         # knowledge graph review system. Without this stage, extracted
         # properties remain only in _ref_gap_fill_staging and never appear
         # in the KG review queue (kg_nodes with review_status='pending').
+        build_result = None  # NFM-2871: populated if KG build succeeds
         if mapped:
             try:
                 from nfm_db.services.kg_re import GraphBuilder
@@ -1088,6 +1089,29 @@ async def trigger_extraction(
         )
 
     await session.commit()
+
+    # NFM-2871: Fire LightRAG ingest AFTER commit to prevent ghost entities
+    # on rollback. The ingest nodes/edges are carried on BuildResult by
+    # GraphBuilder.build_from_extraction() instead of being fired inline.
+    if build_result and (build_result.ingest_nodes or build_result.ingest_edges):
+        try:
+            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
+
+            node_labels = {
+                n.id: n.label for n in build_result.ingest_nodes
+            }
+            fire_ingest_to_lightrag(
+                nodes=list(build_result.ingest_nodes),
+                edges=list(build_result.ingest_edges),
+                node_labels=node_labels,
+            )
+        except Exception:
+            logger.warning(
+                "Job %s: post-commit LightRAG ingest failed (non-fatal)",
+                job_id,
+                exc_info=True,
+            )
+
     return job
 
 
