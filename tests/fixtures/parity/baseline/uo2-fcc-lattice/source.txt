@@ -1,0 +1,11 @@
+# Lattice Constant of UO2 in the FCC Fluorite Structure
+
+The fluorite-type uranium dioxide (UO2) crystallizes in the face-centered cubic (FCC) structure with space group Fm-3m. At room temperature, the lattice constant of stoichiometric UO2 is 5.4704 angstrom, as determined by X-ray diffraction. The theoretical density is 10.97 g/cm^3.
+
+# Bulk Modulus
+
+First-principles calculations within the DFT+U formalism give a bulk modulus of 207.5 GPa for UO2 at zero temperature. The LDA+U approximation reproduces the experimental value within 2 percent.
+
+# Melting Point
+
+The melting point of UO2 under stoichiometric conditions is 3120 K in pure argon at atmospheric pressure. DSC measurements confirm this value within experimental uncertainty of 20 K.
