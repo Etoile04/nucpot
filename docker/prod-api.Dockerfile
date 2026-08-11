@@ -2,21 +2,36 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install build dependencies (with retry for flaky networks).
+# Install build dependencies with retry for flaky mirror proxies (NFM-2502).
+# The local HTTP proxy (Clash/mihomo) returns transient 502 for .deb
+# downloads.  Retries with backoff absorb transient failures; as a last
+# resort we bypass the proxy entirely and connect to mirrors directly
+# (the runner is in CN with direct mirror access).
+#
 # libcurl4-openssl-dev is needed to build the pycurl wheel used by
 # nfm_db.services.mineru_client (NFM-MINERU-1) — pycurl uses libcurl
 # because httpx/urllib fail the TLS 1.3 handshake against
 # cdn-mineru.openxlab.org.cn on some egress networks, while libcurl handles
-# it reliably. Use Tsinghua mirror first for reliability in CN region,
-# fall back to default debian mirror if that fails.
-RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' /etc/apt/sources.list.d/debian.sources && \
+# it reliably.
+RUN TSINGHUA="https://mirrors.tuna.tsinghua.edu.cn/debian"; \
+    DEBIAN="http://deb.debian.org/debian"; \
+    for mirror in "$TSINGHUA" "$DEBIAN"; do \
+      for attempt in 1 2 3; do \
+        [ "$attempt" -gt 1 ] && { echo "==> apt retry $attempt/3 via $mirror (sleep $((attempt*5))s)..."; sleep $((attempt * 5)); }; \
+        sed -i "s|$TSINGHUA|$DEBIAN|g" /etc/apt/sources.list.d/debian.sources; \
+        sed -i "s|$DEBIAN|$mirror|g" /etc/apt/sources.list.d/debian.sources; \
+        apt-get update && \
+        apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
+        rm -rf /var/lib/apt/lists/* && exit 0; \
+        echo "==> apt via $mirror attempt $attempt failed"; \
+      done; \
+    done; \
+    echo "==> All retries via proxy failed, bypassing HTTP proxy..."; \
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
+    sed -i "s|$TSINGHUA|$DEBIAN|g" /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
-    rm -rf /var/lib/apt/lists/* || \
-    (sed -i 's|https://mirrors.tuna.tsinghua.edu.cn/debian|http://deb.debian.org/debian|g' /etc/apt/sources.list.d/debian.sources && \
-     apt-get update && \
-     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
-     rm -rf /var/lib/apt/lists/*)
+    rm -rf /var/lib/apt/lists/*
 
 # Copy project definition, source, and migrations together so pip can find the package
 COPY apps/api/pyproject.toml ./
