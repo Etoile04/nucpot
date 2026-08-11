@@ -33,6 +33,7 @@ from nfm_db.models.ontology_version import OntologyVersion
 
 if TYPE_CHECKING:
     from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+    from nfm_db.services.kg_re import BuildResult
 from nfm_db.services.extraction_prompt import (
     build_extraction_system_prompt,
     build_ontology_extraction_prompt,
@@ -807,6 +808,16 @@ async def trigger_extraction(
         )
 
     try:
+        # NFM-2871: Initialize build_result at the top of the try block so
+        # the post-commit ingest guard below (`if build_result and ...`)
+        # never raises UnboundLocalError when an earlier stage fails or
+        # the V2-flag-off legacy branch returns early. The early-return
+        # paths inside this try (DOI validation, EmptyExtractionError,
+        # empty raw_properties) all `return job` before reaching the
+        # post-commit block, but the except-handler path falls through
+        # to commit + the LightRAG ingest guard.
+        build_result: BuildResult | None = None
+
         # Defense-in-depth: validate DOI format at pipeline entry (NFM-636)
         if source_type == "doi":
             clean_ref = source_reference.strip().lower().removeprefix("doi:")

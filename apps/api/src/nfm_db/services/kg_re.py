@@ -79,8 +79,8 @@ class BuildResult:
     nodes_matched: int = 0
     edges_created: int = 0
     review_queue_items: int = 0
-    ingest_nodes: tuple = ()
-    ingest_edges: tuple = ()
+    ingest_nodes: tuple[KGNode, ...] = ()
+    ingest_edges: tuple[KGEdge, ...] = ()
 
     @property
     def total_nodes_processed(self) -> int:
