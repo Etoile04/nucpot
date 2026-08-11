@@ -1,0 +1,34 @@
+{
+  "fixture_id": "thoria-mixed-oxide",
+  "title": "ThO2 lattice parameter + elastic moduli + formation energy",
+  "citation": {
+    "kind": "synthesized_reference",
+    "note": "Factual crystallographic and elastic-property reference values for thoria (ThO2) in the fluorite structure; non-copyrightable factual data points compiled from widely reported values for the thoria end-member relevant to (Th,U)O2 solid-solution fuels.",
+    "values_sources": [
+      {"property": "lattice_parameter", "value": 5.5959, "unit": "Å", "source_sentence": "The lattice parameter of pure ThO2 is 5.5959 angstrom at room temperature."},
+      {"property": "density", "value": 9.7, "unit": "g/cm^3", "source_sentence": "The theoretical density of ThO2 is 9.7 g/cm^3."},
+      {"property": "bulk_modulus", "value": 240, "unit": "GPa", "temperature_K": 300, "source_sentence": "The bulk modulus of ThO2 measured by ultrasonic resonance is 240 GPa at 300 K."},
+      {"property": "shear_modulus", "value": 103, "unit": "GPa", "source_sentence": "The shear modulus is 103 GPa."},
+      {"property": "youngs_modulus", "value": 271, "unit": "GPa", "source_sentence": "Youngs modulus is 271 GPa."},
+      {"property": "formation_energy", "value": -1226, "unit": "kJ/mol", "source_sentence": "The formation energy of ThO2 from the elements in their standard states is -1226 kJ/mol."}
+    ]
+  },
+  "validator": {
+    "agent_id": "98fc3168-be45-4673-808e-22238b366352",
+    "agent_role": "Lead Engineer",
+    "name": "Paperclip Lead Engineer (NFM-2892)",
+    "validation_method": "Manual review against V2 stub-mode output produced by tools/parity_baseline/compute_expected.py. Verified source.txt -> expected.json entity/relation/property traceability and 5x byte-identical reproducibility."
+  },
+  "validation_date": "2026-08-12",
+  "ontology_version": "0.1.0",
+  "schema_version": "v2-strangler-fig-final-chunks",
+  "pipeline_version": {
+    "raw_text_loader": "NFM-2677-B2",
+    "section_segmenter": "NFM-2677-B3",
+    "entity_extractor": "NFM-2677-B4",
+    "property_normalizer": "NFM-2677-B5",
+    "chunk_builder": "NFM-2677-B6"
+  },
+  "upstream_issues": ["NFM-2891", "NFM-2875", "NFM-2890"],
+  "extracted_entities_summary": {"formula_count": 1, "property_count": 4, "measurement_count": 6}
+}
