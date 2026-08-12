@@ -379,10 +379,12 @@ async def test_trigger_extraction_default_flag_true_routes_to_orchestrator() -> 
     mock_session.commit = AsyncMock()
     mock_session.flush = AsyncMock()
     mock_session.add = MagicMock()
-    # _get_latest_published_ontology is awaited inside the V2 dispatch path
-    # to populate ontology_version_id / ontology_version_str on the ORM row.
+    # _get_latest_published_ontology uses the sync ``result.scalars().first()``
+    # accessor on a real AsyncSession; SQLAlchemy 2.0+ ``AsyncSession.execute``
+    # returns a sync ``Result``, so ``.first()`` is sync, not awaitable.
+    # Mock it as a sync MagicMock returning None (no published ontology).
     mock_scalars = MagicMock()
-    mock_scalars.first = AsyncMock(return_value=None)
+    mock_scalars.first = MagicMock(return_value=None)
     _exec = MagicMock()
     _exec.scalars.return_value = mock_scalars
     _exec.scalar_one_or_none = MagicMock(return_value=None)
