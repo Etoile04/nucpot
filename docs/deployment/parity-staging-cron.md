@@ -36,10 +36,40 @@ local re-runs — that is the whole point of this cron.
 
 ## Install
 
-### Linux (`/etc/cron.d/`)
+> **CRITICAL — do the edit step FIRST.** The shipped cron fragment
+> (`scripts/cron/parity-staging-cron.d/nucpot-parity`) defaults to the LE
+> author's macOS dev paths (`/Users/lwj04/Projects/nucpot`). Those paths
+> do **not exist** on the Linux staging host; if you `sudo install` the
+> file unchanged, the cron daemon will silently spawn a process that
+> fails immediately and you'll get a misleading 02:00 UTC "PASS" (or
+> nothing). **Edit the fragment's `PARITY_*` lines + the cron-line
+> script path before installing.**
+
+### 1. Edit the fragment for the staging host
+
+Open `scripts/cron/parity-staging-cron.d/nucpot-parity` and replace the
+following values with the staging-host equivalents. For the standard
+`/srv/nucpot` checkout the overrides are:
+
+| Variable        | Shipped (dev)                                   | Override for staging                       |
+| --------------- | ----------------------------------------------- | ------------------------------------------ |
+| `PARITY_REPO_DIR` | `/Users/lwj04/Projects/nucpot`                | `/srv/nucpot`                              |
+| `PARITY_PYTHON`   | `/Users/lwj04/Projects/nucpot/apps/api/.venv/bin/python` | `/srv/nucpot/apps/api/.venv/bin/python` |
+| cron-line script | `/Users/lwj04/Projects/nucpot/scripts/run-parity-cron.sh` | `/srv/nucpot/scripts/run-parity-cron.sh` |
+
+The fragment's own header documents the same mapping. Quick sed (review
+the diff before saving):
 
 ```bash
-# From a repo checkout on the staging host (after this PR is merged):
+sed -i.bak \
+    -e 's|/Users/lwj04/Projects/nucpot|/srv/nucpot|g' \
+    scripts/cron/parity-staging-cron.d/nucpot-parity
+diff scripts/cron/parity-staging-cron.d/nucpot-parity{.bak,}
+```
+
+### 2. Install the fragment (Linux)
+
+```bash
 sudo install -o root -g root -m 0644 \
     scripts/cron/parity-staging-cron.d/nucpot-parity \
     /etc/cron.d/nucpot-parity
@@ -48,10 +78,12 @@ sudo mkdir -p /var/log/nucpot/parity
 sudo chown root:root /var/log/nucpot/parity
 ```
 
-### macOS (per-user `crontab`)
+### 3. macOS (per-user `crontab`)
+
+macOS does not honour `/etc/cron.d/`, but `crontab(1)` accepts a file:
 
 ```bash
-# macOS does not honour /etc/cron.d/, but crontab(1) accepts a file:
+# After editing the fragment (see step 1):
 crontab scripts/cron/parity-staging-cron.d/nucpot-parity
 # Confirm:
 crontab -l
@@ -70,14 +102,17 @@ mkdir -p /var/log/nucpot/parity
 After installing, force a run and confirm the artifact appears:
 
 ```bash
+# Catch shell-syntax typos in the script before cron does (M2 hardening):
+bash -n /srv/nucpot/scripts/run-parity-cron.sh
+
 # Linux:
 sudo run-parts --test /etc/cron.daily
 # (or just wait for 02:00 UTC, then):
 ls -la /var/log/nucpot/parity/
 
-# Force a manual run (any host):
-/Users/lwj04/Projects/nucpot/scripts/run-parity-cron.sh --dry-run
-/Users/lwj04/Projects/nucpot/scripts/run-parity-cron.sh
+# Force a manual run (any host, substitute your PARITY_REPO_DIR):
+"$PARITY_REPO_DIR/scripts/run-parity-cron.sh" --dry-run
+"$PARITY_REPO_DIR/scripts/run-parity-cron.sh"
 
 # Inspect today's summary:
 cat /var/log/nucpot/parity/$(date -u +%Y-%m-%d)/summary.json

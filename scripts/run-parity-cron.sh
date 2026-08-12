@@ -138,12 +138,24 @@ EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
 SUMMARY="$RUN_DIR/summary.json"
-"$PYTHON_BIN" - <<PYEOF
+
+# Pass values to the Python summary writer via env vars so the heredoc can
+# stay single-quoted (`<<'PYEOF'`) — no bash interpolation into Python source,
+# so spaces / shell metacharacters in env-overridden paths are safe by construction.
+export PARITY_PYTEST_LOG="$RUN_DIR/pytest-output.log"
+export PARITY_SUMMARY="$SUMMARY"
+export PARITY_TIMESTAMP="$TIMESTAMP"
+export PARITY_REPO_SHA="$REPO_SHA"
+export PARITY_PYTEST_EXIT_CODE="$EXIT_CODE"
+
+"$PYTHON_BIN" - <<'PYEOF'
 import json
+import os
 import re
+import sys
 from pathlib import Path
 
-log_path = Path("$RUN_DIR/pytest-output.log")
+log_path = Path(os.environ["PARITY_PYTEST_LOG"])
 text = log_path.read_text(encoding="utf-8")
 
 passed = re.findall(r"^(tests/parity/test_parity\.py::[^\s]+)\s+PASSED", text, flags=re.MULTILINE)
@@ -153,18 +165,33 @@ errors = re.findall(r"^(tests/parity/test_parity\.py::[^\s]+)\s+ERROR", text, fl
 def short(nodeid: str) -> str:
     return nodeid.split("::", 1)[-1]
 
+total = len(passed) + len(failed) + len(errors)
+exit_code = int(os.environ.get("PARITY_PYTEST_EXIT_CODE", "0"))
+
+# Guard against a silent false-PASS when pytest's output format changes (or
+# pytest silently collects zero tests). NFM-2924's 7-day streak cites these
+# artifacts, so a misleading PASS row would be very expensive to debug later.
+if total == 0:
+    print(
+        f"ERROR: pytest produced no recognizable fixtures (exit_code={exit_code}); "
+        "refusing to write a misleading summary.json. Investigate pytest output at "
+        f"{log_path}.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
 summary = {
-    "timestamp": "$TIMESTAMP",
-    "repo_sha": "$REPO_SHA",
-    "total_fixtures": len(passed) + len(failed) + len(errors),
+    "timestamp": os.environ["PARITY_TIMESTAMP"],
+    "repo_sha": os.environ["PARITY_REPO_SHA"],
+    "total_fixtures": total,
     "passed": len(passed),
     "failed": len(failed) + len(errors),
-    "status": "PASS" if (len(failed) + len(errors)) == 0 else "FAIL",
+    "status": "PASS" if (len(failed) + len(errors)) == 0 and exit_code == 0 else "FAIL",
     "passed_fixtures": [short(n) for n in passed],
     "failed_fixtures": [short(n) for n in failed + errors],
 }
 
-Path("$SUMMARY").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+Path(os.environ["PARITY_SUMMARY"]).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 print(f"Result: {summary['status']} ({summary['passed']} passed, {summary['failed']} failed)")
 PYEOF
 

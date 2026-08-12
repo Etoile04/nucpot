@@ -1,8 +1,23 @@
 # =============================================================================
 # NFM-DB V2 parity baseline cron (NFM-2946 / ADR-0007 §3 staging gate)
 # =============================================================================
-# Install on the staging host as a cron entry. Two install paths:
+# >>>>> STAGING-HOST INSTALLATION REQUIRED <<<<<
 #
+# The PARITY_REPO_DIR / PARITY_PYTHON / cron-command paths below are
+# **dev-machine defaults** (LE author's macOS). They DO NOT exist on a
+# Linux staging host. You MUST edit the four `PARITY_*` lines below AND
+# the cron line at the bottom before `sudo install`-ing this file into
+# /etc/cron.d/. See docs/deployment/parity-staging-cron.md for the
+# full install runbook.
+#
+# Quick reference values for a typical Linux staging host:
+#   PARITY_REPO_DIR   -> /srv/nucpot                            (path to checkout)
+#   PARITY_PYTHON     -> /srv/nucpot/apps/api/.venv/bin/python
+#   PARITY_ARTIFACTS  -> /var/log/nucpot/parity                 (default OK; ensure writable)
+#   cron-line script  -> /srv/nucpot/scripts/run-parity-cron.sh
+# =============================================================================
+#
+# Full install paths:
 #   Linux:
 #     sudo install -o root -g root -m 0644 \
 #         scripts/cron/parity-staging-cron.d/nucpot-parity \
@@ -12,10 +27,9 @@
 #   macOS (per-user crontab; see docs/deployment/parity-staging-cron.md):
 #     crontab scripts/cron/parity-staging-cron.d/nucpot-parity
 #
-# Schedule: 02:00 UTC nightly (was the proposed slot in the original AC).
-# The runner archives per-fixture results under $PARITY_ARTIFACTS with
-# 30-day automatic rotation; the NFM-2924 7-day green streak tracks those
-# artifacts, not local re-runs.
+# Schedule: 02:00 UTC nightly. The runner archives per-fixture results
+# under $PARITY_ARTIFACTS with 30-day automatic rotation; the NFM-2924
+# 7-day green streak tracks those artifacts, not local re-runs.
 #
 # Env vars (override defaults by exporting in the cron user's shell or by
 # editing the `PARITY_*` lines below):
