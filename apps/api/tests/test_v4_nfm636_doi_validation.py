@@ -39,9 +39,14 @@ def _pin_extraction_v2_off():
     outside of stub mode (NFM-2909 partial fix), so these regression
     tests must continue exercising V1 until V2 gains parity.
     """
-    with patch(
-        "nfm_db.config.get_settings",
-        return_value=_make_settings_v1(),
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
     ):
         yield
 
