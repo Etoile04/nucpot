@@ -28,7 +28,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ref_gap_fill import (
     Confidence,
-
+    RefGapFillStaging,
+    StagingStatus,
+)
+from nfm_db.services.extraction_pipeline import (
+    JobStatus,
+    _apply_property_mapping,
+    _job_store,
+    ontofuel_extract,
+    trigger_extraction,
+)
+from nfm_db.services.quality_gate import (
+    GateDecision,
+    QualityGateService,
+    compute_dedup_hash,
+)
 
 # ---------------------------------------------------------------------------
 # V1 regression pin — NFM-2876 flipped the default to True; this file
@@ -54,21 +68,6 @@ def _pin_extraction_v2_off():
         return_value=_make_settings_v1(),
     ):
         yield
-    RefGapFillStaging,
-    StagingStatus,
-)
-from nfm_db.services.extraction_pipeline import (
-    JobStatus,
-    _apply_property_mapping,
-    _job_store,
-    ontofuel_extract,
-    trigger_extraction,
-)
-from nfm_db.services.quality_gate import (
-    GateDecision,
-    QualityGateService,
-    compute_dedup_hash,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures

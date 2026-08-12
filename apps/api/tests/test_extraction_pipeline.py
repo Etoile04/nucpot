@@ -23,7 +23,14 @@ from nfm_db.services.extraction_pipeline import (
     ExtractionJob,
     JobStatus,
     _apply_property_mapping,
-
+    _find_matching,
+    _generate_job_id,
+    _job_store,
+    _update_job,
+    get_job,
+    ontofuel_extract,
+    trigger_extraction,
+)
 
 # ---------------------------------------------------------------------------
 # V1 regression pin — NFM-2876 flipped the default to True; this file
@@ -48,14 +55,6 @@ def _pin_extraction_v2_off():
         return_value=_make_settings_v1(),
     ):
         yield
-    _find_matching,
-    _generate_job_id,
-    _job_store,
-    _update_job,
-    get_job,
-    ontofuel_extract,
-    trigger_extraction,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures
