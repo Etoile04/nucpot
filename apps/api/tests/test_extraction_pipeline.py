@@ -13,6 +13,7 @@ Conventions:
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -690,3 +691,230 @@ class TestTriggerExtraction:
         assert job.status == JobStatus.COMPLETED
         assert job.rejected_count == 0
         assert job.staged_count == 1
+
+
+# ---------------------------------------------------------------------------
+# NFM-2871: LightRAG ingest must NOT fire when session.commit() raises
+# (rollback path) — otherwise LightRAG holds ghost entities that were never
+# persisted to the database. The post-commit block in trigger_extraction()
+# guards on `if build_result and (...)` after a successful commit; if commit
+# raises, fire_ingest_to_lightrag must remain untouched.
+# ---------------------------------------------------------------------------
+
+
+class TestLightRAGIngestAfterCommit:
+    """Regression tests for NFM-2871: rollback path must not trigger LightRAG."""
+
+    @pytest.mark.asyncio
+    async def test_lightrag_not_called_when_commit_raises(
+        self, db_session: AsyncSession
+    ):
+        """Simulate rollback: session.commit() raises. LightRAG must NOT fire.
+
+        Acceptance criterion (NFM-2871 issue): "session.rollback() 后 LightRAG
+        无新增实体". We model rollback by making commit() raise; the
+        post-commit ingest guard must remain unentered.
+        """
+
+        # Build a KG build branch that succeeds (so build_result is populated).
+        # If build_result stayed None, the test would pass vacuously; we need
+        # the guard at line 1096 to actually be exercised.
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 0
+        mock_build_result.edges_created = 0
+        mock_build_result.review_queue_items = 0
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+        mock_node.label = "UO2"
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        mock_builder = AsyncMock()
+        mock_builder.build_from_extraction = AsyncMock(return_value=mock_build_result)
+
+        mock_bulk_result = MagicMock()
+        mock_bulk_result.accepted = []
+        mock_bulk_result.rejected = []
+        mock_bulk_result.duplicates = []
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(return_value=mock_bulk_result)
+        mock_gate.stage_record = AsyncMock(return_value=None)
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock(return_value=None)
+
+        # Force session.commit() to raise — models the rollback path.
+        commit_call_count = 0
+
+        async def commit_side_effect(*_args, **_kwargs):
+            nonlocal commit_call_count
+            commit_call_count += 1
+            raise RuntimeError("simulated commit failure (rollback)")
+
+        db_session.commit = commit_side_effect  # type: ignore[method-assign]
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.QualityGateService",
+                return_value=mock_gate,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.GapScanService",
+                return_value=mock_scanner,
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder",
+                return_value=mock_builder,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag"
+            ) as mock_fire,
+        ):
+            with pytest.raises(RuntimeError, match="simulated commit failure"):
+                await trigger_extraction(
+                    session=db_session,
+                    source_reference="rollback_source",
+                    source_type="file",
+                )
+
+        # Commit was attempted
+        assert commit_call_count >= 1
+        # The fix's whole point: LightRAG ingest MUST NOT fire on commit failure.
+        mock_fire.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_lightrag_called_only_after_commit_succeeds(
+        self, db_session: AsyncSession
+    ):
+        """Order check: fire_ingest_to_lightrag must run AFTER session.commit().
+
+        Without this guarantee a future refactor could move the fire call back
+        inside the try block and reintroduce the ghost-entity regression.
+        """
+
+        # Track call order: which ran first, commit or fire?
+        call_order: list[str] = []
+
+        async def commit_record(*_args, **_kwargs):
+            call_order.append("commit")
+
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 0
+        mock_build_result.edges_created = 0
+        mock_build_result.review_queue_items = 0
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+        mock_node.label = "ZrO2"
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        mock_builder = AsyncMock()
+        mock_builder.build_from_extraction = AsyncMock(return_value=mock_build_result)
+
+        mock_bulk_result = MagicMock()
+        mock_bulk_result.accepted = []
+        mock_bulk_result.rejected = []
+        mock_bulk_result.duplicates = []
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(return_value=mock_bulk_result)
+        mock_gate.stage_record = AsyncMock(return_value=None)
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock(return_value=None)
+
+        db_session.commit = commit_record  # type: ignore[method-assign]
+
+        def fire_record(*_args, **_kwargs):
+            call_order.append("fire_ingest_to_lightrag")
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.QualityGateService",
+                return_value=mock_gate,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.GapScanService",
+                return_value=mock_scanner,
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder",
+                return_value=mock_builder,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag",
+                side_effect=fire_record,
+            ) as mock_fire,
+        ):
+            await trigger_extraction(
+                session=db_session,
+                source_reference="ordering_source",
+                source_type="file",
+            )
+
+        # Fire ran, and ran AFTER commit (strict ordering)
+        mock_fire.assert_called_once()
+        assert call_order, "neither commit nor fire was called"
+        assert call_order[-1] == "fire_ingest_to_lightrag"
+        assert "commit" in call_order
+        assert call_order.index("commit") < call_order.index(
+            "fire_ingest_to_lightrag"
+        ), f"commit must precede fire_ingest_to_lightrag; got {call_order}"
+
+    @pytest.mark.asyncio
+    async def test_lightrag_skipped_when_ingest_nodes_empty(
+        self, db_session: AsyncSession
+    ):
+        """Empty ingest_nodes/edges → fire is a no-op even on successful commit."""
+
+        # BuildResult with no ingest payload (e.g., no entities were extracted).
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 0
+        mock_build_result.nodes_matched = 2
+        mock_build_result.edges_created = 0
+        mock_build_result.review_queue_items = 0
+        mock_build_result.ingest_nodes = ()
+        mock_build_result.ingest_edges = ()
+
+        mock_builder = AsyncMock()
+        mock_builder.build_from_extraction = AsyncMock(return_value=mock_build_result)
+
+        mock_bulk_result = MagicMock()
+        mock_bulk_result.accepted = []
+        mock_bulk_result.rejected = []
+        mock_bulk_result.duplicates = []
+
+        mock_gate = AsyncMock()
+        mock_gate.process_bulk = AsyncMock(return_value=mock_bulk_result)
+        mock_gate.stage_record = AsyncMock(return_value=None)
+
+        mock_scanner = AsyncMock()
+        mock_scanner.scan_gaps = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.QualityGateService",
+                return_value=mock_gate,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.GapScanService",
+                return_value=mock_scanner,
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder",
+                return_value=mock_builder,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag"
+            ) as mock_fire,
+        ):
+            await trigger_extraction(
+                session=db_session,
+                source_reference="empty_ingest_source",
+                source_type="file",
+            )
+
+        mock_fire.assert_not_called()

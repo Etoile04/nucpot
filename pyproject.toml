@@ -61,6 +61,9 @@ ignore_missing_imports = true
 testpaths = ["tests", "scripts/okr/tests"]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
+markers = [
+    "parity: V2 extraction reference-baseline parity tests (NFM-2891 / NFM-2875 T1)",
+]
 
 [build-system]
 requires = ["setuptools>=75.0"]
