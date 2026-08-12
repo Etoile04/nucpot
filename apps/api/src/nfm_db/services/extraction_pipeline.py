@@ -749,6 +749,9 @@ async def trigger_extraction(
         from nfm_db.services.extraction_orchestrator import (
             ExtractionOrchestrator,
         )
+        from nfm_db.services.extraction_pipeline_dispatch import (
+            load_v2_content,
+        )
 
         if job_id is None:
             job_id = _generate_job_id()
@@ -767,14 +770,41 @@ async def trigger_extraction(
             source_type=source_type,
             extract_figures=extract_figures,
             extract_tables=extract_tables,
+            element_systems=element_systems,
+            cache_level=cache_level,
+            max_confidence=max_confidence,
             ontology_version_id=ontology_version_id,
             ontology_version_str=ontology_version_str,
         )
         session.add(orm_job)
         await session.flush()
 
+        # NFM-2909: Load source content BEFORE the orchestrator runs so
+        # the chunk step has something to chunk. The V2 orchestrator
+        # (ExtractionOrchestrator, NFM-2568-T1) is content-agnostic —
+        # it relies on the caller to pass ``content=`` via kwargs.
+        # Without this, _step_chunk returns an empty chunk list and
+        # _step_extract produces zero raw_extractions, breaking the
+        # parity test (extracted_count == 0 vs V1's expected count).
+        # Loader failures are surfaced on the parent job row so the
+        # caller sees ``status='failed'`` + ``error_message`` instead
+        # of a 500.
+        try:
+            content = load_v2_content(source_reference, source_type)
+        except (FileNotFoundError, NotImplementedError) as loader_exc:
+            orm_job.status = JobStatus.FAILED
+            orm_job.error_message = (
+                f"V2 content loader failed for source_type="
+                f"{source_type or '<empty>'!r}: {loader_exc}"
+            )
+            orm_job.completed_at = datetime.now(UTC)
+            session.add(orm_job)
+            await session.commit()
+            return orm_job
+
         orchestrator = ExtractionOrchestrator(session, orm_job)
         return await orchestrator.run(
+            content=content,
             element_systems=element_systems,
             cache_level=cache_level,
             max_confidence=max_confidence,
