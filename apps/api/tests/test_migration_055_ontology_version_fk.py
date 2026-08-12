@@ -14,7 +14,7 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-from nfm_db.models import KEntityType, KRelationType, OntologyVersion
+from nfm_db.models import KEntityType, KRelationType
 
 REVISION = "055_add_ontology_version_fk_to_type_tables"
 DOWN_REVISION = "053_align_extraction_gap_with_adr_nfm_2675"
@@ -155,10 +155,10 @@ class TestModelParity:
 
     def test_kentity_type_fk_target(self) -> None:
         col = KEntityType.__table__.columns["ontology_version_id"]
-        fk = list(col.foreign_keys)[0]
+        fk = next(iter(col.foreign_keys))
         assert fk.target_fullname == "ontology_versions.id"
 
     def test_krelation_type_fk_target(self) -> None:
         col = KRelationType.__table__.columns["ontology_version_id"]
-        fk = list(col.foreign_keys)[0]
+        fk = next(iter(col.foreign_keys))
         assert fk.target_fullname == "ontology_versions.id"
