@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ontology_version import OntologyVersion
@@ -71,8 +72,16 @@ async def _get_latest_published_ontology(
     )
     try:
         result = await session.execute(stmt)
-        return result.scalars().first()
-    except Exception:
+        # NOTE: AsyncScalarResult.first() is an async-only method — calling it
+        # synchronously returns a coroutine object, never the row.  Without the
+        # ``await`` here the function would hand back a coroutine to every
+        # caller, defeating the entire purpose of this helper and silently
+        # regressing V2 ontology-driven extraction (Hermes CRITICAL, 2026-08-12).
+        return await result.scalars().first()
+    except (SQLAlchemyError, AttributeError):
+        # Narrowed from ``Exception`` so unrelated bugs (KeyError, TypeError,
+        # asyncio.CancelledError, ...) surface to the caller instead of being
+        # masked as a "missing ontology, use static prompt".
         logger.warning(
             "Failed to query latest published ontology; falling back to static prompt",
             exc_info=True,

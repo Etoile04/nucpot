@@ -336,3 +336,71 @@ async def test_parity_empty_input_returns_no_staged_no_gaps() -> None:
     assert new["accepted_count"] == 0
     assert legacy["rejected_count"] == 0
     assert new["rejected_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Hermes WARNING 2026-08-12: dedicated V2-flag-on end-to-end test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trigger_extraction_default_flag_true_routes_to_orchestrator() -> None:
+    """End-to-end V2-flag-on coverage (Hermes WARNING 2026-08-12).
+
+    Asserts that ``trigger_extraction`` — the production entry point —
+    actually dispatches to ``ExtractionOrchestrator`` when the post-flip
+    default ``Settings.extraction_v2_enabled is True`` is in effect, not
+    only that the flag default itself is True.
+
+    The dispatch in :func:`trigger_extraction` lazy-imports
+    ``ExtractionOrchestrator`` from ``nfm_db.services.extraction_orchestrator``;
+    patching the source module intercepts that import correctly.
+    """
+    from nfm_db.config import get_settings
+    from nfm_db.services.extraction_pipeline import trigger_extraction
+
+    # Sanity-check the post-flip default without patching anything.
+    os.environ.pop("NFM_EXTRACTION_V2_ENABLED", None)
+    assert get_settings().extraction_v2_enabled is True, (
+        "Flag default must be True after NFM-2869-T2 flip — if this fails, "
+        "the dispatch below is meaningless."
+    )
+
+    mock_session = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.flush = AsyncMock()
+    mock_session.add = MagicMock()
+    # _get_latest_published_ontology is awaited inside the V2 dispatch path
+    # to populate ontology_version_id / ontology_version_str on the ORM row.
+    mock_scalars = MagicMock()
+    mock_scalars.first = AsyncMock(return_value=None)
+    _exec = MagicMock()
+    _exec.scalars.return_value = mock_scalars
+    _exec.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=_exec)
+
+    fake_run = AsyncMock(return_value=MagicMock(status="completed", id=uuid.uuid4()))
+
+    with (
+        patch(
+            "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator"
+        ) as mock_orch_cls,
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.load_v2_content",
+            new_callable=AsyncMock,
+            return_value="# fake source content",
+        ),
+    ):
+        mock_orch_cls.return_value.run = fake_run
+
+        await trigger_extraction(
+            mock_session,
+            source_reference="doi:10.1234/parity-flag-true",
+            source_type="doi",
+        )
+
+    # The V2 orchestrator MUST have been instantiated exactly once and its
+    # run() awaited.  If the dispatch fell through to legacy, mock_orch_cls
+    # would not have been touched.
+    mock_orch_cls.assert_called_once()
+    fake_run.assert_awaited_once()

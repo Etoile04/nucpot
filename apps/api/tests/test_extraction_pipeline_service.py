@@ -1390,20 +1390,29 @@ class TestTriggerExtraction:
 
 
 class TestGetLatestPublishedOntology:
-    """Tests for _get_latest_published_ontology helper (NFM-2640)."""
+    """Tests for _get_latest_published_ontology helper (NFM-2640).
+
+    Regression coverage for Hermes CRITICAL 2026-08-12:
+    ``result.scalars().first()`` is async-only — must be awaited.  All
+    mocks in this class therefore use ``AsyncMock`` for the ``.first``
+    attribute so the real SQLAlchemy semantics are exercised.
+    """
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_published_ontology(self) -> None:
         """Helper returns None when no OntologyVersion has status='published'."""
         mock_session = AsyncMock()
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        # AsyncScalarResult.first() is async — must be AsyncMock with return_value.
+        mock_scalars.first = AsyncMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         result = await _get_latest_published_ontology(mock_session)
         assert result is None
+        # Crucially the await path was taken — .first() was called exactly once.
+        mock_scalars.first.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_returns_latest_published_ontology(self) -> None:
@@ -1418,7 +1427,7 @@ class TestGetLatestPublishedOntology:
             "relation_types": [{"name": "contains"}],
         }
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = AsyncMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1426,6 +1435,66 @@ class TestGetLatestPublishedOntology:
         result = await _get_latest_published_ontology(mock_session)
         assert result is mock_ov
         assert result.version == "1.2.0"
+        mock_scalars.first.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_does_not_return_coroutine_object(self) -> None:
+        """Regression (Hermes 2026-08-12): function must return the row, not a coroutine.
+
+        ``AsyncScalarResult.first()`` is an ``async def`` method; calling it
+        synchronously returns a coroutine object.  Before the fix, the helper
+        returned that coroutine without awaiting, which silently regressed
+        V2 ontology-driven extraction under the flag-true default.
+        """
+        import inspect
+
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first = AsyncMock(return_value="the-row")
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _get_latest_published_ontology(mock_session)
+        assert not inspect.iscoroutine(result), (
+            "Helper must await result.scalars().first(); returning the coroutine "
+            "regresses V2 ontology-driven extraction."
+        )
+        assert result == "the-row"
+
+    @pytest.mark.asyncio
+    async def test_narrowed_exception_surfaces_unrelated_bugs(self) -> None:
+        """Regression (Hermes 2026-08-12): ``except Exception`` was too broad.
+
+        After the fix, only ``SQLAlchemyError`` and ``AttributeError`` are
+        caught (returning None so the static prompt path falls back).  All
+        other exceptions — e.g. ``KeyError``, ``TypeError``, ``ValueError``
+        from a programming bug — must propagate so they are not silently
+        masked as "missing ontology, use static prompt".
+        """
+        from sqlalchemy.exc import OperationalError
+
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+
+        async def _raise_keyerror() -> Any:
+            raise KeyError("not_a_db_error")
+
+        mock_scalars.first = AsyncMock(side_effect=_raise_keyerror)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with pytest.raises(KeyError):
+            await _get_latest_published_ontology(mock_session)
+
+        # OperationalError (a SQLAlchemyError subclass) MUST still be swallowed
+        # so the static-prompt fallback path works when the DB is briefly down.
+        mock_scalars.first = AsyncMock(
+            side_effect=OperationalError("SELECT 1", {}, Exception("db down"))
+        )
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is None
 
 
 class TestOntologyPromptInPipeline:
