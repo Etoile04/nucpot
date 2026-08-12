@@ -33,6 +33,7 @@ from nfm_db.models.ontology_version import OntologyVersion
 
 if TYPE_CHECKING:
     from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+    from nfm_db.services.kg_re import BuildResult
 from nfm_db.services.extraction_prompt import (
     build_extraction_system_prompt,
     build_ontology_extraction_prompt,
@@ -841,6 +842,16 @@ async def trigger_extraction(
         )
 
     try:
+        # NFM-2871: Initialize build_result at the top of the try block so
+        # the post-commit ingest guard below (`if build_result and ...`)
+        # never raises UnboundLocalError when an earlier stage fails or
+        # the V2-flag-off legacy branch returns early. The early-return
+        # paths inside this try (DOI validation, EmptyExtractionError,
+        # empty raw_properties) all `return job` before reaching the
+        # post-commit block, but the except-handler path falls through
+        # to commit + the LightRAG ingest guard.
+        build_result: BuildResult | None = None
+
         # Defense-in-depth: validate DOI format at pipeline entry (NFM-636)
         if source_type == "doi":
             clean_ref = source_reference.strip().lower().removeprefix("doi:")
@@ -1032,6 +1043,7 @@ async def trigger_extraction(
         # knowledge graph review system. Without this stage, extracted
         # properties remain only in _ref_gap_fill_staging and never appear
         # in the KG review queue (kg_nodes with review_status='pending').
+        build_result = None  # NFM-2871: populated if KG build succeeds
         if mapped:
             try:
                 from nfm_db.services.kg_re import GraphBuilder
@@ -1122,6 +1134,29 @@ async def trigger_extraction(
         )
 
     await session.commit()
+
+    # NFM-2871: Fire LightRAG ingest AFTER commit to prevent ghost entities
+    # on rollback. The ingest nodes/edges are carried on BuildResult by
+    # GraphBuilder.build_from_extraction() instead of being fired inline.
+    if build_result and (build_result.ingest_nodes or build_result.ingest_edges):
+        try:
+            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
+
+            node_labels = {
+                n.id: n.label for n in build_result.ingest_nodes
+            }
+            fire_ingest_to_lightrag(
+                nodes=list(build_result.ingest_nodes),
+                edges=list(build_result.ingest_edges),
+                node_labels=node_labels,
+            )
+        except Exception:
+            logger.warning(
+                "Job %s: post-commit LightRAG ingest failed (non-fatal)",
+                job_id,
+                exc_info=True,
+            )
+
     return job
 
 

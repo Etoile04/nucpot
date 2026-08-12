@@ -1,0 +1,47 @@
+[
+  {
+    "content": "# Lattice Parameter of ThO2 and (Th,U)O2 Solid Solutions Thoria (ThO2) adopts the same fluorite structure as UO2 with space group Fm-3m. The lattice parameter of pure ThO2 is 5.5959 angstrom at room temperature. The theoretical density of ThO2 is 9.7 g/cm^3. # Elastic Properties The bulk modulus of ThO2 measured by ultrasonic resonance is 240 GPa at 300 K. The shear modulus is 103 GPa. Youngs modulus is 271 GPa. All values are reported for fully-dense polycrystalline samples. # Formation Energy The formation energy of ThO2 from the elements in their standard states is -1226 kJ/mol. DFT calculations within the LDA give formation energy in good agreement.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      661
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "DFT",
+          "GPa",
+          "LDA",
+          "ThO2",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "density",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus",
+          "formation_energy"
+        ],
+        "measurements": [
+          "103 GPa",
+          "1226 k",
+          "240 GPa",
+          "271 GPa",
+          "300 K",
+          "5.5959 Å",
+          "9.7 g/cm^3"
+        ]
+      },
+      "summary": {
+        "formula_count": 5,
+        "property_count": 6,
+        "measurement_count": 7
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

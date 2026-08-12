@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
 from nfm_db.database import get_db
 from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMeasurement
+from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES, ExtractionStep
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     ExtractionStatusResponse,
@@ -715,3 +716,80 @@ async def get_ingest_job_status(
         status_code=404,
         detail=f"Extraction job '{job_id}' not found.",
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/extraction/jobs/{job_id}/steps/{step_name}  (NFM-2883)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/extraction/jobs/{job_id}/steps/{step_name}",
+    summary="查询单个管道步骤状态",
+    description=(
+        "返回指定提取任务中某个步骤的状态、时间戳及关联 track_id。\n\n"
+        "Return the status, timestamps, and associated track_id for a "
+        "single pipeline step within an extraction job."
+    ),
+)
+async def get_extraction_step_status(
+    job_id: UUID,
+    step_name: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    """查询单个管道步骤状态 (NFM-2883).
+
+    Looks up the parent :class:`ExtractionJob` by ``job_id``, then the
+    child :class:`ExtractionStep` by ``job_id + step_type``.  Returns a
+    flat envelope with status, timestamps, and ``track_id`` (when the
+    column exists; otherwise ``null``).
+    """
+    # Validate step_name against known step types.
+    if step_name not in EXTRACTION_STEP_TYPES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Step '{step_name}' not found.",
+        )
+
+    # Fetch the parent job.
+    job_row = (
+        await session.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_id)
+        )
+    ).scalar_one_or_none()
+
+    if job_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Extraction job '{job_id}' not found.",
+        )
+
+    # Fetch the specific step.
+    step_row = (
+        await session.execute(
+            select(ExtractionStep).where(
+                ExtractionStep.job_id == job_id,
+                ExtractionStep.step_type == step_name,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if step_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Step '{step_name}' not found for job '{job_id}'.",
+        )
+
+    # track_id column added by NFM-2881; use getattr for forward compat.
+    track_id = getattr(job_row, "track_id", None)
+    if track_id is not None:
+        track_id = str(track_id)
+
+    return {
+        "job_id": str(job_id),
+        "step_name": step_name,
+        "status": step_row.status,
+        "track_id": track_id,
+        "started_at": step_row.started_at.isoformat() if step_row.started_at else None,
+        "completed_at": step_row.completed_at.isoformat() if step_row.completed_at else None,
+    }
