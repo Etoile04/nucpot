@@ -118,7 +118,10 @@ async def submitted_job_id(v4_client: AsyncClient, submit_payload: dict) -> str:
     # Poll until terminal state
     for _ in range(20):
         status_resp = await v4_client.get(f"/api/v4/extraction/{job_id}/status")
-        status = status_resp.json()["data"]["status"]
+        status_data = status_resp.json().get("data")
+        if status_data is None:
+            break
+        status = status_data.get("status")
         if status in ("completed", "partial", "failed"):
             break
         await asyncio.sleep(0.05)

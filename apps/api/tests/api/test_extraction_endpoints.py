@@ -13,6 +13,39 @@ from uuid import uuid4
 
 import pytest
 
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    The V2 orchestrator does NOT yet support ``source_type='doi'``
+    or ``source_type='url'`` outside of stub mode.  Patches
+    ``get_settings`` (two import sites) *and* bypasses the
+    ``@lru_cache`` on ``is_extraction_v2_enabled``.
+    """
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+            return_value=False,
+        ),
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Mock object factories
 # ---------------------------------------------------------------------------
