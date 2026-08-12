@@ -9,10 +9,8 @@ Single-step rerun endpoint that:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
-
-_UNSET = object()
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -23,6 +21,8 @@ from nfm_db.database import get_db
 from nfm_db.main import app
 from nfm_db.models.extraction_job import ExtractionJob
 from nfm_db.models.extraction_step import ExtractionStep
+
+_UNSET = object()
 
 
 def _override_get_db(session: AsyncSession):
@@ -51,12 +51,12 @@ async def _create_job_with_step(
     step_type: str = "chunk",
     step_status: str = "completed",
     track_id: str | None = None,
-    started_at: datetime | None | object = _UNSET,
-    completed_at: datetime | None | object = _UNSET,
+    started_at: datetime | object | None = _UNSET,
+    completed_at: datetime | object | None = _UNSET,
     error_message: str | None = None,
 ) -> tuple[ExtractionJob, ExtractionStep]:
     """Create an ExtractionJob + ExtractionStep pair and flush."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job = ExtractionJob(
         id=uuid4(),
         status="completed",

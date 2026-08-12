@@ -902,7 +902,7 @@ async def rerun_extraction_step(
     # AC-3: dispatch the step execution as fire-and-forget.
     # The stub marks the step completed immediately; production
     # orchestrator integration (NFM-2739 Phase B) will replace this.
-    asyncio.create_task(_dispatch_rerun_step(job_id, step_name, step_row.id))
+    asyncio.create_task(_dispatch_rerun_step(job_id, step_name, step_row.id))  # noqa: RUF006 — fire-and-forget intentional
 
     # AC-4: return 202 with the reset step snapshot.
     track_id = getattr(job_row, "track_id", None)
