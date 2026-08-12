@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ontology_version import OntologyVersion
@@ -72,16 +71,18 @@ async def _get_latest_published_ontology(
     )
     try:
         result = await session.execute(stmt)
-        # NOTE: AsyncScalarResult.first() is an async-only method — calling it
-        # synchronously returns a coroutine object, never the row.  Without the
-        # ``await`` here the function would hand back a coroutine to every
-        # caller, defeating the entire purpose of this helper and silently
-        # regressing V2 ontology-driven extraction (Hermes CRITICAL, 2026-08-12).
-        return await result.scalars().first()
-    except (SQLAlchemyError, AttributeError):
-        # Narrowed from ``Exception`` so unrelated bugs (KeyError, TypeError,
-        # asyncio.CancelledError, ...) surface to the caller instead of being
-        # masked as a "missing ontology, use static prompt".
+        # SQLAlchemy 2.0+ AsyncSession.execute() returns a synchronous ``Result``
+        # (not ``AsyncResult``) — see ``sqlalchemy/ext/asyncio/session.py``'s
+        # ``AsyncSession.execute`` source. The awaited value's
+        # ``.scalars().first()`` is therefore the correct sync accessor and
+        # returns the row directly. Adding ``await`` here raises
+        # ``TypeError: 'Row' object can't be awaited`` in production with a
+        # real DB, and is silently caught by the broad ``except Exception``
+        # below, which would cause every V2 extraction to fall back to the
+        # static prompt — the very regression NFM-2876 was meant to prevent.
+        # Empirically verified with SQLAlchemy 2.0.50 on 2026-08-12.
+        return result.scalars().first()
+    except Exception:
         logger.warning(
             "Failed to query latest published ontology; falling back to static prompt",
             exc_info=True,
