@@ -136,7 +136,16 @@ async def _run_v2_pipeline(
     orchestrator = ExtractionOrchestratorV2(
         session, job_id=parent_job.id,
     )
-    finals = await orchestrator.run(initial_chunk)
+    # Thread ``content`` and ``source_type`` as kwargs so the
+    # orchestrator's per-step bodies (notably ``_step_chunk``) can
+    # see them without re-loading from disk. Without this, the chunk
+    # step would short-circuit on ``content is None`` and the 5-step
+    # pipeline would produce an empty chunk list.
+    finals = await orchestrator.run(
+        initial_chunk,
+        content=content,
+        source_type=source_type,
+    )
 
     # --- Mark job completed ---
     parent_job.status = "completed"
