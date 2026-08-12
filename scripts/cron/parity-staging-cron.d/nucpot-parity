@@ -1,0 +1,35 @@
+# =============================================================================
+# NFM-DB V2 parity baseline cron (NFM-2946 / ADR-0007 §3 staging gate)
+# =============================================================================
+# Install on the staging host as a cron entry. Two install paths:
+#
+#   Linux:
+#     sudo install -o root -g root -m 0644 \
+#         scripts/cron/parity-staging-cron.d/nucpot-parity \
+#         /etc/cron.d/nucpot-parity
+#     sudo systemctl restart cron
+#
+#   macOS (per-user crontab; see docs/deployment/parity-staging-cron.md):
+#     crontab scripts/cron/parity-staging-cron.d/nucpot-parity
+#
+# Schedule: 02:00 UTC nightly (was the proposed slot in the original AC).
+# The runner archives per-fixture results under $PARITY_ARTIFACTS with
+# 30-day automatic rotation; the NFM-2924 7-day green streak tracks those
+# artifacts, not local re-runs.
+#
+# Env vars (override defaults by exporting in the cron user's shell or by
+# editing the `PARITY_*` lines below):
+#   PARITY_REPO_DIR    (default: /Users/lwj04/Projects/nucpot)
+#   PARITY_PYTHON      (default: $PARITY_REPO_DIR/apps/api/.venv/bin/python)
+#   PARITY_ARTIFACTS   (default: /var/log/nucpot/parity)
+#   PARITY_RETENTION   (default: 30)
+# =============================================================================
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PARITY_REPO_DIR=/Users/lwj04/Projects/nucpot
+PARITY_PYTHON=/Users/lwj04/Projects/nucpot/apps/api/.venv/bin/python
+PARITY_ARTIFACTS=/var/log/nucpot/parity
+PARITY_RETENTION=30
+
+# m h dom mon dow user command
+0 2 * * * root /Users/lwj04/Projects/nucpot/scripts/run-parity-cron.sh >> /var/log/nucpot/parity/cron.log 2>&1
