@@ -243,3 +243,274 @@ async def test_trigger_extraction_pipeline_legacy_returns_normalized_dict(monkey
         "figure_types", "ontology_version_id", "ontology_version_str",
     ):
         assert required_key in result, f"Missing canonical key: {required_key}"
+
+
+# ---------------------------------------------------------------------------
+# NFM-3006 / NFM-2996-T2: source_type runtime guard
+# ---------------------------------------------------------------------------
+# When V2 is enabled, the dispatch wrapper must guard non-file source types
+# (doi, url, datasource) and route them to V1 with a deprecation warning.
+# File-path-equivalent types (file, internal_id, empty) continue through V2.
+
+
+def test_v2_guard_routes_doi_to_legacy(monkeypatch):
+    """V2 ON + source_type='doi' → routes to legacy path, not V2."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    called = {"legacy": 0, "v2": 0}
+
+    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+
+    fake_job = ExtractionJob(
+        job_id="fake-job-doi",
+        source_reference="10.1234/test",
+        source_type="doi",
+        status=JobStatus.COMPLETED,
+    )
+
+    async def fake_legacy(*args, **kwargs):
+        called["legacy"] += 1
+        return fake_job
+
+    async def fake_v2(*args, **kwargs):
+        called["v2"] += 1
+        return {"routed": "v2"}
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    monkeypatch.setattr(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
+        fake_legacy,
+    )
+    monkeypatch.setattr(dispatch_mod, "_run_v2_pipeline", fake_v2)
+
+    import asyncio
+
+    result = asyncio.run(
+        dispatch_mod.trigger_extraction_pipeline(
+            source_reference="10.1234/test",
+            source_type="doi",
+            session=AsyncSession(),
+        )
+    )
+    assert called["legacy"] == 1, "DOI must route to legacy path"
+    assert called["v2"] == 0, "DOI must NOT reach V2 pipeline"
+    assert result["status"] == "completed"
+
+
+def test_v2_guard_routes_url_to_legacy(monkeypatch):
+    """V2 ON + source_type='url' → routes to legacy path."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    called = {"legacy": 0, "v2": 0}
+
+    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+
+    fake_job = ExtractionJob(
+        job_id="fake-job-url",
+        source_reference="https://example.com/paper.pdf",
+        source_type="url",
+        status=JobStatus.COMPLETED,
+    )
+
+    async def fake_legacy(*args, **kwargs):
+        called["legacy"] += 1
+        return fake_job
+
+    async def fake_v2(*args, **kwargs):
+        called["v2"] += 1
+        return {"routed": "v2"}
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    monkeypatch.setattr(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
+        fake_legacy,
+    )
+    monkeypatch.setattr(dispatch_mod, "_run_v2_pipeline", fake_v2)
+
+    import asyncio
+
+    result = asyncio.run(
+        dispatch_mod.trigger_extraction_pipeline(
+            source_reference="https://example.com/paper.pdf",
+            source_type="url",
+            session=AsyncSession(),
+        )
+    )
+    assert called["legacy"] == 1
+    assert called["v2"] == 0
+    assert result["status"] == "completed"
+
+
+def test_v2_guard_routes_datasource_to_legacy(monkeypatch):
+    """V2 ON + source_type='datasource' → routes to legacy path."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    called = {"legacy": 0, "v2": 0}
+
+    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+
+    fake_job = ExtractionJob(
+        job_id="fake-job-ds",
+        source_reference="datasource://ref",
+        source_type="datasource",
+        status=JobStatus.COMPLETED,
+    )
+
+    async def fake_legacy(*args, **kwargs):
+        called["legacy"] += 1
+        return fake_job
+
+    async def fake_v2(*args, **kwargs):
+        called["v2"] += 1
+        return {"routed": "v2"}
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    monkeypatch.setattr(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
+        fake_legacy,
+    )
+    monkeypatch.setattr(dispatch_mod, "_run_v2_pipeline", fake_v2)
+
+    import asyncio
+
+    result = asyncio.run(
+        dispatch_mod.trigger_extraction_pipeline(
+            source_reference="datasource://ref",
+            source_type="datasource",
+            session=AsyncSession(),
+        )
+    )
+    assert called["legacy"] == 1
+    assert called["v2"] == 0
+    assert result["status"] == "completed"
+
+
+def test_v2_guard_still_routes_file_to_v2(monkeypatch):
+    """V2 ON + source_type='file' → V2 path (unchanged by guard)."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    called = {"v2": 0}
+
+    async def fake_v2(*args, **kwargs):
+        called["v2"] += 1
+        return {"routed": "v2"}
+
+    monkeypatch.setattr(dispatch_mod, "_run_v2_pipeline", fake_v2)
+
+    import asyncio
+
+    result = asyncio.run(
+        dispatch_mod.trigger_extraction_pipeline(
+            source_reference="/path/to/file.md",
+            source_type="file",
+        )
+    )
+    assert called["v2"] == 1, "file source_type must still route to V2"
+    assert result["routed"] == "v2"
+
+
+def test_v2_guard_routes_internal_id_to_v2(monkeypatch):
+    """V2 ON + source_type='internal_id' → V2 path (file-path equivalent)."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    called = {"v2": 0}
+
+    async def fake_v2(*args, **kwargs):
+        called["v2"] += 1
+        return {"routed": "v2"}
+
+    monkeypatch.setattr(dispatch_mod, "_run_v2_pipeline", fake_v2)
+
+    import asyncio
+
+    result = asyncio.run(
+        dispatch_mod.trigger_extraction_pipeline(
+            source_reference="internal-123",
+            source_type="internal_id",
+        )
+    )
+    assert called["v2"] == 1, "internal_id must still route to V2"
+    assert result["routed"] == "v2"
+
+
+def test_v2_guard_routes_empty_source_type_to_v2(monkeypatch):
+    """V2 ON + source_type='' → V2 path (file-path equivalent)."""
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    called = {"v2": 0}
+
+    async def fake_v2(*args, **kwargs):
+        called["v2"] += 1
+        return {"routed": "v2"}
+
+    monkeypatch.setattr(dispatch_mod, "_run_v2_pipeline", fake_v2)
+
+    import asyncio
+
+    result = asyncio.run(
+        dispatch_mod.trigger_extraction_pipeline(
+            source_reference="/path/to/file.md",
+            source_type="",
+        )
+    )
+    assert called["v2"] == 1, "empty source_type must still route to V2"
+    assert result["routed"] == "v2"
+
+
+def test_v2_guard_logs_warning_for_non_file(monkeypatch, caplog):
+    """Non-file source types produce a deprecation warning log."""
+    import logging
+
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+
+    fake_job = ExtractionJob(
+        job_id="fake-job",
+        source_reference="10.1234/test",
+        source_type="doi",
+        status=JobStatus.COMPLETED,
+    )
+
+    async def fake_legacy(*args, **kwargs):
+        return fake_job
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    monkeypatch.setattr(
+        "nfm_db.services.extraction_pipeline_dispatch.trigger_extraction",
+        fake_legacy,
+    )
+
+    import asyncio
+
+    with caplog.at_level(logging.WARNING, logger="nfm_db.services.extraction_pipeline_dispatch"):
+        asyncio.run(
+            dispatch_mod.trigger_extraction_pipeline(
+                source_reference="10.1234/test",
+                source_type="doi",
+                session=AsyncSession(),
+            )
+        )
+
+    assert any(
+        "source_type" in r.message and "doi" in r.message
+        for r in caplog.records
+    ), "Expected deprecation warning mentioning source_type and doi"

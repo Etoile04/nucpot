@@ -294,12 +294,26 @@ async def trigger_extraction_pipeline(
         {"status": str, "job_id": str,
          "created_at": datetime | None, "error_message": str | None}
     """
+    # Source types the V2 orchestrator can handle natively (file-path
+    # semantics). Everything else is guarded to V1 until V2 is extended
+    # (NFM-3006 / NFM-2996-T2).
+    _V2_SUPPORTED_SOURCE_TYPES = frozenset({"file", "internal_id", ""})
+
     if is_extraction_v2_enabled():
-        return await _run_v2_pipeline(
-            source_reference=source_reference,
-            source_type=source_type,
-            **kwargs,
-        )
+        if source_type not in _V2_SUPPORTED_SOURCE_TYPES:
+            logger.warning(
+                "V2 pipeline does not yet support source_type=%r; "
+                "routing to V1 legacy path. "
+                "source_reference=%r",
+                source_type,
+                source_reference,
+            )
+        else:
+            return await _run_v2_pipeline(
+                source_reference=source_reference,
+                source_type=source_type,
+                **kwargs,
+            )
     # Legacy path — unchanged.
     legacy_session = kwargs.get("session")
     if not isinstance(legacy_session, AsyncSession):
