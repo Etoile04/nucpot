@@ -728,29 +728,14 @@ class GraphBuilder:
         )
         self._session.add(queue_entry)
 
-    def _fire_lightrag_ingest(
-        self,
-        nodes: list[KGNode],
-        edges: list[KGEdge],
-    ) -> None:
-        """Fire-and-forget: serialize and ingest new KG data to LightRAG.
-
-        Non-blocking — failures are logged but never propagate.
-        """
-        try:
-            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
-
-            node_labels = {n.id: n.label for n in nodes}
-            fire_ingest_to_lightrag(
-                nodes=nodes,
-                edges=edges,
-                node_labels=node_labels,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to schedule LightRAG ingest (non-fatal)",
-                exc_info=True,
-            )
+    # NFM-2920: `_fire_lightrag_ingest` was deleted here. It dispatched to
+    # LightRAG from inside the SQL transaction, so a later rollback left
+    # ghost entities in the graph. NFM-2871 moved dispatch to after
+    # `session.commit()` in `extraction_pipeline.trigger_extraction()`;
+    # GraphBuilder now only *carries* the payload on
+    # `BuildResult.ingest_nodes` / `.ingest_edges`. Do not reintroduce an
+    # in-transaction dispatch helper — see
+    # `docs/architecture/kg-dispatch-lifecycle.md`.
 
 
 # ---------------------------------------------------------------------------
