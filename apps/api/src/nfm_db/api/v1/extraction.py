@@ -8,6 +8,7 @@ Trigger and monitor OntoFuel extraction jobs:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -786,3 +787,173 @@ async def get_extraction_step_status(
         "started_at": step_row.started_at.isoformat() if step_row.started_at else None,
         "completed_at": step_row.completed_at.isoformat() if step_row.completed_at else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/extraction/jobs/{job_id}/steps/{step_name}/rerun  (NFM-2884)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/extraction/jobs/{job_id}/steps/{step_name}/rerun",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="重跑单个管道步骤",
+    description=(
+        "Reset a single completed/failed pipeline step to ``pending``, "
+        "clear the parent job's ``track_id``, and dispatch the step "
+        "execution as a fire-and-forget background task.\n\n"
+        "Returns 202 Accepted with the reset step snapshot.  Returns "
+        "404 if the job or step does not exist, and 409 if the step is "
+        "currently ``running`` (cannot rerun a step that is still in "
+        "flight)."
+    ),
+)
+async def rerun_extraction_step(
+    job_id: UUID,
+    step_name: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    """Reset and dispatch a single pipeline step (NFM-2884).
+
+    Implements the rerun contract documented in the parent epic
+    (NFM-2872) and the issue body of NFM-2884:
+
+    - AC1: new POST endpoint.
+    - AC2: only ``completed`` or ``failed`` steps are eligible;
+      everything else (including ``pending`` / ``skipped``) is rejected.
+    - AC3: reset step to ``pending``, clear ``track_id`` on parent job,
+      fire execution as ``asyncio.create_task``.
+    - AC4: return 202 + the reset step snapshot.
+    - AC5: 404 if job or step missing.
+    - AC6: 409 if the step is currently ``running``.
+
+    The dispatched task currently marks the step ``completed`` to
+    demonstrate the fire-and-forget wiring; production orchestration
+    will replace this stub once the per-step executor registry
+    (NFM-2739 Phase B) lands.
+    """
+    # AC-5: validate step_name against known step types first.
+    if step_name not in EXTRACTION_STEP_TYPES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Step '{step_name}' not found.",
+        )
+
+    # Fetch the parent job (404 if missing).
+    job_row = (
+        await session.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_id)
+        )
+    ).scalar_one_or_none()
+
+    if job_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Extraction job '{job_id}' not found.",
+        )
+
+    # Fetch the specific step (404 if missing).
+    step_row = (
+        await session.execute(
+            select(ExtractionStep).where(
+                ExtractionStep.job_id == job_id,
+                ExtractionStep.step_type == step_name,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if step_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Step '{step_name}' not found for job '{job_id}'.",
+        )
+
+    # AC-6: cannot rerun a step that is currently in flight.
+    if step_row.status == "running":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Step '{step_name}' is currently running; "
+                "wait for completion before rerunning."
+            ),
+        )
+
+    # AC-2: only completed / failed steps are eligible for rerun.
+    if step_row.status not in ("completed", "failed"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Step '{step_name}' has status '{step_row.status}'; "
+                "only completed or failed steps can be rerun."
+            ),
+        )
+
+    # AC-3: reset step state and clear parent track_id.
+    step_row.status = "pending"
+    step_row.started_at = None
+    step_row.completed_at = None
+    step_row.error_message = None
+    # track_id lives on the parent job (NFM-2881); clear it.
+    if hasattr(job_row, "track_id"):
+        job_row.track_id = None
+    await session.commit()
+    await session.refresh(step_row)
+
+    # AC-3: dispatch the step execution as fire-and-forget.
+    # The stub marks the step completed immediately; production
+    # orchestrator integration (NFM-2739 Phase B) will replace this.
+    asyncio.create_task(_dispatch_rerun_step(job_id, step_name, step_row.id))  # noqa: RUF006 — fire-and-forget intentional
+
+    # AC-4: return 202 with the reset step snapshot.
+    track_id = getattr(job_row, "track_id", None)
+    return {
+        "job_id": str(job_id),
+        "step_name": step_name,
+        "status": step_row.status,
+        "track_id": track_id if track_id is not None else None,
+        "started_at": None,
+        "completed_at": None,
+        "dispatched": True,
+    }
+
+
+async def _dispatch_rerun_step(
+    job_id: UUID,
+    step_name: str,
+    step_id: UUID,
+) -> None:
+    """Stub background task that marks the rerun step ``completed``.
+
+    Production wiring (NFM-2739 Phase B) will look up the step executor
+    in a registry and invoke it with the parent job's inputs.  Until
+    that lands, this stub flips status to ``completed`` so the API
+    contract (AC-4) is observable end-to-end.
+
+    Runs on its own DB session because the request-scoped session is
+    closed by the time this fires.
+    """
+    from nfm_db.database import async_session_factory
+    from nfm_db.models.extraction_step import ExtractionStep
+
+    try:
+        async with async_session_factory() as session:
+            step_row = (
+                await session.execute(
+                    select(ExtractionStep).where(
+                        ExtractionStep.id == step_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if step_row is None:
+                return
+            now = datetime.now(UTC)
+            step_row.status = "completed"
+            step_row.started_at = now
+            step_row.completed_at = now
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "rerun dispatch failed for job_id=%s step=%s",
+            job_id,
+            step_name,
+        )
