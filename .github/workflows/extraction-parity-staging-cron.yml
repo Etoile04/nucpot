@@ -1,8 +1,11 @@
 # Nightly staging parity cron — ADR-0007 §3 / NFM-2944.
 #
-# Runs the V1/V2 extraction parity harness (tests/parity/test_parity.py)
+# Runs the V1/V2 extraction parity harness (apps/api/tests/test_parity.py)
 # against staging (origin/main) every night at 02:00 UTC, producing
 # per-fixture artifacts for the 7-day green-streak gate.
+#
+# Requires EXTRACTION_STUB_MODE=true and -m parity marker to actually
+# execute tests (see test_parity.py module guard).
 #
 # OBSERVATIONAL ONLY — does not gate merges. Uses continue-on-error (not
 # || true) so the real outcome is preserved for the streak counter.
@@ -47,12 +50,16 @@ jobs:
       - name: Run parity harness (observational)
         id: parity
         continue-on-error: true
+        env:
+          EXTRACTION_STUB_MODE: "true"
         shell: bash
         run: |
           set -o pipefail
           mkdir -p parity-artifacts
-          apps/api/.venv/bin/python -m pytest \
-            tests/parity/test_parity.py \
+          uv run --frozen --directory apps/api python -m pytest \
+            tests/test_parity.py \
+            -m parity \
+            --no-cov \
             -v --tb=short \
             2>&1 | tee parity-artifacts/parity-output.txt
 
