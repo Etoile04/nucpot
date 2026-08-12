@@ -10,15 +10,12 @@ NFM-716 — Phase 2B.2 NucMat Ontology
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nfm_db.models import Base, CompatJSONB, JSONArray, TimestampMixin
-
-if TYPE_CHECKING:
-    from nfm_db.models.ontology_version import OntologyVersion
 
 
 class KEntityType(TimestampMixin, Base):
