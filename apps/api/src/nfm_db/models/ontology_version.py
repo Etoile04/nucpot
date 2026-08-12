@@ -10,12 +10,15 @@ Status lifecycle: draft → published → deprecated.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
+
+if TYPE_CHECKING:
+    from nfm_db.models.ontology import KEntityType, KRelationType
 
 # Allowed statuses for an ontology version.
 ONTOLOGY_VERSION_STATUSES: tuple[str, ...] = (
@@ -85,6 +88,15 @@ class OntologyVersion(TimestampMixin, Base):
         default=None,
         nullable=True,
         comment="The actual ontology schema content as JSON.",
+    )
+
+    # --- Back-populated collections (see KEntityType.ontology_version,
+    #     KRelationType.ontology_version) ---
+    entity_types: Mapped[list["KEntityType"]] = relationship(
+        back_populates="ontology_version",
+    )
+    relation_types: Mapped[list["KRelationType"]] = relationship(
+        back_populates="ontology_version",
     )
 
     def __repr__(self) -> str:

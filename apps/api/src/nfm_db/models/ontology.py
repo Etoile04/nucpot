@@ -13,7 +13,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, CompatJSONB, JSONArray, TimestampMixin
 
@@ -49,6 +49,9 @@ class KEntityType(TimestampMixin, Base):
         ForeignKey("ontology_versions.id"),
         nullable=True,
         comment="FK to the OntologyVersion this type belongs to.",
+    )
+    ontology_version: Mapped["OntologyVersion | None"] = relationship(
+        back_populates="entity_types",
     )
 
     def __repr__(self) -> str:
@@ -87,6 +90,9 @@ class KRelationType(TimestampMixin, Base):
         ForeignKey("ontology_versions.id"),
         nullable=True,
         comment="FK to the OntologyVersion this type belongs to.",
+    )
+    ontology_version: Mapped["OntologyVersion | None"] = relationship(
+        back_populates="relation_types",
     )
 
     def __repr__(self) -> str:
