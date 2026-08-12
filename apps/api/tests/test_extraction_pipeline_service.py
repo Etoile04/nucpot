@@ -1208,6 +1208,11 @@ class TestTriggerExtraction:
 
         with (
             patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch(
+                "nfm_db.services.extraction_pipeline.get_settings",
+                return_value=v1_settings,
+                create=True,
+            ),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", new_callable=MagicMock),
         ):
