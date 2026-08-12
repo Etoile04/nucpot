@@ -83,10 +83,13 @@ def _reset_recorder() -> None:
 def _build_session() -> AsyncMock:
     """Return an AsyncMock session matching AsyncSession semantics.
 
-    ``scalars.first`` MUST be an AsyncMock — after the NFM-2876 fix,
-    ``_get_latest_published_ontology`` does ``await result.scalars().first()``
-    (the SQLAlchemy ``AsyncScalarResult.first`` is an ``async def`` method,
-    so the helper awaits the call rather than reading the result).
+    ``scalars.first`` MUST be a sync MagicMock — see commit 9d8ffacc
+    (fix(NFM-2876): revert broken await on result.scalars().first()).
+    SQLAlchemy 2.0+ ``AsyncSession.execute`` returns a sync ``Result``,
+    and ``.scalars().first()`` is the sync accessor that returns the row
+    directly. Awaiting it raises ``TypeError: 'Row' object can't be
+    awaited`` in 2.0.50 (verified empirically) and silently regresses V2
+    ontology-driven extraction by returning None via the broad except.
     """
     session = AsyncMock()
     session.commit = AsyncMock()
@@ -94,7 +97,7 @@ def _build_session() -> AsyncMock:
     # session.add is synchronous on AsyncSession (just marks the row).
     session.add = MagicMock()
     scalars = MagicMock()
-    scalars.first = AsyncMock(return_value=None)
+    scalars.first = MagicMock(return_value=None)
     result = MagicMock()
     result.scalars.return_value = scalars
     session.execute = AsyncMock(return_value=result)

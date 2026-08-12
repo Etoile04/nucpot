@@ -136,16 +136,17 @@ class _WriteCountingSession:
     async def _inc_execute(self, _stmt: Any) -> Any:
         self.execute_count += 1
         # Default to no-op result (skip detection sees nothing).
-        # NOTE: ``scalars().first()`` MUST be an AsyncMock — after the
-        # NFM-2876 fix, ``_get_latest_published_ontology`` does
-        # ``await result.scalars().first()`` (AsyncScalarResult.first is
-        # an async-only method). Without this, ``await NoneType`` raises
-        # ``TypeError: object NoneType can't be used in 'await' expression``.
+        # NOTE: ``scalars().first()`` MUST be a sync MagicMock — see commit
+        # 9d8ffacc (fix(NFM-2876): revert broken await on
+        # ``result.scalars().first()``). SQLAlchemy 2.0+ ``AsyncSession.execute``
+        # returns a sync ``Result`` whose ``.scalars().first()`` is the sync
+        # accessor; ``await`` raises ``TypeError: object NoneType can't be
+        # used in 'await' expression`` in 2.0.50 (verified empirically).
         result = MagicMock()
         result.scalar_one_or_none = MagicMock(return_value=None)
         result.scalars = MagicMock()
         result.scalars.return_value = MagicMock()
-        result.scalars.return_value.first = AsyncMock(return_value=None)
+        result.scalars.return_value.first = MagicMock(return_value=None)
         return result
 
 
