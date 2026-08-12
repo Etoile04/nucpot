@@ -1,0 +1,32 @@
+{
+  "fixture_id": "mox-thermal-conductivity",
+  "title": "MOX (U,Pu)O2 thermal conductivity vs temperature",
+  "citation": {
+    "kind": "synthesized_reference",
+    "note": "Factual thermal-property reference values for (U,Pu)O2 mixed-oxide fuel with 8% Pu; non-copyrightable factual data points compiled from widely reported laser-flash thermal diffusivity literature for light-water-reactor MOX.",
+    "values_sources": [
+      {"property": "thermal_conductivity", "value": 4.2, "unit": "W/(m K)", "temperature_K": 300, "source_sentence": "At 300 K, thermal conductivity of the MOX sample is 4.2 W/(m K)."},
+      {"property": "thermal_conductivity", "value": 2.1, "unit": "W/(m K)", "temperature_K": 1000, "source_sentence": "At 1000 K, the value decreases to 2.1 W/(m K)."},
+      {"property": "specific_heat", "value": 0.234, "unit": "J/(g K)", "temperature_K": 300, "source_sentence": "The specific heat capacity at 300 K is 0.234 J/(g K)."},
+      {"property": "density", "value": 10.42, "unit": "g/cm^3", "source_sentence": "Sample density was 10.42 g/cm^3 after sintering."}
+    ]
+  },
+  "validator": {
+    "agent_id": "98fc3168-be45-4673-808e-22238b366352",
+    "agent_role": "Lead Engineer",
+    "name": "Paperclip Lead Engineer (NFM-2892)",
+    "validation_method": "Manual review against V2 stub-mode output produced by tools/parity_baseline/compute_expected.py. Verified source.txt -> expected.json entity/relation/property traceability and 5x byte-identical reproducibility."
+  },
+  "validation_date": "2026-08-12",
+  "ontology_version": "0.1.0",
+  "schema_version": "v2-strangler-fig-final-chunks",
+  "pipeline_version": {
+    "raw_text_loader": "NFM-2677-B2",
+    "section_segmenter": "NFM-2677-B3",
+    "entity_extractor": "NFM-2677-B4",
+    "property_normalizer": "NFM-2677-B5",
+    "chunk_builder": "NFM-2677-B6"
+  },
+  "upstream_issues": ["NFM-2891", "NFM-2875", "NFM-2890"],
+  "extracted_entities_summary": {"formula_count": 1, "property_count": 2, "measurement_count": 4}
+}
