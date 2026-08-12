@@ -49,10 +49,22 @@ def _make_settings_v1() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _pin_extraction_v2_off():
-    """Route every test in this module through the V1 legacy branch."""
-    with patch(
-        "nfm_db.config.get_settings",
-        return_value=_make_settings_v1(),
+    """Route every test in this module through the V1 legacy branch.
+
+    ``trigger_extraction`` does ``from nfm_db.config import get_settings``
+    locally inside the function — that local binding shadows the
+    module-level patch.  Use ``create=True`` to inject the patched
+    function into ``extraction_pipeline``'s namespace so the local
+    import resolves to our V1 stub.
+    """
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
     ):
         yield
 
