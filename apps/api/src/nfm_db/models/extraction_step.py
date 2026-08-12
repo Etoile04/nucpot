@@ -23,6 +23,13 @@ EXTRACTION_STEP_TYPES: tuple[str, ...] = (
     "map",
     "quality_gate",
     "gap_scan",
+    # NFM-2994: multimodal extraction step. Mirrors the V1 Stage 5b
+    # ``run_multimodal_extraction`` call so the V2 orchestrator
+    # populates ``job.figures`` / ``job.tables`` when the request
+    # sets ``extract_figures`` or ``extract_tables``. Runs LAST
+    # (after gap_scan) so text-extracted properties are already
+    # available for VLM-vs-text conflict resolution.
+    "multimodal",
 )
 
 # Allowed statuses for a pipeline step.

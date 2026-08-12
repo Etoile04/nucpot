@@ -80,7 +80,7 @@ async def _create_job(
 
 @pytest.mark.asyncio
 async def test_run_all_steps_completed(db_session) -> None:
-    """AC: Orchestrator runs all 5 steps and marks job completed."""
+    """AC: Orchestrator runs all 6 steps (NFM-2994 added multimodal) and marks job completed."""
     job = await _create_job(session=db_session)
     orchestrator = ExtractionOrchestrator(db_session, job)
 
@@ -92,12 +92,12 @@ async def test_run_all_steps_completed(db_session) -> None:
 
     await db_session.refresh(result)
 
-    # Verify 5 step rows exist.
+    # Verify 6 step rows exist (NFM-2994 added ``multimodal``).
     stmt = select(ExtractionStep).where(
         ExtractionStep.job_id == job.id,
     )
     steps = (await db_session.execute(stmt)).scalars().all()
-    assert len(steps) == 5
+    assert len(steps) == 6  # NFM-2994 added multimodal (6th step)
 
     step_types = {s.step_type for s in steps}
     assert step_types == set(_PIPELINE_STEPS)
@@ -256,6 +256,10 @@ def test_pipeline_steps_order() -> None:
         "map",
         "quality_gate",
         "gap_scan",
+        # NFM-2994: multimodal runs after gap_scan, mirroring V1
+        # Stage 5b so ``run_multimodal_extraction`` is invoked under
+        # ``EXTRACTION_V2_ENABLED=true``.
+        "multimodal",
     ]
 
 

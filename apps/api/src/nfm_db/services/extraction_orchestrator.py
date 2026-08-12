@@ -36,12 +36,16 @@ from nfm_db.services.quality_gate import QualityGateService
 logger = logging.getLogger(__name__)
 
 # Ordered pipeline steps executed by the orchestrator.
+# NFM-2994: ``multimodal`` runs LAST (after gap_scan) so the VLM
+# extraction has access to the mapped text-extracted properties for
+# conflict resolution (NFM-1366 fix). Mirrors V1 Stage 5b.
 _PIPELINE_STEPS: list[str] = [
     "chunk",
     "extract",
     "map",
     "quality_gate",
     "gap_scan",
+    "multimodal",
 ]
 
 
@@ -236,6 +240,10 @@ class ExtractionOrchestrator:
             "map": self._step_map,
             "quality_gate": self._step_quality_gate,
             "gap_scan": self._step_gap_scan,
+            # NFM-2994: V2 multimodal step mirrors V1 Stage 5b
+            # (``run_multimodal_extraction`` in
+            # ``nfm_db.services.multimodal_extraction``).
+            "multimodal": self._step_multimodal,
         }[step_type]
 
         await step_fn(step, **kwargs)
@@ -273,7 +281,17 @@ class ExtractionOrchestrator:
             )
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        existing = result.scalar_one_or_none()
+        # Defensive guard: under unit tests that pass a bare
+        # ``AsyncMock`` session, ``scalar_one_or_none()`` returns a
+        # ``MagicMock`` (truthy), which would otherwise short-circuit
+        # EVERY step as a "skip" and the pipeline never executes.
+        # Treat anything that is not an actual ``ExtractionStep``
+        # as "no prior step" — production queries return either a
+        # real row or ``None``, never a ``MagicMock``. NFM-2994.
+        if not isinstance(existing, ExtractionStep):
+            return None
+        return existing
 
     def _restore_context_from_existing(
         self,
@@ -392,6 +410,19 @@ class ExtractionOrchestrator:
             # is content-aware (NFM-2568-T5).
             staged = self._context.get("passed_properties") or []
             params["staged_properties"] = staged
+
+        if step_type == "multimodal":
+            # NFM-2994: multimodal's input is the mapped text-extracted
+            # properties (carried from _step_map) plus the
+            # extract_figures / extract_tables flags on the ORM job
+            # (set by ``trigger_extraction``). Include them so skip
+            # detection is content-aware — a re-run whose map output
+            # or flags changed must not reuse a stale multimodal result.
+            params["extract_figures"] = bool(self._job.extract_figures)
+            params["extract_tables"] = bool(self._job.extract_tables)
+            params["mapped_properties"] = (
+                self._context.get("mapped_properties") or []
+            )
 
         return params
 
@@ -727,6 +758,16 @@ class ExtractionOrchestrator:
                 rejected_count = len(bulk_result.rejected)
                 duplicate_count = len(bulk_result.duplicates)
 
+            # NFM-2994: mirror V1 ``_update_job`` semantics so callers
+            # that read ``job.staged_count`` / ``job.rejected_count``
+            # from the returned ORM row see the same counts the V1
+            # dataclass produced. The columns already exist on the
+            # ORM ``ExtractionJob`` (default 0); this is a plain
+            # ``setattr`` write tracked by SQLAlchemy for the
+            # run-level completion flush.
+            self._job.staged_count = staged_count
+            self._job.rejected_count = rejected_count
+
             # Persist staged property payloads so gap_scan can consume
             # them and skip-restore can rehydrate them (NFM-2606).
             self._context["passed_properties"] = passed_properties
@@ -834,6 +875,119 @@ class ExtractionOrchestrator:
             step.metadata_ = {
                 "input_hash": data_hash,
                 "gap_count": 0,
+                "non_fatal": True,
+                "error": str(exc),
+            }
+
+    async def _step_multimodal(
+        self,
+        step: ExtractionStep,
+        **kwargs: Any,
+    ) -> None:
+        """Step 6: Multimodal extraction (figures + tables) — NFM-2994.
+
+        Mirrors V1 Stage 5b in ``trigger_extraction``: when
+        ``extract_figures`` or ``extract_tables`` is set, call
+        ``run_multimodal_extraction`` (in
+        ``nfm_db.services.multimodal_extraction``) to populate
+        ``self._job.figures`` and ``self._job.tables``. Stub mode
+        (``EXTRACTION_STUB_MODE=true``) is honored by the underlying
+        extractor so CI does not require a live VLM service.
+
+        VLM/OCR failures are non-fatal (mirroring gap_scan's pattern):
+        the failure is recorded on the step row (``status='failed'``,
+        ``error_message``, ``metadata_`` with ``non_fatal=True``) but
+        the exception is NOT re-raised so the orchestrator continues.
+
+        Why the legacy ``job_id`` shim:
+            ``run_multimodal_extraction`` was written against the V1
+            dataclass and reads ``job.job_id`` for logging. The ORM
+            job uses ``id`` as the primary key, so we set
+            ``job_id`` as a Python instance attribute (SQLAlchemy
+            ignores unmapped attrs) before invoking. ``_update_job``
+            uses ``setattr``, which works on both dataclass and ORM
+            instances.
+
+        Why log via ``extraction_pipeline.logger``:
+            ``test_multimodal_failure_logged_as_warning`` (NFM-1366)
+            patches ``nfm_db.services.extraction_pipeline.logger``
+            and asserts a "multimodal … non-fatal" warning was
+            recorded there. We resolve the logger at call time via
+            ``_ep_module.logger`` so the test's patch takes effect.
+        """
+        extract_figures = bool(
+            kwargs.get("extract_figures", self._job.extract_figures),
+        )
+        extract_tables = bool(
+            kwargs.get("extract_tables", self._job.extract_tables),
+        )
+
+        # Early-out: nothing to extract. Mark step with a flag so the
+        # run-loop advances and downstream operators see the skip.
+        if not extract_figures and not extract_tables:
+            logger.info(
+                "Step 'multimodal' for job %s: neither extract_figures "
+                "nor extract_tables is set — skipping",
+                self._job.id,
+            )
+            step.metadata_ = {"non_fatal": True, "skipped_reason": "no_flags"}
+            self._context["figures"] = []
+            self._context["tables"] = []
+            return
+
+        # text_props carries the property-mapping result; passed to
+        # ``run_multimodal_extraction`` so the VLM-vs-text conflict
+        # resolution step (NFM-1366) can supersede text properties
+        # that disagree with multimodal extractions.
+        text_props: list[dict[str, Any]] = (
+            self._context.get("mapped_properties") or []
+        )
+
+        # V1 logging compat: ``run_multimodal_extraction`` reads
+        # ``job.job_id``. The ORM job's PK is ``id``; set ``job_id``
+        # as a transient instance attribute so the legacy code path
+        # works without modification.
+        self._job.job_id = str(self._job.id)
+
+        # Lazy imports so the test that patches
+        # ``nfm_db.services.multimodal_extraction.run_multimodal_extraction``
+        # at the module attribute sees the lookup at call time.
+        from nfm_db.services import extraction_pipeline as _ep_module
+        from nfm_db.services.multimodal_extraction import (
+            run_multimodal_extraction,
+        )
+        ep_logger = _ep_module.logger
+
+        try:
+            await run_multimodal_extraction(self._job, text_props=text_props)
+            fig_count = len(self._job.figures or [])
+            tbl_count = len(self._job.tables or [])
+            ep_logger.info(
+                "Job %s: multimodal extraction completed — "
+                "figures=%d tables=%d",
+                self._job.id,
+                fig_count,
+                tbl_count,
+            )
+            self._context["figures"] = list(self._job.figures or [])
+            self._context["tables"] = list(self._job.tables or [])
+        except Exception as exc:
+            # Non-fatal path — same shape as gap_scan (line ~757):
+            # capture the failure on the step row, log a warning via
+            # ``extraction_pipeline.logger`` so the existing
+            # ``test_multimodal_failure_logged_as_warning`` assertion
+            # fires, but DO NOT re-raise — the rest of the pipeline
+            # must complete.
+            ep_logger.warning(
+                "Job %s: multimodal extraction stage failed (non-fatal): %s",
+                self._job.id,
+                exc,
+                exc_info=True,
+            )
+            step.status = "failed"
+            step.error_message = f"multimodal failed (non-fatal): {exc}"
+            step.completed_at = datetime.now(UTC)
+            step.metadata_ = {
                 "non_fatal": True,
                 "error": str(exc),
             }

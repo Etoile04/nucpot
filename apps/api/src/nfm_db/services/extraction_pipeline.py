@@ -756,6 +756,7 @@ async def trigger_extraction(
     extract_tables: bool = False,
     job_id: str | None = None,
     ontology_version_id: uuid.UUID | None = None,
+    content: str | None = None,
 ) -> ExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -766,6 +767,11 @@ async def trigger_extraction(
     4. Stage passing values to _ref_gap_fill_staging
     4b. Optional: auto-reopen wont_fix gaps (when ontology_version_id is set)
     5. Optional: gap re-scan to close the loop
+
+    The *content* kwarg is a V2-only injection point: the V2
+    orchestrator's ``chunk`` step reads ``content`` from ``kwargs``
+    (NFM-2568-T2) so the test harness can seed a single chunk without
+    writing a file. The V1 dataclass path ignores it.
 
     Returns the job tracker with current status.  If *job_id* is
     provided, the new job reuses it — letting the HTTP trigger
@@ -812,6 +818,15 @@ async def trigger_extraction(
         )
         session.add(orm_job)
         await session.flush()
+        # NFM-2994 / NFM-2993: ``session.flush()`` populates the PK but
+        # leaves the just-added ORM object as an "expired" proxy for
+        # unmapped/just-staged columns (e.g. ``metadata_``). Without
+        # ``refresh`` the V2 orchestrator's ``chunk`` step — and every
+        # downstream step that reads any mapped column off the job —
+        # raises ``AttributeError: 'coroutine' object has no attribute
+        # 'metadata_'`` on the first access. Refresh synchronously so
+        # the orchestrator can read mapped columns directly.
+        await session.refresh(orm_job)
 
         # NFM-2909: Load source content BEFORE the orchestrator runs so
         # the chunk step has something to chunk. The V2 orchestrator
@@ -842,6 +857,7 @@ async def trigger_extraction(
             element_systems=element_systems,
             cache_level=cache_level,
             max_confidence=max_confidence,
+            content=content,
         )
 
     # --- Legacy pipeline (unchanged when flag is False) ---
