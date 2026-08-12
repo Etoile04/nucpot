@@ -749,6 +749,9 @@ async def trigger_extraction(
         from nfm_db.services.extraction_orchestrator import (
             ExtractionOrchestrator,
         )
+        from nfm_db.services.extraction_pipeline_dispatch import (
+            load_v2_content,
+        )
 
         if job_id is None:
             job_id = _generate_job_id()
@@ -767,14 +770,41 @@ async def trigger_extraction(
             source_type=source_type,
             extract_figures=extract_figures,
             extract_tables=extract_tables,
+            element_systems=element_systems,
+            cache_level=cache_level,
+            max_confidence=max_confidence,
             ontology_version_id=ontology_version_id,
             ontology_version_str=ontology_version_str,
         )
         session.add(orm_job)
         await session.flush()
 
+        # NFM-2909: Load source content BEFORE the orchestrator runs so
+        # the chunk step has something to chunk. The V2 orchestrator
+        # (ExtractionOrchestrator, NFM-2568-T1) is content-agnostic —
+        # it relies on the caller to pass ``content=`` via kwargs.
+        # Without this, _step_chunk returns an empty chunk list and
+        # _step_extract produces zero raw_extractions, breaking the
+        # parity test (extracted_count == 0 vs V1's expected count).
+        # Loader failures are surfaced on the parent job row so the
+        # caller sees ``status='failed'`` + ``error_message`` instead
+        # of a 500.
+        try:
+            content = load_v2_content(source_reference, source_type)
+        except (FileNotFoundError, NotImplementedError) as loader_exc:
+            orm_job.status = JobStatus.FAILED
+            orm_job.error_message = (
+                f"V2 content loader failed for source_type="
+                f"{source_type or '<empty>'!r}: {loader_exc}"
+            )
+            orm_job.completed_at = datetime.now(UTC)
+            session.add(orm_job)
+            await session.commit()
+            return orm_job
+
         orchestrator = ExtractionOrchestrator(session, orm_job)
         return await orchestrator.run(
+            content=content,
             element_systems=element_systems,
             cache_level=cache_level,
             max_confidence=max_confidence,
@@ -1098,30 +1128,30 @@ async def trigger_extraction(
             error_message=str(exc),
             completed_at=datetime.now(UTC),
         )
-
-    await session.commit()
-
-    # NFM-2871: Fire LightRAG ingest AFTER commit to prevent ghost entities
-    # on rollback. The ingest nodes/edges are carried on BuildResult by
-    # GraphBuilder.build_from_extraction() instead of being fired inline.
-    if build_result and (build_result.ingest_nodes or build_result.ingest_edges):
+        # NFM-2928: discard any partial KG rows from the failed build so the
+        # post-commit dispatch never ships ghost entities. defense-in-depth:
+        # also nullify build_result so the dispatch guard below sees nothing.
         try:
-            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
-
-            node_labels = {
-                n.id: n.label for n in build_result.ingest_nodes
-            }
-            fire_ingest_to_lightrag(
-                nodes=list(build_result.ingest_nodes),
-                edges=list(build_result.ingest_edges),
-                node_labels=node_labels,
-            )
-        except Exception:
+            await session.rollback()
+        except Exception:  # pragma: no cover — rollback best-effort
             logger.warning(
-                "Job %s: post-commit LightRAG ingest failed (non-fatal)",
+                "Job %s: rollback after failure raised (continuing)",
                 job_id,
                 exc_info=True,
             )
+        build_result = None  # type: ignore[assignment]
+
+    await session.commit()
+
+    # NFM-2871 / NFM-2928: Fire LightRAG ingest AFTER commit via the shared
+    # dispatch helper. dispatch_build_result is the single public entry
+    # point — every caller of GraphBuilder.build_from_extraction() must pair
+    # it with dispatch_build_result() so the ingest payload is never silently
+    # dropped (NFM-2927 regression family).
+    if build_result is not None:
+        from nfm_db.services.kg_re import dispatch_build_result
+
+        dispatch_build_result(build_result)
 
     return job
 
