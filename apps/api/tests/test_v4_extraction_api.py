@@ -22,6 +22,37 @@ from nfm_db.schemas.extraction import (
     V4ValidateRequest,
 )
 
+
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the HTTP /api/v4/extraction/* endpoints that still call into
+# the legacy ``trigger_extraction`` dataclass branch.
+# -----------------------------------------------------------------------
+
+from unittest.mock import MagicMock, patch
+
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    The V2 orchestrator does NOT yet support ``source_type='doi'``
+    outside of stub mode (NFM-2909 partial fix), so these regression
+    tests must continue exercising V1 until V2 gains parity.
+    """
+    with patch(
+        "nfm_db.config.get_settings",
+        return_value=_make_settings_v1(),
+    ):
+        yield
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

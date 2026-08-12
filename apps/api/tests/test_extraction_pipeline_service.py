@@ -1198,7 +1198,16 @@ class TestTriggerExtraction:
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
 
+        # Pin V2=False — this test exercises the legacy branch's
+        # ``_job_store`` dict. The V2 orchestrator path persists to the
+        # DB via ``session.add(orm_job)`` and never touches ``_job_store``
+        # (NFM-2698), so it must continue exercising V1 until V2 ships
+        # a ``_job_store``-equivalent or we accept the schema gap.
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
+
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", new_callable=MagicMock),
         ):
@@ -1515,7 +1524,7 @@ class TestOntologyPromptInPipeline:
             "relation_types": [],
         }
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = AsyncMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1557,7 +1566,7 @@ class TestOntologyPromptInPipeline:
         """Pipeline uses build_extraction_system_prompt when no ontology published."""
         mock_session = AsyncMock()
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        mock_scalars.first = AsyncMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1631,7 +1640,7 @@ class TestOntologyJobProvenance:
         mock_ov.version = "1.0.0"
         mock_ov.ontology_data = {"entity_types": [], "relation_types": []}
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = AsyncMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1666,7 +1675,7 @@ class TestOntologyJobProvenance:
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        mock_scalars.first = AsyncMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1751,7 +1760,7 @@ class TestV2PathOntologyProvenanceOnORM:
         mock_ov.id = ov_id
         mock_ov.version = "1.2.3"
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = AsyncMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1792,7 +1801,7 @@ class TestV2PathOntologyProvenanceOnORM:
         mock_session.add = MagicMock()
 
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        mock_scalars.first = AsyncMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)

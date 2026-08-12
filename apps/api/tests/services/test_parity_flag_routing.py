@@ -146,7 +146,16 @@ async def _run_legacy(raw: list[dict[str, Any]]) -> dict[str, Any]:
     bulk = _build_bulk_result_for(raw)
     gap = _build_gap_result(1)
 
+    # Pin V2=False so the dispatcher routes through the legacy dataclass
+    # branch. NFM-2876 flipped the default to True; without this patch
+    # both ``_run_legacy`` and ``_run_orchestrator`` would converge on
+    # the V2 path and the parity assertion would compare V2 against
+    # itself (false positive).
+    legacy_settings = MagicMock()
+    legacy_settings.extraction_v2_enabled = False
+
     with (
+        patch("nfm_db.config.get_settings", return_value=legacy_settings),
         patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
         patch(
             "nfm_db.services.extraction_pipeline.ontofuel_extract",

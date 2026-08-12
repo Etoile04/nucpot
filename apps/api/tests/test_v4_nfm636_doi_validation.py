@@ -17,6 +17,37 @@ from nfm_db.database import get_db
 from nfm_db.main import app
 
 
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the legacy ``trigger_extraction`` dataclass branch and the
+# HTTP submit/validate paths that still call into it.
+# -----------------------------------------------------------------------
+
+from unittest.mock import MagicMock, patch
+
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    The V2 orchestrator does NOT yet support ``source_type='doi'``
+    outside of stub mode (NFM-2909 partial fix), so these regression
+    tests must continue exercising V1 until V2 gains parity.
+    """
+    with patch(
+        "nfm_db.config.get_settings",
+        return_value=_make_settings_v1(),
+    ):
+        yield
+
+
 @pytest.fixture
 async def doi_client(db_session):
     """Async test client for NFM-636 DOI validation tests."""

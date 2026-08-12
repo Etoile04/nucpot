@@ -23,6 +23,31 @@ from nfm_db.services.extraction_pipeline import (
     ExtractionJob,
     JobStatus,
     _apply_property_mapping,
+
+
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the legacy ``trigger_extraction`` dataclass branch via
+# ``db_session`` fixtures.  These tests assert on
+# ``job.job_id``/``ExtractionJob``-specific attributes and the
+# ``_job_store`` dict, which are V1-only contracts.
+# -----------------------------------------------------------------------
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch."""
+    with patch(
+        "nfm_db.config.get_settings",
+        return_value=_make_settings_v1(),
+    ):
+        yield
     _find_matching,
     _generate_job_id,
     _job_store,

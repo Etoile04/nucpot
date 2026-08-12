@@ -81,14 +81,20 @@ def _reset_recorder() -> None:
 
 
 def _build_session() -> AsyncMock:
-    """Return an AsyncMock session matching AsyncSession semantics."""
+    """Return an AsyncMock session matching AsyncSession semantics.
+
+    ``scalars.first`` MUST be an AsyncMock — after the NFM-2876 fix,
+    ``_get_latest_published_ontology`` does ``await result.scalars().first()``
+    (the SQLAlchemy ``AsyncScalarResult.first`` is an ``async def`` method,
+    so the helper awaits the call rather than reading the result).
+    """
     session = AsyncMock()
     session.commit = AsyncMock()
     session.flush = AsyncMock()
     # session.add is synchronous on AsyncSession (just marks the row).
     session.add = MagicMock()
     scalars = MagicMock()
-    scalars.first.return_value = None
+    scalars.first = AsyncMock(return_value=None)
     result = MagicMock()
     result.scalars.return_value = scalars
     session.execute = AsyncMock(return_value=result)

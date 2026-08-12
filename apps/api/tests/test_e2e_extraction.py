@@ -20,7 +20,7 @@ Conventions:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import func
@@ -28,6 +28,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ref_gap_fill import (
     Confidence,
+
+
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the legacy ``trigger_extraction`` dataclass branch via
+# ``db_session`` fixtures end-to-end (real QualityGateService, real
+# ontofuel_extract stub, only GapScanService mocked).  V2 does not
+# yet have feature parity with the legacy pipeline for these flows
+# (NFM-2909 partial fix).
+# -----------------------------------------------------------------------
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch."""
+    with patch(
+        "nfm_db.config.get_settings",
+        return_value=_make_settings_v1(),
+    ):
+        yield
     RefGapFillStaging,
     StagingStatus,
 )

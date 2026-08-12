@@ -136,8 +136,16 @@ class _WriteCountingSession:
     async def _inc_execute(self, _stmt: Any) -> Any:
         self.execute_count += 1
         # Default to no-op result (skip detection sees nothing).
+        # NOTE: ``scalars().first()`` MUST be an AsyncMock — after the
+        # NFM-2876 fix, ``_get_latest_published_ontology`` does
+        # ``await result.scalars().first()`` (AsyncScalarResult.first is
+        # an async-only method). Without this, ``await NoneType`` raises
+        # ``TypeError: object NoneType can't be used in 'await' expression``.
         result = MagicMock()
         result.scalar_one_or_none = MagicMock(return_value=None)
+        result.scalars = MagicMock()
+        result.scalars.return_value = MagicMock()
+        result.scalars.return_value.first = AsyncMock(return_value=None)
         return result
 
 
@@ -158,7 +166,15 @@ async def _run_legacy_bench(
         stats=_GapStats(covered=0, total_target_tuples=1),
     )
 
+    # Pin V2=False so the dispatcher routes through the legacy dataclass
+    # branch. NFM-2876 flipped the default to True; without this patch
+    # ``_run_legacy_bench`` would converge on the V2 path and the
+    # 10%-overhead assertion would compare V2 against V2 (false positive).
+    legacy_settings = MagicMock()
+    legacy_settings.extraction_v2_enabled = False
+
     with (
+        patch("nfm_db.config.get_settings", return_value=legacy_settings),
         patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
         patch(
             "nfm_db.services.extraction_pipeline.ontofuel_extract",
