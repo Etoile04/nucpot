@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import BackupCapacityConfig
-from .metrics import BackupMetrics, _should_push_on_refusal
+from .metrics import BackupMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -113,15 +113,14 @@ class CapacityGuardrails:
             capacity_total_bytes=disk.total_backup_bytes,
         )
 
-        if _should_push_on_refusal():
-            logger.warning(
-                "[SRE-WARNING] Backup write refused: floor breach. "
-                "free=%d backup_size=%d floor=%d total=%d",
-                disk.free_bytes,
-                backup_size,
-                self._config.min_free_bytes,
-                disk.total_backup_bytes,
-            )
+        logger.warning(
+            "[SRE-WARNING] Backup write refused: floor breach. "
+            "free=%d backup_size=%d floor=%d total=%d",
+            disk.free_bytes,
+            backup_size,
+            self._config.min_free_bytes,
+            disk.total_backup_bytes,
+        )
 
         return event
 
@@ -185,13 +184,12 @@ class CapacityGuardrails:
             capacity_total_bytes=disk.total_backup_bytes,
         )
 
-        if _should_push_on_refusal():
-            logger.warning(
-                "[SRE-WARNING] Post-pruner floor breach: free=%d floor=%d total=%d",
-                disk.free_bytes,
-                self._config.min_free_bytes,
-                disk.total_backup_bytes,
-            )
+        logger.warning(
+            "[SRE-WARNING] Post-pruner floor breach: free=%d floor=%d total=%d",
+            disk.free_bytes,
+            self._config.min_free_bytes,
+            disk.total_backup_bytes,
+        )
 
         return event
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from nfm_db.services.backup.config import (
+    BackupCapacityConfig,
     _DEFAULT_MAX_TOTAL_BYTES,
     _DEFAULT_MIN_FREE_BYTES,
     _DEFAULT_REFUSE_ON_FLOOR,
-    BackupCapacityConfig,
 )
 
 
