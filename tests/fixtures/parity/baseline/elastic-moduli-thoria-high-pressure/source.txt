@@ -1,0 +1,7 @@
+# Elastic Moduli of ThO2 Under High Pressure
+
+The elastic properties of thoria (ThO2) were measured under hydrostatic pressures up to 9 GPa. At ambient pressure, the bulk modulus is 240 GPa. The shear modulus is 103 GPa. Youngs modulus is 271 GPa. The lattice parameter is 5.5959 angstrom at 300 K.
+
+# Pressure Dependence
+
+The bulk modulus increases to approximately 280 GPa at 9 GPa. The density at ambient conditions is 9.7 g/cm^3. The melting point of ThO2 is 3663 K. The thermal conductivity at 1000 K is 6.5 W/(m K). The specific heat at 1000 K is 0.280 J/(g K).

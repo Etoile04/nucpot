@@ -1,0 +1,45 @@
+[
+  {
+    "content": "# Zircaloy Corrosion Kinetics Zircaloy-4 cladding undergoes oxidation in pressurized water reactor coolant at 570 K and 15.5 MPa. The oxidation kinetics follow a cubic rate law up to a transition point. The weight gain after 500 days is 50 mg/dm^2. The density of the oxide layer is 5.6 g/cm^3. # Hydrogen Pickup Hydrogen pickup fraction of Zircaloy-4 in PWR coolant is approximately 15 to 25 percent of the total hydrogen generated. The terminal solid solubility of hydrogen in alpha-Zr is 80 ppm at 570 K. Youngs modulus of Zircaloy-4 with 200 ppm hydrogen decreases from 99 GPa to 95 GPa. # Impact on Mechanical Properties The shear modulus of hydrided Zircaloy-4 is reduced by 8 percent relative to the unhydrided value of 36 GPa. The bulk modulus remains at 110 GPa. Ductility drops significantly when the hydride volume fraction exceeds 500 ppm. The melting point of the cladding alloy is 2128 K.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      902
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "MPa",
+          "PWR"
+        ],
+        "properties": [
+          "melting_point",
+          "density",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "110 GPa",
+          "15.5 MPa",
+          "2128 K",
+          "36 GPa",
+          "5.6 g/cm^3",
+          "570 K",
+          "95 GPa",
+          "99 GPa"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 5,
+        "measurement_count": 8
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

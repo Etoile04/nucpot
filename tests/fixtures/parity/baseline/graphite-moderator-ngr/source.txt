@@ -1,0 +1,11 @@
+# Nuclear Graphite Moderator Properties
+
+Nuclear-grade graphite serves as the moderator in graphite-moderated reactors such as the AGR and RBMK designs. The density of isotropic nuclear graphite is 1.73 g/cm^3.
+
+# Thermophysical Data
+
+The thermal conductivity of nuclear graphite at 300 K parallel to the extrusion direction is 140 W/(m K), and 120 W/(m K) perpendicular. The specific heat at 500 K is 1.55 J/(g K). The melting point of graphite is approximately 4000 K at atmospheric pressure.
+
+# Irradiation Effects
+
+Neutron irradiation causes dimensional change in graphite. At a fluence of 2e22 n/cm^2, the shrinkage along the extrusion direction is approximately 0.5 percent. Youngs modulus of irradiated graphite increases from 11 GPa to 15 GPa at moderate fluence.

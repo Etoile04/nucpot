@@ -1,0 +1,46 @@
+[
+  {
+    "content": "# Zirconium Diboride (ZrB2) as Protective Coating Zirconium diboride (ZrB2) is an ultra-high-temperature ceramic with potential nuclear applications. The hexagonal AlB2-type structure has lattice parameters a=3.169 angstrom and c=3.530 angstrom. The density of ZrB2 is 6.09 g/cm^3. # Thermomechanical Properties The thermal conductivity of ZrB2 at room temperature is 60 W/(m K). Youngs modulus is 540 GPa, making it one of the stiffest engineering ceramics. The bulk modulus is 340 GPa. The shear modulus is 220 GPa. The melting point of ZrB2 exceeds 3500 K.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      559
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "AlB2",
+          "GPa",
+          "ZrB2"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "220 GPa",
+          "3.169 Å",
+          "3.530 Å",
+          "340 GPa",
+          "3500 K",
+          "540 GPa",
+          "6.09 g/cm^3"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 7,
+        "measurement_count": 7
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

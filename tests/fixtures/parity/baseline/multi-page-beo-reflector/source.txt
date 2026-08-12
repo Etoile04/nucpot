@@ -1,0 +1,11 @@
+# Beryllium Oxide as Neutron Reflector
+
+Beryllium oxide (BeO) is used as a neutron reflector and moderator in some nuclear reactor designs due to its high thermal conductivity and low neutron absorption cross-section. The lattice constant of hexagonal BeO is 2.698 angstrom (a-axis) and 4.377 angstrom (c-axis). The density is 3.01 g/cm^3.
+
+# Thermal Conductivity
+
+The thermal conductivity of BeO at 300 K is 330 W/(m K), among the highest of all ceramics. At 1000 K, the thermal conductivity decreases to 40 W/(m K). The specific heat at 300 K is 1.03 J/(g K).
+
+# Mechanical and Electronic Properties
+
+Youngs modulus of BeO is 345 GPa. The bulk modulus is 250 GPa. The band gap of BeO is 7.6 eV, making it an excellent electrical insulator. The melting point is 2843 K under nitrogen atmosphere.

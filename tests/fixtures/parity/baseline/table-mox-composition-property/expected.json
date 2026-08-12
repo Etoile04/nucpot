@@ -1,0 +1,35 @@
+[
+  {
+    "content": "# MOX Fuel Properties vs Pu Content Thermal conductivity and density of (U1-x,Pux)O2 mixed oxide fuel as a function of plutonium fraction x: | Pu fraction x | Density (g/cm^3) | TC 1000 K (W/(m K)) | Lattice (angstrom) | |---|---|---|---| | 0.00 | 10.97 | 3.2 | 5.470 | | 0.05 | 10.96 | 2.8 | 5.464 | | 0.08 | 10.95 | 2.5 | 5.460 | | 0.15 | 10.92 | 2.1 | 5.450 | | 0.20 | 10.89 | 1.8 | 5.443 | | 0.30 | 10.83 | 1.5 | 5.428 | The lattice parameter decreases linearly with Pu content.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      482
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "MOX",
+          "TC"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "density",
+          "thermal_conductivity"
+        ],
+        "measurements": [
+          "1000 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 3,
+        "measurement_count": 1
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

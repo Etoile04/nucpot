@@ -1,0 +1,48 @@
+[
+  {
+    "content": "# Thorium Carbide (ThC) Properties Thorium carbide (ThC) has the NaCl-type structure with a lattice parameter of 5.304 angstrom. The density is 10.63 g/cm^3. The melting point is approximately 2630 K. # Thermophysical Properties The thermal conductivity of ThC at 300 K is 19 W/(m K). Youngs modulus is 175 GPa. The bulk modulus is 130 GPa. The specific heat at 800 K is 0.250 J/(g K). The formation energy from thorium and carbon is approximately -75 kJ/mol.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      459
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "NaCl",
+          "ThC"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "youngs_modulus",
+          "bulk_modulus",
+          "formation_energy"
+        ],
+        "measurements": [
+          "10.63 g/cm^3",
+          "130 GPa",
+          "175 GPa",
+          "2630 K",
+          "300 K",
+          "5.304 Å",
+          "75 k",
+          "800 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 8,
+        "measurement_count": 8
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

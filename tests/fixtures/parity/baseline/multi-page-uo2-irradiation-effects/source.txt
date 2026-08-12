@@ -1,0 +1,11 @@
+# Irradiation Effects on UO2 Fuel
+
+Uranium dioxide (UO2) fuel pellets undergo significant microstructural changes during irradiation in light water reactors. The lattice constant of UO2 increases from 5.4704 angstrom at zero burnup to 5.48 angstrom at 60 GWd/tU due to fission gas accumulation.
+
+# Fission Gas Release
+
+Fission gas release fraction reaches 15 percent at a burnup of 50 GWd/tU when the fuel centerline temperature exceeds 1800 K. The thermal conductivity of irradiated UO2 decreases to 3.5 W/(m K) at 800 K compared to 8.0 W/(m K) for unirradiated material. The density of high-burnup UO2 pellets drops to 10.2 g/cm^3 from an initial 10.97 g/cm^3.
+
+# Restructuring
+
+Columnar grains form in the central region when the temperature exceeds 2000 K. The melting point of irradiated UO2 is depressed by approximately 30 K relative to the stoichiometric value of 3120 K. The specific heat at 1500 K is 0.340 J/(g K).

@@ -1,0 +1,47 @@
+[
+  {
+    "content": "# Americium Dioxide (AmO2) in Nuclear Fuel Cycle Americium dioxide (AmO2) is a fluorite-structured actinide oxide with a lattice constant of 5.377 angstrom. The density is 11.68 g/cm^3. The melting point is approximately 2448 K. # Properties Relevant to Transmutation The thermal conductivity of AmO2 at 400 K is 3.8 W/(m K). The specific heat at 500 K is 0.240 J/(g K). Youngs modulus is approximately 170 GPa. The bulk modulus is 190 GPa. The band gap is approximately 1.4 eV.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      478
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "AmO2",
+          "GPa"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "youngs_modulus",
+          "bulk_modulus",
+          "band_gap"
+        ],
+        "measurements": [
+          "1.4 eV",
+          "11.68 g/cm^3",
+          "170 GPa",
+          "190 GPa",
+          "2448 K",
+          "400 K",
+          "5.377 Å",
+          "500 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 8,
+        "measurement_count": 8
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

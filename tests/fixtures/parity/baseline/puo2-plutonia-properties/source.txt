@@ -1,0 +1,7 @@
+# Plutonia (PuO2) Properties
+
+Plutonium dioxide (PuO2) adopts the fluorite structure (Fm-3m) with a lattice constant of 5.396 angstrom. The density is 11.46 g/cm^3. The melting point under oxygen partial pressure of 0.21 atm is 2673 K.
+
+# Thermal Properties
+
+The thermal conductivity of PuO2 at 300 K is 6.5 W/(m K). The specific heat at 500 K is 0.260 J/(g K). Youngs modulus of dense polycrystalline PuO2 is 151 GPa. The bulk modulus is approximately 180 GPa. The formation energy from the elements is -1057 kJ/mol.

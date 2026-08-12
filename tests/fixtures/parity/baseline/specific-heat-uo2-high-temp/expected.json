@@ -1,0 +1,42 @@
+[
+  {
+    "content": "# Specific Heat of UO2 at Elevated Temperature The specific heat capacity of uranium dioxide (UO2) increases monotonically with temperature. At 300 K, the specific heat of stoichiometric UO2 is 0.300 J/(g K). At 1500 K, it rises to 0.340 J/(g K). The density is 10.97 g/cm^3. # Heat Capacity Model The heat capacity follows the Maier-Kelley model with parameters fitted to experimental data. The lattice constant at 1500 K expands to 5.498 angstrom from the 300 K value of 5.4704 angstrom. The melting point of UO2 is 3120 K. The thermal conductivity at 1500 K is 2.5 W/(m K).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      576
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "heat_capacity"
+        ],
+        "measurements": [
+          "10.97 g/cm^3",
+          "1500 K",
+          "300 K",
+          "3120 K",
+          "5.4704 Å",
+          "5.498 Å"
+        ]
+      },
+      "summary": {
+        "formula_count": 1,
+        "property_count": 6,
+        "measurement_count": 6
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

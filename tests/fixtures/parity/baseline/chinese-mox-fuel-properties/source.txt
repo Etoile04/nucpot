@@ -1,0 +1,7 @@
+# 混合氧化物燃料 / MOX Fuel Properties
+
+混合氧化物(MOX)燃料由铀和钚的氧化物组成，化学式为(U1-x,Pux)O2。 MOX fuel thermal conductivity at 300 K with 8 percent Pu is 4.2 W/(m K). MOX燃料的晶格常数随钚含量线性变化，符合Vegard定律。The lattice parameter of MOX with x=0.08 is 5.460 angstrom。
+
+# 辐照行为 / Irradiation Behavior
+
+辐照后MOX燃料的裂变气体释放率在燃耗达到50 GWd/tU时约为15%。 The fission gas release fraction for MOX is comparable to UO2 at equivalent burnup levels. MOX密度为10.95 g/cm^3，熔点约为3050 K。

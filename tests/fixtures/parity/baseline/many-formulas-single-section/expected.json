@@ -1,0 +1,49 @@
+[
+  {
+    "content": "# Compound Identification in Mixed Oxide Fuel Mixed oxide fuel contains multiple chemical compounds that must be tracked during reprocessing. Common species include UO2, PuO2, AmO2, NpO2, ThO2, ZrO2, and MoO2. Additionally, fission products form compounds such as La2O3, CeO2, Nd2O3, BaO, SrO, and RuO2. The thermal conductivity of the mixed matrix at 1000 K is approximately 2.5 W/(m K). The density of typical MOX fuel is 10.95 g/cm^3 with a lattice parameter of 5.460 angstrom.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      480
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "AmO2",
+          "BaO",
+          "CeO2",
+          "La2O3",
+          "MOX",
+          "MoO2",
+          "Nd2O3",
+          "NpO2",
+          "PuO2",
+          "RuO2",
+          "SrO",
+          "ThO2",
+          "UO2",
+          "ZrO2"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "density",
+          "thermal_conductivity"
+        ],
+        "measurements": [
+          "10.95 g/cm^3",
+          "1000 K",
+          "5.460 Å"
+        ]
+      },
+      "summary": {
+        "formula_count": 14,
+        "property_count": 3,
+        "measurement_count": 3
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

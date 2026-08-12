@@ -1,0 +1,41 @@
+[
+  {
+    "content": "# Empty Sections in Technical Documents Some nuclear materials science papers contain empty or nearly-empty sections between substantive content blocks. The lattice constant of UO2 is 5.4704 angstrom. # Introduction This section intentionally left blank for formatting purposes. # Results The bulk modulus of UO2 is 207.5 GPa. The melting point is 3120 K. The thermal conductivity at 500 K is 6.0 W/(m K). The density is 10.97 g/cm^3.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      434
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "bulk_modulus"
+        ],
+        "measurements": [
+          "10.97 g/cm^3",
+          "207.5 GPa",
+          "3120 K",
+          "5.4704 Å",
+          "500 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 5,
+        "measurement_count": 5
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

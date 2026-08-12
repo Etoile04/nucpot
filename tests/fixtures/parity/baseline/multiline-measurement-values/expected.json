@@ -1,0 +1,49 @@
+[
+  {
+    "content": "# Measurement Data for Thoria Fuel A comprehensive set of measurements was obtained for thoria (ThO2) samples. The lattice parameter is 5.5959 angstrom at room temperature. Thermal conductivity values: 12.0 W/(m K) at 300 K, 6.5 W/(m K) at 1000 K, and 4.0 W/(m K) at 1500 K. Density is 9.7 g/cm^3. The bulk modulus is 240 GPa. Shear modulus 103 GPa. Youngs modulus is 271 GPa. The melting point is 3663 K. Formation energy is -1226 kJ/mol.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      439
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "ThO2"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus",
+          "formation_energy"
+        ],
+        "measurements": [
+          "1000 K",
+          "103 GPa",
+          "1226 k",
+          "1500 K",
+          "240 GPa",
+          "271 GPa",
+          "300 K",
+          "3663 K",
+          "5.5959 Å",
+          "9.7 g/cm^3"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 8,
+        "measurement_count": 10
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

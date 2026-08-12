@@ -1,0 +1,7 @@
+# Creep Behavior of Zircaloy-4 at High Temperature
+
+The creep rate of Zircaloy-4 fuel cladding is a critical parameter for reactor safety analysis. At 973 K and a hoop stress of 150 MPa, the steady-state creep rate is 1.0e-7 s^-1. The melting point of Zircaloy-4 is 2128 K and density is 6.56 g/cm^3.
+
+# Temperature Dependence
+
+The creep activation energy for Zircaloy-4 in the alpha phase is 210 kJ/mol. Youngs modulus at 973 K decreases to 75 GPa from the room-temperature value of 99 GPa. The thermal conductivity at 973 K is 13.5 W/(m K).

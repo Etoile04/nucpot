@@ -1,0 +1,7 @@
+# Neptunium Dioxide (NpO2) Properties
+
+Neptunium dioxide (NpO2) crystallizes in the fluorite structure with a lattice constant of 5.424 angstrom. The density is 11.14 g/cm^3. The melting point is approximately 3083 K under a controlled oxygen atmosphere.
+
+# Thermophysical Data
+
+The thermal conductivity of NpO2 at 600 K is 4.5 W/(m K). The bulk modulus is 210 GPa. Youngs modulus is 235 GPa. The specific heat at 800 K is 0.275 J/(g K). The formation energy from neptunium metal and oxygen is approximately -1080 kJ/mol.

@@ -1,0 +1,11 @@
+# SiC Coating in TRISO Particles
+
+Silicon carbide (SiC) serves as the primary pressure vessel in tristructural isotropic (TRISO) coated fuel particles. The density of CVD SiC is 3.21 g/cm^3. The theoretical thermal conductivity of high-purity SiC at 300 K is 120 W/(m K), though irradiation reduces this to approximately 30 W/(m K) at a fast neutron fluence of 3e25 n/m^2.
+
+# Mechanical Properties of SiC
+
+Youngs modulus of CVD SiC is 410 GPa at room temperature. The shear modulus is 170 GPa. The bulk modulus measured by ultrasonic techniques is 210 GPa. The melting point of SiC at atmospheric pressure is 3103 K.
+
+# Irradiation Creep
+
+Irradiation creep compliance of SiC is 1.5e-29 (Pa s)^-1 at 1173 K. The band gap of 3C-SiC is 2.36 eV. The lattice constant of cubic SiC is 4.3596 angstrom.

@@ -1,0 +1,39 @@
+[
+  {
+    "content": "# YAML Configuration for Extraction The extraction service configuration is defined in YAML format: ```yaml extraction: v2_enabled: true pipeline: - step: raw_text_loader - step: section_segmenter - step: entity_extractor - step: property_normalizer - step: chunk_builder ``` The density of UO2 is 10.97 g/cm^3 with a lattice parameter of 5.4704 angstrom. The melting point of UO2 fuel is 3120 K. The thermal conductivity at 300 K is 8.0 W/(m K).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      446
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "UO2",
+          "YAML"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "melting_point",
+          "density",
+          "thermal_conductivity"
+        ],
+        "measurements": [
+          "10.97 g/cm^3",
+          "300 K",
+          "3120 K",
+          "5.4704 Å"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 4,
+        "measurement_count": 4
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

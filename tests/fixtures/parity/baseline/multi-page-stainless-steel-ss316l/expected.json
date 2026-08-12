@@ -1,0 +1,50 @@
+[
+  {
+    "content": "# Stainless Steel 316L in Nuclear Applications Austenitic stainless steel 316L (SS316L) is widely used in nuclear reactor primary coolant systems, containment vessels, and spent fuel handling equipment. The density of SS316L is 7.99 g/cm^3. The melting point is 1673 K. # Mechanical Properties at Operating Temperature Youngs modulus of SS316L at room temperature is 193 GPa, decreasing to 150 GPa at 873 K. The bulk modulus is 163 GPa. The shear modulus is 74 GPa. The specific heat at 600 K is 0.54 J/(g K). # Irradiation Effects Neutron irradiation at fluence levels above 1e22 n/cm^2 causes radiation hardening in SS316L. The thermal conductivity of irradiated SS316L at 573 K is approximately 15.0 W/(m K). The lattice constant of FCC austenite is 3.595 angstrom.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      768
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "FCC",
+          "GPa",
+          "SS316L"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "150 GPa",
+          "163 GPa",
+          "1673 K",
+          "193 GPa",
+          "3.595 Å",
+          "573 K",
+          "600 K",
+          "7.99 g/cm^3",
+          "74 GPa",
+          "873 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 8,
+        "measurement_count": 10
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

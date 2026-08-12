@@ -1,0 +1,6 @@
+# Hafnium Diboride (HfB2) for ATF Applications
+
+Hafnium diboride (HfB2) is an ultra-high-temperature ceramic with the hexagonal AlB2 structure. The lattice parameters are a=3.142 angstrom and c=3.470 angstrom. The density is 10.52 g/cm^3.
+
+# Thermophysical and Mechanical Properties
+The thermal conductivity at 300 K is 45 W/(m K). Youngs modulus is 530 GPa. The bulk modulus is 360 GPa. The shear modulus is 230 GPa. The melting point exceeds 3650 K. The band gap is approximately 0.5 eV.

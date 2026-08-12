@@ -1,0 +1,7 @@
+# Titanium Diboride (TiB2) Properties
+
+Titanium diboride (TiB2) crystallizes in the hexagonal AlB2 structure with a=3.030 angstrom and c=3.230 angstrom. The density is 4.52 g/cm^3. The thermal conductivity at 300 K is 120 W/(m K).
+
+# Mechanical Properties
+
+Youngs modulus of TiB2 is 560 GPa. The bulk modulus is 290 GPa. The shear modulus is 250 GPa. The melting point is 3498 K. The band gap is approximately 0.3 eV, classifying TiB2 as a semimetal.

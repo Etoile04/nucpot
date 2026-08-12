@@ -1,0 +1,6 @@
+# Density and Porosity of UO2 Fuel Pellets
+
+The theoretical density of stoichiometric UO2 is 10.97 g/cm^3. Manufactured fuel pellets typically achieve 95 to 97 percent of theoretical density, corresponding to 10.42 to 10.64 g/cm^3.
+
+# Porosity Effects on Thermal Conductivity
+Thermal conductivity decreases linearly with increasing porosity. A 5 percent porous UO2 pellet at 800 K has a thermal conductivity of 4.0 W/(m K) compared to 5.2 W/(m K) for fully dense material. The lattice constant is 5.4704 angstrom. The melting point is 3120 K. Youngs modulus of porous UO2 at 5 percent porosity is 210 GPa.

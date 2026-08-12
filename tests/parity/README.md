@@ -41,7 +41,9 @@ tools/parity_baseline/
                           # by mirroring the V2 step implementations
 ```
 
-Current fixtures (4 — within the 3-5 target):
+Current fixtures (55):
+
+### Original (4)
 
 | Fixture                       | Topic                                              |
 | ----------------------------- | -------------------------------------------------- |
@@ -49,6 +51,97 @@ Current fixtures (4 — within the 3-5 target):
 | `uo2-fcc-lattice`             | Lattice constant, bulk modulus, melting point of UO₂ |
 | `zircaloy-cladding-modulus`   | Elastic moduli and thermal expansion of Zircaloy-4 |
 | `thoria-mixed-oxide`          | ThO₂ lattice, elastic, formation-energy properties |
+
+### Multi-page documents (7)
+
+| Fixture                              | Topic                                                |
+| ------------------------------------ | ---------------------------------------------------- |
+| `multi-page-uo2-irradiation-effects` | Irradiation, fission gas release, restructuring of UO₂ |
+| `multi-page-zircaloy-corrosion`     | Oxidation kinetics, hydrogen pickup, mechanical impact |
+| `multi-page-sic-coated-particles`    | TRISO SiC coating thermomechanical and irradiation creep |
+| `multi-page-fecral-atf`              | FeCrAl ATF oxidation resistance and mechanical props |
+| `multi-page-un-nitride-fuel`         | UN advanced fuel thermal and elastic constants |
+| `multi-page-beo-reflector`           | BeO reflector thermal conductivity and electronic props |
+| `multi-page-stainless-steel-ss316l`  | SS316L primary coolant system irradiation effects |
+
+### Table-containing documents (4)
+
+| Fixture                             | Topic                                      |
+| ----------------------------------- | ------------------------------------------ |
+| `table-uo2-property-comparison`      | Experimental vs DFT properties of UO₂     |
+| `table-mox-composition-property`     | MOX fuel properties vs Pu content           |
+| `table-cladding-alloy-comparison`    | Cladding alloy property comparison         |
+| `table-nitride-fuel-thermophysical`  | Nitride fuel thermophysical data table      |
+
+### Code-block documents (3)
+
+| Fixture                    | Topic                                         |
+| -------------------------- | --------------------------------------------- |
+| `code-block-python-extraction` | V2 pipeline Python imports and UO₂ properties |
+| `code-block-yaml-config`  | YAML extraction config and UO₂ properties     |
+| `code-block-sql-migration` | SQL schema for extraction and Zircaloy-4 props |
+
+### Chinese + English mixed (4)
+
+| Fixture                         | Topic                                       |
+| ------------------------------- | ------------------------------------------- |
+| `chinese-uo2-thermal-conductivity` | UO₂ thermal conductivity (bilingual)     |
+| `chinese-mox-fuel-properties`     | MOX fuel composition and irradiation (bilingual) |
+| `chinese-zircaloy-cladding`       | Zircaloy cladding corrosion (bilingual)    |
+| `chinese-sic-triso-coating`       | SiC TRISO coating irradiation (bilingual) |
+
+### Diverse materials (15)
+
+| Fixture                              | Topic                                        |
+| ------------------------------------ | -------------------------------------------- |
+| `u3si2-atf-dispersion-fuel`          | U₃Si₂ ATF dispersion fuel properties         |
+| `uo2-poison-fission-products`        | Fission product poisoning in UO₂             |
+| `zirconium-diboride-zrb2-coating`    | ZrB₂ ultra-high-temperature ceramic coating   |
+| `titanium-diboride-tib2`            | TiB₂ hexagonal AlB2 structure properties     |
+| `uranium-carbide-uc-fuel`           | UC monocarbide fuel thermal and mechanical    |
+| `magnesia-mgo-insulator`            | MgO nuclear insulator properties              |
+| `alumina-al2o3-neutron-insulator`    | α-Al₂O₃ neutron insulator properties        |
+| `graphite-moderator-ngr`            | Nuclear graphite moderator irradiation       |
+| `puo2-plutonia-properties`           | PuO₂ fluorite structure properties           |
+| `nio2-neptunium-dioxide`            | NpO₂ thermophysical and formation energy     |
+| `boron-carbide-b4c-control-rod`     | B₄C control rod absorber properties          |
+| `zirconium-nitride-zrn-coating`     | ZrN protective coating properties             |
+| `yttria-stabilized-zirconia-ysz`    | 8YSZ thermal barrier coating properties      |
+| `thorium-carbide-thc-fuel`           | ThC advanced fuel properties                 |
+| `americium-oxide-amo2`               | AmO₂ transmutation fuel properties           |
+
+### Diverse properties (7)
+
+| Fixture                              | Topic                                        |
+| ------------------------------------ | -------------------------------------------- |
+| `creep-rate-zircaloy-high-temp`       | Zircaloy-4 creep at high temperature         |
+| `specific-heat-uo2-high-temp`        | UO₂ specific heat at elevated temperature    |
+| `thermal-expansion-zircaloy`          | Zircaloy anisotropic thermal expansion        |
+| `density-measurement-porosity-uo2`    | UO₂ pellet porosity and thermal conductivity |
+| `elastic-moduli-thoria-high-pressure` | ThO₂ elastic moduli under high pressure       |
+| `band-gap-nuclear-materials`          | Band gaps across nuclear fuel materials       |
+| `formation-energy-actinide-oxides`    | Formation energy of UO₂, ThO₂, PuO₂          |
+
+### Edge cases (10)
+
+| Fixture                     | Topic                                  |
+| --------------------------- | -------------------------------------- |
+| `empty-sections-document`   | Document with intentionally empty sections |
+| `no-sections-single-block` | Single-block text with no headings    |
+| `deeply-nested-markdown`   | H1 to H2 nested heading structure      |
+| `unicode-special-chars`    | Unicode characters in measurements     |
+| `many-formulas-single-section` | Compound identification with many formulas |
+| `duplicate-properties-repeated` | Repeated property mentions in text   |
+| `h3-h4-nested-headings`    | H1 to H4 heading hierarchy  |
+| `multiline-measurement-values` | Multi-line measurement data for ThO₂   |
+
+### Additional structural alloys (3)
+
+| Fixture                     | Topic                                  |
+| --------------------------- | -------------------------------------- |
+| `inconel-718-spacer-grid`  | Inconel 718 spacer grid properties     |
+| `hafnium-diboride-hfb2-atf` | HfB₂ ATF ceramic properties            |
+| `ag-in-cd-control-rod`     | Ag-In-Cd control rod alloy properties   |
 
 ## What the test does
 

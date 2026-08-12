@@ -1,0 +1,7 @@
+# 锆合金包壳 / Zircaloy Cladding Properties
+
+锆合金(Zircaloy-4)是压水反应堆中广泛使用的燃料包壳材料。 Zircaloy-4的杨氏模量为99 GPa，剪切模量为36 GPa。 Youngs modulus is measured by ultrasonic resonance techniques. Zircaloy-4的熔点为2128 K，密度为6.56 g/cm^3。
+
+# 腐蚀行为 / Corrosion Behavior
+
+在570 K的PWR冷却剂环境中，锆合金包壳的氧化动力学符合立方速率定律。 The corrosion rate of Zircaloy-4 is approximately 50 mg/dm^2 after 500 days exposure at 570 K. 包壳的热导率为16.0 W/(m K)。Bulk modulus is 110 GPa.

@@ -1,0 +1,42 @@
+[
+  {
+    "content": "# Fission Product Poisoning in UO2 Fuel Fission products such as Xe, Kr, and La accumulate in UO2 fuel during irradiation. The lattice constant of UO2 containing 1 atomic percent Xe in solution increases by 0.15 percent to 5.478 angstrom. The melting point of UO2 is 3120 K and is essentially unchanged by fission product contamination. # Thermal Conductivity Degradation The thermal conductivity of UO2 at 800 K degrades from 4.0 W/(m K) in the fresh state to 2.5 W/(m K) at a burnup of 60 GWd/tU. The specific heat at 1500 K is 0.340 J/(g K). The bulk modulus of UO2 at zero burnup is 207.5 GPa.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      597
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "GWd",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "thermal_conductivity",
+          "specific_heat",
+          "bulk_modulus"
+        ],
+        "measurements": [
+          "1500 K",
+          "207.5 GPa",
+          "3120 K",
+          "5.478 Å",
+          "800 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 5,
+        "measurement_count": 5
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

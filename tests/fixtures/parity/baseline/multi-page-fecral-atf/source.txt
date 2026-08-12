@@ -1,0 +1,11 @@
+# FeCrAl Alloy for Accident Tolerant Fuel
+
+Iron-chromium-aluminum (FeCrAl) alloys are leading candidates for accident-tolerant fuel cladding in light water reactors. A typical composition is Fe-13Cr-5Al in weight percent. The density of FeCrAl alloy is 7.1 g/cm^3.
+
+# High-Temperature Oxidation Resistance
+
+FeCrAl forms a protective alpha-Al2O3 scale above 1273 K, providing exceptional oxidation resistance. The melting point of Fe-13Cr-5Al is 1793 K. The specific heat at 1000 K is 0.70 J/(g K). The thermal conductivity at 600 K is 15.5 W/(m K).
+
+# Mechanical Properties
+
+Youngs modulus of FeCrAl at room temperature is 201 GPa. The bulk modulus is 170 GPa. The shear modulus is 78 GPa. Thermal expansion coefficient is 12.0e-6 K^-1 at 300 K. The cohesive energy of the BCC FeCrAl lattice is 4.2 eV/atom.

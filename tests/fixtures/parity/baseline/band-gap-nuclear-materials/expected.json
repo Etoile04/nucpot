@@ -1,0 +1,45 @@
+[
+  {
+    "content": "# Band Gap of Nuclear Fuel Materials The electronic band gap is a key parameter for understanding the thermal and electrical properties of nuclear fuel materials. UO2 has a band gap of 2.1 eV, classifying it as a semiconductor. ThO2 has a wider band gap of 5.8 eV. # Comparison Across Materials UN (uranium nitride) exhibits metallic behavior with a band gap of approximately 0.5 eV. UC (uranium carbide) is a semimetal with near-zero band gap. SiC has a band gap of 2.36 eV. BeO has the widest band gap at 7.6 eV. The density of UO2 is 10.97 g/cm^3 and the lattice constant is 5.4704 angstrom.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      594
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "BeO",
+          "SiC",
+          "ThO2",
+          "UC",
+          "UN",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "density",
+          "band_gap"
+        ],
+        "measurements": [
+          "0.5 eV",
+          "10.97 g/cm^3",
+          "2.1 eV",
+          "2.36 eV",
+          "5.4704 Å",
+          "5.8 eV",
+          "7.6 eV"
+        ]
+      },
+      "summary": {
+        "formula_count": 6,
+        "property_count": 3,
+        "measurement_count": 7
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

@@ -1,0 +1,49 @@
+[
+  {
+    "content": "# Boron Carbide (B4C) Control Rod Material Boron carbide (B4C) is the primary absorber material in LWR control rods due to the high neutron absorption cross-section of boron-10. The rhombohedral structure has lattice parameters a=5.600 angstrom and c=12.086 angstrom in hexagonal setting. The density of B4C is 2.52 g/cm^3. # Thermophysical Properties The thermal conductivity of B4C at 300 K is 42 W/(m K). The melting point is 2723 K. Youngs modulus is 450 GPa. The bulk modulus is 200 GPa. The shear modulus is 185 GPa. The specific heat at 1000 K is 1.80 J/(g K).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      567
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "B4C",
+          "GPa",
+          "LWR"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "1000 K",
+          "12.086 Å",
+          "185 GPa",
+          "2.52 g/cm^3",
+          "200 GPa",
+          "2723 K",
+          "300 K",
+          "450 GPa",
+          "5.600 Å"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 8,
+        "measurement_count": 9
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

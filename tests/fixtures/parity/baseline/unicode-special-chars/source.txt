@@ -1,0 +1,7 @@
+# Unicode in Nuclear Materials Data
+
+The lattice constant of UO2 is 5.4704 Å (angstrom). Temperatures are reported in both K and °C: the melting point of UO2 is 3120 K or 2847 °C. The bulk modulus is 207.5 GPa and the density is 10.97 g/cm^3.
+
+# Additional Measurements
+
+Thermal conductivity at 800 K is 3.5 W/(m·K). The specific heat at 500 K is 0.310 J/(g·K). Youngs modulus is 220 GPa and the shear modulus is 85 GPa.

@@ -1,0 +1,11 @@
+# Uranium Nitride (UN) as Advanced Nuclear Fuel
+
+Uranium nitride (UN) has a face-centered cubic (NaCl-type) structure with space group Fm-3m. The lattice parameter of UN is 4.88 angstrom at room temperature. The theoretical density is 14.32 g/cm^3, significantly higher than UO2 at 10.97 g/cm^3.
+
+# Thermal Properties
+
+The thermal conductivity of UN at 300 K is 13.5 W/(m K), roughly double that of UO2. The melting point of UN is 3123 K in a nitrogen overpressure of 0.1 MPa. The specific heat of UN at 1000 K is 0.280 J/(g K).
+
+# Elastic Constants
+
+Youngs modulus of UN measured by ultrasonic methods is 189 GPa. The bulk modulus is 195 GPa from DFT+U calculations. The shear modulus is 75 GPa. The formation energy of UN from uranium and nitrogen gas is -292 kJ/mol.

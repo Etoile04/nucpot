@@ -1,0 +1,11 @@
+# Empty Sections in Technical Documents
+
+Some nuclear materials science papers contain empty or nearly-empty sections between substantive content blocks. The lattice constant of UO2 is 5.4704 angstrom.
+
+# Introduction
+
+This section intentionally left blank for formatting purposes.
+
+# Results
+
+The bulk modulus of UO2 is 207.5 GPa. The melting point is 3120 K. The thermal conductivity at 500 K is 6.0 W/(m K). The density is 10.97 g/cm^3.

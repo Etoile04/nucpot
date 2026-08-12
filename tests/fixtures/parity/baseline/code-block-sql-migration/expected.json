@@ -1,0 +1,49 @@
+[
+  {
+    "content": "# Database Schema for Extraction Results The extraction results are stored in PostgreSQL: ```sql CREATE TABLE extraction_chunks ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), job_id UUID NOT NULL REFERENCES extraction_jobs(id), content TEXT NOT NULL, chunk_type VARCHAR(50) NOT NULL ); ``` The bulk modulus of Zircaloy-4 is 110 GPa. Youngs modulus is 99 GPa. The density is 6.56 g/cm^3. The melting point is 2128 K.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      417
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "CREATE",
+          "DEFAULT",
+          "GPa",
+          "KEY",
+          "NOT",
+          "NULL",
+          "PRIMARY",
+          "REFERENCES",
+          "TABLE",
+          "TEXT",
+          "UUID",
+          "VARCHAR"
+        ],
+        "properties": [
+          "melting_point",
+          "density",
+          "youngs_modulus",
+          "bulk_modulus"
+        ],
+        "measurements": [
+          "110 GPa",
+          "2128 K",
+          "6.56 g/cm^3",
+          "99 GPa"
+        ]
+      },
+      "summary": {
+        "formula_count": 12,
+        "property_count": 4,
+        "measurement_count": 4
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

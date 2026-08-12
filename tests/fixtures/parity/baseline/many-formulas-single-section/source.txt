@@ -1,0 +1,3 @@
+# Compound Identification in Mixed Oxide Fuel
+
+Mixed oxide fuel contains multiple chemical compounds that must be tracked during reprocessing. Common species include UO2, PuO2, AmO2, NpO2, ThO2, ZrO2, and MoO2. Additionally, fission products form compounds such as La2O3, CeO2, Nd2O3, BaO, SrO, and RuO2. The thermal conductivity of the mixed matrix at 1000 K is approximately 2.5 W/(m K). The density of typical MOX fuel is 10.95 g/cm^3 with a lattice parameter of 5.460 angstrom.

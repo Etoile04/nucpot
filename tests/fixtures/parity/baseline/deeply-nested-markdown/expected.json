@@ -1,0 +1,42 @@
+[
+  {
+    "content": "# Main Title: Nuclear Fuel Performance ## Subsection: UO2 Base Properties The fluorite-type uranium dioxide (UO2) crystallizes in the face-centered cubic structure. The lattice constant is 5.4704 angstrom and the density is 10.97 g/cm^3. ## Subsection: High-Temperature Behavior The melting point of UO2 is 3120 K. The thermal conductivity at 1000 K is 2.5 W/(m K). The specific heat at 1000 K is 0.320 J/(g K). The bulk modulus is 207.5 GPa.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      442
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "bulk_modulus"
+        ],
+        "measurements": [
+          "10.97 g/cm^3",
+          "1000 K",
+          "207.5 GPa",
+          "3120 K",
+          "5.4704 Å"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 6,
+        "measurement_count": 5
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

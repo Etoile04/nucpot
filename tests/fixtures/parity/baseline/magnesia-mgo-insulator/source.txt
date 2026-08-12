@@ -1,0 +1,7 @@
+# Magnesium Oxide (MgO) in Nuclear Applications
+
+Magnesium oxide (MgO) is a refractory ceramic with the rock salt (NaCl) structure, space group Fm-3m. The lattice constant of MgO is 4.212 angstrom at room temperature. The density is 3.58 g/cm^3.
+
+# Thermophysical Properties
+
+The thermal conductivity of MgO at 300 K is 60 W/(m K), decreasing to 8 W/(m K) at 1500 K. The melting point is 3125 K. The specific heat at 1000 K is 1.20 J/(g K). The bulk modulus of MgO is 160 GPa. Youngs modulus is 250 GPa. The band gap is 7.8 eV.

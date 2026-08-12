@@ -1,0 +1,7 @@
+# Alumina (Al2O3) for Nuclear Insulation
+
+Alumina (alpha-Al2O3) is used as an electrical insulator and neutron moderator in nuclear environments. The corundum structure has hexagonal symmetry with a=4.759 angstrom and c=12.991 angstrom. The density of sintered alumina is 3.97 g/cm^3.
+
+# Physical Properties
+
+The thermal conductivity of high-purity alumina at 300 K is 35 W/(m K). The melting point is 2345 K. Youngs modulus is 380 GPa. The bulk modulus is 252 GPa. The shear modulus is 145 GPa. The band gap of alpha-Al2O3 is 8.8 eV. The specific heat at 1000 K is 1.15 J/(g K).

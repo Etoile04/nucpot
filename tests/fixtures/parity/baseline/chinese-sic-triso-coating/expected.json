@@ -1,0 +1,37 @@
+[
+  {
+    "content": "# 碳化硅涂层 / SiC TRISO Coating Layer 碳化硅(SiC)是三结构同向性(TRISO)燃料颗粒的主要压力容器层。 SiC coating thermal conductivity at 300 K is 120 W/(m K) for high-purity CVD material. SiC的密度为3.21 g/cm^3，杨氏模量为410 GPa。Youngs modulus was measured by nanoindentation。 # 辐照性能 / Irradiation Performance 快中子注量达到3e25 n/m^2时，SiC的热导率下降至约30 W/(m K)。 At fast neutron fluence of 3e25 n/m^2, SiC swelling is less than 0.5 percent volume change. SiC的熔点为3103 K，剪切模量为170 GPa。",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      431
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "CVD",
+          "GPa",
+          "SiC",
+          "TRISO"
+        ],
+        "properties": [
+          "thermal_conductivity",
+          "youngs_modulus"
+        ],
+        "measurements": [
+          "21 g/cm^3",
+          "300 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 4,
+        "property_count": 2,
+        "measurement_count": 2
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

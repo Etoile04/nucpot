@@ -1,0 +1,7 @@
+# Uranium Monocarbide (UC) Fuel
+
+Uranium monocarbide (UC) has the NaCl-type rock salt structure (FCC, Fm-3m) with a lattice parameter of 4.960 angstrom. The density is 13.63 g/cm^3, higher than UO2 at 10.97 g/cm^3.
+
+# Thermal and Mechanical Properties
+
+The thermal conductivity of UC at 300 K is 22 W/(m K), significantly higher than UO2. The melting point of UC is 2790 K in a carbon-saturated atmosphere. Youngs modulus is 220 GPa. The bulk modulus is 140 GPa. The formation energy of UC from uranium and graphite is approximately -95 kJ/mol.

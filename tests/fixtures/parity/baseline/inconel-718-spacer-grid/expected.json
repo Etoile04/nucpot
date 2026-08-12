@@ -1,0 +1,45 @@
+[
+  {
+    "content": "# Inconel 718 for Fuel Assembly Spacer Grids Inconel 718 is a nickel-based superalloy used in fuel assembly spacer grids. The density is 8.19 g/cm^3. The melting point is 1609 K. # Mechanical Properties at Operating Temperature Youngs modulus at room temperature is 200 GPa, decreasing to 165 GPa at 873 K. The bulk modulus is 180 GPa. The shear modulus is 77 GPa. The thermal conductivity at 600 K is 18.5 W/(m K). The specific heat at 600 K is 0.470 J/(g K).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      460
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa"
+        ],
+        "properties": [
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "1609 K",
+          "165 GPa",
+          "180 GPa",
+          "200 GPa",
+          "600 K",
+          "77 GPa",
+          "8.19 g/cm^3",
+          "873 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 1,
+        "property_count": 7,
+        "measurement_count": 8
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

@@ -1,0 +1,44 @@
+[
+  {
+    "content": "# U3Si2 as Accident Tolerant Dispersion Fuel Uranium silicide (U3Si2) is a high-uranium-density compound considered for accident-tolerant fuel applications. The tetragonal crystal structure has lattice parameters a=7.332 angstrom and c=3.900 angstrom. The theoretical density of U3Si2 is 12.2 g/cm^3, providing a 25 percent increase in uranium density over UO2. # Thermophysical Properties The thermal conductivity of U3Si2 at 300 K is 8.5 W/(m K). The melting point is 1938 K. The specific heat at 500 K is 0.200 J/(g K). The formation energy from the elements is approximately -85 kJ/mol per uranium atom.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      607
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "U3Si2",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_parameter",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "specific_heat",
+          "formation_energy"
+        ],
+        "measurements": [
+          "12.2 g/cm^3",
+          "1938 K",
+          "3.900 Å",
+          "300 K",
+          "500 K",
+          "7.332 Å",
+          "85 k"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 6,
+        "measurement_count": 7
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

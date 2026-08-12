@@ -1,0 +1,40 @@
+[
+  {
+    "content": "# UO2 Property Comparison: Experimental vs DFT The following table compares experimental and DFT calculated properties of UO2: | Property | Experimental | DFT (PBE+U) | Unit | |---|---|---|---| | Lattice constant | 5.4704 | 5.498 | angstrom | | Bulk modulus | 207 | 198 | GPa | | Melting point | 3120 | 2900 | K | | Thermal conductivity (300 K) | 8.0 | 7.5 | W/(m K) | | Density | 10.97 | 10.85 | g/cm^3 | | Band gap | 2.1 | 2.0 | eV | The DFT calculations were performed within the PBE+U formalism.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      499
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "DFT",
+          "GPa",
+          "PBE",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "bulk_modulus",
+          "band_gap"
+        ],
+        "measurements": [
+          "300 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 4,
+        "property_count": 6,
+        "measurement_count": 1
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

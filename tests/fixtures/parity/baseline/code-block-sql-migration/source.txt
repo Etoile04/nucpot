@@ -1,0 +1,14 @@
+# Database Schema for Extraction Results
+
+The extraction results are stored in PostgreSQL:
+
+```sql
+CREATE TABLE extraction_chunks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES extraction_jobs(id),
+    content TEXT NOT NULL,
+    chunk_type VARCHAR(50) NOT NULL
+);
+```
+
+The bulk modulus of Zircaloy-4 is 110 GPa. Youngs modulus is 99 GPa. The density is 6.56 g/cm^3. The melting point is 2128 K.

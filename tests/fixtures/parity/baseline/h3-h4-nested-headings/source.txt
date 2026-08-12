@@ -1,0 +1,9 @@
+# Fuel Performance Summary
+
+## UO2 Properties
+### Lattice and Density
+The lattice constant of UO2 is 5.4704 angstrom with density 10.97 g/cm^3.
+### Thermal Properties
+The thermal conductivity at 300 K is 8.0 W/(m K). The melting point is 3120 K.
+#### High-Temperature Degradation
+At 2000 K, thermal conductivity drops to 2.0 W/(m K). The specific heat at 1500 K is 0.340 J/(g K). The bulk modulus is 207.5 GPa.

@@ -1,0 +1,7 @@
+# Yttria-Stabilized Zirconia (YSZ) in Nuclear Applications
+
+Yttria-stabilized zirconia (YSZ) with 8 mol percent Y2O3 is used as a thermal barrier coating and solid electrolyte. The cubic fluorite phase has a lattice constant of 5.140 angstrom. The density of 8YSZ is 6.00 g/cm^3.
+
+# Thermal Properties
+
+The thermal conductivity of YSZ at 300 K is 2.0 W/(m K), significantly lower than pure ZrO2 at 2.5 W/(m K). The melting point is 2973 K. The specific heat at 1000 K is 0.580 J/(g K). Youngs modulus is 200 GPa. The bulk modulus is 170 GPa.

@@ -1,0 +1,40 @@
+[
+  {
+    "content": "# V2 Extraction Pipeline Configuration The V2 extraction pipeline is configured through the following Python settings. The extraction orchestrator processes raw text through five sequential steps: ```python from nfm_db.services.extraction.steps import ( RawTextLoader, SectionSegmenter, EntityExtractor, PropertyNormalizer, ChunkBuilder, ) ``` The lattice constant of UO2 in the fluorite structure is 5.4704 angstrom at 300 K. The bulk modulus is 207.5 GPa. The melting point is 3120 K. The thermal conductivity at 800 K is 3.5 W/(m K).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      536
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "thermal_conductivity",
+          "bulk_modulus"
+        ],
+        "measurements": [
+          "207.5 GPa",
+          "300 K",
+          "3120 K",
+          "5.4704 Å",
+          "800 K"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 4,
+        "measurement_count": 5
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

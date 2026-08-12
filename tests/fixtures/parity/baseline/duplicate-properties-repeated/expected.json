@@ -1,0 +1,39 @@
+[
+  {
+    "content": "# Repeated Property Mentions in Technical Text The lattice constant of UO2 is reported in the literature as 5.4704 angstrom. Multiple studies confirm this lattice constant value of 5.4704 angstrom. The density of UO2 at this lattice constant is 10.97 g/cm^3. The melting point of UO2 is 3120 K. The bulk modulus at room temperature is 207.5 GPa, while the melting point of UO2 at 3120 K is well-established.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      407
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "bulk_modulus"
+        ],
+        "measurements": [
+          "10.97 g/cm^3",
+          "207.5 GPa",
+          "3120 K",
+          "5.4704 Å"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 4,
+        "measurement_count": 4
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

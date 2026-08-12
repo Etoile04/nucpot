@@ -1,0 +1,37 @@
+[
+  {
+    "content": "# Cladding Alloy Properties Comparison | Alloy | Density (g/cm^3) | Melting point (K) | Youngs modulus (GPa) | Thermal conductivity (W/(m K)) | |---|---|---|---|---| | Zircaloy-4 | 6.56 | 2128 | 99 | 16.0 | | M5 (Zr-1NbO) | 6.51 | 2133 | 95 | 14.5 | | FeCrAl | 7.10 | 1793 | 201 | 15.5 | | SiC (CVD) | 3.21 | 3103 | 410 | 120 | | SS316L | 7.99 | 1673 | 193 | 15.0 | Cladding selection involves trade-offs among neutronic penalty, corrosion resistance, and accident tolerance.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      475
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "CVD",
+          "FeCrAl",
+          "GPa",
+          "SS316L",
+          "SiC"
+        ],
+        "properties": [
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "youngs_modulus"
+        ],
+        "measurements": []
+      },
+      "summary": {
+        "formula_count": 5,
+        "property_count": 4,
+        "measurement_count": 0
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

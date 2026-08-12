@@ -1,0 +1,11 @@
+# Nitride Fuel Thermophysical Data
+
+| Fuel | Lattice parameter (angstrom) | Density (g/cm^3) | Melting point (K) | TC 300 K (W/(m K)) |
+|---|---|---|---|---|
+| UN | 4.880 | 14.32 | 3123 | 13.5 |
+| (U,Zr)N | 4.910 | 12.80 | 3050 | 11.0 |
+| (U,Pu)N | 4.890 | 13.80 | 3080 | 10.5 |
+| ZrN | 4.577 | 7.09 | 2960 | 20.0 |
+| ThN | 5.200 | 11.60 | 2980 | 15.0 |
+
+Formation energy of UN is -292 kJ/mol, ZrN is -365 kJ/mol.

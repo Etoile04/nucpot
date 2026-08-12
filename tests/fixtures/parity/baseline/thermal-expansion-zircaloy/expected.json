@@ -1,0 +1,42 @@
+[
+  {
+    "content": "# Thermal Expansion of Zircaloy Alloys The linear thermal expansion coefficient of Zircaloy-4 varies with temperature. At 300 K, the expansion coefficient is 6.0e-6 K^-1 in the axial direction. At 773 K, it increases to 8.5e-6 K^-1. The melting point is 2128 K. # Anisotropic Behavior Zircaloy exhibits anisotropic thermal expansion due to the alpha-titanium hexagonal close-packed crystal structure. The density at room temperature is 6.56 g/cm^3. Youngs modulus is 99 GPa and the shear modulus is 36 GPa. The thermal conductivity at 773 K is 14.0 W/(m K).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      557
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa"
+        ],
+        "properties": [
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "youngs_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "2128 K",
+          "300 K",
+          "36 GPa",
+          "6 K^-1",
+          "6.56 g/cm^3",
+          "773 K",
+          "99 GPa"
+        ]
+      },
+      "summary": {
+        "formula_count": 1,
+        "property_count": 5,
+        "measurement_count": 7
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

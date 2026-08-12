@@ -1,0 +1,6 @@
+# Formation Energy of Actinide Oxides
+
+The formation energy from elements in their standard states is a fundamental thermodynamic property. For UO2, the standard enthalpy of formation is -1085 kJ/mol. For ThO2, the formation energy is -1226 kJ/mol. For PuO2, the formation energy is approximately -1057 kJ/mol.
+
+# Lattice and Density Correlation
+The lattice constant of UO2 is 5.4704 angstrom with density 10.97 g/cm^3. ThO2 has a larger lattice parameter of 5.5959 angstrom but lower density of 9.7 g/cm^3 due to the lighter thorium nucleus. PuO2 has a lattice constant of 5.396 angstrom and density of 11.46 g/cm^3. The melting point of UO2 is 3120 K.

@@ -1,0 +1,7 @@
+# Zirconium Nitride (ZrN) as Protective Coating
+
+Zirconium nitride (ZrN) has the NaCl-type FCC structure with a lattice parameter of 4.577 angstrom. The density is 7.09 g/cm^3. The melting point is 2960 K under 1 atm nitrogen.
+
+# Thermophysical Properties
+
+The thermal conductivity of ZrN at 300 K is 20 W/(m K). Youngs modulus is 410 GPa. The bulk modulus is 220 GPa. The shear modulus is 170 GPa. The specific heat at 1000 K is 0.600 J/(g K). The formation energy from zirconium and nitrogen gas is -365 kJ/mol. The band gap of ZrN is approximately 2.0 eV.

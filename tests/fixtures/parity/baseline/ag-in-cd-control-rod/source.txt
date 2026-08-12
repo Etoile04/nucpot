@@ -1,0 +1,7 @@
+# Ag-In-Cd Control Rod Alloy
+
+The Ag-80In-15Cd-5 (weight percent) alloy is used as control rod material in pressurized water reactors. The density of the Ag-In-Cd alloy is 10.17 g/cm^3. The melting point is approximately 1073 K.
+
+# Mechanical Properties
+
+Youngs modulus of the Ag-In-Cd alloy is approximately 83 GPa. The thermal conductivity at 600 K is 50 W/(m K). The specific heat at 500 K is 0.260 J/(g K). The bulk modulus is 105 GPa. The shear modulus is 38 GPa.

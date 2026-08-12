@@ -1,0 +1,39 @@
+[
+  {
+    "content": "# UO2热导率研究 / Thermal Conductivity of UO2 二氧化铀(UO2)是轻水反应堆中最重要的核燃料材料。UO2的热导率在300 K时约为8.0 W/(m K)。 Thermal conductivity of UO2 decreases significantly with increasing temperature, reaching approximately 2.5 W/(m K) at 2000 K. UO2的密度为10.97 g/cm^3。 # 热导率模型 / Modeling Approach 热导率可表示为A/(T+B)+CT^D的形式，其中A、B、C、D为拟合参数。 At 1000 K, the specific heat capacity of UO2 is 0.320 J/(g K). UO2的熔点在化学计量条件下为3120 K。The melting point is measured by differential scanning calorimetry (DSC).",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      469
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "CT",
+          "DSC",
+          "UO2"
+        ],
+        "properties": [
+          "melting_point",
+          "thermal_conductivity",
+          "specific_heat",
+          "heat_capacity"
+        ],
+        "measurements": [
+          "1000 K",
+          "2000 K",
+          "97 g/cm^3"
+        ]
+      },
+      "summary": {
+        "formula_count": 3,
+        "property_count": 4,
+        "measurement_count": 3
+      }
+    },
+    "parent_chunk_id": null
+  }
+]

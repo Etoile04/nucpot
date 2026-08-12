@@ -1,0 +1,46 @@
+[
+  {
+    "content": "The following UO2 properties were measured at room temperature: lattice constant 5.4704 angstrom, bulk modulus 207.5 GPa, density 10.97 g/cm^3, and melting point 3120 K. The thermal conductivity is 8.0 W/(m K) at 300 K, decreasing to 3.0 W/(m K) at 1500 K. Youngs modulus is 220 GPa and the shear modulus is 85 GPa. These values are consistent with the fluorite structure of uranium dioxide.",
+    "chunk_type": "final",
+    "_source_span": [
+      0,
+      391
+    ],
+    "metadata": {
+      "normalized": true,
+      "section_index": 0,
+      "section_count": 1,
+      "entities": {
+        "formulas": [
+          "GPa",
+          "UO2"
+        ],
+        "properties": [
+          "lattice_constant",
+          "melting_point",
+          "density",
+          "thermal_conductivity",
+          "youngs_modulus",
+          "bulk_modulus",
+          "shear_modulus"
+        ],
+        "measurements": [
+          "10.97 g/cm^3",
+          "1500 K",
+          "207.5 GPa",
+          "220 GPa",
+          "300 K",
+          "3120 K",
+          "5.4704 Å",
+          "85 GPa"
+        ]
+      },
+      "summary": {
+        "formula_count": 2,
+        "property_count": 7,
+        "measurement_count": 8
+      }
+    },
+    "parent_chunk_id": null
+  }
+]
