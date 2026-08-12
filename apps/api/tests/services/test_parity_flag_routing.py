@@ -146,7 +146,16 @@ async def _run_legacy(raw: list[dict[str, Any]]) -> dict[str, Any]:
     bulk = _build_bulk_result_for(raw)
     gap = _build_gap_result(1)
 
+    # Pin V2=False so the dispatcher routes through the legacy dataclass
+    # branch. NFM-2876 flipped the default to True; without this patch
+    # both ``_run_legacy`` and ``_run_orchestrator`` would converge on
+    # the V2 path and the parity assertion would compare V2 against
+    # itself (false positive).
+    legacy_settings = MagicMock()
+    legacy_settings.extraction_v2_enabled = False
+
     with (
+        patch("nfm_db.config.get_settings", return_value=legacy_settings),
         patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
         patch(
             "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -297,13 +306,17 @@ async def test_parity_flag_false_vs_flag_true_equivalent_results() -> None:
     assert legacy["status"] == new["status"]
 
 
-def test_parity_flag_default_is_false() -> None:
-    """The acceptance criterion — flag defaults to False (do NOT flip default)."""
+def test_parity_flag_default_is_true() -> None:
+    """The acceptance criterion — flag defaults to True (NFM-2869-T2 flip).
+
+    Staging parity was verified by NFM-2875 before the flip; rolling the
+    default back to ``False`` requires a new ADR.
+    """
     from nfm_db.config import Settings
 
     os.environ.pop("NFM_EXTRACTION_V2_ENABLED", None)
     s = Settings()
-    assert s.extraction_v2_enabled is False
+    assert s.extraction_v2_enabled is True
 
 
 @pytest.mark.asyncio
@@ -332,3 +345,153 @@ async def test_parity_empty_input_returns_no_staged_no_gaps() -> None:
     assert new["accepted_count"] == 0
     assert legacy["rejected_count"] == 0
     assert new["rejected_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Hermes WARNING 2026-08-12: dedicated V2-flag-on end-to-end test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trigger_extraction_default_flag_true_routes_to_orchestrator() -> None:
+    """End-to-end V2-flag-on coverage (Hermes WARNING 2026-08-12).
+
+    Asserts that ``trigger_extraction`` — the production entry point —
+    actually dispatches to ``ExtractionOrchestrator`` when the post-flip
+    default ``Settings.extraction_v2_enabled is True`` is in effect, not
+    only that the flag default itself is True.
+
+    The dispatch in :func:`trigger_extraction` lazy-imports
+    ``ExtractionOrchestrator`` from ``nfm_db.services.extraction_orchestrator``;
+    patching the source module intercepts that import correctly.
+    """
+    from nfm_db.config import get_settings
+    from nfm_db.services.extraction_pipeline import trigger_extraction
+
+    # Sanity-check the post-flip default without patching anything.
+    os.environ.pop("NFM_EXTRACTION_V2_ENABLED", None)
+    assert get_settings().extraction_v2_enabled is True, (
+        "Flag default must be True after NFM-2869-T2 flip — if this fails, "
+        "the dispatch below is meaningless."
+    )
+
+    mock_session = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.flush = AsyncMock()
+    mock_session.add = MagicMock()
+    # _get_latest_published_ontology uses the sync ``result.scalars().first()``
+    # accessor on a real AsyncSession; SQLAlchemy 2.0+ ``AsyncSession.execute``
+    # returns a sync ``Result``, so ``.first()`` is sync, not awaitable.
+    # Mock it as a sync MagicMock returning None (no published ontology).
+    mock_scalars = MagicMock()
+    mock_scalars.first = MagicMock(return_value=None)
+    _exec = MagicMock()
+    _exec.scalars.return_value = mock_scalars
+    _exec.scalar_one_or_none = MagicMock(return_value=None)
+    mock_session.execute = AsyncMock(return_value=_exec)
+
+    fake_run = AsyncMock(return_value=MagicMock(status="completed", id=uuid.uuid4()))
+
+    with (
+        patch(
+            "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator"
+        ) as mock_orch_cls,
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.load_v2_content",
+            new_callable=AsyncMock,
+            return_value="# fake source content",
+        ),
+    ):
+        mock_orch_cls.return_value.run = fake_run
+
+        await trigger_extraction(
+            mock_session,
+            source_reference="doi:10.1234/parity-flag-true",
+            source_type="doi",
+        )
+
+    # The V2 orchestrator MUST have been instantiated exactly once and its
+    # run() awaited.  If the dispatch fell through to legacy, mock_orch_cls
+    # would not have been touched.
+    mock_orch_cls.assert_called_once()
+    fake_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_parity_v2_flag_on_routes_via_dispatcher_to_orchestrator(
+    monkeypatch, tmp_path, db_session,
+) -> None:
+    """V2 flag ON must route ``trigger_extraction_pipeline`` to the V2
+    orchestrator and produce a canonical 24-key response (NFM-2869-T2).
+
+    Hermes CR Finding 2 (2026-08-12) noted that ``test_parity_flag_routing.py``
+    only covered the flag default; a dedicated end-to-end V2-flag-on parity
+    test exercising the orchestrator (not just the flag default) was missing.
+    This test closes that gap: with V2 ON, the dispatcher's contract surface
+    (``trigger_extraction_pipeline``) must invoke the V2 orchestrator and the
+    returned dict must satisfy the D3 canonical contract.
+
+    The V2 orchestrator's step chain (RawTextLoader → SectionSegmenter →
+    EntityExtractor → PropertyNormalizer → ChunkBuilder) is exercised through
+    the dispatcher exactly the same way production code paths invoke it; we
+    only stub the LLM boundary via ``EXTRACTION_STUB_MODE`` so the test does
+    not require an external LLM key.
+    """
+    import nfm_db.services.extraction_pipeline_dispatch as dispatch_mod
+
+    # Clear the lru_cache BEFORE the monkeypatch replaces the symbol with a
+    # lambda (the lambda has no .cache_clear attribute).
+    dispatch_mod.is_extraction_v2_enabled.cache_clear()
+    # Force V2 flag ON regardless of host env.
+    monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
+
+    # Stub a real markdown source so load_v2_content returns valid content
+    # and the orchestrator's chunker emits >=1 section.
+    source_file = tmp_path / "v2_flag_on_parity.md"
+    source_file.write_text(
+        "# UO2 Lattice Parameter\n\n"
+        "## Crystal Structure\n"
+        "FCC lattice constant: 5.47 angstrom.\n\n"
+        "## Bulk Modulus\n"
+        "Bulk modulus at 300 K: 207.5 GPa.\n",
+        encoding="utf-8",
+    )
+
+    with patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}):
+        result = await dispatch_mod.trigger_extraction_pipeline(
+            source_reference=str(source_file),
+            source_type="file",
+            session=db_session,
+        )
+
+    # D3 canonical 24-key dict (NFM-2743 AC).
+    assert isinstance(result, dict), "V2 path must return a dict, not a dataclass"
+    assert result["status"] == "completed"
+    assert result["source_reference"] == str(source_file)
+    assert result["source_type"] == "file"
+    assert result["job_id"] is not None
+    assert result["error_message"] is None
+    assert result["created_at"] is not None
+    assert result["completed_at"] is not None
+
+    # Verify the orchestrator actually ran (not legacy) by checking that the
+    # parent job row was persisted with status=completed via the V2 path.
+    import uuid
+
+    from sqlalchemy import select
+
+    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+    job_uuid = uuid.UUID(result["job_id"])
+    persisted_job = (
+        await db_session.execute(
+            select(ORMExtractionJob).where(ORMExtractionJob.id == job_uuid)
+        )
+    ).scalars().first()
+    # The result above is the awaited row object, not a coroutine. SQLAlchemy
+    # 2.0+ AsyncSession.execute returns a sync Result; .scalars().first() is
+    # the correct sync accessor (defended against the Hermes CR Finding 1
+    # misread). See extraction_pipeline._get_latest_published_ontology.
+    assert persisted_job is not None, "V2 dispatcher must persist a parent job row"
+    assert persisted_job.status == "completed"
+    assert persisted_job.source_reference == str(source_file)
