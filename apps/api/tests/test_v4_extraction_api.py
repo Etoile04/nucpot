@@ -53,6 +53,11 @@ def _pin_extraction_v2_off():
             return_value=v1,
             create=True,
         ),
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.get_settings",
+            return_value=v1,
+            create=True,
+        ),
     ):
         yield
 
