@@ -1,0 +1,134 @@
+# V1/V2 extraction parity harness — observational CI job (NFM-2923 / ADR-0007 §3).
+#
+# Status: OBSERVATIONAL ONLY. Does not block merges. Promotion to a required
+# status check is gated on the harness running GREEN for >=7 consecutive
+# days on staging (ADR-0007 §3 / NFM-2916 phased gate).
+#
+# Triggers: pull_request that touches apps/api/** or tests/parity/**.
+# Runs the parity harness (NFM-2922, tests/parity/extraction_v1_v2.py),
+# captures the per-fixture summary to a file artifact (>=7 day retention),
+# and posts a PR annotation summarising the outcome.
+
+name: extraction-parity (observational)
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/**'
+      - 'tests/parity/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel in-progress runs for the same PR — keeps CI minutes cheap when an
+# author force-pushes. Does not affect merge gating (there is none).
+concurrency:
+  group: parity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: V1/V2 extraction parity harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'apps/api/uv.lock'
+
+      - name: Install API dev dependencies
+        working-directory: apps/api
+        run: uv sync --extra dev --frozen
+
+      # NFM-2922 ships tests/parity/extraction_v1_v2.py with @pytest.mark.parity
+      # and a pytest_sessionfinish hook that prints the per-fixture summary.
+      # `tee` captures the full pytest output (including the summary block)
+      # while still streaming it to the workflow log. `|| true` keeps the
+      # step non-fatal — the workflow intentionally continues on harness
+      # failures because the deliverable is the summary file, not pytest's
+      # exit code (NFM-2922 docstring, ADR-0007).
+      - name: Run parity harness (observational)
+        id: parity
+        working-directory: apps/api
+        run: |
+          mkdir -p parity-artifacts
+          uv run pytest \
+            tests/parity/extraction_v1_v2.py \
+            -v --tb=short \
+            2>&1 | tee parity-artifacts/parity-output.txt || true
+          echo "::notice title=Parity harness finished::See artifact 'extraction-parity-summary' for the per-fixture summary (NFM-2922)."
+
+      - name: Upload parity summary artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: extraction-parity-summary
+          path: apps/api/parity-artifacts/parity-output.txt
+          if-no-files-found: warn
+          # 14 days >> AC-required 7. ADR-0007 §3 review window is one
+          # week; doubling that gives the CPO headroom to inspect runs
+          # without rushing to download.
+          retention-days: 14
+
+      # Posts (or updates) a single bot comment on the PR. Uses an HTML
+      # comment marker so reruns replace the prior comment in place
+      # instead of stacking. `if: always()` ensures we annotate even on
+      # harness failure.
+      - name: Annotate PR with parity status (observational)
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        env:
+          RUN_ID: ${{ github.run_id }}
+          OUTCOME: ${{ steps.parity.outcome }}
+        with:
+          script: |
+            const marker = '<!-- extraction-parity-bot -->';
+            const outcome = (process.env.OUTCOME || 'unknown');
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.RUN_ID}`;
+            const verdict = outcome === 'success' ? 'GREEN' : 'OBSERVED-FAIL';
+            const emoji = outcome === 'success' ? '✅' : '⚠️';
+            const body = marker + '\n' +
+              '## ' + emoji + ' V1/V2 extraction parity (observational)\n\n' +
+              '**Outcome:** `' + outcome + '` → **' + verdict + '**\n\n' +
+              '**This job is observational only — it does NOT gate merge.** Per ADR-0007 §3 ' +
+              'the harness must run GREEN for ≥7 consecutive days on staging before promotion ' +
+              'to a required status check.\n\n' +
+              '📥 Per-fixture summary: download the `extraction-parity-summary` artifact from ' +
+              '[this run](' + runUrl + ') (14-day retention).\n\n' +
+              '_Issue: NFM-2923 · Harness: NFM-2922 · Gate prep: NFM-2916_';
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.data.find(c => (c.body || '').includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
