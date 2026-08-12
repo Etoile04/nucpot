@@ -122,15 +122,28 @@ class TestExtractionV2FlagRoutesToOrchestrator:
 
         session = _build_session()
 
+        # NFM-2909 (BLOCKER 3 / CR second pass): the V2 branch loads
+        # content via ``load_v2_content`` BEFORE constructing the
+        # orchestrator. ``doi:10.1234/flag-verification`` is not on
+        # disk and ``EXTRACTION_STUB_MODE`` is unset, so the loader
+        # raises ``NotImplementedError`` and the V2 branch short-
+        # circuits to a FAILED job — the orchestrator is never
+        # constructed. Patch the loader at its source module so the
+        # function-local ``from ... import load_v2_content`` inside
+        # ``trigger_extraction`` picks up the patched value.
         with patch(
             "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
             _RecordingOrchestrator,
         ):
-            job = await legacy_module.trigger_extraction(
-                session,
-                source_reference="doi:10.1234/flag-verification",
-                source_type="doi",
-            )
+            with patch(
+                "nfm_db.services.extraction_pipeline_dispatch.load_v2_content",
+                return_value="# Placeholder\n\nStub content for flag-routing test.",
+            ):
+                job = await legacy_module.trigger_extraction(
+                    session,
+                    source_reference="doi:10.1234/flag-verification",
+                    source_type="doi",
+                )
 
         assert len(_RecordingOrchestrator.instances) == 1, (
             "V2 flag=True must construct exactly one ExtractionOrchestrator"
@@ -163,15 +176,24 @@ class TestExtractionV2FlagRoutesToOrchestrator:
 
         session = _build_session()
 
+        # NFM-2909 (CR second pass): same root cause as
+        # ``test_v2_flag_true_routes_to_orchestrator`` — V2 branch
+        # short-circuits when the loader raises before constructing
+        # the orchestrator. Patch the loader so the V2 branch reaches
+        # the ``session.add(orm_job)`` step we want to assert on.
         with patch(
             "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
             _RecordingOrchestrator,
         ):
-            await legacy_module.trigger_extraction(
-                session,
-                source_reference="doi:10.1234/v2-add",
-                source_type="doi",
-            )
+            with patch(
+                "nfm_db.services.extraction_pipeline_dispatch.load_v2_content",
+                return_value="# Placeholder\n\nStub content for session-add test.",
+            ):
+                await legacy_module.trigger_extraction(
+                    session,
+                    source_reference="doi:10.1234/v2-add",
+                    source_type="doi",
+                )
 
         assert session.add.called, "V2 branch must session.add() the ORM job"
         added_objects = [call.args[0] for call in session.add.call_args_list]
@@ -363,16 +385,28 @@ class TestExtractionV2FlagMutualExclusion:
             async def run(self, **_kwargs: object) -> None:
                 raise RuntimeError("forced: orchestrator run failed")
 
+        # NFM-2909 (BLOCKER 4 / CR second pass): the V2 branch runs
+        # ``load_v2_content`` BEFORE constructing the orchestrator.
+        # Without stub mode the loader raises ``NotImplementedError``,
+        # the V2 branch catches it and returns a FAILED job — so the
+        # orchestrator is never constructed and ``pytest.raises`` sees
+        # NOTHING (the FAILED-job path returns, it does not re-raise).
+        # Patch the loader so the orchestrator IS constructed and
+        # ``.run()`` raises the expected ``RuntimeError``.
         with patch(
             "nfm_db.services.extraction_orchestrator.ExtractionOrchestrator",
             _FailingOrchestrator,
         ):
-            with pytest.raises(RuntimeError, match="forced: orchestrator run failed"):
-                await legacy_module.trigger_extraction(
-                    session,
-                    source_reference=sentinel_key,
-                    source_type="doi",
-                )
+            with patch(
+                "nfm_db.services.extraction_pipeline_dispatch.load_v2_content",
+                return_value="# Placeholder\n\nStub content for leak test.",
+            ):
+                with pytest.raises(RuntimeError, match="forced: orchestrator run failed"):
+                    await legacy_module.trigger_extraction(
+                        session,
+                        source_reference=sentinel_key,
+                        source_type="doi",
+                    )
 
         assert sentinel_key not in legacy_module._job_store
         assert len(legacy_module._job_store) == pre_count, (
