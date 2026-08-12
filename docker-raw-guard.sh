@@ -12,7 +12,7 @@ set -euo pipefail
 # ── Configurable defaults (override via environment) ──────────────────────
 
 DOCKER_RAW_PATH="${DOCKER_RAW_PATH:-$HOME/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw}"
-LOG_FILE="${LOG_FILE:-/var/log/docker-raw-guard.log}"
+LOG_FILE="${LOG_FILE:-$HOME/Library/Logs/docker-raw-guard.log}"
 ALERT_THRESHOLD="${ALERT_THRESHOLD:-60}"       # percentage — triggers warning + notification
 PRUNE_THRESHOLD="${PRUNE_THRESHOLD:-80}"       # percentage — triggers auto-prune
 ALERT_WEBHOOK_URL="${ALERT_WEBHOOK_URL:-}"      # optional webhook for alerting

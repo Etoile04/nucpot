@@ -1,111 +1,151 @@
-# Docker Raw Guard
+# NFM-DB — 核燃料与材料物性数据库
 
-Docker.raw disk usage monitor, alerter, and auto-pruner for macOS Docker Desktop.
+> 可持续共享的核燃料与材料物性数据库平台
+>
+> Nuclear Fuel & Materials Properties Database — a sustainable and sharing platform for nuclear materials data in China.
 
-**Part of NFM-3019.** Prevents Docker.raw from silently consuming the entire host volume.
+## Tech Stack
 
-## Problem
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 15 (App Router) + TypeScript + Ant Design 5 |
+| Backend | Python 3.12+ / FastAPI |
+| Database | PostgreSQL 16 |
+| Package Manager | pnpm (JS) / uv (Python) |
+| CI/CD | GitHub Actions |
 
-Docker Desktop on macOS stores all container/image data in a single `Docker.raw` disk image. Without monitoring, it can grow to consume the entire host volume (observed: 92 GB actual / 384 GB apparent on a 460 GB volume) and crash the host.
+## Prerequisites
 
-## How It Works
-
-```
-docker-raw-guard.sh
-├── Measures Docker.raw size via du
-├── Reads host volume capacity via df
-├── Computes percentage of volume used
-├── < 60%  → INFO log, exit 0
-├── ≥ 60%  → WARNING log + macOS notification + webhook, exit 1
-└── ≥ 80%  → CRITICAL log + auto-prune + notification, exit 2
-```
-
-Auto-prune runs `docker system prune -a -f --volumes` and `docker builder prune -a -f`, then logs space recovered.
+- **Node.js** ≥ 20 (LTS recommended)
+- **pnpm** ≥ 9 (`corepack enable && corepack prepare pnpm@latest --activate`)
+- **Python** ≥ 3.12
+- **uv** (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- **Docker** (for PostgreSQL, optional if you have a local instance)
 
 ## Quick Start
 
 ```bash
-# 1. Install the script
-sudo cp docker-raw-guard.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/docker-raw-guard.sh
+# 1. Clone and enter the repo
+git clone <repo-url> && cd nfm-db
 
-# 2. Install the launchd agent (runs every 30 minutes)
-cp com.nucpot.docker-raw-guard.plist ~/Library/LaunchAgents/
-launchctl load -w ~/Library/LaunchAgents/com.nucpot.docker-raw-guard.plist
+# 2. Start PostgreSQL (one-time)
+docker compose -f docker/docker-compose.yml up -d
 
-# 3. Verify it's loaded
-launchctl list | grep docker-raw-guard
+# 3. Install frontend dependencies
+pnpm install
 
-# 4. Test manually
-sudo /usr/local/bin/docker-raw-guard.sh
-echo "Exit code: $?"
+# 4. Install backend dependencies
+cd apps/api && uv sync --dev && cd ../..
+
+# 5. Start both dev servers (in separate terminals)
+pnpm dev          # Frontend → http://localhost:3000
+pnpm dev:api      # Backend  → http://localhost:8000
 ```
 
-## Configuration
+That's it — the frontend runs on port 3000 with hot reload, and the API on port 8000 with auto-reload.
 
-All thresholds are configurable via environment variables. Set them in the plist's `EnvironmentVariables` dict or export in your shell profile.
+## Project Structure
 
-| Variable | Default | Description |
-|---|---|---|
-| `DOCKER_RAW_PATH` | `~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw` | Path to Docker.raw |
-| `LOG_FILE` | `/var/log/docker-raw-guard.log` | Metrics log path |
-| `ALERT_THRESHOLD` | `60` | Percentage that triggers warning |
-| `PRUNE_THRESHOLD` | `80` | Percentage that triggers auto-prune |
-| `ALERT_WEBHOOK_URL` | _(empty)_ | Optional webhook URL for alerts |
-| `HOST_VOLUME` | `/` | Host volume to measure against |
-
-### Example: custom thresholds in plist
-
-Add to the `EnvironmentVariables` dict in the plist:
-
-```xml
-<key>ALERT_THRESHOLD</key>
-<string>50</string>
-<key>PRUNE_THRESHOLD</key>
-<string>70</string>
-<key>ALERT_WEBHOOK_URL</key>
-<string>https://hooks.slack.com/services/XXX/YYY/ZZZ</string>
+```
+nfm-db/
+├── apps/
+│   ├── web/              # Next.js 15 frontend
+│   │   ├── src/
+│   │   │   ├── app/      # App Router pages
+│   │   │   ├── components/
+│   │   │   ├── lib/
+│   │   │   └── styles/
+│   │   └── e2e/          # Playwright E2E tests
+│   └── api/              # FastAPI backend
+│       ├── src/nfm_db/
+│       │   ├── api/v1/   # API routes
+│       │   ├── models/   # SQLAlchemy models
+│       │   ├── schemas/  # Pydantic schemas
+│       │   └── services/ # Business logic
+│       └── tests/
+├── packages/
+│   ├── shared/           # Shared TypeScript types
+│   └── config/           # Shared config (ESLint, etc.)
+├── docker/               # Docker Compose & Dockerfiles
+├── docs/                 # Project documentation
+├── .github/workflows/    # CI pipeline
+├── pnpm-workspace.yaml
+├── pyproject.toml        # Python project config (Ruff, mypy, pytest)
+└── README.md
 ```
 
-## Log Format
+## Scripts
 
-Each run appends a single JSON line to `/var/log/docker-raw-guard.log`:
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Start Next.js dev server (port 3000) |
+| `pnpm dev:api` | Start FastAPI dev server (port 8000) |
+| `pnpm build` | Build the Next.js frontend |
+| `pnpm lint` | Lint all packages |
+| `pnpm typecheck` | Type-check all packages |
+| `pnpm test` | Run unit tests |
+| `pnpm test:e2e` | Run Playwright E2E tests |
 
-```json
-{"ts":"2026-08-13T05:30:00Z","level":"INFO","msg":"Docker.raw usage 42.10GB / 460.00GB (9.2%)","usage_gb":42.10,"total_gb":460.00,"pct_used":9.2}
-```
-
-Fields: `ts` (ISO 8601 UTC), `level` (INFO/WARNING/CRITICAL/ERROR), `msg`, `usage_gb`, `total_gb`, `pct_used`, `extra` (optional — e.g. `recovered_gb=5.20`).
-
-## Docker Desktop Disk Limit
-
-In addition to the monitoring script, configure Docker Desktop's maximum disk image size:
-
-**File:** `~/.docker/desktop/settings.json`
-**Key:** `dataDiskMaxSize`
-
-```json
-{
-  "dataDiskMaxSize": 64424509440
-}
-```
-
-Value is in bytes. 60 GB = 60 × 1024³ = 64,424,509,440 bytes.
-
-Recommended limit: **60 GB** — well under a 460 GB volume, leaving room for the OS and other services.
-
-> **Note:** Apply this setting via Docker Desktop → Settings → Resources → Disk image size, or edit the JSON directly while Docker Desktop is stopped.
-
-## Uninstall
+## Backend (Python)
 
 ```bash
-launchctl unload -w ~/Library/LaunchAgents/com.nucpot.docker-raw-guard.plist
-rm ~/Library/LaunchAgents/com.nucpot.docker-raw-guard.plist
-sudo rm /usr/local/bin/docker-raw-guard.sh
+cd apps/api
+
+# Install dependencies
+uv sync --dev
+
+# Run dev server with auto-reload
+uvicorn nfm_db.main:app --reload --port 8000
+
+# Run tests
+uv run pytest
+
+# Lint
+uv run ruff check src tests
+
+# Type check
+uv run mypy src
 ```
 
-## Safety
+API documentation is auto-generated at `http://localhost:8000/docs` (Swagger UI).
 
-- **Daemon check:** Auto-prune only runs if `docker info` succeeds — skipped if Docker is down.
-- **Idempotent:** Safe to run multiple times; prune commands use `-f` (force, no prompts).
-- **No external dependencies:** Uses only Docker CLI and standard macOS tools (`du`, `df`, `bc`, `osascript`, `curl`).
+## Frontend (Next.js)
+
+```bash
+cd apps/web
+
+# Install dependencies
+pnpm install
+
+# Run dev server
+pnpm dev
+
+# Run tests
+pnpm test
+
+# Type check
+pnpm typecheck
+```
+
+## CI Pipeline
+
+GitHub Actions runs on every push to `main` and on pull requests:
+
+1. **Frontend**: lint → type-check → unit tests → build
+2. **Backend**: lint (ruff) → type-check (mypy) → tests (pytest)
+
+Both jobs must pass before a PR can be merged.
+
+## Environment Variables
+
+Create `.env` files for local development:
+
+**Backend** (`apps/api/.env`):
+```
+NFM_DATABASE_URL=postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_db
+NFM_DEBUG=true
+```
+
+## License
+
+Proprietary — all rights reserved.

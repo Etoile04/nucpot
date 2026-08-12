@@ -18,15 +18,17 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/var/log/docker-raw-guard.log</string>
+    <string>/dev/null</string>
 
     <key>StandardErrorPath</key>
-    <string>/var/log/docker-raw-guard.log</string>
+    <string>/dev/null</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>LOG_FILE</key>
+        <string>$HOME/Library/Logs/docker-raw-guard.log</string>
     </dict>
 </dict>
 </plist>
