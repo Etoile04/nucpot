@@ -1,0 +1,117 @@
+name: extraction-parity
+
+"on":
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  extraction-parity:
+    name: Extraction V1-V2 Parity Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run parity tests
+        id: parity
+        run: |
+          set -euo pipefail
+
+          # Run from repo root so root pyproject.toml discovers tests/parity/
+          # and tests/parity/conftest.py bootstraps apps/api/src onto sys.path.
+          # EXTRACTION_STUB_MODE=true activates the stub pipeline path.
+          uv run python -m pytest \
+            -m parity \
+            tests/parity/ \
+            -v \
+            --no-header \
+            --tb=short \
+            -o "addopts=" \
+            2>&1 | tee ../parity-output.txt
+
+          # Determine exit code from pytest (tee preserves it)
+          PYTEST_EXIT=${PIPESTATUS[0]}
+          echo "pytest_exit=${PYTEST_EXIT}" >> "$GITHUB_OUTPUT"
+
+          # Generate a compact JSON summary from pytest output
+          PASS_COUNT=$(grep -cP '^tests/parity/.* PASSED' ../parity-output.txt || true)
+          FAIL_COUNT=$(grep -cP '^tests/parity/.* FAILED' ../parity-output.txt || true)
+          TOTAL=$((PASS_COUNT + FAIL_COUNT))
+
+          python3 -c "
+          import json, os
+          report = {
+              'total': ${TOTAL},
+              'passed': ${PASS_COUNT},
+              'failed': ${FAIL_COUNT},
+              'exit_code': ${PYTEST_EXIT},
+          }
+          with open('${{ github.workspace }}/parity-report.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          print(json.dumps(report, indent=2))
+          "
+
+          exit "${PYTEST_EXIT}"
+
+      - name: Upload parity report artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: parity-report
+          path: |
+            parity-report.json
+            parity-output.txt
+          retention-days: 30
+
+      - name: Post PR comment with results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require("fs");
+            const report = JSON.parse(
+              fs.readFileSync("${{ github.workspace }}/parity-report.json", "utf8")
+            );
+            const exitCode = parseInt(process.env.PYTEST_EXIT || "1");
+
+            const icon = report.failed === 0 ? "✅" : "❌";
+            const body = [
+              `### ${icon} Extraction Parity Tests`,
+              "",
+              "| Metric | Value |",
+              "|--------|-------|",
+              `| **Total** | ${report.total} |`,
+              `| **Passed** | ${report.passed} |`,
+              `| **Failed** | ${report.failed} |`,
+              "",
+              `> Commit: \`${context.sha.slice(0, 7)}\` · ` +
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body,
+            });
