@@ -1,8 +1,16 @@
-"""Tests for ``_load_v2_content`` (NFM-2909).
+"""Tests for ``load_v2_content`` (NFM-2909).
 
 Strangler-fig content-loading contract for the V2 pipeline::
 
-    file         → load from path on disk
+    file,
+    internal_id,
+    ""           → V1-compatible file-path semantics: try
+                   *source_reference* on disk; if missing and
+                   ``EXTRACTION_STUB_MODE`` is on, fall back to the
+                   placeholder markdown so the chunker and the
+                   ``ontofuel_extract`` stub path can run end-to-end
+                   in CI / dev. Missing file outside stub mode
+                   raises ``FileNotFoundError``.
     doi          → try as file path; fall back to stub content in
                    ``EXTRACTION_STUB_MODE`` so the 5-step orchestrator
                    can run end-to-end during CI / dev. Out-of-stub DOI
@@ -14,7 +22,10 @@ Strangler-fig content-loading contract for the V2 pipeline::
                    documented migration path. Staging / prod traffic
                    does not yet exercise these source types.
 
-Tested in isolation so the loader contract is locked before the
+The loader is the single content-resolution point for both V2 entry
+paths — the dispatcher in ``extraction_pipeline_dispatch`` and the
+legacy ``trigger_extraction`` V2 branch in ``extraction_pipeline``.
+Tested in isolation so the contract is locked before the
 ``EXTRACTION_PIPELINE_V2`` flag flip to default-True (NFM-2869).
 """
 
@@ -27,18 +38,23 @@ import pytest
 def _isolate_stub_mode(monkeypatch):
     """Default each case to a known stub-mode state.
 
-    ``_load_v2_content`` consults ``EXTRACTION_STUB_MODE``; tests that
-    want a specific value set it explicitly with ``monkeypatch.setenv``.
+    ``load_v2_content`` consults ``EXTRACTION_STUB_MODE`` AND falls
+    back to placeholder content when ``LLM_API_KEY`` is unset (V1
+    compatibility: V1 ``ontofuel_extract`` falls back to stub when
+    the LLM is not configured). Tests that want a missing-file
+    error path must set ``LLM_API_KEY`` so the no-LLM fallback
+    doesn't silently shadow their assertion.
     """
     monkeypatch.delenv("EXTRACTION_STUB_MODE", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "test-key-for-loader-tests")
 
 
 def _loader():
     from nfm_db.services.extraction_pipeline_dispatch import (
-        _load_v2_content,
+        load_v2_content,
     )
 
-    return _load_v2_content
+    return load_v2_content
 
 
 def test_file_source_type_returns_file_contents(tmp_path):
@@ -141,3 +157,60 @@ def test_unknown_source_type_raises_not_implemented():
         _loader()("anywhere", "arxiv")
 
     assert "arxiv" in str(exc_info.value)
+
+
+def test_internal_id_source_type_with_local_file(tmp_path):
+    """``source_type='internal_id'`` is V1-compatible file-path
+    semantics — V1 ``ontofuel_extract`` falls through to "file
+    path on disk" for everything except ``doi`` / ``datasource``,
+    so the V2 loader must too (NFM-2909 review feedback: previously
+    rejected with NotImplementedError, breaking V1 parity)."""
+    sample = tmp_path / "internal.md"
+    sample.write_text("# Internal\n\nCO2 properties.", encoding="utf-8")
+
+    result = _loader()(str(sample), "internal_id")
+
+    assert result == "# Internal\n\nCO2 properties."
+
+
+def test_internal_id_source_type_stub_mode_returns_placeholder(monkeypatch):
+    """Missing ``internal_id`` reference in stub mode returns the
+    placeholder markdown so the 5-step orchestrator can complete."""
+    monkeypatch.setenv("EXTRACTION_STUB_MODE", "true")
+
+    result = _loader()("missing-internal-id", "internal_id")
+
+    assert isinstance(result, str)
+    assert result  # non-empty placeholder
+
+
+def test_empty_source_type_stub_mode_returns_placeholder(monkeypatch):
+    """Empty ``source_type`` (one of the live staging jobs) follows
+    file-path semantics; missing source in stub mode returns the
+    placeholder so V2 doesn't regress staging traffic (NFM-2909
+    review feedback)."""
+    monkeypatch.setenv("EXTRACTION_STUB_MODE", "true")
+
+    # Empty source_type with empty source_reference.
+    result = _loader()("", "")
+
+    assert isinstance(result, str)
+    assert result  # non-empty placeholder
+
+
+def test_file_source_type_stub_mode_returns_placeholder(monkeypatch, tmp_path):
+    """``source_type='file'`` with a missing path falls back to the
+    placeholder markdown when stub mode is on. This mirrors the V1
+    ``ontofuel_extract`` behaviour where ``EXTRACTION_STUB_MODE=true``
+    bypasses the file read and returns 3 demo records — the V2
+    chunker needs SOMETHING to chunk, so we provide placeholder
+    content instead of crashing the orchestrator.
+    """
+    monkeypatch.setenv("EXTRACTION_STUB_MODE", "true")
+    missing = tmp_path / "absent.md"
+
+    result = _loader()(str(missing), "file")
+
+    assert isinstance(result, str)
+    assert result  # non-empty placeholder
+    assert "\n# " in result or result.startswith("# ")
