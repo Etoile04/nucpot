@@ -6,20 +6,18 @@ while valid DOI formats and other source_types are unaffected.
 
 from __future__ import annotations
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-
-from nfm_db.database import get_db
-from nfm_db.main import app
-
-
 # ---------------------------------------------------------------------------
 # V1 regression pin — NFM-2876 flipped the default to True; this file
 # exercises the legacy ``trigger_extraction`` dataclass branch and the
 # HTTP /api/v4/extraction/submit path that still calls into it.
 # -----------------------------------------------------------------------
-
 from unittest.mock import MagicMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from nfm_db.database import get_db
+from nfm_db.main import app
 
 
 def _make_settings_v1() -> MagicMock:
@@ -37,9 +35,14 @@ def _pin_extraction_v2_off():
     outside of stub mode (NFM-2909 partial fix), so these regression
     tests must continue exercising V1 until V2 gains parity.
     """
-    with patch(
-        "nfm_db.config.get_settings",
-        return_value=_make_settings_v1(),
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
     ):
         yield
 

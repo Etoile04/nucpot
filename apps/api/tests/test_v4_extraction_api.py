@@ -13,6 +13,13 @@ from __future__ import annotations
 
 import asyncio
 
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the HTTP /api/v4/extraction/* endpoints that still call into
+# the legacy ``trigger_extraction`` dataclass branch.
+# -----------------------------------------------------------------------
+from unittest.mock import MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -21,15 +28,6 @@ from nfm_db.schemas.extraction import (
     V4ExtractionSubmitRequest,
     V4ValidateRequest,
 )
-
-
-# ---------------------------------------------------------------------------
-# V1 regression pin — NFM-2876 flipped the default to True; this file
-# exercises the HTTP /api/v4/extraction/* endpoints that still call into
-# the legacy ``trigger_extraction`` dataclass branch.
-# -----------------------------------------------------------------------
-
-from unittest.mock import MagicMock, patch
 
 
 def _make_settings_v1() -> MagicMock:

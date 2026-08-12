@@ -10,20 +10,18 @@ Requires EXTRACTION_STUB_MODE=true in the environment for stub mode tests.
 
 from __future__ import annotations
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-
-from nfm_db.database import get_db
-from nfm_db.main import app
-
-
 # ---------------------------------------------------------------------------
 # V1 regression pin — NFM-2876 flipped the default to True; this file
 # exercises the legacy ``trigger_extraction`` dataclass branch and the
 # HTTP submit/validate paths that still call into it.
 # -----------------------------------------------------------------------
-
 from unittest.mock import MagicMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from nfm_db.database import get_db
+from nfm_db.main import app
 
 
 def _make_settings_v1() -> MagicMock:
