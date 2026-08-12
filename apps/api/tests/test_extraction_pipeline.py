@@ -727,7 +727,39 @@ class TestTriggerExtraction:
 
 
 class TestLightRAGIngestAfterCommit:
-    """Regression tests for NFM-2871: rollback path must not trigger LightRAG."""
+    """Regression tests for NFM-2871: rollback path must not trigger LightRAG.
+
+    All tests in this class target the LEGACY monolithic pipeline path
+    (V1-flag branch) of ``trigger_extraction``. They assert legacy-specific
+    behaviour: ``fire_ingest_to_lightrag`` is called only after a successful
+    ``session.commit()`` (or not at all when ingest_nodes is empty), and the
+    rollback path (commit raising) suppresses the fire. The tests do this by
+    patching ``nfm_db.services.extraction_pipeline.QualityGateService`` and
+    ``nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag`` — symbols
+    that exist only on the V1 legacy path.
+
+    Under ``NFM_EXTRACTION_V2_ENABLED=true``, ``trigger_extraction()`` returns
+    immediately from ``ExtractionOrchestrator.run()`` before any of those
+    legacy mocks are reached, so the assertions fail or pass vacuously. To
+    keep these tests meaningful regardless of the env-var flag — and to
+    satisfy NFM-2939 AC#1 — every test here forces
+    ``Settings.extraction_v2_enabled = False`` via an autouse monkeypatch on
+    ``nfm_db.config.get_settings`` (the module ``trigger_extraction`` imports
+    lazily inside the function body). This mirrors the pattern established
+    by NFM-2921 for ``TestTriggerExtraction``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _force_v1_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pin ``extraction_v2_enabled`` to False for legacy-pipeline tests."""
+        from unittest.mock import MagicMock
+
+        fake_settings = MagicMock()
+        fake_settings.extraction_v2_enabled = False
+        monkeypatch.setattr(
+            "nfm_db.config.get_settings",
+            lambda: fake_settings,
+        )
 
     @pytest.mark.asyncio
     async def test_lightrag_not_called_when_commit_raises(
