@@ -6,10 +6,8 @@ timestamps.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
-
-_UNSET = object()
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,6 +17,9 @@ from nfm_db.database import get_db
 from nfm_db.main import app
 from nfm_db.models.extraction_job import ExtractionJob
 from nfm_db.models.extraction_step import ExtractionStep
+
+# Sentinel distinguishing "caller omitted this timestamp" from an explicit None.
+_UNSET = object()
 
 
 def _override_get_db(session: AsyncSession):
@@ -47,7 +48,7 @@ async def _create_job_with_step(
     completed_at: datetime | None | object = _UNSET,
 ) -> tuple[ExtractionJob, ExtractionStep]:
     """Create an ExtractionJob + ExtractionStep pair and flush."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job = ExtractionJob(
         id=uuid4(),
         status="completed",
