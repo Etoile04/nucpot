@@ -267,10 +267,18 @@ def test_pipeline_steps_order() -> None:
 class TestFeatureFlagRouting:
     """Tests for EXTRACTION_V2_ENABLED feature flag."""
 
-    def test_flag_defaults_to_false(self) -> None:
-        """AC: Feature flag defaults to False."""
+    def test_flag_defaults_to_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AC: Feature flag defaults to False.
+
+        NFM-2921 (W1 follow-up): the test must isolate the default-value
+        contract from any ambient ``NFM_EXTRACTION_V2_ENABLED`` env var.
+        Without the explicit ``delenv``, an ambient ``true`` from the
+        test runner would make ``Settings()`` resolve the env value and
+        turn the flag ON — masking the actual default.
+        """
         from nfm_db.config import Settings
 
+        monkeypatch.delenv("NFM_EXTRACTION_V2_ENABLED", raising=False)
         s = Settings()
         assert s.extraction_v2_enabled is False
 

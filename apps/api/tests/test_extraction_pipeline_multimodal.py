@@ -55,6 +55,29 @@ def _clean_job_store():
     _job_store.clear()
 
 
+@pytest.fixture(autouse=True)
+def _force_v1_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin ``extraction_v2_enabled`` to False for legacy-pipeline tests.
+
+    NFM-2921 (W1 follow-up): the multimodal tests in this file target the
+    LEGACY monolithic pipeline path (V1-flag branch). They mock
+    ``extraction_pipeline.QualityGateService`` /
+    ``extraction_pipeline.GapScanService`` and assert
+    ``_job_store`` / ``_update_job`` semantics. Under
+    ``NFM_EXTRACTION_V2_ENABLED=true``, ``trigger_extraction()``
+    routes through a V1 orchestrator with a different module-level
+    reference set, breaking those mocks. Forcing the flag off keeps
+    the tests meaningful regardless of the ambient env var
+    (satisfies NFM-2921 AC#1/AC#2).
+    """
+    fake_settings = MagicMock()
+    fake_settings.extraction_v2_enabled = False
+    monkeypatch.setattr(
+        "nfm_db.config.get_settings",
+        lambda: fake_settings,
+    )
+
+
 def _make_mock_session() -> AsyncMock:
     """Create a mock async session with commit."""
     session = AsyncMock()

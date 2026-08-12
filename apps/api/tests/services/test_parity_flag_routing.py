@@ -146,6 +146,14 @@ async def _run_legacy(raw: list[dict[str, Any]]) -> dict[str, Any]:
     bulk = _build_bulk_result_for(raw)
     gap = _build_gap_result(1)
 
+    # NFM-2921 (W1 follow-up): force the V1-flag branch so the legacy
+    # mocks at ``extraction_pipeline.QualityGateService`` /
+    # ``extraction_pipeline.GapScanService`` apply even when the
+    # ambient ``NFM_EXTRACTION_V2_ENABLED=true`` would otherwise route
+    # through the V2 orchestrator branch.
+    fake_settings = MagicMock()
+    fake_settings.extraction_v2_enabled = False
+
     with (
         patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
         patch(
@@ -157,6 +165,7 @@ async def _run_legacy(raw: list[dict[str, Any]]) -> dict[str, Any]:
             "nfm_db.services.extraction_pipeline.QualityGateService"
         ) as mock_qg_cls,
         patch("nfm_db.services.extraction_pipeline.GapScanService") as mock_gap_cls,
+        patch("nfm_db.config.get_settings", lambda: fake_settings),
     ):
         mock_qg = mock_qg_cls.return_value
         mock_qg.process_bulk = AsyncMock(return_value=bulk)

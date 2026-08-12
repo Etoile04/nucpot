@@ -446,7 +446,34 @@ class TestFindMatching:
 
 
 class TestTriggerExtraction:
-    """Tests for extraction pipeline trigger (NFM-67.3)."""
+    """Tests for extraction pipeline trigger (NFM-67.3).
+
+    All tests in this class target the LEGACY monolithic pipeline path
+    (V1-flag branch). They assert legacy-specific behaviour such as
+    ``_update_job`` status transitions, the in-memory ``_job_store``
+    population, and ``JobStatus.PARTIAL`` semantics.
+
+    Under ``NFM_EXTRACTION_V2_ENABLED=true``, ``trigger_extraction()``
+    routes through a different code path (V2 orchestrator) with
+    divergent semantics. To keep these tests meaningful regardless of
+    the env-var flag — and to satisfy NFM-2921 AC#1/AC#2 — every test
+    here forces ``Settings.extraction_v2_enabled = False`` via a
+    ``monkeypatch.setattr`` on ``nfm_db.config.get_settings`` (the
+    module that ``trigger_extraction`` imports lazily inside the
+    function body).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _force_v1_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pin ``extraction_v2_enabled`` to False for legacy-pipeline tests."""
+        from unittest.mock import MagicMock
+
+        fake_settings = MagicMock()
+        fake_settings.extraction_v2_enabled = False
+        monkeypatch.setattr(
+            "nfm_db.config.get_settings",
+            lambda: fake_settings,
+        )
 
     @pytest.mark.asyncio
     async def test_full_pipeline_stage_transitions(self, db_session: AsyncSession):
