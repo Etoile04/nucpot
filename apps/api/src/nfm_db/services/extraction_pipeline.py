@@ -857,7 +857,6 @@ async def trigger_extraction(
             element_systems=element_systems,
             cache_level=cache_level,
             max_confidence=max_confidence,
-            content=content,
         )
 
     # --- Legacy pipeline (unchanged when flag is False) ---
