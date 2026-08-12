@@ -155,16 +155,13 @@ async def _run_v2_pipeline(
     orchestrator = ExtractionOrchestratorV2(
         session, job_id=parent_job.id,
     )
-    # Thread ``content`` and ``source_type`` as kwargs so the
-    # orchestrator's per-step bodies (notably ``_step_chunk``) can
-    # see them without re-loading from disk. Without this, the chunk
-    # step would short-circuit on ``content is None`` and the 5-step
-    # pipeline would produce an empty chunk list.
-    finals = await orchestrator.run(
-        initial_chunk,
-        content=content,
-        source_type=source_type,
-    )
+    # ``initial_chunk.content`` is already populated above from
+    # ``load_v2_content``. The V2 orchestrator's ``run`` only takes
+    # ``initial_chunk`` -- it routes content through the step chain
+    # via ``initial_chunk.content``, never via kwargs. Threading
+    # extra kwargs raises ``TypeError`` at the V2 entry point
+    # (NFM-2912 / E2E QA-FAILED regression).
+    finals = await orchestrator.run(initial_chunk)
 
     # --- Mark job completed ---
     parent_job.status = "completed"
