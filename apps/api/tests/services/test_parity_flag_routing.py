@@ -297,13 +297,17 @@ async def test_parity_flag_false_vs_flag_true_equivalent_results() -> None:
     assert legacy["status"] == new["status"]
 
 
-def test_parity_flag_default_is_false() -> None:
-    """The acceptance criterion — flag defaults to False (do NOT flip default)."""
+def test_parity_flag_default_is_true() -> None:
+    """The acceptance criterion — flag defaults to True (NFM-2869-T2 flip).
+
+    Staging parity was verified by NFM-2875 before the flip; rolling the
+    default back to ``False`` requires a new ADR.
+    """
     from nfm_db.config import Settings
 
     os.environ.pop("NFM_EXTRACTION_V2_ENABLED", None)
     s = Settings()
-    assert s.extraction_v2_enabled is False
+    assert s.extraction_v2_enabled is True
 
 
 @pytest.mark.asyncio

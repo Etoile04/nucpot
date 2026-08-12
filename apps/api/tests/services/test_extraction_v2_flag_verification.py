@@ -328,28 +328,33 @@ class TestExtractionV2FlagRoutesToLegacy:
 
 
 # ---------------------------------------------------------------------------
-# Default-value guard — flag defaults OFF (do NOT flip)
+# Default-value guard — flag defaults ON (NFM-2869-T2 flip, parity NFM-2875)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-class TestExtractionV2FlagDefaultIsOff:
-    """The feature flag must default to ``False`` (strangler-fig contract)."""
+class TestExtractionV2FlagDefaultIsOn:
+    """The feature flag must default to ``True`` after the NFM-2869-T2 flip.
 
-    def test_settings_default_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    Staging parity was verified by NFM-2875 before the flip; rolling the
+    default back to ``False`` requires a new ADR (strangler-fig rollback).
+    """
+
+    def test_settings_default_is_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NFM_EXTRACTION_V2_ENABLED", raising=False)
         from nfm_db.config import Settings
         settings = Settings()
-        assert settings.extraction_v2_enabled is False, (
-            "Flag default must remain False until the V2 orchestrator "
-            "has been independently validated (NFM-2698 acceptance)"
+        assert settings.extraction_v2_enabled is True, (
+            "Flag default must remain True after the NFM-2869-T2 flip "
+            "(parity verified by NFM-2875); set NFM_EXTRACTION_V2_ENABLED=false "
+            "to roll back to the legacy path."
         )
 
-    def test_settings_can_be_overridden_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("NFM_EXTRACTION_V2_ENABLED", "true")
+    def test_settings_can_be_disabled_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NFM_EXTRACTION_V2_ENABLED", "false")
         from nfm_db.config import Settings
         settings = Settings()
-        assert settings.extraction_v2_enabled is True
+        assert settings.extraction_v2_enabled is False
 
 
 # ---------------------------------------------------------------------------
