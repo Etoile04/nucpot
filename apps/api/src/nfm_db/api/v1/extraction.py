@@ -30,7 +30,10 @@ from nfm_db.schemas.extraction import (
     ExtractionTriggerRequest,
 )
 from nfm_db.services.celery_app import celery_app
-from nfm_db.services.extraction_pipeline import get_job
+from nfm_db.services.extraction_pipeline import (
+    _extraction_job_to_dict,
+    get_job,
+)
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -619,96 +622,36 @@ async def get_ingest_job_status(
             ).scalar_one_or_none()
         except Exception:
             # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
-            # there but the bind failed, surface a clean 404 instead of
-            # a 500.  Caller can retry after operator investigation.
+            # there but the bind failed, surface a clean response instead
+            # of a 500.  Fall through to 404 below.
             logger.exception(
                 "get_ingest_job_status: failed to query ExtractionJob for id=%s",
                 job_id,
             )
             row = None
         if row is not None:
+            # NFM-3007: use the canonical 24-key dict helper so the
+            # ORM-only path produces the identical key set as the
+            # dataclass path (ADR-NFM-2739 §2.1).
             return {
                 "success": True,
-                "data": {
-                    "job_id": str(row.id),
-                    "source_reference": row.source_reference or "",
-                    "source_type": row.source_type or "",
-                    "corpus_id": row.corpus_id or "",
-                    "status": row.status,
-                    "extracted_count": row.total_received,
-                    "staged_count": row.created_measurements,
-                    "rejected_count": row.skipped_unknown_properties,
-                    "created_measurements": row.created_measurements,
-                    "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
-                    "skipped_unknown_properties": row.skipped_unknown_properties,
-                    "skipped_duplicates": row.skipped_duplicates,
-                    "reused_entities": row.reused_entities,
-                    "validation_errors": row.validation_errors,
-                    "error_message": row.error_message,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "started_at": row.started_at.isoformat() if row.started_at else None,
-                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-                },
+                "data": _extraction_job_to_dict(row),
             }
+        # UUID was valid but row not found — 404.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Extraction job '{job_id}' not found.",
+        )
 
-    # Fallback: in-memory store for non-Celery / non-ingest jobs.
-    job = get_job(job_id)
-    if job is not None:
-        return {
-            "success": True,
-            "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-            ).model_dump(),
-        }
-
-    # Check Celery AsyncResult for trigger-dispatched jobs.
-    try:
-        async_result = celery_app.AsyncResult(job_id)
-        state = async_result.state
-
-        status_map = {
-            "PENDING": "pending",
-            "STARTED": "processing",
-            "SUCCESS": "completed",
-            "FAILURE": "failed",
-            "RETRY": "processing",
-            "REVOKED": "failed",
-        }
-        cel_status = status_map.get(state, (state or "unknown").lower())
-
-        error_message: str | None = None
-        if state == "FAILURE" and async_result.result:
-            error_message = str(async_result.result)[:500]
-
-        return {
-            "success": True,
-            "data": {
-                "job_id": job_id,
-                "source_reference": "",
-                "source_type": "",
-                "status": cel_status,
-                "extracted_count": 0,
-                "staged_count": 0,
-                "rejected_count": 0,
-                "error_message": error_message,
-            },
-        }
-    except Exception:
-        logger.exception("Failed to check Celery status for job_id=%s", job_id)
-
+    # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
+    # deprecated.  The ingest endpoint always generates UUIDs.
     raise HTTPException(
-        status_code=404,
-        detail=f"Extraction job '{job_id}' not found.",
+        status_code=400,
+        detail=(
+            f"Extraction job '{job_id}' is not a valid UUID. "
+            "Non-UUID (legacy Celery) job IDs are no longer supported. "
+            "Use a UUID-format job_id from a recent /extraction/ingest call."
+        ),
     )
 
 
