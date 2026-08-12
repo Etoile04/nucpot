@@ -2,7 +2,10 @@
 
 import os
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
+
+from nfm_db.config.backup import BackupConfig
 
 # ---------------------------------------------------------------------------
 # Version lock — must match docker/lightrag.Dockerfile ARG LIGHTRAG_VERSION
@@ -59,6 +62,8 @@ class Settings(BaseSettings):
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
+    # NFM-3014: Tiered backup retention with capacity guardrails.
+    backup: BackupConfig = Field(default_factory=BackupConfig)
 
     model_config = {"env_file": ".env", "env_prefix": "NFM_", "extra": "ignore"}
 

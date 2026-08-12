@@ -135,6 +135,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     ``close_lightrag_client()``. The close helper swallows any close
     errors so this await is always safe.
     """
+    from nfm_db.config import check_retention_deprecation, get_settings
+
+    check_retention_deprecation(get_settings().backup)
     yield
     await close_lightrag_client()
 
