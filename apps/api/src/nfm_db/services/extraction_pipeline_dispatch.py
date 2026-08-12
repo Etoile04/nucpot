@@ -24,6 +24,7 @@ that toggle the env var between cases must call
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -41,6 +42,42 @@ from nfm_db.services.extraction_pipeline import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_stub_mode() -> bool:
+    """Mirror V1 stub-mode detection so V2 honours ``EXTRACTION_STUB_MODE``.
+
+    The legacy ``extraction_pipeline._is_stub_mode`` is intentionally
+    duplicated here (rather than re-exported) to keep the dispatcher's
+    module dependency surface small — the dispatcher imports a narrow
+    subset of the legacy pipeline, not its full module.
+    """
+    return os.environ.get("EXTRACTION_STUB_MODE", "").lower() in ("true", "1")
+
+
+# Stable placeholder content used when V2 routes a non-file source type
+# (e.g. ``doi``) in stub mode. Must include at least one markdown heading
+# so the V2 ``SectionSegmenter`` step emits >=1 section. Kept short to
+# avoid bloating CI logs while still exercising the 5-step pipeline
+# (RawTextLoader -> SectionSegmenter -> EntityExtractor ->
+# PropertyNormalizer -> ChunkBuilder).
+_STUB_DOI_CONTENT = (
+    "# Stub Material Properties\n"
+    "\n"
+    "This is placeholder markdown used when V2 cannot resolve a DOI to\n"
+    "real content (CI / dev only). The 5-step orchestrator requires some\n"
+    "content to drive SectionSegmenter, so we provide a minimal-but-valid\n"
+    "stub here.\n"
+    "\n"
+    "## Lattice Parameter\n"
+    "FCC lattice constant: 5.47 angstrom.\n"
+    "\n"
+    "## Bulk Modulus\n"
+    "Bulk modulus at 300 K: 207.5 GPa.\n"
+    "\n"
+    "## Thermal Conductivity\n"
+    "Thermal conductivity at 1000 K: 7.5 W/(m*K).\n"
+)
 
 
 @lru_cache(maxsize=1)
@@ -117,10 +154,30 @@ async def _run_v2_pipeline(
 
 
 def _load_v2_content(source_reference: str, source_type: str) -> str:
-    """Load document content for the V2 pipeline.
+    """Load document content for the V2 pipeline (NFM-2909 contract).
 
-    Currently supports only ``source_type="file"`` (reads the file at
-    *source_reference*).  Other types raise ``ValueError``.
+    Resolution per ``source_type``:
+
+    - ``"file"``  — read from *source_reference* on disk. A missing
+      path is still a hard ``FileNotFoundError`` so the caller can
+      distinguish "wrong path" from "not yet supported".
+    - ``"doi"``   — try as a file path first (matches V1's
+      locally-resolved-PDF semantics). If the file is absent and
+      ``EXTRACTION_STUB_MODE`` is on, return :data:`_STUB_DOI_CONTENT`
+      so the 5-step orchestrator can run end-to-end in CI / dev.
+      Outside stub mode an unresolvable DOI raises
+      :class:`NotImplementedError` with the documented migration
+      path (route through ``process_literature`` or pre-cache the
+      PDF).
+    - ``"url"``, ``"datasource"`` and any other type — explicit
+      :class:`NotImplementedError` so API callers can branch on a
+      single, documented error class. Staging / prod traffic does
+      not yet exercise these types, so we surface the gap rather
+      than ship a half-working implementation.
+
+    The decision matrix (file / doi / url / datasource) and the
+    "out-of-stub DOI resolution is out of scope" note are recorded in
+    ``docs/architecture/ADR-NFM-2737-strangler-fig-extraction-dispatch.md``.
     """
     if source_type == "file":
         path = Path(source_reference)
@@ -130,9 +187,37 @@ def _load_v2_content(source_reference: str, source_type: str) -> str:
             )
         return path.read_text(encoding="utf-8")
 
-    raise ValueError(
+    if source_type == "doi":
+        # V1-compatible: a DOI reference may already point at a
+        # locally-cached PDF / markdown copy. Treat the reference as
+        # a file path first.
+        path = Path(source_reference)
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        if _is_stub_mode():
+            logger.info(
+                "V2 stub mode: DOI %s has no on-disk file, "
+                "returning placeholder content",
+                source_reference,
+            )
+            return _STUB_DOI_CONTENT
+        raise NotImplementedError(
+            f"V2 pipeline does not yet resolve source_type='doi' for "
+            f"{source_reference!r} outside of stub mode. "
+            "Migration path: route through process_literature or "
+            "pre-cache the PDF."
+        )
+
+    if source_type in ("url", "datasource"):
+        raise NotImplementedError(
+            f"V2 pipeline does not yet support source_type={source_type!r}. "
+            "Migration path: route through process_literature "
+            "(V1) until V2 wires up the equivalent resolver."
+        )
+
+    raise NotImplementedError(
         f"V2 pipeline does not yet support source_type={source_type!r}. "
-        "Only 'file' is currently supported."
+        "Supported: 'file', 'doi' (file fallback / stub only)."
     )
 
 
