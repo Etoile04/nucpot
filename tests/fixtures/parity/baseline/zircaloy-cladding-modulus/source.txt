@@ -1,0 +1,11 @@
+# Elastic Moduli of Zircaloy-4 Cladding
+
+Zircaloy-4 is a zirconium-tin-iron-chromium alloy used as fuel cladding in pressurized water reactors. Typical bulk composition is Zr with 1.2 to 1.7 weight percent Sn, 0.18 to 0.24 weight percent Fe, and 0.07 to 0.13 weight percent Cr.
+
+# Mechanical Properties
+
+Youngs modulus of Zircaloy-4 measured by ultrasonic resonance is 99 GPa at room temperature. The shear modulus is 36 GPa. The bulk modulus is 110 GPa. All values are reported for the recrystallized condition.
+
+# Thermal Expansion
+
+The linear thermal expansion coefficient of Zircaloy-4 is 6.0e-6 K^-1 at 300 K. Density is 6.56 g/cm^3 at room temperature. The melting point is 2128 K.

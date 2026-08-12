@@ -1,10 +1,11 @@
 """Tests for KG relation extraction and GraphBuilder service (NFM-984).
 
-Focuses on the _fire_lightrag_ingest wiring added in NFM-1222 (NFM-1247),
+Focuses on the LightRAG ingest data wiring (NFM-1222, refactored by NFM-2871),
 and the UUID-before-consumers regression (NFM-1499 → NFM-1500).
 
 Verifies that GraphBuilder correctly:
-- Triggers the LightRAG auto-ingest hook when new KG nodes/edges are created
+- Stores new KG nodes/edges on BuildResult for post-commit LightRAG ingest
+  (NFM-2871: ingest deferred to extraction_pipeline after session.commit())
 - Assigns concrete UUIDs to nodes and edges BEFORE any downstream consumer
   (review queue, AGE sync, edge FK) reads the ID, so transactions don't
   fail with NOT NULL / IntegrityError on the final flush.
@@ -83,22 +84,24 @@ def _make_fake_node(
 # ---------------------------------------------------------------------------
 
 
-class TestGraphBuilderFireLightRAGIngest:
-    """Verify that GraphBuilder calls _fire_lightrag_ingest after
-    creating new nodes and/or edges (NFM-1247, finding 4b).
+class TestGraphBuilderIngestDataOnResult:
+    """Verify that GraphBuilder stores new nodes/edges on BuildResult for
+    post-commit LightRAG ingest (NFM-2871).
 
-    The fire-and-forget function is mocked to avoid real LightRAG calls.
+    NFM-2871 moved the LightRAG ingest out of build_from_extraction() to
+    after session.commit() in extraction_pipeline to prevent ghost entities
+    on rollback. BuildResult now carries ingest_nodes and ingest_edges tuples.
     """
 
     @pytest.mark.asyncio
-    async def test_fire_lightrag_ingest_called_when_nodes_created(
+    async def test_ingest_nodes_populated_when_nodes_created(
         self,
     ) -> None:
-        """_fire_lightrag_ingest should be called when new KGNodes are created.
+        """BuildResult.ingest_nodes should contain newly created KGNodes.
 
         Scenario: extraction properties produce a new Material entity that
         does not match any existing node, so a new KGNode is created and
-        the ingest hook fires.
+        stored on the result for post-commit ingest.
         """
         session = _make_mock_session()
         builder = GraphBuilder(
@@ -115,35 +118,26 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with (
-            patch.object(
-                builder._linker,
-                "find_matching_node",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                builder,
-                "_fire_lightrag_ingest",
-            ) as mock_fire,
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=None,
         ):
             result = await builder.build_from_extraction(extracted)
 
         assert result.nodes_created == 1
-
-        mock_fire.assert_called_once()
-        nodes_arg, edges_arg = mock_fire.call_args[0]
-        assert len(nodes_arg) == 1
-        assert len(edges_arg) == 0  # single entity, no edges
+        assert len(result.ingest_nodes) == 1
+        assert len(result.ingest_edges) == 0  # single entity, no edges
 
     @pytest.mark.asyncio
-    async def test_fire_lightrag_ingest_called_when_edges_created(
+    async def test_ingest_edges_populated_when_edges_created(
         self,
     ) -> None:
-        """_fire_lightrag_ingest should be called when new KGEdges are created.
+        """BuildResult.ingest_edges should contain newly created KGEdges.
 
         Scenario: two co-occurring Material entities produce a relation,
-        resulting in an edge being created and the ingest hook firing.
+        resulting in an edge being created and stored on the result.
         """
         session = _make_mock_session()
         builder = GraphBuilder(
@@ -152,9 +146,6 @@ class TestGraphBuilderFireLightRAGIngest:
             sync_to_age=False,
         )
 
-        # Two materials -> Material-Material relations.
-        # The RelationExtractor checks both (Material, Material) forward
-        # and reverse; for same-type pairs this yields 2 edges.
         extracted = [
             {
                 "material_name": "UO2",
@@ -168,33 +159,24 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with (
-            patch.object(
-                builder._linker,
-                "find_matching_node",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                builder,
-                "_fire_lightrag_ingest",
-            ) as mock_fire,
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=None,
         ):
             result = await builder.build_from_extraction(extracted)
 
         assert result.nodes_created == 2
         assert result.edges_created >= 1
-
-        mock_fire.assert_called_once()
-        nodes_arg, edges_arg = mock_fire.call_args[0]
-        assert len(nodes_arg) == 2
-        assert len(edges_arg) >= 1
+        assert len(result.ingest_nodes) == 2
+        assert len(result.ingest_edges) >= 1
 
     @pytest.mark.asyncio
-    async def test_fire_lightrag_ingest_not_called_when_no_new_data(
+    async def test_ingest_data_empty_when_no_new_data(
         self,
     ) -> None:
-        """_fire_lightrag_ingest should NOT be called when all entities
+        """BuildResult.ingest_nodes/edges should be empty when all entities
         match existing nodes and no new edges are produced.
         """
         session = _make_mock_session()
@@ -214,31 +196,25 @@ class TestGraphBuilderFireLightRAGIngest:
             },
         ]
 
-        with (
-            patch.object(
-                builder._linker,
-                "find_matching_node",
-                new_callable=AsyncMock,
-                return_value=existing_node,
-            ),
-            patch.object(
-                builder,
-                "_fire_lightrag_ingest",
-            ) as mock_fire,
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=existing_node,
         ):
             result = await builder.build_from_extraction(extracted)
 
         assert result.nodes_created == 0
         assert result.edges_created == 0
-
-        mock_fire.assert_not_called()
+        assert result.ingest_nodes == ()
+        assert result.ingest_edges == ()
 
     @pytest.mark.asyncio
-    async def test_fire_lightrag_ingest_survives_import_error(
+    async def test_build_succeeds_even_if_lightrag_import_fails(
         self,
     ) -> None:
-        """_fire_lightrag_ingest should not raise even if kg_lightrag_sync
-        import fails — failures are caught and logged."""
+        """build_from_extraction should not import kg_lightrag_sync at all
+        now (NFM-2871). The ingest is deferred to the caller."""
         session = _make_mock_session()
         builder = GraphBuilder(
             session=session,  # type: ignore[arg-type]
@@ -267,6 +243,8 @@ class TestGraphBuilderFireLightRAGIngest:
         ):
             result = await builder.build_from_extraction(extracted)
             assert result.nodes_created == 1
+            # No import happens inside build_from_extraction anymore,
+            # so the ImportError mock is never triggered by the builder.
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,33 @@
+{
+  "fixture_id": "zircaloy-cladding-modulus",
+  "title": "Zircaloy-4 elastic moduli + thermal expansion + melting point",
+  "citation": {
+    "kind": "synthesized_reference",
+    "note": "Factual mechanical-property reference values for Zircaloy-4 fuel cladding; non-copyrightable factual data points compiled from widely reported ASTM-spec values for the recrystallized condition used in pressurized-water-reactor fuel rods.",
+    "values_sources": [
+      {"property": "youngs_modulus", "value": 99, "unit": "GPa", "temperature_K": 300, "source_sentence": "Youngs modulus of Zircaloy-4 measured by ultrasonic resonance is 99 GPa at room temperature."},
+      {"property": "shear_modulus", "value": 36, "unit": "GPa", "source_sentence": "The shear modulus is 36 GPa."},
+      {"property": "bulk_modulus", "value": 110, "unit": "GPa", "source_sentence": "The bulk modulus is 110 GPa."},
+      {"property": "density", "value": 6.56, "unit": "g/cm^3", "source_sentence": "Density is 6.56 g/cm^3 at room temperature."},
+      {"property": "melting_point", "value": 2128, "unit": "K", "source_sentence": "The melting point is 2128 K."}
+    ]
+  },
+  "validator": {
+    "agent_id": "98fc3168-be45-4673-808e-22238b366352",
+    "agent_role": "Lead Engineer",
+    "name": "Paperclip Lead Engineer (NFM-2892)",
+    "validation_method": "Manual review against V2 stub-mode output produced by tools/parity_baseline/compute_expected.py. Verified source.txt -> expected.json entity/relation/property traceability and 5x byte-identical reproducibility."
+  },
+  "validation_date": "2026-08-12",
+  "ontology_version": "0.1.0",
+  "schema_version": "v2-strangler-fig-final-chunks",
+  "pipeline_version": {
+    "raw_text_loader": "NFM-2677-B2",
+    "section_segmenter": "NFM-2677-B3",
+    "entity_extractor": "NFM-2677-B4",
+    "property_normalizer": "NFM-2677-B5",
+    "chunk_builder": "NFM-2677-B6"
+  },
+  "upstream_issues": ["NFM-2891", "NFM-2875", "NFM-2890"],
+  "extracted_entities_summary": {"formula_count": 1, "property_count": 4, "measurement_count": 5}
+}
