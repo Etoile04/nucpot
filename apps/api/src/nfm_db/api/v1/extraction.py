@@ -638,9 +638,23 @@ async def get_ingest_job_status(
             # NFM-3007: use the canonical 24-key dict helper so the
             # ORM-only path produces the identical key set as the
             # dataclass path (ADR-NFM-2739 §2.1).
+            status_dict = _extraction_job_to_dict(row)
+            # Merge in ingest-specific ORM columns that the pipeline
+            # helper does not cover (it targets extraction pipeline
+            # status, not ingest ack shape).
+            status_dict.update({
+                "corpus_id": row.corpus_id,
+                "total_received": row.total_received,
+                "created_measurements": row.created_measurements,
+                "reused_entities": row.reused_entities,
+                "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
+                "skipped_unknown_properties": row.skipped_unknown_properties,
+                "skipped_duplicates": row.skipped_duplicates,
+                "validation_errors": row.validation_errors,
+            })
             return {
                 "success": True,
-                "data": _extraction_job_to_dict(row),
+                "data": status_dict,
             }
         # UUID was valid but row not found — 404.
         raise HTTPException(
