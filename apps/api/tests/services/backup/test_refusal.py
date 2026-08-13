@@ -7,19 +7,19 @@ enforcement, and immutability). This file adds:
   (free_bytes, backup_size, floor) constitute a structured reason code
   that uniquely identifies a capacity-floor breach.
 - AC2: refusalCount increments by exactly 1 and lastRefusalAt is set,
-  verified with a **frozen clock** via ``freezegun`` for determinism.
+  verified with a **frozen clock** via ``unittest.mock`` for determinism.
 - AC3: Two consecutive refusals produce refusalCount=2 and lastRefusalAt
   reflecting the **second** call (overwrite-not-append).
 - AC4: ≥80% line coverage on the refusal code-path.
-- AC5: pytest + tmp_path + freezegun.freeze_time conventions.
+- AC5: pytest + tmp_path + mock-based clock conventions.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
-
-from freezegun import freeze_time
+from unittest.mock import patch
 
 from nfm_db.services.backup.config import BackupCapacityConfig
 from nfm_db.services.backup.guardrails import (
@@ -34,6 +34,25 @@ from nfm_db.services.backup.metrics import BackupMetrics
 # ---------------------------------------------------------------------------
 
 _GIB = 1024**3
+
+
+def _freeze_clock(dt: datetime):
+    """Decorator/context-manager that freezes ``datetime.now()`` to *dt*.
+
+    Replaces the ``freezegun`` dependency with stdlib-only mocking.
+    Patches ``datetime.now`` on the class itself (shared reference across
+    all modules that import ``datetime``), so the guardrails code that calls
+    ``datetime.now(UTC)`` observes the frozen value.
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with patch.object(datetime, "now", return_value=dt):
+                return func(*args, **kwargs)
+        return wrapper
+
+    return decorator
 
 
 def _make_config(
@@ -141,11 +160,14 @@ class TestRefusalContract:
 # ---------------------------------------------------------------------------
 
 
+_T12 = datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+
+
 class TestRefusalCountAndClock:
     """AC2: A successful refusal increments refusalCount by exactly 1 and
-    sets lastRefusalAt to the current clock (frozen via freezegun)."""
+    sets lastRefusalAt to the current clock (frozen via mock)."""
 
-    @freeze_time("2026-08-13T12:00:00Z")
+    @_freeze_clock(_T12)
     def test_single_refusal_count_and_timestamp(self, tmp_path: Path) -> None:
         """First refusal: count=1, lastRefusalAt matches frozen clock."""
         cfg = _make_config(min_free=20 * _GIB)
@@ -158,9 +180,9 @@ class TestRefusalCountAndClock:
         gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+        assert metrics.last_refusal_at == _T12
 
-    @freeze_time("2026-08-13T12:00:00Z")
+    @_freeze_clock(_T12)
     def test_event_refused_at_matches_frozen_clock(self, tmp_path: Path) -> None:
         """The FloorBreachEvent.refused_at also reflects the frozen clock."""
         cfg = _make_config(min_free=20 * _GIB)
@@ -173,9 +195,9 @@ class TestRefusalCountAndClock:
         event = gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert event is not None
-        assert event.refused_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+        assert event.refused_at == _T12
 
-    @freeze_time("2026-08-13T12:00:00Z")
+    @_freeze_clock(_T12)
     def test_refusal_does_not_increment_when_permitted(self, tmp_path: Path) -> None:
         """When the write is allowed, refusalCount stays at 0."""
         cfg = _make_config(min_free=20 * _GIB)
@@ -196,11 +218,16 @@ class TestRefusalCountAndClock:
 # ---------------------------------------------------------------------------
 
 
+_T12_00 = datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+_T12_30 = datetime(2026, 8, 13, 12, 0, 30, tzinfo=UTC)
+_T12_01 = datetime(2026, 8, 13, 12, 1, 0, tzinfo=UTC)
+
+
 class TestConsecutiveRefusalsOverwrite:
     """AC3: Two consecutive refusals produce refusalCount=2 and lastRefusalAt
     reflecting the SECOND call (proves overwrite-not-append)."""
 
-    @freeze_time("2026-08-13T12:00:00Z")
+    @_freeze_clock(_T12_00)
     def test_first_refusal_sets_initial_state(self, tmp_path: Path) -> None:
         cfg = _make_config(min_free=20 * _GIB)
         metrics = BackupMetrics()
@@ -213,9 +240,8 @@ class TestConsecutiveRefusalsOverwrite:
 
         assert event1 is not None
         assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+        assert metrics.last_refusal_at == _T12_00
 
-    @freeze_time("2026-08-13T12:00:30Z")
     def test_second_refusal_overwrites_last_refusal_at(self, tmp_path: Path) -> None:
         """Advance the clock by 30s and trigger a second refusal.
         lastRefusalAt must reflect the second call, not the first."""
@@ -227,23 +253,22 @@ class TestConsecutiveRefusalsOverwrite:
         disk = _make_disk(free=21 * _GIB, total_backup=0)
 
         # First refusal at T+0s (frozen at 12:00:00)
-        with freeze_time("2026-08-13T12:00:00Z"):
+        with patch.object(datetime, "now", return_value=_T12_00):
             gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+        assert metrics.last_refusal_at == _T12_00
 
         # Second refusal at T+30s (frozen at 12:00:30)
-        with freeze_time("2026-08-13T12:00:30Z"):
+        with patch.object(datetime, "now", return_value=_T12_30):
             event2 = gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 2
         # Overwrite-not-append: lastRefusalAt is the SECOND call's time.
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 30, tzinfo=UTC)
+        assert metrics.last_refusal_at == _T12_30
         assert event2 is not None
-        assert event2.refused_at == datetime(2026, 8, 13, 12, 0, 30, tzinfo=UTC)
+        assert event2.refused_at == _T12_30
 
-    @freeze_time("2026-08-13T12:00:00Z")
     def test_post_pruner_refusal_also_overwrites(self, tmp_path: Path) -> None:
         """Mixing pre-write and post-pruner refusals: both increment count
         and lastRefusalAt reflects the most recent refusal."""
@@ -255,20 +280,20 @@ class TestConsecutiveRefusalsOverwrite:
         disk = _make_disk(free=21 * _GIB, total_backup=0)
 
         # First refusal at T+0s (pre-write)
-        with freeze_time("2026-08-13T12:00:00Z"):
+        with patch.object(datetime, "now", return_value=_T12_00):
             gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
 
         # Second refusal at T+60s (post-pruner, different trigger)
         low_disk = _make_disk(free=5 * _GIB, total_backup=0)
-        with freeze_time("2026-08-13T12:01:00Z"):
+        with patch.object(datetime, "now", return_value=_T12_01):
             event2 = gr.recheck_floor_after_pruner(disk=low_disk)
 
         assert metrics.refusal_count == 2
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 1, 0, tzinfo=UTC)
+        assert metrics.last_refusal_at == _T12_01
         assert event2 is not None
-        assert event2.refused_at == datetime(2026, 8, 13, 12, 1, 0, tzinfo=UTC)
+        assert event2.refused_at == _T12_01
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +301,13 @@ class TestConsecutiveRefusalsOverwrite:
 # ---------------------------------------------------------------------------
 
 
+_T07_18_59 = datetime(2026, 8, 13, 7, 18, 59, 123000, tzinfo=UTC)
+
+
 class TestRefusalSnapshotRFC3339:
     """Verify the snapshot's RFC-3339 string matches the frozen clock."""
 
-    @freeze_time("2026-08-13T07:18:59.123Z")
+    @_freeze_clock(_T07_18_59)
     def test_snapshot_rfc3339_after_refusal(self, tmp_path: Path) -> None:
         cfg = _make_config(min_free=20 * _GIB)
         metrics = BackupMetrics()
