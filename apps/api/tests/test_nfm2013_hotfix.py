@@ -349,10 +349,11 @@ class TestIngestStatusEndpoint:
         """Endpoint returns in-memory job data when available."""
         from uuid import uuid4
 
-        from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+        from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+        from nfm_db.services.extraction_pipeline import JobStatus
 
         job_id_str = str(uuid4())
-        job = ExtractionJob(
+        job = OrmExtractionJob(
             job_id=job_id_str,
             source_reference="doi:10.1234/test",
             source_type="doi",

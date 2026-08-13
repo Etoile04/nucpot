@@ -145,6 +145,7 @@ class TestOntoFuelExtraction:
     async def test_extraction_to_staging(
         self,
         client: AsyncClient,
+        db_session: AsyncSession,
     ):
         """Test extraction pipeline from trigger to staging.
 

@@ -201,41 +201,6 @@ def _generate_job_id() -> str:
     return str(uuid.uuid4())
 
 
-# Deprecated compatibility shim (NFM-3008).
-# The in-memory store was removed; this empty dict is kept so
-# legacy test fixtures that import ``_job_store`` don't raise
-# ``ImportError`` at collection time.  Tests that write to it
-# will operate on a transient dict that is never read by
-# production code.
-_job_store: dict[str, Any] = {}  # deprecated — NFM-3008
-
-# Backward-compat re-export (NFM-3008).
-# Many tests import ``ExtractionJob`` from this module. The
-# dataclass was removed; this alias points to the ORM model so
-# existing import statements keep resolving.  Call-sites that
-# construct with dataclass-only kwargs (``job_id=...``) will get
-# ``TypeError`` — those tests need updating separately.
-ExtractionJob = OrmExtractionJob  # deprecated alias — NFM-3008
-
-
-def get_job(job_id: str) -> OrmExtractionJob | None:
-    """Retrieve an ORM extraction job by its UUID string.
-
-    Replaces the legacy in-memory dataclass lookup (removed in NFM-3008).
-    Returns ``None`` when no matching row exists.
-    """
-    try:
-        from sqlalchemy import select
-
-        from nfm_db.core.session import get_sync_session
-
-        session = get_sync_session()
-        result = session.execute(
-            select(OrmExtractionJob).where(OrmExtractionJob.id == uuid.UUID(job_id))
-        )
-        return result.scalar_one_or_none()
-    except Exception:
-        return None
 
 
 

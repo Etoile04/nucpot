@@ -55,9 +55,10 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
 
     called = {"legacy": 0}
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+    from nfm_db.services.extraction_pipeline import JobStatus
 
-    fake_job = ExtractionJob(
+    fake_job = OrmExtractionJob(
         job_id="fake-job-id",
         source_reference="foo.md",
         source_type="file",
@@ -199,9 +200,10 @@ async def test_trigger_extraction_pipeline_legacy_returns_normalized_dict(monkey
 
     from unittest.mock import AsyncMock, patch
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
+    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+    from nfm_db.services.extraction_pipeline import JobStatus
 
-    fake_job = ExtractionJob(
+    fake_job = OrmExtractionJob(
         job_id="test-job-123",
         source_reference="foo.md",
         source_type="file",

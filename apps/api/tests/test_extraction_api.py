@@ -6,6 +6,7 @@ Tests for POST /trigger and GET /status/{job_id}.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -15,10 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.main import app
-from nfm_db.services.extraction_pipeline import (
-    JobStatus,
-    _generate_job_id,
-)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,7 +141,7 @@ async def test_get_extraction_status_success(db_session: AsyncSession) -> None:
     # Create an ORM job (NFM-3008 — dataclass + _job_store removed).
     job_id = str(uuid4())
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob as ORMExtractionJob
+    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
 
     job = ORMExtractionJob(
         id=uuid.UUID(job_id),
