@@ -1,7 +1,7 @@
 """Tests for multimodal extraction helpers (NFM-979).
 
 Covers:
-- ExtractionJob multimodal field defaults
+- OrmExtractionJob multimodal field defaults
 - _apply_conflict_resolution: prefer_vlm, prefer_text, merge strategies
 - _extract_figures_from_source: stub mode, filtering, fault tolerance
 - _extract_tables_from_source: stub mode, filtering, fault tolerance
@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nfm_db.services.extraction_pipeline import ExtractionJob
+from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.services.multimodal_extraction import (
     _apply_conflict_resolution,
     _extract_figures_from_source,
@@ -25,43 +25,43 @@ from nfm_db.services.multimodal_extraction import (
 )
 
 # ---------------------------------------------------------------------------
-# ExtractionJob field defaults (NFM-979 AC: 7 new fields)
+# OrmExtractionJob field defaults (NFM-979 AC: 7 new fields)
 # ---------------------------------------------------------------------------
 
 
-class TestExtractionJobMultimodalFields:
+class TestOrmExtractionJobMultimodalFields:
     """Verify all 7 multimodal fields exist with correct defaults."""
 
     def test_extract_figures_default_false(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.extract_figures is False
 
     def test_extract_tables_default_false(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.extract_tables is False
 
     def test_figure_types_default_none(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.figure_types is None
 
     def test_confidence_threshold_default(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.confidence_threshold == 0.5
 
     def test_conflict_strategy_default(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.conflict_strategy == "prefer_vlm"
 
     def test_figures_default_empty_list(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.figures == []
 
     def test_tables_default_empty_list(self) -> None:
-        job = ExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
+        job = OrmExtractionJob(job_id="j1", source_reference="src.md", source_type="markdown")
         assert job.tables == []
 
     def test_custom_values_accepted(self) -> None:
-        job = ExtractionJob(
+        job = OrmExtractionJob(
             job_id="j1",
             source_reference="src.md",
             source_type="markdown",
@@ -333,14 +333,14 @@ class TestExtractTablesFaultTolerance:
 class TestRunMultimodalExtraction:
     """Test the orchestration function wires helpers into the pipeline."""
 
-    def _make_job(self, **overrides: Any) -> ExtractionJob:
+    def _make_job(self, **overrides: Any) -> OrmExtractionJob:
         defaults: dict[str, Any] = {
             "job_id": "j1",
             "source_reference": "test.md",
             "source_type": "markdown",
         }
         defaults.update(overrides)
-        return ExtractionJob(**defaults)
+        return OrmExtractionJob(**defaults)
 
     def setup_method(self) -> None:
         os.environ["EXTRACTION_STUB_MODE"] = "true"

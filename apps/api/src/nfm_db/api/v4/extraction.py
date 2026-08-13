@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     V4BrowseResponse,
@@ -36,7 +37,6 @@ from nfm_db.schemas.extraction import (
     V4ValidateRequest,
     V4ValidateResponse,
 )
-from nfm_db.services.extraction_pipeline import get_job
 
 logger = logging.getLogger(__name__)
 
@@ -138,23 +138,89 @@ def _to_v4_property(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Helper: async job lookup by UUID string (NFM-3008)
+# ---------------------------------------------------------------------------
+
+
+async def _get_job(session: AsyncSession, job_id: str) -> OrmExtractionJob | None:
+    """Look up an ORM ExtractionJob by UUID string.
+
+    Returns ``None`` when no matching row exists or *job_id* is not a
+    valid UUID.
+    """
+    try:
+        from sqlalchemy import select
+
+        stmt = select(OrmExtractionJob).where(
+            OrmExtractionJob.id == uuid.UUID(job_id)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+    except (ValueError, Exception):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Helper: collect stored properties for a job
+# ---------------------------------------------------------------------------
+
+
 async def _get_job_properties(
     job_id: str,
     session: AsyncSession,
 ) -> list[dict[str, Any]]:
-    """Retrieve properties from ref_gap_fill_staging for a job.
+    """Retrieve properties from _ref_gap_fill_staging for a job.
 
-    Returns empty list if job not found. The fill_batch_id lookup
-    was a dataclass-only path (removed in NFM-3008); ORM jobs
-    are tracked via the extraction_jobs table.
+    Follows the ``fill_batch_id`` join:
+    ``ExtractionJob.fill_batch_id`` → ``RefGapFillStaging.fill_batch_id``.
+
+    Returns an empty list when the job has no ``fill_batch_id`` or no
+    matching staging rows exist.
     """
+    try:
+        from nfm_db.models.ref_gap_fill import RefGapFillStaging
 
-    job = get_job(job_id)
-    if job is None:
+        job = await _get_job(session, job_id)
+        if job is None or job.fill_batch_id is None:
+            return []
+
+        from sqlalchemy import select
+
+        batch_uid = uuid.UUID(job.fill_batch_id)
+        stmt = select(RefGapFillStaging).where(
+            RefGapFillStaging.fill_batch_id == batch_uid
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+        return [
+            {
+                "property_name": row.property_name,
+                "element_system": row.element_system,
+                "phase": row.phase,
+                "value": row.value,
+                "unit": row.unit,
+                "method": row.method,
+                "source": row.source,
+                "confidence": row.confidence.value if row.confidence else None,
+                "temperature": row.temperature,
+                "cache_level": row.cache_level.value if row.cache_level else None,
+                "staging_status": row.status.value if row.status else None,
+                "property_category": row.property_category,
+                "composition": row.composition,
+                "element": row.element,
+                "context": row.context,
+                "source_file": row.source_file,
+            }
+            for row in rows
+        ]
+    except Exception:
+        logger.warning(
+            "Failed to query job properties for %s",
+            job_id,
+            exc_info=True,
+        )
         return []
-
-    # ORM ExtractionJob does not have fill_batch_id; return empty.
-    return []
 
 
 # ---------------------------------------------------------------------------
@@ -267,9 +333,12 @@ async def submit_extraction(
     summary="查询提取任务进度",
     description="轮询提取任务进度，包含详细的步骤追踪。\n\nPoll extraction job progress with detailed step tracking.",
 )
-async def get_extraction_status(job_id: str) -> JSONResponse:
+async def get_extraction_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_db),
+) -> JSONResponse:
     """轮询提取任务进度（含详细步骤追踪）。"""
-    job = get_job(job_id)
+    job = await _get_job(session, job_id)
 
     if job is None:
         return _error_response(
@@ -317,7 +386,7 @@ async def get_extraction_result(
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """获取已完成任务的提取结果，支持分页。"""
-    job = get_job(job_id)
+    job = await _get_job(session, job_id)
 
     if job is None:
         return _error_response(
@@ -498,7 +567,7 @@ async def validate_extraction(
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """触发提取属性验证工作流。"""
-    job = get_job(job_id)
+    job = await _get_job(session, job_id)
 
     if job is None:
         return _error_response(

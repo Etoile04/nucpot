@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -30,7 +31,7 @@ from nfm_db.schemas.extraction import (
     ExtractionTriggerRequest,
 )
 from nfm_db.services.celery_app import celery_app
-from nfm_db.services.extraction_pipeline import _extraction_job_to_dict, get_job
+from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -199,13 +200,20 @@ async def trigger_extraction_job(
 )
 async def get_extraction_status(
     job_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
     """查询提取任务执行状态。
 
     Returns current status, counts of extracted/staged/rejected properties,
     timestamps, and error message (if failed).
     """
-    job = get_job(str(job_id))
+    try:
+        result = await session.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_id)
+        )
+        job = result.scalar_one_or_none()
+    except Exception:
+        job = None
 
     if job is not None:
         return {
@@ -647,7 +655,13 @@ async def get_ingest_job_status(
         )
 
     # Fallback: ORM lookup for non-Celery / non-ingest jobs.
-    job = get_job(job_id)
+    try:
+        result = await session.execute(
+            select(ExtractionJob).where(ExtractionJob.id == uuid.UUID(job_id))
+        )
+        job = result.scalar_one_or_none()
+    except Exception:
+        job = None
     if job is not None:
         return {
             "success": True,
