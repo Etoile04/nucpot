@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 
 from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 
@@ -200,12 +201,28 @@ class TestIngestStatusOrmPath:
             )
 
     @pytest.mark.asyncio
-    async def test_orm_query_exception_raises_404(self) -> None:
-        """ORM query exception surfaces as clean 404 (row=None path)."""
+    async def test_orm_query_sqlalchemy_error_raises_503(self) -> None:
+        """SQLAlchemy DB errors return 503 (not 404) so SRE can distinguish."""
         mock_session = AsyncMock()
-        mock_session.execute.side_effect = RuntimeError("DB down")
+        mock_session.execute.side_effect = SQLAlchemyError("connection refused")
 
-        with pytest.raises(HTTPException, match="not found"):
+        with pytest.raises(HTTPException) as exc_info:
+            from nfm_db.api.v1.extraction import get_ingest_job_status
+
+            await get_ingest_job_status(
+                str(uuid.uuid4()), session=mock_session
+            )
+
+        assert exc_info.value.status_code == 503
+        assert "Retry-After" in (exc_info.value.headers or {})
+
+    @pytest.mark.asyncio
+    async def test_orm_query_non_sql_error_propagates(self) -> None:
+        """Non-SQLAlchemy errors (e.g. programming bugs) propagate uncaught."""
+        mock_session = AsyncMock()
+        mock_session.execute.side_effect = RuntimeError("unexpected bug")
+
+        with pytest.raises(RuntimeError, match="unexpected bug"):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
             await get_ingest_job_status(
@@ -269,6 +286,9 @@ class TestIngestStatusNonUuidDeprecation:
         assert exc_info.value.status_code == 400
         detail = str(exc_info.value.detail)
         assert "deprecated" in detail.lower() or "uuid" in detail.lower()
+        headers = exc_info.value.headers or {}
+        assert headers.get("Deprecation") == "true"
+        assert "Sunset" in headers
 
     @pytest.mark.asyncio
     async def test_uuid_string_still_works(self) -> None:

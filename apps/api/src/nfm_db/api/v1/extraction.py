@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
@@ -601,9 +602,9 @@ async def get_ingest_job_status(
     """查询提取任务状态（NFM-2013 AC-5）。
 
     Reads from the ``extraction_jobs`` table persisted by the ingest
-    handler.  Falls back to the in-memory store and Celery AsyncResult
-    for jobs dispatched via /extraction/trigger (which don't land in
-    the ingest-side table).
+    handler.  Returns 503 when the database is unreachable, 404 when
+    the UUID is valid but no row exists, and 400 for non-UUID (legacy
+    Celery) job IDs with deprecation headers.
     """
     # NFM-2013 AC-5: try the persisted ExtractionJob row first.  This is
     # the canonical state for POST /extraction/ingest jobs.
@@ -620,15 +621,19 @@ async def get_ingest_job_status(
                     select(ExtractionJob).where(ExtractionJob.id == job_uuid)
                 )
             ).scalar_one_or_none()
-        except Exception:
-            # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
-            # there but the bind failed, surface a clean response instead
-            # of a 500.  Fall through to 404 below.
+        except SQLAlchemyError:
+            # DB-layer error (connection failure, schema drift, corrupt
+            # row).  Return 503 so SRE can distinguish "DB is down" from
+            # "row genuinely not found" (which yields 404 below).
             logger.exception(
-                "get_ingest_job_status: failed to query ExtractionJob for id=%s",
+                "get_ingest_job_status: DB error querying ExtractionJob for id=%s",
                 job_id,
             )
-            row = None
+            raise HTTPException(
+                status_code=503,
+                detail="Service temporarily unavailable. Please retry.",
+                headers={"Retry-After": "5"},
+            )
         if row is not None:
             # NFM-3007: use the canonical 24-key dict helper so the
             # ORM-only path produces the identical key set as the
@@ -652,6 +657,7 @@ async def get_ingest_job_status(
             "Non-UUID (legacy Celery) job IDs are no longer supported. "
             "Use a UUID-format job_id from a recent /extraction/ingest call."
         ),
+        headers={"Deprecation": "true", "Sunset": "2026-12-31"},
     )
 
 
