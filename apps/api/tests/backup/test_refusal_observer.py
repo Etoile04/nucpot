@@ -4,18 +4,19 @@ AC1: A synthetic refusal produced by mock state must generate exactly one
 ``[SRE-WARNING]`` payload to the SRE Monitor channel within one heartbeat.
 
 The observer is read-only w.r.t. the writer — it consumes a ``BackupRefusalEvent``
-and a ``RefusalStateSnapshot`` and forwards the AC1 payload through whatever
-sink the integration wires in. Default sink for production is a structured
-``logging.warning("[SRE-WARNING] %s", json.dumps(payload))`` matching the
-existing ``CapacityGuardrails`` convention.
+and a ``RefusalStateSnapshot`` and forwards the AC1 payload through an explicit
+``emit`` callable that the integration task (NFM-3064) wires in.  The observer
+has **no default log sink** to avoid double-alerting with the capacity
+guardrails (NFM-3043), which already emit ``[SRE-WARNING]`` at refusal time.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
+
+import pytest
 
 from nfm_db.monitoring.refusal_observer import (
     BackupRefusalEvent,
@@ -107,29 +108,40 @@ def test_two_refusals_emit_two_payloads_debounce_handled_by_sibling() -> None:
     assert all(p["severity"] == "warning" for p in emitted)
 
 
-def test_default_sink_emits_log_warning_with_sre_warning_prefix_and_json_payload(
+def test_observer_requires_explicit_emit_to_prevent_double_alerting() -> None:
+    """NFM-3043 conflict resolution: observer has no default log sink.
+
+    The capacity guardrails already emit ``[SRE-WARNING]`` at refusal time.
+    Constructing the observer without an explicit ``emit`` must raise
+    ``TypeError`` so integration (NFM-3064) is forced to wire the transport
+    explicitly, preventing double-alerting.
+    """
+    with pytest.raises(TypeError, match="missing.*required.*argument.*emit"):
+        BackupRefusalObserver()  # type: ignore[call-arg]
+
+
+def test_observer_does_not_emit_to_log_channel_by_default(
     caplog: Any,
 ) -> None:
-    """Default sink reuses the existing [SRE-WARNING] log convention so the
-    SRE Monitor agent (NFM-2915 / Hermes) keeps picking up refusal alerts through
-    its log-scanning transport — no new transport invented."""
-    observer = BackupRefusalObserver()  # default emit
+    """With an explicit emit sink (required), the observer must NOT produce
+    any log output on the observer's logger — the log channel is the
+    guardrails' domain (NFM-3043)."""
+    emitted: list[dict[str, Any]] = []
+    observer = BackupRefusalObserver(emit=emitted.append)
 
-    with caplog.at_level(logging.WARNING, logger="nfm_db.monitoring.refusal_observer"):
+    with caplog.at_level(logging.DEBUG, logger="nfm_db.monitoring.refusal_observer"):
         observer.observe(event=_synthetic_event(), snapshot=_synthetic_snapshot())
 
-    records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(records) == 1
+    # Observer's own logger must be silent — no [SRE-WARNING] leak.
+    observer_records = [
+        r for r in caplog.records
+        if r.name == "nfm_db.monitoring.refusal_observer"
+    ]
+    assert len(observer_records) == 0
 
-    message = records[0].getMessage()
-    assert message.startswith("[SRE-WARNING]")
-
-    # The body after the prefix is the AC1 JSON payload, parseable.
-    body = message[len("[SRE-WARNING]") :].strip()
-    payload = json.loads(body)
-    assert payload["tag"] == "backup-refusal"
-    assert payload["severity"] == "warning"
-    assert payload["refusalCount"] == 1
+    # The injected emit sink still received the AC1 payload.
+    assert len(emitted) == 1
+    assert emitted[0]["tag"] == "backup-refusal"
 
 
 def test_build_sre_warning_payload_is_pure_and_reusable() -> None:
