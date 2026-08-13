@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     V4BrowseResponse,
@@ -138,7 +139,32 @@ def _to_v4_property(
 
 
 # ---------------------------------------------------------------------------
-# Helper: collect stored properties for a job
+# Helper: ORM job lookup (NFM-2996-T1)
+# ---------------------------------------------------------------------------
+
+
+async def _get_orm_job(
+    session: AsyncSession, job_id: str
+) -> ORMExtractionJob | None:
+    """Look up an ORM ExtractionJob by UUID string.
+
+    Returns None if *job_id* is not a valid UUID or no matching
+    row exists in the database.  Used by the C3 (result) and C4
+    (validate) endpoints after migrating away from the in-memory
+    dataclass ``_job_store``.
+    """
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except (ValueError, AttributeError):
+        return None
+    result = await session.execute(
+        select(ORMExtractionJob).where(ORMExtractionJob.id == job_uuid)
+    )
+    return result.scalars().first()
+
+
+# ---------------------------------------------------------------------------
+# Helper: collect stored properties for a job (C2 — ORM-migrated)
 # ---------------------------------------------------------------------------
 
 
@@ -148,17 +174,28 @@ async def _get_job_properties(
 ) -> list[dict[str, Any]]:
     """Retrieve properties from ref_gap_fill_staging for a job.
 
-    Looks up the ExtractionJob in _job_store to get fill_batch_id,
-    then queries the staging table for matching records.
-    Returns empty list if job not found or fill_batch_id is None.
+    Queries ORM ``ExtractionJob`` by UUID for ``fill_batch_id``, then
+    queries the staging table for matching records.  Returns an empty
+    list if the job is not found or ``fill_batch_id`` is ``None``.
+
+    NFM-2996-T1: migrated from ``get_job()`` / ``_job_store`` to ORM.
     """
     from nfm_db.models.ref_gap_fill import RefGapFillStaging
 
-    job = get_job(job_id)
-    if job is None or job.fill_batch_id is None:
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except (ValueError, AttributeError):
         return []
 
-    batch_uuid = uuid.UUID(job.fill_batch_id)
+    result = await session.execute(
+        select(ORMExtractionJob.fill_batch_id).where(ORMExtractionJob.id == job_uuid)
+    )
+    fill_batch_id = result.scalar_one_or_none()
+
+    if fill_batch_id is None:
+        return []
+
+    batch_uuid = uuid.UUID(fill_batch_id)
     result = await session.execute(
         select(RefGapFillStaging).where(RefGapFillStaging.fill_batch_id == batch_uuid)
     )
@@ -348,19 +385,22 @@ async def get_extraction_result(
     limit: int = Query(default=50, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """获取已完成任务的提取结果，支持分页。"""
-    job = get_job(job_id)
+    """获取已完成任务的提取结果，支持分页。
 
-    if job is None:
+    C3 call-site — migrated from ``get_job()`` to ``_get_orm_job()``.
+    """
+    orm_job = await _get_orm_job(session, job_id)
+
+    if orm_job is None:
         return _error_response(
             404,
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    if orm_job.status != JobStatus.COMPLETED.value:
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{orm_job.status}', not 'completed'. "
             "Results are only available for completed jobs.",
         )
 
@@ -391,9 +431,9 @@ async def get_extraction_result(
         content={
             "success": True,
             "data": V4ResultResponse(
-                source_reference=job.source_reference,
-                job_status=job.status.value,
-                total_extracted=job.extracted_count,
+                source_reference=orm_job.source_reference,
+                job_status=orm_job.status,
+                total_extracted=orm_job.extracted_count,
                 properties=[p.model_dump(mode="json") for p in properties],
             ).model_dump(mode="json"),
             "meta": {
@@ -529,19 +569,22 @@ async def validate_extraction(
     payload: V4ValidateRequest | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """触发提取属性验证工作流。"""
-    job = get_job(job_id)
+    """触发提取属性验证工作流。
 
-    if job is None:
+    C4 call-site — migrated from ``get_job()`` to ``_get_orm_job()``.
+    """
+    orm_job = await _get_orm_job(session, job_id)
+
+    if orm_job is None:
         return _error_response(
             404,
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    if orm_job.status != JobStatus.COMPLETED.value:
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{orm_job.status}', not 'completed'. "
             "Validation can only be triggered on completed jobs.",
         )
 

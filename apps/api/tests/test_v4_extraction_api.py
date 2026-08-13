@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.main import app
 from nfm_db.schemas.extraction import (
@@ -123,6 +124,29 @@ async def submitted_job_id(v4_client: AsyncClient, submit_payload: dict) -> str:
             break
         await asyncio.sleep(0.05)
     return job_id
+
+
+@pytest.fixture
+async def orm_completed_job_id(db_session: AsyncSession) -> str:
+    """Create a completed ORM ExtractionJob row and return its UUID string.
+
+    Used by tests for endpoints that have been migrated from the
+    dataclass ``_job_store`` to ORM reads (NFM-2996-T1).
+    """
+    import uuid as uuid_mod
+
+    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+    job = ORMExtractionJob(
+        id=uuid_mod.uuid4(),
+        source_reference="orm_test_paper.md",
+        source_type="file",
+        status="completed",
+        extracted_count=3,
+    )
+    db_session.add(job)
+    await db_session.flush()
+    return str(job.id)
 
 
 # ---------------------------------------------------------------------------
@@ -285,21 +309,23 @@ class TestExtractionResult:
         assert "not found" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_result_returns_409_for_non_completed_job(self, v4_client: AsyncClient):
+    async def test_result_returns_409_for_non_completed_job(
+        self, v4_client: AsyncClient, db_session: AsyncSession
+    ):
         """Accessing results on a running job must return 409 Conflict."""
-        from nfm_db.services.extraction_pipeline import (
-            ExtractionJob,
-            JobStatus,
-            _job_store,
-        )
+        import uuid as uuid_mod
 
-        job_id = "test-409-result-job"
-        _job_store[job_id] = ExtractionJob(
-            job_id=job_id,
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+        job = ORMExtractionJob(
+            id=uuid_mod.uuid4(),
             source_reference="test://ref",
             source_type="url",
-            status=JobStatus.RUNNING,
+            status="running",
         )
+        db_session.add(job)
+        await db_session.flush()
+        job_id = str(job.id)
         try:
             response = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
             assert response.status_code == 409
@@ -307,13 +333,13 @@ class TestExtractionResult:
             assert body["success"] is False
             assert "not 'completed'" in body["error"]
         finally:
-            _job_store.pop(job_id, None)
+            await db_session.rollback()
 
     @pytest.mark.asyncio
     async def test_result_returns_200_for_completed_job(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
-        result_resp = await v4_client.get(f"/api/v4/extraction/{submitted_job_id}/result")
+        result_resp = await v4_client.get(f"/api/v4/extraction/{orm_completed_job_id}/result")
         assert result_resp.status_code == 200
         body = result_resp.json()
         assert body["success"] is True
@@ -325,10 +351,10 @@ class TestExtractionResult:
 
     @pytest.mark.asyncio
     async def test_result_supports_pagination_params(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/result",
+            f"/api/v4/extraction/{orm_completed_job_id}/result",
             params={"page": 1, "limit": 10, "confidence": "high"},
         )
         assert result_resp.status_code == 200
@@ -340,10 +366,10 @@ class TestExtractionResult:
 
     @pytest.mark.asyncio
     async def test_result_returns_422_for_invalid_limit(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/result",
+            f"/api/v4/extraction/{orm_completed_job_id}/result",
             params={"limit": 999},
         )
         assert result_resp.status_code == 422
@@ -460,22 +486,22 @@ class TestValidateExtraction:
 
     @pytest.mark.asyncio
     async def test_validate_returns_409_for_non_completed_job(
-        self, v4_client: AsyncClient, validate_payload: dict
+        self, v4_client: AsyncClient, db_session: AsyncSession, validate_payload: dict
     ):
         """Triggering validation on a non-completed job must return 409 Conflict."""
-        from nfm_db.services.extraction_pipeline import (
-            ExtractionJob,
-            JobStatus,
-            _job_store,
-        )
+        import uuid as uuid_mod
 
-        job_id = "test-409-validate-job"
-        _job_store[job_id] = ExtractionJob(
-            job_id=job_id,
+        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+
+        job = ORMExtractionJob(
+            id=uuid_mod.uuid4(),
             source_reference="test://ref",
             source_type="url",
-            status=JobStatus.EXTRACTING,
+            status="extracting",
         )
+        db_session.add(job)
+        await db_session.flush()
+        job_id = str(job.id)
         try:
             response = await v4_client.post(
                 f"/api/v4/extraction/{job_id}/validate",
@@ -486,21 +512,21 @@ class TestValidateExtraction:
             assert body["success"] is False
             assert "not 'completed'" in body["error"]
         finally:
-            _job_store.pop(job_id, None)
+            await db_session.rollback()
 
     @pytest.mark.asyncio
     async def test_validate_returns_202_for_completed_job(
-        self, v4_client: AsyncClient, submitted_job_id: str, validate_payload: dict
+        self, v4_client: AsyncClient, orm_completed_job_id: str, validate_payload: dict
     ):
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{submitted_job_id}/validate",
+            f"/api/v4/extraction/{orm_completed_job_id}/validate",
             json=validate_payload,
         )
         assert validate_resp.status_code == 202
         body = validate_resp.json()
         assert body["success"] is True
         data = body["data"]
-        assert data["job_id"] == submitted_job_id
+        assert data["job_id"] == orm_completed_job_id
         assert "validation_id" in data
         assert "total_properties" in data
         assert "auto_approved" in data
@@ -509,22 +535,22 @@ class TestValidateExtraction:
 
     @pytest.mark.asyncio
     async def test_validate_defaults_when_empty_body(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{submitted_job_id}/validate",
+            f"/api/v4/extraction/{orm_completed_job_id}/validate",
             json={},
         )
         assert validate_resp.status_code == 202
         data = validate_resp.json()["data"]
-        assert data["job_id"] == submitted_job_id
+        assert data["job_id"] == orm_completed_job_id
 
     @pytest.mark.asyncio
     async def test_validate_includes_review_url(
-        self, v4_client: AsyncClient, submitted_job_id: str, validate_payload: dict
+        self, v4_client: AsyncClient, orm_completed_job_id: str, validate_payload: dict
     ):
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{submitted_job_id}/validate",
+            f"/api/v4/extraction/{orm_completed_job_id}/validate",
             json=validate_payload,
         )
         data = validate_resp.json()["data"]
@@ -798,29 +824,15 @@ class TestMultimodalResultWiring:
             _job_store.pop(job_id, None)
 
     @pytest.mark.asyncio
-    async def test_result_returns_empty_figures_tables_when_absent(self, v4_client: AsyncClient):
+    async def test_result_returns_empty_figures_tables_when_absent(
+        self, v4_client: AsyncClient, orm_completed_job_id: str
+    ):
         """GET result returns empty arrays when job has no figures/tables (backward compat)."""
-        from nfm_db.services.extraction_pipeline import (
-            ExtractionJob,
-            JobStatus,
-            _job_store,
-        )
-
-        job_id = "test-multimodal-result-empty"
-        _job_store[job_id] = ExtractionJob(
-            job_id=job_id,
-            source_reference="test://no-multimodal",
-            source_type="url",
-            status=JobStatus.COMPLETED,
-        )
-        try:
-            resp = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
-            assert resp.status_code == 200
-            data = resp.json()["data"]
-            assert data["figures"] == []
-            assert data["tables"] == []
-        finally:
-            _job_store.pop(job_id, None)
+        resp = await v4_client.get(f"/api/v4/extraction/{orm_completed_job_id}/result")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["figures"] == []
+        assert data["tables"] == []
 
 
 # ---------------------------------------------------------------------------
