@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -19,7 +19,6 @@ from nfm_db.services.backup.config import BackupCapacityConfig
 from nfm_db.services.backup.guardrails import CapacityGuardrails, DiskUsage
 from nfm_db.services.backup.metrics import (
     BackupMetrics,
-    BackupMetricsSnapshot,
     format_rfc3339_z_ms,
 )
 
@@ -44,20 +43,20 @@ class TestFormatRfc3339ZMs:
     """The formatter produces exactly one form: RFC-3339 UTC Z with ms."""
 
     def test_output_matches_regex(self) -> None:
-        dt = datetime(2026, 8, 13, 7, 18, 59, 123000, tzinfo=timezone.utc)
+        dt = datetime(2026, 8, 13, 7, 18, 59, 123000, tzinfo=UTC)
         result = format_rfc3339_z_ms(dt)
         assert _RFC3339_Z_MS_RE.match(result), f"bad format: {result}"
 
     def test_exact_output(self) -> None:
-        dt = datetime(2026, 8, 13, 7, 18, 59, 123000, tzinfo=timezone.utc)
+        dt = datetime(2026, 8, 13, 7, 18, 59, 123000, tzinfo=UTC)
         assert format_rfc3339_z_ms(dt) == "2026-08-13T07:18:59.123Z"
 
     def test_single_digit_month_day_hour(self) -> None:
-        dt = datetime(2026, 1, 5, 3, 4, 5, 6000, tzinfo=timezone.utc)
+        dt = datetime(2026, 1, 5, 3, 4, 5, 6000, tzinfo=UTC)
         assert format_rfc3339_z_ms(dt) == "2026-01-05T03:04:05.006Z"
 
     def test_truncates_microseconds_to_millis(self) -> None:
-        dt = datetime(2026, 8, 13, 7, 18, 59, 123456, tzinfo=timezone.utc)
+        dt = datetime(2026, 8, 13, 7, 18, 59, 123456, tzinfo=UTC)
         assert format_rfc3339_z_ms(dt) == "2026-08-13T07:18:59.123Z"
 
     def test_rejects_naive_datetime(self) -> None:
@@ -74,7 +73,7 @@ class TestFormatRfc3339ZMs:
 
     def test_always_z_suffix(self) -> None:
         """Never emits +00:00 — always Z."""
-        dt = datetime(2026, 8, 13, 0, 0, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 8, 13, 0, 0, 0, 0, tzinfo=UTC)
         result = format_rfc3339_z_ms(dt)
         assert result.endswith("Z"), f"must end with Z, got: {result}"
         assert "+00:00" not in result
