@@ -1,0 +1,55 @@
+{
+  "fields": {
+    "annotations": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    },
+    "confidence": {
+      "default": "0.0",
+      "required": false,
+      "type": "<class'float'>"
+    },
+    "legend_entries": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    },
+    "plot_type": {
+      "default": "'unknown'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "raw_response": {
+      "default": null,
+      "required": false,
+      "type": "dict[str,typing.Any]|None"
+    },
+    "series": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[schemas.vision_extraction.SeriesData]"
+    },
+    "title": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "x_axis": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "<class'schemas.vision_extraction.AxisInfo'>"
+    },
+    "y2_axis": {
+      "default": null,
+      "required": false,
+      "type": "schemas.vision_extraction.AxisInfo|None"
+    },
+    "y_axis": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "<class'schemas.vision_extraction.AxisInfo'>"
+    }
+  },
+  "literals": {}
+}

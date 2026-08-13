@@ -1,0 +1,104 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 16: BaFe12O19 response vs temperature",
+  "bounding_box": {
+    "x": 76.8,
+    "y": 67.3,
+    "width": 503.0,
+    "height": 292.5
+  },
+  "plot_data": {
+    "title": "F82H tensile response",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        420.7142,
+        505.6312,
+        590.5482,
+        675.4652,
+        760.3821,
+        845.2991,
+        930.2161,
+        1015.1331
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        76.3189,
+        260.6856,
+        445.0523,
+        629.4191,
+        813.7858,
+        998.1526,
+        1182.5193,
+        1366.8861
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          972.5012,
+          1104.7936,
+          345.4265,
+          61.4588,
+          375.0925,
+          968.0916,
+          606.4218,
+          243.4167
+        ],
+        "color": "blue",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          916.3071,
+          204.8922,
+          206.2621,
+          1355.8554,
+          440.4659,
+          471.5392,
+          894.3595,
+          338.6014
+        ],
+        "color": "red",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          946.3109,
+          755.2865,
+          846.8307,
+          1182.5282,
+          1374.2569,
+          360.8922,
+          591.2211,
+          935.7708
+        ],
+        "color": "green",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.938
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-015/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 359.0,
+  "fallback_used": false,
+  "paper_id": "plot-015"
+}

@@ -1,0 +1,104 @@
+{
+  "figure_type": "diagram",
+  "title": "Diagram 2: F82H process flow",
+  "bounding_box": {
+    "x": 61.2,
+    "y": 52.0,
+    "width": 455.3,
+    "height": 291.9
+  },
+  "plot_data": {
+    "title": "process flow diagram",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Step",
+      "unit": "",
+      "values": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        300.0,
+        471.4286,
+        642.8571,
+        814.2857,
+        985.7143,
+        1157.1429,
+        1328.5714,
+        1500.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "path 0",
+        "values": [
+          359.2337,
+          1476.5201,
+          327.6135,
+          341.4333,
+          810.5788,
+          1345.606,
+          1301.5087,
+          1303.5143
+        ],
+        "color": "blue",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "path 1",
+        "values": [
+          639.5182,
+          1154.6543,
+          455.3804,
+          325.8206,
+          303.0116,
+          1191.6777,
+          1164.6862,
+          502.7743
+        ],
+        "color": "black",
+        "marker_style": "square"
+      },
+      {
+        "name": "path 2",
+        "values": [
+          1202.7356,
+          1121.2541,
+          306.1096,
+          519.6856,
+          885.0994,
+          719.962,
+          955.1407,
+          1277.4938
+        ],
+        "color": "green",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "path 0",
+      "path 1",
+      "path 2"
+    ],
+    "annotations": [],
+    "confidence": 0.852
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/diagram/diagram-001/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 365.0,
+  "fallback_used": false,
+  "paper_id": "diagram-001"
+}

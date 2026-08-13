@@ -1,0 +1,124 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 14: HT9 response vs temperature",
+  "bounding_box": {
+    "x": 97.3,
+    "y": 79.1,
+    "width": 453.5,
+    "height": 319.5
+  },
+  "plot_data": {
+    "title": "WC-Co tensile response",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        196.5036,
+        283.739,
+        370.9743,
+        458.2097,
+        545.4451,
+        632.6804,
+        719.9158,
+        807.1511,
+        894.3865,
+        981.6218,
+        1068.8572,
+        1156.0926
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        32.6548,
+        130.1957,
+        227.7365,
+        325.2774,
+        422.8183,
+        520.3592,
+        617.9,
+        715.4409,
+        812.9818,
+        910.5227,
+        1008.0635,
+        1105.6044
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          1261.8775,
+          637.2548,
+          27.2673,
+          1214.1415,
+          898.3378,
+          465.3469,
+          429.862,
+          623.4545,
+          130.7442,
+          785.5794,
+          1230.4185,
+          1033.9497
+        ],
+        "color": "black",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          229.7738,
+          786.6503,
+          1186.9398,
+          905.6046,
+          49.5595,
+          1131.4563,
+          672.837,
+          374.5518,
+          1194.9839,
+          910.1202,
+          881.3452,
+          1124.3276
+        ],
+        "color": "blue",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          193.8947,
+          1249.6814,
+          185.2828,
+          1152.0388,
+          622.2869,
+          500.7591,
+          322.72,
+          145.8148,
+          924.9697,
+          740.181,
+          959.4284,
+          661.5778
+        ],
+        "color": "green",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.955
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-013/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 180.4,
+  "fallback_used": false,
+  "paper_id": "plot-013"
+}

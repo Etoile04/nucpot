@@ -1,0 +1,96 @@
+{
+  "id": "uo2-specific-heat",
+  "description": "UO2 specific heat - high temp and standard conditions",
+  "source_file": "fink_2000_uo2_cp.md",
+  "property_category": "比热容",
+  "records": [
+    {
+      "id": "uo2-cp-at-300k",
+      "input": {
+        "source_file": "fink_2000_uo2_cp.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "比热容",
+        "property": "比热容",
+        "value": "300",
+        "unit": "J/(kg·K)",
+        "conditions": {
+          "temp_K": 1200,
+          "condition_type": "experimental"
+        },
+        "context": "high temperature specific heat",
+        "reference": "Fink, Thermochim. Acta 2000"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 300.0
+        },
+        "cleaned_value": "300",
+        "confidence": "high",
+        "dedup_hash": "446bd7716c64dd2f7c54e59d88dad4d5e3ed9ce46738ec07a4ca6526b61492bc",
+        "staging": {
+          "source_file": "fink_2000_uo2_cp.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "比热容",
+          "property_name": "比热容",
+          "value": 300.0,
+          "unit": "J/(kg·K)",
+          "temperature": 926.85,
+          "method": null,
+          "context": "high temperature specific heat",
+          "confidence": "medium",
+          "source": "Fink, Thermochim. Acta 2000"
+        }
+      }
+    },
+    {
+      "id": "uo2-cp-latex-mu",
+      "input": {
+        "source_file": "fink_2000_uo2_cp.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "比热容",
+        "property": "比热容",
+        "value": "80.5",
+        "unit": "J/(mol·K)",
+        "conditions": {
+          "temp_K": 298,
+          "condition_type": "experimental"
+        },
+        "context": "standard conditions",
+        "reference": "Fink, Thermochim. Acta 2000"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 80.5
+        },
+        "cleaned_value": "80.5",
+        "confidence": "high",
+        "dedup_hash": "446bd7716c64dd2f7c54e59d88dad4d5e3ed9ce46738ec07a4ca6526b61492bc",
+        "staging": {
+          "source_file": "fink_2000_uo2_cp.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "比热容",
+          "property_name": "比热容",
+          "value": 80.5,
+          "unit": "J/(mol·K)",
+          "temperature": 24.850000000000023,
+          "method": null,
+          "context": "standard conditions",
+          "confidence": "medium",
+          "source": "Fink, Thermochim. Acta 2000"
+        }
+      }
+    }
+  ]
+}

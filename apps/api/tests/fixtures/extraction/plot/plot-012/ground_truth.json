@@ -1,0 +1,104 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 13: Li2O-Al2O3-SiO2 response vs temperature",
+  "bounding_box": {
+    "x": 97.7,
+    "y": 72.2,
+    "width": 446.9,
+    "height": 345.1
+  },
+  "plot_data": {
+    "title": "Zr-4 tensile response",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        22.0962,
+        166.347,
+        310.5978,
+        454.8485,
+        599.0993,
+        743.3501,
+        887.6008,
+        1031.8516
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        67.7957,
+        246.7643,
+        425.733,
+        604.7017,
+        783.6703,
+        962.639,
+        1141.6076,
+        1320.5763
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          1258.9751,
+          1504.7136,
+          516.3918,
+          827.6639,
+          826.5092,
+          1229.5788,
+          207.804,
+          1109.6939
+        ],
+        "color": "black",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          926.7591,
+          1155.108,
+          466.0001,
+          1575.4642,
+          1306.7987,
+          706.8714,
+          1129.1733,
+          311.5158
+        ],
+        "color": "black",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          78.5668,
+          1150.3008,
+          1366.7719,
+          889.539,
+          146.9296,
+          1370.2012,
+          229.9406,
+          280.0563
+        ],
+        "color": "red",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.847
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-012/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 419.9,
+  "fallback_used": false,
+  "paper_id": "plot-012"
+}

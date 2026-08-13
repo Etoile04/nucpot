@@ -1,0 +1,28 @@
+---
+extends: default
+
+ignore: |
+  node_modules/
+  .next/
+  vendor/
+
+rules:
+  # GitHub Actions uses 'on:' as a trigger keyword
+  truthy:
+    allowed-values:
+      - "true"
+      - "false"
+      - "on"
+
+  # Long lines are common in CI/CD configs and shell commands
+  line-length: disable
+
+  # Allow empty lines between sections for readability
+  empty-lines:
+    max: 2
+    max-end: 1
+
+  # Indentation: 2 spaces for YAML
+  indentation:
+    spaces: 2
+    indent-sequences: consistent

@@ -1,0 +1,224 @@
+/**
+ * Tests for KgReviewPage — migrated to canonical review-api.
+ *
+ * Spec: NFM-1096
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+
+// ── Mock data ──────────────────────────────────────────────────────────
+
+const MOCK_ITEMS: ReadonlyArray<ReviewItem> = [
+  {
+    id: 'kg1',
+    item_type: 'node',
+    item_data: { label: 'UO2 密度属性' },
+    confidence: 0.92,
+    review_status: 'pending',
+    source: null,
+    created_at: '2025-01-15T00:00:00Z',
+    title: 'UO2 密度属性',
+    type: '实体',
+    status: 'pending',
+    createdAt: '2025-01-15T00:00:00Z',
+  },
+  {
+    id: 'kg2',
+    item_type: 'node',
+    item_data: { label: 'UO2 熔点属性' },
+    confidence: 0.85,
+    review_status: 'pending',
+    source: null,
+    created_at: '2025-01-16T00:00:00Z',
+    title: 'UO2 熔点属性',
+    type: '实体',
+    status: 'pending',
+    createdAt: '2025-01-16T00:00:00Z',
+  },
+]
+
+const MOCK_QUEUE_RESPONSE: ReviewListResponse = {
+  items: MOCK_ITEMS,
+  total: 25,
+  page: 1,
+  pageSize: 20,
+}
+
+const EMPTY_RESPONSE: ReviewListResponse = {
+  items: [],
+  total: 0,
+  page: 1,
+  pageSize: 20,
+}
+
+// ── Mock API module ──────────────────────────────────────────────────
+
+vi.mock('@/lib/review-api', () => ({
+  getKgReviewQueue: vi.fn(),
+  batchKgAction: vi.fn().mockResolvedValue(undefined),
+}))
+
+import { getKgReviewQueue, batchKgAction, type ReviewItem, type ReviewListResponse } from '@/lib/review-api'
+import KgReviewPage from '@/app/(dashboard)/review/kg/page'
+
+const mockedGetKgReviewQueue = vi.mocked(getKgReviewQueue)
+const mockedBatchKgAction = vi.mocked(batchKgAction)
+
+// ── Tests ──────────────────────────────────────────────────────────────
+
+describe('KgReviewPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockedGetKgReviewQueue.mockResolvedValue(MOCK_QUEUE_RESPONSE as any)
+  })
+
+  it('1. renders page title 知识图谱审核', async () => {
+    render(<KgReviewPage />)
+    expect(screen.getByText('知识图谱审核')).toBeDefined()
+  })
+
+  it('2. fetches queue on mount with correct params (status=pending, page=1, limit=20)', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(mockedGetKgReviewQueue).toHaveBeenCalledWith('pending', 1, 20)
+    })
+  })
+
+  it('3. renders ReviewQueueTable with fetched items', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('UO2 密度属性')).toBeDefined()
+    })
+    expect(screen.getByText('UO2 熔点属性')).toBeDefined()
+  })
+
+  it('4. shows loading state while fetching', async () => {
+    // Use never-resolving promises to keep the component in loading state
+    mockedGetKgReviewQueue.mockImplementation(() => new Promise(() => {}))
+
+    render(<KgReviewPage />)
+
+    // Items should NOT be rendered while loading
+    expect(screen.queryByText('UO2 密度属性')).toBeNull()
+  })
+
+  it('5. shows error state when fetch fails', async () => {
+    mockedGetKgReviewQueue.mockRejectedValue(new Error('网络错误'))
+
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('网络错误')).toBeDefined()
+    })
+  })
+
+  it('6. calls batchKgAction on batch approve via confirmation modal', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('UO2 密度属性')).toBeDefined()
+    })
+
+    // Select all items via the select-all checkbox
+    const selectAllCheckbox = screen.getByLabelText('选择全部')
+    fireEvent.click(selectAllCheckbox)
+
+    // Click batch approve button (appears when items are selected)
+    const batchApproveBtn = screen.getByLabelText(/批量审核/)
+    fireEvent.click(batchApproveBtn)
+
+    // Confirm in the modal
+    const confirmBtn = screen.getByText('确认通过')
+    fireEvent.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(mockedBatchKgAction).toHaveBeenCalledWith('approve', ['kg1', 'kg2'])
+    })
+  })
+
+  it('7. calls batchKgAction on individual reject', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('UO2 密度属性')).toBeDefined()
+    })
+
+    // Click individual reject button (拒绝) for the first item
+    const rejectButtons = screen.getAllByLabelText(/拒绝.*/)
+    fireEvent.click(rejectButtons[0]!)
+
+    await waitFor(() => {
+      expect(mockedBatchKgAction).toHaveBeenCalledWith('reject', ['kg1'])
+    })
+  })
+
+  it('8. calls getKgReviewQueue with new page on pagination change', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('UO2 密度属性')).toBeDefined()
+    })
+
+    // Clear previous calls to isolate pagination trigger
+    vi.clearAllMocks()
+    mockedGetKgReviewQueue.mockResolvedValue({
+      ...MOCK_QUEUE_RESPONSE,
+      page: 2,
+    } as any)
+
+    // Click page 2 button rendered by ReviewQueueTable
+    const page2Button = screen.getByText('2')
+    fireEvent.click(page2Button)
+
+    await waitFor(() => {
+      expect(mockedGetKgReviewQueue).toHaveBeenCalledWith('pending', 2, 20)
+    })
+  })
+
+  it('9. resets page to 1 on filter change', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(mockedGetKgReviewQueue).toHaveBeenCalledWith('pending', 1, 20)
+    })
+
+    vi.clearAllMocks()
+    mockedGetKgReviewQueue.mockResolvedValue(EMPTY_RESPONSE)
+
+    // Change the status filter to "已通过" (approved)
+    const select = screen.getByLabelText('筛选状态')
+    fireEvent.change(select, { target: { value: 'approved' } })
+
+    await waitFor(() => {
+      expect(mockedGetKgReviewQueue).toHaveBeenCalledWith('approved', 1, 20)
+    })
+  })
+
+  it('10. clears selection after successful batch action', async () => {
+    render(<KgReviewPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('UO2 密度属性')).toBeDefined()
+    })
+
+    // Select all items
+    const selectAllCheckbox = screen.getByLabelText('选择全部')
+    fireEvent.click(selectAllCheckbox)
+
+    // Open confirmation modal and confirm
+    const batchApproveBtn = screen.getByLabelText(/批量审核/)
+    fireEvent.click(batchApproveBtn)
+    const confirmBtn = screen.getByText('确认通过')
+    fireEvent.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(mockedBatchKgAction).toHaveBeenCalled()
+    })
+
+    // After batch action, the batch bar disappears (selection cleared)
+    expect(screen.queryByLabelText(/批量审核/)).toBeNull()
+  })
+})

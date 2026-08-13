@@ -1,0 +1,88 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 6: UO2 response vs temperature",
+  "bounding_box": {
+    "x": 84.4,
+    "y": 51.5,
+    "width": 517.9,
+    "height": 357.6
+  },
+  "plot_data": {
+    "title": "Zr-4 tensile response",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        79.1636,
+        212.4564,
+        345.7492,
+        479.042,
+        612.3348,
+        745.6276,
+        878.9203,
+        1012.2131
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        37.5918,
+        221.9044,
+        406.217,
+        590.5296,
+        774.8422,
+        959.1548,
+        1143.4674,
+        1327.78
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          444.2918,
+          359.0682,
+          1083.1695,
+          122.5911,
+          1446.431,
+          304.193,
+          174.016,
+          672.8256
+        ],
+        "color": "green",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          801.6725,
+          218.8426,
+          476.7436,
+          1134.0914,
+          1408.2179,
+          1161.4795,
+          726.9154,
+          1014.3725
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1"
+    ],
+    "annotations": [],
+    "confidence": 0.916
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-005/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 375.7,
+  "fallback_used": false,
+  "paper_id": "plot-005"
+}

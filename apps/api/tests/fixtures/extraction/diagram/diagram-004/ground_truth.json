@@ -1,0 +1,79 @@
+{
+  "figure_type": "diagram",
+  "title": "Diagram 5: Inconel-718 process flow",
+  "bounding_box": {
+    "x": 58.8,
+    "y": 53.2,
+    "width": 427.9,
+    "height": 366.0
+  },
+  "plot_data": {
+    "title": "process flow diagram",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Step",
+      "unit": "",
+      "values": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        300.0,
+        600.0,
+        900.0,
+        1200.0,
+        1500.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "path 0",
+        "values": [
+          326.541,
+          1196.743,
+          1495.8211,
+          1113.2078,
+          1353.0108
+        ],
+        "color": "red",
+        "marker_style": "square"
+      },
+      {
+        "name": "path 1",
+        "values": [
+          1278.837,
+          311.4813,
+          617.3483,
+          362.7724,
+          793.4982
+        ],
+        "color": "black",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "path 0",
+      "path 1"
+    ],
+    "annotations": [
+      "inlet",
+      "outlet"
+    ],
+    "confidence": 0.919
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/diagram/diagram-004/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 333.1,
+  "fallback_used": false,
+  "paper_id": "diagram-004"
+}

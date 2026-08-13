@@ -1,0 +1,101 @@
+{
+  "id": "zr-irradiation-creep",
+  "description": "Zr-2.5Nb irradiation creep - strain rate (LaTeX), strain range",
+  "source_file": "friday_2018_zr_creep.md",
+  "property_category": "辐照蠕变",
+  "records": [
+    {
+      "id": "zr-creep-rate",
+      "input": {
+        "source_file": "friday_2018_zr_creep.md",
+        "material_name": "Zr-2.5Nb",
+        "phase": "alpha",
+        "element": "Zr",
+        "property_category": "辐照蠕变",
+        "property": "蠕变速率",
+        "value": "$2.5\\times10^{-7}$",
+        "unit": "/s",
+        "conditions": {
+          "temp_C": 300,
+          "stress_MPa": 120,
+          "flux_n_m2_s": "3×10^17",
+          "condition_type": "irradiation"
+        },
+        "context": "in-reactor pressure tube creep",
+        "reference": "Friday et al., JNM 2018"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 2.5e-07
+        },
+        "cleaned_value": "2.5×10^-7",
+        "confidence": "high",
+        "dedup_hash": "01738ab97b25935c3a0d7b870462f77eac43ae5025221b7237fbe8595b4b5ed9",
+        "staging": {
+          "source_file": "friday_2018_zr_creep.md",
+          "element_system": "Zr-2.5Nb",
+          "composition": null,
+          "phase": "alpha",
+          "element": "Zr",
+          "property_category": "辐照蠕变",
+          "property_name": "蠕变速率",
+          "value": 2.5e-07,
+          "unit": "/s",
+          "temperature": 300.0,
+          "method": null,
+          "context": "in-reactor pressure tube creep",
+          "confidence": "medium",
+          "source": "Friday et al., JNM 2018"
+        }
+      }
+    },
+    {
+      "id": "zr-creep-strain",
+      "input": {
+        "source_file": "friday_2018_zr_creep.md",
+        "material_name": "Zr-2.5Nb",
+        "phase": "alpha",
+        "element": "Zr",
+        "property_category": "辐照蠕变",
+        "property": "蠕变应变",
+        "value": "0.5 to 1.2",
+        "unit": "%",
+        "conditions": {
+          "temp_C": 300,
+          "fluence_n_m2": "5×10^25",
+          "condition_type": "irradiation"
+        },
+        "context": "axial strain after full bundle irradiation",
+        "reference": "Friday et al., JNM 2018"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 0.85,
+          "range": [
+            0.5,
+            1.2
+          ]
+        },
+        "cleaned_value": "0.5 to 1.2",
+        "confidence": "high",
+        "dedup_hash": "11a038d873f3d5f86dd66ff592758e499978db7edbc25b825788b9cbc361a43a",
+        "staging": {
+          "source_file": "friday_2018_zr_creep.md",
+          "element_system": "Zr-2.5Nb",
+          "composition": null,
+          "phase": "alpha",
+          "element": "Zr",
+          "property_category": "辐照蠕变",
+          "property_name": "蠕变应变",
+          "value": 0.85,
+          "unit": "%",
+          "temperature": 300.0,
+          "method": null,
+          "context": "axial strain after full bundle irradiation",
+          "confidence": "medium",
+          "source": "Friday et al., JNM 2018"
+        }
+      }
+    }
+  ]
+}

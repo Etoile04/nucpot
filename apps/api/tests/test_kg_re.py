@@ -1,0 +1,763 @@
+"""Tests for KG relation extraction and GraphBuilder service (NFM-984).
+
+Focuses on the LightRAG ingest data wiring (NFM-1222, refactored by NFM-2871),
+and the UUID-before-consumers regression (NFM-1499 → NFM-1500).
+
+Verifies that GraphBuilder correctly:
+- Stores new KG nodes/edges on BuildResult for post-commit LightRAG ingest
+  (NFM-2871: ingest deferred to extraction_pipeline after session.commit())
+- Assigns concrete UUIDs to nodes and edges BEFORE any downstream consumer
+  (review queue, AGE sync, edge FK) reads the ID, so transactions don't
+  fail with NOT NULL / IntegrityError on the final flush.
+
+External side effects are mocked where required; the UUID-assignment
+regression uses the real ``db_session`` fixture (SQLite in-memory with FK
+enforcement enabled) and patches only EntityLinker, AGE sync, and LightRAG.
+"""
+
+from __future__ import annotations
+
+import ast
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.services.kg_re import ExtractedEntity, ExtractedRelation, GraphBuilder
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_session() -> AsyncMock:
+    """Create a mock SQLAlchemy AsyncSession.
+
+    The mock returns a properly-shaped Result object for ``execute``
+    calls so that ``result.scalars().first()`` and
+    ``result.scalars().all()`` don't blow up with
+    ``'coroutine' object has no attribute 'first'``.
+    """
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    # Build a Result-like mock that supports .scalars().first() and .all()
+    def _make_result(items=None):
+        """Return a mock Result whose .scalars() chain works."""
+        result = MagicMock()
+        scalars_mock = MagicMock()
+        if items is None:
+            scalars_mock.first.return_value = None
+            scalars_mock.all.return_value = []
+        else:
+            scalars_mock.first.return_value = items[0] if items else None
+            scalars_mock.all.return_value = items
+        result.scalars.return_value = scalars_mock
+        return result
+
+    # session.execute is an AsyncMock that returns a Result-like mock.
+    session.execute = AsyncMock(return_value=_make_result())
+    # Some code paths call session.execute(stmt) then use .first() directly.
+    session.execute.return_value.first = MagicMock(return_value=None)
+
+    return session
+
+
+def _make_fake_node(
+    *,
+    label: str = "UO2",
+    node_type: str = "Material",
+) -> KGNode:
+    """Create a lightweight KGNode-like object without ORM machinery."""
+    node = MagicMock(spec=KGNode)
+    node.id = uuid.uuid4()
+    node.node_type = node_type
+    node.label = label
+    return node
+
+
+# ---------------------------------------------------------------------------
+# _fire_lightrag_ingest wiring tests
+# ---------------------------------------------------------------------------
+
+
+class TestGraphBuilderIngestDataOnResult:
+    """Verify that GraphBuilder stores new nodes/edges on BuildResult for
+    post-commit LightRAG ingest (NFM-2871).
+
+    NFM-2871 moved the LightRAG ingest out of build_from_extraction() to
+    after session.commit() in extraction_pipeline to prevent ghost entities
+    on rollback. BuildResult now carries ingest_nodes and ingest_edges tuples.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ingest_nodes_populated_when_nodes_created(
+        self,
+    ) -> None:
+        """BuildResult.ingest_nodes should contain newly created KGNodes.
+
+        Scenario: extraction properties produce a new Material entity that
+        does not match any existing node, so a new KGNode is created and
+        stored on the result for post-commit ingest.
+        """
+        session = _make_mock_session()
+        builder = GraphBuilder(
+            session=session,  # type: ignore[arg-type]
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "confidence": 0.9,
+                "source_file": "paper.pdf",
+            },
+        ]
+
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await builder.build_from_extraction(extracted)
+
+        assert result.nodes_created == 1
+        assert len(result.ingest_nodes) == 1
+        assert len(result.ingest_edges) == 0  # single entity, no edges
+
+    @pytest.mark.asyncio
+    async def test_ingest_edges_populated_when_edges_created(
+        self,
+    ) -> None:
+        """BuildResult.ingest_edges should contain newly created KGEdges.
+
+        Scenario: two co-occurring Material entities produce a relation,
+        resulting in an edge being created and stored on the result.
+        """
+        session = _make_mock_session()
+        builder = GraphBuilder(
+            session=session,  # type: ignore[arg-type]
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "confidence": 0.9,
+                "source_file": "paper.pdf",
+            },
+            {
+                "material_name": "ZrO2",
+                "confidence": 0.9,
+                "source_file": "paper.pdf",
+            },
+        ]
+
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await builder.build_from_extraction(extracted)
+
+        assert result.nodes_created == 2
+        assert result.edges_created >= 1
+        assert len(result.ingest_nodes) == 2
+        assert len(result.ingest_edges) >= 1
+
+    @pytest.mark.asyncio
+    async def test_ingest_data_empty_when_no_new_data(
+        self,
+    ) -> None:
+        """BuildResult.ingest_nodes/edges should be empty when all entities
+        match existing nodes and no new edges are produced.
+        """
+        session = _make_mock_session()
+        builder = GraphBuilder(
+            session=session,  # type: ignore[arg-type]
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        existing_node = _make_fake_node(label="UO2")
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "confidence": 0.9,
+                "source_file": "paper.pdf",
+            },
+        ]
+
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=existing_node,
+        ):
+            result = await builder.build_from_extraction(extracted)
+
+        assert result.nodes_created == 0
+        assert result.edges_created == 0
+        assert result.ingest_nodes == ()
+        assert result.ingest_edges == ()
+
+    @pytest.mark.asyncio
+    async def test_build_succeeds_even_if_lightrag_import_fails(
+        self,
+    ) -> None:
+        """build_from_extraction should not import kg_lightrag_sync at all
+        now (NFM-2871). The ingest is deferred to the caller."""
+        session = _make_mock_session()
+        builder = GraphBuilder(
+            session=session,  # type: ignore[arg-type]
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "confidence": 0.9,
+            },
+        ]
+
+        with (
+            patch.object(
+                builder._linker,
+                "find_matching_node",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag",
+                side_effect=ImportError("module not installed"),
+            ),
+        ):
+            result = await builder.build_from_extraction(extracted)
+            assert result.nodes_created == 1
+            # No import happens inside build_from_extraction anymore,
+            # so the ImportError mock is never triggered by the builder.
+
+
+# ---------------------------------------------------------------------------
+# UUID-before-consumers regression (NFM-1499 → NFM-1500)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphBuilderUUIDAssignment:
+    """Regression for NFM-1499: GraphBuilder must assign concrete UUIDs to
+    newly created nodes and edges BEFORE any downstream consumer reads
+    ``.id``.
+
+    Pre-fix behaviour: ``KGNode``/``KGEdge`` rely on the SQLAlchemy
+    ``default=uuid.uuid4`` Python-side default, which only fires at flush
+    time. ``_create_node`` adds the new node to the session and returns it
+    immediately. Downstream consumers (``_queue_for_review``, ``sync_node``,
+    and ``_create_edge`` reading ``source_node.id``/``target_node.id``) all
+    see ``None`` until the final flush, which then raises ``IntegrityError``
+    on the ``NOT NULL`` constraints of ``kg_review_queue.item_id`` and
+    ``kg_edges.source_node_id`` / ``target_node_id``.
+
+    Post-fix behaviour: ``_create_node`` and ``_create_edge`` assign a
+    concrete ``uuid.uuid4()`` to ``id`` at construction time, so the
+    downstream consumers always read a real UUID and the final flush
+    succeeds.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_node_returns_node_with_concrete_uuid(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Unit-level guard: ``_create_node`` must return a node whose
+        ``id`` is a real UUID, NOT ``None``, before any flush."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+        entity = ExtractedEntity(
+            label="UO2",
+            entity_type="Material",
+            confidence=0.95,
+        )
+        node = await builder._create_node(entity)
+
+        # Pre-flush invariant: the returned node MUST carry a concrete UUID
+        # so downstream consumers (_queue_for_review, sync_node, _create_edge
+        # reading source_node.id/target_node.id) never see None.
+        assert node.id is not None, (
+            "_create_node returned a node with id=None; downstream "
+            "consumers would persist None foreign keys and the final "
+            "flush would fail with NOT NULL / IntegrityError."
+        )
+        assert isinstance(node.id, uuid.UUID)
+
+    @pytest.mark.asyncio
+    async def test_create_edge_returns_edge_with_concrete_uuid(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Unit-level guard: ``_create_edge`` must return an edge whose
+        own ``id`` is a real UUID, NOT ``None``, before any flush."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+        relation = ExtractedRelation(
+            source_label="UO2",
+            source_type="Material",
+            target_label="thermal_conductivity",
+            target_type="Property",
+            relation_type="hasProperty",
+            confidence=0.9,
+        )
+        # Use manually assigned source/target ids so this test isolates the
+        # edge's own id assignment from the node id assignment.
+        source_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        edge = await builder._create_edge(relation, source_id, target_id)
+
+        assert edge.id is not None, (
+            "_create_edge returned an edge with id=None; downstream "
+            "consumers (_queue_for_review for low-confidence relations, "
+            "sync_edge) would persist None."
+        )
+        assert isinstance(edge.id, uuid.UUID)
+
+    @pytest.mark.asyncio
+    async def test_build_uo2_multi_property_persists_with_concrete_uuids(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Integration regression for NFM-1499.
+
+        With a real ``db_session`` (FK enforcement enabled), build a
+        UO2 multi-property payload that produces ≥1 ``hasProperty`` edge
+        and at least one low-confidence entity routed to the review queue.
+
+        The build MUST:
+
+        - Complete without IntegrityError on the final flush.
+        - Produce ``BuildResult.edges_created >= 1``.
+        - Persist every node and edge with a non-null UUID.
+        - Persist every edge FK referencing a node present in the same
+          transaction.
+        - Persist every review queue entry with a non-null ``item_id``
+          that resolves to a node or edge in the same transaction.
+        """
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,  # patch external AGE side effect only
+        )
+
+        # 3 entities: 1 Material + 2 Property (one low-confidence).
+        # Pair rule (Material, Property) → hasProperty fires twice,
+        # yielding 2 edges.
+        extracted = [
+            {
+                "material_name": "UO2",
+                "property": "thermal_conductivity",
+                "confidence": 0.95,
+            },
+            {
+                "material_name": "UO2",
+                "property": "thermal_expansion",
+                "confidence": 0.4,  # below 0.6 → routes entity to review queue
+            },
+        ]
+
+        # Patch only the linker to return None without executing any DB
+        # query. This guarantees no autoflush during the node-creation
+        # loop, which is exactly the production scenario where the
+        # pre-fix code reads None from .id (last node in the loop never
+        # gets a chance to flush before the next consumer reads it).
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            # Pre-fix: this raises IntegrityError on the final flush.
+            result = await builder.build_from_extraction(extracted)
+
+        # --- count invariants (NFM-1500 acceptance criteria) ---
+        assert result.edges_created >= 1, (
+            f"Expected ≥1 edge for UO2 multi-property, got {result.edges_created}"
+        )
+        assert result.nodes_created >= 2
+        assert result.review_queue_items >= 1, (
+            "Expected ≥1 review queue item for the low-confidence thermal_expansion entity."
+        )
+
+        # --- node UUID invariants ---
+        nodes = (await db_session.execute(select(KGNode))).scalars().all()
+        assert len(nodes) >= 2
+        for n in nodes:
+            assert n.id is not None, "Persisted KGNode has null id"
+            assert isinstance(n.id, uuid.UUID)
+
+        # --- edge UUID + FK invariants ---
+        edges = (await db_session.execute(select(KGEdge))).scalars().all()
+        assert len(edges) >= 1
+        node_ids = {n.id for n in nodes}
+        for e in edges:
+            assert e.id is not None, "Persisted KGEdge has null id"
+            assert isinstance(e.id, uuid.UUID)
+            assert e.source_node_id in node_ids, (
+                f"Edge {e.id} source_node_id={e.source_node_id} not in "
+                f"node set {sorted(str(x) for x in node_ids)}"
+            )
+            assert e.target_node_id in node_ids, (
+                f"Edge {e.id} target_node_id={e.target_node_id} not in "
+                f"node set {sorted(str(x) for x in node_ids)}"
+            )
+
+        # --- Phase 3 unified review model: check review_status on nodes ---
+        # (replaces old kg_review_queue assertions)
+        pending_nodes = [n for n in nodes if n.review_status == "pending"]
+        assert len(pending_nodes) >= 1, (
+            "Expected at least 1 node with review_status='pending' "
+            "(low-confidence items should be flagged for review)"
+        )
+        for n in pending_nodes:
+            assert n.id is not None, "Pending KGNode has null id"
+
+    @pytest.mark.asyncio
+    async def test_fail_fast_when_source_or_target_node_id_is_none(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Invariant guard: if a resolved source or target node object has
+        a ``None`` id (regression / programmer error), ``build_from_extraction``
+        must raise a ``RuntimeError`` naming both labels, NOT silently
+        persist a None FK and blow up on flush."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        # Build two lightweight fake-node stand-ins with id=None to
+        # simulate the regression (e.g. someone forgot to assign id at
+        # construction). The linker "finds" these so node_map contains
+        # them, but their ids are None.
+        fake_source = MagicMock(spec=KGNode)
+        fake_source.id = None
+        fake_source.label = "FAKE_SOURCE"
+        fake_source.node_type = "Material"
+
+        fake_target = MagicMock(spec=KGNode)
+        fake_target.id = None
+        fake_target.label = "FAKE_TARGET"
+        fake_target.node_type = "Property"
+
+        extracted = [
+            {
+                "material_name": "FAKE_SOURCE",
+                "property": "FAKE_TARGET",
+                "confidence": 0.95,
+            },
+        ]
+
+        async def _linker_side_effect(*_args, **_kwargs):
+            # Return the two fake nodes in turn so node_map contains them
+            # with id=None. Use a list to alternate.
+            _linker_side_effect.calls += 1
+            return fake_source if _linker_side_effect.calls == 1 else fake_target
+
+        _linker_side_effect.calls = 0
+
+        with patch.object(
+            builder._linker,
+            "find_matching_node",
+            side_effect=_linker_side_effect,
+        ):
+            with pytest.raises(RuntimeError) as excinfo:
+                await builder.build_from_extraction(extracted)
+
+        msg = str(excinfo.value)
+        assert "FAKE_SOURCE" in msg, f"Fail-fast error must name the source label, got: {msg!r}"
+        assert "FAKE_TARGET" in msg, f"Fail-fast error must name the target label, got: {msg!r}"
+
+
+class TestGraphBuilderEdgeDedup:
+    """Verify that _create_edge skips duplicate edges (same source, target,
+    relation_type) instead of raising a UNIQUE constraint violation.
+
+    Regression: the extraction pipeline Stage 5 (NFM-1945) calls
+    build_from_extraction on every submit. Re-processing overlapping content
+    previously caused IntegrityError on kg_edges UNIQUE constraint.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_edge_skips_duplicate_and_returns_existing(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Calling _create_edge twice with the same triple returns the
+        existing edge on the second call (no IntegrityError)."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        source_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+
+        # Create source and target nodes so FK references resolve.
+        source_node = KGNode(
+            id=source_id,
+            label="UO2",
+            node_type="Material",
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        target_node = KGNode(
+            id=target_id,
+            label="density",
+            node_type="Property",
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        db_session.add(source_node)
+        db_session.add(target_node)
+        await db_session.flush()
+
+        relation = ExtractedRelation(
+            source_label="UO2",
+            source_type="Material",
+            target_label="density",
+            target_type="Property",
+            relation_type="has_property",
+            confidence=0.95,
+            properties={},
+            source_id=None,
+        )
+
+        edge1 = await builder._create_edge(relation, source_id, target_id)
+        await db_session.flush()
+
+        assert edge1.source_node_id == source_id
+        assert edge1.target_node_id == target_id
+
+        # Same triple again — should return the existing edge, not raise.
+        edge2 = await builder._create_edge(relation, source_id, target_id)
+        assert edge2.id == edge1.id, "Expected the same edge, not a new one"
+
+        # Only one row in the table.
+        rows = list((await db_session.execute(select(KGEdge))).scalars().all())
+        assert len(rows) == 1
+
+    @pytest.mark.asyncio
+    async def test_build_from_extraction_idempotent_on_reprocess(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Calling build_from_extraction twice with the same extracted
+        properties should not raise — duplicate edges are skipped."""
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "property": "density",
+                "confidence": 0.95,
+            },
+            {
+                "material_name": "UO2",
+                "property": "melting_point",
+                "confidence": 0.85,
+            },
+        ]
+
+        result1 = await builder.build_from_extraction(extracted)
+        await db_session.flush()
+        assert result1.edges_created >= 1
+
+        # Re-process the same extraction — should succeed without error.
+        result2 = await builder.build_from_extraction(extracted)
+        await db_session.flush()
+        # On second pass at least some nodes are matched (linked).
+        assert result2.nodes_matched >= 1
+
+
+# ---------------------------------------------------------------------------
+# NFM-2928: dispatch contract guard
+# ---------------------------------------------------------------------------
+# Static guard: every call to GraphBuilder.build_from_extraction() in apps/api/src
+# MUST be paired with a dispatch_build_result() call in the same function scope.
+# Regression family: NFM-2927 (literature path dropped the BuildResult) and
+# NFM-2871 (carrying without dispatching). If a third caller forgets to dispatch,
+# the BuildResult is silently dropped and the KG / LightRAG go out of sync.
+
+
+def _build_parent_map(tree: ast.AST) -> dict[int, ast.AST]:
+    """Build a parent-id map for every AST node in *tree*."""
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    return parents
+
+
+def _called_name(func: ast.AST) -> str | None:
+    """Extract the rightmost attribute / name from a Call's func."""
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _build_calls_in_function(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[set[str], list[int]]:
+    """Return (set-of-called-names, list-of-build_from_extraction-line-numbers).
+
+    Only counts calls that happen *inside* the function body (not nested
+    function definitions) to avoid false positives from helpers.
+    """
+    called: set[str] = set()
+    build_lines: list[int] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self._depth_in_nested_function = 0
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is not func:
+                self._depth_in_nested_function += 1
+                self.generic_visit(node)
+                self._depth_in_nested_function -= 1
+            else:
+                self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node is not func:
+                self._depth_in_nested_function += 1
+                self.generic_visit(node)
+                self._depth_in_nested_function -= 1
+            else:
+                self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if self._depth_in_nested_function > 0:
+                self.generic_visit(node)
+                return
+            func_name = _called_name(node.func)
+            if func_name is not None:
+                called.add(func_name)
+                if func_name == "build_from_extraction":
+                    build_lines.append(node.lineno)
+            self.generic_visit(node)
+
+    _Visitor().visit(func)
+    return called, build_lines
+
+
+def test_all_build_from_extraction_callers_dispatch() -> None:
+    """Static guard: every caller of GraphBuilder.build_from_extraction() in
+    apps/api/src must pair the call with a dispatch_build_result() call in
+    the same function scope.
+
+    Failure mode (NFM-2927 / NFM-2928 regression family): a third caller
+    silently drops the BuildResult → KG / LightRAG go out of sync with no
+    observable error.
+    """
+    from pathlib import Path
+
+    src_root = Path(__file__).resolve().parent.parent / "src"
+    assert src_root.is_dir(), f"src root not found: {src_root}"
+
+    offenders: list[str] = []
+    files_scanned = 0
+
+    for py_file in sorted(src_root.rglob("*.py")):
+        # Skip migration scripts and pure-definition modules that don't run.
+        if "migrations" in py_file.parts:
+            continue
+        text = py_file.read_text()
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        files_scanned += 1
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            called, build_lines = _build_calls_in_function(node)
+            if not build_lines:
+                continue
+            if "dispatch_build_result" not in called:
+                for lineno in build_lines:
+                    rel = py_file.relative_to(src_root.parent.parent)
+                    offenders.append(
+                        f"{rel}:{lineno} in {node.name}() — build_from_extraction "
+                        "without dispatch_build_result()"
+                    )
+
+    assert files_scanned > 0, "no source files scanned (path wrong?)"
+    assert not offenders, (
+        "BuildResult dispatch contract violated. Every GraphBuilder."
+        "build_from_extraction() call in apps/api/src must be paired with a "
+        "dispatch_build_result() call in the same function scope. Offenders:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_dispatch_build_result_is_the_only_dispatch_entry_point() -> None:
+    """Regression: dispatch_build_result must be the single public entry point.
+
+    No other public function in apps/api/src should call fire_ingest_to_lightrag
+    directly outside the dispatch helper. Direct callers bypass the contract
+    guard and silently drop the BuildResult on the floor.
+    """
+    from pathlib import Path
+
+    src_root = Path(__file__).resolve().parent.parent / "src"
+    direct_callers: list[str] = []
+
+    for py_file in sorted(src_root.rglob("*.py")):
+        if "migrations" in py_file.parts:
+            continue
+        text = py_file.read_text()
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = _called_name(func)
+            if name != "fire_ingest_to_lightrag":
+                continue
+            # Allow the call inside dispatch_build_result itself (kg_re.py).
+            rel = py_file.relative_to(src_root.parent.parent)
+            if rel.as_posix() == "api/src/nfm_db/services/kg_re.py":
+                continue
+            direct_callers.append(f"{rel}:{node.lineno}")
+
+    assert not direct_callers, (
+        "fire_ingest_to_lightrag is called outside the dispatch helper. "
+        "Route every dispatch through kg_re.dispatch_build_result. "
+        "Direct callers:\n" + "\n".join(direct_callers)
+    )

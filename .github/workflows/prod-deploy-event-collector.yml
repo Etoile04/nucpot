@@ -1,0 +1,113 @@
+# =============================================================================
+# NFM-2109 / ADR-KR3-A2 — Production deploy-event collector.
+#
+# This workflow downloads every prod-deploy-event-<run_id> GHA artifact
+# produced by ``production-deployment.yml`` since the last successful
+# sync, validates each fragment, and appends the validated events to
+# the master JSONL on the Mac Studio host under ``flock``. Sync-state
+# is advanced atomically with the master append — a network partition
+# mid-sync leaves the lock released and the state unadvanced so the
+# next iteration retries the same fragments.
+#
+# Two trigger sources:
+#   - workflow_run: fires every time ``Production Deployment`` finishes
+#     (success or failure). Brings new events into the master within
+#     seconds of run completion, not after a cron tick.
+#   - schedule: */15 minutes. Catches runs the workflow_run trigger
+#     missed (e.g., collector downtime, GHA outage between runs) per
+#     ADR §Failure-mode 3. The collector queries GH API with a 5-min
+#     skew window so any run created since the last sync is picked up.
+#
+# Runs on the Mac Studio self-hosted runner (``[self-hosted,
+# production]``) — the master JSONL lives on that host and the SSH
+# hop is loopback, matching the prod deploy transport (NFM-150 rev 2).
+# =============================================================================
+
+name: Prod Deploy Event Collector
+
+on:
+  workflow_run:
+    workflows: ["Production Deployment"]
+    types: [completed]
+  schedule:
+    # 15-minute cadence per ADR §Failure-mode 3 recovery budget.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate + plan only; do not append or advance state."
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  # Serialise collector invocations so two simultaneous runs (a
+  # workflow_run trigger firing at the same instant as a cron tick)
+  # cannot race each other. The collect() function also re-checks
+  # ``last_synced_run_id`` under the flock — this concurrency group is
+  # belt-and-braces.
+  group: prod-deploy-event-collector
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect prod deploy events
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        # The runner service runs as lwj04 which has no /Users/runner
+        # directory and no sudo to create one. actions/setup-python@v7
+        # hardcodes RUNNER_TOOL_CACHE to /Users/runner/hostedtoolcache
+        # and fails. The collector uses only stdlib — no pip deps — so
+        # the system Python (installed via brew) is sufficient (NFM-2754).
+        run: |
+          python3 --version
+
+      - name: Verify SSH key present
+        run: |
+          test -f ~/.ssh/deploy_key || {
+            echo "::error::~/.ssh/deploy_key missing on the self-hosted runner."
+            exit 1
+          }
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Verify jq available on host
+        # The remote script uses jq to JSON-decode the payload. If the
+        # Mac Studio doesn't have jq, fail loud here so we don't
+        # silently lose fragments.
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "command -v jq >/dev/null 2>&1 || { echo '::error::jq missing on host'; exit 1; }"
+
+      - name: Run collector
+        run: |
+          if [ "${{ inputs.dry_run || 'false' }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          else
+            DRY_RUN_FLAG=""
+          fi
+          python scripts/okr/prod_event_collector.py \
+            --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
+            --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
+            --repo "${{ github.repository }}" \
+            --ssh-target lwj04@127.0.0.1 \
+            $DRY_RUN_FLAG
+
+      - name: Annotate summary
+        if: always()
+        run: |
+          {
+            echo "## Prod deploy-event collector"
+            echo ""
+            echo "- Trigger: ${{ github.event_name }}"
+            echo "- Workflow run: ${{ github.event.workflow_run.head_branch || 'manual' }}"
+            echo "- Result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

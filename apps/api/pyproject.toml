@@ -1,0 +1,426 @@
+[project]
+name = "nfm-db-api"
+version = "0.1.0"
+description = "Nuclear Fuel & Materials Properties Database - Backend API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "cachetools>=5.5.0",
+    "alembic>=1.14.0",
+    "pydantic[email]>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt<4.1",
+    "PyJWT>=2.10.0",
+    "python-multipart>=0.0.20",
+    "paramiko>=3.4.0",
+    "celery[redis]>=5.4.0",
+    "redis>=5.2.0",
+    "httpx>=0.28.0",
+    # pycurl (libcurl bindings) for MinerU result zip download — httpx/urllib
+    # both fail TLS 1.3 handshake against cdn-mineru.openxlab.org.cn on some
+    # egress networks (SSLEOFError), libcurl handles it reliably.
+    "pycurl>=7.45.0",
+    "python-frontmatter>=1.1.0",
+    "slowapi>=0.1.9",
+    "PyMuPDF>=1.24.0",
+    "Pillow>=10.4.0",
+    "rapidfuzz>=3.0.0",
+    # ML prediction pipeline (NFM-1560) — eagerly imported at module level,
+    # so these are required dependencies, not optional.
+    "pandas>=2.2.0",
+    "numpy>=2.0.0",
+    "scikit-learn>=1.5.0",
+    "joblib>=1.4.0",
+    "pymoo>=0.6.0",
+    # xgboost: used by train_v11.py:325, train_v20.py:222, train_energy_v11.py:28
+    # and required to unpickle the deployed .joblib artifacts
+    # (phase_classifier_v01, phase_classifier_v2.0, energy_predictor_v11).
+    # Pin 3.x to match the training-time major version.
+    "xgboost>=3.0,<4",
+    # Additional imports referenced in src/ but not previously declared.
+    # Found by scripts/check_imports_in_deps.py (NFM-2089 follow-up).
+    "PyYAML>=6.0",              # blog_post.py imports yaml
+    "prometheus-client>=0.20",   # hpc_metrics.py, monitoring/prometheus.py
+    "pytesseract>=0.3.10",       # ocr_fallback.py (system tesseract binary also needed)
+    # NFM-1973: operator CLI (nucpot create-service-account) — Click
+    # was already pulled in transitively but we declare it explicitly so
+    # `pip install nfm-db-api` and `uv sync` both expose the
+    # ``nucpot`` console script.
+    "click>=8.1",
+]
+
+[project.scripts]
+# NFM-1973 / NFM-1972 AC-1: operator CLI for provisioning service
+# accounts.  Install via ``uv sync`` or ``pip install -e .``; then
+# ``nucpot create-service-account --username ontofuel-svc --role service``
+# emits a one-time password to stdout.
+nucpot = "nfm_db.cli.main:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "aiosqlite>=0.20.0",
+]
+lightrag = [
+    # Version must match docker/lightrag.Dockerfile ARG LIGHTRAG_VERSION
+    # and nfm_db.config.LIGHTRAG_VERSION. Only needed for local dev
+    # against a live LightRAG sidecar (not required in production,
+    # where the sidecar runs independently).
+    "lightrag-hku==1.5.4",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "SIM", "RUF",
+]
+ignore = [
+    "E501",
+    "UP046",
+    "B008",
+    "UP042",  # intentional: str-enums back DB CHECK constraints & JSON
+    "N806",   # MockManager in test fixtures
+    "N803",   # X, F, G are standard mathematical notation in ML/optimization code
+    "B904",   # raise … from err — pervasive in pre-existing code
+    "B017",   # assert blind Exception — test pattern
+    "B015",   # pointless comparison at end of function scope
+    "B018",   # useless attribute access — test fixtures
+    "RUF012", # mutable default class attribute — pervasive pre-existing pattern
+    "RUF013", # implicit Optional — pervasive in pre-existing code
+    "RUF059", # unpacked variable never used — test fixtures
+    "RUF043", # unescaped regex metacharacters
+    "SIM102", # nested if — pervasive in pre-existing code
+    "SIM105", # contextlib.suppress — pervasive in pre-existing code
+    "SIM108", # ternary instead of if-else — style preference
+    "SIM110", # return all() — style preference
+    "SIM115", # open() context manager — style preference
+    "SIM117", # nested with — pervasive in pre-existing code
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Chinese fullwidth punctuation is intentional i18n content
+"src/nfm_db/api/v1/*.py" = ["RUF001", "RUF002"]
+"src/nfm_db/api/v4/*.py" = ["RUF001", "RUF002"]
+"src/nfm_db/schemas/errors.py" = ["RUF001", "RUF002"]
+"src/nfm_db/services/extraction_prompt.py" = ["RUF001"]
+"src/nfm_db/services/extraction_pipeline.py" = ["RUF001", "RUF002", "RUF003"]
+# Multiplication sign × is intentional in LaTeX pattern matching
+"src/nfm_db/core/extraction_rules.py" = ["RUF001", "RUF002", "RUF003"]
+# Greek alpha / Chinese characters in docstrings and test data are intentional
+"src/nfm_db/core/phase_rules.py" = ["RUF002"]
+# Greek letters (alpha, gamma), multiplication sign, and minus sign are intentional scientific notation
+"src/nfm_db/ml/*.py" = ["RUF001", "RUF002", "RUF003"]
+# Greek letters (ρ), en-dashes, and other math notation are intentional in
+# alloy optimization docstrings (NFM-1681)
+"src/nfm_db/optimization/*.py" = ["RUF001", "RUF002", "RUF003"]
+"src/nfm_db/schemas/prediction.py" = ["RUF001"]
+"tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
+"tests/test_extraction_prompt.py" = ["RUF001"]
+"tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
+"tests/test_phase_rules.py" = ["RUF001", "RUF002"]
+"tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
+# Multiplication sign × is intentional in alloy-population math docs (NFM-1681)
+"tests/test_design_optimization.py" = ["RUF001", "RUF002"]
+# NFM-2195: Chinese fullwidth punctuation is intentional in blog customer-case test data
+"tests/api/v1/test_blog_customer_case.py" = ["RUF001", "RUF002"]
+# NFM-1371: pre-existing import ordering issues (import before docstring / unsorted)
+"tests/test_auth_service.py" = ["E402", "F811", "I001"]
+"tests/test_auth_endpoints.py" = ["E402", "F811", "I001"]
+# NFM-2088: Alembic migrations are point-in-time DB schema snapshots —
+# modifying them post-merge breaks reproducibility for users who have
+# already applied them. Exclude modernization rules (UP*, F401, I001,
+# W292) that flag old-style typing imports / unsorted imports / missing
+# trailing newlines, none of which are bugs in generated migration code.
+"migrations/versions/*.py" = ["UP035", "UP007", "F401", "I001", "W292"]
+# Multiplication sign × is intentional in alloy/chemistry composition
+# strings (e.g. "Ti10×V5×Al3"). RUF001 would corrupt the data.
+"scripts/generate_golden_fixtures.py" = ["RUF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nfm_db"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "celery.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "yaml.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "paramiko.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "jose.*"
+ignore_missing_imports = true
+
+# ML libraries lack type stubs — ignore missing-imports only (strict on our code)
+[[tool.mypy.overrides]]
+module = "pandas.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "xgboost.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sklearn.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "joblib.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "passlib.context.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "prometheus_client.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pytesseract.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "PIL.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "nfm_md_runner.*"
+ignore_missing_imports = true
+
+# cachetools has no published type stubs (NFM-1804).
+[[tool.mypy.overrides]]
+module = "cachetools.*"
+ignore_missing_imports = true
+
+# Pre-existing modules with unresolved mypy errors (existed on main before this branch).
+# Strict typing deferred to a dedicated cleanup issue.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.schemas.potential",
+    "nfm_db.models.potential",
+    "nfm_db.services.fusion_pipeline",
+    "nfm_db.services.conflict_resolution",
+    "nfm_db.api.v1.reference_values",
+    "nfm_db.api.v1.feedback",
+    "nfm_db.api.v1.extraction",
+    "nfm_db.api.v1.auth",
+    "nfm_db.api.v1.blog",
+    "nfm_db.services.verification_service",
+    "nfm_db.services.auth_service",
+    "nfm_db.services.extraction_pipeline",
+    "nfm_db.services.external_data_sources",
+    "nfm_db.services.upload_service",
+    "nfm_db.services.potential_service",
+    "nfm_db.schemas.domain_expert",
+    "nfm_db.services.blog_post",
+]
+ignore_errors = true
+
+# HPC/monitoring scaffold modules — strict typing added incrementally (NFM-408).
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.services.hpc_orchestration",
+    "nfm_db.services.hpc_file_transfer",
+    "nfm_db.services.hpc_job_monitor",
+    "nfm_db.services.hpc_failover",
+    "nfm_db.services.hpc_metrics",
+    "nfm_db.services.hpc_sync",
+    "nfm_db.services.hpc_ssh",
+    "nfm_db.services.hpc_slurm",
+    "nfm_db.services.celery_app",
+    "nfm_db.models.hpc_failover_event",
+    "nfm_db.services.md_verification",
+    "nfm_db.services.md_tasks",
+    "monitoring.prometheus",
+]
+ignore_errors = true
+
+# API standardization modules (NFM-1072) — schema/attribute refactoring in progress.
+# Strict typing will be restored when schema changes are finalized.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.api.v1.kg",
+    "nfm_db.api.v1.literature",
+    "nfm_db.api.v1.review",
+    "nfm_db.api.v1.conflict",
+    "nfm_db.api.v1.health",
+    "nfm_db.api.v1.materials",
+    "nfm_db.api.admin.health",
+]
+ignore_errors = true
+
+# LightRAG/RAG provider services (NFM-1222 stack) — strict typing deferred.
+# httpx.AsyncClient.json() returns Any (no-any-return on dict[str, Any] returns)
+# and AsyncResult.mappings() await typing varies across sqlalchemy versions.
+# Track restoration in a dedicated cleanup issue alongside NFM-1072.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.services.lightrag_client",
+    "nfm_db.services.rag_provider",
+]
+ignore_errors = true
+
+# ML prediction pipeline (NFM-1560) — strict typing deferred.
+# Missing type annotations, untyped ML library stubs (pandas, numpy, joblib).
+# Track restoration in a dedicated cleanup issue alongside NFM-1072.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.ml.feature_engineering",
+    "nfm_db.ml.energy_features_v11",
+    "nfm_db.ml.prediction_service",
+    "nfm_db.ml.train_energy_v11",
+    "nfm_db.ml.train_v11",
+    "nfm_db.ml.train_energy_v11",
+    "nfm_db.ml.energy_features_v11",
+    "nfm_db.ml.model_version",
+    "nfm_db.ml.train_v20",
+    "nfm_db.ml.energy_features_v11",
+    "nfm_db.ml.train_energy_v11",
+    "nfm_db.ml.model_version",
+    "nfm_db.ml.group_kfold_cv",
+    "nfm_db.ml",
+]
+ignore_errors = true
+
+# NFM-1547/1678/1681: data pipeline, DFT import, compute_incremental_features,
+# merge_training_set, design optimization. Strict typing deferred to NFM-1072
+# cleanup alongside NFM-1560 — pandas/sklearn stubs missing, pymoo missing
+# stubs, dict[str, float | None] union narrowing in compute paths.
+[[tool.mypy.overrides]]
+module = [
+    "nfm_db.ml.data_pipeline",
+    "nfm_db.ml.dft_import",
+    "nfm_db.ml.merge_training_set",
+    "nfm_db.ml.compute_incremental_features",
+    "nfm_db.api.v1.design",
+    "nfm_db.optimization.*",
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Include "." (apps/api) so the `tests` package is importable under every
+# invocation — `uv run pytest` and the console-script entrypoint do NOT put the
+# CWD on sys.path (unlike `python -m pytest`), which broke the ontology tests'
+# `from tests.<helper> import ...` collection in CI (NFM-275).
+pythonpath = ["src", "."]
+# NFM-2044 / KR-5.1: coverage emission is now driven by [tool.coverage.run] below.
+# `--cov` (no path) tells pytest-cov to honor the configured `source` list;
+# `--cov-fail-under` is intentionally NOT set (AC-4: surface the number, not a
+# hard gate). `--cov-report=json` keeps the existing apps/api/coverage.json
+# artifact in sync for any downstream consumer (AC-3).
+addopts = "-m 'not integration' --cov --cov-report=term-missing --cov-report=xml --cov-report=json"
+markers = [
+    "e2e: End-to-end tests that exercise the full system",
+    "unit: Unit tests (isolated, no external dependencies)",
+    "integration: Integration tests (require external services)",
+    "golden: Golden regression tests",
+    "performance: Performance benchmark tests",
+    # NFM-2893: V2 extraction regression vs. deterministic baseline.
+    # Run with: EXTRACTION_STUB_MODE=true pytest -m parity
+    # Skipped by default (see apps/api/tests/test_parity.py module guard).
+    "parity: Stub-mode regression parity vs. baseline fixtures",
+]
+
+# NFM-2044 / KR-5.1: Core-module coverage emission (Cobertura XML at
+# apps/api/coverage.xml + JSON at apps/api/coverage.json). See NFM-2040 §1 and
+# NFM-2035 §2 ADR-KR5-1, §3.2 for the spec.
+[tool.coverage.run]
+# Core module set per NFM-2040 / NFM-2035 §2 ADR-KR5-1:
+#   include: apps/api/src/, apps/api/src/models/, apps/api/alembic_migrations/, packages/
+#   - apps/api/src/models/ does not exist as a Python source directory (Python
+#     models live under apps/api/src/nfm_db/models/). It is listed for spec
+#     completeness; no files match.
+#   - packages/ lives at the repo root and contains TypeScript only; coverage.py
+#     instruments only Python, so listing it here has no measurable effect but
+#     documents the intended core-module set.
+# Coverage is measured for everything pytest imports whose file is under one of
+# these roots; non-matching imports are silently skipped.
+source = [
+    "src",                # apps/api/src/ — nfm_db, monitoring packages
+    "alembic_migrations", # apps/api/alembic_migrations/ — operational migration scripts
+]
+branch = false
+omit = [
+    # src/monitoring/ observability modules ship without dedicated tests;
+    # excluding them keeps the suite-wide gate focused on application code.
+    # Remove when observability tests land.
+    "src/monitoring/logging_config.py",
+    "src/monitoring/prometheus.py",
+    # Standard Python / Node build & cache artifacts
+    "*/__pycache__/*",
+    "*/.next/*",
+    "*/dist/*",
+    "*/node_modules/*",
+    # Out-of-scope apps per NFM-2040 / NFM-2035 §2 ADR-KR5-1
+    "../apps/web/src/components/ui/*",
+    "../apps/mcp-server/*",
+    "../apps/nfm-md-runner/*",
+    # ML training scripts — offline tooling, not covered by API test suite
+    "*/ml/train_*.py",
+    # Alembic version scripts and migration test fixtures
+    "*/migrations/versions/*",
+    # Tests aren't part of the core module set
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+# AC-4: --fail-under is NOT a gate; we surface the number, not a hard threshold.
+# Reporter outputs:
+#   - coverage.xml (Cobertura schema) at apps/api/coverage.xml — AC-1 / AC-2
+#   - coverage.json (coverage.py native format 3) at apps/api/coverage.json — AC-3
+#   - term-missing to stdout for interactive use
+precision = 2
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+    "pass",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+
+# Pre-existing lint patterns in ML/science test files (E402: sys.path, I001: unsorted, RUF: scientific notation)
+"tests/test_compute_incremental_features.py" = ["E402", "I001", "RUF003"]
+"tests/test_dft_calculation_model.py" = ["F401", "I001"]
+"tests/test_merge_training_set.py" = ["I001"]
+"tests/test_ml_feature_engineering.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_ml_prediction_api.py" = ["RUF001"]
+"tests/test_ml_surrogate.py" = ["E402", "I001"]
+"tests/eval/test_accuracy_benchmark.py" = ["E402"]

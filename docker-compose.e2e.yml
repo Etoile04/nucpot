@@ -1,0 +1,117 @@
+# E2E test infrastructure for NFM-2029
+#
+# 1 Hub node + 4 Resource nodes simulating the 1+N distributed architecture.
+#
+# Usage:
+#   E2E_HUB_PORT=18000 docker compose -f docker-compose.e2e.yml up --build -d
+#   E2E_HUB_PORT=18000 docker compose -f docker-compose.e2e.yml exec hub pytest tests/e2e/ -v
+#   docker compose -f docker-compose.e2e.yml down -v
+#
+# NOTE: The primary E2E tests (tests/e2e/) use ASGI transport + in-memory
+# SQLite and do NOT require Docker. This compose file is provided for
+# infrastructure-level validation and optional full-network simulation.
+
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: docker/e2e-hub.Dockerfile
+    container_name: nucpot-e2e-hub
+    ports:
+      - "${E2E_HUB_PORT:-18000}:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://e2e:e2e@db:5432/nucpot_e2e
+      - E2E_MODE=true
+      - HUB_NODE_ID=b1000000-0000-0000-0000-000000000001
+      - HUB_TOKEN=e2e
+      - NFM_DATABASE_URL=postgresql+asyncpg://e2e:e2e@db:5432/nucpot_e2e
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  resource-alpha:
+    build:
+      context: .
+      dockerfile: docker/e2e-resource.Dockerfile
+    container_name: nucpot-e2e-resource-alpha
+    environment:
+      - HUB_URL=http://hub:8000
+      - NODE_ID=b2000000-0000-0000-0000-000000000001
+      - NODE_NAME=resource-alpha
+      - NODE_TYPE=computing
+      - HUB_NODE_ID=b1000000-0000-0000-0000-000000000001
+      - HUB_TOKEN=e2e
+    depends_on:
+      hub:
+        condition: service_healthy
+
+  resource-beta:
+    build:
+      context: .
+      dockerfile: docker/e2e-resource.Dockerfile
+    container_name: nucpot-e2e-resource-beta
+    environment:
+      - HUB_URL=http://hub:8000
+      - NODE_ID=b2000000-0000-0000-0000-000000000002
+      - NODE_NAME=resource-beta
+      - NODE_TYPE=storage
+      - HUB_NODE_ID=b1000000-0000-0000-0000-000000000001
+      - HUB_TOKEN=e2e
+    depends_on:
+      hub:
+        condition: service_healthy
+
+  resource-gamma:
+    build:
+      context: .
+      dockerfile: docker/e2e-resource.Dockerfile
+    container_name: nucpot-e2e-resource-gamma
+    environment:
+      - HUB_URL=http://hub:8000
+      - NODE_ID=b2000000-0000-0000-0000-000000000003
+      - NODE_NAME=resource-gamma
+      - NODE_TYPE=observatory
+      - HUB_NODE_ID=b1000000-0000-0000-0000-000000000001
+      - HUB_TOKEN=e2e
+    depends_on:
+      hub:
+        condition: service_healthy
+
+  resource-delta:
+    build:
+      context: .
+      dockerfile: docker/e2e-resource.Dockerfile
+    container_name: nucpot-e2e-resource-delta
+    environment:
+      - HUB_URL=http://hub:8000
+      - NODE_ID=b2000000-0000-0000-0000-000000000004
+      - NODE_NAME=resource-delta
+      - NODE_TYPE=computing
+      - HUB_NODE_ID=b1000000-0000-0000-0000-000000000001
+      - HUB_TOKEN=e2e
+    depends_on:
+      hub:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: nucpot-e2e-db
+    environment:
+      - POSTGRES_USER=e2e
+      - POSTGRES_PASSWORD=e2e
+      - POSTGRES_DB=nucpot_e2e
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    volumes:
+      - e2e_pgdata:/var/lib/postgresql/data
+
+volumes:
+  e2e_pgdata:

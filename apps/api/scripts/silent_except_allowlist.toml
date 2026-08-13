@@ -1,0 +1,21 @@
+# silent_except_allowlist.toml — NFM-2234 AC allowlist for
+# apps/api/scripts/check_silent_excepts.py.
+#
+# Every entry MUST include a non-empty `justification` string that
+# documents why this specific silent-except is permitted. The checker
+# raises AllowlistConfigError on any entry whose `justification` is
+# empty or whitespace-only.
+#
+# Schema (TOML array of tables):
+#
+#   [[allowlist]]
+#   path         = "apps/api/src/<module>.py"   # 1-based line of `except` keyword
+#   line         = <int>                       # exact line from checker output
+#   category     = "pass" | "ellipsis" | "continue"
+#   justification = "documented rationale (mandatory, non-empty)"
+#
+# Add an entry below ONLY when you have intentionally documented why
+# the silent except at that line is acceptable. Empty file is valid on
+# `main` (the AC is ≥13 unsuppressed findings, not zero total).
+
+# (no entries — add with justification when suppressing a documented case)

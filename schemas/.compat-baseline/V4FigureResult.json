@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "extraction": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'nfm_db.schemas.vision_extraction.VisionExtractionResult'>"
+    },
+    "page_number": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'int'>"
+    },
+    "source_file": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

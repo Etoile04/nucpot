@@ -1,0 +1,25 @@
+{
+  "fields": {
+    "avg_confidence": {
+      "default": "0.0",
+      "required": false,
+      "type": "<class'float'>"
+    },
+    "fallback_count": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "total_figures": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "total_tables": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    }
+  },
+  "literals": {}
+}

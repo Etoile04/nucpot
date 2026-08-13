@@ -1,0 +1,19 @@
+# CI except-pass allowlist
+#
+# Each non-comment line below is a path RELATIVE TO REPO ROOT that is
+# permitted to contain a bare `except: pass` pattern. The path MUST be
+# followed (on the same physical line) by a `# reason:` comment explaining
+# why the swallow is safe.
+#
+# The intent of the CI guard (see scripts/check_except_pass.sh and NFM-2219)
+# is to keep this file EMPTY. Every line here is technical debt that must
+# be re-justified at every PR that touches it. Add an entry only when the
+# exception is genuinely defensible and the cost of logging outweighs the
+# observability benefit — in nearly every case, replacing `pass` with
+# `logger.debug(...)` is the right move.
+#
+# Format:
+#   <relative/path/to/file.py>  # reason: <one-line justification>
+#
+# Example:
+#   apps/api/src/nfm_db/legacy/foo.py  # reason: third-party shim, error is irrelevant

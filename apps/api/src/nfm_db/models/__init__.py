@@ -1,0 +1,343 @@
+"""SQLAlchemy ORM base and common mixins."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import DateTime, Text, TypeDecorator, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.engine import Dialect
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeEngine
+
+if TYPE_CHECKING:
+    pass
+
+
+class JSONArray(TypeDecorator[list[str] | None]):
+    """PostgreSQL ARRAY ↔ JSON text for cross-database compatibility.
+
+    On PostgreSQL, uses native ARRAY(Text).
+    On SQLite and other databases, serializes lists as JSON text.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(ARRAY(Text))
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
+class CompatJSONB(TypeDecorator[dict[str, Any] | None]):
+    """PostgreSQL JSONB ↔ JSON text for cross-database compatibility.
+
+    On PostgreSQL, uses native JSONB.
+    On SQLite and other databases, serializes dicts as JSON text.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB())
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
+class Base(DeclarativeBase):
+    """Base class for all ORM models."""
+
+    pass
+
+
+class TimestampMixin:
+    """Provide created_at and updated_at columns."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+from nfm_db.models.blog_post import (  # noqa: E402
+    BlogPostMetadata,
+    PostStatus,
+)
+from nfm_db.models.classification_level import (  # noqa: E402
+    ClassificationLevel,
+    ClassificationLevelEnum,
+    classification_check_constraint,
+)
+from nfm_db.models.conflict import (  # noqa: E402  # type: ignore
+    ConflictRecord,
+    ConflictStatus,
+    ResolutionStrategy,
+)
+from nfm_db.models.corpus import Corpus  # noqa: E402
+from nfm_db.models.data_collection_request import (  # noqa: E402
+    DATA_COLLECTION_REQUEST_STATUSES,
+    SOURCE_PREFERENCES,
+    DataCollectionRequest,
+)
+from nfm_db.models.data_dna import DataDna  # noqa: E402
+from nfm_db.models.dft_calculation import DFTCalculation  # noqa: E402
+from nfm_db.models.entity_merge import (  # noqa: E402
+    EntityMergeLog,
+    MatchMethod,
+)
+from nfm_db.models.extraction_chunk import (  # noqa: E402
+    ExtractionChunk,
+)
+from nfm_db.models.extraction_figure import (  # noqa: E402
+    ExtractionFigure,
+)
+from nfm_db.models.extraction_gap import (  # noqa: E402
+    EXTRACTION_GAP_STATUSES,
+    ExtractionGap,
+)
+from nfm_db.models.extraction_job import (  # noqa: E402
+    ExtractionJob,
+)
+from nfm_db.models.extraction_result import (  # noqa: E402
+    ExtractionResult,
+)
+from nfm_db.models.extraction_step import (  # noqa: E402
+    ExtractionStep,
+)
+from nfm_db.models.feedback import (  # noqa: E402
+    Feedback,
+    FeedbackStatus,
+    FeedbackType,
+    Priority,
+)
+from nfm_db.models.health_event import HealthEvent  # noqa: E402
+from nfm_db.models.hpc_failover_event import (  # noqa: E402
+    HPCFailoverEvent,
+)
+from nfm_db.models.hub_node import HubNode  # noqa: E402
+from nfm_db.models.ingest_log import IngestLog  # noqa: E402
+from nfm_db.models.kg import (  # noqa: E402
+    VALID_NODE_TYPES,
+    VALID_RELATION_TYPES,
+    KGEdge,
+    KGNode,
+    KGReviewQueue,
+    OntologyIdMap,
+)
+from nfm_db.models.knowledge_gap import (  # noqa: E402
+    KNOWLEDGE_GAP_STATUSES,
+    KNOWLEDGE_GAP_TYPES,
+    GapStatus,
+    GapType,
+    KnowledgeGap,
+)
+from nfm_db.models.material import (  # noqa: E402
+    Material,
+    MaterialAlias,
+    MaterialCategory,
+    MaterialComposition,
+)
+from nfm_db.models.md_verification import (  # noqa: E402
+    DefectAnalysisResult,
+    DefectType,
+    ExecutionStatus,
+    FittingMethod,
+    HpcJob,
+    HpcJobStatus,
+    JobStatus,
+    JobType,
+    MDSimulationResult,
+    MDVerificationJob,
+    PotentialFittingResult,
+    VerificationResultMD,
+)
+from nfm_db.models.ontology import (  # noqa: E402
+    KEntityType,
+    KRelationType,
+)
+from nfm_db.models.ontology_version import (  # noqa: E402
+    ONTOLOGY_VERSION_STATUSES,
+    OntologyVersion,
+)
+from nfm_db.models.potential import Potential  # noqa: E402
+from nfm_db.models.property import (  # noqa: E402
+    Dataset,
+    MeasurementCondition,
+    PropertyCategory,
+    PropertyMeasurement,
+    PropertyType,
+)
+from nfm_db.models.re_extraction_queue import (  # noqa: E402
+    RE_EXTRACTION_STATUSES,
+    ReExtractionQueue,
+)
+from nfm_db.models.ref_gap_fill import (  # noqa: E402
+    CacheLevel,
+    Confidence,
+    RefGapFillStaging,
+    StagingStatus,
+)
+from nfm_db.models.resource_node import ResourceNode  # noqa: E402
+from nfm_db.models.review import (  # noqa: E402
+    VALID_TRANSITIONS,
+    ReviewMixin,
+    ReviewStatus,
+)
+from nfm_db.models.source import (  # noqa: E402
+    Author,
+    DataSource,
+    DataSourceAuthor,
+)
+from nfm_db.models.sync_operation import SyncOperation  # noqa: E402
+from nfm_db.models.unit import (  # noqa: E402
+    Unit,
+    UnitConversion,
+)
+from nfm_db.models.upload_session import UploadSession  # noqa: E402
+from nfm_db.models.user import (  # noqa: E402
+    BlogRole,
+    Permission,
+    User,
+)
+from nfm_db.models.verification_task import (  # noqa: E402
+    TaskStatus,
+    VerificationTask,
+)
+
+__all__ = [
+    "DATA_COLLECTION_REQUEST_STATUSES",
+    "EXTRACTION_GAP_STATUSES",
+    "KNOWLEDGE_GAP_STATUSES",
+    "KNOWLEDGE_GAP_TYPES",
+    "ONTOLOGY_VERSION_STATUSES",
+    "RE_EXTRACTION_STATUSES",
+    "SOURCE_PREFERENCES",
+    "VALID_NODE_TYPES",
+    "VALID_RELATION_TYPES",
+    "VALID_TRANSITIONS",
+    "Author",
+    "Base",
+    "BlogPostMetadata",
+    "BlogRole",
+    "CacheLevel",
+    "ClassificationLevel",
+    "ClassificationLevelEnum",
+    "CompatJSONB",
+    "Confidence",
+    "ConflictRecord",
+    "ConflictStatus",
+    "Corpus",
+    "DFTCalculation",
+    "DataCollectionRequest",
+    "DataDna",
+    "DataSource",
+    "DataSourceAuthor",
+    "Dataset",
+    "DefectAnalysisResult",
+    "DefectType",
+    "EntityMergeLog",
+    "ExecutionStatus",
+    "ExtractionChunk",
+    "ExtractionFigure",
+    "ExtractionGap",
+    "ExtractionJob",
+    "ExtractionResult",
+    "ExtractionStep",
+    "Feedback",
+    "FeedbackStatus",
+    "FeedbackType",
+    "FittingMethod",
+    "GapStatus",
+    "GapType",
+    "HPCFailoverEvent",
+    "HealthEvent",
+    "HpcJob",
+    "HpcJobStatus",
+    "HubNode",
+    "IngestLog",
+    "JSONArray",
+    "JobStatus",
+    "JobType",
+    "KEntityType",
+    "KGEdge",
+    "KGNode",
+    "KGReviewQueue",
+    "KRelationType",
+    "KnowledgeGap",
+    "MDSimulationResult",
+    "MDVerificationJob",
+    "MatchMethod",
+    "Material",
+    "MaterialAlias",
+    "MaterialCategory",
+    "MaterialComposition",
+    "MeasurementCondition",
+    "OntologyIdMap",
+    "OntologyVersion",
+    "Permission",
+    "PostStatus",
+    "Potential",
+    "PotentialFittingResult",
+    "Priority",
+    "PropertyCategory",
+    "PropertyMeasurement",
+    "PropertyType",
+    "ReExtractionQueue",
+    "RefGapFillStaging",
+    "ResolutionStrategy",
+    "ResourceNode",
+    "ReviewMixin",
+    "ReviewStatus",
+    "StagingStatus",
+    "SyncOperation",
+    "TaskStatus",
+    "TimestampMixin",
+    "Unit",
+    "UnitConversion",
+    "UploadSession",
+    "User",
+    "VerificationResultMD",
+    "VerificationTask",
+    "classification_check_constraint",
+]

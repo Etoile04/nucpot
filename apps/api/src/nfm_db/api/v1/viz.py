@@ -1,0 +1,51 @@
+"""Visualization API endpoints for NVL data."""
+
+from fastapi import APIRouter, Query
+
+from nfm_db.schemas.viz import NvlResponse, VizStatsResponse
+from nfm_db.services.ontology_service import get_nvl_data, get_viz_stats
+
+router = APIRouter(tags=["可视化"])
+
+
+@router.get(
+    "/viz/nvl",
+    response_model=NvlResponse,
+    summary="获取NVL可视化数据",
+    description="获取NVL可视化数据，支持按类别和关键词过滤，可限制返回节点数量。\n\nGet NVL visualization data with class and search filters.",
+)
+async def get_nvl(
+    class_filter: str | None = Query(None, alias="class", description="Filter by class subtree"),
+    search: str | None = Query(None, description="Filter by search term"),
+    max_nodes: int | None = Query(None, ge=1, description="Maximum number of nodes"),
+) -> NvlResponse:
+    """获取NVL可视化数据，支持类别和搜索过滤。
+
+    Args:
+        class_filter: Filter nodes to those containing this class
+        search: Filter nodes to those containing this term in name
+        max_nodes: Limit total nodes returned
+
+    Returns:
+        NvlResponse with nodes and relationships
+    """
+    return await get_nvl_data(
+        class_filter=class_filter,
+        search_term=search,
+        max_nodes=max_nodes,
+    )
+
+
+@router.get(
+    "/viz/stats",
+    response_model=VizStatsResponse,
+    summary="获取本体统计信息",
+    description="获取本体统计信息，包括节点数、关系数和类别分布。\n\nGet ontology statistics: node count, relationship count, and class distribution.",
+)
+async def get_stats() -> VizStatsResponse:
+    """获取本体统计信息（节点数、关系数、类别分布）。
+
+    Returns:
+        VizStatsResponse with node/relationship counts and class distribution
+    """
+    return await get_viz_stats()

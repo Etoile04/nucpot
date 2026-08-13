@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Thermal properties",
+    "slug": "thermal",
+    "description": "Properties related to heat transfer and thermal behavior of nuclear fuel materials",
+    "sort_order": 1
+  },
+  {
+    "name": "Mechanical properties",
+    "slug": "mechanical",
+    "description": "Properties describing material response to applied forces",
+    "sort_order": 2
+  },
+  {
+    "name": "Nuclear properties",
+    "slug": "nuclear",
+    "description": "Properties related to nuclear interactions, cross-sections, and fission behavior",
+    "sort_order": 3
+  },
+  {
+    "name": "Physical properties",
+    "slug": "physical",
+    "description": "Fundamental physical properties such as density, crystal structure, and phase transitions",
+    "sort_order": 4
+  },
+  {
+    "name": "Chemical properties",
+    "slug": "chemical",
+    "description": "Properties related to chemical reactivity, corrosion, and compatibility",
+    "sort_order": 5
+  },
+  {
+    "name": "Optical properties",
+    "slug": "optical",
+    "description": "Properties related to light interaction with materials",
+    "sort_order": 6
+  },
+  {
+    "name": "Electrical properties",
+    "slug": "electrical",
+    "description": "Properties related to electrical conductivity and electromagnetic behavior",
+    "sort_order": 7
+  }
+]

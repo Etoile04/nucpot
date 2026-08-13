@@ -1,0 +1,25 @@
+{
+  "fields": {
+    "color": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "marker_style": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "name": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "values": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[float]"
+    }
+  },
+  "literals": {}
+}

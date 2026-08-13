@@ -1,0 +1,182 @@
+name: API Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: API Tests with Coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Enforce single alembic head (no forked migration graph)
+        # Prevents a forked migration graph from merging again. `alembic heads`
+        # is a pure graph operation (no DB/app import), so it runs fast and
+        # catches "Multiple head revisions are present" before it can break
+        # `alembic upgrade head` in the deployed container. See NFM-167.
+        run: |
+          set -euo pipefail
+          heads=$(uv run alembic heads | grep -c '(head)' || true)
+          echo "Alembic head count: ${heads}"
+          if [ "${heads}" -ne 1 ]; then
+            echo "::error::Forked alembic migration graph detected (${heads} heads). Unite the branches with 'alembic merge <head_a> <head_b>' before merging this PR (NFM-167)."
+            uv run alembic heads
+            exit 1
+          fi
+          echo "OK: exactly one alembic head"
+
+      - name: Check schema backward compatibility (NFM-869)
+        run: uv run python ../../scripts/check_schema_compat.py --schema src/nfm_db/schemas/ontology.py --baseline ../../.schema-baseline.json
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=json --cov-fail-under=80
+
+      # NFM-2149 / ADR-NFM-2139 §5 D2: PR-time regression for the
+      # pre-deploy-assert script. Tests run on ubuntu-latest (no Docker
+      # needed) by stubbing `docker` on PATH with a shim that returns
+      # canned responses. The full live-Docker smoke lives in
+      # production-deployment.yml > pre-deploy-assert-smoke.
+      - name: Run pre-deploy-assert unit tests (NFM-2149)
+        # `uv run` so pytest comes from the project venv (system python3 has no pytest).
+        run: |
+          uv run pytest ../../tools/pre-deploy-assert-smoke/test_assert.py -v
+
+      # Publishes the Cobertura XML for the KR-5 coverage aggregator (NFM-2047).
+      # `always()` keeps a red run measurable: a run that fails the 80% gate
+      # still has a real coverage number worth reporting.
+      - name: Upload coverage.xml artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-api-cobertura
+          path: apps/api/coverage.xml
+          if-no-files-found: error
+          retention-days: 90
+
+      # Companion JSON (NFM-2044) — same data, machines prefer JSON. The XML
+      # is the aggregator's primary input; JSON is kept for downstream tools
+      # that consume the coverage.py JSON form.
+      - name: Upload coverage.json artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-api-json
+          path: apps/api/coverage.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v7
+        if: always()
+        with:
+          file: apps/api/coverage.xml
+          flags: api
+          name: api-coverage
+          fail_ci_if_error: false
+
+  # NFM-2196 / NFM-2146 D3: PR-time regression for the deploy-lock invariant.
+  # The default pytest run deselects integration tests via ``-m 'not integration'``
+  # in apps/api/pyproject.toml, so the behavioral contract test that exercises
+  # ``run_async_migrations()`` against a real Postgres never runs in CI. This
+  # job spins up a Postgres 16 service, points ``NFM_TEST_DATABASE_URL`` at it,
+  # and runs ``tests/test_deploy_lock.py`` with the integration marker respected
+  # (overriding the project's default ``-m 'not integration'`` deselection).
+  #
+  # Two AC#2 contracts are proved here:
+  # 1. ``test_run_async_migrations_holds_advisory_lock_during_execution`` —
+  #    while env.py drives ``do_run_migrations`` on the migration's own async
+  #    connection, a probe on a *separate* connection cannot acquire the same
+  #    key. Pre-fix code (lock in transient psql session) → probe acquires.
+  # 2. ``test_run_async_migrations_releases_lock_after_completion`` — the
+  #    finally-block unlock frees the deploy lock so the next migrator proceeds.
+  test-deploy-lock-pg:
+    name: API Deploy-Lock (Postgres)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nfm
+          POSTGRES_PASSWORD: nfm
+          POSTGRES_DB: nfm_deploy_lock_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nfm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NFM_TEST_DATABASE_URL: postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_deploy_lock_test
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # Install psycopg[binary] for sync create_engine bridge. The project
+      # ships only asyncpg; the deploy-lock tests use create_engine() with
+      # postgresql+psycopg:// to open probe connections on separate sync
+      # sessions. See test_deploy_lock.py::_sync_url().
+      - name: Install psycopg[binary]
+        run: uv pip install "psycopg[binary]"
+
+      # Install pg_isready (postgresql-client). pg_isready is the deterministic
+      # gate for waiting on the Postgres 16 service container; the service
+      # ``--health-cmd`` runs inside the container and is not visible from the
+      # runner's host namespace.
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Wait for Postgres to be reachable. ``5432:5432`` maps the container
+      # port to host port 5432 deterministically; the service health check
+      # runs inside the container, so pg_isready from the runner host is the
+      # authoritative readiness gate. Fail loudly if Postgres never comes up.
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U nfm; then
+              echo "Postgres ready"
+              break
+            fi
+            echo "Waiting for Postgres (${i}/30)..."
+            sleep 2
+          done
+          # Hard-fail if pg_isready never succeeded. Without this gate the job
+          # silently proceeded to the test step, where every connection attempt
+          # failed with ECONNREFUSED — the original 50-run red streak.
+          pg_isready -h localhost -p 5432 -U nfm
+
+      # Override the ``addopts = "-m 'not integration'"`` deselection in
+      # apps/api/pyproject.toml by setting ``addopts=""`` on the CLI. This
+      # runs the deploy-lock integration tests against the live PG service.
+      # ``--no-cov`` keeps this job independent of the coverage gate.
+      - name: Run deploy-lock behavioral tests
+        run: |
+          uv run pytest tests/test_deploy_lock.py -v --no-cov --override-ini="addopts="

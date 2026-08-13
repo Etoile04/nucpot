@@ -1,0 +1,97 @@
+{
+  "id": "sic-thermal-expansion",
+  "description": "SiC thermal expansion - CTE plain and with uncertainty",
+  "source_file": "katoh_2014_sic_cvd.md",
+  "property_category": "热膨胀",
+  "records": [
+    {
+      "id": "sic-cte-plain",
+      "input": {
+        "source_file": "katoh_2014_sic_cvd.md",
+        "material_name": "SiC",
+        "composition": "CVD-SiC",
+        "phase": "beta",
+        "element": "Si",
+        "property_category": "热膨胀",
+        "property": "热膨胀系数",
+        "value": "4.0",
+        "unit": "×10⁻⁶/K",
+        "conditions": {
+          "temp_C": 800,
+          "condition_type": "experimental"
+        },
+        "context": "CVD SiC axial direction",
+        "reference": "Katoh et al., JNM 2014"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 4.0
+        },
+        "cleaned_value": "4.0",
+        "confidence": "high",
+        "dedup_hash": "044a4906bb360e7ba203b13357503b33adee651ff72122d94906f28ddb926d79",
+        "staging": {
+          "source_file": "katoh_2014_sic_cvd.md",
+          "element_system": "SiC",
+          "composition": "CVD-SiC",
+          "phase": "beta",
+          "element": "Si",
+          "property_category": "热膨胀",
+          "property_name": "热膨胀系数",
+          "value": 4.0,
+          "unit": "×10⁻⁶/K",
+          "temperature": 800.0,
+          "method": null,
+          "context": "CVD SiC axial direction",
+          "confidence": "medium",
+          "source": "Katoh et al., JNM 2014"
+        }
+      }
+    },
+    {
+      "id": "sic-cte-latex-sub",
+      "input": {
+        "source_file": "katoh_2014_sic_cvd.md",
+        "material_name": "SiC",
+        "composition": "${SiC}_{f}$/SiC",
+        "phase": "beta",
+        "element": "Si",
+        "property_category": "热膨胀",
+        "property": "热膨胀系数",
+        "value": "4.5 ± 0.2",
+        "unit": "×10⁻⁶/K",
+        "conditions": {
+          "temp_C": 1000,
+          "condition_type": "experimental"
+        },
+        "context": "composite at high temperature",
+        "reference": "Katoh et al., JNM 2014"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 4.5,
+          "uncertainty": 0.2
+        },
+        "cleaned_value": "4.5 ± 0.2",
+        "confidence": "high",
+        "dedup_hash": "044a4906bb360e7ba203b13357503b33adee651ff72122d94906f28ddb926d79",
+        "staging": {
+          "source_file": "katoh_2014_sic_cvd.md",
+          "element_system": "SiC",
+          "composition": "${SiC}_{f}$/SiC",
+          "phase": "beta",
+          "element": "Si",
+          "property_category": "热膨胀",
+          "property_name": "热膨胀系数",
+          "value": 4.5,
+          "unit": "×10⁻⁶/K",
+          "temperature": 1000.0,
+          "method": null,
+          "context": "composite at high temperature",
+          "confidence": "medium",
+          "source": "Katoh et al., JNM 2014"
+        }
+      }
+    }
+  ]
+}

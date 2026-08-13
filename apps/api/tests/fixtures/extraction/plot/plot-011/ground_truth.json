@@ -1,0 +1,72 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 12: WC-Co response vs temperature",
+  "bounding_box": {
+    "x": 86.6,
+    "y": 74.2,
+    "width": 494.2,
+    "height": 313.3
+  },
+  "plot_data": {
+    "title": "MOX tensile response",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        471.8203,
+        521.5619,
+        571.3034,
+        621.045,
+        670.7866,
+        720.5282,
+        770.2697,
+        820.0113
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        85.4078,
+        286.7532,
+        488.0986,
+        689.444,
+        890.7894,
+        1092.1348,
+        1293.4801,
+        1494.8255
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          194.53,
+          1508.4545,
+          901.9608,
+          504.6221,
+          124.7234,
+          481.879,
+          455.6863,
+          1460.9866
+        ],
+        "color": "green",
+        "marker_style": "square"
+      }
+    ],
+    "legend_entries": [
+      "sample 0"
+    ],
+    "annotations": [],
+    "confidence": 0.783
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-011/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 206.3,
+  "fallback_used": false,
+  "paper_id": "plot-011"
+}
