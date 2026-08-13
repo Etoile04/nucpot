@@ -1,0 +1,4 @@
+2026-08-14T16:43:31Z msg=armed_at_entry armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-08-14T16:44:05Z msg=build_failed armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-08-14T16:44:05Z msg=exit_trap_fired rc=1 armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-08-14T16:44:05Z msg=skip_c2_build_failed_no_signal armed=false first_poll= rollback=false signaled=false build_ok=false
