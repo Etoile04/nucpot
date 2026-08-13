@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # rejected by :func:`nfm_db.core.path_safety.safe_resolve`.  Wired
     # via ``NFM_SOURCE_BASE`` env var.
     source_base: str = "/var/nfm-data/sources/"
+    # NFM-3070: allowed backup root directories.  ``backup_dir`` and
+    # ``refusal_file`` query parameters on the admin backup endpoints
+    # are rejected unless they resolve inside one of these roots.
+    # Comma-separated via ``NFM_BACKUP_DIR_ROOTS`` env var.
+    backup_dir_roots: list[str] = ["/var/backups/nucpot"]
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
