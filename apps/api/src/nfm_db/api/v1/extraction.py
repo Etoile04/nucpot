@@ -614,7 +614,7 @@ async def get_ingest_job_status(
                     select(ExtractionJob).where(ExtractionJob.id == job_uuid)
                 )
             ).scalar_one_or_none()
-        except Exception:
+        except SQLAlchemyError:
             # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
             # there but the bind failed, surface a clean 404 instead of
             # a 500.  Caller can retry after operator investigation.
