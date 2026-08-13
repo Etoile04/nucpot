@@ -13,7 +13,7 @@ guardrails (NFM-3043), which already emit ``[SRE-WARNING]`` at refusal time.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -25,9 +25,8 @@ from nfm_db.monitoring.refusal_observer import (
     build_sre_warning_payload,
 )
 
-
 # A fixed synthetic moment — no coupling to wall-clock time.
-FROZEN_AT = datetime(2026, 8, 13, 9, 0, 0, tzinfo=timezone.utc)
+FROZEN_AT = datetime(2026, 8, 13, 9, 0, 0, tzinfo=UTC)
 
 
 def _collecting_observer() -> tuple[BackupRefusalObserver, list[dict[str, Any]]]:
