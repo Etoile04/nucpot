@@ -46,7 +46,7 @@ class PrunePlan:
 
 def _size_bytes(record: dict[str, Any]) -> int:
     """Extract ``size_bytes`` from a backup record. Returns 0 if missing."""
-    return record.get("size_bytes", 0)
+    return int(record.get("size_bytes") or 0)
 
 
 def _total_bytes(records: list[dict[str, Any]]) -> int:
