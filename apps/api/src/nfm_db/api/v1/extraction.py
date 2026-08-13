@@ -595,9 +595,9 @@ async def get_ingest_job_status(
     """查询提取任务状态（NFM-2013 AC-5）。
 
     Reads from the ``extraction_jobs`` table persisted by the ingest
-    handler.  Returns 503 when the database is unreachable, 404 when
-    the UUID is valid but no row exists, and 400 for non-UUID (legacy
-    Celery) job IDs with deprecation headers.
+    handler.  Falls back to the in-memory store and Celery AsyncResult
+    for jobs dispatched via /extraction/trigger (which don't land in
+    the ingest-side table).
     """
     # NFM-2013 AC-5: try the persisted ExtractionJob row first.  This is
     # the canonical state for POST /extraction/ingest jobs.
@@ -615,45 +615,38 @@ async def get_ingest_job_status(
                 )
             ).scalar_one_or_none()
         except SQLAlchemyError:
-            # DB-layer error (connection failure, schema drift, corrupt
-            # row).  Return 503 so SRE can distinguish "DB is down" from
-            # "row genuinely not found" (which yields 404 below).
+            # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
+            # there but the bind failed, surface a clean 404 instead of
+            # a 500.  Caller can retry after operator investigation.
             logger.exception(
-                "get_ingest_job_status: DB error querying ExtractionJob for id=%s",
+                "get_ingest_job_status: failed to query ExtractionJob for id=%s",
                 job_id,
             )
-            raise HTTPException(
-                status_code=503,
-                detail="Service temporarily unavailable. Please retry.",
-                headers={"Retry-After": "5"},
-            )
+            row = None
         if row is not None:
-            # NFM-3007: use the canonical 24-key dict helper so the
-            # ORM-only path produces the identical key set as the
-            # dataclass path (ADR-NFM-2739 §2.1).
-            status_dict = _extraction_job_to_dict(row)
-            # Merge in ingest-specific ORM columns that the pipeline
-            # helper does not cover (it targets extraction pipeline
-            # status, not ingest ack shape).
-            status_dict.update({
-                "corpus_id": row.corpus_id,
-                "total_received": row.total_received,
-                "created_measurements": row.created_measurements,
-                "reused_entities": row.reused_entities,
-                "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
-                "skipped_unknown_properties": row.skipped_unknown_properties,
-                "skipped_duplicates": row.skipped_duplicates,
-                "validation_errors": row.validation_errors,
-            })
             return {
                 "success": True,
-                "data": status_dict,
+                "data": {
+                    "job_id": str(row.id),
+                    "source_reference": row.source_reference or "",
+                    "source_type": row.source_type or "",
+                    "corpus_id": row.corpus_id or "",
+                    "status": row.status,
+                    "extracted_count": row.total_received,
+                    "staged_count": row.created_measurements,
+                    "rejected_count": row.skipped_unknown_properties,
+                    "created_measurements": row.created_measurements,
+                    "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
+                    "skipped_unknown_properties": row.skipped_unknown_properties,
+                    "skipped_duplicates": row.skipped_duplicates,
+                    "reused_entities": row.reused_entities,
+                    "validation_errors": row.validation_errors,
+                    "error_message": row.error_message,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
+                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                },
             }
-        # UUID was valid but row not found — 404.
-        raise HTTPException(
-            status_code=404,
-            detail=f"Extraction job '{job_id}' not found.",
-        )
 
     # Fallback: ORM lookup for non-Celery / non-ingest jobs.
     try:
