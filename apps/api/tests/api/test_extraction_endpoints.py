@@ -31,9 +31,14 @@ def _make_trigger_result(**overrides):
 
 
 def _make_status_result(**overrides):
-    """Build a lightweight mock matching get_job return shape."""
+    """Build a lightweight mock matching ORM ExtractionJob field names.
+
+    NFM-3008: the dataclass ExtractionJob was removed; get_job now returns
+    an ORM ExtractionJob whose fields are ``id`` (UUID) and ``status``
+    (plain str), not ``job_id`` / ``status.value``.
+    """
     defaults = {
-        "job_id": uuid4(),
+        "id": uuid4(),
         "source_reference": "10.1234/test",
         "source_type": "doi",
         "extracted_count": 10,
@@ -43,8 +48,14 @@ def _make_status_result(**overrides):
         "created_at": datetime.now(UTC),
         "started_at": datetime.now(UTC),
         "completed_at": None,
+        "status": "completed",
+        "extract_figures": False,
+        "extract_tables": False,
+        "confidence_threshold": 0.7,
+        "figure_types": None,
+        "ontology_version_id": None,
+        "ontology_version_str": None,
     }
-    defaults["status"] = MagicMock(value="completed")
     defaults.update(overrides)
     return type("ExtractionJobStatus", (), defaults)()
 
@@ -229,8 +240,7 @@ async def test_status_returns_200_for_found_job(mock_get_job, async_client):
     """Status endpoint should return 200 with job details when job exists."""
     job_id = uuid4()
     mock_result = _make_status_result(
-        job_id=job_id,
-        status=MagicMock(value="completed"),
+        id=job_id,
     )
     mock_get_job.return_value = mock_result
 
@@ -273,10 +283,10 @@ async def test_status_with_valid_uuid_format(mock_get_job, async_client):
     """Status endpoint should handle standard UUID format correctly."""
     job_id = uuid4()
     mock_result = _make_status_result(
-        job_id=job_id,
+        id=job_id,
         source_reference="https://arxiv.org/abs/2401.12345",
         source_type="url",
-        status=MagicMock(value="running"),
+        status="running",
         extracted_count=0,
         staged_count=0,
         rejected_count=0,

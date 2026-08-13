@@ -27,14 +27,10 @@ from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMe
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES, ExtractionStep
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
-    ExtractionStatusResponse,
     ExtractionTriggerRequest,
 )
 from nfm_db.services.celery_app import celery_app
-from nfm_db.services.extraction_pipeline import (
-    _extraction_job_to_dict,
-    get_job,
-)
+from nfm_db.services.extraction_pipeline import _extraction_job_to_dict, get_job
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -214,19 +210,7 @@ async def get_extraction_status(
     if job is not None:
         return {
             "success": True,
-            "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-            ).model_dump(),
+            "data": _extraction_job_to_dict(job),
         }
 
     # Fallback: check Celery AsyncResult for trigger-dispatched jobs
@@ -662,16 +646,52 @@ async def get_ingest_job_status(
             detail=f"Extraction job '{job_id}' not found.",
         )
 
-    # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
-    # deprecated.  The ingest endpoint always generates UUIDs.
+    # Fallback: ORM lookup for non-Celery / non-ingest jobs.
+    job = get_job(job_id)
+    if job is not None:
+        return {
+            "success": True,
+            "data": _extraction_job_to_dict(job),
+        }
+
+    # Check Celery AsyncResult for trigger-dispatched jobs.
+    try:
+        async_result = celery_app.AsyncResult(job_id)
+        state = async_result.state
+
+        status_map = {
+            "PENDING": "pending",
+            "STARTED": "processing",
+            "SUCCESS": "completed",
+            "FAILURE": "failed",
+            "RETRY": "processing",
+            "REVOKED": "failed",
+        }
+        cel_status = status_map.get(state, (state or "unknown").lower())
+
+        error_message: str | None = None
+        if state == "FAILURE" and async_result.result:
+            error_message = str(async_result.result)[:500]
+
+        return {
+            "success": True,
+            "data": {
+                "job_id": job_id,
+                "source_reference": "",
+                "source_type": "",
+                "status": cel_status,
+                "extracted_count": 0,
+                "staged_count": 0,
+                "rejected_count": 0,
+                "error_message": error_message,
+            },
+        }
+    except Exception:
+        logger.exception("Failed to check Celery status for job_id=%s", job_id)
+
     raise HTTPException(
-        status_code=400,
-        detail=(
-            f"Extraction job '{job_id}' is not a valid UUID. "
-            "Non-UUID (legacy Celery) job IDs are no longer supported. "
-            "Use a UUID-format job_id from a recent /extraction/ingest call."
-        ),
-        headers={"Deprecation": "true", "Sunset": "2026-12-31"},
+        status_code=404,
+        detail=f"Extraction job '{job_id}' not found.",
     )
 
 

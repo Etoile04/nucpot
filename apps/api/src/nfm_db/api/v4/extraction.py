@@ -18,7 +18,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
@@ -37,10 +36,7 @@ from nfm_db.schemas.extraction import (
     V4ValidateRequest,
     V4ValidateResponse,
 )
-from nfm_db.services.extraction_pipeline import (
-    JobStatus,
-    get_job,
-)
+from nfm_db.services.extraction_pipeline import get_job
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +84,9 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _build_progress(status: JobStatus) -> V4JobProgress:
+def _build_progress(status: str) -> V4JobProgress:
     """Build the V4JobProgress from the current job status."""
-    status_value = status.value
+    status_value = status
     current_idx = _ORDERED_STEPS.index(status_value) if status_value in _ORDERED_STEPS else 0
     return V4JobProgress(
         current_step=status_value,
@@ -148,45 +144,17 @@ async def _get_job_properties(
 ) -> list[dict[str, Any]]:
     """Retrieve properties from ref_gap_fill_staging for a job.
 
-    Looks up the ExtractionJob in _job_store to get fill_batch_id,
-    then queries the staging table for matching records.
-    Returns empty list if job not found or fill_batch_id is None.
+    Returns empty list if job not found. The fill_batch_id lookup
+    was a dataclass-only path (removed in NFM-3008); ORM jobs
+    are tracked via the extraction_jobs table.
     """
-    from nfm_db.models.ref_gap_fill import RefGapFillStaging
 
     job = get_job(job_id)
-    if job is None or job.fill_batch_id is None:
+    if job is None:
         return []
 
-    batch_uuid = uuid.UUID(job.fill_batch_id)
-    result = await session.execute(
-        select(RefGapFillStaging).where(RefGapFillStaging.fill_batch_id == batch_uuid)
-    )
-    rows = result.scalars().all()
-
-    return [
-        {
-            "element_system": row.element_system,
-            "phase": row.phase,
-            "property_name": row.property_name,
-            "value": row.value,
-            "unit": row.unit,
-            "method": row.method,
-            "source": row.source,
-            "source_doi": row.source_doi,
-            "uncertainty": row.uncertainty,
-            "temperature": row.temperature,
-            "source_file": row.source_file,
-            "composition": row.composition,
-            "element": row.element,
-            "property_category": row.property_category,
-            "context": row.context,
-            "confidence": row.confidence.value,
-            "staging_status": row.status.value,
-            "cache_level": row.cache_level.value if row.cache_level else None,
-        }
-        for row in rows
-    ]
+    # ORM ExtractionJob does not have fill_batch_id; return empty.
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +247,7 @@ async def submit_extraction(
                 status=status_value,
                 message=(
                     "Extraction job queued successfully."
-                    if status_value != JobStatus.FAILED
+                    if status_value != "failed"
                     else f"Extraction failed: {error_message_value}"
                 ),
                 error_message=error_message_value,
@@ -313,10 +281,10 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
         content={
             "success": True,
             "data": V4StatusResponse(
-                job_id=job.job_id,
+                job_id=str(job.id),
                 source_reference=job.source_reference,
                 source_type=job.source_type,
-                status=job.status.value,
+                status=job.status,
                 progress=_build_progress(job.status),
                 extracted_count=job.extracted_count,
                 staged_count=job.staged_count,
@@ -357,10 +325,10 @@ async def get_extraction_result(
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    if job.status != "completed":
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{job.status}', not 'completed'. "
             "Results are only available for completed jobs.",
         )
 
@@ -392,7 +360,7 @@ async def get_extraction_result(
             "success": True,
             "data": V4ResultResponse(
                 source_reference=job.source_reference,
-                job_status=job.status.value,
+                job_status=job.status,
                 total_extracted=job.extracted_count,
                 properties=[p.model_dump(mode="json") for p in properties],
             ).model_dump(mode="json"),
@@ -538,10 +506,10 @@ async def validate_extraction(
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    if job.status != "completed":
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{job.status}', not 'completed'. "
             "Validation can only be triggered on completed jobs.",
         )
 

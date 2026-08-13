@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nfm_db.services.extraction_pipeline import ExtractionJob
+    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+
+    # Re-export for backward compat with call-sites that do
+    # ``from extraction_pipeline import ExtractionJob``.
+    ExtractionJob = OrmExtractionJob
 
 logger = logging.getLogger(__name__)
 
@@ -387,13 +391,15 @@ async def run_multimodal_extraction(
     if not job.extract_figures and not job.extract_tables:
         return
 
+    # ORM model uses ``id`` (UUID), not ``job_id`` (str).
+    job_id = str(job.id)
     threshold = job.confidence_threshold
 
     try:
         if job.extract_figures:
             logger.info(
                 "Job %s: starting figure extraction (types=%s, threshold=%.2f)",
-                job.job_id,
+                job_id,
                 job.figure_types,
                 threshold,
             )
@@ -402,27 +408,27 @@ async def run_multimodal_extraction(
                 figure_types=job.figure_types,
                 threshold=threshold,
             )
-            _update_job(job, figures=figures)
+            job.figures = figures
             logger.info(
                 "Job %s: extracted %d figures",
-                job.job_id,
+                job_id,
                 len(figures),
             )
 
         if job.extract_tables:
             logger.info(
                 "Job %s: starting table extraction (threshold=%.2f)",
-                job.job_id,
+                job_id,
                 threshold,
             )
             tables = await _extract_tables_from_source(
                 source_reference=job.source_reference,
                 threshold=threshold,
             )
-            _update_job(job, tables=tables)
+            job.tables = tables
             logger.info(
                 "Job %s: extracted %d tables",
-                job.job_id,
+                job_id,
                 len(tables),
             )
 
@@ -438,7 +444,7 @@ async def run_multimodal_extraction(
 
             logger.info(
                 "Job %s: conflict resolution (strategy=%s) on %d VLM items",
-                job.job_id,
+                job_id,
                 job.conflict_strategy,
                 len(vlm_props),
             )
@@ -446,7 +452,8 @@ async def run_multimodal_extraction(
             # Update job with resolved VLM properties
             resolved_figures = [p for p in resolved_vlm if p.get("figure_type") != "table"]
             resolved_tables = [p for p in resolved_vlm if p.get("figure_type") == "table"]
-            _update_job(job, figures=resolved_figures, tables=resolved_tables)
+            job.figures = resolved_figures
+            job.tables = resolved_tables
 
             # Note: resolved_text reflects which text props should win/lose.
             # Text properties are already staged at this point; the resolved
@@ -455,7 +462,7 @@ async def run_multimodal_extraction(
             if dropped > 0:
                 logger.info(
                     "Job %s: %d text properties superseded by VLM (strategy=%s)",
-                    job.job_id,
+                    job_id,
                     dropped,
                     job.conflict_strategy,
                 )
@@ -463,13 +470,8 @@ async def run_multimodal_extraction(
     except Exception as exc:
         logger.error(
             "Job %s: multimodal extraction stage failed (non-fatal): %s",
-            job.job_id,
+            job_id,
             exc,
         )
 
 
-def _update_job(job: ExtractionJob, **kwargs: Any) -> None:
-    """Immutable-style update for in-memory job state."""
-    for key, value in kwargs.items():
-        if hasattr(job, key):
-            setattr(job, key, value)
