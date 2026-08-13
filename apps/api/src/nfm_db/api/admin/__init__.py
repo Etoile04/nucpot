@@ -15,4 +15,4 @@ router = APIRouter()
 router.include_router(health_router)
 router.include_router(backups_router)
 
-__all__ = ["router", "backups_router", "health_router"]
+__all__ = ["backups_router", "health_router", "router"]

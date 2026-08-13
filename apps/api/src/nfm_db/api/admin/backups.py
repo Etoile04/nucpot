@@ -80,7 +80,7 @@ def _resolve_backup_dir(override: str | None) -> Path:
     response_model_by_alias=True,
     summary="列出备份快照",
     description=(
-        "扫描备份目录，返回所有备份快照的元数据列表，"
+        "扫描备份目录, 返回所有备份快照的元数据列表,"
         "每个快照包含 GFS 保留层级 (``hourly`` | ``daily`` | ``weekly`` | ``null``)。\n\n"
         "Scans the backup directory and returns metadata for every snapshot, "
         "including its GFS retention tier (``null`` for pre-migration). "
@@ -120,7 +120,7 @@ async def get_backups(
     response_model_by_alias=True,
     summary="备份容量统计",
     description=(
-        "返回备份子系统的实时磁盘和容量指标："
+        "返回备份子系统的实时磁盘和容量指标:"
         "``totalBytes``、``freeBytes``、``refusalCount``、``lastRefusalAt``。\n\n"
         "Returns real-time disk and capacity metrics for the backup "
         "subsystem.  Cached for 1 second.  Admin-only."

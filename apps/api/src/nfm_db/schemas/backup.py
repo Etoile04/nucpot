@@ -55,7 +55,7 @@ class BackupSnapshotResponse(BaseModel):
     filename: str = Field(description="Backup file name")
     size_bytes: int = Field(ge=0, description="File size in bytes")
     created_at: datetime = Field(description="Snapshot creation timestamp")
-    tier: Optional[BackupTier] = Field(
+    tier: BackupTier | None = Field(
         default=None,
         description=(
             "GFS retention tier (``hourly`` | ``daily`` | ``weekly``). "
@@ -92,7 +92,7 @@ class BackupStatsResponse(BaseModel):
     refusal_count: int = Field(
         ge=0, description="Backups refused by capacity guardrails"
     )
-    last_refusal_at: Optional[datetime] = Field(
+    last_refusal_at: datetime | None = Field(
         default=None, description="ISO8601 timestamp of most recent refusal"
     )
 
@@ -106,4 +106,4 @@ class BackupRefusalsSnapshot:
     """
 
     refusal_count: int
-    last_refusal_at: Optional[datetime]
+    last_refusal_at: datetime | None
