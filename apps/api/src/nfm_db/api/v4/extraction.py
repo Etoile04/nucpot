@@ -157,7 +157,7 @@ async def _get_job(session: AsyncSession, job_id: str) -> OrmExtractionJob | Non
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
-    except (ValueError, Exception):
+    except (ValueError, TypeError):
         return None
 
 
@@ -211,16 +211,17 @@ async def _get_job_properties(
                 "element": row.element,
                 "context": row.context,
                 "source_file": row.source_file,
+                "source_doi": row.source_doi,
+                "uncertainty": row.uncertainty,
             }
             for row in rows
         ]
     except Exception:
-        logger.warning(
+        logger.exception(
             "Failed to query job properties for %s",
             job_id,
-            exc_info=True,
         )
-        return []
+        raise
 
 
 # ---------------------------------------------------------------------------
