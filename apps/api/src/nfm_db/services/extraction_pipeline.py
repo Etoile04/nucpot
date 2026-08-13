@@ -22,16 +22,13 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.models.ontology_version import OntologyVersion
-
-if TYPE_CHECKING:
-    pass
 from nfm_db.services.extraction_prompt import (
     build_extraction_system_prompt,
     build_ontology_extraction_prompt,
