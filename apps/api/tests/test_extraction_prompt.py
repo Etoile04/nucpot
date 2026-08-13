@@ -669,8 +669,8 @@ class TestOntologyDrivenImportPresence:
 
     def test_property_category_import_still_present(self) -> None:
         """PropertyCategory must still be importable (V1 path uses it)."""
-        from nfm_db.core.property_catalog import PropertyCategory as PC
-        assert len(list(PC)) >= 11
+        from nfm_db.core.property_catalog import PropertyCategory
+        assert len(list(PropertyCategory)) >= 11
 
     def test_standard_properties_import_still_present(self) -> None:
         """STANDARD_PROPERTIES must still be importable (V1 path uses it)."""
