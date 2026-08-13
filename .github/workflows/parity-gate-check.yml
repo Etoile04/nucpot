@@ -1,0 +1,160 @@
+# Reusable Parity Gate Check — ADR-0007 §3 / NFM-2916 / NFM-2999 T2
+#
+# Verifies that the V1/V2 extraction parity streak has reached >= 7 consecutive
+# green days. Downstream workflows (e.g. NFM-2916 promotion) call this to enforce
+# the 7-day gate policy before proceeding.
+#
+# ## Usage
+#   jobs:
+#     parity-gate:
+#       uses: ./.github/workflows/parity-gate-check.yml
+#       if: github.ref == 'refs/heads/main'
+#
+# ## Outputs
+#   gate_passed  - "true" if streak >= 7, "false" otherwise
+#   streak_count - Integer streak value (0 if no data found)
+#
+# ## Data Sources (tried in order)
+#   1. GitHub Actions cache (key prefix: parity-streak-) — written by T1
+#   2. Workflow artifact (parity-streak-value / streak.txt) — fallback
+#   3. If neither available: gate fails with streak=0
+#
+# ## Policy
+#   The streak is maintained by extraction-parity-staging-cron.yml (T1).
+#   A streak >= 7 consecutive green nights means V1/V2 extraction outputs
+#   have been identical for a full week, satisfying the promotion safety
+#   threshold defined in ADR-0007 §3.
+
+name: parity-gate-check
+
+on:
+  workflow_call:
+    outputs:
+      gate_passed:
+        description: "true if streak >= 7, false otherwise"
+        value: ${{ jobs.check.outputs.gate_passed }}
+      streak_count:
+        description: "Current parity streak count"
+        value: ${{ jobs.check.outputs.streak_count }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    name: Parity gate check (>= 7 days)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      gate_passed: ${{ steps.evaluate.outputs.gate_passed }}
+      streak_count: ${{ steps.evaluate.outputs.streak_count }}
+    steps:
+      # --- Attempt 1: Restore streak from GitHub Actions cache ---
+      - name: Attempt cache restore
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: parity-streak-data
+          key: parity-streak-
+        continue-on-error: true
+
+      - name: Read streak from cache
+        id: from_cache
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          if [ -f parity-streak-data/streak.txt ]; then
+            STREAK="$(cat parity-streak-data/streak.txt | tr -d '[:space:]')"
+            echo "streak=${STREAK}"
+            echo "source=cache"
+          else
+            echo "streak="
+            echo "source="
+          fi
+        shell: bash
+
+      # --- Attempt 2: Download latest artifact (fallback) ---
+      - name: Attempt artifact download
+        id: artifact
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: parity-streak-value
+          path: parity-streak-artifact
+        continue-on-error: true
+
+      - name: Read streak from artifact
+        id: from_artifact
+        if: steps.cache.outputs.cache-hit != 'true' && steps.artifact.outcome == 'success'
+        run: |
+          set -euo pipefail
+          if [ -f parity-streak-artifact/streak.txt ]; then
+            STREAK="$(cat parity-streak-artifact/streak.txt | tr -d '[:space:]')"
+            echo "streak=${STREAK}"
+            echo "source=artifact"
+          else
+            echo "streak="
+            echo "source="
+          fi
+        shell: bash
+
+      # --- Evaluate gate ---
+      - name: Evaluate gate
+        id: evaluate
+        run: |
+          set -euo pipefail
+          GATE_THRESHOLD=7
+
+          # Determine streak value from the best available source
+          if [[ "${{ steps.from_cache.outputs.streak }}" != "" ]]; then
+            STREAK="${{ steps.from_cache.outputs.streak }}"
+            SOURCE="${{ steps.from_cache.outputs.source }}"
+          elif [[ "${{ steps.from_artifact.outputs.streak }}" != "" ]]; then
+            STREAK="${{ steps.from_artifact.outputs.streak }}"
+            SOURCE="${{ steps.from_artifact.outputs.source }}"
+          else
+            STREAK=0
+            SOURCE="none"
+          fi
+
+          # Validate that streak is a non-negative integer
+          if ! [[ "${STREAK}" =~ ^[0-9]+$ ]]; then
+            echo "::warning::Invalid streak value '${STREAK}' from ${SOURCE} — treating as 0"
+            STREAK=0
+          fi
+
+          # Evaluate
+          if [[ "${STREAK}" -ge "${GATE_THRESHOLD}" ]]; then
+            GATE_PASSED="true"
+          else
+            GATE_PASSED="false"
+          fi
+
+          # Set outputs
+          echo "gate_passed=${GATE_PASSED}" >> "${GITHUB_OUTPUT}"
+          echo "streak_count=${STREAK}" >> "${GITHUB_OUTPUT}"
+
+          # Log for transparency
+          echo "### Parity Gate Check" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Field | Value |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "|-------|-------|" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Source | \`${SOURCE}\` |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Streak | **${STREAK}** / ${GATE_THRESHOLD} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Gate | **${GATE_PASSED}** |" >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${GATE_PASSED}" == "true" ]]; then
+            echo "::notice title=Parity gate PASSED::Streak ${STREAK} >= ${GATE_THRESHOLD} threshold"
+          else
+            echo "::error title=Parity gate FAILED::Streak ${STREAK} < ${GATE_THRESHOLD} threshold (source: ${SOURCE})"
+          fi
+        shell: bash
+
+      # --- Exit with correct code ---
+      - name: Fail if gate not passed
+        if: steps.evaluate.outputs.gate_passed != 'true'
+        run: |
+          echo "::error::Parity gate check FAILED — streak ${{ steps.evaluate.outputs.streak_count }} < 7"
+          exit 1
+        shell: bash

@@ -72,6 +72,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Write streak artifact (gate-check fallback)
+        if: always()
+        run: |
+          set -euo pipefail
+          # T1 maintains the streak counter in parity-streak-data/streak.txt (cached).
+          # This step copies the current streak value to an artifact that the
+          # parity-gate-check reusable workflow uses as a fallback when cache
+          # is evicted. Artifact retention is 90 days vs cache's 7-day default.
+          STREAK_FILE="parity-streak-data/streak.txt"
+          mkdir -p parity-artifacts
+          if [ -f "${STREAK_FILE}" ]; then
+            cp "${STREAK_FILE}" parity-artifacts/streak.txt
+            echo "Streak artifact written from cache file: $(cat "${STREAK_FILE}")"
+          else
+            # T1 streak counter not yet present — write 0 so the gate-check
+            # artifact path has a valid (failing) value rather than 404.
+            echo "0" > parity-artifacts/streak.txt
+            echo "No streak cache file found — wrote default 0"
+          fi
+        shell: bash
+
+      - name: Upload streak value artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: parity-streak-value
+          path: parity-artifacts/streak.txt
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Step summary
         if: always()
         run: |
