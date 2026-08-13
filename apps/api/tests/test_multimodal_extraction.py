@@ -21,7 +21,6 @@ from nfm_db.services.multimodal_extraction import (
     _apply_conflict_resolution,
     _extract_figures_from_source,
     _extract_tables_from_source,
-    run_multimodal_extraction,
 )
 
 # ---------------------------------------------------------------------------
@@ -328,80 +327,3 @@ class TestExtractTablesFaultTolerance:
             )
             results = await _extract_tables_from_source("test.png", 0.5)
             assert results == []
-
-
-# ---------------------------------------------------------------------------
-# run_multimodal_extraction orchestration
-# ---------------------------------------------------------------------------
-
-
-class TestRunMultimodalExtraction:
-    """Test the orchestration function wires helpers into the pipeline."""
-
-    def _make_job(self, **overrides: Any) -> OrmExtractionJob:
-        defaults: dict[str, Any] = {
-            "source_reference": "test.md",
-            "source_type": "markdown",
-        }
-        defaults.update(overrides)
-        return OrmExtractionJob(**defaults)
-
-    def setup_method(self) -> None:
-        os.environ["EXTRACTION_STUB_MODE"] = "true"
-
-    def teardown_method(self) -> None:
-        os.environ.pop("EXTRACTION_STUB_MODE", None)
-
-    @pytest.mark.asyncio
-    async def test_skips_when_both_flags_false(self) -> None:
-        job = self._make_job()
-        await run_multimodal_extraction(job, [])
-        assert job.figures == []
-        assert job.tables == []
-
-    @pytest.mark.asyncio
-    async def test_extracts_figures_when_flag_set(self) -> None:
-        job = self._make_job(extract_figures=True, confidence_threshold=0.0)
-        await run_multimodal_extraction(job, [])
-        assert len(job.figures) > 0
-        assert job.tables == []
-
-    @pytest.mark.asyncio
-    async def test_extracts_tables_when_flag_set(self) -> None:
-        job = self._make_job(extract_tables=True, confidence_threshold=0.0)
-        await run_multimodal_extraction(job, [])
-        assert len(job.tables) > 0
-        assert job.figures == []
-
-    @pytest.mark.asyncio
-    async def test_extracts_both_when_both_flags_set(self) -> None:
-        job = self._make_job(extract_figures=True, extract_tables=True, confidence_threshold=0.0)
-        await run_multimodal_extraction(job, [])
-        assert len(job.figures) > 0
-        assert len(job.tables) > 0
-
-    @pytest.mark.asyncio
-    async def test_applies_conflict_resolution(self) -> None:
-        job = self._make_job(
-            extract_figures=True,
-            confidence_threshold=0.0,
-            conflict_strategy="prefer_vlm",
-        )
-        text_props = [
-            {"property_name": "lattice_constant", "value": 5.47},
-        ]
-        await run_multimodal_extraction(job, text_props)
-        assert len(job.figures) > 0
-
-    @pytest.mark.asyncio
-    async def test_is_fault_tolerant(self) -> None:
-        """Orchestration catches exceptions and does not propagate."""
-        job = self._make_job(extract_figures=True, confidence_threshold=0.0)
-        with patch(
-            "nfm_db.services.multimodal_extraction._extract_figures_from_source",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("catastrophic failure"),
-        ):
-            await run_multimodal_extraction(job, [])
-        assert job.figures == []
-        assert job.tables == []

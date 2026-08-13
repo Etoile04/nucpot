@@ -12,14 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
-
-    # Re-export for backward compat with call-sites that do
-    # ``from extraction_pipeline import ExtractionJob``.
-    ExtractionJob = OrmExtractionJob
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -365,113 +358,4 @@ async def _extract_tables_from_source(
                 return []
 
     return [tbl for tbl in all_tables if tbl["confidence"] >= threshold]
-
-
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
-
-
-async def run_multimodal_extraction(
-    job: ExtractionJob,
-    text_props: list[dict[str, Any]],
-) -> None:
-    """Run the multimodal extraction stage (figures and/or tables).
-
-    Extracts figure/table data from the source, applies conflict resolution
-    against text-extracted properties, and stores results on the job.
-    Failures are caught and logged — they do NOT fail the overall job.
-
-    Args:
-        job: The extraction job with multimodal options set.
-        text_props: Properties extracted by the text extraction stage,
-            used for conflict resolution. May be empty if text extraction
-            produced no results.
-    """
-    if not job.extract_figures and not job.extract_tables:
-        return
-
-    # ORM model uses ``id`` (UUID), not ``job_id`` (str).
-    job_id = str(job.id)
-    threshold = job.confidence_threshold
-
-    try:
-        if job.extract_figures:
-            logger.info(
-                "Job %s: starting figure extraction (types=%s, threshold=%.2f)",
-                job_id,
-                job.figure_types,
-                threshold,
-            )
-            figures = await _extract_figures_from_source(
-                source_reference=job.source_reference,
-                figure_types=job.figure_types,
-                threshold=threshold,
-            )
-            job.figures = figures
-            logger.info(
-                "Job %s: extracted %d figures",
-                job_id,
-                len(figures),
-            )
-
-        if job.extract_tables:
-            logger.info(
-                "Job %s: starting table extraction (threshold=%.2f)",
-                job_id,
-                threshold,
-            )
-            tables = await _extract_tables_from_source(
-                source_reference=job.source_reference,
-                threshold=threshold,
-            )
-            job.tables = tables
-            logger.info(
-                "Job %s: extracted %d tables",
-                job_id,
-                len(tables),
-            )
-
-        # Apply conflict resolution between text-extracted and VLM-extracted
-        # properties. This wires the previously-dead _apply_conflict_resolution
-        # into the pipeline (H1 fix).
-        if (job.figures or job.tables) and text_props:
-            vlm_props: list[dict[str, Any]] = list(job.figures) + list(job.tables)
-
-            resolved_text, resolved_vlm = _apply_conflict_resolution(
-                text_props, vlm_props, job.conflict_strategy
-            )
-
-            logger.info(
-                "Job %s: conflict resolution (strategy=%s) on %d VLM items",
-                job_id,
-                job.conflict_strategy,
-                len(vlm_props),
-            )
-
-            # Update job with resolved VLM properties
-            resolved_figures = [p for p in resolved_vlm if p.get("figure_type") != "table"]
-            resolved_tables = [p for p in resolved_vlm if p.get("figure_type") == "table"]
-            job.figures = resolved_figures
-            job.tables = resolved_tables
-
-            # Note: resolved_text reflects which text props should win/lose.
-            # Text properties are already staged at this point; the resolved
-            # list is informational for future pipeline improvements.
-            dropped = len(text_props) - len(resolved_text)
-            if dropped > 0:
-                logger.info(
-                    "Job %s: %d text properties superseded by VLM (strategy=%s)",
-                    job_id,
-                    dropped,
-                    job.conflict_strategy,
-                )
-
-    except Exception as exc:
-        logger.error(
-            "Job %s: multimodal extraction stage failed (non-fatal): %s",
-            job_id,
-            exc,
-        )
-
 
