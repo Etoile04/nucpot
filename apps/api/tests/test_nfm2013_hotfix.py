@@ -279,79 +279,139 @@ class TestMineruAutoDetect:
 # ===================================================================
 
 
-class TestIngestStatusEndpoint:
-    """NFM-2013 Task 3: ingest job status endpoint.
+class _MockDbResult:
+    """Mimics SQLAlchemy Result for ``scalar_one_or_none()`` calls."""
 
-    Updated for NFM-3007: the ingest endpoint now uses ORM-only lookup
-    via ``_extraction_job_to_dict``.  Non-UUID job_ids return 400
-    (deprecated).  The in-memory and Celery fallback paths are removed.
+    def __init__(self, row: Any = None) -> None:
+        self._row = row
+
+    def scalar_one_or_none(self) -> Any:
+        return self._row
+
+
+def _mock_session_not_found() -> AsyncMock:
+    """Return an AsyncSession mock whose execute() yields no row."""
+    session = AsyncMock()
+    session.execute.return_value = _MockDbResult(row=None)
+    return session
+
+
+class TestIngestStatusEndpoint:
+    """NFM-2013 Task 3: ingest job status endpoint with Celery fallback.
+
+    After NFM-3008 the endpoint queries the ORM first (no more ``get_job``
+    in-memory store).  Tests that exercise the Celery-fallback path mock
+    ``session.execute`` to return no row so the endpoint falls through
+    to ``celery_app.AsyncResult``.
     """
 
     @pytest.mark.asyncio
-    async def test_ingest_status_non_uuid_deprecated(self) -> None:
-        """GET /extraction/ingest/{id}/status returns 400 for non-UUID job_id."""
-        from fastapi import HTTPException
+    async def test_ingest_status_celery_pending(self) -> None:
+        """GET /extraction/ingest/{id}/status returns 'pending' for PENDING Celery task."""
+        mock_result = MagicMock()
+        mock_result.state = "PENDING"
+        mock_result.result = None
 
-        with pytest.raises(HTTPException, match="not a valid UUID"):
+        mock_celery = MagicMock()
+        mock_celery.AsyncResult.return_value = mock_result
+
+        with (
+            patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
+        ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            await get_ingest_job_status("test-job-id", session=AsyncMock())
+            resp = await get_ingest_job_status(
+                "test-job-id", session=_mock_session_not_found(),
+            )
+
+        assert resp["success"] is True
+        assert resp["data"]["status"] == "pending"
 
     @pytest.mark.asyncio
-    async def test_ingest_status_returns_canonical_dict_from_orm(self) -> None:
-        """GET /extraction/ingest/{id}/status returns 24-key canonical dict."""
+    async def test_ingest_status_celery_success(self) -> None:
+        """GET /extraction/ingest/{id}/status returns 'completed' for SUCCESS."""
+        mock_result = MagicMock()
+        mock_result.state = "SUCCESS"
+        mock_result.result = None
+
+        mock_celery = MagicMock()
+        mock_celery.AsyncResult.return_value = mock_result
+
+        with (
+            patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
+        ):
+            from nfm_db.api.v1.extraction import get_ingest_job_status
+
+            resp = await get_ingest_job_status(
+                "test-job-id", session=_mock_session_not_found(),
+            )
+
+        assert resp["data"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_ingest_status_celery_failure_with_message(self) -> None:
+        """GET /extraction/ingest/{id}/status returns error_message for FAILURE."""
+        mock_result = MagicMock()
+        mock_result.state = "FAILURE"
+        mock_result.result = RuntimeError("LLM 502 after retries")
+
+        mock_celery = MagicMock()
+        mock_celery.AsyncResult.return_value = mock_result
+
+        with (
+            patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
+        ):
+            from nfm_db.api.v1.extraction import get_ingest_job_status
+
+            resp = await get_ingest_job_status(
+                "test-job-id", session=_mock_session_not_found(),
+            )
+
+        assert resp["data"]["status"] == "failed"
+        assert "LLM 502" in resp["data"]["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_ingest_status_returns_persisted_job(self) -> None:
+        """Endpoint returns ORM row data when the job is found in DB."""
         from uuid import uuid4
 
         from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 
-        row = OrmExtractionJob(
-            id=uuid4(),
+        job_uuid = uuid4()
+        job = OrmExtractionJob(
+            id=job_uuid,
             source_reference="doi:10.1234/test",
             source_type="doi",
             status="completed",
-            total_received=50,
-            created_measurements=40,
         )
+        job_id_str = str(job_uuid)
+
         mock_session = AsyncMock()
+        mock_session.execute.return_value = _MockDbResult(row=job)
 
-        class _MockResult:
-            def scalar_one_or_none(self) -> OrmExtractionJob:
-                return row
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-        mock_session.execute.return_value = _MockResult()
+        resp = await get_ingest_job_status(job_id_str, session=mock_session)
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
-
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
-
-        assert resp["success"] is True
-        assert resp["data"]["job_id"] == str(row.id)
         assert resp["data"]["status"] == "completed"
-        # Must include canonical keys (not ORM-only ones)
-        assert "extracted_count" in resp["data"]
-        assert "staged_count" in resp["data"]
+        assert resp["data"]["source_reference"] == "doi:10.1234/test"
 
     @pytest.mark.asyncio
-    async def test_ingest_status_404_when_uuid_not_found(self) -> None:
-        """Endpoint returns 404 when UUID not found in DB."""
-        from uuid import uuid4
-
+    async def test_ingest_status_404_when_not_found(self) -> None:
+        """Endpoint returns 404 when job is not in DB or Celery."""
         from fastapi import HTTPException
 
-        mock_session = AsyncMock()
+        mock_celery = MagicMock()
+        mock_celery.AsyncResult.side_effect = Exception("broker unreachable")
 
-        class _MockResult:
-            def scalar_one_or_none(self) -> None:
-                return None
-
-        mock_session.execute.return_value = _MockResult()
-
-        with pytest.raises(HTTPException, match="not found"):
+        with (
+            patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
+            pytest.raises(HTTPException, match="not found"),
+        ):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
             await get_ingest_job_status(
-                str(uuid4()), session=mock_session
+                "nonexistent-job", session=_mock_session_not_found(),
             )
 
     @pytest.mark.asyncio
@@ -367,11 +427,33 @@ class TestIngestStatusEndpoint:
         mock_celery.AsyncResult.return_value = mock_result
 
         with (
-            patch("nfm_db.api.v1.extraction.get_job", return_value=None),
             patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
         ):
             from nfm_db.api.v1.extraction import get_extraction_status
 
-            resp = await get_extraction_status(uuid4())
+            resp = await get_extraction_status(
+                uuid4(), session=_mock_session_not_found(),
+            )
+
+        assert resp["data"]["status"] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_ingest_status_celery_retry_state(self) -> None:
+        """RETRY Celery state maps to 'processing'."""
+        mock_result = MagicMock()
+        mock_result.state = "RETRY"
+        mock_result.result = None
+
+        mock_celery = MagicMock()
+        mock_celery.AsyncResult.return_value = mock_result
+
+        with (
+            patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
+        ):
+            from nfm_db.api.v1.extraction import get_ingest_job_status
+
+            resp = await get_ingest_job_status(
+                "retry-job", session=_mock_session_not_found(),
+            )
 
         assert resp["data"]["status"] == "processing"
