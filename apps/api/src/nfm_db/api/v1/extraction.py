@@ -26,11 +26,10 @@ from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMe
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES, ExtractionStep
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
-    ExtractionStatusResponse,
     ExtractionTriggerRequest,
 )
 from nfm_db.services.celery_app import celery_app
-from nfm_db.services.extraction_pipeline import get_job
+from nfm_db.services.extraction_pipeline import _extraction_job_to_dict, get_job
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -210,19 +209,7 @@ async def get_extraction_status(
     if job is not None:
         return {
             "success": True,
-            "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-            ).model_dump(),
+            "data": _extraction_job_to_dict(job),
         }
 
     # Fallback: check Celery AsyncResult for trigger-dispatched jobs
@@ -651,24 +638,12 @@ async def get_ingest_job_status(
                 },
             }
 
-    # Fallback: in-memory store for non-Celery / non-ingest jobs.
+    # Fallback: ORM lookup for non-Celery / non-ingest jobs.
     job = get_job(job_id)
     if job is not None:
         return {
             "success": True,
-            "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-            ).model_dump(),
+            "data": _extraction_job_to_dict(job),
         }
 
     # Check Celery AsyncResult for trigger-dispatched jobs.
