@@ -51,6 +51,30 @@ def _clean_job_store():
     _job_store.clear()
 
 
+def _attach_sync_ontology_mock(
+    mock_session: AsyncMock,
+    *,
+    published: Any | None = None,
+) -> AsyncMock:
+    """Wire ``session.execute`` to return a sync-Result with ``.scalars().first()``.
+
+    SQLAlchemy 2.0+ ``AsyncSession.execute`` returns a sync ``Result`` whose
+    ``.scalars().first()`` is the sync accessor (verified empirically in
+    2.0.50 — awaiting it raises ``TypeError: 'Row' object can't be awaited``).
+    A bare ``AsyncMock()`` session, however, makes every nested attribute a
+    coroutine-returning ``AsyncMock``, so ``_get_latest_published_ontology``
+    ends up calling ``.scalars().first()`` on a coroutine.  This helper
+    installs the sync Result shape so the helper returns the row (or None)
+    synchronously.  Refs commit 9d8ffacc.
+    """
+    mock_scalars = MagicMock()
+    mock_scalars.first = MagicMock(return_value=published)
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = mock_scalars
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    return mock_session
+
+
 # ---------------------------------------------------------------------------
 # _is_stub_mode tests
 # ---------------------------------------------------------------------------
@@ -949,8 +973,15 @@ class TestTriggerExtraction:
         """Pipeline completes when extraction returns empty list."""
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
+        _attach_sync_ontology_mock(mock_session)
+        # Pin V2=False — these V1-branch tests predate the NFM-2876 default flip
+        # and don't mock the V2 orchestrator's content loader.
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
 
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch("nfm_db.services.extraction_pipeline.get_settings", return_value=v1_settings, create=True),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -979,8 +1010,13 @@ class TestTriggerExtraction:
         """Pipeline sets FAILED status when extraction raises."""
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
+        _attach_sync_ontology_mock(mock_session)
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
 
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch("nfm_db.services.extraction_pipeline.get_settings", return_value=v1_settings, create=True),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1008,6 +1044,9 @@ class TestTriggerExtraction:
         """Pipeline completes when quality gate rejects all properties."""
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
+        _attach_sync_ontology_mock(mock_session)
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
 
         mock_gate = AsyncMock()
         mock_gate.process_bulk = AsyncMock(
@@ -1023,6 +1062,8 @@ class TestTriggerExtraction:
         ]
 
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch("nfm_db.services.extraction_pipeline.get_settings", return_value=v1_settings, create=True),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1046,6 +1087,9 @@ class TestTriggerExtraction:
         """Pipeline stages accepted results and runs gap scan."""
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
+        _attach_sync_ontology_mock(mock_session)
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
 
         accepted_result = MagicMock(dedup_hash="test_hash")
         mock_gate = AsyncMock()
@@ -1073,6 +1117,8 @@ class TestTriggerExtraction:
         ]
 
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch("nfm_db.services.extraction_pipeline.get_settings", return_value=v1_settings, create=True),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1097,6 +1143,9 @@ class TestTriggerExtraction:
         """Pipeline continues when gap scan throws."""
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
+        _attach_sync_ontology_mock(mock_session)
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
 
         mock_gate = AsyncMock()
         mock_gate.process_bulk = AsyncMock(
@@ -1123,6 +1172,8 @@ class TestTriggerExtraction:
         ]
 
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch("nfm_db.services.extraction_pipeline.get_settings", return_value=v1_settings, create=True),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1147,6 +1198,9 @@ class TestTriggerExtraction:
         """Pipeline sets PARTIAL status when some results are rejected."""
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
+        _attach_sync_ontology_mock(mock_session)
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
 
         mock_gate = AsyncMock()
         mock_gate.process_bulk = AsyncMock(
@@ -1173,6 +1227,8 @@ class TestTriggerExtraction:
         ]
 
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch("nfm_db.services.extraction_pipeline.get_settings", return_value=v1_settings, create=True),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1198,7 +1254,21 @@ class TestTriggerExtraction:
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
 
+        # Pin V2=False — this test exercises the legacy branch's
+        # ``_job_store`` dict. The V2 orchestrator path persists to the
+        # DB via ``session.add(orm_job)`` and never touches ``_job_store``
+        # (NFM-2698), so it must continue exercising V1 until V2 ships
+        # a ``_job_store``-equivalent or we accept the schema gap.
+        v1_settings = MagicMock()
+        v1_settings.extraction_v2_enabled = False
+
         with (
+            patch("nfm_db.config.get_settings", return_value=v1_settings),
+            patch(
+                "nfm_db.services.extraction_pipeline.get_settings",
+                return_value=v1_settings,
+                create=True,
+            ),
             patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"}),
             patch("nfm_db.services.extraction_pipeline.QualityGateService", new_callable=MagicMock),
         ):
@@ -1390,20 +1460,33 @@ class TestTriggerExtraction:
 
 
 class TestGetLatestPublishedOntology:
-    """Tests for _get_latest_published_ontology helper (NFM-2640)."""
+    """Tests for _get_latest_published_ontology helper (NFM-2640).
+
+    Regression coverage for Hermes CRITICAL 2026-08-12 (re-evaluated after
+    the 9d8ffacc revert): ``_get_latest_published_ontology`` MUST return
+    the row, never a coroutine.  In SQLAlchemy 2.0.50 with AsyncSession,
+    ``.scalars().first()`` is a *sync* accessor that returns the row
+    directly (verified empirically — awaiting it raises
+    ``TypeError: 'Row' object can't be awaited``).  Therefore all mocks
+    in this class use ``MagicMock`` (sync) for the ``.first`` attribute
+    to match real SQLAlchemy semantics.
+    """
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_published_ontology(self) -> None:
         """Helper returns None when no OntologyVersion has status='published'."""
         mock_session = AsyncMock()
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        # ``.scalars().first()`` is sync on AsyncSession — see commit 9d8ffacc.
+        mock_scalars.first = MagicMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         result = await _get_latest_published_ontology(mock_session)
         assert result is None
+        # The sync accessor path was taken — .first() was called exactly once.
+        mock_scalars.first.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_returns_latest_published_ontology(self) -> None:
@@ -1418,7 +1501,7 @@ class TestGetLatestPublishedOntology:
             "relation_types": [{"name": "contains"}],
         }
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = MagicMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1426,6 +1509,73 @@ class TestGetLatestPublishedOntology:
         result = await _get_latest_published_ontology(mock_session)
         assert result is mock_ov
         assert result.version == "1.2.0"
+        mock_scalars.first.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_does_not_return_coroutine_object(self) -> None:
+        """Regression (Hermes 2026-08-12): function must return the row, not a coroutine.
+
+        Earlier in the NFM-2876 lifecycle, a draft ``await result.scalars().first()``
+        change caused the helper to return a coroutine in test-mock contexts,
+        silently regressing V2 ontology-driven extraction under the
+        flag-true default.  Commit 9d8ffacc reverted the await (it raised
+        ``TypeError`` in 2.0.50) and the corresponding mock must now be a
+        sync ``MagicMock``.  This test guards that the helper never
+        returns a coroutine regardless of which accessor pattern is used.
+        """
+        import inspect
+
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.first = MagicMock(return_value="the-row")
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await _get_latest_published_ontology(mock_session)
+        assert not inspect.iscoroutine(result), (
+            "Helper must return the row directly (sync accessor); returning a "
+            "coroutine silently regresses V2 ontology-driven extraction."
+        )
+        assert result == "the-row"
+
+    @pytest.mark.asyncio
+    async def test_narrowed_exception_surfaces_unrelated_bugs(self) -> None:
+        """Regression (Hermes 2026-08-12): helper swallows transient DB errors.
+
+        Per commit 9d8ffacc, ``_get_latest_published_ontology`` keeps the
+        broad ``except Exception`` guard so a transient DB error (modeled
+        here as ``OperationalError``) is logged and returns ``None`` so the
+        static-prompt fallback path can run.  Programming bugs (e.g.
+        ``KeyError`` from a malformed mock) are also caught by the same
+        broad guard — they are logged with ``exc_info`` and the pipeline
+        falls back rather than crashing V2 extractions under the flag-true
+        default.  This test pins both halves of that contract.
+        """
+        from sqlalchemy.exc import OperationalError
+
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+
+        def _raise_keyerror() -> Any:
+            raise KeyError("not_a_db_error")
+
+        mock_scalars.first = MagicMock(side_effect=_raise_keyerror)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        # Broad ``except Exception`` swallows the KeyError; helper returns None.
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is None
+
+        # OperationalError (a SQLAlchemyError subclass) MUST also be swallowed
+        # so the static-prompt fallback path works when the DB is briefly down.
+        mock_scalars.first = MagicMock(
+            side_effect=OperationalError("SELECT 1", {}, Exception("db down"))
+        )
+        result = await _get_latest_published_ontology(mock_session)
+        assert result is None
 
 
 class TestOntologyPromptInPipeline:
@@ -1446,7 +1596,7 @@ class TestOntologyPromptInPipeline:
             "relation_types": [],
         }
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = MagicMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1488,7 +1638,7 @@ class TestOntologyPromptInPipeline:
         """Pipeline uses build_extraction_system_prompt when no ontology published."""
         mock_session = AsyncMock()
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        mock_scalars.first = MagicMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1562,7 +1712,7 @@ class TestOntologyJobProvenance:
         mock_ov.version = "1.0.0"
         mock_ov.ontology_data = {"entity_types": [], "relation_types": []}
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = MagicMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1597,7 +1747,7 @@ class TestOntologyJobProvenance:
         mock_session = AsyncMock()
         mock_session.commit = AsyncMock()
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        mock_scalars.first = MagicMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1682,7 +1832,7 @@ class TestV2PathOntologyProvenanceOnORM:
         mock_ov.id = ov_id
         mock_ov.version = "1.2.3"
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = mock_ov
+        mock_scalars.first = MagicMock(return_value=mock_ov)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -1723,7 +1873,7 @@ class TestV2PathOntologyProvenanceOnORM:
         mock_session.add = MagicMock()
 
         mock_scalars = MagicMock()
-        mock_scalars.first.return_value = None
+        mock_scalars.first = MagicMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_session.execute = AsyncMock(return_value=mock_result)

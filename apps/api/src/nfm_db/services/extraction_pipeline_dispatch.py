@@ -104,7 +104,9 @@ def is_extraction_v2_enabled() -> bool:
     """Return the current value of the ``EXTRACTION_PIPELINE_V2`` flag.
 
     Reads from ``Settings.extraction_v2_enabled`` (env var
-    ``NFM_EXTRACTION_V2_ENABLED``).  Default False (strangler-fig).
+    ``NFM_EXTRACTION_V2_ENABLED``).  Default True (NFM-2869-T2 —
+    staging parity verified NFM-2875).  Set the env var to ``false``
+    to roll back to the legacy path.
     """
     return bool(get_settings().extraction_v2_enabled)
 

@@ -86,8 +86,21 @@ def _make_mock_pipeline_dependencies():
     def _cleanup():
         pass  # ExitStack handles unenter automatically
 
-    cm = patch.dict(os.environ, {"EXTRACTION_STUB_MODE": "true"})
+    # NFM-2876: pin V1 flag so multimodal V1-regression tests remain
+    # valid now that the default flipped to True (V2 path does not
+    # support multimodal extraction).
+    cm = patch.dict(
+        os.environ,
+        {"EXTRACTION_STUB_MODE": "true", "NFM_EXTRACTION_V2_ENABLED": "false"},
+    )
     stack.enter_context(cm)
+
+    stack.enter_context(
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.is_extraction_v2_enabled",
+            return_value=False,
+        )
+    )
 
     mock_extract = stack.enter_context(
         patch("nfm_db.services.extraction_pipeline.ontofuel_extract", new_callable=AsyncMock),

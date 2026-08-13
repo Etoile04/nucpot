@@ -33,6 +33,42 @@ from nfm_db.services.extraction_pipeline import (
 )
 
 # ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the legacy ``trigger_extraction`` dataclass branch via
+# ``db_session`` fixtures.  These tests assert on
+# ``job.job_id``/``ExtractionJob``-specific attributes and the
+# ``_job_store`` dict, which are V1-only contracts.
+# -----------------------------------------------------------------------
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    ``trigger_extraction`` does ``from nfm_db.config import get_settings``
+    locally inside the function — that local binding shadows the
+    module-level patch.  Use ``create=True`` to inject the patched
+    function into ``extraction_pipeline``'s namespace so the local
+    import resolves to our V1 stub.
+    """
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+    ):
+        yield
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 

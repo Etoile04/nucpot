@@ -5,6 +5,11 @@
 - **Author:** Lead Engineer (per CTO architectural contract in NFM-2743)
 - **Issue:** NFM-2739 / NFM-2743 (D3 seam)
 - **Related:** NFM-2737 (PR cascade architecture review #725/#726/#728), NFM-2738, NFM-2564 (Epic)
+- **2026-08-12 update:** §2.2's "not part of this work" note on flipping
+  `extraction_v2_enabled` is superseded by NFM-2869-T2 ([NFM-2876](/NFM/issues/NFM-2876))
+  after staging parity was independently verified by NFM-2875. The default
+  is now `True`; the legacy dataclass path remains as the documented
+  rollback (`NFM_EXTRACTION_V2_ENABLED=false`).
 
 ---
 
