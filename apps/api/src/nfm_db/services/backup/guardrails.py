@@ -1,10 +1,12 @@
-"""Capacity guardrails for backup writes (NFM-3016).
+"""Capacity guardrails for backup writes (NFM-3016 / NFM-3053).
 
 Core logic:
 1. **Pre-write floor check** — refuse if ``free_bytes - backup_size < min_free_bytes``.
 2. **Post-write cap check** — prune oldest until ``total_bytes ≤ max_total_bytes``.
 3. **Re-check floor after pruner** — a pruner run that frees space but
    leaves the system below the floor is NOT tolerated.
+4. **SRE alert push** — on floor breach, emit a debounced
+   ``[SRE-WARNING]`` health event (NFM-3053).
 """
 
 from __future__ import annotations
@@ -12,11 +14,15 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .config import BackupCapacityConfig
 from .metrics import BackupMetrics, _should_push_on_refusal, format_rfc3339_z_ms
+
+if TYPE_CHECKING:
+    from .sre_alert import RefusalAlertEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +65,8 @@ class CapacityGuardrails:
         config:  Capacity configuration (caps, floors, flags).
         backup_dir:  Directory where backup files live.
         metrics:  Shared metrics tracker for refusal events.
+        alert_emitter:  Optional SRE alert emitter (NFM-3053).  When
+            ``None`` (default) one is created from *config*.
     """
 
     def __init__(
@@ -67,10 +75,22 @@ class CapacityGuardrails:
         config: BackupCapacityConfig,
         backup_dir: Path,
         metrics: BackupMetrics | None = None,
+        alert_emitter: RefusalAlertEmitter | None = None,
     ) -> None:
         self._config = config
         self._backup_dir = backup_dir
         self._metrics = metrics or BackupMetrics()
+        self._alert_emitter = alert_emitter or self._make_alert_emitter()
+
+    @property
+    def alert_emitter(self) -> RefusalAlertEmitter:
+        return self._alert_emitter
+
+    def _make_alert_emitter(self) -> RefusalAlertEmitter:
+        """Create an alert emitter from the current config."""
+        from .sre_alert import RefusalAlertEmitter
+
+        return RefusalAlertEmitter(push_on_refusal=self._config.push_on_refusal)
 
     # -- public properties ---------------------------------------------------
 
@@ -124,6 +144,8 @@ class CapacityGuardrails:
                 disk.total_backup_bytes,
                 format_rfc3339_z_ms(refused_at),
             )
+
+        self._emit_refusal_alert(disk=disk)
 
         return event
 
@@ -197,7 +219,28 @@ class CapacityGuardrails:
                 format_rfc3339_z_ms(refused_at),
             )
 
+        self._emit_refusal_alert(disk=disk)
+
         return event
+
+    # -- SRE alert push (NFM-3053) ----------------------------------------
+
+    def _emit_refusal_alert(self, *, disk: DiskUsage) -> None:
+        """Push a debounced SRE alert for the current refusal state.
+
+        Best-effort: a failure to persist the health event is logged
+        but never propagated.
+        """
+        snapshot = self._metrics.snapshot()
+        refusal_ts = snapshot.last_refusal_at or datetime.now(UTC)
+        self._alert_emitter.on_refusal(
+            refusal_count=snapshot.refusal_count,
+            last_refusal_at=refusal_ts,
+            free_bytes=disk.free_bytes,
+            total_bytes=disk.total_backup_bytes,
+            min_free_bytes=self._config.min_free_bytes,
+            max_total_bytes=self._config.max_total_bytes,
+        )
 
     # -- helpers ---------------------------------------------------------------
 
