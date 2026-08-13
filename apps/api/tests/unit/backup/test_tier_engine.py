@@ -14,19 +14,19 @@ warns when an operator still uses the legacy ``retentionDays`` alias.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from nfm_db.backup.schema import BackupConfig, RetentionConfig, TierSpec
+
 # The module under test does not exist yet — these imports intentionally
 # fail under RED. They will become GREEN once ``tier_engine`` lands.
-from nfm_db.backup.tier_engine import (  # noqa: E402
+from nfm_db.backup.tier_engine import (
     Tier,
     classify_tier,
     sort_by_age_desc,
 )
-from nfm_db.backup.schema import BackupConfig, RetentionConfig, TierSpec  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,7 +43,7 @@ def _file(created_at: datetime, path: str | None = None) -> dict:
 
 
 def _now() -> datetime:
-    return datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    return datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 
 def _default_config() -> RetentionConfig:
