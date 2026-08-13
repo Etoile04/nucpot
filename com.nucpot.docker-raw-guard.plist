@@ -25,10 +25,17 @@
 
     <key>EnvironmentVariables</key>
     <dict>
+        <!--
+            launchd does NOT expand $HOME (or any shell syntax) inside
+            EnvironmentVariables. Setting LOG_FILE to "$HOME/..." here would
+            pass the literal string through and break every scheduled run under
+            set -euo pipefail. The script's own default (`$HOME/Library/Logs/
+            docker-raw-guard.log`) is bash parameter expansion, which DOES
+            resolve at script execution time. Override LOG_FILE with an
+            ABSOLUTE PATH in this dict if you need a non-default location.
+        -->
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <key>LOG_FILE</key>
-        <string>$HOME/Library/Logs/docker-raw-guard.log</string>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 </dict>
 </plist>
