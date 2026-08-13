@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from nfm_db.services.backup.metrics import BackupMetrics, BackupMetricsSnapshot
 
@@ -28,10 +28,10 @@ class TestBackupMetricsRecordRefusal:
         assert metrics.refusal_count == 2
 
     def test_records_timestamp(self) -> None:
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         metrics = BackupMetrics()
         metrics.record_refusal(free_bytes=100, backup_size=50, floor=200)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= metrics.last_refusal_at <= after
 
     def test_snapshot_returns_immutable_copy(self) -> None:

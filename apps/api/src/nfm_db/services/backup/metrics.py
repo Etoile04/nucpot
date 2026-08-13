@@ -15,10 +15,9 @@ observer consistency (NFM-3060, NFM-3062).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .config import BackupCapacityConfig
-
 
 # ---------------------------------------------------------------------------
 # RFC-3339 UTC Z with millisecond precision (ADR D4 — Amendment 5)
@@ -37,7 +36,7 @@ def format_rfc3339_z_ms(dt: datetime) -> str:
         raise ValueError(
             "format_rfc3339_z_ms requires a timezone-aware datetime"
         )
-    if dt.tzinfo is not timezone.utc:
+    if dt.tzinfo is not UTC:
         raise ValueError(
             "format_rfc3339_z_ms requires UTC timezone, "
             f"got offset {dt.utcoffset()}"
@@ -104,7 +103,7 @@ class BackupMetrics:
         Recording is independent of the SRE-push gate — the stats endpoint
         must always see the refusal, even when ``pushOnRefusal: false``.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._refusal_count += 1
         self._last_refusal_at = now
         return now

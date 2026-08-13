@@ -16,10 +16,9 @@ enforcement, and immutability). This file adds:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 from freezegun import freeze_time
 
 from nfm_db.services.backup.config import BackupCapacityConfig
@@ -159,7 +158,7 @@ class TestRefusalCountAndClock:
         gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
+        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
 
     @freeze_time("2026-08-13T12:00:00Z")
     def test_event_refused_at_matches_frozen_clock(self, tmp_path: Path) -> None:
@@ -174,7 +173,7 @@ class TestRefusalCountAndClock:
         event = gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert event is not None
-        assert event.refused_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
+        assert event.refused_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
 
     @freeze_time("2026-08-13T12:00:00Z")
     def test_refusal_does_not_increment_when_permitted(self, tmp_path: Path) -> None:
@@ -214,7 +213,7 @@ class TestConsecutiveRefusalsOverwrite:
 
         assert event1 is not None
         assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
+        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
 
     @freeze_time("2026-08-13T12:00:30Z")
     def test_second_refusal_overwrites_last_refusal_at(self, tmp_path: Path) -> None:
@@ -232,7 +231,7 @@ class TestConsecutiveRefusalsOverwrite:
             gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
+        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
 
         # Second refusal at T+30s (frozen at 12:00:30)
         with freeze_time("2026-08-13T12:00:30Z"):
@@ -240,9 +239,9 @@ class TestConsecutiveRefusalsOverwrite:
 
         assert metrics.refusal_count == 2
         # Overwrite-not-append: lastRefusalAt is the SECOND call's time.
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 30, tzinfo=timezone.utc)
+        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 0, 30, tzinfo=UTC)
         assert event2 is not None
-        assert event2.refused_at == datetime(2026, 8, 13, 12, 0, 30, tzinfo=timezone.utc)
+        assert event2.refused_at == datetime(2026, 8, 13, 12, 0, 30, tzinfo=UTC)
 
     @freeze_time("2026-08-13T12:00:00Z")
     def test_post_pruner_refusal_also_overwrites(self, tmp_path: Path) -> None:
@@ -267,9 +266,9 @@ class TestConsecutiveRefusalsOverwrite:
             event2 = gr.recheck_floor_after_pruner(disk=low_disk)
 
         assert metrics.refusal_count == 2
-        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 1, 0, tzinfo=timezone.utc)
+        assert metrics.last_refusal_at == datetime(2026, 8, 13, 12, 1, 0, tzinfo=UTC)
         assert event2 is not None
-        assert event2.refused_at == datetime(2026, 8, 13, 12, 1, 0, tzinfo=timezone.utc)
+        assert event2.refused_at == datetime(2026, 8, 13, 12, 1, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------

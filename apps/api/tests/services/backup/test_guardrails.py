@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -24,7 +24,6 @@ from nfm_db.services.backup.guardrails import (
     CapacityGuardrails,
     DiskUsage,
     FloorBreachEvent,
-    measure_disk,
 )
 from nfm_db.services.backup.metrics import BackupMetrics
 
@@ -306,7 +305,7 @@ class TestImmutability:
             free_bytes=1,
             backup_size=2,
             floor=3,
-            refused_at=datetime.now(timezone.utc),
+            refused_at=datetime.now(UTC),
             capacity_total_bytes=4,
         )
         with pytest.raises(AttributeError):
