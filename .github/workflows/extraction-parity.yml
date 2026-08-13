@@ -40,16 +40,19 @@ jobs:
       # NFM-2891 / NFM-2998-T2: Run V2 extraction parity tests against
       # curated baseline fixtures. EXTRACTION_STUB_MODE=true activates
       # deterministic stub responses so tests don't need LLM API keys.
+      # Tests live at repo-root tests/parity/ (outside apps/api/) but
+      # import from nfm_db via conftest sys.path bootstrap, so we run
+      # from the apps/api venv using a relative path (../../tests/parity/)
+      # matching the pattern in test-api.yml for out-of-tree test dirs.
       - name: Run parity tests
         id: parity
         run: |
-          uv run pytest tests/parity/ -m parity -v \
+          uv run pytest ../../tests/parity/ -m parity -v \
             --tb=short \
             --junitxml=parity-report.xml \
             --override-ini="addopts="
         env:
           EXTRACTION_STUB_MODE: "true"
-        working-directory: ${{ github.workspace }}
 
       # Upload the raw JUnit XML as a downloadable artifact.
       - name: Upload parity report artifact
@@ -57,10 +60,7 @@ jobs:
         if: always()
         with:
           name: parity-report
-          # The `parity` step above overrides the default `working-directory:
-          # apps/api` to ${{ github.workspace }}, so --junitxml writes
-          # parity-report.xml at the REPO ROOT, not under apps/api/.
-          path: parity-report.xml
+          path: apps/api/parity-report.xml
           retention-days: 30
 
       # Convert JUnit XML to a JSON summary for machine-readable artifact.
@@ -68,7 +68,7 @@ jobs:
         if: always()
         id: summary
         run: |
-          python3 -c "
+          uv run python -c "
           import xml.etree.ElementTree as ET, json, sys
 
           tree = ET.parse('parity-report.xml')
@@ -113,17 +113,18 @@ jobs:
             json.dump(result, f, indent=2)
           print(json.dumps(result))
           " 2>&1 | tee /dev/stderr
-        working-directory: ${{ github.workspace }}
 
       - name: Upload JSON summary artifact
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: parity-summary
-          path: parity-summary.json
+          path: apps/api/parity-summary.json
           retention-days: 30
 
       # Post a pass/fail summary as a PR comment (skip on schedule runs).
+      # Uses an HTML marker to find and update an existing comment instead
+      # of creating a new one each run (idempotent annotation pattern).
       - name: Post PR comment
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v9
@@ -131,11 +132,12 @@ jobs:
           script: |
             const fs = require('fs');
             const summary = JSON.parse(
-              fs.readFileSync('${{ github.workspace }}/parity-summary.json', 'utf8')
+              fs.readFileSync('${{ github.workspace }}/apps/api/parity-summary.json', 'utf8')
             );
 
             const status = summary.failed === 0 ? '✅ PASSED' : '❌ FAILED';
             const body = [
+              `<!-- extraction-parity-marker -->`,
               `## Extraction Parity ${status}`,
               '',
               `| Metric | Count |`,
@@ -157,9 +159,33 @@ jobs:
             body.push('');
             body.push(`[📄 Download full report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`);
 
-            await github.rest.issues.createComment({
+            const newBody = body.join('\n');
+
+            // Search for an existing comment with our idempotent marker.
+            const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: body.join('\n'),
             });
+
+            const existing = comments.data.find(
+              c => c.body.includes('<!-- extraction-parity-marker -->')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: newBody,
+              });
+              core.info(`Updated existing comment #${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: newBody,
+              });
+              core.info('Created new parity comment');
+            }
