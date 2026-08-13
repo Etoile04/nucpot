@@ -1,0 +1,129 @@
+{
+  "figure_type": "diagram",
+  "title": "Diagram 1: Zr-4 process flow",
+  "bounding_box": {
+    "x": 85.5,
+    "y": 76.4,
+    "width": 505.6,
+    "height": 377.2
+  },
+  "plot_data": {
+    "title": "process flow diagram",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Step",
+      "unit": "",
+      "values": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        300.0,
+        450.0,
+        600.0,
+        750.0,
+        900.0,
+        1050.0,
+        1200.0,
+        1350.0,
+        1500.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "path 0",
+        "values": [
+          1000.1324,
+          1357.1729,
+          522.4685,
+          707.8694,
+          954.8671,
+          1263.4811,
+          405.5175,
+          1377.9082,
+          512.0315
+        ],
+        "color": "red",
+        "marker_style": "circle"
+      },
+      {
+        "name": "path 1",
+        "values": [
+          411.3611,
+          1291.4173,
+          721.2259,
+          1115.6408,
+          1161.8296,
+          1419.2758,
+          925.6306,
+          848.9856,
+          1129.7495
+        ],
+        "color": "red",
+        "marker_style": "square"
+      },
+      {
+        "name": "path 2",
+        "values": [
+          596.6108,
+          683.4858,
+          433.3099,
+          884.8598,
+          1309.7424,
+          959.2652,
+          588.3613,
+          976.9113,
+          705.4974
+        ],
+        "color": "green",
+        "marker_style": "circle"
+      },
+      {
+        "name": "path 3",
+        "values": [
+          936.8854,
+          384.4056,
+          646.2173,
+          1312.2135,
+          623.907,
+          619.4938,
+          512.0902,
+          1107.9283,
+          1210.8345
+        ],
+        "color": "green",
+        "marker_style": "square"
+      }
+    ],
+    "legend_entries": [
+      "path 0",
+      "path 1",
+      "path 2",
+      "path 3"
+    ],
+    "annotations": [
+      "inlet",
+      "outlet"
+    ],
+    "confidence": 0.843
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/diagram/diagram-000/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 427.5,
+  "fallback_used": false,
+  "paper_id": "diagram-000"
+}

@@ -1,0 +1,110 @@
+{
+  "figure_type": "diagram",
+  "title": "Diagram 3: UO2 process flow",
+  "bounding_box": {
+    "x": 101.8,
+    "y": 64.8,
+    "width": 494.9,
+    "height": 365.5
+  },
+  "plot_data": {
+    "title": "process flow diagram",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Step",
+      "unit": "",
+      "values": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        300.0,
+        540.0,
+        780.0,
+        1020.0,
+        1260.0,
+        1500.0
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "path 0",
+        "values": [
+          1334.7554,
+          1207.0821,
+          832.9574,
+          1325.273,
+          455.3663,
+          1055.8026
+        ],
+        "color": "green",
+        "marker_style": "circle"
+      },
+      {
+        "name": "path 1",
+        "values": [
+          439.5854,
+          1000.43,
+          1002.9728,
+          821.6139,
+          479.1201,
+          300.1616
+        ],
+        "color": "black",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "path 2",
+        "values": [
+          911.1142,
+          1107.1736,
+          1441.2231,
+          1189.6049,
+          960.2022,
+          667.8696
+        ],
+        "color": "black",
+        "marker_style": "circle"
+      },
+      {
+        "name": "path 3",
+        "values": [
+          514.267,
+          802.6894,
+          640.6688,
+          544.2015,
+          940.2889,
+          999.8661
+        ],
+        "color": "black",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "path 0",
+      "path 1",
+      "path 2",
+      "path 3"
+    ],
+    "annotations": [
+      "inlet"
+    ],
+    "confidence": 0.928
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/diagram/diagram-002/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 237.7,
+  "fallback_used": false,
+  "paper_id": "diagram-002"
+}

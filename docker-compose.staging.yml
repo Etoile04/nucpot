@@ -1,0 +1,235 @@
+# =============================================================================
+# NFM-DB — Staging deployment stack (NFM-111)
+# =============================================================================
+# Managed by scripts/staging_deploy.sh (deploy / status / rollback + health
+# gate + auto-rollback). Bring env up via:
+#   cp docker/.env.staging.example docker/.env.staging   # then fill secrets
+#   ./scripts/staging_deploy.sh deploy
+#
+# Container names are prefixed `nucpot-staging-*` (the GitHub repo is
+# `Etoile04/nucpot`) so `docker ps --filter name=nucpot-staging` shows the
+# whole stack (NFM-112 acceptance contract). The API is the NFM-DB FastAPI app
+# (apps/api); the web is the NFM-DB Next.js app (apps/web).
+# See docs/deployment/staging-pipeline.md for the full runbook.
+# =============================================================================
+
+name: nucpot-staging
+
+services:
+  # ---- Bundled PostgreSQL 16 (staging database) ------------------------------
+  db:
+    image: postgres:16
+    container_name: nucpot-staging-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${STAGING_POSTGRES_USER:-nfm}
+      POSTGRES_PASSWORD: ${STAGING_POSTGRES_PASSWORD:?Set STAGING_POSTGRES_PASSWORD in docker/.env.staging}
+      POSTGRES_DB: ${STAGING_POSTGRES_DB:-nfm_db}
+    ports:
+      - "${STAGING_DB_HOST_PORT:-5432}:5432"
+    volumes:
+      - staging-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STAGING_POSTGRES_USER:-nfm} -d ${STAGING_POSTGRES_DB:-nfm_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [staging]
+
+  # ---- NFM-DB FastAPI (staging API, /api/v1/health) --------------------------
+  api:
+    build:
+      context: .
+      dockerfile: docker/staging-api.Dockerfile
+    image: nucpot-staging-api:${STAGING_IMAGE_TAG:-latest}
+    container_name: nucpot-staging-api
+    restart: unless-stopped
+    ports:
+      # NFM-112 contract: staging API reachable on the host at 127.0.0.1:8001
+      - "${STAGING_API_HOST_PORT:-8001}:8000"
+    environment:
+      # Staging contract vars (STAGING_* prefix) mapped to the app's NFM_* env.
+      NFM_DATABASE_URL: ${STAGING_DATABASE_URL:-postgresql+asyncpg://nfm:${STAGING_POSTGRES_PASSWORD:?Set STAGING_POSTGRES_PASSWORD}@nucpot-staging-db:5432/nfm_db}
+      NFM_SECRET_KEY: ${STAGING_API_SECRET_KEY:?Set STAGING_API_SECRET_KEY in docker/.env.staging}
+      NFM_CORS_ORIGINS: ${STAGING_CORS_ORIGINS:-["http://localhost:3000"]}
+      NFM_DEBUG: ${STAGING_DEBUG:-false}
+      NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${STAGING_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    networks: [staging]
+
+  # ---- NFM-DB Next.js web (staging front-end) --------------------------------
+  # NFM-2547: Unlike production (nginx upstream handles /api/*), staging has
+  # NO nginx or reverse proxy. Next.js must proxy /api/* itself via rewrites.
+  # Therefore API_SERVER_URL is required and DISABLE_API_REWRITE must NOT be set.
+  # The Dockerfile defaults to nucpot-prod-api (prod network), so we override
+  # both the build arg (baked at next build time) and runtime env (read by
+  # next.config.ts rewrites on each request) with staging service names.
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        API_SERVER_URL: "http://nucpot-staging-api:8000"
+        LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621"
+    image: nucpot-staging-web:${STAGING_IMAGE_TAG:-latest}
+    container_name: nucpot-staging-web
+    restart: unless-stopped
+    ports:
+      - "${STAGING_WEB_HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      # Next.js rewrite proxy target — must use staging Docker service name.
+      # Without this, the Dockerfile default (nucpot-prod-api) is used at build
+      # time, but DNS resolution fails at runtime since staging uses the
+      # nucpot-staging-* network.
+      API_SERVER_URL: "http://nucpot-staging-api:8000"
+      LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621"
+      # NFM-2547: Do NOT set DISABLE_API_REWRITE=true here. Staging has no
+      # nginx upstream, so Next.js must handle /api/* routing itself. Setting
+      # DISABLE_API_REWRITE=true would return 404 for all /api/* requests.
+    depends_on:
+      - api
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [staging]
+
+  # ---- LightRAG sidecar (knowledge-graph RAG, NFM-1221) -----------------------
+  lightrag:
+    build:
+      context: .
+      dockerfile: docker/lightrag.Dockerfile
+    image: nucpot-staging-lightrag:${STAGING_IMAGE_TAG:-latest}
+    container_name: nucpot-staging-lightrag
+    restart: unless-stopped
+    ports:
+      - "${STAGING_LIGHTRAG_HOST_PORT:-9621}:9621"
+    volumes:
+      - staging-lightrag-data:/app/data
+    environment:
+      # --- PostgreSQL (shared with NFM API) ---
+      POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-staging-db}
+      POSTGRES_PORT: ${LIGHTRAG_PG_PORT:-5432}
+      POSTGRES_USER: ${LIGHTRAG_PG_USER:-${STAGING_POSTGRES_USER:-nfm}}
+      POSTGRES_PASSWORD: ${LIGHTRAG_PG_PASSWORD:-${STAGING_POSTGRES_PASSWORD:?Set STAGING_POSTGRES_PASSWORD}}
+      POSTGRES_DATABASE: ${LIGHTRAG_PG_DB:-${STAGING_POSTGRES_DB:-nfm_db}}
+      # --- LLM Configuration ---
+      LLM_BINDING: ${STAGING_LIGHTRAG_LLM_BINDING:-openai}
+      LLM_MODEL: ${STAGING_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
+      LLM_BINDING_HOST: ${STAGING_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
+      LLM_BINDING_API_KEY: ${STAGING_LIGHTRAG_LLM_API_KEY:?Set STAGING_LIGHTRAG_LLM_API_KEY}
+      EMBEDDING_BINDING: ${STAGING_LIGHTRAG_EMBEDDING_BINDING:-openai}
+      EMBEDDING_MODEL: ${STAGING_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_BINDING_HOST: ${STAGING_LIGHTRAG_EMBEDDING_HOST:-https://api.openai.com/v1}
+      EMBEDDING_BINDING_API_KEY: ${STAGING_LIGHTRAG_EMBEDDING_API_KEY:-${STAGING_LIGHTRAG_LLM_API_KEY}}
+      WORKSPACE: /app/data
+    depends_on:
+      db: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks: [staging]
+
+  # ---- Cloudflare Tunnel connector (RESTORED — NFM-2523 closed, NFM-2507 final fix) ---
+  # The staging cloudflared service was temporarily removed in PR #647 as a
+  # fail-closed measure while the Cloudflare Zero Trust dashboard was fixed
+  # (prod 502 bleed caused by staging tunnel intercepting prod traffic via a
+  # misconfigured dashboard hostname rule).
+  #
+  # Restoration preconditions (MUST all hold before `docker compose up`):
+  #   1. A new staging tunnel exists in Cloudflare Zero Trust (e.g.
+  #      `nucpot-staging`) with token in `docker/.env.staging` as
+  #      `STAGING_CLOUDFLARE_TUNNEL_TOKEN`. The token MUST be distinct from
+  #      the production tunnel token (enforced in CI by
+  #      `verify-cloudflared-token.sh`).
+  #   2. The staging tunnel's public hostnames in Cloudflare are:
+  #        - `staging.nucpot.dpdns.org`      -> http://web:3000
+  #        - `staging-api.nucpot.dpdns.org`  -> http://api:8000
+  #      The staging tunnel MUST NOT declare any production hostname
+  #      (no `nucpot.dpdns.org` with empty subdomain, no `api.nucpot.dpdns.org`,
+  #      no `www.nucpot.dpdns.org`, etc.). Verified in CI.
+  #   3. The origin URLs MUST use Docker service names (`web:3000`, `api:8000`),
+  #      NOT `localhost` or `127.0.0.1`. Inside the cloudflared container,
+  #      `localhost` is the container's own loopback, not the host or network.
+  #   4. After starting, verify with:
+  #        - `for i in $(seq 1 50); do curl -s -o /dev/null -w "%{http_code}\n" \
+  #            https://nucpot.dpdns.org/sre-after-restore-$i-$(date +%s%N); \
+  #            done | sort | uniq -c`  -> 50/50 200 or 404, 0 个 502
+  #        - `docker logs --since 2m nucpot-staging-cloudflared 2>&1 | \
+  #            grep -c 'dest=https://nucpot.dpdns.org'` -> 0
+  #
+  # The CI guard from NFM-2509 (`verify-cloudflared-token.sh`) remains as a
+  # second layer: it rejects any compose that uses a prod tunnel token in
+  # the staging path even if the dashboard is later mis-configured.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nucpot-staging-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:36501 run
+    environment:
+      TUNNEL_TOKEN: ${STAGING_CLOUDFLARE_TUNNEL_TOKEN:?Set STAGING_CLOUDFLARE_TUNNEL_TOKEN in docker/.env.staging}
+      # cloudflared must reach Docker-DNS-resolved service names like
+      # `web:3000` and `api:8000` directly inside `nucpot-staging-net`.
+      # The Docker daemon may inject HTTP(S)_PROXY (e.g. host-side Clash /
+      # Verge at host.docker.internal:7892) which forces all outbound HTTP
+      # through an external proxy that cannot resolve these names — every
+      # tunnel request then times out as "context canceled". We explicitly
+      # unset the proxy vars and tighten NO_PROXY to include the staging
+      # service aliases. Source: NFM-2507 staging tunnel restoration
+      # (2026-08-05).
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "localhost,127.0.0.1,web,api,db,lightrag,nucpot-staging-net,172.18.0.0/16,172.25.0.0/16"
+      no_proxy: "localhost,127.0.0.1,web,api,db,lightrag,nucpot-staging-net,172.18.0.0/16,172.25.0.0/16"
+    ports:
+      - "127.0.0.1:${STAGING_CLOUDFLARED_METRICS_HOST_PORT:-36501}:36501"
+    depends_on: [api, web]
+    networks: [staging]
+
+networks:
+  staging:
+    name: nucpot-staging-net
+    driver: bridge
+
+volumes:
+  staging-db-data:
+    name: nucpot-staging-db-data
+  staging-lightrag-data:
+    name: nucpot-staging-lightrag-data

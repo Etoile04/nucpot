@@ -1,0 +1,95 @@
+{
+  "id": "graphite-thermal-conductivity",
+  "description": "NBG-17 graphite thermal conductivity - anisotropic values",
+  "source_file": "joyce_2019_nbg17.md",
+  "property_category": "热传导率",
+  "records": [
+    {
+      "id": "graphite-tc-parallel",
+      "input": {
+        "source_file": "joyce_2019_nbg17.md",
+        "material_name": "NBG-17",
+        "phase": "graphite",
+        "element": "C",
+        "property_category": "热传导率",
+        "property": "热导率",
+        "value": "175",
+        "unit": "W/(m·K)",
+        "conditions": {
+          "temp_C": 25,
+          "condition_type": "experimental"
+        },
+        "context": "parallel to grain direction",
+        "reference": "Joyce et al., Carbon 2019"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 175.0
+        },
+        "cleaned_value": "175",
+        "confidence": "high",
+        "dedup_hash": "12b1ff6f1be6f2bc75a49d6bb4c9d1b3698e94f9440282dd321246b465f9a9ba",
+        "staging": {
+          "source_file": "joyce_2019_nbg17.md",
+          "element_system": "NBG-17",
+          "composition": null,
+          "phase": null,
+          "element": "C",
+          "property_category": "热传导率",
+          "property_name": "热导率",
+          "value": 175.0,
+          "unit": "W/(m·K)",
+          "temperature": 25.0,
+          "method": null,
+          "context": "parallel to grain direction",
+          "confidence": "medium",
+          "source": "Joyce et al., Carbon 2019"
+        }
+      }
+    },
+    {
+      "id": "graphite-tc-perpendicular",
+      "input": {
+        "source_file": "joyce_2019_nbg17.md",
+        "material_name": "NBG-17",
+        "phase": "graphite",
+        "element": "C",
+        "property_category": "热传导率",
+        "property": "热导率",
+        "value": "110 ± 8",
+        "unit": "W/(m·K)",
+        "conditions": {
+          "temp_C": 25,
+          "condition_type": "experimental"
+        },
+        "context": "perpendicular to grain direction",
+        "reference": "Joyce et al., Carbon 2019"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 110.0,
+          "uncertainty": 8.0
+        },
+        "cleaned_value": "110 ± 8",
+        "confidence": "high",
+        "dedup_hash": "12b1ff6f1be6f2bc75a49d6bb4c9d1b3698e94f9440282dd321246b465f9a9ba",
+        "staging": {
+          "source_file": "joyce_2019_nbg17.md",
+          "element_system": "NBG-17",
+          "composition": null,
+          "phase": null,
+          "element": "C",
+          "property_category": "热传导率",
+          "property_name": "热导率",
+          "value": 110.0,
+          "unit": "W/(m·K)",
+          "temperature": 25.0,
+          "method": null,
+          "context": "perpendicular to grain direction",
+          "confidence": "medium",
+          "source": "Joyce et al., Carbon 2019"
+        }
+      }
+    }
+  ]
+}

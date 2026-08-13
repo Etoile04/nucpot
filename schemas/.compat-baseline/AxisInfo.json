@@ -1,0 +1,25 @@
+{
+  "fields": {
+    "label": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "scale": {
+      "default": "'linear'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "unit": {
+      "default": "''",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "values": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[float]"
+    }
+  },
+  "literals": {}
+}

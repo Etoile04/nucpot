@@ -1,0 +1,338 @@
+# =============================================================================
+# NFM-DB — Production deployment stack
+# =============================================================================
+# Can run on Mac Studio (primary) or any Docker-capable host.
+# Usage:
+#   cp docker/.env.prod.example docker/.env.prod   # then fill secrets
+#   ./scripts/verify-env-sync.sh                   # pre-deploy env key check
+#   docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d --build
+#
+# Pre-deploy check: ./scripts/verify-env-sync.sh
+# Fails when a key in the root .env.prod is missing from docker/.env.prod
+# (NFM-2221 — the MINERU_API_KEY silent-fallback incident).
+#
+# Services:
+#   - nucpot-prod-db: PostgreSQL 16
+#   - nucpot-prod-redis: Redis (Celery broker + cache)
+#   - nucpot-prod-api: FastAPI backend
+#   - nucpot-prod-worker: Celery worker for MD verification
+# =============================================================================
+
+name: nucpot-prod
+
+services:
+  # ---- PostgreSQL 16 ---------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: nucpot-prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PROD_POSTGRES_USER:-nfm}
+      POSTGRES_PASSWORD: ${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PROD_POSTGRES_DB:-nfm_db}
+    ports:
+      - "${PROD_DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - prod-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PROD_POSTGRES_USER:-nfm} -d ${PROD_POSTGRES_DB:-nfm_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [prod]
+
+  # ---- Redis (Celery broker + cache) -----------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: nucpot-prod-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${PROD_REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - prod-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [prod]
+
+  # ---- FastAPI backend -------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: docker/prod-api.Dockerfile
+    image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-api
+    restart: unless-stopped
+    ports:
+      - "${PROD_API_HOST_PORT:-8001}:8000"
+      - "8002:8000"  # CF Tunnel ingress (verify.nucpot.dpdns.org)
+    environment:
+      NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
+      NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
+      NFM_CORS_ORIGINS: '["https://nucpot.dpdns.org","http://localhost:3000"]'
+      NFM_DEBUG: "false"
+      NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${PROD_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REDIS_HOST: nucpot-prod-redis
+      REDIS_PORT: "6379"
+      CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
+      # HPC SSH key (mount as secret in production)
+      NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
+      NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
+      NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
+      # NFM-1489: LLM env (literature parsing uses the Ollama endpoint).
+      # AC #4 — must be visible via ``docker exec nucpot-prod-api env``.
+      LLM_PROVIDER: ollama
+      LLM_API_KEY: ollama
+      LLM_BASE_URL: ${PROD_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${PROD_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
+      # NFM-1366: VLM env for multimodal extraction (figure/table detection).
+      # Uses the same Ollama endpoint as LLM but with a vision-capable model.
+      VLM_PROVIDER: ollama
+      VLM_API_KEY: ollama
+      VLM_BASE_URL: ${PROD_VLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      VLM_MODEL: ${PROD_VLM_MODEL:-minicpm-v4.5:8b}
+      # NFM-1807: httpx does not support wildcards in NO_PROXY.
+      # List every Docker-internal hostname the API may call so
+      # requests bypass the host proxy and go directly over the
+      # Docker bridge network.  Without this, API→LightRAG traffic
+      # is forwarded to host.docker.internal:7892 → 502.
+      NO_PROXY: ${PROD_API_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      no_proxy: ${PROD_API_no_proxy:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      # NFM-MINERU-1: MinerU PDF parsing (literature pipeline primary parser)
+      MINERU_ENABLED: ${MINERU_ENABLED:-true}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
+    volumes:
+      # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
+      # from the same path.  Distinct from the potentials / LightRAG volumes.
+      - prod-uploads:/app/uploads
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    networks: [prod]
+
+  # ---- LightRAG sidecar (knowledge-graph RAG, NFM-1221) -----------------------
+  lightrag:
+    build:
+      context: .
+      dockerfile: docker/lightrag.Dockerfile
+      args:
+        LIGHTRAG_VERSION: "1.5.4"
+    image: nucpot-prod-lightrag:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-lightrag
+    restart: unless-stopped
+    ports:
+      - "${PROD_LIGHTRAG_HOST_PORT:-9621}:9621"
+    volumes:
+      - prod-lightrag-data:/app/data
+    environment:
+      # --- PostgreSQL (shared with NFM API) ---
+      POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-prod-db}
+      POSTGRES_PORT: ${LIGHTRAG_PG_PORT:-5432}
+      POSTGRES_USER: ${LIGHTRAG_PG_USER:-${PROD_POSTGRES_USER:-nfm}}
+      POSTGRES_PASSWORD: ${LIGHTRAG_PG_PASSWORD:-${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}}
+      POSTGRES_DATABASE: ${LIGHTRAG_PG_DB:-${PROD_POSTGRES_DB:-nfm_db}}
+      # --- LLM Configuration ---
+      LLM_BINDING: ${PROD_LIGHTRAG_LLM_BINDING:-openai}
+      LLM_MODEL: ${PROD_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
+      LLM_BINDING_HOST: ${PROD_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
+      LLM_BINDING_API_KEY: ${PROD_LIGHTRAG_LLM_API_KEY:?Set PROD_LIGHTRAG_LLM_API_KEY}
+      EMBEDDING_BINDING: ${PROD_LIGHTRAG_EMBEDDING_BINDING:-openai}
+      # NFM-1765: nomic-embed-text (768d, ~0.065s/query on Mac CPU). Was
+      # qwen3-embedding:4b (2560d) per user decision 2026-07-24, but
+      # LightRAG 1.5.4 hybrid storage + 2560d vectors caused 60-240s
+      # query latency (cross-workspace lookup fallback). Reverting keeps
+      # E2E flow functional. See NFM-1808 followup for GPU/relay fix.
+      EMBEDDING_MODEL: ${PROD_LIGHTRAG_EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIM: ${PROD_LIGHTRAG_EMBEDDING_DIM:-768}
+      EMBEDDING_BINDING_HOST: ${PROD_LIGHTRAG_EMBEDDING_HOST:-http://host.docker.internal:11434/v1}
+      EMBEDDING_BINDING_API_KEY: ${PROD_LIGHTRAG_EMBEDDING_API_KEY:-${PROD_LIGHTRAG_LLM_API_KEY}}
+      # NFM-1764: pgvector storage backend (CTO ADR Option C — hybrid)
+      LIGHTRAG_VECTOR_STORAGE: ${PROD_LIGHTRAG_VECTOR_STORAGE:-PGVectorStorage}
+      LIGHTRAG_GRAPH_STORAGE: ${PROD_LIGHTRAG_GRAPH_STORAGE:-NetworkXStorage}
+      LIGHTRAG_KV_STORAGE: ${PROD_LIGHTRAG_KV_STORAGE:-JsonKVStorage}
+      LIGHTRAG_DOC_STATUS_STORAGE: ${PROD_LIGHTRAG_DOC_STATUS_STORAGE:-JsonDocStatusStorage}
+      # NFM-1763: LightRAG uses WORKING_DIR (default ./rag_storage) for the
+      # absolute storage path; WORKSPACE only supplies a sub-namespace name.
+      # Without this, LightRAG writes to /app/rag_storage (image-baked,
+      # un-persisted) and ignores the prod-lightrag-data volume mount on
+      # /app/data — wipes, restarts, and restages all silently lose data.
+      # Must point at the mounted volume for production durability.
+      WORKING_DIR: ${PROD_LIGHTRAG_WORKING_DIR:-/app/data}
+      INPUT_DIR: ${PROD_LIGHTRAG_INPUT_DIR:-/app/data/inputs}
+      WORKSPACE: ${PROD_LIGHTRAG_WORKSPACE:-_app_data}
+      # NFM-741: Chinese summary language for entity extraction and KG
+      # summarisation. AC-4 requires Chinese-language paper processing;
+      # default is English which produces English summaries even for
+      # Chinese input text.
+      SUMMARY_LANGUAGE: ${PROD_LIGHTRAG_SUMMARY_LANGUAGE:-Chinese}
+      # NFM-741: API prefix so the LightRAG SPA (served at /webui) makes
+      # all its internal API calls under /lightrag-api/* instead of the
+      # bare root. Next.js rewrites /lightrag-api/* to this container.
+      LIGHTRAG_API_PREFIX: /lightrag-api
+      # NFM-1763: keep LightRAG container's host.docker.internal traffic off
+      # the Docker Desktop user-level proxy. The default noProxy list omits
+      # host.docker.internal, so Ollama calls (host.docker.internal:11434)
+      # get routed through the host proxy (host.docker.internal:7892) and
+      # return HTTP 502. Safe global addition — does not change LLM behavior.
+      NO_PROXY: ${PROD_LIGHTRAG_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-api,nucpot-prod-web,nucpot-prod-lightrag,nucpot-prod-redis,nucpot-prod-worker,host.docker.internal}
+      no_proxy: ${PROD_LIGHTRAG_no_proxy:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-api,nucpot-prod-web,nucpot-prod-lightrag,nucpot-prod-redis,nucpot-prod-worker,host.docker.internal}
+      # NFM-1763: Qwen3 thinking models emit `reasoning_content` blocks that
+      # OpenAI-compatible clients must explicitly suppress, otherwise
+      # entity extraction produces zero content. Pass through when set.
+      OPENAI_LLM_REASONING_EFFORT: ${PROD_LIGHTRAG_REASONING_EFFORT:-${OPENAI_LLM_REASONING_EFFORT:-}}
+    depends_on:
+      db: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks: [prod]
+
+  # ---- Celery worker (MD verification tasks) ---------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: docker/prod-api.Dockerfile
+    image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-worker
+    restart: unless-stopped
+    command: >
+      python -m celery -A nfm_db.services.celery_app:celery_app worker
+      --queues=md_verification,literature_processing
+      --concurrency=${PROD_WORKER_CONCURRENCY:-1}
+      --loglevel=INFO
+      --max-tasks-per-child=1
+    environment:
+      NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
+      NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
+      REDIS_HOST: nucpot-prod-redis
+      REDIS_PORT: "6379"
+      CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
+      NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
+      NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
+      # NFM-1489: LLM env required by the worker because
+      # ``process_literature_task`` runs in this container.  Must mirror
+      # the api service values above.
+      LLM_PROVIDER: ollama
+      LLM_API_KEY: ollama
+      LLM_BASE_URL: ${PROD_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${PROD_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
+      # NFM-1366: VLM env for multimodal extraction (figure/table detection).
+      VLM_PROVIDER: ollama
+      VLM_API_KEY: ollama
+      VLM_BASE_URL: ${PROD_VLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      VLM_MODEL: ${PROD_VLM_MODEL:-minicpm-v4.5:8b}
+      # NFM-MINERU-1: MinerU env must mirror the api service — the worker
+      # runs ``process_literature_task`` which calls parse_pdf_to_markdown.
+      MINERU_ENABLED: ${MINERU_ENABLED:-true}
+      # NFM-MINERU-bridge: bypass the HTTP proxy for host.docker.internal
+      # so urllib reaches the launchd-launched bridge at port 9630.
+      # Without this, urllib sends the bridge request through the
+      # Clash proxy at host.docker.internal:7892 and gets a 502.
+      NO_PROXY: ${PROD_WORKER_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-redis,nucpot-prod-api,nucpot-prod-lightrag,nucpot-prod-worker,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      no_proxy: ${PROD_WORKER_no_proxy:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-redis,nucpot-prod-api,nucpot-prod-lightrag,nucpot-prod-worker,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
+    volumes:
+      # NFM-1489: the worker reads PDFs from the same upload volume the
+      # api service writes to.  Without this mount the worker sees an
+      # empty directory and every parse fails immediately.
+      - prod-uploads:/app/uploads
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -m celery -A nfm_db.services.celery_app:celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks: [prod]
+
+  # ---- Web frontend (Next.js) -------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        API_SERVER_URL: "http://nucpot-prod-api:8000"
+    image: nucpot-prod-web:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-web
+    restart: unless-stopped
+    ports:
+      - "${PROD_WEB_HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      # SSR server-side fetch needs to reach the backend directly (not via
+      # the public domain). Without this, fetchFullGraphData falls back to
+      # localhost:8000 which is not reachable inside the container.
+      API_SERVER_URL: "http://nucpot-prod-api:8000"
+      # NFM-1407: nginx already routes /api/* on the host, so the Next.js
+      # rewrite proxy would either hang or loop when /api/* requests hit
+      # the web container directly (e.g. host-port health probes).
+      # Force-disable the rewrite here. The web container only serves the
+      # Next.js UI; all /api/* traffic is handled by nginx upstream.
+      DISABLE_API_REWRITE: "true"
+      # NFM-741: LightRAG WebUI reverse proxy target. The LightRAG
+      # sidecar exposes a built-in React SPA at /webui on port 9621.
+      # Next.js rewrites /lightrag-webui/* → this URL so users can
+      # ingest documents, browse the KG, and run queries from within
+      # the NFM site without exposing port 9621 publicly.
+      LIGHTRAG_WEBUI_URL: "http://nucpot-prod-lightrag:9621"
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks: [prod]
+
+volumes:
+  prod-db-data:
+  prod-redis-data:
+  prod-lightrag-data:
+    name: nucpot-prod-lightrag-data
+  # NFM-1489 §C: literature upload landing zone.  Owned by the api
+  # service (writes) and shared read-only by the worker (parses).
+  prod-uploads:
+
+networks:
+  prod:
+    driver: bridge

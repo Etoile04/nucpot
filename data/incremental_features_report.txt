@@ -1,0 +1,37 @@
+========================================================================
+INCREMENTAL FEATURE COMPUTATION REPORT
+========================================================================
+Total records scanned:     200
+Features computed:         200
+Skipped (no composition):  0
+
+NULL RATE BY FEATURE:
+  Feature                    Total  NULL     Rate
+--------------------------------------------------
+  mo_equivalent                188     0 0.0000%
+  lattice_distortion           188     0 0.0000%
+  allen_chi_diff               188     0 0.0000%
+  vec                          188     0 0.0000%
+  cluster_I                    188     0 0.0000%
+  cluster_II                   188     0 0.0000%
+  cluster_III                  188     0 0.0000%
+  cluster_IV                   188     0 0.0000%
+
+ANOMALIES (|z| > 3.0σ):
+  Material             Feature                   Value     Mean      Std    |z|
+--------------------------------------------------------------------------------
+  C-50U-50             lattice_distortion       0.3391   0.0372   0.0702   4.30
+  C-66.7U-33.3         lattice_distortion       0.3604   0.0372   0.0702   4.60
+  N-50U-50             lattice_distortion       0.3506   0.0372   0.0702   4.46
+  N-66.7U-33.3         lattice_distortion       0.3744   0.0372   0.0702   4.80
+  N-66.7U-33.3         allen_chi_diff         122.7280  32.1005  26.2357   3.45
+  C-50Zr-50            lattice_distortion       0.3502   0.0372   0.0702   4.46
+  C-66.7Zr-33.3        lattice_distortion       0.3738   0.0372   0.0702   4.79
+  N-50Zr-50            lattice_distortion       0.3617   0.0372   0.0702   4.62
+  N-66.7Zr-33.3        lattice_distortion       0.3878   0.0372   0.0702   4.99
+  N-66.7Zr-33.3        allen_chi_diff         128.4889  32.1005  26.2357   3.67
+  Ti-95Zr-5            mo_equivalent          182.2000  35.6517  41.5564   3.53
+  Ti-85Zr-15           mo_equivalent          174.6000  35.6517  41.5564   3.34
+  Ti-75Zr-25           mo_equivalent          167.0000  35.6517  41.5564   3.16
+
+========================================================================

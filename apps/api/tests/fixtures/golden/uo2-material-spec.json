@@ -1,0 +1,88 @@
+{
+  "id": "uo2-material-spec",
+  "description": "UO2 material specs - grain size, porosity with approximate",
+  "source_file": "rest_2005_uo2_fabrication.md",
+  "property_category": "材料规格/组织信息",
+  "records": [
+    {
+      "id": "uo2-grain-size",
+      "input": {
+        "source_file": "rest_2005_uo2_fabrication.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "材料规格/组织信息",
+        "property": "晶粒尺寸",
+        "value": "8",
+        "unit": "μm",
+        "context": "sintered pellet",
+        "reference": "Rest, JNM 2005"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 8.0
+        },
+        "cleaned_value": "8",
+        "confidence": "high",
+        "dedup_hash": "1844dcaa507d2bae115c266b0ac5317e6439a1cf2969f0e3adf14600b176f300",
+        "staging": {
+          "source_file": "rest_2005_uo2_fabrication.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "材料规格/组织信息",
+          "property_name": "晶粒尺寸",
+          "value": 8.0,
+          "unit": "μm",
+          "temperature": null,
+          "method": null,
+          "context": "sintered pellet",
+          "confidence": "medium",
+          "source": "Rest, JNM 2005"
+        }
+      }
+    },
+    {
+      "id": "uo2-porosity",
+      "input": {
+        "source_file": "rest_2005_uo2_fabrication.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "材料规格/组织信息",
+        "property": "孔隙率",
+        "value": "approximately 5",
+        "unit": "%",
+        "context": "as-sintered pellet",
+        "reference": "Rest, JNM 2005"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 5.0
+        },
+        "cleaned_value": "approximately 5",
+        "confidence": "high",
+        "dedup_hash": "866e0e5e5a5590ae7bd09add7420edacd18b9b8f7dd49edc5c8122e2a612552f",
+        "staging": {
+          "source_file": "rest_2005_uo2_fabrication.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "材料规格/组织信息",
+          "property_name": "孔隙率",
+          "value": 5.0,
+          "unit": "%",
+          "temperature": null,
+          "method": null,
+          "context": "as-sintered pellet",
+          "confidence": "medium",
+          "source": "Rest, JNM 2005"
+        }
+      }
+    }
+  ]
+}

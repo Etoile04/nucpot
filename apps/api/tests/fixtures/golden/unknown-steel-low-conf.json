@@ -1,0 +1,41 @@
+{
+  "id": "unknown-steel-low-conf",
+  "description": "Unknown steel - minimal fields, low confidence only",
+  "source_file": "unknown_source.md",
+  "property_category": "弹塑性模型",
+  "records": [
+    {
+      "id": "unknown-steel-yield",
+      "input": {
+        "material_name": "unknown steel",
+        "property": "屈服强度",
+        "value": "350",
+        "unit": "MPa"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 350.0
+        },
+        "cleaned_value": "350",
+        "confidence": "low",
+        "dedup_hash": "eacd3d0c2ebf4436fcc1f995700e5c4f7b618544be6295dddd0dabe15e35a568",
+        "staging": {
+          "source_file": null,
+          "element_system": "unknown steel",
+          "composition": null,
+          "phase": null,
+          "element": null,
+          "property_category": null,
+          "property_name": "屈服强度",
+          "value": 350.0,
+          "unit": "MPa",
+          "temperature": null,
+          "method": null,
+          "context": null,
+          "confidence": "medium",
+          "source": null
+        }
+      }
+    }
+  ]
+}

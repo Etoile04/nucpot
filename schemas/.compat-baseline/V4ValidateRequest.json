@@ -1,0 +1,15 @@
+{
+  "fields": {
+    "auto_approve": {
+      "default": "True",
+      "required": false,
+      "type": "<class'bool'>"
+    },
+    "scope": {
+      "default": "'pending_only'",
+      "required": false,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

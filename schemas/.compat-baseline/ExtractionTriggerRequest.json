@@ -1,0 +1,30 @@
+{
+  "fields": {
+    "cache_level": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "element_systems": {
+      "default": null,
+      "required": false,
+      "type": "list[str]|None"
+    },
+    "max_confidence": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "source_reference": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "source_type": {
+      "default": "'doi'",
+      "required": false,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

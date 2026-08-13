@@ -1,0 +1,96 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 15: SiC-SiC response vs temperature",
+  "bounding_box": {
+    "x": 54.3,
+    "y": 43.4,
+    "width": 533.6,
+    "height": 346.0
+  },
+  "plot_data": {
+    "title": "Inconel-718 tensile response",
+    "plot_type": "scatter",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        399.57,
+        456.4918,
+        513.4136,
+        570.3353,
+        627.2571,
+        684.1789,
+        741.1006,
+        798.0224,
+        854.9442,
+        911.8659
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        69.644,
+        127.4721,
+        185.3002,
+        243.1284,
+        300.9565,
+        358.7846,
+        416.6127,
+        474.4408,
+        532.2689,
+        590.097
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          528.9512,
+          180.8156,
+          80.9382,
+          189.832,
+          357.4556,
+          204.8182,
+          332.6318,
+          528.626,
+          689.8284,
+          266.5099
+        ],
+        "color": "green",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          65.2643,
+          610.4796,
+          351.0237,
+          604.6203,
+          127.8622,
+          85.9912,
+          578.3368,
+          599.5128,
+          559.9553,
+          279.9769
+        ],
+        "color": "black",
+        "marker_style": "square"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1"
+    ],
+    "annotations": [],
+    "confidence": 0.922
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-014/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 316.4,
+  "fallback_used": false,
+  "paper_id": "plot-014"
+}

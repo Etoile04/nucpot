@@ -1,0 +1,11 @@
+# Thermal Conductivity of (U,Pu)O2 Mixed Oxide Fuel
+
+Mixed oxide (MOX) fuel, with composition (U1-x,Pux)O2 where x is the Pu fraction, is used in light water reactors. This work measures thermal conductivity of MOX with Pu content 0.08.
+
+# Experimental Values
+
+Thermal conductivity was measured by laser-flash from 300 K to 1500 K. At 300 K, thermal conductivity of the MOX sample is 4.2 W/(m K). At 1000 K, the value decreases to 2.1 W/(m K). The specific heat capacity at 300 K is 0.234 J/(g K). Sample density was 10.42 g/cm^3 after sintering.
+
+# Comparison with UO2
+
+The thermal conductivity of UO2 at 300 K is 7.6 W/(m K). Adding 8 percent plutonium reduces thermal conductivity by roughly 45 percent.

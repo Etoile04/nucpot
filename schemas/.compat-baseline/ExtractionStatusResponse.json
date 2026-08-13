@@ -1,0 +1,60 @@
+{
+  "fields": {
+    "completed_at": {
+      "default": null,
+      "required": false,
+      "type": "datetime.datetime|None"
+    },
+    "created_at": {
+      "default": null,
+      "required": false,
+      "type": "datetime.datetime|None"
+    },
+    "error_message": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "extracted_count": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "job_id": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'uuid.UUID'>"
+    },
+    "rejected_count": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "source_reference": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "source_type": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "staged_count": {
+      "default": "0",
+      "required": false,
+      "type": "<class'int'>"
+    },
+    "started_at": {
+      "default": null,
+      "required": false,
+      "type": "datetime.datetime|None"
+    },
+    "status": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

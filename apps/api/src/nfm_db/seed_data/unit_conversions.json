@@ -1,0 +1,93 @@
+[
+  {
+    "source_symbol": "°C",
+    "target_symbol": "K",
+    "factor": 1.0,
+    "offset": 273.15,
+    "description": "T(K) = T(°C) + 273.15"
+  },
+  {
+    "source_symbol": "°F",
+    "target_symbol": "K",
+    "factor": 0.555556,
+    "offset": 255.372,
+    "description": "T(K) = (T(°F) - 32) × 5/9 + 273.15"
+  },
+  {
+    "source_symbol": "K",
+    "target_symbol": "°C",
+    "factor": 1.0,
+    "offset": -273.15,
+    "description": "T(°C) = T(K) - 273.15"
+  },
+  {
+    "source_symbol": "MPa",
+    "target_symbol": "Pa",
+    "factor": 1000000.0,
+    "offset": 0.0,
+    "description": "1 MPa = 10^6 Pa"
+  },
+  {
+    "source_symbol": "GPa",
+    "target_symbol": "Pa",
+    "factor": 1000000000.0,
+    "offset": 0.0,
+    "description": "1 GPa = 10^9 Pa"
+  },
+  {
+    "source_symbol": "atm",
+    "target_symbol": "Pa",
+    "factor": 101325.0,
+    "offset": 0.0,
+    "description": "1 atm = 101325 Pa"
+  },
+  {
+    "source_symbol": "cm",
+    "target_symbol": "m",
+    "factor": 0.01,
+    "offset": 0.0,
+    "description": "1 cm = 0.01 m"
+  },
+  {
+    "source_symbol": "μm",
+    "target_symbol": "m",
+    "factor": 0.000001,
+    "offset": 0.0,
+    "description": "1 μm = 10^-6 m"
+  },
+  {
+    "source_symbol": "nm",
+    "target_symbol": "m",
+    "factor": 0.000000001,
+    "offset": 0.0,
+    "description": "1 nm = 10^-9 m"
+  },
+  {
+    "source_symbol": "Å",
+    "target_symbol": "m",
+    "factor": 0.0000000001,
+    "offset": 0.0,
+    "description": "1 Å = 10^-10 m"
+  },
+  {
+    "source_symbol": "kJ",
+    "target_symbol": "J",
+    "factor": 1000.0,
+    "offset": 0.0,
+    "description": "1 kJ = 10^3 J"
+  },
+  {
+    "source_symbol": "eV",
+    "target_symbol": "J",
+    "factor": 1.602176634e-19,
+    "offset": 0.0,
+    "description": "1 eV = 1.602176634 × 10^-19 J"
+  },
+  {
+    "source_symbol": "g/cm³",
+    "target_symbol": "kg/m³",
+    "factor": 1000.0,
+    "offset": 0.0,
+    "description": "1 g/cm³ = 1000 kg/m³"
+  }
+]

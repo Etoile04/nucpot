@@ -1,0 +1,137 @@
+{
+  "id": "steel-corrosion",
+  "description": "316/304SS corrosion - weight loss, oxide thickness range, low confidence",
+  "source_file": "was_2014_ss_corrosion.md",
+  "property_category": "腐蚀",
+  "records": [
+    {
+      "id": "steel-corrosion-plain",
+      "input": {
+        "source_file": "was_2014_ss_corrosion.md",
+        "material_name": "316SS",
+        "composition": "Fe-17Cr-12Ni-2Mo",
+        "phase": "gamma",
+        "element": "Fe",
+        "property_category": "腐蚀",
+        "property": "腐蚀速率",
+        "value": "2.3",
+        "unit": "mg/dm²/day",
+        "conditions": {
+          "temp_C": 300,
+          "atmosphere": "PWR primary water",
+          "condition_type": "experimental"
+        },
+        "context": "PWR normal water chemistry",
+        "reference": "Was et al., Corrosion 2014"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 2.3
+        },
+        "cleaned_value": "2.3",
+        "confidence": "high",
+        "dedup_hash": "d3b888053bccaefe3537e3e6aaa5e3f14a69a6b903e64005f7c6795b2abbb9ea",
+        "staging": {
+          "source_file": "was_2014_ss_corrosion.md",
+          "element_system": "316SS",
+          "composition": "Fe-17Cr-12Ni-2Mo",
+          "phase": null,
+          "element": "Fe",
+          "property_category": "腐蚀",
+          "property_name": "腐蚀速率",
+          "value": 2.3,
+          "unit": "mg/dm²/day",
+          "temperature": 300.0,
+          "method": null,
+          "context": "PWR normal water chemistry",
+          "confidence": "medium",
+          "source": "Was et al., Corrosion 2014"
+        }
+      }
+    },
+    {
+      "id": "steel-corrosion-range",
+      "input": {
+        "source_file": "was_2014_ss_corrosion.md",
+        "material_name": "316SS",
+        "composition": "Fe-17Cr-12Ni-2Mo",
+        "phase": "gamma",
+        "element": "Fe",
+        "property_category": "腐蚀",
+        "property": "氧化膜厚度",
+        "value": "50 to 120",
+        "unit": "nm",
+        "conditions": {
+          "temp_C": 360,
+          "time_h": "5000",
+          "condition_type": "experimental"
+        },
+        "context": "oxide scale after 5000h exposure",
+        "reference": "Was et al., Corrosion 2014"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 85.0,
+          "range": [
+            50.0,
+            120.0
+          ]
+        },
+        "cleaned_value": "50 to 120",
+        "confidence": "high",
+        "dedup_hash": "a3dd84611a47a86f628df0a60956059289be3a313591dc602bbaf0cccbfbf9e9",
+        "staging": {
+          "source_file": "was_2014_ss_corrosion.md",
+          "element_system": "316SS",
+          "composition": "Fe-17Cr-12Ni-2Mo",
+          "phase": "oxide",
+          "element": "Fe",
+          "property_category": "腐蚀",
+          "property_name": "氧化膜厚度",
+          "value": 85.0,
+          "unit": "nm",
+          "temperature": 360.0,
+          "method": null,
+          "context": "oxide scale after 5000h exposure",
+          "confidence": "medium",
+          "source": "Was et al., Corrosion 2014"
+        }
+      }
+    },
+    {
+      "id": "steel-corrosion-low-conf",
+      "input": {
+        "material_name": "304SS",
+        "property_category": "腐蚀",
+        "property": "腐蚀速率",
+        "value": "5.1",
+        "unit": "mg/dm²/day",
+        "context": "high temperature water"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 5.1
+        },
+        "cleaned_value": "5.1",
+        "confidence": "low",
+        "dedup_hash": "89d133f41d360451d4888b2471f4605dbb3c17ddef3de30ec2a76114cc0bc76b",
+        "staging": {
+          "source_file": null,
+          "element_system": "304SS",
+          "composition": null,
+          "phase": null,
+          "element": null,
+          "property_category": "腐蚀",
+          "property_name": "腐蚀速率",
+          "value": 5.1,
+          "unit": "mg/dm²/day",
+          "temperature": null,
+          "method": null,
+          "context": "high temperature water",
+          "confidence": "medium",
+          "source": null
+        }
+      }
+    }
+  ]
+}

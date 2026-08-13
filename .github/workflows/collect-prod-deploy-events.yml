@@ -1,0 +1,65 @@
+---
+# KR-COMPANY-3 / NFMD: production durable event collector (NFM-2111).
+#
+# ADR-KR3-A1 §C6.1 stage 2: a self-hosted collector polls
+# `.github/workflows/production-deployment.yml` for new runs, downloads the
+# `nfm-deploy-event-*.json` artifact uploaded by the producer sibling, and
+# atomically appends the validated event line to the persistent JSONL.
+#
+# Idempotency is keyed on `sha256(event_json)` (not `run_id`) to handle
+# GHA retry-on-replay; replay-safe via the `<jsonl>.processed` ledger.
+name: Collect Production Deploy Events
+
+on:
+  schedule:
+    # Every 5 minutes — KR-COMPANY-3 is a weekly metric so 5-min granularity
+    # is more than enough (and stays well under the GHA free-tier budget).
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+# Serialise collector runs against each other. The atomic append is
+# single-line POSIX O_APPEND and would survive concurrent writers, but
+# holding the lock makes per-run log lines easier to read.
+concurrency:
+  group: prod-deploy-events-collect
+  cancel-in-progress: false
+
+# `actions: read` covers gh api calls into workflows/runs/artifacts.
+# `contents: read` covers `actions/checkout` so the orchestrator + collector
+# scripts are available on the runner.
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  collect-prod-events:
+    name: Collect production deploy events
+    # Self-hosted runner — pinned to the `production` label on the Mac Studio
+    # host (same machine as the prod compose stack per ADR-KR3-A1 §C6.1). The
+    # historical `prod-collector` label was never registered on the runner, so
+    # workflow_dispatch runs queued forever. Switching to `production` matches
+    # the only self-hosted runner that exists (wenjiedeMac-Studio, labels:
+    # self-hosted/macOS/ARM64/production). Collector and deployer share the
+    # runner; contention is low because deploy-prod only runs on push/tag/d
+    # ispatch while the collector runs every 5 min.
+    runs-on: [self-hosted, production]
+    env:
+      # Prefer a fine-grained PAT (`secrets.GH_TOKEN`) so the collector works
+      # even on forks; fall back to the per-run GITHUB_TOKEN which already has
+      # `actions: read` per the job's permissions block.
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+      # ADR §C6.1.5 — repo variable `NFMD_DEPLOY_EVENTS_PATH`. The collector
+      # falls back to <repo>/docker/.deploy-events.jsonl if unset, so this
+      # workflow runs even in a freshly cloned repo without operator config.
+      NFMD_DEPLOY_EVENTS_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PATH || 'docker/.deploy-events.jsonl' }}
+      NFMD_DEPLOY_EVENTS_PROCESSED_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PROCESSED_PATH || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Collect deploy events into JSONL
+        # The bash orchestrator lives next to the Python collector; both are
+        # covered by the unit tests under scripts/okr/tests/.
+        run: |
+          set -euo pipefail
+          bash scripts/lib/collect_prod_run.sh

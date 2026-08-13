@@ -1,0 +1,15 @@
+{
+  "fields": {
+    "columns": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[str]"
+    },
+    "sub_headers": {
+      "default": null,
+      "required": false,
+      "type": "list[str]|None"
+    }
+  },
+  "literals": {}
+}

@@ -1,0 +1,35 @@
+{
+  "fields": {
+    "figures": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "ForwardRef('list[V4FigureResult]',is_class=True)"
+    },
+    "job_status": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "properties": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "list[schemas.extraction.V4PropertyResponse]"
+    },
+    "source_reference": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "tables": {
+      "default": "PydanticUndefined",
+      "required": false,
+      "type": "ForwardRef('list[V4TableResult]',is_class=True)"
+    },
+    "total_extracted": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'int'>"
+    }
+  },
+  "literals": {}
+}

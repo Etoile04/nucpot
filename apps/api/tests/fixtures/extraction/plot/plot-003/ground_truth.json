@@ -1,0 +1,114 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 4: UO2 response vs temperature",
+  "bounding_box": {
+    "x": 53.2,
+    "y": 41.0,
+    "width": 491.9,
+    "height": 315.3
+  },
+  "plot_data": {
+    "title": "SiC-SiC tensile response",
+    "plot_type": "scatter",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        355.618,
+        449.5434,
+        543.4687,
+        637.3941,
+        731.3194,
+        825.2448,
+        919.1702,
+        1013.0955,
+        1107.0209,
+        1200.9462
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        80.2703,
+        234.4545,
+        388.6387,
+        542.8229,
+        697.0071,
+        851.1913,
+        1005.3755,
+        1159.5597,
+        1313.7439,
+        1467.928
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          1301.7088,
+          284.4784,
+          155.8627,
+          522.5858,
+          1435.2457,
+          107.8365,
+          177.8892,
+          967.0352,
+          670.2847,
+          591.6008
+        ],
+        "color": "red",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          401.8847,
+          1647.7967,
+          1302.4028,
+          1203.8617,
+          1431.0625,
+          131.9459,
+          1164.5505,
+          716.1994,
+          359.2202,
+          464.15
+        ],
+        "color": "green",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          1410.1748,
+          1450.4113,
+          1511.9214,
+          231.6167,
+          575.3952,
+          1008.4661,
+          894.3927,
+          269.2669,
+          1218.3363,
+          1380.0529
+        ],
+        "color": "green",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.956
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-003/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 373.4,
+  "fallback_used": false,
+  "paper_id": "plot-003"
+}

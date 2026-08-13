@@ -1,0 +1,128 @@
+[
+  {
+    "symbol": "K",
+    "name": "Kelvin",
+    "dimension": "temperature",
+    "description": "SI base unit of thermodynamic temperature"
+  },
+  {
+    "symbol": "°C",
+    "name": "Celsius",
+    "dimension": "temperature",
+    "description": "Common temperature scale, T(°C) = T(K) - 273.15"
+  },
+  {
+    "symbol": "°F",
+    "name": "Fahrenheit",
+    "dimension": "temperature",
+    "description": "Imperial temperature scale"
+  },
+  {
+    "symbol": "Pa",
+    "name": "Pascal",
+    "dimension": "pressure",
+    "description": "SI base unit of pressure"
+  },
+  {
+    "symbol": "MPa",
+    "name": "Megapascal",
+    "dimension": "pressure",
+    "description": "10^6 Pascals, common in nuclear engineering"
+  },
+  {
+    "symbol": "GPa",
+    "name": "Gigapascal",
+    "dimension": "pressure",
+    "description": "10^9 Pascals, used for high-pressure measurements"
+  },
+  {
+    "symbol": "atm",
+    "name": "Standard atmosphere",
+    "dimension": "pressure",
+    "description": "101325 Pa, standard atmospheric pressure"
+  },
+  {
+    "symbol": "J",
+    "name": "Joule",
+    "dimension": "energy",
+    "description": "SI base unit of energy"
+  },
+  {
+    "symbol": "kJ",
+    "name": "Kilojoule",
+    "dimension": "energy",
+    "description": "10^3 Joules"
+  },
+  {
+    "symbol": "eV",
+    "name": "Electronvolt",
+    "dimension": "energy",
+    "description": "Unit of energy commonly used in atomic/nuclear physics"
+  },
+  {
+    "symbol": "W/m·K",
+    "name": "Watt per meter-Kelvin",
+    "dimension": "thermal_conductivity",
+    "description": "SI unit of thermal conductivity"
+  },
+  {
+    "symbol": "m",
+    "name": "Meter",
+    "dimension": "length",
+    "description": "SI base unit of length"
+  },
+  {
+    "symbol": "cm",
+    "name": "Centimeter",
+    "dimension": "length",
+    "description": "10^-2 meters"
+  },
+  {
+    "symbol": "μm",
+    "name": "Micrometer",
+    "dimension": "length",
+    "description": "10^-6 meters"
+  },
+  {
+    "symbol": "nm",
+    "name": "Nanometer",
+    "dimension": "length",
+    "description": "10^-9 meters, common in crystal structure"
+  },
+  {
+    "symbol": "Å",
+    "name": "Angstrom",
+    "dimension": "length",
+    "description": "10^-10 meters, traditional unit for lattice parameters"
+  },
+  {
+    "symbol": "kg/m³",
+    "name": "Kilogram per cubic meter",
+    "dimension": "density",
+    "description": "SI unit of density"
+  },
+  {
+    "symbol": "g/cm³",
+    "name": "Gram per cubic centimeter",
+    "dimension": "density",
+    "description": "Common unit for material density, 1 g/cm³ = 1000 kg/m³"
+  },
+  {
+    "symbol": "J/kg·K",
+    "name": "Joule per kilogram-Kelvin",
+    "dimension": "specific_heat",
+    "description": "SI unit of specific heat capacity"
+  },
+  {
+    "symbol": "W/m²",
+    "name": "Watt per square meter",
+    "dimension": "heat_flux",
+    "description": "SI unit of heat flux density"
+  },
+  {
+    "symbol": "1",
+    "name": "Dimensionless",
+    "dimension": "dimensionless",
+    "description": "Dimensionless quantity"
+  }
+]

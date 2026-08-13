@@ -1,0 +1,124 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 17: UO2 response vs temperature",
+  "bounding_box": {
+    "x": 58.5,
+    "y": 49.1,
+    "width": 523.4,
+    "height": 303.8
+  },
+  "plot_data": {
+    "title": "F82H tensile response",
+    "plot_type": "bar",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        144.8889,
+        251.7983,
+        358.7077,
+        465.6172,
+        572.5266,
+        679.4361,
+        786.3455,
+        893.2549,
+        1000.1644,
+        1107.0738,
+        1213.9833,
+        1320.8927
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        42.621,
+        136.8257,
+        231.0304,
+        325.2351,
+        419.4398,
+        513.6445,
+        607.8492,
+        702.0539,
+        796.2586,
+        890.4633,
+        984.668,
+        1078.8727
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          658.9544,
+          317.3502,
+          798.6279,
+          952.4565,
+          569.4043,
+          267.1075,
+          696.6336,
+          517.0513,
+          935.622,
+          138.3888,
+          1112.8003,
+          117.7894
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          229.6143,
+          687.623,
+          1212.6406,
+          1138.0664,
+          461.9093,
+          891.1975,
+          1013.7137,
+          783.6015,
+          177.4381,
+          233.6753,
+          1132.008,
+          633.5673
+        ],
+        "color": "blue",
+        "marker_style": "circle"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          294.5033,
+          364.2591,
+          287.3764,
+          804.0911,
+          831.8078,
+          938.6736,
+          1154.0904,
+          786.6272,
+          1111.7174,
+          942.9616,
+          156.9516,
+          204.0091
+        ],
+        "color": "blue",
+        "marker_style": "triangle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.781
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-016/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 285.2,
+  "fallback_used": false,
+  "paper_id": "plot-016"
+}

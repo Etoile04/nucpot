@@ -1,0 +1,141 @@
+{
+  "id": "uo2-thermal-conductivity",
+  "description": "UO2 thermal conductivity - scientific notation, LaTeX, uncertainty",
+  "source_file": "fink_2000_uo2_tc.md",
+  "property_category": "热传导率",
+  "records": [
+    {
+      "id": "uo2-tc-sci-e",
+      "input": {
+        "source_file": "fink_2000_uo2_tc.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "热传导率",
+        "property": "热导率",
+        "value": "3.5e-2",
+        "unit": "W/(m·K)",
+        "conditions": {
+          "temp_C": 800,
+          "condition_type": "experimental"
+        },
+        "context": "stoichiometric UO2 at elevated temperature",
+        "reference": "Fink, J. Nucl. Mater. 2000"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 0.035
+        },
+        "cleaned_value": "3.5e-2",
+        "confidence": "high",
+        "dedup_hash": "9f8f341cd796c6f9f93a9aa8481ded71a3cd074bb16484c972b64faa7e06aa3c",
+        "staging": {
+          "source_file": "fink_2000_uo2_tc.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "热传导率",
+          "property_name": "热导率",
+          "value": 0.035,
+          "unit": "W/(m·K)",
+          "temperature": 800.0,
+          "method": null,
+          "context": "stoichiometric UO2 at elevated temperature",
+          "confidence": "medium",
+          "source": "Fink, J. Nucl. Mater. 2000"
+        }
+      }
+    },
+    {
+      "id": "uo2-tc-latex-times",
+      "input": {
+        "source_file": "fink_2000_uo2_tc.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "热传导率",
+        "property": "热导率",
+        "value": "$8.5\\times10^{-3}$",
+        "unit": "W/(m·K)",
+        "conditions": {
+          "temp_C": 1500,
+          "condition_type": "experimental"
+        },
+        "context": "high temperature regime",
+        "reference": "Fink, J. Nucl. Mater. 2000"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 0.0085
+        },
+        "cleaned_value": "8.5×10^-3",
+        "confidence": "high",
+        "dedup_hash": "9f8f341cd796c6f9f93a9aa8481ded71a3cd074bb16484c972b64faa7e06aa3c",
+        "staging": {
+          "source_file": "fink_2000_uo2_tc.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "热传导率",
+          "property_name": "热导率",
+          "value": 0.0085,
+          "unit": "W/(m·K)",
+          "temperature": 1500.0,
+          "method": null,
+          "context": "high temperature regime",
+          "confidence": "medium",
+          "source": "Fink, J. Nucl. Mater. 2000"
+        }
+      }
+    },
+    {
+      "id": "uo2-tc-uncertainty",
+      "input": {
+        "source_file": "fink_2000_uo2_tc.md",
+        "material_name": "UO2",
+        "composition": "UO2.00",
+        "phase": "alpha",
+        "element": "U",
+        "property_category": "热传导率",
+        "property": "热导率",
+        "value": "5.0 ± 0.3",
+        "unit": "W/(m·K)",
+        "conditions": {
+          "temp_C": 300,
+          "condition_type": "experimental"
+        },
+        "context": "room temperature measurement",
+        "reference": "Fink, J. Nucl. Mater. 2000"
+      },
+      "expected": {
+        "parsed_value": {
+          "main_value": 5.0,
+          "uncertainty": 0.3
+        },
+        "cleaned_value": "5.0 ± 0.3",
+        "confidence": "high",
+        "dedup_hash": "9f8f341cd796c6f9f93a9aa8481ded71a3cd074bb16484c972b64faa7e06aa3c",
+        "staging": {
+          "source_file": "fink_2000_uo2_tc.md",
+          "element_system": "UO2",
+          "composition": "UO2.00",
+          "phase": "alpha",
+          "element": "U",
+          "property_category": "热传导率",
+          "property_name": "热导率",
+          "value": 5.0,
+          "unit": "W/(m·K)",
+          "temperature": 300.0,
+          "method": null,
+          "context": "room temperature measurement",
+          "confidence": "medium",
+          "source": "Fink, J. Nucl. Mater. 2000"
+        }
+      }
+    }
+  ]
+}

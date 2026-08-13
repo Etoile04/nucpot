@@ -1,0 +1,40 @@
+{
+  "fields": {
+    "created_at": {
+      "default": null,
+      "required": false,
+      "type": "datetime.datetime|None"
+    },
+    "error_message": {
+      "default": null,
+      "required": false,
+      "type": "str|None"
+    },
+    "job_id": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "message": {
+      "default": "'Extraction job queued successfully.'",
+      "required": false,
+      "type": "<class'str'>"
+    },
+    "source_reference": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "source_type": {
+      "default": "PydanticUndefined",
+      "required": true,
+      "type": "<class'str'>"
+    },
+    "status": {
+      "default": "'queued'",
+      "required": false,
+      "type": "<class'str'>"
+    }
+  },
+  "literals": {}
+}

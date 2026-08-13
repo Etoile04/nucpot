@@ -1,0 +1,124 @@
+{
+  "figure_type": "plot",
+  "title": "Figure 19: BaFe12O19 response vs temperature",
+  "bounding_box": {
+    "x": 55.9,
+    "y": 63.7,
+    "width": 510.4,
+    "height": 336.4
+  },
+  "plot_data": {
+    "title": "F82H tensile response",
+    "plot_type": "line",
+    "x_axis": {
+      "label": "Temperature",
+      "unit": "K",
+      "values": [
+        351.9661,
+        452.514,
+        553.0618,
+        653.6097,
+        754.1576,
+        854.7055,
+        955.2533,
+        1055.8012,
+        1156.3491,
+        1256.8969,
+        1357.4448,
+        1457.9927
+      ],
+      "scale": "linear"
+    },
+    "y_axis": {
+      "label": "Stress",
+      "unit": "MPa",
+      "values": [
+        98.093,
+        189.4294,
+        280.7658,
+        372.1022,
+        463.4386,
+        554.775,
+        646.1114,
+        737.4478,
+        828.7842,
+        920.1206,
+        1011.4571,
+        1102.7935
+      ],
+      "scale": "linear"
+    },
+    "series": [
+      {
+        "name": "sample 0",
+        "values": [
+          655.0144,
+          602.8115,
+          399.0168,
+          1203.4971,
+          1211.0469,
+          432.5995,
+          721.3873,
+          804.1273,
+          120.1562,
+          967.7577,
+          424.4783,
+          1039.3067
+        ],
+        "color": "black",
+        "marker_style": "triangle"
+      },
+      {
+        "name": "sample 1",
+        "values": [
+          93.5428,
+          653.4871,
+          852.0713,
+          414.447,
+          569.5925,
+          369.6111,
+          142.7262,
+          450.0226,
+          1228.7194,
+          898.3104,
+          485.3171,
+          544.4313
+        ],
+        "color": "green",
+        "marker_style": "square"
+      },
+      {
+        "name": "sample 2",
+        "values": [
+          635.8271,
+          1270.0609,
+          625.1168,
+          341.9793,
+          1142.5566,
+          1275.6391,
+          393.7856,
+          118.9043,
+          750.9689,
+          1018.6936,
+          1262.984,
+          732.9803
+        ],
+        "color": "red",
+        "marker_style": "circle"
+      }
+    ],
+    "legend_entries": [
+      "sample 0",
+      "sample 1",
+      "sample 2"
+    ],
+    "annotations": [],
+    "confidence": 0.855
+  },
+  "source_image_path": "apps/api/tests/fixtures/extraction/plot/plot-018/image.png",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "extraction_time_ms": 298.3,
+  "fallback_used": false,
+  "paper_id": "plot-018"
+}
