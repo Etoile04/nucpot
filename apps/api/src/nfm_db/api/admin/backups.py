@@ -14,6 +14,8 @@ endpoint returns ``503`` when the disk-stat call is unavailable.
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,6 +32,8 @@ from nfm_db.schemas.backup import (
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.services import backup_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["备份管理"])
 
 
@@ -37,6 +41,37 @@ def _ensure_backup_enabled() -> None:
     """Raise 404 when the operator has disabled the backup subsystem."""
     if not backup_service.is_backup_enabled():
         raise HTTPException(status_code=404, detail="Backup subsystem disabled")
+
+
+def _resolve_backup_dir(override: str | None) -> Path:
+    """Canonicalize and validate a backup directory path.
+
+    Rejects paths that resolve outside ``backup_service.BACKUP_DIR`` to
+    prevent admin-only directory traversal (CR review finding).  The
+    allowed root is read dynamically from the service module so that
+    test monkeypatches take effect without patching this module too.
+    """
+    target = Path(override) if override else backup_service.BACKUP_DIR
+    try:
+        resolved = target.resolve(strict=False)
+    except (OSError, ValueError) as exc:
+        logger.warning("Invalid backup_dir path %r: %s", override, exc)
+        raise HTTPException(status_code=400, detail="Invalid backup_dir path") from exc
+
+    allowed = backup_service.BACKUP_DIR.resolve(strict=False)
+    try:
+        resolved.relative_to(allowed)
+    except ValueError:
+        logger.warning(
+            "backup_dir %s resolved outside allowed root %s — rejected",
+            resolved,
+            allowed,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="backup_dir must resolve inside the configured backup root",
+        )
+    return resolved
 
 
 @router.get(
@@ -74,7 +109,7 @@ async def get_backups(
         extension: File extension filter.
     """
     _ensure_backup_enabled()
-    target = backup_dir or str(backup_service.BACKUP_DIR)
+    target = _resolve_backup_dir(backup_dir)
     result = backup_service.list_snapshots(target, extension=extension)
     return ApiResponse(success=True, data=result)
 
@@ -108,7 +143,7 @@ async def get_backup_stats_endpoint(
         backup_dir: Optional directory override.
     """
     _ensure_backup_enabled()
-    target = backup_dir or str(backup_service.BACKUP_DIR)
+    target = _resolve_backup_dir(backup_dir)
     try:
         result = backup_service.get_backup_stats(target)
     except OSError:

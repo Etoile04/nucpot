@@ -45,13 +45,15 @@ logger = logging.getLogger(__name__)
 # Module-level configuration (introspected by tests; never rely on closures)
 # ---------------------------------------------------------------------------
 
-BACKUP_DIR: Path = Path("/var/backups/nucpot")
-"""Default backup directory; overridable for tests and per-environment config."""
+BACKUP_DIR: Path = Path(
+    os.environ.get("NFM_BACKUP_DIR", "/var/backups/nucpot")
+)
+"""Default backup directory; overridable via ``NFM_BACKUP_DIR`` env var."""
 
 STATS_CACHE_TTL_SECONDS: float = 1.0
 """TTL for the ``get_backup_stats`` cache (per spec: 1 second)."""
 
-_REFUSAL_FILE: Path | None = Path("/var/backups/nucpot/.refusals.json")
+_REFUSAL_FILE: Path | None = BACKUP_DIR / ".refusals.json"
 """Path to the JSON sidecar that persists refusal counts across restarts."""
 
 _STATS_CACHE: dict[str, tuple[float, BackupStatsResponse]] = {}
