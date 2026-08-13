@@ -39,7 +39,7 @@ router = APIRouter(tags=["备份管理"])
     response_model=ApiResponse[BackupListResponse],
     summary="列出备份快照",
     description=(
-        "扫描备份目录，返回所有备份快照的元数据列表，"
+        "扫描备份目录，返回所有备份快照的元数据列表，",  # noqa: RUF001
         "每个快照包含 GFS 保留层级 (hourly | daily | weekly)。\n\n"
         "Scans the backup directory and returns metadata for every snapshot, "
         "including its GFS retention tier. Admin-only."
@@ -75,8 +75,8 @@ async def get_backups(
     response_model=ApiResponse[BackupStatsResponse],
     summary="备份容量统计",
     description=(
-        "返回备份子系统的实时磁盘和容量指标："
-        "totalBytes、freeBytes、refusalCount、lastRefusalAt，"
+        "返回备份子系统的实时磁盘和容量指标：",  # noqa: RUF001
+        "totalBytes、freeBytes、refusalCount、lastRefusalAt，",  # noqa: RUF001
         "以及按 tier 拆分的 {count, bytes} 统计。\n\n"
         "Returns real-time disk and capacity metrics for the backup subsystem "
         "(totalBytes, freeBytes, refusalCount, lastRefusalAt) plus a per-tier "
