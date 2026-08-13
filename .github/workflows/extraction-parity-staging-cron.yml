@@ -1,0 +1,235 @@
+# =============================================================================
+# NFM-2945 — Nightly extraction parity job against staging
+# =============================================================================
+# Runs V1/V2 extraction parity tests (NFM-2593) on a nightly schedule so
+# staging artifacts accumulate for the ADR-0007 §4 7-day green-streak gate.
+#
+# This workflow is observational (ADR-0007 §3): failures do NOT block
+# deploys.  Every run uploads a per-fixture summary artifact retained for
+# 30 days — longer than the 7-day gate plus retry headroom.
+#
+# Schedule: 02:00 UTC daily (off-peak for US + EU teams).
+# Manual:   workflow_dispatch with optional fixture filter.
+# =============================================================================
+
+name: Extraction Parity — Nightly Staging
+
+on:
+  schedule:
+    # Daily at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      pytest_filter:
+        description: "Optional pytest filter expression (e.g. 'test_parity_flag')"
+        required: false
+        default: ""
+
+concurrency:
+  group: extraction-parity-staging-cron
+  cancel-in-progress: false  # never cancel a scheduled parity run
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  parity:
+    name: V1/V2 Extraction Parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout origin/main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # -----------------------------------------------------------------------
+      # Run parity tests.
+      # --override-ini="addopts=" strips the default "-m 'not integration'"
+      # so parity tests (which are unit-level with mocks) always run.
+      # --no-cov keeps this job independent of the coverage gate — parity
+      # is about correctness, not coverage percentage.
+      # --tb=short keeps the log focused; full tracebacks are in the artifact.
+      # --junitxml produces a stdlib-parseable XML report (no extra deps).
+      # continue-on-error makes this observational per ADR-0007 §3.
+      # -----------------------------------------------------------------------
+      - name: Run parity tests
+        id: parity
+        run: |
+          FILTER="${{ github.event.inputs.pytest_filter }}"
+          if [ -n "$FILTER" ]; then
+            echo "Running with filter: ${FILTER}"
+            uv run pytest \
+              tests/services/test_parity_flag_routing.py \
+              -k "$FILTER" \
+              -v --tb=short --no-cov \
+              --override-ini="addopts=" \
+              --junitxml=parity-junit.xml \
+              || true
+          else
+            uv run pytest \
+              tests/services/test_parity_flag_routing.py \
+              -v --tb=short --no-cov \
+              --override-ini="addopts=" \
+              --junitxml=parity-junit.xml \
+              || true
+          fi
+
+      # -----------------------------------------------------------------------
+      # Parse JUnit XML into JSON + Markdown digest (stdlib only — no extra
+      # dependencies required).  The JSON artifact is the machine-readable
+      # source for the 7-day streak tally; the Markdown is the human-readable
+      # summary posted to the Actions run page.
+      # -----------------------------------------------------------------------
+      - name: Generate parity results (JSON + Markdown digest)
+        if: always()
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import sys
+          import xml.etree.ElementTree as ET
+          from datetime import datetime, timezone
+
+          JUNIT_PATH = "parity-junit.xml"
+          JSON_PATH = "parity-results.json"
+          DIGEST_PATH = "parity-digest.md"
+
+          try:
+              tree = ET.parse(JUNIT_PATH)
+              root = tree.getroot()
+          except (FileNotFoundError, ET.ParseError) as exc:
+              print(f"ERROR: Cannot parse {JUNIT_PATH}: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          tests = []
+          total = passed = failed = errors = skipped = 0
+          for testcase in root.iter("testcase"):
+              total += 1
+              nodeid = testcase.get("name", "unknown")
+              classname = testcase.get("classname", "")
+              full_name = f"{classname}::{nodeid}" if classname else nodeid
+              duration_s = float(testcase.get("time", 0))
+
+              failure = testcase.find("failure")
+              error = testcase.find("error")
+              skip = testcase.find("skipped")
+
+              if skip is not None:
+                  skipped += 1
+                  outcome = "skipped"
+              elif failure is not None:
+                  failed += 1
+                  outcome = "failed"
+              elif error is not None:
+                  errors += 1
+                  outcome = "error"
+              else:
+                  passed += 1
+                  outcome = "passed"
+
+              tests.append({
+                  "nodeid": full_name,
+                  "outcome": outcome,
+                  "duration_s": round(duration_s, 3),
+              })
+
+          report = {
+              "timestamp": ts,
+              "run_id": "${{ github.run_id }}",
+              "summary": {
+                  "total": total,
+                  "passed": passed,
+                  "failed": failed,
+                  "errors": errors,
+                  "skipped": skipped,
+                  "pass_rate": round(passed / total * 100, 1) if total > 0 else 0.0,
+              },
+              "tests": tests,
+          }
+
+          with open(JSON_PATH, "w") as f:
+              json.dump(report, f, indent=2)
+
+          # Markdown digest
+          pass_rate = report["summary"]["pass_rate"]
+          lines = [
+              f"# Extraction Parity Digest — {ts}",
+              "",
+              "| Metric | Value |",
+              "|--------|-------|",
+              f"| Total tests | {total} |",
+              f"| Passed | {passed} |",
+              f"| Failed | {failed} |",
+              f"| Errors | {errors} |",
+              f"| Skipped | {skipped} |",
+              f"| Pass rate | {pass_rate}% |",
+              "",
+          ]
+
+          for t in tests:
+              icon = "✅" if t["outcome"] == "passed" else (
+                  "⏭️" if t["outcome"] == "skipped" else "❌"
+              )
+              ms = t["duration_s"] * 1000
+              lines.append(f"- {icon} `{t['nodeid']}` — {t['outcome']} ({ms:.0f}ms)")
+
+          lines.append("")
+
+          with open(DIGEST_PATH, "w") as f:
+              f.write("\n".join(lines))
+
+          print(f"JSON: {JSON_PATH} | Digest: {DIGEST_PATH} | {passed}/{total} passed")
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # Upload artifacts with 30-day retention (> 7-day gate + headroom).
+      # -----------------------------------------------------------------------
+      - name: Upload parity results (JSON)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: parity-results-${{ github.run_number }}
+          path: apps/api/parity-results.json
+          retention-days: 30
+
+      - name: Upload parity digest (Markdown)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: parity-digest-${{ github.run_number }}
+          path: apps/api/parity-digest.md
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # Job summary — visible in the Actions run page.
+      # -----------------------------------------------------------------------
+      - name: Write job summary
+        if: always()
+        run: |
+          if [ -f parity-digest.md ]; then
+            cat parity-digest.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Parity digest not generated — check the pytest step." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Run**: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Schedule**: 02:00 UTC daily" >> "$GITHUB_STEP_SUMMARY"
