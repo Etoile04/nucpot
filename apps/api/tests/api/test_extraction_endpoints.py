@@ -266,7 +266,7 @@ async def test_status_returns_200_for_found_job(async_client):
         class _FakeSession:
             async def execute(self, stmt):
                 class _R:
-                    def scalar_one_or_none(self_inner):
+                    def scalar_one_or_none(self):
                         return _make_status_result(id=job_id)
 
                 return _R()

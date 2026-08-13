@@ -212,7 +212,8 @@ async def get_extraction_status(
             select(ExtractionJob).where(ExtractionJob.id == job_id)
         )
         job = result.scalar_one_or_none()
-    except Exception:
+    except (ValueError, SQLAlchemyError) as exc:
+        logger.warning("ORM job lookup failed for %s: %s", job_id, exc)
         job = None
 
     if job is not None:
@@ -660,7 +661,8 @@ async def get_ingest_job_status(
             select(ExtractionJob).where(ExtractionJob.id == uuid.UUID(job_id))
         )
         job = result.scalar_one_or_none()
-    except Exception:
+    except (ValueError, SQLAlchemyError) as exc:
+        logger.warning("ORM job lookup failed for %s: %s", job_id, exc)
         job = None
     if job is not None:
         return {
