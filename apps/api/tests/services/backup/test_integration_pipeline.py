@@ -25,13 +25,9 @@ from pathlib import Path
 
 import pytest
 
-from nfm_db.config.backup import (
-    BackupConfig,
-    RetentionTier,
-    TieredRetention,
-    check_retention_deprecation,
-)
-from nfm_db.schemas.backup import BackupTier
+from nfm_db.backup.config_loader import check_retention_deprecation
+from nfm_db.backup.schema import BackupConfig, RetentionConfig, TierSpec
+from nfm_db.backup.tier_engine import Tier
 from nfm_db.services.backup.config import BackupCapacityConfig
 from nfm_db.services.backup.guardrails import (
     CapacityGuardrails,
@@ -43,6 +39,11 @@ from nfm_db.services.backup.retention import (
     RetentionResult,
     apply_tiered_retention,
 )
+
+# Type aliases for readability — match the test's domain vocabulary.
+BackupTier = Tier
+TieredRetention = RetentionConfig
+RetentionTier = TierSpec
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +228,9 @@ class TestSettlePipeline:
         )
 
         # No refusals during the healthy settle path.
-        assert metrics.refusal_count == 0, (
-            f"No refusals expected during settle, got {metrics.refusal_count}"
+        assert guardrails.metrics.refusal_count == 0, (
+            "No refusals expected during settle, got "
+            f"{guardrails.metrics.refusal_count}"
         )
 
         # The tier-aware pruner pruned at least the 5 hourly extras.
@@ -272,8 +274,8 @@ class TestFloorBreachIntegration:
         assert event.floor == 20 * _GIB
 
         # The metric was recorded for SRE alerting.
-        assert metrics.refusal_count == 1
-        assert metrics.last_refusal_at is not None
+        assert guardrails.metrics.refusal_count == 1
+        assert guardrails.metrics.last_refusal_at is not None
 
         # The SRE-WARNING log line is emitted (matches NFM-2915 alert).
         assert "[SRE-WARNING]" in caplog.text
@@ -343,7 +345,9 @@ class TestLegacyRetentionMigration:
             refuse_on_floor_breach=True,
         )
 
-        with caplog.at_level(logging.WARNING, logger="nfm_db.config.backup"):
+        with caplog.at_level(
+            logging.WARNING, logger="nfm_db.backup.config_loader"
+        ):
             check_retention_deprecation(cfg)
 
         assert "[DEPRECATION]" in caplog.text
@@ -378,7 +382,9 @@ class TestLegacyRetentionMigration:
             retention=TieredRetention(),  # explicit tiered config
             retention_days=None,
         )
-        with caplog.at_level(logging.WARNING, logger="nfm_db.config.backup"):
+        with caplog.at_level(
+            logging.WARNING, logger="nfm_db.backup.config_loader"
+        ):
             check_retention_deprecation(cfg)
         assert "[DEPRECATION]" not in caplog.text
 
@@ -443,7 +449,7 @@ class TestEndToEndPipelineOrder:
             recheck = guardrails.recheck_floor_after_pruner(disk=mock_disk.usage())
 
         assert recheck is None
-        assert metrics.refusal_count == 0
+        assert guardrails.metrics.refusal_count == 0
         assert "Post-pruner floor breach" not in caplog.text
 
 

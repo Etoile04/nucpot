@@ -21,15 +21,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from nfm_db.config.backup import TieredRetention
-from nfm_db.schemas.backup import BackupTier
+from nfm_db.backup.schema import RetentionConfig
+from nfm_db.backup.tier_engine import Tier
 
 logger = logging.getLogger(__name__)
 
-_TIER_SUFFIX_TO_TIER: dict[str, BackupTier] = {
-    ".hourly": BackupTier.HOURLY,
-    ".daily": BackupTier.DAILY,
-    ".weekly": BackupTier.WEEKLY,
+_TIER_SUFFIX_TO_TIER: dict[str, Tier] = {
+    ".hourly": Tier.HOURLY,
+    ".daily": Tier.DAILY,
+    ".weekly": Tier.WEEKLY,
 }
 
 
@@ -39,10 +39,10 @@ class RetentionResult:
 
     pruned_paths: list[Path] = field(default_factory=list)
     pruned_count: int = 0
-    kept_by_tier: dict[BackupTier, int] = field(default_factory=dict)
+    kept_by_tier: dict[Tier, int] = field(default_factory=dict)
 
 
-def _tier_from_filename(filename: str) -> Optional[BackupTier]:
+def _tier_from_filename(filename: str) -> Optional[Tier]:
     """Map a filename to its GFS tier using the dot-suffix convention."""
     lower = filename.lower()
     for suffix, tier in _TIER_SUFFIX_TO_TIER.items():
@@ -60,7 +60,7 @@ def _list_snapshot_files(backup_dir: Path) -> list[Path]:
 
 def apply_tiered_retention(
     backup_dir: Path,
-    retention: TieredRetention,
+    retention: RetentionConfig,
 ) -> RetentionResult:
     """Prune oldest snapshots in each tier beyond the configured ``count``.
 
@@ -77,21 +77,22 @@ def apply_tiered_retention(
     if not files:
         return RetentionResult()
 
-    # Group files by tier.
-    tier_buckets: dict[BackupTier, list[Path]] = {t: [] for t in BackupTier}
+    # Group files by tier (only the three retention tiers, not PRUNABLE).
+    _retention_tiers = [Tier.HOURLY, Tier.DAILY, Tier.WEEKLY]
+    tier_buckets: dict[Tier, list[Path]] = {t: [] for t in _retention_tiers}
     for path in files:
         tier = _tier_from_filename(path.name)
         if tier is not None:
             tier_buckets[tier].append(path)
 
     tier_caps = {
-        BackupTier.HOURLY: retention.hourly.count,
-        BackupTier.DAILY: retention.daily.count,
-        BackupTier.WEEKLY: retention.weekly.count,
+        Tier.HOURLY: retention.hourly.count,
+        Tier.DAILY: retention.daily.count,
+        Tier.WEEKLY: retention.weekly.count,
     }
 
     pruned: list[Path] = []
-    kept_by_tier: dict[BackupTier, int] = {}
+    kept_by_tier: dict[Tier, int] = {}
 
     for tier, bucket in tier_buckets.items():
         # Sort oldest-first so we keep the newest.
