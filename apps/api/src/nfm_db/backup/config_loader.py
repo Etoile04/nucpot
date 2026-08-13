@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from nfm_db.backup.schema import BackupConfig
 
@@ -27,7 +27,7 @@ _NEW_KEY = "retention"
 def _read_json(path: Path) -> dict[str, Any]:
     """Read and parse a JSON file. Raises ``FileNotFoundError`` / ``json.JSONDecodeError``."""
     with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+        return cast(dict[str, Any], json.load(fh))
 
 
 def load_backup_config(path: str | Path) -> BackupConfig:
