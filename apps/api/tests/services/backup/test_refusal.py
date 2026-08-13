@@ -35,20 +35,27 @@ from nfm_db.services.backup.metrics import BackupMetrics
 
 _GIB = 1024**3
 
+# Patch target: the ``datetime`` name inside the metrics module where
+# ``record_refusal()`` calls ``datetime.now(UTC)``.  Patching the
+# module-level reference works on CPython 3.12 (Linux) where the C type
+# ``datetime.datetime`` is immutable and rejects ``setattr``.
+_METRICS_DT = "nfm_db.services.backup.metrics.datetime"
+
 
 def _freeze_clock(dt: datetime):
-    """Decorator/context-manager that freezes ``datetime.now()`` to *dt*.
+    """Decorator that freezes ``datetime.now()`` to *dt*.
 
-    Replaces the ``freezegun`` dependency with stdlib-only mocking.
-    Patches ``datetime.now`` on the class itself (shared reference across
-    all modules that import ``datetime``), so the guardrails code that calls
-    ``datetime.now(UTC)`` observes the frozen value.
+    Patches the ``datetime`` name inside the metrics module (not the C
+    type itself) so ``record_refusal()`` observes the frozen value.
+    This works on all CPython versions including 3.12+ where the
+    built-in ``datetime.datetime`` type is immutable.
     """
 
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            with patch.object(datetime, "now", return_value=dt):
+            with patch(_METRICS_DT) as mock_dt:
+                mock_dt.now.return_value = dt
                 return func(*args, **kwargs)
         return wrapper
 
@@ -253,14 +260,16 @@ class TestConsecutiveRefusalsOverwrite:
         disk = _make_disk(free=21 * _GIB, total_backup=0)
 
         # First refusal at T+0s (frozen at 12:00:00)
-        with patch.object(datetime, "now", return_value=_T12_00):
+        with patch(_METRICS_DT) as _m:
+            _m.now.return_value = _T12_00
             gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
         assert metrics.last_refusal_at == _T12_00
 
         # Second refusal at T+30s (frozen at 12:00:30)
-        with patch.object(datetime, "now", return_value=_T12_30):
+        with patch(_METRICS_DT) as _m:
+            _m.now.return_value = _T12_30
             event2 = gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 2
@@ -280,14 +289,16 @@ class TestConsecutiveRefusalsOverwrite:
         disk = _make_disk(free=21 * _GIB, total_backup=0)
 
         # First refusal at T+0s (pre-write)
-        with patch.object(datetime, "now", return_value=_T12_00):
+        with patch(_METRICS_DT) as _m:
+            _m.now.return_value = _T12_00
             gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
 
         assert metrics.refusal_count == 1
 
         # Second refusal at T+60s (post-pruner, different trigger)
         low_disk = _make_disk(free=5 * _GIB, total_backup=0)
-        with patch.object(datetime, "now", return_value=_T12_01):
+        with patch(_METRICS_DT) as _m:
+            _m.now.return_value = _T12_01
             event2 = gr.recheck_floor_after_pruner(disk=low_disk)
 
         assert metrics.refusal_count == 2
