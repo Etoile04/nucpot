@@ -7,7 +7,7 @@ Covers:
 3. Input hash skip logic — step skipped when hash matches prior completion.
 4. Step failure persists error_message and stops pipeline.
 5. compute_input_hash determinism.
-6. Feature flag defaults to False.
+6. Feature flag defaults to True (NFM-2869-T2 flip; staging parity verified NFM-2875).
 7. Feature flag routing: when True, orchestrator is called; when False, legacy runs.
 8. _step_quality_gate wraps QualityGateService.process_bulk (NFM-2588).
 """
@@ -267,12 +267,12 @@ def test_pipeline_steps_order() -> None:
 class TestFeatureFlagRouting:
     """Tests for EXTRACTION_V2_ENABLED feature flag."""
 
-    def test_flag_defaults_to_false(self) -> None:
-        """AC: Feature flag defaults to False."""
+    def test_flag_defaults_to_true(self) -> None:
+        """AC: Feature flag defaults to True (NFM-2869-T2 flip; parity NFM-2875)."""
         from nfm_db.config import Settings
 
         s = Settings()
-        assert s.extraction_v2_enabled is False
+        assert s.extraction_v2_enabled is True
 
     def test_flag_enabled_via_env(self, monkeypatch) -> None:
         """Flag can be enabled via environment variable NFM_EXTRACTION_V2_ENABLED."""

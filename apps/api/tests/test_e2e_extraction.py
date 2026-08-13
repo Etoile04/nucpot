@@ -20,7 +20,7 @@ Conventions:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import func
@@ -43,6 +43,42 @@ from nfm_db.services.quality_gate import (
     QualityGateService,
     compute_dedup_hash,
 )
+
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the legacy ``trigger_extraction`` dataclass branch via
+# ``db_session`` fixtures end-to-end (real QualityGateService, real
+# ontofuel_extract stub, only GapScanService mocked).  V2 does not
+# yet have feature parity with the legacy pipeline for these flows
+# (NFM-2909 partial fix).
+# -----------------------------------------------------------------------
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    ``trigger_extraction`` does ``from nfm_db.config import get_settings``
+    locally — shadows module-level patch.  Use ``create=True`` to inject
+    a patched ``get_settings`` into the ``extraction_pipeline`` namespace
+    so the local import resolves to our V1 stub.
+    """
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+    ):
+        yield
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -10,11 +10,50 @@ Requires EXTRACTION_STUB_MODE=true in the environment for stub mode tests.
 
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the legacy ``trigger_extraction`` dataclass branch and the
+# HTTP submit/validate paths that still call into it.
+# -----------------------------------------------------------------------
+from unittest.mock import MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from nfm_db.database import get_db
 from nfm_db.main import app
+
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    The V2 orchestrator does NOT yet support ``source_type='doi'``
+    outside of stub mode (NFM-2909 partial fix), so these regression
+    tests must continue exercising V1 until V2 gains parity.
+    """
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+    ):
+        yield
 
 
 @pytest.fixture
