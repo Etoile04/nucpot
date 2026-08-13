@@ -87,7 +87,7 @@ def _resolve_backup_dir(override: str | None) -> Path:
         "Admin-only."
     ),
 )
-@limiter.exempt  # type: ignore[misc]
+@limiter.exempt  # type: ignore[untyped-decorator]
 async def get_backups(
     _user: Annotated[User, Depends(require_blog_role(BlogRole.ADMIN))],
     _db: Annotated[AsyncSession, Depends(get_db)],
@@ -126,7 +126,7 @@ async def get_backups(
         "subsystem.  Cached for 1 second.  Admin-only."
     ),
 )
-@limiter.exempt  # type: ignore[misc]
+@limiter.exempt  # type: ignore[untyped-decorator]
 async def get_backup_stats_endpoint(
     _user: Annotated[User, Depends(require_blog_role(BlogRole.ADMIN))],
     _db: Annotated[AsyncSession, Depends(get_db)],
