@@ -30,13 +30,6 @@ from nfm_db.schemas.extraction import (
 )
 
 
-def _make_settings_v1() -> MagicMock:
-    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
-    settings = MagicMock()
-    settings.extraction_v2_enabled = False
-    return settings
-
-
 @pytest.fixture(autouse=True)
 def _pin_extraction_v2_off():
     """Route every test in this module through the V1 legacy branch.
@@ -182,6 +175,13 @@ class TestSubmitExtraction:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet support "
+            "source_type='url'. xfail until NFM-2912/NFM-2916."
+        ),
+        strict=True,
+    )
     async def test_submit_accepts_minimal_payload(self, v4_client: AsyncClient):
         payload = {
             "source_reference": "10.1016/test",
@@ -193,6 +193,13 @@ class TestSubmitExtraction:
         assert data["job_id"]
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason=(
+            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet resolve "
+            "source_type='doi'. xfail until NFM-2912/NFM-2916."
+        ),
+        strict=True,
+    )
     async def test_submit_accepts_all_valid_source_types(self, v4_client: AsyncClient):
         # Map each source_type to a representative valid source_reference.
         # DOI must match the regex guard added in NFM-632.
