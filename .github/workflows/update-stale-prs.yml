@@ -1,0 +1,105 @@
+# update-stale-prs.yml
+#
+# Periodically updates open, mergeable PR branches with the latest main.
+# This prevents cascade CI re-runs: instead of N PRs each triggering full
+# CI when main advances, PRs are kept up-to-date proactively so only
+# truly new changes incur CI cost.
+#
+# NFM-3137 — PR Cascade 1: auto-update-branch + required reviewers
+
+name: Update Stale PR Branches
+
+on:
+  schedule:
+    # Every hour at :47 (off the :00 boundary to avoid cron thundering herd)
+    - cron: "47 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List PRs that would be updated without updating them"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-stale-prs
+  cancel-in-progress: true
+
+jobs:
+  update-branches:
+    name: Update stale PR branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo (for gh auth)
+        uses: actions/checkout@v4
+
+      - name: Update stale PR branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # Fetch open, non-draft PRs that are behind main
+          PRS=$(gh pr list \
+            --state open \
+            --json number,headRefName,mergeable,isDraft,baseRefName \
+            --jq '.[] | select(.isDraft == false and .baseRefName == "main") | .number' \
+          )
+
+          if [ -z "$PRS" ]; then
+            echo "No open, non-draft PRs against main — nothing to do."
+            exit 0
+          fi
+
+          UPDATED=0
+          SKIPPED=0
+          FAILED=0
+
+          for pr_num in $PRS; do
+            # Check the PR's mergeable_state to decide action
+            STATE=$(gh api \
+              "repos/Etoile04/nucpot/pulls/${pr_num}" \
+              --jq '.mergeable_state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+
+            case "$STATE" in
+              BEHIND)
+                echo "::group::Updating PR #${pr_num} (state: BEHIND)"
+                if [ "$DRY_RUN" = "true" ]; then
+                  echo "DRY RUN: would update PR #${pr_num}"
+                  UPDATED=$((UPDATED + 1))
+                else
+                  if gh pr update-branch "$pr_num" 2>&1; then
+                    UPDATED=$((UPDATED + 1))
+                    echo "Updated PR #${pr_num}"
+                  else
+                    FAILED=$((FAILED + 1))
+                    echo "Failed to update PR #${pr_num}"
+                  fi
+                fi
+                echo "::endgroup::"
+                ;;
+              DIRTY)
+                echo "Skipping PR #${pr_num} (merge conflict)"
+                SKIPPED=$((SKIPPED + 1))
+                ;;
+              CLEAN|BLOCKED|UNSTABLE)
+                echo "Skipping PR #${pr_num} (state: $STATE — up-to-date or checks pending)"
+                SKIPPED=$((SKIPPED + 1))
+                ;;
+              *)
+                echo "Skipping PR #${pr_num} (state: $STATE — not yet computed)"
+                SKIPPED=$((SKIPPED + 1))
+                ;;
+            esac
+          done
+
+          echo "## Summary"
+          echo "- Updated: $UPDATED"
+          echo "- Skipped: $SKIPPED"
+          echo "- Failed:  $FAILED"
+          echo "total=$UPDATED $SKIPPED $FAILED"
