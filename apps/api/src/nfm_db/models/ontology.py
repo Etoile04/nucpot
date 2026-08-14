@@ -5,6 +5,7 @@ Tables:
 - kg_relation_types: controlled vocabulary for edge types (hasProperty, etc.)
 
 NFM-716 — Phase 2B.2 NucMat Ontology
+NFM-2873 — Phase 2.3 versioned FK to ontology_versions
 """
 
 from __future__ import annotations
@@ -12,13 +13,13 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfm_db.models import Base, CompatJSONB, JSONArray, TimestampMixin
 
 if TYPE_CHECKING:
-    pass
+    from nfm_db.models.ontology_version import OntologyVersion
 
 
 class KEntityType(TimestampMixin, Base):
@@ -45,6 +46,17 @@ class KEntityType(TimestampMixin, Base):
         nullable=True,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Ontology version (NFM-2873) ---
+    ontology_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ontology_versions.id"),
+        nullable=False,
+        comment="FK to the OntologyVersion this type belongs to.",
+    )
+    ontology_version: Mapped[OntologyVersion] = relationship(
+        back_populates="entity_types",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return f"<KEntityType id={self.id!s} name={self.name!r}>"
@@ -78,6 +90,17 @@ class KRelationType(TimestampMixin, Base):
         nullable=True,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Ontology version (NFM-2873) ---
+    ontology_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ontology_versions.id"),
+        nullable=False,
+        comment="FK to the OntologyVersion this type belongs to.",
+    )
+    ontology_version: Mapped[OntologyVersion] = relationship(
+        back_populates="relation_types",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return f"<KRelationType id={self.id!s} name={self.name!r}>"
