@@ -44,8 +44,8 @@ async def _create_job_with_step(
     *,
     step_type: str = "chunk",
     step_status: str = "completed",
-    started_at: datetime | None | object = _UNSET,
-    completed_at: datetime | None | object = _UNSET,
+    started_at: datetime | object | None = _UNSET,
+    completed_at: datetime | object | None = _UNSET,
 ) -> tuple[ExtractionJob, ExtractionStep]:
     """Create an ExtractionJob + ExtractionStep pair and flush."""
     now = datetime.now(UTC)
