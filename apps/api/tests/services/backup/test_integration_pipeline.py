@@ -205,7 +205,7 @@ class TestSettlePipeline:
         )
 
         # 4) Post-write cap enforcement — prunes oldest until total ≤ 12 GiB.
-        pruned_by_cap = guardrails.enforce_cap_after_write(
+        _pruned_by_cap = guardrails.enforce_cap_after_write(
             disk=mock_disk.usage()
         )
 
