@@ -45,7 +45,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 #: Default debounce window — one hour.
-_DEBOUNCE_WINDOW = timedelta(hours=1)
+_DEFAULT_DEBOUNCE_SECONDS = 3600
 
 #: SRE event type tag stored in ``health_events.event_type``.
 _EVENT_TYPE = "backup_refusal"
@@ -89,6 +89,8 @@ class RefusalAlertEmitter:
     Parameters:
         push_on_refusal: When ``False``, the SRE push is suppressed while
             refusal counting and stats continue normally.
+        debounce_seconds: Minimum seconds between consecutive SRE alert
+            pushes (default 3600 = 1 hour).
         emit_fn: The function used to persist the alert.  Defaults to
             ``emit_health_event_sync`` from the health event emitter.
             Accepts a custom callable for test injection.
@@ -98,9 +100,11 @@ class RefusalAlertEmitter:
         self,
         *,
         push_on_refusal: bool = True,
+        debounce_seconds: int = _DEFAULT_DEBOUNCE_SECONDS,
         emit_fn: Callable[..., None] | None = None,
     ) -> None:
         self._push_on_refusal = push_on_refusal
+        self._debounce_window = timedelta(seconds=debounce_seconds)
         self._last_emit_at: datetime | None = None
         self._suppressed_count: int = 0
         self._emit_fn = emit_fn or self._default_emit_fn
@@ -114,6 +118,10 @@ class RefusalAlertEmitter:
     @property
     def last_emit_at(self) -> datetime | None:
         return self._last_emit_at
+
+    @property
+    def debounce_seconds(self) -> int:
+        return int(self._debounce_window.total_seconds())
 
     @property
     def suppressed_count(self) -> int:
@@ -158,7 +166,7 @@ class RefusalAlertEmitter:
         if (
             self._last_emit_at is not None
             and self._suppressed_count > 0
-            and now - self._last_emit_at >= _DEBOUNCE_WINDOW
+            and now - self._last_emit_at >= self._debounce_window
         ):
             summary = BackupRefusalAlert(
                 refusal_count=self._suppressed_count,
@@ -174,19 +182,25 @@ class RefusalAlertEmitter:
         # Decide whether to emit or debounce the current refusal.
         if (
             self._last_emit_at is not None
-            and now - self._last_emit_at < _DEBOUNCE_WINDOW
+            and now - self._last_emit_at < self._debounce_window
         ):
             self._suppressed_count += 1
             return None
 
         # Outside the window (or first ever) — emit immediately.
-        self._do_emit(alert, is_summary=False)
-        return alert
+        ok = self._do_emit(alert, is_summary=False)
+        return alert if ok else None
 
     # -- internals -------------------------------------------------------------
 
-    def _do_emit(self, alert: BackupRefusalAlert, *, is_summary: bool) -> None:
-        """Persist the alert via the emit function (never raises)."""
+    def _do_emit(self, alert: BackupRefusalAlert, *, is_summary: bool) -> bool:
+        """Persist the alert via the emit function (never raises).
+
+        Returns ``True`` if the alert was persisted successfully,
+        ``False`` if the emit function raised.  ``_last_emit_at`` is
+        only advanced on success so that a DB-outage failure does not
+        silently debounce the next real refusal.
+        """
         context = alert.to_context()
         if is_summary:
             context["_debouncedSummary"] = True
@@ -198,11 +212,12 @@ class RefusalAlertEmitter:
                 source_service="backup_guardrails",
                 context=context,
             )
-        except Exception:
+        except (OSError, RuntimeError, AttributeError):
             logger.exception(
                 "Failed to persist backup-refusal SRE alert "
                 "(alert data logged but not written to DB)"
             )
+            return False
 
         self._last_emit_at = datetime.now(UTC)
         logger.warning(
@@ -216,6 +231,7 @@ class RefusalAlertEmitter:
             alert.max_total_bytes,
             " (debounced summary)" if is_summary else "",
         )
+        return True
 
     @staticmethod
     def _default_emit_fn(**kwargs: Any) -> None:

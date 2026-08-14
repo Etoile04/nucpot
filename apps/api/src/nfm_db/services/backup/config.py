@@ -17,6 +17,7 @@ _DEFAULT_MAX_TOTAL_BYTES: int = 12 * 1024**3   # 12 GiB
 _DEFAULT_MIN_FREE_BYTES: int = 20 * 1024**3    # 20 GiB
 _DEFAULT_REFUSE_ON_FLOOR: bool = True
 _DEFAULT_PUSH_ON_REFUSAL: bool = True
+_DEFAULT_PUSH_DEBOUNCE_SECONDS: int = 3600  # 1 hour
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class BackupCapacityConfig:
     min_free_bytes: int = _DEFAULT_MIN_FREE_BYTES
     refuse_on_floor_breach: bool = _DEFAULT_REFUSE_ON_FLOOR
     push_on_refusal: bool = _DEFAULT_PUSH_ON_REFUSAL
+    push_debounce_seconds: int = _DEFAULT_PUSH_DEBOUNCE_SECONDS
 
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> BackupCapacityConfig:
@@ -67,4 +69,5 @@ class BackupCapacityConfig:
             min_free_bytes=_int("NFM_BACKUP_MIN_FREE_BYTES", _DEFAULT_MIN_FREE_BYTES),
             refuse_on_floor_breach=_bool("NFM_BACKUP_REFUSE_ON_FLOOR", _DEFAULT_REFUSE_ON_FLOOR),
             push_on_refusal=_bool("NFM_BACKUP_PUSH_ON_REFUSAL", _DEFAULT_PUSH_ON_REFUSAL),
+            push_debounce_seconds=_int("NFM_BACKUP_PUSH_DEBOUNCE_SECONDS", _DEFAULT_PUSH_DEBOUNCE_SECONDS),
         )

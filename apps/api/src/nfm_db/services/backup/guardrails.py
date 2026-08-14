@@ -90,7 +90,10 @@ class CapacityGuardrails:
         """Create an alert emitter from the current config."""
         from .sre_alert import RefusalAlertEmitter
 
-        return RefusalAlertEmitter(push_on_refusal=self._config.push_on_refusal)
+        return RefusalAlertEmitter(
+            push_on_refusal=self._config.push_on_refusal,
+            debounce_seconds=self._config.push_debounce_seconds,
+        )
 
     # -- public properties ---------------------------------------------------
 

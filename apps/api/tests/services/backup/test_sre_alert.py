@@ -377,11 +377,11 @@ class TestEdgeCases:
             min_free_bytes=20 * _GIB,
             max_total_bytes=12 * _GIB,
         )
-        # The alert object is still returned (emit is best-effort).
-        assert result is not None
-        assert isinstance(result, BackupRefusalAlert)
-        # But last_emit_at was still recorded (emit happened, just failed).
-        assert emitter.last_emit_at is not None
+        # _do_emit returns early on failure, so on_refusal returns None.
+        assert result is None
+        # _last_emit_at is NOT advanced on failure — the next refusal
+        # within the debounce window will get a fresh chance to emit.
+        assert emitter.last_emit_at is None
 
     def test_zero_refusal_count(self) -> None:
         """A refusal_count of 0 is valid (e.g. before first refusal)."""
@@ -427,3 +427,72 @@ class TestEdgeCases:
 
         # Both emit because they have independent debounce state.
         assert emit_fn.call_count == 2
+
+    def test_configurable_debounce_seconds(self) -> None:
+        """Emitter uses custom debounce_seconds instead of default 3600."""
+        emit_fn = MagicMock()
+        emitter = RefusalAlertEmitter(
+            push_on_refusal=True,
+            debounce_seconds=60,
+            emit_fn=emit_fn,
+        )
+        assert emitter.debounce_seconds == 60
+
+        ts = datetime(2025, 8, 14, 12, 0, 0, tzinfo=UTC)
+        with patch("nfm_db.services.backup.sre_alert.datetime") as mock_dt:
+            mock_dt.now.return_value = ts
+            r1 = emitter.on_refusal(
+                refusal_count=1, last_refusal_at=ts, free_bytes=5 * _GIB,
+                total_bytes=0, min_free_bytes=20 * _GIB, max_total_bytes=12 * _GIB,
+            )
+            assert r1 is not None
+
+            # Within 60s window — suppressed.
+            mock_dt.now.return_value = datetime(2025, 8, 14, 12, 0, 30, tzinfo=UTC)
+            r2 = emitter.on_refusal(
+                refusal_count=2, last_refusal_at=ts, free_bytes=4 * _GIB,
+                total_bytes=0, min_free_bytes=20 * _GIB, max_total_bytes=12 * _GIB,
+            )
+            assert r2 is None
+            assert emitter.suppressed_count == 1
+            assert emit_fn.call_count == 1
+
+            # After 60s window — summary is flushed for 1 suppressed,
+            # then the triggering refusal is debounced by the fresh window
+            # (summary emit resets _last_emit_at).
+            mock_dt.now.return_value = datetime(2025, 8, 14, 12, 1, 1, tzinfo=UTC)
+            r3 = emitter.on_refusal(
+                refusal_count=3, last_refusal_at=ts, free_bytes=3 * _GIB,
+                total_bytes=0, min_free_bytes=20 * _GIB, max_total_bytes=12 * _GIB,
+            )
+            assert r3 is None
+            # 2 emits: initial + summary
+            assert emit_fn.call_count == 2
+
+    def test_failure_preserves_next_refusal_chance(self) -> None:
+        """After a failed emit, the next refusal is NOT debounced."""
+        def failing_emit_fn(**kwargs: Any) -> None:
+            raise OSError("DB down")
+
+        emitter = RefusalAlertEmitter(
+            push_on_refusal=True,
+            emit_fn=failing_emit_fn,
+        )
+
+        ts = datetime(2025, 8, 14, 12, 0, 0, tzinfo=UTC)
+        r1 = emitter.on_refusal(
+            refusal_count=1, last_refusal_at=ts, free_bytes=5 * _GIB,
+            total_bytes=0, min_free_bytes=20 * _GIB, max_total_bytes=12 * _GIB,
+        )
+        assert r1 is None  # failed emit
+        assert emitter.last_emit_at is None  # not advanced
+
+        # Swap in a working emit_fn — the next call should NOT be debounced.
+        working_fn = MagicMock()
+        emitter._emit_fn = working_fn
+        r2 = emitter.on_refusal(
+            refusal_count=2, last_refusal_at=ts, free_bytes=4 * _GIB,
+            total_bytes=0, min_free_bytes=20 * _GIB, max_total_bytes=12 * _GIB,
+        )
+        assert r2 is not None  # emitted successfully
+        assert working_fn.call_count == 1
