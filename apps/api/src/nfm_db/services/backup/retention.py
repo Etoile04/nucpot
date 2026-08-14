@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from nfm_db.backup.schema import RetentionConfig
 from nfm_db.backup.tier_engine import Tier
@@ -42,7 +41,7 @@ class RetentionResult:
     kept_by_tier: dict[Tier, int] = field(default_factory=dict)
 
 
-def _tier_from_filename(filename: str) -> Optional[Tier]:
+def _tier_from_filename(filename: str) -> Tier | None:
     """Map a filename to its GFS tier using the dot-suffix convention."""
     lower = filename.lower()
     for suffix, tier in _TIER_SUFFIX_TO_TIER.items():
