@@ -43,6 +43,11 @@ from nfm_db.services.extraction_pipeline import (
 
 logger = logging.getLogger(__name__)
 
+# Source types the V2 orchestrator can handle natively (file-path
+# semantics). Everything else is guarded to V1 until V2 is extended
+# (NFM-3006 / NFM-2996-T2).
+_V2_SUPPORTED_SOURCE_TYPES: frozenset[str] = frozenset({"file", "internal_id", ""})
+
 
 def _is_stub_mode() -> bool:
     """Mirror V1 stub-mode detection so V2 honours ``EXTRACTION_STUB_MODE``.
@@ -294,11 +299,6 @@ async def trigger_extraction_pipeline(
         {"status": str, "job_id": str,
          "created_at": datetime | None, "error_message": str | None}
     """
-    # Source types the V2 orchestrator can handle natively (file-path
-    # semantics). Everything else is guarded to V1 until V2 is extended
-    # (NFM-3006 / NFM-2996-T2).
-    _V2_SUPPORTED_SOURCE_TYPES = frozenset({"file", "internal_id", ""})
-
     if is_extraction_v2_enabled():
         if source_type not in _V2_SUPPORTED_SOURCE_TYPES:
             logger.warning(

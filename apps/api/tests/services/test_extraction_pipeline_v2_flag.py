@@ -472,7 +472,8 @@ def test_v2_guard_routes_empty_source_type_to_v2(monkeypatch):
     assert result["routed"] == "v2"
 
 
-def test_v2_guard_logs_warning_for_non_file(monkeypatch, caplog):
+@pytest.mark.parametrize("source_type", ["doi", "url", "datasource"])
+def test_v2_guard_logs_warning_for_non_file(monkeypatch, caplog, source_type):
     """Non-file source types produce a deprecation warning log."""
     import logging
 
@@ -482,10 +483,12 @@ def test_v2_guard_logs_warning_for_non_file(monkeypatch, caplog):
 
     from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
 
+    sample_ref = {"doi": "10.1234/test", "url": "https://example.com/paper.pdf", "datasource": "ds-001"}
+
     fake_job = ExtractionJob(
         job_id="fake-job",
-        source_reference="10.1234/test",
-        source_type="doi",
+        source_reference=sample_ref[source_type],
+        source_type=source_type,
         status=JobStatus.COMPLETED,
     )
 
@@ -504,13 +507,13 @@ def test_v2_guard_logs_warning_for_non_file(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="nfm_db.services.extraction_pipeline_dispatch"):
         asyncio.run(
             dispatch_mod.trigger_extraction_pipeline(
-                source_reference="10.1234/test",
-                source_type="doi",
+                source_reference=sample_ref[source_type],
+                source_type=source_type,
                 session=AsyncSession(),
             )
         )
 
     assert any(
-        "source_type" in r.message and "doi" in r.message
+        "source_type" in r.message and source_type in r.message
         for r in caplog.records
-    ), "Expected deprecation warning mentioning source_type and doi"
+    ), f"Expected deprecation warning mentioning source_type and {source_type}"
