@@ -95,7 +95,10 @@ class BuildResult:
         return self.nodes_created + self.nodes_matched
 
 
-def dispatch_build_result(build_result: BuildResult | None) -> int:
+def dispatch_build_result(
+    build_result: BuildResult | None,
+    extraction_job_id: uuid.UUID | None = None,
+) -> int:
     """Single public entry point for consuming a :class:`BuildResult`.
 
     All callers of :meth:`GraphBuilder.build_from_extraction` MUST pass the
@@ -123,6 +126,7 @@ def dispatch_build_result(build_result: BuildResult | None) -> int:
             nodes=list(build_result.ingest_nodes),
             edges=list(build_result.ingest_edges),
             node_labels=node_labels,
+            extraction_job_id=extraction_job_id,
         )
     except Exception:
         logger.warning(
