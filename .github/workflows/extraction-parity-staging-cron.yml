@@ -1,7 +1,7 @@
 # Nightly staging parity cron — ADR-0007 §3 / NFM-2944.
 #
 # Runs the V1/V2 extraction parity harness (apps/api/tests/test_parity.py)
-# against staging (origin/main) every night at 02:00 UTC, producing
+# against staging (origin/main) every night at 06:00 UTC, producing
 # per-fixture artifacts for the 7-day green-streak gate.
 #
 # Requires EXTRACTION_STUB_MODE=true and -m parity marker to actually
@@ -14,11 +14,12 @@ name: extraction-parity-staging-cron
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # Every night at 02:00 UTC
+    - cron: "0 6 * * *"   # Every night at 06:00 UTC
   workflow_dispatch:         # Manual trigger for ad-hoc runs
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   parity:
@@ -63,6 +64,77 @@ jobs:
             -v --tb=short \
             2>&1 | tee parity-artifacts/parity-output.txt
 
+      # --- Streak counter (ADR-0007 §3) ---
+      # Restores previous streak via cache prefix, increments on green,
+      # resets on red, then saves a new cache entry for the next run.
+
+      - name: Restore streak cache
+        uses: actions/cache@v4
+        with:
+          path: parity-streak.txt
+          key: parity-streak-${{ github.run_id }}
+          restore-keys: parity-streak-
+
+      - name: Update streak counter
+        id: streak
+        run: |
+          CURRENT=$(cat parity-streak.txt 2>/dev/null || echo "0")
+          if [ "${{ steps.parity.outcome }}" = "success" ]; then
+            NEW=$((CURRENT + 1))
+            echo "Parity streak: $NEW consecutive green days"
+          else
+            NEW=0
+            echo "Parity streak RESET to 0 (parity failure)"
+          fi
+          echo "$NEW" > parity-streak.txt
+          echo "count=$NEW" >> "$GITHUB_OUTPUT"
+
+      # --- Issue annotation on NFM-2916 ---
+      # Posts / updates a comment with the current streak using an HTML
+      # marker for in-place updates (same pattern as extraction-parity.yml).
+
+      - name: Post streak to NFM-2916
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          STREAK_COUNT: ${{ steps.streak.outputs.count }}
+          PARITY_OUTCOME: ${{ steps.parity.outcome }}
+          RUN_ID: ${{ github.run_id }}
+        with:
+          script: |
+            const marker = '<!-- parity-streak-bot -->';
+            const streak = process.env.STREAK_COUNT || '0';
+            const outcome = process.env.PARITY_OUTCOME || 'unknown';
+            const runId = process.env.RUN_ID;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
+            const date = new Date().toISOString().slice(0, 10);
+            const verdict = outcome === 'success' ? '🟢 GREEN' : '🔴 RED';
+
+            const body = `${marker}\n## Parity Streak\n\n| | |\n|---|--|\n| **Streak** | ${streak} consecutive green day(s) |\n| **Outcome** | ${verdict} |\n| **Date** | ${date} |\n| **Run** | [View run](${runUrl}) |\n`;
+
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 2916,
+              per_page: 100,
+            });
+            const existing = comments.data.find(c => (c.body || '').includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: 2916,
+                body,
+              });
+            }
+
       - name: Upload parity summary artifact
         if: always()
         uses: actions/upload-artifact@v7
@@ -77,6 +149,7 @@ jobs:
         run: |
           echo "## Nightly Staging Parity Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Outcome:** ${{ steps.parity.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Streak:** ${{ steps.streak.outputs.count }} consecutive green day(s)" >> $GITHUB_STEP_SUMMARY
           echo "- **Run:** [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Artifact:** Download \`extraction-parity-staging-summary\` from the run page (30-day retention)" >> $GITHUB_STEP_SUMMARY
 
