@@ -26,10 +26,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nfm_db.services.backup.config import BackupCapacityConfig
-from nfm_db.services.backup.guardrails import FloorBreachEvent
-from nfm_db.services.backup.metrics import BackupMetrics
-
 # ---------------------------------------------------------------------------
 # Documented schema (NFM-3024-E spec, see parent issue NFM-3053 description).
 # Keys MUST appear in the order listed here in the serialized payload.
@@ -143,46 +139,36 @@ class TestRefusalAlertSchemaSnapshot:
         # Local importorskip so only THIS test skips when NFM-3060's
         # observer hasn't yet been merged into the integration branch.
         # The two pure-spec tests above must always execute.
-        refusal_observer = pytest.importorskip(
-            "nfm_db.services.backup.refusal_observer",
-            reason=(
-                "refusal observer (NFM-3060) not yet merged into this "
-                "branch; activates once NFM-3055 merges the NFM-3024-E "
-                "siblings."
-            ),
+        mod = pytest.importorskip(
+            "nfm_db.monitoring.refusal_observer",
+            reason="refusal observer (NFM-3060) not available.",
         )
 
-        cfg = BackupCapacityConfig(
-            max_total_bytes=12 * 1024**3,
-            min_free_bytes=20 * 1024**3,
-            refuse_on_floor_breach=True,
-        )
-        metrics = BackupMetrics()
         refused_at = datetime(2026, 8, 13, 5, 0, 0, tzinfo=UTC)
-        event = FloorBreachEvent(
+        event = mod.BackupRefusalEvent(
             free_bytes=5_000_000_000,
-            backup_size=3_000_000_000,
-            floor=cfg.min_free_bytes,
+            total_bytes=8_500_000_000,
+            min_free_bytes=20 * 1024**3,
+            max_total_bytes=12 * 1024**3,
             refused_at=refused_at,
-            capacity_total_bytes=8_500_000_000,
         )
-        # Mirror what CapacityGuardrails.check_floor_before_write does.
-        metrics._refusal_count = 1  # type: ignore[attr-defined]
-        metrics._last_refusal_at = refused_at  # type: ignore[attr-defined]
+        snapshot = mod.RefusalStateSnapshot(
+            refusal_count=1,
+            last_refusal_at=refused_at,
+        )
 
-        observed: dict[str, object] = refusal_observer.build_refusal_alert_payload(  # type: ignore[attr-defined]
-            metrics=metrics,
+        observed: dict[str, object] = mod.build_sre_warning_payload(
             event=event,
-            config=cfg,
+            snapshot=snapshot,
         )
 
         expected = _expected_payload(
             refusal_count=1,
             last_refusal_at=refused_at,
             free_bytes=event.free_bytes,
-            total_bytes=event.capacity_total_bytes,
-            min_free_bytes=cfg.min_free_bytes,
-            max_total_bytes=cfg.max_total_bytes,
+            total_bytes=event.total_bytes,
+            min_free_bytes=event.min_free_bytes,
+            max_total_bytes=event.max_total_bytes,
         )
 
         # 1. Key set: must match exactly (no extras, no missing).
