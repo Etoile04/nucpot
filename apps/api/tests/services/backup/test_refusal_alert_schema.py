@@ -28,7 +28,7 @@ import pytest
 
 from nfm_db.services.backup.config import BackupCapacityConfig
 from nfm_db.services.backup.guardrails import FloorBreachEvent
-from nfm_db.services.backup.metrics import BackupMetrics
+from nfm_db.services.backup.metrics import BackupMetrics, format_rfc3339_z_ms
 
 # ---------------------------------------------------------------------------
 # Documented schema (NFM-3024-E spec, see parent issue NFM-3053 description).
@@ -58,37 +58,20 @@ def _expected_payload(
 ) -> dict[str, object]:
     """Build the exact payload the observer MUST produce.
 
-    ``lastRefusalAt`` is normalized to ISO-8601 with a trailing ``Z`` (the
-    UTC "Zulu" suffix). If the implementation emits ``+00:00`` instead,
-    the acceptance check below normalizes on both sides so a single doc
-    decision does not block the test.
+    ``lastRefusalAt`` is formatted via ``format_rfc3339_z_ms`` — RFC-3339
+    UTC with a ``Z`` suffix and millisecond precision.  Byte-for-byte
+    equality; no normalization at compare time.
     """
-    iso_z = (
-        last_refusal_at.astimezone(UTC)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
     return {
         "severity": "warning",
         "tag": "backup-refusal",
         "refusalCount": refusal_count,
-        "lastRefusalAt": iso_z,
+        "lastRefusalAt": format_rfc3339_z_ms(last_refusal_at),
         "freeBytes": free_bytes,
         "totalBytes": total_bytes,
         "minFreeBytes": min_free_bytes,
         "maxTotalBytes": max_total_bytes,
     }
-
-
-def _normalize_ts(value: str) -> str:
-    """Normalize ISO-8601 timestamps to a canonical ``Z``-suffix form.
-
-    The schema accepts either ``...:00:00Z`` or ``...+00:00``; this helper
-    collapses both to ``...Z`` so the byte-for-byte check is unambiguous.
-    """
-    if value.endswith("+00:00"):
-        return value[: -len("+00:00")] + "Z"
-    return value
 
 
 # ---------------------------------------------------------------------------
@@ -202,19 +185,11 @@ class TestRefusalAlertSchemaSnapshot:
             f"  observed order = {list(observed)}"
         )
 
-        # 3. Values: normalize the ISO-8601 timestamp suffix so a single
-        #    doc decision (Z vs +00:00) does not block the test.
-        observed_norm = dict(observed)
-        expected_norm = dict(expected)
-        if isinstance(observed_norm.get("lastRefusalAt"), str):
-            observed_norm["lastRefusalAt"] = _normalize_ts(
-                observed_norm["lastRefusalAt"]  # type: ignore[arg-type]
-            )
-
-        # Compare via JSON dumps so failures highlight structural drift.
-        observed_json = json.dumps(observed_norm, indent=2, sort_keys=False)
-        expected_json = json.dumps(expected_norm, indent=2, sort_keys=False)
-        assert observed_norm == expected_norm, (
+        # 3. Values: byte-for-byte comparison — no normalization needed
+        #    since both sides use format_rfc3339_z_ms.
+        observed_json = json.dumps(observed, indent=2, sort_keys=False)
+        expected_json = json.dumps(expected, indent=2, sort_keys=False)
+        assert observed == expected, (
             "Refusal alert payload values drifted from the documented schema.\n"
             f"  expected (snapshot):\n{expected_json}\n"
             f"  observed:            \n{observed_json}"

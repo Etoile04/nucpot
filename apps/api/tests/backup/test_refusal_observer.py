@@ -24,6 +24,7 @@ from nfm_db.monitoring.refusal_observer import (
     RefusalStateSnapshot,
     build_sre_warning_payload,
 )
+from nfm_db.services.backup.metrics import format_rfc3339_z_ms
 
 # A fixed synthetic moment — no coupling to wall-clock time.
 FROZEN_AT = datetime(2026, 8, 13, 9, 0, 0, tzinfo=UTC)
@@ -67,7 +68,7 @@ def test_synthetic_refusal_emits_exactly_one_sre_warning_within_one_heartbeat() 
 
     # Counters come from the writer-side snapshot.
     assert payload["refusalCount"] == 1
-    assert payload["lastRefusalAt"] == FROZEN_AT.isoformat()
+    assert payload["lastRefusalAt"] == format_rfc3339_z_ms(FROZEN_AT)
 
     # Byte fields match the event the writer emitted.
     assert payload["freeBytes"] == 5_000_000_000
@@ -154,7 +155,7 @@ def test_build_sre_warning_payload_is_pure_and_reusable() -> None:
         "severity": "warning",
         "tag": "backup-refusal",
         "refusalCount": 1,
-        "lastRefusalAt": FROZEN_AT.isoformat(),
+        "lastRefusalAt": format_rfc3339_z_ms(FROZEN_AT),
         "freeBytes": 5_000_000_000,
         "totalBytes": 12_000_000_000,
         "minFreeBytes": 20_000_000_000,
@@ -172,7 +173,7 @@ def test_snapshot_with_no_prior_refusals_emits_zero_count_and_null_timestamp() -
     observer.observe(event=_synthetic_event(), snapshot=snapshot)
 
     assert emitted[0]["refusalCount"] == 1
-    assert emitted[0]["lastRefusalAt"] == FROZEN_AT.isoformat()
+    assert emitted[0]["lastRefusalAt"] == format_rfc3339_z_ms(FROZEN_AT)
 
 
 def test_observer_does_not_mutate_event_or_snapshot() -> None:

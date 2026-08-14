@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
+from nfm_db.services.backup.metrics import format_rfc3339_z_ms
+
 __all__ = [
     "BackupRefusalEvent",
     "BackupRefusalObserver",
@@ -88,7 +90,7 @@ def build_sre_warning_payload(
         "tag": TAG_BACKUP_REFUSAL,
         "refusalCount": snapshot.refusal_count,
         "lastRefusalAt": (
-            snapshot.last_refusal_at.isoformat()
+            format_rfc3339_z_ms(snapshot.last_refusal_at)
             if snapshot.last_refusal_at is not None
             else None
         ),
