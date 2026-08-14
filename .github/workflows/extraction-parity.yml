@@ -38,6 +38,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Guard: skip if tests/parity/ doesn't exist yet (parity test
+          # fixtures are shipped by a sibling PR). Produce a stub report so
+          # downstream annotation/upload steps don't crash on ENOENT.
+          if [ ! -d "${{ github.workspace }}/tests/parity" ]; then
+            echo "::notice title=Parity tests skipped::tests/parity/ directory not found — parity test fixtures have not been merged yet."
+            echo "pytest_exit=0" >> "$GITHUB_OUTPUT"
+            python3 -c "
+            import json
+            report = {'total': 0, 'passed': 0, 'failed': 0, 'exit_code': 0, 'skipped': True}
+            with open('${{ github.workspace }}/parity-report.json', 'w') as f:
+              json.dump(report, f, indent=2)
+            "
+            echo "SKIPPED" > "${{ github.workspace }}/parity-output.txt"
+            exit 0
+          fi
+
           # Run from repo root so root pyproject.toml discovers tests/parity/
           # and tests/parity/conftest.py bootstraps apps/api/src onto sys.path.
           # EXTRACTION_STUB_MODE=true activates the stub pipeline path.
@@ -95,15 +111,20 @@ jobs:
             );
             const exitCode = parseInt(process.env.PYTEST_EXIT || "1");
 
-            const icon = report.failed === 0 ? "✅" : "❌";
+            const skipped = report.skipped === true;
+            const icon = skipped ? "⏭️" : (report.failed === 0 ? "✅" : "❌");
             const body = [
-              `### ${icon} Extraction Parity Tests`,
+              `### ${icon} Extraction Parity Tests${skipped ? ' (skipped)' : ''}`,
               "",
-              "| Metric | Value |",
-              "|--------|-------|",
-              `| **Total** | ${report.total} |`,
-              `| **Passed** | ${report.passed} |`,
-              `| **Failed** | ${report.failed} |`,
+              skipped
+                ? "> `tests/parity/` not found — parity test fixtures have not been merged yet."
+                : [
+                    "| Metric | Value |",
+                    "|--------|-------|",
+                    `| **Total** | ${report.total} |`,
+                    `| **Passed** | ${report.passed} |`,
+                    `| **Failed** | ${report.failed} |`,
+                  ].join("\n"),
               "",
               `> Commit: \`${context.sha.slice(0, 7)}\` · ` +
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
