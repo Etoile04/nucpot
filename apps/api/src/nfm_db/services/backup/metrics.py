@@ -5,6 +5,11 @@ the SRE-push observer (sibling task) calls to decide whether to emit the
 ``[SRE-WARNING]`` line on a refusal (NFM-3024-E AC2). The refusal is
 **always** recorded on this class regardless of the gate — the suppression
 is SRE-push-only, so the stats endpoint never goes silent.
+
+Amendment 5 (ADR D4): :func:`format_rfc3339_z_ms` produces the canonical
+``lastRefusalAt`` string in RFC-3339 UTC Z with millisecond precision,
+used by the SRE-WARNING log line and the alert payload for observer
+consistency (NFM-3132).
 """
 
 from __future__ import annotations
@@ -13,6 +18,31 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from .config import BackupCapacityConfig
+
+# ---------------------------------------------------------------------------
+# RFC-3339 UTC Z with millisecond precision (ADR D4 — Amendment 5)
+# ---------------------------------------------------------------------------
+
+
+def format_rfc3339_z_ms(dt: datetime) -> str:
+    """Format *dt* as RFC-3339 UTC with a ``Z`` suffix and millisecond precision.
+
+    Output example: ``2026-08-13T07:18:59.123Z``.
+
+    Raises:
+        ValueError: If *dt* is not timezone-aware or not UTC.
+    """
+    if dt.tzinfo is None:
+        raise ValueError(
+            "format_rfc3339_z_ms requires a timezone-aware datetime"
+        )
+    if dt.tzinfo is not UTC:
+        raise ValueError(
+            "format_rfc3339_z_ms requires UTC timezone, "
+            f"got offset {dt.utcoffset()}"
+        )
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
 
 # Public default constant so the observer can rely on a stable symbol name.
 DEFAULT_PUSH_ON_REFUSAL: bool = True
