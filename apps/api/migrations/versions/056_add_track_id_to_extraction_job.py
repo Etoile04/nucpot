@@ -4,7 +4,7 @@ NFM-2881 AC-4: stores the LightRAG ingest tracking ID so operators
 can poll ingest status per-job.
 
 Revision ID: 056_add_track_id_to_extraction_job
-Revises: 053_align_extraction_gap_with_adr_nfm_2675
+Revises: 055_add_ontology_version_fk_to_type_tables
 """
 
 from collections.abc import Sequence
@@ -14,7 +14,7 @@ from alembic import op
 
 revision: str = "056_add_track_id_to_extraction_job"
 down_revision: str | Sequence[str] | None = (
-    "055_add_ontology_version_id_to_type_tables"
+    "055_add_ontology_version_fk_to_type_tables"
 )
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
