@@ -68,4 +68,20 @@ def load_backup_config(path: str | Path) -> BackupConfig:
     return BackupConfig.model_validate(backup_block)
 
 
-__all__ = ["load_backup_config"]
+def check_retention_deprecation(cfg: BackupConfig) -> None:
+    """Emit a ``[DEPRECATION]`` warning if *cfg* uses the legacy path.
+
+    This is the programmatic companion to the warning inside
+    :func:`load_backup_config` — callers that construct a
+    :class:`BackupConfig` in-memory (without loading from JSON) can
+    still get the deprecation warning by calling this explicitly.
+    """
+    if cfg.retention is None and cfg.retention_days is not None:
+        _logger.warning(
+            "[DEPRECATION] backup.retentionDays is deprecated and will be "
+            "removed in the next release cycle; migrate to backup.retention "
+            "with hourly/daily/weekly tier specs (see NFM-3024-T1)."
+        )
+
+
+__all__ = ["check_retention_deprecation", "load_backup_config"]

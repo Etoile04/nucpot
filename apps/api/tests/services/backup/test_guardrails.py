@@ -315,3 +315,66 @@ class TestImmutability:
         e = BackupEntry(path=Path("/x"), size_bytes=1, modified_at=0.0)
         with pytest.raises(AttributeError):
             e.size_bytes = 0  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Guardrails → SRE alert emitter integration (NFM-3053)
+# ---------------------------------------------------------------------------
+
+
+class TestGuardrailsAlertEmitterIntegration:
+    """Exercises the alert_emitter property and _make_alert_emitter factory
+    that live on CapacityGuardrails (NFM-3053 CR suggestion).
+    """
+
+    def test_floor_breach_calls_alert_emitter(self, tmp_path: Path) -> None:
+        """check_floor_before_write drives alert_emitter.on_refusal on breach."""
+        from unittest.mock import MagicMock
+
+        mock_emitter = MagicMock()
+        mock_emitter.on_refusal.return_value = None
+
+        cfg = _make_config(
+            min_free=20 * _GIB,
+        )
+        gr = CapacityGuardrails(
+            config=cfg,
+            backup_dir=tmp_path,
+            alert_emitter=mock_emitter,
+        )
+        disk = _make_disk(free=22 * _GIB, total_backup=0)
+
+        gr.check_floor_before_write(backup_size=5 * _GIB, disk=disk)
+
+        mock_emitter.on_refusal.assert_called_once()
+        call_kwargs = mock_emitter.on_refusal.call_args[1]
+        assert call_kwargs["free_bytes"] == 22 * _GIB
+        assert call_kwargs["total_bytes"] == 0
+        assert call_kwargs["min_free_bytes"] == 20 * _GIB
+        assert call_kwargs["max_total_bytes"] == 12 * _GIB
+        assert call_kwargs["refusal_count"] == 1
+        assert call_kwargs["last_refusal_at"] is not None
+
+    def test_make_alert_emitter_uses_config_debounce(self, tmp_path: Path) -> None:
+        """_make_alert_emitter reads push_debounce_seconds from config."""
+        cfg = BackupCapacityConfig(
+            max_total_bytes=12 * _GIB,
+            min_free_bytes=20 * _GIB,
+            push_on_refusal=True,
+            push_debounce_seconds=1800,
+        )
+        gr = CapacityGuardrails(config=cfg, backup_dir=tmp_path)
+
+        assert gr.alert_emitter.push_on_refusal is True
+        assert gr.alert_emitter.debounce_seconds == 1800
+
+    def test_make_alert_emitter_disabled(self, tmp_path: Path) -> None:
+        """When push_on_refusal=False, the emitter suppresses pushes."""
+        cfg = BackupCapacityConfig(
+            max_total_bytes=12 * _GIB,
+            min_free_bytes=20 * _GIB,
+            push_on_refusal=False,
+        )
+        gr = CapacityGuardrails(config=cfg, backup_dir=tmp_path)
+
+        assert gr.alert_emitter.push_on_refusal is False

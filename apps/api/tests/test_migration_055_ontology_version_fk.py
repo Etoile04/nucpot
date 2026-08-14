@@ -89,7 +89,7 @@ class TestSchemaChanges:
         assert '"ontology_version_id"' in migration_source
 
     def test_columns_are_nullable(self, migration_source: str) -> None:
-        """Columns must be nullable -- NOT NULL would rewrite the table."""
+        """Columns must be nullable -- NOT NULL would rewrite the table.  NOTE: the ORM models are updated to nullable=False by NFM-2873 after the backfill runs, but the migration DDL itself remains nullable=True for safety during the ADD+BACKFILL+ALTER sequence."""
         assert "nullable=True" in migration_source
 
     def test_fk_targets_ontology_versions(self, migration_source: str) -> None:
@@ -147,11 +147,11 @@ class TestModelParity:
     def test_krelation_type_has_ontology_version_id(self) -> None:
         assert "ontology_version_id" in KRelationType.__table__.columns
 
-    def test_kentity_type_column_is_nullable(self) -> None:
-        assert KEntityType.__table__.columns["ontology_version_id"].nullable is True
+    def test_kentity_type_column_not_nullable(self) -> None:
+        assert KEntityType.__table__.columns["ontology_version_id"].nullable is False
 
-    def test_krelation_type_column_is_nullable(self) -> None:
-        assert KRelationType.__table__.columns["ontology_version_id"].nullable is True
+    def test_krelation_type_column_not_nullable(self) -> None:
+        assert KRelationType.__table__.columns["ontology_version_id"].nullable is False
 
     def test_kentity_type_fk_target(self) -> None:
         col = KEntityType.__table__.columns["ontology_version_id"]
