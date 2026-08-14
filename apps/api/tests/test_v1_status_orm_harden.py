@@ -49,6 +49,21 @@ CANONICAL_24_KEYS: set[str] = {
     "ontology_version_str",
 }
 
+# 8 ingest-specific ORM columns merged after the canonical dict
+INGEST_EXTRAS: set[str] = {
+    "corpus_id",
+    "total_received",
+    "created_measurements",
+    "reused_entities",
+    "skipped_duplicate_measurements",
+    "skipped_unknown_properties",
+    "skipped_duplicates",
+    "validation_errors",
+}
+
+# Full key set the ingest status endpoint returns (24 + 8)
+INGEST_STATUS_KEYS: set[str] = CANONICAL_24_KEYS | INGEST_EXTRAS
+
 
 def _make_orm_row(
     *,
@@ -93,8 +108,8 @@ class TestIngestStatusOrmPath:
     """NFM-3007: UUID path returns canonical 24-key dict from ORM row."""
 
     @pytest.mark.asyncio
-    async def test_returns_all_24_canonical_keys(self) -> None:
-        """ORM row must produce the full 24-key canonical dict."""
+    async def test_returns_all_ingest_status_keys(self) -> None:
+        """Ingest endpoint returns canonical 24-key dict + 8 ingest extras."""
         row = _make_orm_row()
         mock_session = AsyncMock()
 
@@ -111,19 +126,18 @@ class TestIngestStatusOrmPath:
 
         assert resp["success"] is True
         data_keys = set(resp["data"].keys())
-        assert data_keys == CANONICAL_24_KEYS, (
-            f"Missing keys: {CANONICAL_24_KEYS - data_keys}, "
-            f"Extra keys: {data_keys - CANONICAL_24_KEYS}"
+        assert data_keys == INGEST_STATUS_KEYS, (
+            f"Missing keys: {INGEST_STATUS_KEYS - data_keys}, "
+            f"Extra keys: {data_keys - INGEST_STATUS_KEYS}"
         )
 
     @pytest.mark.asyncio
-    async def test_field_mapping_orm_to_canonical(self) -> None:
-        """ORM column names map to canonical dict keys per ADR-NFM-2739 §2.1.
+    async def test_canonical_dict_field_mapping(self) -> None:
+        """_extraction_job_to_dict maps ORM columns to canonical 24-key dict.
 
         The canonical 24-key dict is the dataclass-centric contract.
-        ORM-only columns (total_received, created_measurements, corpus_id,
-        etc.) are NOT in the canonical dict — the ORM path emits the
-        orchestration defaults instead.
+        ORM-only ingest columns (total_received, created_measurements,
+        corpus_id, etc.) are NOT part of the canonical dict.
         """
         row = _make_orm_row()
         mock_session = AsyncMock()
@@ -177,10 +191,42 @@ class TestIngestStatusOrmPath:
         assert isinstance(data["started_at"], str | type(None))
         assert isinstance(data["completed_at"], str | type(None))
 
-        # Verify ORM-only columns are NOT in the canonical dict
-        assert "total_received" not in data
-        assert "created_measurements" not in data
-        assert "corpus_id" not in data
+    @pytest.mark.asyncio
+    async def test_ingest_specific_columns_in_response(self) -> None:
+        """Ingest endpoint merges 8 ORM-specific columns after canonical dict."""
+        row = _make_orm_row(
+            corpus_id="my-corpus",
+            total_received=100,
+            created_measurements=80,
+            reused_entities=5,
+            skipped_duplicate_measurements=3,
+            skipped_unknown_properties=7,
+            skipped_duplicates=10,
+            validation_errors=2,
+        )
+        mock_session = AsyncMock()
+
+        class _MockResult:
+            def scalar_one_or_none(self) -> OrmExtractionJob:
+                return row
+
+        mock_session.execute.return_value = _MockResult()
+
+        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
+            from nfm_db.api.v1.extraction import get_ingest_job_status
+
+            resp = await get_ingest_job_status(str(row.id), session=mock_session)
+
+        data = resp["data"]
+        # All 8 ingest extras must be present with correct values
+        assert data["corpus_id"] == "my-corpus"
+        assert data["total_received"] == 100
+        assert data["created_measurements"] == 80
+        assert data["reused_entities"] == 5
+        assert data["skipped_duplicate_measurements"] == 3
+        assert data["skipped_unknown_properties"] == 7
+        assert data["skipped_duplicates"] == 10
+        assert data["validation_errors"] == 2
 
     @pytest.mark.asyncio
     async def test_orm_row_not_found_raises_404(self) -> None:
@@ -268,6 +314,10 @@ class TestIngestStatusOrmPath:
         assert data["conflict_strategy"] == "prefer_db"
         assert data["figures"] == [{"id": "fig-1"}]
         assert data["tables"] == [{"id": "tbl-1"}]
+        # Ingest extras must also be present
+        assert data["corpus_id"] == "test-corpus"
+        assert data["total_received"] == 100
+        assert data["created_measurements"] == 80
 
 
 class TestIngestStatusNonUuidDeprecation:
