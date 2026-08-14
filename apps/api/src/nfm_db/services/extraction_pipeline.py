@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
@@ -65,12 +66,12 @@ async def _get_latest_published_ontology(
         # ``.scalars().first()`` is therefore the correct sync accessor and
         # returns the row directly. Adding ``await`` here raises
         # ``TypeError: 'Row' object can't be awaited`` in production with a
-        # real DB, and is silently caught by the broad ``except Exception``
-        # below, which would cause every V2 extraction to fall back to the
-        # static prompt — the very regression NFM-2876 was meant to prevent.
+        # real DB, and is silently caught by the ``except Exception`` below,
+        # which would cause every V2 extraction to fall back to the static
+        # prompt — the very regression NFM-2876 was meant to prevent.
         # Empirically verified with SQLAlchemy 2.0.50 on 2026-08-12.
         return result.scalars().first()
-    except Exception:
+    except (SQLAlchemyError, OSError):
         logger.warning(
             "Failed to query latest published ontology; falling back to static prompt",
             exc_info=True,
