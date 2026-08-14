@@ -46,11 +46,6 @@ class KEntityType(TimestampMixin, Base):
         nullable=True,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ontology_version_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("ontology_versions.id"),
-        nullable=True,
-        comment="FK to the OntologyVersion this type belongs to.",
-    )
 
     # --- Ontology version (NFM-2873) ---
     ontology_version_id: Mapped[uuid.UUID] = mapped_column(
@@ -95,11 +90,6 @@ class KRelationType(TimestampMixin, Base):
         nullable=True,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ontology_version_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("ontology_versions.id"),
-        nullable=True,
-        comment="FK to the OntologyVersion this type belongs to.",
-    )
 
     # --- Ontology version (NFM-2873) ---
     ontology_version_id: Mapped[uuid.UUID] = mapped_column(
