@@ -453,3 +453,226 @@ class TestOntologyExtractionNullSafety:
         ov = _FakeOntologyVersion(ontology_data={"entity_types": []})
         prompt = build_ontology_extraction_prompt(ov)
         assert isinstance(prompt, str)
+
+
+# ---------------------------------------------------------------------------
+# NFM-3004: Ontology-driven categories + standard names tests
+# ---------------------------------------------------------------------------
+
+
+class TestOntologyDrivenCategoriesBlock:
+    """AC-1: categories_block generated from ontology entity_types."""
+
+    def test_categories_from_ontology_entity_types(self) -> None:
+        """When ontology_data has entity_types, categories must come from them."""
+        ontology_data = {
+            "entity_types": [
+                {"name": "NuclearFuel", "required_properties": ["name"]},
+                {"name": "Cladding", "required_properties": ["material"]},
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        # Entity type names must appear in the categories section
+        assert "NuclearFuel" in prompt
+        assert "Cladding" in prompt
+
+    def test_categories_not_from_property_category_enum(self) -> None:
+        """Categories block should NOT contain hardcoded enum values when ontology has entity_types."""
+        ontology_data = {
+            "entity_types": [
+                {"name": "CustomMaterial", "required_properties": ["density"]},
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        # The prompt should contain CustomMaterial
+        assert "CustomMaterial" in prompt
+        # The categories section should be entity type names, not PropertyCategory values
+        categories_section_start = prompt.find("## Property Categories")
+        if categories_section_start != -1:
+            categories_section_end = prompt.find("\n\n", categories_section_start)
+            if categories_section_end == -1:
+                categories_section_end = len(prompt)
+            categories_section = prompt[categories_section_start:categories_section_end]
+            # PropertyCategory enum has "腐蚀" but our ontology doesn't
+            assert "腐蚀" not in categories_section
+
+    def test_deduplicated_entity_type_names(self) -> None:
+        """Duplicate entity type names must be deduplicated."""
+        ontology_data = {
+            "entity_types": [
+                {"name": "Fuel", "required_properties": ["a"]},
+                {"name": "Fuel", "required_properties": ["b"]},
+                {"name": "Cladding", "required_properties": ["c"]},
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+        # "Fuel" should appear exactly once in categories section
+        categories_start = prompt.find("## Property Categories")
+        categories_end = prompt.find("\n## Standard Property Names", categories_start)
+        section = prompt[categories_start:categories_end]
+        assert section.count("Fuel") == 1
+
+
+class TestOntologyDrivenStandardNamesBlock:
+    """AC-2: standard_names_block generated from ontology required_properties."""
+
+    def test_standard_names_from_ontology_properties(self) -> None:
+        """When ontology_data has required_properties, names must come from them."""
+        ontology_data = {
+            "entity_types": [
+                {
+                    "name": "NuclearFuel",
+                    "required_properties": ["thermal_conductivity", "density", "melting_point"],
+                },
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        assert "thermal_conductivity" in prompt
+        assert "density" in prompt
+        assert "melting_point" in prompt
+
+    def test_standard_names_not_from_hardcoded_dict(self) -> None:
+        """Standard names should come from ontology, not STANDARD_PROPERTIES."""
+        ontology_data = {
+            "entity_types": [
+                {
+                    "name": "CustomType",
+                    "required_properties": ["custom_prop_x"],
+                },
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        assert "custom_prop_x" in prompt
+        # 标准名称 from STANDARD_PROPERTIES like "密度" should NOT appear
+        # in the standard names section (it's not in our ontology)
+        sn_start = prompt.find("## Standard Property Names")
+        sn_end = prompt.find("\n## 字段规则", sn_start)
+        if sn_start != -1 and sn_end != -1:
+            section = prompt[sn_start:sn_end]
+            assert "密度" not in section
+
+    def test_deduplicated_property_names_across_entity_types(self) -> None:
+        """Property names shared across entity types must be deduplicated."""
+        ontology_data = {
+            "entity_types": [
+                {"name": "TypeA", "required_properties": ["temp", "pressure"]},
+                {"name": "TypeB", "required_properties": ["temp", "stress"]},
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        sn_start = prompt.find("## Standard Property Names")
+        sn_end = prompt.find("\n## 字段规则", sn_start)
+        section = prompt[sn_start:sn_end]
+        assert section.count("temp") == 1
+        assert "pressure" in section
+        assert "stress" in section
+
+    def test_sorted_property_names(self) -> None:
+        """Property names must be sorted for determinism."""
+        ontology_data = {
+            "entity_types": [
+                {
+                    "name": "TypeA",
+                    "required_properties": ["zebra", "alpha", "mid"],
+                },
+            ],
+        }
+        ov = _FakeOntologyVersion(ontology_data=ontology_data)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        sn_start = prompt.find("## Standard Property Names")
+        sn_end = prompt.find("\n## 字段规则", sn_start)
+        section = prompt[sn_start:sn_end]
+        alpha_pos = section.find("- alpha")
+        mid_pos = section.find("- mid")
+        zebra_pos = section.find("- zebra")
+        assert alpha_pos < mid_pos < zebra_pos
+
+
+class TestOntologyDrivenFallback:
+    """AC-4: Fallback to hardcoded when no ontology."""
+
+    def test_none_ontology_uses_hardcoded_categories(self) -> None:
+        """None ontology_data should fall back to PropertyCategory enum."""
+        ov = _FakeOntologyVersion(ontology_data=None)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        for cat in PropertyCategory:
+            assert cat.value in prompt, f"Missing fallback category: {cat.value}"
+
+    def test_empty_ontology_uses_hardcoded_categories(self) -> None:
+        """Empty ontology_data should fall back to PropertyCategory enum."""
+        ov = _FakeOntologyVersion(ontology_data={})
+        prompt = build_ontology_extraction_prompt(ov)
+
+        for cat in PropertyCategory:
+            assert cat.value in prompt, f"Missing fallback category: {cat.value}"
+
+    def test_none_ontology_uses_hardcoded_standard_names(self) -> None:
+        """None ontology_data should fall back to STANDARD_PROPERTIES."""
+        ov = _FakeOntologyVersion(ontology_data=None)
+        prompt = build_ontology_extraction_prompt(ov)
+
+        assert "密度" in prompt
+        assert "热导率" in prompt
+
+    def test_empty_entity_types_uses_hardcoded_categories(self) -> None:
+        """Empty entity_types list should fall back to hardcoded categories."""
+        ov = _FakeOntologyVersion(ontology_data={"entity_types": []})
+        prompt = build_ontology_extraction_prompt(ov)
+
+        for cat in PropertyCategory:
+            assert cat.value in prompt, f"Missing fallback category: {cat.value}"
+
+    def test_empty_required_properties_uses_hardcoded_names(self) -> None:
+        """Entity types with no required_properties should fall back to hardcoded names."""
+        ov = _FakeOntologyVersion(ontology_data={
+            "entity_types": [{"name": "TypeA", "required_properties": []}]
+        })
+        prompt = build_ontology_extraction_prompt(ov)
+
+        assert "密度" in prompt
+
+
+class TestV1PathUntouched:
+    """AC-3: V1 build_extraction_system_prompt() continues using hardcoded helpers."""
+
+    def test_v1_uses_hardcoded_categories(self) -> None:
+        prompt = build_extraction_system_prompt()
+        for cat in PropertyCategory:
+            assert cat.value in prompt, f"V1 missing category: {cat.value}"
+
+    def test_v1_uses_hardcoded_standard_names(self) -> None:
+        prompt = build_extraction_system_prompt()
+        assert "密度" in prompt
+        assert "热导率" in prompt
+        assert "杨氏模量" in prompt
+
+    def test_v1_no_ontology_context(self) -> None:
+        prompt = build_extraction_system_prompt()
+        assert "本体" not in prompt and "Ontology" not in prompt
+
+
+class TestOntologyDrivenImportPresence:
+    """AC-5: Imports of PropertyCategory/STANDARD_PROPERTIES remain (used by V1/fallback)."""
+
+    def test_property_category_import_still_present(self) -> None:
+        """PropertyCategory must still be importable (V1 path uses it)."""
+        from nfm_db.core.property_catalog import PropertyCategory
+        assert len(list(PropertyCategory)) >= 11
+
+    def test_standard_properties_import_still_present(self) -> None:
+        """STANDARD_PROPERTIES must still be importable (V1 path uses it)."""
+        from nfm_db.core.property_catalog import STANDARD_PROPERTIES as SP
+        assert len(SP) > 0
