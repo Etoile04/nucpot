@@ -10,10 +10,9 @@ is SRE-push-only, so the stats endpoint never goes silent.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .config import BackupCapacityConfig
-
 
 # Public default constant so the observer can rely on a stable symbol name.
 DEFAULT_PUSH_ON_REFUSAL: bool = True
@@ -73,7 +72,7 @@ class BackupMetrics:
         Recording is independent of the SRE-push gate — the stats endpoint
         must always see the refusal, even when ``pushOnRefusal: false``.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._refusal_count += 1
         self._last_refusal_at = now
         return now
