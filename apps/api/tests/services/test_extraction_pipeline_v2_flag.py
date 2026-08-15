@@ -12,9 +12,49 @@ Strangler-fig routing is gated on ``EXTRACTION_PIPELINE_V2`` (config field
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Duck-type replacement for the ExtractionJob dataclass that is removed in
+# PR #808 (NFM-3008).  Provides the full attribute surface that
+# ``_extraction_job_to_dict`` reads — either via direct access or
+# ``getattr`` with defaults.  ``status`` is a plain ``str`` so the
+# ``hasattr(status, "value")`` branch is *False* and ``str(status)`` is
+# used (identical to the ORM column-value path).
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class _FakeLegacyJob:
+    """Minimal frozen dataclass mimicking ExtractionJob attribute surface."""
+
+    job_id: str
+    source_reference: str
+    source_type: str
+    status: str = "completed"
+    fill_batch_id: str | None = None
+    extracted_count: int = 0
+    staged_count: int = 0
+    rejected_count: int = 0
+    error_message: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    element_systems: list[str] | None = None
+    cache_level: str | None = None
+    max_confidence: str | None = None
+    extract_figures: bool = False
+    extract_tables: bool = False
+    confidence_threshold: float = 0.5
+    figure_types: list[str] | None = None
+    conflict_strategy: str = "prefer_vlm"
+    figures: list[dict] = field(default_factory=list)
+    tables: list[dict] = field(default_factory=list)
+    ontology_version_id: str | None = None
+    ontology_version_str: str | None = None
 
 
 def test_is_extraction_v2_enabled_defaults_on():
@@ -55,13 +95,10 @@ def test_trigger_extraction_pipeline_off_routes_to_legacy(monkeypatch):
 
     called = {"legacy": 0}
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
-
-    fake_job = ExtractionJob(
+    fake_job = _FakeLegacyJob(
         job_id="fake-job-id",
         source_reference="foo.md",
         source_type="file",
-        status=JobStatus.COMPLETED,
     )
 
     async def fake_legacy(*args, **kwargs):
@@ -199,13 +236,11 @@ async def test_trigger_extraction_pipeline_legacy_returns_normalized_dict(monkey
 
     from unittest.mock import AsyncMock, patch
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
-
-    fake_job = ExtractionJob(
+    fake_job = _FakeLegacyJob(
         job_id="test-job-123",
         source_reference="foo.md",
         source_type="file",
-        status=JobStatus.QUEUED,
+        status="queued",
     )
 
     with patch(
@@ -261,13 +296,10 @@ def test_v2_guard_routes_doi_to_legacy(monkeypatch):
 
     called = {"legacy": 0, "v2": 0}
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
-
-    fake_job = ExtractionJob(
+    fake_job = _FakeLegacyJob(
         job_id="fake-job-doi",
         source_reference="10.1234/test",
         source_type="doi",
-        status=JobStatus.COMPLETED,
     )
 
     async def fake_legacy(*args, **kwargs):
@@ -308,13 +340,10 @@ def test_v2_guard_routes_url_to_legacy(monkeypatch):
 
     called = {"legacy": 0, "v2": 0}
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
-
-    fake_job = ExtractionJob(
+    fake_job = _FakeLegacyJob(
         job_id="fake-job-url",
         source_reference="https://example.com/paper.pdf",
         source_type="url",
-        status=JobStatus.COMPLETED,
     )
 
     async def fake_legacy(*args, **kwargs):
@@ -355,13 +384,10 @@ def test_v2_guard_routes_datasource_to_legacy(monkeypatch):
 
     called = {"legacy": 0, "v2": 0}
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
-
-    fake_job = ExtractionJob(
+    fake_job = _FakeLegacyJob(
         job_id="fake-job-ds",
         source_reference="datasource://ref",
         source_type="datasource",
-        status=JobStatus.COMPLETED,
     )
 
     async def fake_legacy(*args, **kwargs):
@@ -481,15 +507,12 @@ def test_v2_guard_logs_warning_for_non_file(monkeypatch, caplog, source_type):
 
     monkeypatch.setattr(dispatch_mod, "is_extraction_v2_enabled", lambda: True)
 
-    from nfm_db.services.extraction_pipeline import ExtractionJob, JobStatus
-
     sample_ref = {"doi": "10.1234/test", "url": "https://example.com/paper.pdf", "datasource": "ds-001"}
 
-    fake_job = ExtractionJob(
+    fake_job = _FakeLegacyJob(
         job_id="fake-job",
         source_reference=sample_ref[source_type],
         source_type=source_type,
-        status=JobStatus.COMPLETED,
     )
 
     async def fake_legacy(*args, **kwargs):
