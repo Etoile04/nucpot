@@ -35,8 +35,28 @@ jobs:
 
       - name: Run parity tests
         id: parity
+        working-directory: ${{ github.workspace }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          REPORT_JSON="${{ github.workspace }}/parity-report.json"
+          OUTPUT_TXT="${{ github.workspace }}/parity-output.txt"
+
+          write_report() {
+            python3 - "$1" "$2" "$3" "$REPORT_JSON" <<'PYEOF'
+          import json, sys
+          passed, failed, exit_code, path = sys.argv[1:5]
+          report = {
+              'total': int(passed) + int(failed),
+              'passed': int(passed),
+              'failed': int(failed),
+              'exit_code': int(exit_code),
+          }
+          with open(path, 'w') as f:
+              json.dump(report, f, indent=2)
+          print(json.dumps(report, indent=2))
+          PYEOF
+          }
 
           # Guard: skip if tests/parity/ doesn't exist yet (parity test
           # fixtures are shipped by a sibling PR). Produce a stub report so
@@ -47,48 +67,43 @@ jobs:
             python3 -c "
             import json
             report = {'total': 0, 'passed': 0, 'failed': 0, 'exit_code': 0, 'skipped': True}
-            with open('${{ github.workspace }}/parity-report.json', 'w') as f:
+            with open('$REPORT_JSON', 'w') as f:
               json.dump(report, f, indent=2)
             "
-            echo "SKIPPED" > "${{ github.workspace }}/parity-output.txt"
+            echo "SKIPPED" > "$OUTPUT_TXT"
             exit 0
           fi
 
-          # Run from repo root so root pyproject.toml discovers tests/parity/
-          # and tests/parity/conftest.py bootstraps apps/api/src onto sys.path.
+          # Run from repo root (absolute path — NOT the job-level
+          # working-directory apps/api) so root pyproject.toml registers
+          # the `parity` marker and discovers tests/parity/, and
+          # tests/parity/conftest.py bootstraps apps/api/src onto sys.path.
           # EXTRACTION_STUB_MODE=true activates the stub pipeline path.
-          uv run python -m pytest \
+          # NOTE: no `set -e` here — a pytest failure must still produce
+          # parity-report.json so the artifact upload and PR comment steps
+          # don't crash on ENOENT; the step's exit code is set explicitly
+          # at the end.
+          set +e
+          uv run --project apps/api python -m pytest \
             -m parity \
-            tests/parity/ \
+            "${{ github.workspace }}/tests/parity/" \
             -v \
             --no-header \
             --tb=short \
             -o "addopts=" \
-            2>&1 | tee ../parity-output.txt
-
-          # Determine exit code from pytest (tee preserves it)
+            2>&1 | tee "$OUTPUT_TXT"
           PYTEST_EXIT=${PIPESTATUS[0]}
+          set -e
+
           echo "pytest_exit=${PYTEST_EXIT}" >> "$GITHUB_OUTPUT"
 
           # Generate a compact JSON summary from pytest output
-          PASS_COUNT=$(grep -cP '^tests/parity/.* PASSED' ../parity-output.txt || true)
-          FAIL_COUNT=$(grep -cP '^tests/parity/.* FAILED' ../parity-output.txt || true)
-          TOTAL=$((PASS_COUNT + FAIL_COUNT))
+          PASS_COUNT=$(grep -cP 'tests/parity/.* PASSED' "$OUTPUT_TXT" || true)
+          FAIL_COUNT=$(grep -cP 'tests/parity/.* FAILED' "$OUTPUT_TXT" || true)
 
-          python3 -c "
-          import json, os
-          report = {
-              'total': ${TOTAL},
-              'passed': ${PASS_COUNT},
-              'failed': ${FAIL_COUNT},
-              'exit_code': ${PYTEST_EXIT},
-          }
-          with open('${{ github.workspace }}/parity-report.json', 'w') as f:
-              json.dump(report, f, indent=2)
-          print(json.dumps(report, indent=2))
-          "
+          write_report "$PASS_COUNT" "$FAIL_COUNT" "$PYTEST_EXIT"
 
-          exit "${PYTEST_EXIT}"
+          exit "$PYTEST_EXIT"
 
       - name: Upload parity report artifact
         uses: actions/upload-artifact@v7
