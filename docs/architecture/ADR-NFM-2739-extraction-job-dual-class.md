@@ -1,6 +1,6 @@
 # ADR-NFM-2739 — `ExtractionJob` dual-class debt, and the canonical dict serialization boundary
 
-- **Status:** Accepted (decision D3 implemented; column migration deferred to NFM-2739)
+- **Status:** Implemented (2026-08-15 — Phase B integration via NFM-3009: dataclass ExtractionJob removed, ORM-only path, V2 flag defaulted to True)
 - **Date:** 2026-08-10
 - **Author:** Lead Engineer (per CTO architectural contract in NFM-2743)
 - **Issue:** NFM-2739 / NFM-2743 (D3 seam)
