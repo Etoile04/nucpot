@@ -147,35 +147,6 @@ show it as waste.
 
 ---
 
-## PR governance (as of NFM-3137)
-
-**Branch protection on `main`** requires:
-
-1. **1 approving review** with `dismiss_stale_reviews: true` — if main advances
-   after your approval, the approval is dismissed and re-review is required.
-2. **3 required status checks** (Frontend, Backend, commit-ref-gate).
-3. `strict: true` + `enforce_admins: true` — no bypass path exists.
-
-**Auto-update workflow** (`.github/workflows/update-stale-prs.yml`) runs hourly
-and merges main into any PR whose `mergeable_state` is `BEHIND`. This keeps PRs
-up-to-date so that CI only runs for truly new changes, not for every main
-advance.
-
-**Before merging or requesting review**, run:
-
-```bash
-gh pr update-branch <PR_NUMBER>
-```
-
-This reduces cascade CI waste. The hourly workflow handles this automatically,
-but a manual update before merge/review is still good practice to avoid stale
-review approvals being dismissed.
-
-See [`docs/verification/PR-GOVERNANCE.md`](docs/verification/PR-GOVERNANCE.md) for the
-full governance specification.
-
----
-
 ## See also
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — the same rule written for human readers.

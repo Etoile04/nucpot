@@ -2,11 +2,6 @@
 
 Validates that submitting source_type=doi with a malformed DOI returns HTTP 400,
 while valid DOI formats and other source_types are unaffected.
-
-NOTE: After the R4 gate (NFM-3008), the V1 dataclass/flag infrastructure was
-removed. Tests that submit *valid* DOIs or URLs now reach the V2 pipeline,
-which raises NotImplementedError for those source types. Those tests are marked
-xfail until V2 gains parity (NFM-2912 / NFM-2916).
 """
 
 from __future__ import annotations
@@ -16,6 +11,10 @@ from httpx import ASGITransport, AsyncClient
 
 from nfm_db.database import get_db
 from nfm_db.main import app
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -44,13 +43,6 @@ class TestDoiFormatValidation:
     """Tests for DOI regex guard on submit_extraction endpoint."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason=(
-            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet resolve "
-            "source_type='doi'. xfail until NFM-2912/NFM-2916."
-        ),
-        strict=True,
-    )
     async def test_valid_doi_passes_validation(self, doi_client: AsyncClient):
         """Valid DOI '10.1016/j.nucengdes.2020.110756' should return 202."""
         payload = {
@@ -101,13 +93,6 @@ class TestDoiFormatValidation:
         assert body["success"] is False
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason=(
-            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet support "
-            "source_type='url'. xfail until NFM-2912/NFM-2916."
-        ),
-        strict=True,
-    )
     async def test_url_source_type_not_affected(self, doi_client: AsyncClient):
         """source_type=url with arbitrary string should still pass."""
         payload = {
@@ -165,13 +150,6 @@ class TestDoiFormatValidation:
         assert response.status_code in (400, 422)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason=(
-            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet resolve "
-            "source_type='doi'. xfail until NFM-2912/NFM-2916."
-        ),
-        strict=True,
-    )
     async def test_doi_short_registrant_passes_regex(self, doi_client: AsyncClient):
         """DOI with short registrant like '10.1234/test' should pass regex."""
         payload = {

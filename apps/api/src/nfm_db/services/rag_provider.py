@@ -75,12 +75,8 @@ class RAGProvider(ABC):
         """Execute a knowledge-graph query."""
 
     @abstractmethod
-    async def ingest(self, *, text: str, source: str | None = None) -> str | None:
-        """Ingest a document into the knowledge graph.
-
-        Returns a provider-specific tracking ID (e.g. LightRAG ``track_id``)
-        or ``None`` when the provider does not support tracking.
-        """
+    async def ingest(self, *, text: str, source: str | None = None) -> None:
+        """Ingest a document into the knowledge graph."""
 
     @abstractmethod
     async def health(self) -> bool:
@@ -121,15 +117,8 @@ class LightRAGProvider(RAGProvider):
             provider=self.name,
         )
 
-    async def ingest(self, *, text: str, source: str | None = None) -> str | None:
-        """Ingest and return the LightRAG track_id (if any).
-
-        Wraps :meth:`LightRAGClient.ingest` which returns a dict that
-        may contain a ``track_id`` key.  Returns the string value or
-        ``None`` when absent.
-        """
-        result = await self._client.ingest(text=text, file_source=source)
-        return result.get("track_id") if isinstance(result, dict) else None
+    async def ingest(self, *, text: str, source: str | None = None) -> None:
+        await self._client.ingest(text=text, file_source=source)
 
     async def health(self) -> bool:
         return await self._client.health_check()
@@ -251,8 +240,8 @@ class RuleBasedFallbackProvider(RAGProvider):
             fallback=True,
         )
 
-    async def ingest(self, *, text: str, source: str | None = None) -> str | None:
-        """No-op for the fallback provider.  Always returns ``None``."""
+    async def ingest(self, *, text: str, source: str | None = None) -> None:
+        """No-op for the fallback provider."""
         logger.debug(
             "RuleBasedFallbackProvider.ingest is a no-op (text=%d chars, source=%s)",
             len(text),
@@ -337,15 +326,10 @@ class RAGProviderSelector:
             logger.warning("LightRAG query failed, falling back to rule-based")
             return await self._fallback.query(query=query, **kwargs)
 
-    async def ingest(self, *, text: str, source: str | None = None) -> str | None:
-        """Ingest using LightRAG with automatic fallback on error.
-
-        Returns the LightRAG ``track_id`` when the primary provider
-        succeeds, or ``None`` on fallback.
-        """
+    async def ingest(self, *, text: str, source: str | None = None) -> None:
+        """Ingest using LightRAG with automatic fallback on error."""
         try:
-            return await self._lightrag.ingest(text=text, source=source)
+            await self._lightrag.ingest(text=text, source=source)
         except LightRAGClientError:
             logger.warning("LightRAG ingest failed, falling back to rule-based")
             await self._fallback.ingest(text=text, source=source)
-            return None

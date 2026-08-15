@@ -178,7 +178,6 @@ async def ingest_kg_to_lightrag(
     nodes: list[KGNode],
     edges: list[KGEdge],
     node_labels: dict[uuid.UUID, str],
-    extraction_job_id: uuid.UUID | None = None,
 ) -> None:
     """Ingest serialized KG data into LightRAG (fire-and-forget safe).
 
@@ -188,16 +187,12 @@ async def ingest_kg_to_lightrag(
     1. Checks ``is_lightrag_configured()`` — skips entirely if not.
     2. Serializes the build result to structured text.
     3. Calls ``LightRAGProvider.ingest()`` directly.
-    4. Persists the returned ``track_id`` to the ``ExtractionJob`` row
-       when *extraction_job_id* is provided (NFM-2881).
-    5. Catches and logs all exceptions — never propagates failures.
+    4. Catches and logs all exceptions — never propagates failures.
 
     Args:
         nodes: Newly created ``KGNode`` records.
         edges: Newly created ``KGEdge`` records.
         node_labels: Mapping of node UUID -> label for edge serialization.
-        extraction_job_id: Optional ``ExtractionJob`` PK whose ``track_id``
-            column should be updated after ingest.
     """
     if not is_lightrag_configured():
         logger.debug("LightRAG not configured — skipping KG auto-ingest")
@@ -207,33 +202,13 @@ async def ingest_kg_to_lightrag(
         return
 
     try:
-        from nfm_db.database import async_session_factory
         from nfm_db.services.lightrag_lifecycle import get_shared_lightrag_client
         from nfm_db.services.rag_provider import LightRAGProvider
 
         text = serialize_build_result(nodes, edges, node_labels)
         shared_client = get_shared_lightrag_client()
         provider = LightRAGProvider(client=shared_client)
-        track_id = await provider.ingest(text=text, source="kg_pipeline")
-
-        # Persist track_id to the ExtractionJob row (NFM-2881 AC-2).
-        if extraction_job_id is not None and track_id is not None:
-            async with async_session_factory() as session:
-                from sqlalchemy import update
-
-                from nfm_db.models.extraction_job import ExtractionJob
-
-                await session.execute(
-                    update(ExtractionJob)
-                    .where(ExtractionJob.id == extraction_job_id)
-                    .values(track_id=track_id)
-                )
-                await session.commit()
-                logger.info(
-                    "Persisted track_id=%s to ExtractionJob %s",
-                    track_id,
-                    extraction_job_id,
-                )
+        await provider.ingest(text=text, source="kg_pipeline")
 
         logger.info(
             "KG auto-ingest complete: %d nodes, %d edges (%d chars)",
@@ -253,7 +228,6 @@ def fire_ingest_to_lightrag(
     nodes: list[KGNode],
     edges: list[KGEdge],
     node_labels: dict[uuid.UUID, str],
-    extraction_job_id: uuid.UUID | None = None,
 ) -> None:
     """Schedule a fire-and-forget LightRAG ingest as a background task.
 
@@ -265,8 +239,6 @@ def fire_ingest_to_lightrag(
         nodes: Newly created ``KGNode`` records.
         edges: Newly created ``KGEdge`` records.
         node_labels: Mapping of node UUID -> label.
-        extraction_job_id: Optional ``ExtractionJob`` PK to persist
-            ``track_id`` (NFM-2881).
     """
     if not is_lightrag_configured():
         return
@@ -278,7 +250,6 @@ def fire_ingest_to_lightrag(
                 nodes=nodes,
                 edges=edges,
                 node_labels=node_labels,
-                extraction_job_id=extraction_job_id,
             ),
             name="kg-lightrag-ingest",
         )

@@ -73,15 +73,7 @@ class ExtractedRelation:
 
 @dataclass(frozen=True)
 class BuildResult:
-    """Summary of graph construction results.
-
-    The ``ingest_nodes`` / ``ingest_edges`` payloads are the LightRAG
-    ingest payload — they MUST be dispatched via :func:`dispatch_build_result`
-    AFTER a successful ``session.commit()``. ``GraphBuilder.build_from_extraction``
-    is a payload carrier only; it does NOT fire LightRAG ingest inline.
-
-    See NFM-2871 / NFM-2928 for the ghost-entity-on-rollback rationale.
-    """
+    """Summary of graph construction results."""
 
     nodes_created: int = 0
     nodes_matched: int = 0
@@ -93,43 +85,6 @@ class BuildResult:
     @property
     def total_nodes_processed(self) -> int:
         return self.nodes_created + self.nodes_matched
-
-
-def dispatch_build_result(build_result: BuildResult | None) -> int:
-    """Single public entry point for consuming a :class:`BuildResult`.
-
-    All callers of :meth:`GraphBuilder.build_from_extraction` MUST pass the
-    returned :class:`BuildResult` through this helper AFTER a successful
-    ``session.commit()`` to fire LightRAG ingest. Skipping the helper is a
-    contract violation: the ingest payload is silently dropped and the
-    KG / LightRAG go out of sync (NFM-2927 / NFM-2928 regression family).
-
-    The dispatch is failure-tolerant: any exception raised by the
-    background ingest task is logged and suppressed so a LightRAG outage
-    cannot poison the committing transaction.
-
-    Returns the number of nodes that were scheduled for ingest (0 if the
-    build result was None or carried no payload).
-    """
-    if build_result is None:
-        return 0
-    if not (build_result.ingest_nodes or build_result.ingest_edges):
-        return 0
-    try:
-        from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
-
-        node_labels = {n.id: n.label for n in build_result.ingest_nodes}
-        fire_ingest_to_lightrag(
-            nodes=list(build_result.ingest_nodes),
-            edges=list(build_result.ingest_edges),
-            node_labels=node_labels,
-        )
-    except Exception:
-        logger.warning(
-            "Failed to dispatch BuildResult to LightRAG (non-fatal)",
-            exc_info=True,
-        )
-    return len(build_result.ingest_nodes)
 
 
 # ---------------------------------------------------------------------------
@@ -728,14 +683,29 @@ class GraphBuilder:
         )
         self._session.add(queue_entry)
 
-    # NFM-2920: `_fire_lightrag_ingest` was deleted here. It dispatched to
-    # LightRAG from inside the SQL transaction, so a later rollback left
-    # ghost entities in the graph. NFM-2871 moved dispatch to after
-    # `session.commit()` in `extraction_pipeline.trigger_extraction()`;
-    # GraphBuilder now only *carries* the payload on
-    # `BuildResult.ingest_nodes` / `.ingest_edges`. Do not reintroduce an
-    # in-transaction dispatch helper — see
-    # `docs/architecture/kg-dispatch-lifecycle.md`.
+    def _fire_lightrag_ingest(
+        self,
+        nodes: list[KGNode],
+        edges: list[KGEdge],
+    ) -> None:
+        """Fire-and-forget: serialize and ingest new KG data to LightRAG.
+
+        Non-blocking — failures are logged but never propagate.
+        """
+        try:
+            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
+
+            node_labels = {n.id: n.label for n in nodes}
+            fire_ingest_to_lightrag(
+                nodes=nodes,
+                edges=edges,
+                node_labels=node_labels,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to schedule LightRAG ingest (non-fatal)",
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ from nfm_db.services.ontology_sync import (
 
 __all__ = [
     "SyncResult",
+    "SyncResult",
     "SyncStatus",
     "get_sync_status",
     "rebuild_ontology_graph",

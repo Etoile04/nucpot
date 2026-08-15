@@ -8,7 +8,6 @@ Trigger and monitor OntoFuel extraction jobs:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -18,7 +17,6 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
@@ -27,9 +25,11 @@ from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMe
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES, ExtractionStep
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
+    ExtractionStatusResponse,
     ExtractionTriggerRequest,
 )
-from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
+from nfm_db.services.celery_app import celery_app
+from nfm_db.services.extraction_pipeline import get_job
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -198,27 +198,67 @@ async def trigger_extraction_job(
 )
 async def get_extraction_status(
     job_id: UUID,
-    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
     """查询提取任务执行状态。
 
     Returns current status, counts of extracted/staged/rejected properties,
     timestamps, and error message (if failed).
     """
-    try:
-        result = await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == job_id)
-        )
-        job = result.scalar_one_or_none()
-    except (ValueError, SQLAlchemyError) as exc:
-        logger.warning("ORM job lookup failed for %s: %s", job_id, exc)
-        job = None
+    job = get_job(str(job_id))
 
     if job is not None:
         return {
             "success": True,
-            "data": _extraction_job_to_dict(job),
+            "data": ExtractionStatusResponse(
+                job_id=job.job_id,
+                source_reference=job.source_reference,
+                source_type=job.source_type,
+                status=job.status.value,
+                extracted_count=job.extracted_count,
+                staged_count=job.staged_count,
+                rejected_count=job.rejected_count,
+                error_message=job.error_message,
+                created_at=job.created_at,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+            ).model_dump(),
         }
+
+    # Fallback: check Celery AsyncResult for trigger-dispatched jobs
+    # (NFM-2013 — in-memory store is per-process and empty for Celery
+    # worker jobs running in a separate process).
+    try:
+        async_result = celery_app.AsyncResult(str(job_id))
+        if async_result.state == "PENDING":
+            cel_status = "pending"
+        elif async_result.state == "STARTED":
+            cel_status = "processing"
+        elif async_result.state == "SUCCESS":
+            cel_status = "completed"
+        elif async_result.state == "FAILURE":
+            cel_status = "failed"
+        else:
+            cel_status = async_result.state.lower() if async_result.state else "unknown"
+
+        error_message: str | None = None
+        if async_result.state == "FAILURE" and async_result.result:
+            error_message = str(async_result.result)[:500]
+
+        return {
+            "success": True,
+            "data": {
+                "job_id": str(job_id),
+                "source_reference": "",
+                "source_type": "",
+                "status": cel_status,
+                "extracted_count": 0,
+                "staged_count": 0,
+                "rejected_count": 0,
+                "error_message": error_message,
+            },
+        }
+    except Exception:
+        logger.exception("Failed to check Celery status for job_id=%s", job_id)
 
     raise HTTPException(
         status_code=404,
@@ -543,12 +583,11 @@ async def ingest_extraction_batch(
 
 @router.get(
     "/extraction/ingest/{job_id}/status",
-    summary="查询提取任务状态",
+    summary="查询提取任务状态（Celery）",
     description=(
-        "通过 ORM 查询提取任务的状态（UUID → 数据库行）。\n"
-        "返回 404（未找到）或 503（数据库错误，Retry-After: 5s）。\n\n"
-        "Look up an extraction job by UUID via ORM. "
-        "Returns 404 if not found, or 503 with Retry-After on DB error."
+        "查询由 /extraction/trigger 触发的 Celery 任务状态。\n\n"
+        "Check status of a Celery-dispatched extraction job. "
+        "Falls back to in-memory store for non-Celery jobs."
     ),
 )
 async def get_ingest_job_status(
@@ -557,63 +596,114 @@ async def get_ingest_job_status(
 ) -> dict[str, object]:
     """查询提取任务状态（NFM-2013 AC-5）。
 
-    Looks up the job by UUID in the ``extraction_jobs`` table via ORM.
-    Returns 404 if the row does not exist, or 503 with ``Retry-After: 5``
-    on a database error.
+    Reads from the ``extraction_jobs`` table persisted by the ingest
+    handler.  Falls back to the in-memory store and Celery AsyncResult
+    for jobs dispatched via /extraction/trigger (which don't land in
+    the ingest-side table).
     """
     # NFM-2013 AC-5: try the persisted ExtractionJob row first.  This is
     # the canonical state for POST /extraction/ingest jobs.
     try:
         job_uuid = UUID(job_id)
     except ValueError:
-        # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
-        # deprecated.  The ingest endpoint always generates UUIDs.
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Extraction job '{job_id}' is not a valid UUID. "
-                "Non-UUID (legacy Celery) job IDs are no longer supported. "
-                "Use a UUID-format job_id from a recent /extraction/ingest call."
-            ),
-            headers={"Deprecation": "true", "Sunset": "2026-12-31"},
-        )
+        # Not a UUID — must be a legacy Celery task id; fall through.
+        job_uuid = None
 
-    try:
-        row = (
-            await session.execute(
-                select(ExtractionJob).where(ExtractionJob.id == job_uuid)
+    if job_uuid is not None:
+        try:
+            row = (
+                await session.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == job_uuid)
+                )
+            ).scalar_one_or_none()
+        except Exception:
+            # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
+            # there but the bind failed, surface a clean 404 instead of
+            # a 500.  Caller can retry after operator investigation.
+            logger.exception(
+                "get_ingest_job_status: failed to query ExtractionJob for id=%s",
+                job_id,
             )
-        ).scalar_one_or_none()
-    except SQLAlchemyError:
-        # DB-level failure (connection refused, bind quirk, etc.).  Surface
-        # as 503 so SRE can distinguish from a clean 404.
-        logger.exception(
-            "get_ingest_job_status: DB error querying ExtractionJob for id=%s",
-            job_id,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Database temporarily unavailable. Retry after a short delay.",
-            headers={"Retry-After": "5"},
-        )
-    if row is not None:
-        canonical = _extraction_job_to_dict(row)
-        # Merge the 8 ingest-side extras on top of the canonical 24-key dict
-        # so the ingest endpoint preserves the full contract.
-        ingest_extras = {
-            "corpus_id": row.corpus_id or "",
-            "total_received": row.total_received,
-            "created_measurements": row.created_measurements,
-            "reused_entities": row.reused_entities,
-            "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
-            "skipped_unknown_properties": row.skipped_unknown_properties,
-            "skipped_duplicates": row.skipped_duplicates,
-            "validation_errors": row.validation_errors,
-        }
+            row = None
+        if row is not None:
+            return {
+                "success": True,
+                "data": {
+                    "job_id": str(row.id),
+                    "source_reference": row.source_reference or "",
+                    "source_type": row.source_type or "",
+                    "corpus_id": row.corpus_id or "",
+                    "status": row.status,
+                    "extracted_count": row.total_received,
+                    "staged_count": row.created_measurements,
+                    "rejected_count": row.skipped_unknown_properties,
+                    "created_measurements": row.created_measurements,
+                    "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
+                    "skipped_unknown_properties": row.skipped_unknown_properties,
+                    "skipped_duplicates": row.skipped_duplicates,
+                    "reused_entities": row.reused_entities,
+                    "validation_errors": row.validation_errors,
+                    "error_message": row.error_message,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
+                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                },
+            }
+
+    # Fallback: in-memory store for non-Celery / non-ingest jobs.
+    job = get_job(job_id)
+    if job is not None:
         return {
             "success": True,
-            "data": {**canonical, **ingest_extras},
+            "data": ExtractionStatusResponse(
+                job_id=job.job_id,
+                source_reference=job.source_reference,
+                source_type=job.source_type,
+                status=job.status.value,
+                extracted_count=job.extracted_count,
+                staged_count=job.staged_count,
+                rejected_count=job.rejected_count,
+                error_message=job.error_message,
+                created_at=job.created_at,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+            ).model_dump(),
         }
+
+    # Check Celery AsyncResult for trigger-dispatched jobs.
+    try:
+        async_result = celery_app.AsyncResult(job_id)
+        state = async_result.state
+
+        status_map = {
+            "PENDING": "pending",
+            "STARTED": "processing",
+            "SUCCESS": "completed",
+            "FAILURE": "failed",
+            "RETRY": "processing",
+            "REVOKED": "failed",
+        }
+        cel_status = status_map.get(state, (state or "unknown").lower())
+
+        error_message: str | None = None
+        if state == "FAILURE" and async_result.result:
+            error_message = str(async_result.result)[:500]
+
+        return {
+            "success": True,
+            "data": {
+                "job_id": job_id,
+                "source_reference": "",
+                "source_type": "",
+                "status": cel_status,
+                "extracted_count": 0,
+                "staged_count": 0,
+                "rejected_count": 0,
+                "error_message": error_message,
+            },
+        }
+    except Exception:
+        logger.exception("Failed to check Celery status for job_id=%s", job_id)
 
     raise HTTPException(
         status_code=404,
@@ -696,173 +786,3 @@ async def get_extraction_step_status(
         "started_at": step_row.started_at.isoformat() if step_row.started_at else None,
         "completed_at": step_row.completed_at.isoformat() if step_row.completed_at else None,
     }
-
-
-# ---------------------------------------------------------------------------
-# POST /api/v1/extraction/jobs/{job_id}/steps/{step_name}/rerun  (NFM-2884)
-# ---------------------------------------------------------------------------
-
-
-@router.post(
-    "/extraction/jobs/{job_id}/steps/{step_name}/rerun",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="重跑单个管道步骤",
-    description=(
-        "Reset a single completed/failed pipeline step to ``pending``, "
-        "clear the parent job's ``track_id``, and dispatch the step "
-        "execution as a fire-and-forget background task.\n\n"
-        "Returns 202 Accepted with the reset step snapshot.  Returns "
-        "404 if the job or step does not exist, and 409 if the step is "
-        "currently ``running`` (cannot rerun a step that is still in "
-        "flight)."
-    ),
-)
-async def rerun_extraction_step(
-    job_id: UUID,
-    step_name: str,
-    session: Annotated[AsyncSession, Depends(get_db)],
-) -> dict[str, object]:
-    """Reset and dispatch a single pipeline step (NFM-2884).
-
-    Implements the rerun contract documented in the parent epic
-    (NFM-2872) and the issue body of NFM-2884:
-
-    - AC1: new POST endpoint.
-    - AC2: only ``completed`` or ``failed`` steps are eligible;
-      everything else (including ``pending`` / ``skipped``) is rejected.
-    - AC3: reset step to ``pending``, clear ``track_id`` on parent job,
-      fire execution as ``asyncio.create_task``.
-    - AC4: return 202 + the reset step snapshot.
-    - AC5: 404 if job or step missing.
-    - AC6: 409 if the step is currently ``running``.
-
-    The dispatched task currently marks the step ``completed`` to
-    demonstrate the fire-and-forget wiring; production orchestration
-    will replace this stub once the per-step executor registry
-    (NFM-2739 Phase B) lands.
-    """
-    # AC-5: validate step_name against known step types first.
-    if step_name not in EXTRACTION_STEP_TYPES:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Step '{step_name}' not found.",
-        )
-
-    # Fetch the parent job (404 if missing).
-    job_row = (
-        await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == job_id)
-        )
-    ).scalar_one_or_none()
-
-    if job_row is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Extraction job '{job_id}' not found.",
-        )
-
-    # Fetch the specific step (404 if missing).
-    step_row = (
-        await session.execute(
-            select(ExtractionStep).where(
-                ExtractionStep.job_id == job_id,
-                ExtractionStep.step_type == step_name,
-            )
-        )
-    ).scalar_one_or_none()
-
-    if step_row is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Step '{step_name}' not found for job '{job_id}'.",
-        )
-
-    # AC-6: cannot rerun a step that is currently in flight.
-    if step_row.status == "running":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Step '{step_name}' is currently running; "
-                "wait for completion before rerunning."
-            ),
-        )
-
-    # AC-2: only completed / failed steps are eligible for rerun.
-    if step_row.status not in ("completed", "failed"):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Step '{step_name}' has status '{step_row.status}'; "
-                "only completed or failed steps can be rerun."
-            ),
-        )
-
-    # AC-3: reset step state and clear parent track_id.
-    step_row.status = "pending"
-    step_row.started_at = None
-    step_row.completed_at = None
-    step_row.error_message = None
-    # track_id lives on the parent job (NFM-2881); clear it.
-    if hasattr(job_row, "track_id"):
-        job_row.track_id = None
-    await session.commit()
-    await session.refresh(step_row)
-
-    # AC-3: dispatch the step execution as fire-and-forget.
-    # The stub marks the step completed immediately; production
-    # orchestrator integration (NFM-2739 Phase B) will replace this.
-    asyncio.create_task(_dispatch_rerun_step(job_id, step_name, step_row.id))  # noqa: RUF006 — fire-and-forget intentional
-
-    # AC-4: return 202 with the reset step snapshot.
-    track_id = getattr(job_row, "track_id", None)
-    return {
-        "job_id": str(job_id),
-        "step_name": step_name,
-        "status": step_row.status,
-        "track_id": track_id if track_id is not None else None,
-        "started_at": None,
-        "completed_at": None,
-        "dispatched": True,
-    }
-
-
-async def _dispatch_rerun_step(
-    job_id: UUID,
-    step_name: str,
-    step_id: UUID,
-) -> None:
-    """Stub background task that marks the rerun step ``completed``.
-
-    Production wiring (NFM-2739 Phase B) will look up the step executor
-    in a registry and invoke it with the parent job's inputs.  Until
-    that lands, this stub flips status to ``completed`` so the API
-    contract (AC-4) is observable end-to-end.
-
-    Runs on its own DB session because the request-scoped session is
-    closed by the time this fires.
-    """
-    from nfm_db.database import async_session_factory
-    from nfm_db.models.extraction_step import ExtractionStep
-
-    try:
-        async with async_session_factory() as session:
-            step_row = (
-                await session.execute(
-                    select(ExtractionStep).where(
-                        ExtractionStep.id == step_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if step_row is None:
-                return
-            now = datetime.now(UTC)
-            step_row.status = "completed"
-            step_row.started_at = now
-            step_row.completed_at = now
-            await session.commit()
-    except Exception:
-        logger.exception(
-            "rerun dispatch failed for job_id=%s step=%s",
-            job_id,
-            step_name,
-        )

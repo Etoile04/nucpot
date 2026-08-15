@@ -78,70 +78,6 @@ def _build_standard_names_block() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Ontology-driven category/property helpers (NFM-3004)
-# ---------------------------------------------------------------------------
-
-
-def _build_ontology_categories_block(ontology_data: dict[str, Any]) -> str:
-    """Build categories block from ontology entity_types.
-
-    Extracts unique category names from ``entity_types`` entries.
-    Falls back gracefully when entity_types is missing or empty.
-    """
-    entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
-    if not entity_types:
-        return _build_categories_block()
-
-    names: list[str] = []
-    seen: set[str] = set()
-    for et in entity_types:
-        name = et.get("name")
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-
-    if not names:
-        return _build_categories_block()
-
-    lines = ["## Property Categories (property_category)", ""]
-    for name in names:
-        lines.append(f"- {name}")
-    return "\n".join(lines)
-
-
-def _build_ontology_standard_names_block(ontology_data: dict[str, Any]) -> str:
-    """Build standard names block from ontology required_properties.
-
-    Extracts unique property names from ``required_properties`` across
-    all entity types in ``ontology_data``.
-    """
-    entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
-    if not entity_types:
-        return _build_standard_names_block()
-
-    names: list[str] = []
-    seen: set[str] = set()
-    for et in entity_types:
-        for prop in et.get("required_properties", []):
-            if prop not in seen:
-                seen.add(prop)
-                names.append(prop)
-
-    if not names:
-        return _build_standard_names_block()
-
-    names.sort()
-    lines = [
-        "## Standard Property Names (property)",
-        "优先使用以下标准名称:",
-        "",
-    ]
-    for name in names:
-        lines.append(f"- {name}")
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
 # Ontology context builder (NFM-2639)
 # ---------------------------------------------------------------------------
 
@@ -413,12 +349,11 @@ def build_ontology_extraction_prompt(
 
     if not ontology_data:
         ontology_context_block = ""
-        categories_block = _build_categories_block()
-        standard_names_block = _build_standard_names_block()
     else:
         ontology_context_block = _build_ontology_context_block(ontology_data)
-        categories_block = _build_ontology_categories_block(ontology_data)
-        standard_names_block = _build_ontology_standard_names_block(ontology_data)
+
+    categories_block = _build_categories_block()
+    standard_names_block = _build_standard_names_block()
 
     return _PROMPT_TEMPLATE.format(
         categories_block=categories_block,

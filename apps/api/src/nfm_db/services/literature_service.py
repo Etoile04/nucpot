@@ -627,11 +627,6 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         )
 
         # --- Step 4: persist via extraction_to_db_mapper ---------------
-        # ``build_result`` carries the pre-commit LightRAG ingest payload
-        # (NFM-2871). It MUST be dispatched via dispatch_build_result()
-        # AFTER db.commit() below — never before, otherwise we ship ghost
-        # entities on rollback. NFM-2928 wires the second caller.
-        build_result: Any | None = None
         if raw_properties:
             from nfm_db.services.extraction_to_db_mapper import map_and_persist
 
@@ -653,9 +648,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             from nfm_db.services.kg_re import GraphBuilder
 
             builder = GraphBuilder(db, sync_to_age=False)
-            build_result = await builder.build_from_extraction(
-                raw_properties, source_id=ds.id
-            )
+            await builder.build_from_extraction(raw_properties, source_id=ds.id)
         else:
             logger.info(
                 "process_literature: datasource_id=%s — nothing to extract",
@@ -692,14 +685,6 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         ds.parse_status = PARSE_STATUS_COMPLETED
         ds.parse_error = None
         await db.commit()
-
-        # NFM-2928: dispatch the carried BuildResult to LightRAG AFTER the
-        # commit so we never ship ghost entities on rollback. dispatch_build_result
-        # is the single public entry point for BuildResult consumption.
-        if build_result is not None:
-            from nfm_db.services.kg_re import dispatch_build_result
-
-            dispatch_build_result(build_result)
 
         logger.info(
             "process_literature: datasource_id=%s completed",

@@ -40,8 +40,8 @@ IMPORT_NAME_OVERRIDES: set[str] = {
     "fitz",
     # python-frontmatter (declared as "python-frontmatter>=1.1.0") as "frontmatter"
     "frontmatter",
-    # PyJWT (declared as "PyJWT>=2.10.0") is imported as "jwt"
-    "jwt",
+    # python-jose (declared as "python-jose[cryptography]>=3.3.0") as "jose"
+    "jose",
     # pydantic-settings (declared as "pydantic-settings>=2.7.0") as "pydantic_settings"
     "pydantic_settings",
     # python-multipart (declared as "python-multipart>=0.0.20") as "multipart"
