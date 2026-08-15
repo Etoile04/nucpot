@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -567,75 +566,58 @@ async def get_ingest_job_status(
     try:
         job_uuid = UUID(job_id)
     except ValueError:
-        # Not a UUID — must be a legacy Celery task id; fall through.
-        job_uuid = None
-
-    if job_uuid is not None:
-        try:
-            row = (
-                await session.execute(
-                    select(ExtractionJob).where(ExtractionJob.id == job_uuid)
-                )
-            ).scalar_one_or_none()
-        except SQLAlchemyError:
-            # SQLite+aiosqlite UUID bind quirk: if the row is genuinely
-            # there but the bind failed, surface a clean 404 instead of
-            # a 500.  Caller can retry after operator investigation.
-            logger.exception(
-                "get_ingest_job_status: failed to query ExtractionJob for id=%s",
-                job_id,
-            )
-            row = None
-        if row is not None:
-            return {
-                "success": True,
-                "data": {
-                    "job_id": str(row.id),
-                    "source_reference": row.source_reference or "",
-                    "source_type": row.source_type or "",
-                    "corpus_id": row.corpus_id or "",
-                    "status": row.status,
-                    "extracted_count": row.total_received,
-                    "staged_count": row.created_measurements,
-                    "rejected_count": row.skipped_unknown_properties,
-                    "created_measurements": row.created_measurements,
-                    "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
-                    "skipped_unknown_properties": row.skipped_unknown_properties,
-                    "skipped_duplicates": row.skipped_duplicates,
-                    "reused_entities": row.reused_entities,
-                    "validation_errors": row.validation_errors,
-                    "error_message": row.error_message,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "started_at": row.started_at.isoformat() if row.started_at else None,
-                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-                },
-            }
-
-    # Fallback: ORM lookup for non-Celery / non-ingest jobs.
-    try:
-        result = await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == uuid.UUID(job_id))
+        # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
+        # deprecated.  The ingest endpoint always generates UUIDs.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Extraction job '{job_id}' is not a valid UUID. "
+                "Non-UUID (legacy Celery) job IDs are no longer supported. "
+                "Use a UUID-format job_id from a recent /extraction/ingest call."
+            ),
+            headers={"Deprecation": "true", "Sunset": "2026-12-31"},
         )
-        job = result.scalar_one_or_none()
-    except (ValueError, SQLAlchemyError) as exc:
-        logger.warning("ORM job lookup failed for %s: %s", job_id, exc)
-        job = None
-    if job is not None:
+
+    try:
+        row = (
+            await session.execute(
+                select(ExtractionJob).where(ExtractionJob.id == job_uuid)
+            )
+        ).scalar_one_or_none()
+    except SQLAlchemyError:
+        # DB-level failure (connection refused, bind quirk, etc.).  Surface
+        # as 503 so SRE can distinguish from a clean 404.
+        logger.exception(
+            "get_ingest_job_status: DB error querying ExtractionJob for id=%s",
+            job_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Retry after a short delay.",
+            headers={"Retry-After": "5"},
+        )
+    if row is not None:
+        canonical = _extraction_job_to_dict(row)
+        # Merge the 8 ingest-side extras on top of the canonical 24-key dict
+        # so the ingest endpoint preserves the full contract.
+        ingest_extras = {
+            "corpus_id": row.corpus_id or "",
+            "total_received": row.total_received,
+            "created_measurements": row.created_measurements,
+            "reused_entities": row.reused_entities,
+            "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
+            "skipped_unknown_properties": row.skipped_unknown_properties,
+            "skipped_duplicates": row.skipped_duplicates,
+            "validation_errors": row.validation_errors,
+        }
         return {
             "success": True,
-            "data": _extraction_job_to_dict(job),
+            "data": {**canonical, **ingest_extras},
         }
 
-    # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
-    # deprecated.  The ingest endpoint always generates UUIDs.
     raise HTTPException(
-        status_code=400,
-        detail=(
-            f"Extraction job '{job_id}' is not a valid UUID. "
-            "Non-UUID (legacy Celery) job IDs are no longer supported. "
-            "Use a UUID-format job_id from a recent /extraction/ingest call."
-        ),
-        headers={"Deprecation": "true", "Sunset": "2026-12-31"},
+        status_code=404,
+        detail=f"Extraction job '{job_id}' not found.",
     )
 
 
