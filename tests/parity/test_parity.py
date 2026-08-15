@@ -154,7 +154,7 @@ def _walk_diff(
             lines.append(
                 f"{path}: list length {len(actual)} != expected {len(expected)}"
             )
-        for i, (e_item, a_item) in enumerate(zip(expected, actual, strict=False)):
+        for i, (e_item, a_item) in enumerate(zip(expected, actual, strict=True)):
             _walk_diff(e_item, a_item, f"{path}[{i}]", lines, limit)
         return
     if expected != actual:
