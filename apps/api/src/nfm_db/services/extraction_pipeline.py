@@ -40,7 +40,6 @@ from nfm_db.services.llm_client import call_llm, is_llm_configured
 # Ontology version query helper (NFM-2640)
 # ---------------------------------------------------------------------------
 
-
 async def _get_latest_published_ontology(
     session: AsyncSession,
 ) -> OntologyVersion | None:
@@ -78,7 +77,6 @@ async def _get_latest_published_ontology(
         )
         return None
 
-
 # ---------------------------------------------------------------------------
 # Chunking constants (NFM-1366 P3, daily reflection 2026-08-06 §2.2)
 # ---------------------------------------------------------------------------
@@ -88,7 +86,6 @@ async def _get_latest_published_ontology(
 # _MODEL_CONTEXT_CHARS), minus ~3K for system_prompt + user_message
 # prefix, times 0.8 safety margin.
 _CHUNK_MAX_CHARS = 20_000  # max chars of source content per LLM call
-
 
 def _chunk_content(content: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str]:
     """Split *content* into chunks ≤ *max_chars*, preferring paragraph
@@ -153,7 +150,6 @@ logger = logging.getLogger(__name__)
 # DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
 _DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 
-
 class EmptyExtractionError(Exception):
     """Raised when extraction cannot produce results for a known, structural reason.
 
@@ -175,7 +171,6 @@ class EmptyExtractionError(Exception):
 # In-memory job store
 # ---------------------------------------------------------------------------
 
-
 class JobStatus(StrEnum):
     """Extraction job lifecycle statuses."""
 
@@ -188,24 +183,17 @@ class JobStatus(StrEnum):
     FAILED = "failed"
     PARTIAL = "partial"
 
-
 # ---------------------------------------------------------------------------
 # Job ID generation
 # ---------------------------------------------------------------------------
-
 
 def _generate_job_id() -> str:
     """Generate a unique job identifier."""
     return str(uuid.uuid4())
 
-
-
-
-
 # ---------------------------------------------------------------------------
 # Serialization boundary (NFM-2743, D3)
 # ---------------------------------------------------------------------------
-
 
 def _coalesce(value: Any, default: Any) -> Any:
     """Return *value* when it is not ``None``, else *default*.
@@ -218,7 +206,6 @@ def _coalesce(value: Any, default: Any) -> Any:
     returns ``None`` (it never raises ``AttributeError``).
     """
     return value if value is not None else default
-
 
 def _extraction_job_to_dict(
     job: OrmExtractionJob,
@@ -306,11 +293,9 @@ def _extraction_job_to_dict(
         "ontology_version_str": job.ontology_version_str,
     }
 
-
 # ---------------------------------------------------------------------------
 # OntoFuel extraction interface (LLM-backed with stub fallback)
 # ---------------------------------------------------------------------------
-
 
 def _is_stub_mode() -> bool:
     """Check if EXTRACTION_STUB_MODE is enabled.
@@ -319,7 +304,6 @@ def _is_stub_mode() -> bool:
         True if EXTRACTION_STUB_MODE env var is 'true' or '1'.
     """
     return os.environ.get("EXTRACTION_STUB_MODE", "").lower() in ("true", "1")
-
 
 def _load_source_content(source_reference: str) -> str:
     """Load Markdown content from a source file path.
@@ -337,7 +321,6 @@ def _load_source_content(source_reference: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Source file not found: {source_reference}")
     return path.read_text(encoding="utf-8")
-
 
 def _post_process_extracted(
     raw_properties: list[dict[str, Any]],
@@ -412,7 +395,6 @@ def _post_process_extracted(
         processed.append(item)
 
     return processed
-
 
 async def ontofuel_extract(
     source_reference: str,
@@ -586,7 +568,6 @@ async def ontofuel_extract(
         )
         return []
 
-
 def _stub_extraction_results(source: str) -> list[dict[str, Any]]:
     """Generate stub extraction results for pipeline testing.
 
@@ -639,11 +620,9 @@ def _stub_extraction_results(source: str) -> list[dict[str, Any]]:
         },
     ]
 
-
 # ---------------------------------------------------------------------------
 # Pipeline orchestration
 # ---------------------------------------------------------------------------
-
 
 async def trigger_extraction(
     session: AsyncSession,
@@ -727,11 +706,9 @@ async def trigger_extraction(
         max_confidence=max_confidence,
     )
 
-
 # ---------------------------------------------------------------------------
 # Property mapping (normalization)
 # ---------------------------------------------------------------------------
-
 
 def _apply_property_mapping(
     raw_properties: list[dict[str, Any]],
@@ -772,7 +749,6 @@ def _apply_property_mapping(
         mapped.append(item)
 
     return mapped
-
 
 def _find_matching(
     values: list[dict[str, Any]],

@@ -18,6 +18,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
@@ -65,11 +66,9 @@ _ORDERED_STEPS = [
     "completed",
 ]
 
-
 # ---------------------------------------------------------------------------
 # Helper: error envelope
 # ---------------------------------------------------------------------------
-
 
 def _error_response(status_code: int, message: str) -> JSONResponse:
     """Return a standard ApiResponse error envelope."""
@@ -78,11 +77,9 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
         content={"success": False, "data": None, "error": message, "meta": None},
     )
 
-
 # ---------------------------------------------------------------------------
 # Helper: build progress sub-object from JobStatus
 # ---------------------------------------------------------------------------
-
 
 def _build_progress(status: str) -> V4JobProgress:
     """Build the V4JobProgress from the current job status."""
@@ -94,11 +91,9 @@ def _build_progress(status: str) -> V4JobProgress:
         steps_remaining=_ORDERED_STEPS[current_idx + 1 :],
     )
 
-
 # ---------------------------------------------------------------------------
 # Helper: convert raw property dicts to V4PropertyResponse
 # ---------------------------------------------------------------------------
-
 
 def _to_v4_property(
     prop: dict[str, Any],
@@ -132,16 +127,13 @@ def _to_v4_property(
         cache_level=prop.get("cache_level"),
     )
 
-
 # ---------------------------------------------------------------------------
 # Helper: collect stored properties for a job
 # ---------------------------------------------------------------------------
 
-
 # ---------------------------------------------------------------------------
 # Helper: async job lookup by UUID string (NFM-3008)
 # ---------------------------------------------------------------------------
-
 
 async def _get_job(session: AsyncSession, job_id: str) -> OrmExtractionJob | None:
     """Look up an ORM ExtractionJob by UUID string.
@@ -160,11 +152,9 @@ async def _get_job(session: AsyncSession, job_id: str) -> OrmExtractionJob | Non
     except (ValueError, TypeError):
         return None
 
-
 # ---------------------------------------------------------------------------
 # Helper: collect stored properties for a job
 # ---------------------------------------------------------------------------
-
 
 async def _get_job_properties(
     job_id: str,
@@ -216,18 +206,16 @@ async def _get_job_properties(
             }
             for row in rows
         ]
-    except Exception:
+    except (SQLAlchemyError, OSError):
         logger.exception(
             "Failed to query job properties for %s",
             job_id,
         )
         raise
 
-
 # ---------------------------------------------------------------------------
 # Helper: build material systems index
 # ---------------------------------------------------------------------------
-
 
 def _build_material_systems_index() -> list[dict[str, Any]]:
     """Build material systems overview from available job data.
@@ -238,11 +226,9 @@ def _build_material_systems_index() -> list[dict[str, Any]]:
     """
     return []
 
-
 # ---------------------------------------------------------------------------
 # 1. POST /api/v4/extraction/submit
 # ---------------------------------------------------------------------------
-
 
 @router.post(
     "/extraction/submit",
@@ -323,11 +309,9 @@ async def submit_extraction(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 2. GET /api/v4/extraction/{job_id}/status
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/extraction/{job_id}/status",
@@ -367,11 +351,9 @@ async def get_extraction_status(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 3. GET /api/v4/extraction/{job_id}/result
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/extraction/{job_id}/result",
@@ -444,11 +426,9 @@ async def get_extraction_result(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 4. GET /api/v4/properties/{material_system}
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/properties/{material_system}",
@@ -549,11 +529,9 @@ async def browse_properties(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 5. POST /api/v4/extraction/{job_id}/validate
 # ---------------------------------------------------------------------------
-
 
 @router.post(
     "/extraction/{job_id}/validate",
@@ -616,11 +594,9 @@ async def validate_extraction(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 6. GET /api/v4/material-systems
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/material-systems",
