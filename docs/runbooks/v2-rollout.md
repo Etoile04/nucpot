@@ -1,9 +1,8 @@
 # V2 Extraction Pipeline Rollout Runbook
 
-> **Status:** Active — awaiting first scheduled parity run. Per
-> [NFM-2924](/NFM/issues/NFM-2924): pre-flight complete, CI fix merged
-> (PR #843, 2026-08-15), streak table reset and ready for population from
-> the `extraction-parity` daily 06:00 UTC cron.
+> **Status:** Phase 2 — Staging green streak in progress (Day 1/7).
+> First scheduled parity run: 2026-08-15 06:00 UTC — GREEN.
+> Owning issue: [NFM-3226](/NFM/issues/NFM-3226).
 
 This runbook is the operational source of truth for promoting the V2
 extraction pipeline from default-OFF to default-ON in production. The
@@ -68,14 +67,12 @@ are still PASS.
 
 | Date (UTC) | Parity fixtures run | V1 fail count | V2 fail count | Parity delta | Outcome | Operator initials |
 |------------|---------------------|---------------|---------------|--------------|---------|-------------------|
-| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| 2026-08-15 | 4/4 (mox-thermal, thoria-mixed-oxide, uo2-fcc, zircaloy) | 0 | 0 | 0% | **PASS** | CTO-auto |
 
-> **Streak not yet started.** The `schedule: cron: "0 6 * * *"` trigger was
-> added to `extraction-parity.yml` on 2026-08-15 (commit `cb05a81b`, PR
-> #843). Rows will be appended from the first scheduled run onward. Earlier
-> rows dated 2026-08-13 and 2026-08-14 were removed — they were sourced
-> from PR-triggered (observational) parity runs, not the scheduled cron per
-> ADR-0007 §4.
+> **Streak: 1/7.** Day 1 recorded from scheduled run
+> [31869721752](https://github.com/Etoile04/nucpot/actions/runs/31869721752)
+> (2026-08-15 06:00 UTC). All 4 fixtures passed (4/4 GREEN, 0 failed).
+> Parity delta: 0% — within ADR-0007 ±5% tolerance.
 
 **Parity fixtures** (4 canonical): mox-thermal-conductivity,
 thoria-mixed-oxide, uo2-fcc-lattice, zircaloy-cladding-modulus.
