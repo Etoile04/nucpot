@@ -180,3 +180,72 @@ jobs:
       - name: Run deploy-lock behavioral tests
         run: |
           uv run pytest tests/test_deploy_lock.py -v --no-cov --override-ini="addopts="
+
+  # NFM-3199: Restore parity test execution inside the standard backend CI
+  # workflow now that .github/workflows/extraction-parity*.yml have been
+  # removed (NFM-3193 / PR #808). Mirrors the invocation shape of the deleted
+  # .github/workflows/extraction-parity-staging-cron.yml (NFM-2944 / PR #801):
+  # -m parity marker, EXTRACTION_STUB_MODE=true env var (required for the
+  # test_parity.py module guard to run rather than skip — see
+  # apps/api/tests/test_parity.py:78), tests/test_parity.py path, --no-cov so
+  # the 80% coverage gate in the `test` job above is not entangled.
+  #
+  # `continue-on-error` (NOT `|| true`) keeps parity failures visible without
+  # gating merge — see ADR-0007 §3 phased promotion (NFM-2916). A real
+  # `|| true` would force steps.parity.outcome to 'success' and silently mask
+  # regressions; `continue-on-error` preserves the true outcome for the step
+  # summary and artifact. `set -o pipefail` keeps pytest's exit code from
+  # being masked by `tee`.
+  parity:
+    name: API V1/V2 Parity Harness
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      EXTRACTION_STUB_MODE: "true"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Run parity harness
+        id: parity
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p parity-artifacts
+          uv run --frozen python -m pytest \
+            tests/test_parity.py \
+            -m parity \
+            --no-cov \
+            -v --tb=short \
+            2>&1 | tee parity-artifacts/parity-output.txt
+
+      - name: Upload parity summary artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: parity-summary
+          path: apps/api/parity-artifacts/parity-output.txt
+          if-no-files-found: warn
+          # 14 days >> AC-required 7. ADR-0007 §3 review window is one week;
+          # doubling that gives reviewers headroom to inspect runs without
+          # rushing to download.
+          retention-days: 14
+
+      - name: Step summary
+        if: always()
+        run: |
+          echo "## V1/V2 Parity Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Outcome:** ${{ steps.parity.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run:** [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact:** Download \`parity-summary\` from the run page (14-day retention)" >> $GITHUB_STEP_SUMMARY
