@@ -1,9 +1,10 @@
 # V2 Extraction Pipeline Rollout Runbook
 
-> **Status:** Active — awaiting first scheduled parity run. Per
+> **Status:** Active — streak in progress (1/7 days). Per
 > [NFM-2924](/NFM/issues/NFM-2924): pre-flight complete, CI fix merged
-> (PR #843, 2026-08-15), streak table reset and ready for population from
-> the `extraction-parity` daily 06:00 UTC cron.
+> (PR #843, 2026-08-15), first scheduled run GREEN
+> ([run 31869721752](https://github.com/Etoile04/nucpot/actions/runs/31869721752),
+> 2026-08-15 06:32 UTC). Next expected run: 2026-08-16 ~06:00 UTC.
 
 This runbook is the operational source of truth for promoting the V2
 extraction pipeline from default-OFF to default-ON in production. The
@@ -68,14 +69,15 @@ are still PASS.
 
 | Date (UTC) | Parity fixtures run | V1 fail count | V2 fail count | Parity delta | Outcome | Operator initials |
 |------------|---------------------|---------------|---------------|--------------|---------|-------------------|
+| 2026-08-15 | 4 | 0 | 0 | 0 % | PASS | LE (automated) |
 | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
 
-> **Streak not yet started.** The `schedule: cron: "0 6 * * *"` trigger was
-> added to `extraction-parity.yml` on 2026-08-15 (commit `cb05a81b`, PR
-> #843). Rows will be appended from the first scheduled run onward. Earlier
-> rows dated 2026-08-13 and 2026-08-14 were removed — they were sourced
-> from PR-triggered (observational) parity runs, not the scheduled cron per
-> ADR-0007 §4.
+> **Streak: 1/7 days.** First row sourced from scheduled run
+> [31869721752](https://github.com/Etoile04/nucpot/actions/runs/31869721752)
+> (06:32 UTC). Earlier rows dated 2026-08-13 and 2026-08-14 were removed —
+> they were sourced from the now-removed `extraction-parity-staging-cron.yml`
+> (a sibling-branch artifact), not the canonical `extraction-parity.yml`
+> scheduled trigger per ADR-0007 §4.
 
 **Parity fixtures** (4 canonical): mox-thermal-conductivity,
 thoria-mixed-oxide, uo2-fcc-lattice, zircaloy-cladding-modulus.
