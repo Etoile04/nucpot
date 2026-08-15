@@ -70,15 +70,19 @@ are still PASS.
 |------------|---------------------|---------------|---------------|--------------|---------|-------------------|
 | 2026-08-13 | 4 | 0 | 0 | 0.0% | PASS | LE |
 | 2026-08-14 | 4 | 0 | 0 | 0.0% | PASS | LE |
+| 2026-08-15 | 4 | 0 | 0 | 0.0% | PASS | LE |
 | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
 
 **Parity fixtures** (4 canonical): mox-thermal-conductivity,
 thoria-mixed-oxide, uo2-fcc-lattice, zircaloy-cladding-modulus.
 
-**CI run log:** each row is sourced from the
-`extraction-parity-staging-cron` workflow artifacts, not local re-runs.
-Download the `extraction-parity-staging-summary` artifact from the
-corresponding run page.
+**CI run log:** each row is sourced from GitHub Actions artifacts, not
+local re-runs.  Aug 13–14 rows come from the deprecated
+`extraction-parity-staging-cron` workflow (artifact:
+`extraction-parity-staging-summary`).  Starting Aug 15 the consolidated
+`extraction-parity` workflow took over with the same schedule (06:00 UTC
+daily) and fixture set; its artifact is `parity-report`.  Download the
+corresponding artifact from each run page.
 
 **Acceptance for promotion to Production shadow:** seven consecutive rows
 all showing `PASS`, the parity delta stays at or below the ADR-0007
