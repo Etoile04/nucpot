@@ -3,7 +3,6 @@
 NFM-3024-T1 — see :mod:`nfm_db.backup.tier_engine` for the classification
 function and :mod:`nfm_db.config.backup` for the Pydantic schema that
 describes the tier counts.
-<<<<<<< HEAD
 
 NFM-3066 / NFM-3024-A1: backup configuration schema.
 
@@ -31,6 +30,3 @@ __all__ = [
     "TierSpec",
     "reset_retention_days_warned",
 ]
-=======
-"""
->>>>>>> origin/NFM-3041-nfm-3024-t1-config-schema-retention-tier-engine-hourly-daily-weekly

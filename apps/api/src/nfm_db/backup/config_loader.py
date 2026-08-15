@@ -68,7 +68,6 @@ def load_backup_config(path: str | Path) -> BackupConfig:
     return BackupConfig.model_validate(backup_block)
 
 
-<<<<<<< HEAD
 def check_retention_deprecation(cfg: BackupConfig) -> None:
     """Emit a ``[DEPRECATION]`` warning if *cfg* uses the legacy path.
 
@@ -86,6 +85,3 @@ def check_retention_deprecation(cfg: BackupConfig) -> None:
 
 
 __all__ = ["check_retention_deprecation", "load_backup_config"]
-=======
-__all__ = ["load_backup_config"]
->>>>>>> origin/NFM-3041-nfm-3024-t1-config-schema-retention-tier-engine-hourly-daily-weekly
