@@ -29,7 +29,6 @@ from nfm_db.services.extraction.steps.raw_text_loader import RawTextLoader
 from nfm_db.services.extraction.steps.section_segmenter import SectionSegmenter
 from nfm_db.services.extraction.types import ExtractionChunk
 
-
 # Path: tests/parity/ → tests/fixtures/parity/baseline/
 BASELINE_DIR = (
     Path(__file__).resolve().parent.parent / "fixtures" / "parity" / "baseline"
@@ -155,7 +154,7 @@ def _walk_diff(
             lines.append(
                 f"{path}: list length {len(actual)} != expected {len(expected)}"
             )
-        for i, (e_item, a_item) in enumerate(zip(expected, actual)):
+        for i, (e_item, a_item) in enumerate(zip(expected, actual, strict=False)):
             _walk_diff(e_item, a_item, f"{path}[{i}]", lines, limit)
         return
     if expected != actual:
