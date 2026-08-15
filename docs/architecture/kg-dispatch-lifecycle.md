@@ -96,7 +96,8 @@ Two properties make this safe:
 | Test | Asserts |
 | --- | --- |
 | `test_lightrag_not_called_when_commit_raises` | Rollback path: `session.commit()` raises → `fire_ingest_to_lightrag` is never invoked |
-| ordering test | `commit` appears before `fire_ingest_to_lightrag` in the recorded call order, and the ingest is last |
+| `test_lightrag_called_only_after_commit_succeeds` | `commit` appears before `fire_ingest_to_lightrag` in the recorded call order, and the ingest is last |
+| `test_lightrag_skipped_when_ingest_nodes_empty` | Empty `ingest_nodes`/`ingest_edges` → `fire_ingest_to_lightrag` is never invoked even on successful commit |
 
 The rollback test builds a KG branch that *succeeds* first, so `build_result` is
 genuinely populated. Without that setup the guard would be unentered for the wrong
