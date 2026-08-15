@@ -591,8 +591,10 @@ async def ingest_extraction_batch(
     summary="查询提取任务状态（Celery）",
     description=(
         "查询由 /extraction/trigger 触发的 Celery 任务状态。\n\n"
-        "Check status of a Celery-dispatched extraction job. "
-        "Falls back to in-memory store for non-Celery jobs."
+        "Check status of an extraction job by UUID. Returns 200 with the "
+        "persisted ORM row, 404 if the job_id is not found, 400 with "
+        "Deprecation/Sunset headers for non-UUID (legacy Celery) job_ids, "
+        "or 503 with Retry-After:5 for database errors."
     ),
 )
 async def get_ingest_job_status(
