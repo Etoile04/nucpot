@@ -45,10 +45,6 @@ class Settings(BaseSettings):
     # tokens without affecting interactive sessions.
     service_jwt_ttl_minutes: int = _resolve_service_jwt_ttl()
     blog_content_dir: str = "content/blog"
-    # NFM-2568-T1: feature flag routing to V2 orchestrator.
-    # When True, trigger_extraction() delegates to ExtractionOrchestrator.
-    # When False (default), legacy pipeline runs unchanged.
-    extraction_v2_enabled: bool = False
     # NFM-2781 HOTFIX CR1: allowlist base for
     # ``get_gap_source_text``.  ``chunk.source_reference`` strings must
     # resolve to a path inside this directory; anything outside is

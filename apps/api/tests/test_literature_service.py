@@ -79,6 +79,20 @@ async def _add_datasource(
     return ds
 
 
+def _make_empty_build_result() -> MagicMock:
+    """Build a BuildResult-like MagicMock with empty ingest payload.
+
+    NFM-2928: process_literature now passes the BuildResult to
+    dispatch_build_result, which short-circuits empty payloads. Use this
+    helper wherever a test mocks ``GraphBuilder.build_from_extraction``
+    and does not care about the dispatch outcome.
+    """
+    result = MagicMock()
+    result.ingest_nodes = ()
+    result.ingest_edges = ()
+    return result
+
+
 # ---------------------------------------------------------------------------
 # 1. Happy path — content_md already set; skip PDF parse, go straight to extract
 # ---------------------------------------------------------------------------
@@ -96,7 +110,12 @@ class TestHappyPathPreSet:
         )
 
         mock_extract_result = _make_demo_extraction()
-        build_result_sentinel = object()
+        # NFM-2928: build_from_extraction now returns a BuildResult that is
+        # passed to dispatch_build_result. Use a MagicMock with the right
+        # shape so the dispatch helper short-circuits with no payload.
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
 
         with (
             patch.object(lit_svc, "_parse_pdf_to_markdown") as mock_parse,
@@ -110,7 +129,7 @@ class TestHappyPathPreSet:
             ) as mock_map,
             patch(
                 "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
-                new=AsyncMock(return_value=build_result_sentinel),
+                new=AsyncMock(return_value=empty_build_result),
             ) as mock_build,
         ):
             result = await lit_svc.process_literature(db_session, ds.id)
@@ -172,7 +191,9 @@ class TestHappyPathPdfParse:
             ),
             patch(
                 "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
-                new=AsyncMock(return_value=object()),
+                new=AsyncMock(
+                    return_value=_make_empty_build_result(),
+                ),
             ),
         ):
             result = await lit_svc.process_literature(db_session, ds.id)
@@ -238,7 +259,7 @@ class TestDuplicateHashShortCircuit:
             ),
             patch(
                 "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
-                new=AsyncMock(return_value=object()),
+                new=AsyncMock(return_value=_make_empty_build_result()),
             ),
         ):
             await lit_svc.process_literature(db_session, ds.id)
@@ -722,3 +743,179 @@ class TestPersistMinUAssets:
 
         assert result == md_text
         storage.save.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# NFM-2928: LightRAG ingest must fire on the literature path after commit
+# ---------------------------------------------------------------------------
+# Regression: NFM-2871 / PR #783 converted GraphBuilder from dispatcher to
+# payload carrier. The literature path silently dropped the returned
+# BuildResult, so literature-derived entities never reached LightRAG.
+#
+# These tests verify that process_literature now:
+#  1. dispatches the carried BuildResult exactly once on commit success
+#  2. does NOT dispatch when the path fails (rollback / exception)
+#  3. does NOT dispatch when the build yielded no ingest payload
+# ---------------------------------------------------------------------------
+
+
+class TestLightRAGIngestAfterCommit:
+    """Regression tests for NFM-2928: literature-path ingest dispatch."""
+
+    @pytest.mark.asyncio
+    async def test_literature_dispatches_build_result_after_commit(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Happy path: build_from_extraction returns a BuildResult → the
+        ``dispatch_build_result`` helper is invoked exactly once AFTER the
+        final ``db.commit()`` call.
+
+        This is the regression that NFM-2871 introduced and NFM-2928 fixes:
+        the literature path silently dropped the BuildResult and never
+        delivered literature-derived entities to LightRAG.
+        """
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+
+        # Build a real BuildResult shape so the dispatch helper is exercised.
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+        mock_node.label = "UO2"
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 0
+        mock_build_result.edges_created = 0
+        mock_build_result.review_queue_items = 0
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        call_order: list[str] = []
+
+        async def commit_record(*_args: Any, **_kwargs: Any) -> None:
+            call_order.append("commit")
+
+        def dispatch_record(*_args: Any, **_kwargs: Any) -> int:
+            call_order.append("dispatch")
+            return 1
+
+        db_session.commit = commit_record  # type: ignore[method-assign]
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=mock_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_re.dispatch_build_result",
+                side_effect=dispatch_record,
+            ) as mock_dispatch,
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        # Dispatch happened exactly once.
+        mock_dispatch.assert_called_once()
+        # Dispatch ran AFTER the final commit (Step 6).
+        assert call_order, "neither commit nor dispatch was called"
+        assert call_order[-1] == "dispatch"
+        assert "commit" in call_order
+        assert call_order.index("commit") < call_order.index("dispatch"), (
+            f"commit must precede dispatch_build_result; got {call_order}"
+        )
+        # Literature path returned successfully.
+        assert result["status"] == "completed"
+        assert result["extracted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_literature_does_not_dispatch_on_failure(
+        self, db_session: AsyncSession
+    ) -> None:
+        """If the pipeline raises BEFORE the final commit, the dispatch
+        guard must NOT fire. This guarantees no ghost entities on rollback.
+
+        Modelled by raising from `map_and_persist` to abort Step 4 before
+        `build_from_extraction` and the final commit.
+        """
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(
+                    side_effect=RuntimeError("simulated mapping failure")
+                ),
+            ),
+            patch(
+                "nfm_db.services.kg_re.dispatch_build_result",
+            ) as mock_dispatch,
+        ):
+            with pytest.raises(RuntimeError, match="simulated mapping failure"):
+                await lit_svc.process_literature(db_session, ds.id)
+
+        # The acceptance criterion: dispatch_build_result MUST NOT be called
+        # on a failed path. This is the bug class NFM-2871 / NFM-2928 fixes.
+        mock_dispatch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_literature_skips_dispatch_when_ingest_payload_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """If the build produced no ingest payload (no new entities),
+        dispatch_build_result is still called with the empty BuildResult but
+        no LightRAG fire occurs. The helper itself short-circuits empty
+        payloads — see dispatch_build_result in kg_re.py.
+        """
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+
+        # BuildResult with no ingest payload (e.g. all nodes matched existing).
+        empty_build_result = MagicMock()
+        empty_build_result.nodes_created = 0
+        empty_build_result.nodes_matched = 1
+        empty_build_result.edges_created = 0
+        empty_build_result.review_queue_items = 0
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag"
+            ) as mock_fire,
+        ):
+            await lit_svc.process_literature(db_session, ds.id)
+
+        # Empty payload → no fire, even though dispatch was called.
+        mock_fire.assert_not_called()

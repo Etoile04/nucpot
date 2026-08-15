@@ -4,7 +4,7 @@
 **Date**: 2026-08-10
 **Authors**: CTO, on escalation from Hermes Agent audit (2026-08-09)
 **Supersedes**: none
-**Related**: [NFM-2737](/NFM/issues/NFM-2737) (this ADR's source issue), [NFM-2564](/NFM/issues/NFM-2564) (EPIC), [NFM-2677](/NFM/issues/NFM-2677) (strangler-fig decomposition, merged via PR [#728](https://github.com/Etoile04/nucpot/pull/728)), [NFM-2680](/NFM/issues/NFM-2680) (EXTRACTION_PIPELINE_V2 flag wrapper, superseded), [NFM-2687](/NFM/issues/NFM-2687) (ExtractionChunk V2 model + migration, PR [#725](https://github.com/Etoile04/nucpot/pull/725)), [NFM-2698](/NFM/issues/NFM-2698) (canonical ExtractionStep Protocol + flag verification, merged via PR [#727](https://github.com/Etoile04/nucpot/pull/727)). Implementation follow-ups: NFM-2738 (CPO: close #726 + fix #725 CI), NFM-2739 (long-term: ExtractionJob dataclass deprecation). Architecture doc: [`nucpot-technical-architecture-2026-08-07.md`](./nucpot-technical-architecture-2026-08-07.md) §7.1 (strangler-fig rollout), §7.3 (data model dual-class debt).
+**Related**: [NFM-2737](/NFM/issues/NFM-2737) (this ADR's source issue), [NFM-2564](/NFM/issues/NFM-2564) (EPIC), [NFM-2677](/NFM/issues/NFM-2677) (strangler-fig decomposition, merged via PR [#728](https://github.com/Etoile04/nucpot/pull/728)), [NFM-2680](/NFM/issues/NFM-2680) (EXTRACTION_PIPELINE_V2 flag wrapper, superseded), [NFM-2687](/NFM/issues/NFM-2687) (ExtractionChunk V2 model + migration, PR [#725](https://github.com/Etoile04/nucpot/pull/725)), [NFM-2698](/NFM/issues/NFM-2698) (canonical ExtractionStep Protocol + flag verification, merged via PR [#727](https://github.com/Etoile04/nucpot/pull/727)), [NFM-2876](/NFM/issues/NFM-2876) (flip `NFM_EXTRACTION_V2_ENABLED` default to ON, PR [#790](https://github.com/Etoile04/nucpot/pull/790), commit `573ddc48`). Implementation follow-ups: NFM-2738 (CPO: close #726 + fix #725 CI), NFM-2739 (long-term: ExtractionJob dataclass deprecation; see [ADR-NFM-2739](./ADR-NFM-2739-extraction-job-dual-class.md)). Architecture doc: [`nucpot-technical-architecture-2026-08-07.md`](./nucpot-technical-architecture-2026-08-07.md) §7.1 (strangler-fig rollout), §7.3 (data model dual-class debt).
 
 ---
 
@@ -74,6 +74,41 @@ This eliminates the dual-class debt entirely. The legacy `trigger_extraction()` 
 
 D4 is tracked as **NFM-2739** (follow-up issue). It is **not** in scope for the #725/#726/#728 cascade.
 
+### D5. V2 `_load_v2_content` contract for non-`file` source types (NFM-2909)
+
+Before the `EXTRACTION_PIPELINE_V2` flag can be flipped to default-True,
+`_load_v2_content` must accept the source types that staging / prod
+traffic actually uses today. The original implementation rejected every
+non-`file` type with a generic `ValueError`, which would have converted
+working DOI extractions into hard failures on the strangler-fig flip
+([NFM-2869](/NFM/issues/NFM-2869)).
+
+Decision matrix (locked in `extraction_pipeline_dispatch._load_v2_content`):
+
+| `source_type` | Behavior                                                                |
+| ------------- | ----------------------------------------------------------------------- |
+| `file`        | Read from `source_reference` on disk. Missing path → `FileNotFoundError`. |
+| `doi`         | Try `source_reference` as a file path first (matches V1 locally-resolved-PDF semantics). If absent and `EXTRACTION_STUB_MODE=true`, return the placeholder markdown in `_STUB_DOI_CONTENT` so the 5-step orchestrator can run end-to-end in CI. Otherwise raise `NotImplementedError` with the documented migration path (`process_literature` or pre-cached PDF). |
+| `url`         | Explicit `NotImplementedError` — staging/prod traffic does not yet exercise it. |
+| `datasource`  | Explicit `NotImplementedError` — V1 loads `content_md` from the `DataSource` row; V2 needs that wiring before this contract can move. |
+| anything else | `NotImplementedError` with the supported list. |
+
+Rationale for the rejected cases: better a loud, documented error class
+(`NotImplementedError` with the migration path) than a silent half-working
+implementation. The `url` and `datasource` types are out of scope for the
+strangler-fig flip; tracking the wiring as separate follow-up tickets
+keeps this change small and reviewable.
+
+Rationale for `doi` in stub mode: tests that route through the dispatcher
+with placeholder references like `doi:10.1234/example` (or local paths
+that don't exist) previously failed with `FileNotFoundError` and produced
+42 false-positive test failures on PR #790. The placeholder content
+includes at least one markdown heading so the V2 `SectionSegmenter` step
+emits ≥1 section — the same invariant the legacy stub fixture relied on.
+
+D5 is implemented in [NFM-2909](/NFM/issues/NFM-2909). The loader contract
+is locked by `tests/services/test_extraction_v2_content_loader.py`.
+
 ## 3. Rationale
 
 - **D1's safety guard is the differentiator.** #728's `NotImplementedError` is not a missing-feature bug — it is the architectural commitment that the flag must remain OFF until the entire content-loading chain is wired. #726 lacks this guard and would silently produce empty extractions if flipped ON. The CTO escalation rule (§7.1 of the architecture doc: "重写 trigger_extraction 打断管线 → 必须用绞杀者模式 + feature flag") requires the guard.
@@ -95,15 +130,20 @@ D4 is tracked as **NFM-2739** (follow-up issue). It is **not** in scope for the 
 ## 5. Acceptance criteria
 
 - [ ] **D1:** `apps/api/src/nfm_db/api/v4/extraction.py:252-269` continues to import `trigger_extraction_pipeline` from `extraction_pipeline_dispatch`. No other module reads `is_extraction_v2_enabled()` directly.
-- [ ] **D1:** Production deploy keeps `NFM_EXTRACTION_V2_ENABLED` unset (or `false`). A canary that flips it ON must fail loudly via `NotImplementedError`, not produce silent zero-result extractions.
+- [ ] **D1:** Production deploy relies on the V2 pipeline by default — `NFM_EXTRACTION_V2_ENABLED` is unset, which now resolves to ON (post-[NFM-2876](/NFM/issues/NFM-2876)). The `NFM_EXTRACTION_V2_ENABLED=false` env override is the documented rollback path; flipping it ON manually is no longer a canary — it is the production path. See PR [#790](https://github.com/Etoile04/nucpot/pull/790) / commit `573ddc48` for the flip; [ADR-NFM-2739](./ADR-NFM-2739-extraction-job-dual-class.md) for the dataclass contract.
 - [ ] **D2:** PR [#726](https://github.com/Etoile04/nucpot/pull/726) is closed as `cancelled` with a comment linking to this ADR.
 - [ ] **D2:** PR [#725](https://github.com/Etoile04/nucpot/pull/725) merges after: (a) ruff UP037 fix, (b) `test_alembic_has_a_single_head` set update, (c) `alembic heads` prints exactly one revision, (d) rebase onto post-#728 main.
 - [ ] **D3:** Before V2 flag can be enabled, `_extraction_job_to_dict` helper exists in `extraction_pipeline_dispatch.py` (or a sibling module) with tests covering both dataclass and ORM input shapes producing identical dict output.
 - [ ] **D4:** NFM-2739 issue created and assigned to Lead Engineer (or Codebase Onboarding) for the long-term dataclass deprecation. Not gated by D1–D3.
 - [ ] **Audit trail:** This ADR is referenced from the comment thread on [NFM-2737](/NFM/issues/NFM-2737) and the implementation child issue NFM-2738.
+- [ ] **D5:** `_load_v2_content` resolves `doi` via the V1 file-fallback path and falls back to `_STUB_DOI_CONTENT` in `EXTRACTION_STUB_MODE`; `url`, `datasource`, and unknown types raise `NotImplementedError` with the migration path. Locked by `tests/services/test_extraction_v2_content_loader.py`.
 
 ## 6. Changelog note
 
 The architecture changelog should record:
 
 > 2026-08-10 — Strangler-fig extraction pipeline dispatch: `trigger_extraction_pipeline` (PR #728 / NFM-2677) is the canonical wrapper. `EXTRACTION_PIPELINE_V2` flag remains default-OFF until `RawTextLoader` ships production wiring and a `_extraction_job_to_dict` helper exists. PR #726 (`trigger_extraction_dispatch`, NFM-2680) closed as superseded. PR #725 (ExtractionChunk V2 model, NFM-2687) lands between #728 and the B2/B3 step series. Long-term `ExtractionJob` dataclass deprecation tracked as NFM-2739. See [ADR-NFM-2737](/docs/architecture/ADR-NFM-2737-strangler-fig-extraction-dispatch.md).
+>
+> 2026-08-12 — **V2 default flipped to ON** ([NFM-2876](/NFM/issues/NFM-2876), PR [#790](https://github.com/Etoile04/nucpot/pull/790), commit `573ddc48`). `NFM_EXTRACTION_V2_ENABLED` now defaults to `True`; an unset env var resolves to the V2 pipeline. The D1 acceptance criterion above is updated to reflect this — flipping the flag ON is no longer a canary, it is the production path, with `NFM_EXTRACTION_V2_ENABLED=false` as the documented rollback. E2E QA passed with one P2 doc warning (W1), which this entry closes; follow-up tracked as [NFM-2907](/NFM/issues/NFM-2907). Dataclass contract still governed by [ADR-NFM-2739](./ADR-NFM-2739-extraction-job-dual-class.md).
+>
+> 2026-08-12 — D5 ([NFM-2909](/NFM/issues/NFM-2909)): V2 `_load_v2_content` now resolves `doi` (file fallback + stub-mode placeholder) and explicitly rejects `url` / `datasource` with a documented migration path. Closes the loader-contract gap that PR #790's 42 false-positive `FileNotFoundError: test_paper.md` failures surfaced. Locked by `tests/services/test_extraction_v2_content_loader.py`.
