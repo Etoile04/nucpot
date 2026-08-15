@@ -1,24 +1,8 @@
-"""Strangler-fig dispatcher for the extraction pipeline (NFM-2680).
+"""Extraction pipeline dispatcher (NFM-2680, NFM-3008).
 
-Routes callers to either the legacy ``trigger_extraction()`` (default OFF)
-or the V2 ``ExtractionOrchestrator`` (when ``EXTRACTION_PIPELINE_V2`` /
-``NFM_EXTRACTION_V2_ENABLED`` is truthy).  This module is the single
-external entry point that B2/B3 work targets; legacy code is left
-unchanged.
-
-Routing semantics
------------------
-- Flag OFF  → call the legacy ``trigger_extraction`` unchanged.
-- Flag ON   → call the V2 orchestrator's ``run`` method via
-  ``_run_v2_pipeline`` (kept as a module-level coroutine so tests can
-  monkeypatch the path under test).
-
-Hot-path safety
----------------
-``is_extraction_v2_enabled`` is wrapped in ``functools.lru_cache`` so
-call-sites don't re-parse pydantic Settings on every invocation.  Tests
-that toggle the env var between cases must call
-``is_extraction_v2_enabled.cache_clear()``.
+Single external entry point that routes to the V2 orchestrator.
+The legacy V1 path and ``extraction_v2_enabled`` flag were removed in
+NFM-3008 (Phase B final cutover).
 """
 
 from __future__ import annotations
@@ -26,19 +10,16 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.config import get_settings
 from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
 from nfm_db.services.extraction import ExtractionChunk
 from nfm_db.services.extraction_orchestrator_v2 import ExtractionOrchestratorV2
 from nfm_db.services.extraction_pipeline import (
     _extraction_job_to_dict,
-    trigger_extraction,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,18 +78,6 @@ _STUB_DOI_CONTENT = (
     "## Thermal Conductivity\n"
     "Thermal conductivity at 1000 K: 7.5 W/(m*K).\n"
 )
-
-
-@lru_cache(maxsize=1)
-def is_extraction_v2_enabled() -> bool:
-    """Return the current value of the ``EXTRACTION_PIPELINE_V2`` flag.
-
-    Reads from ``Settings.extraction_v2_enabled`` (env var
-    ``NFM_EXTRACTION_V2_ENABLED``).  Default True (NFM-2869-T2 —
-    staging parity verified NFM-2875).  Set the env var to ``false``
-    to roll back to the legacy path.
-    """
-    return bool(get_settings().extraction_v2_enabled)
 
 
 async def _run_v2_pipeline(
@@ -285,41 +254,16 @@ async def trigger_extraction_pipeline(
     source_type: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Single entry point that routes to legacy or V2 based on the flag.
+    """Single entry point for the V2 extraction pipeline.
 
     Returns a **normalized dict** with consistent keys so call-sites
-    (e.g. ``api/v4/extraction.py``) never need their own
-    ``is_extraction_v2_enabled`` branching::
+    (e.g. ``api/v4/extraction.py``) never need branching::
 
         {"status": str, "job_id": str,
          "created_at": datetime | None, "error_message": str | None}
     """
-    if is_extraction_v2_enabled():
-        return await _run_v2_pipeline(
-            source_reference=source_reference,
-            source_type=source_type,
-            **kwargs,
-        )
-    # Legacy path — unchanged.
-    legacy_session = kwargs.get("session")
-    if not isinstance(legacy_session, AsyncSession):
-        raise TypeError(
-            "Legacy trigger_extraction requires an AsyncSession via session=..."
-        )
-    job = await trigger_extraction(
-        session=legacy_session,
+    return await _run_v2_pipeline(
         source_reference=source_reference,
         source_type=source_type,
-        element_systems=kwargs.get("element_systems"),
-        cache_level=kwargs.get("cache_level"),
-        max_confidence=kwargs.get("max_confidence"),
-        extract_figures=kwargs.get("extract_figures", False),
-        extract_tables=kwargs.get("extract_tables", False),
-        job_id=kwargs.get("job_id"),
-        ontology_version_id=kwargs.get("ontology_version_id"),
+        **kwargs,
     )
-    # NFM-2743 / D3 — the single serialization boundary. Both the
-    # legacy dataclass path (default OFF) and any future ORM path
-    # converge on this 24-key canonical dict so call-sites never have
-    # to branch on the V2 flag.
-    return _extraction_job_to_dict(job)

@@ -279,99 +279,67 @@ class TestMineruAutoDetect:
 # ===================================================================
 
 
+class _MockDbResult:
+    """Mimics SQLAlchemy Result for ``scalar_one_or_none()`` calls."""
+
+    def __init__(self, row: Any = None) -> None:
+        self._row = row
+
+    def scalar_one_or_none(self) -> Any:
+        return self._row
+
+
+def _mock_session_not_found() -> AsyncMock:
+    """Return an AsyncSession mock whose execute() yields no row."""
+    session = AsyncMock()
+    session.execute.return_value = _MockDbResult(row=None)
+    return session
+
+
 class TestIngestStatusEndpoint:
     """NFM-2013 Task 3: ingest job status endpoint.
 
-    Updated for NFM-3007: the ingest endpoint now uses ORM-only lookup
-    via ``_extraction_job_to_dict``.  Non-UUID job_ids return 400
-    (deprecated).  The in-memory and Celery fallback paths are removed.
+    After NFM-3008 the endpoint queries the ORM (no more ``get_job``
+    in-memory store, no more Celery fallback).  Tests below exercise the
+    ORM-only happy path and the 404 not-found path.
     """
 
     @pytest.mark.asyncio
-    async def test_ingest_status_non_uuid_deprecated(self) -> None:
-        """GET /extraction/ingest/{id}/status returns 400 for non-UUID job_id."""
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException, match="not a valid UUID"):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
-
-            await get_ingest_job_status("test-job-id", session=AsyncMock())
-
-    @pytest.mark.asyncio
-    async def test_ingest_status_returns_canonical_dict_from_orm(self) -> None:
-        """GET /extraction/ingest/{id}/status returns 24-key canonical dict."""
+    async def test_ingest_status_returns_persisted_job(self) -> None:
+        """Endpoint returns ORM row data when the job is found in DB."""
         from uuid import uuid4
 
         from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 
-        row = OrmExtractionJob(
-            id=uuid4(),
+        job_uuid = uuid4()
+        job = OrmExtractionJob(
+            id=job_uuid,
             source_reference="doi:10.1234/test",
             source_type="doi",
             status="completed",
-            total_received=50,
-            created_measurements=40,
         )
+        job_id_str = str(job_uuid)
+
         mock_session = AsyncMock()
+        mock_session.execute.return_value = _MockDbResult(row=job)
 
-        class _MockResult:
-            def scalar_one_or_none(self) -> OrmExtractionJob:
-                return row
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-        mock_session.execute.return_value = _MockResult()
+        resp = await get_ingest_job_status(job_id_str, session=mock_session)
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
-
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
-
-        assert resp["success"] is True
-        assert resp["data"]["job_id"] == str(row.id)
         assert resp["data"]["status"] == "completed"
-        # Must include canonical keys (not ORM-only ones)
-        assert "extracted_count" in resp["data"]
-        assert "staged_count" in resp["data"]
+        assert resp["data"]["source_reference"] == "doi:10.1234/test"
 
     @pytest.mark.asyncio
-    async def test_ingest_status_404_when_uuid_not_found(self) -> None:
-        """Endpoint returns 404 when UUID not found in DB."""
+    async def test_ingest_status_404_when_not_found(self) -> None:
+        """Endpoint returns 404 when job is not in DB."""
         from uuid import uuid4
 
         from fastapi import HTTPException
-
-        mock_session = AsyncMock()
-
-        class _MockResult:
-            def scalar_one_or_none(self) -> None:
-                return None
-
-        mock_session.execute.return_value = _MockResult()
 
         with pytest.raises(HTTPException, match="not found"):
             from nfm_db.api.v1.extraction import get_ingest_job_status
 
             await get_ingest_job_status(
-                str(uuid4()), session=mock_session
+                str(uuid4()), session=_mock_session_not_found(),
             )
-
-    @pytest.mark.asyncio
-    async def test_legacy_status_celery_fallback(self) -> None:
-        """GET /extraction/status/{id} also falls back to Celery (NFM-2013)."""
-        from uuid import uuid4
-
-        mock_result = MagicMock()
-        mock_result.state = "STARTED"
-        mock_result.result = None
-
-        mock_celery = MagicMock()
-        mock_celery.AsyncResult.return_value = mock_result
-
-        with (
-            patch("nfm_db.api.v1.extraction.get_job", return_value=None),
-            patch("nfm_db.api.v1.extraction.celery_app", mock_celery),
-        ):
-            from nfm_db.api.v1.extraction import get_extraction_status
-
-            resp = await get_extraction_status(uuid4())
-
-        assert resp["data"]["status"] == "processing"

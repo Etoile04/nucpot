@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -119,10 +119,9 @@ class TestIngestStatusOrmPath:
 
         mock_session.execute.return_value = _MockResult()
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
+        resp = await get_ingest_job_status(str(row.id), session=mock_session)
 
         assert resp["success"] is True
         data_keys = set(resp["data"].keys())
@@ -148,10 +147,9 @@ class TestIngestStatusOrmPath:
 
         mock_session.execute.return_value = _MockResult()
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
+        resp = await get_ingest_job_status(str(row.id), session=mock_session)
 
         data = resp["data"]
         # Identity: job_id must be str, not UUID (NFM-2743 contract)
@@ -212,10 +210,9 @@ class TestIngestStatusOrmPath:
 
         mock_session.execute.return_value = _MockResult()
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
+        resp = await get_ingest_job_status(str(row.id), session=mock_session)
 
         data = resp["data"]
         # All 8 ingest extras must be present with correct values
@@ -298,10 +295,9 @@ class TestIngestStatusOrmPath:
 
         mock_session.execute.return_value = _MockResult()
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
+        resp = await get_ingest_job_status(str(row.id), session=mock_session)
 
         data = resp["data"]
         assert data["fill_batch_id"] == "batch-123"
@@ -352,9 +348,8 @@ class TestIngestStatusNonUuidDeprecation:
 
         mock_session.execute.return_value = _MockResult()
 
-        with patch("nfm_db.api.v1.extraction.get_job", return_value=None):
-            from nfm_db.api.v1.extraction import get_ingest_job_status
+        from nfm_db.api.v1.extraction import get_ingest_job_status
 
-            resp = await get_ingest_job_status(str(row.id), session=mock_session)
+        resp = await get_ingest_job_status(str(row.id), session=mock_session)
 
         assert resp["success"] is True

@@ -264,6 +264,7 @@ def test_pipeline_steps_order() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="NFM-3008: extraction_v2_enabled config field removed")
 class TestFeatureFlagRouting:
     """Tests for EXTRACTION_V2_ENABLED feature flag."""
 
