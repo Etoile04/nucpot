@@ -18,11 +18,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
 from nfm_db.database import get_db
+from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
     V4BrowseResponse,
@@ -36,10 +37,6 @@ from nfm_db.schemas.extraction import (
     V4SubmitResponse,
     V4ValidateRequest,
     V4ValidateResponse,
-)
-from nfm_db.services.extraction_pipeline import (
-    JobStatus,
-    get_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,11 +66,9 @@ _ORDERED_STEPS = [
     "completed",
 ]
 
-
 # ---------------------------------------------------------------------------
 # Helper: error envelope
 # ---------------------------------------------------------------------------
-
 
 def _error_response(status_code: int, message: str) -> JSONResponse:
     """Return a standard ApiResponse error envelope."""
@@ -82,15 +77,13 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
         content={"success": False, "data": None, "error": message, "meta": None},
     )
 
-
 # ---------------------------------------------------------------------------
 # Helper: build progress sub-object from JobStatus
 # ---------------------------------------------------------------------------
 
-
-def _build_progress(status: JobStatus) -> V4JobProgress:
+def _build_progress(status: str) -> V4JobProgress:
     """Build the V4JobProgress from the current job status."""
-    status_value = status.value
+    status_value = status
     current_idx = _ORDERED_STEPS.index(status_value) if status_value in _ORDERED_STEPS else 0
     return V4JobProgress(
         current_step=status_value,
@@ -98,11 +91,9 @@ def _build_progress(status: JobStatus) -> V4JobProgress:
         steps_remaining=_ORDERED_STEPS[current_idx + 1 :],
     )
 
-
 # ---------------------------------------------------------------------------
 # Helper: convert raw property dicts to V4PropertyResponse
 # ---------------------------------------------------------------------------
-
 
 def _to_v4_property(
     prop: dict[str, Any],
@@ -136,63 +127,95 @@ def _to_v4_property(
         cache_level=prop.get("cache_level"),
     )
 
+# ---------------------------------------------------------------------------
+# Helper: collect stored properties for a job
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Helper: async job lookup by UUID string (NFM-3008)
+# ---------------------------------------------------------------------------
+
+async def _get_job(session: AsyncSession, job_id: str) -> OrmExtractionJob | None:
+    """Look up an ORM ExtractionJob by UUID string.
+
+    Returns ``None`` when no matching row exists or *job_id* is not a
+    valid UUID.
+    """
+    try:
+        from sqlalchemy import select
+
+        stmt = select(OrmExtractionJob).where(
+            OrmExtractionJob.id == uuid.UUID(job_id)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+    except (ValueError, TypeError):
+        return None
 
 # ---------------------------------------------------------------------------
 # Helper: collect stored properties for a job
 # ---------------------------------------------------------------------------
 
-
 async def _get_job_properties(
     job_id: str,
     session: AsyncSession,
 ) -> list[dict[str, Any]]:
-    """Retrieve properties from ref_gap_fill_staging for a job.
+    """Retrieve properties from _ref_gap_fill_staging for a job.
 
-    Looks up the ExtractionJob in _job_store to get fill_batch_id,
-    then queries the staging table for matching records.
-    Returns empty list if job not found or fill_batch_id is None.
+    Follows the ``fill_batch_id`` join:
+    ``ExtractionJob.fill_batch_id`` → ``RefGapFillStaging.fill_batch_id``.
+
+    Returns an empty list when the job has no ``fill_batch_id`` or no
+    matching staging rows exist.
     """
-    from nfm_db.models.ref_gap_fill import RefGapFillStaging
+    try:
+        from nfm_db.models.ref_gap_fill import RefGapFillStaging
 
-    job = get_job(job_id)
-    if job is None or job.fill_batch_id is None:
-        return []
+        job = await _get_job(session, job_id)
+        if job is None or job.fill_batch_id is None:
+            return []
 
-    batch_uuid = uuid.UUID(job.fill_batch_id)
-    result = await session.execute(
-        select(RefGapFillStaging).where(RefGapFillStaging.fill_batch_id == batch_uuid)
-    )
-    rows = result.scalars().all()
+        from sqlalchemy import select
 
-    return [
-        {
-            "element_system": row.element_system,
-            "phase": row.phase,
-            "property_name": row.property_name,
-            "value": row.value,
-            "unit": row.unit,
-            "method": row.method,
-            "source": row.source,
-            "source_doi": row.source_doi,
-            "uncertainty": row.uncertainty,
-            "temperature": row.temperature,
-            "source_file": row.source_file,
-            "composition": row.composition,
-            "element": row.element,
-            "property_category": row.property_category,
-            "context": row.context,
-            "confidence": row.confidence.value,
-            "staging_status": row.status.value,
-            "cache_level": row.cache_level.value if row.cache_level else None,
-        }
-        for row in rows
-    ]
-
+        batch_uid = uuid.UUID(job.fill_batch_id)
+        stmt = select(RefGapFillStaging).where(
+            RefGapFillStaging.fill_batch_id == batch_uid
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+        return [
+            {
+                "property_name": row.property_name,
+                "element_system": row.element_system,
+                "phase": row.phase,
+                "value": row.value,
+                "unit": row.unit,
+                "method": row.method,
+                "source": row.source,
+                "confidence": row.confidence.value if row.confidence else None,
+                "temperature": row.temperature,
+                "cache_level": row.cache_level.value if row.cache_level else None,
+                "staging_status": row.status.value if row.status else None,
+                "property_category": row.property_category,
+                "composition": row.composition,
+                "element": row.element,
+                "context": row.context,
+                "source_file": row.source_file,
+                "source_doi": row.source_doi,
+                "uncertainty": row.uncertainty,
+            }
+            for row in rows
+        ]
+    except (SQLAlchemyError, OSError):
+        logger.exception(
+            "Failed to query job properties for %s",
+            job_id,
+        )
+        raise
 
 # ---------------------------------------------------------------------------
 # Helper: build material systems index
 # ---------------------------------------------------------------------------
-
 
 def _build_material_systems_index() -> list[dict[str, Any]]:
     """Build material systems overview from available job data.
@@ -203,11 +226,9 @@ def _build_material_systems_index() -> list[dict[str, Any]]:
     """
     return []
 
-
 # ---------------------------------------------------------------------------
 # 1. POST /api/v4/extraction/submit
 # ---------------------------------------------------------------------------
-
 
 @router.post(
     "/extraction/submit",
@@ -279,7 +300,7 @@ async def submit_extraction(
                 status=status_value,
                 message=(
                     "Extraction job queued successfully."
-                    if status_value != JobStatus.FAILED
+                    if status_value != "failed"
                     else f"Extraction failed: {error_message_value}"
                 ),
                 error_message=error_message_value,
@@ -288,20 +309,21 @@ async def submit_extraction(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 2. GET /api/v4/extraction/{job_id}/status
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/extraction/{job_id}/status",
     summary="查询提取任务进度",
     description="轮询提取任务进度，包含详细的步骤追踪。\n\nPoll extraction job progress with detailed step tracking.",
 )
-async def get_extraction_status(job_id: str) -> JSONResponse:
+async def get_extraction_status(
+    job_id: str,
+    session: AsyncSession = Depends(get_db),
+) -> JSONResponse:
     """轮询提取任务进度（含详细步骤追踪）。"""
-    job = get_job(job_id)
+    job = await _get_job(session, job_id)
 
     if job is None:
         return _error_response(
@@ -313,10 +335,10 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
         content={
             "success": True,
             "data": V4StatusResponse(
-                job_id=job.job_id,
+                job_id=str(job.id),
                 source_reference=job.source_reference,
                 source_type=job.source_type,
-                status=job.status.value,
+                status=job.status,
                 progress=_build_progress(job.status),
                 extracted_count=job.extracted_count,
                 staged_count=job.staged_count,
@@ -329,11 +351,9 @@ async def get_extraction_status(job_id: str) -> JSONResponse:
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 3. GET /api/v4/extraction/{job_id}/result
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/extraction/{job_id}/result",
@@ -349,7 +369,7 @@ async def get_extraction_result(
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """获取已完成任务的提取结果，支持分页。"""
-    job = get_job(job_id)
+    job = await _get_job(session, job_id)
 
     if job is None:
         return _error_response(
@@ -357,10 +377,10 @@ async def get_extraction_result(
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    if job.status != "completed":
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{job.status}', not 'completed'. "
             "Results are only available for completed jobs.",
         )
 
@@ -392,7 +412,7 @@ async def get_extraction_result(
             "success": True,
             "data": V4ResultResponse(
                 source_reference=job.source_reference,
-                job_status=job.status.value,
+                job_status=job.status,
                 total_extracted=job.extracted_count,
                 properties=[p.model_dump(mode="json") for p in properties],
             ).model_dump(mode="json"),
@@ -406,11 +426,9 @@ async def get_extraction_result(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 4. GET /api/v4/properties/{material_system}
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/properties/{material_system}",
@@ -511,11 +529,9 @@ async def browse_properties(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 5. POST /api/v4/extraction/{job_id}/validate
 # ---------------------------------------------------------------------------
-
 
 @router.post(
     "/extraction/{job_id}/validate",
@@ -530,7 +546,7 @@ async def validate_extraction(
     session: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """触发提取属性验证工作流。"""
-    job = get_job(job_id)
+    job = await _get_job(session, job_id)
 
     if job is None:
         return _error_response(
@@ -538,10 +554,10 @@ async def validate_extraction(
             f"Extraction job '{job_id}' not found.",
         )
 
-    if job.status != JobStatus.COMPLETED:
+    if job.status != "completed":
         return _error_response(
             409,
-            f"Job '{job_id}' is '{job.status.value}', not 'completed'. "
+            f"Job '{job_id}' is '{job.status}', not 'completed'. "
             "Validation can only be triggered on completed jobs.",
         )
 
@@ -578,11 +594,9 @@ async def validate_extraction(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # 6. GET /api/v4/material-systems
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/material-systems",

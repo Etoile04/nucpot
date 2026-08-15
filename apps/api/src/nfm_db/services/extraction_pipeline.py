@@ -1,17 +1,16 @@
 """OntoFuel extraction pipeline service (NFM-66, NFM-523.3).
 
-Orchestrates the end-to-end extraction pipeline:
-  literature source → LLM extraction → property mapping
-  → quality gate → staging → (optional) gap re-scan
+Orchestrates the end-to-end extraction pipeline via the V2
+ORM-based orchestrator (NFM-2677, NFM-2739).
 
 The extraction step uses an LLM (OpenAI-compatible API) to extract
 structured property data from Markdown source files. A stub mode
 (EXTRACTION_STUB_MODE=true) is available for CI/testing without LLM.
 
-Job tracking uses an in-memory store with the staging table's
-`fill_batch_id` field for grouping. This is a lightweight design;
-a dedicated extraction_jobs table can be added when persistent
-job history is required.
+Job tracking uses the ORM ``ExtractionJob`` model
+(``models/extraction_job.py``) for persistent state across
+restarts. The legacy in-memory dataclass was removed in NFM-3008
+(Phase B final cutover).
 """
 
 from __future__ import annotations
@@ -20,37 +19,26 @@ import logging
 import os
 import re
 import uuid
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.models.ontology_version import OntologyVersion
-
-if TYPE_CHECKING:
-    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
-    from nfm_db.services.kg_re import BuildResult
 from nfm_db.services.extraction_prompt import (
     build_extraction_system_prompt,
     build_ontology_extraction_prompt,
 )
-from nfm_db.services.gap_scan_service import GapScanService
-from nfm_db.services.health_event_emitter import (
-    SEVERITY_WARNING,
-    build_context,
-    emit_health_event_sync,
-)
 from nfm_db.services.llm_client import call_llm, is_llm_configured
-from nfm_db.services.quality_gate import QualityGateService
 
 # ---------------------------------------------------------------------------
 # Ontology version query helper (NFM-2640)
 # ---------------------------------------------------------------------------
-
 
 async def _get_latest_published_ontology(
     session: AsyncSession,
@@ -71,14 +59,23 @@ async def _get_latest_published_ontology(
     )
     try:
         result = await session.execute(stmt)
+        # SQLAlchemy 2.0+ AsyncSession.execute() returns a synchronous ``Result``
+        # (not ``AsyncResult``) — see ``sqlalchemy/ext/asyncio/session.py``'s
+        # ``AsyncSession.execute`` source. The awaited value's
+        # ``.scalars().first()`` is therefore the correct sync accessor and
+        # returns the row directly. Adding ``await`` here raises
+        # ``TypeError: 'Row' object can't be awaited`` in production with a
+        # real DB, and is silently caught by the ``except Exception`` below,
+        # which would cause every V2 extraction to fall back to the static
+        # prompt — the very regression NFM-2876 was meant to prevent.
+        # Empirically verified with SQLAlchemy 2.0.50 on 2026-08-12.
         return result.scalars().first()
-    except Exception:
+    except (SQLAlchemyError, OSError):
         logger.warning(
             "Failed to query latest published ontology; falling back to static prompt",
             exc_info=True,
         )
         return None
-
 
 # ---------------------------------------------------------------------------
 # Chunking constants (NFM-1366 P3, daily reflection 2026-08-06 §2.2)
@@ -89,7 +86,6 @@ async def _get_latest_published_ontology(
 # _MODEL_CONTEXT_CHARS), minus ~3K for system_prompt + user_message
 # prefix, times 0.8 safety margin.
 _CHUNK_MAX_CHARS = 20_000  # max chars of source content per LLM call
-
 
 def _chunk_content(content: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str]:
     """Split *content* into chunks ≤ *max_chars*, preferring paragraph
@@ -154,7 +150,6 @@ logger = logging.getLogger(__name__)
 # DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
 _DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 
-
 class EmptyExtractionError(Exception):
     """Raised when extraction cannot produce results for a known, structural reason.
 
@@ -176,7 +171,6 @@ class EmptyExtractionError(Exception):
 # In-memory job store
 # ---------------------------------------------------------------------------
 
-
 class JobStatus(StrEnum):
     """Extraction job lifecycle statuses."""
 
@@ -189,68 +183,17 @@ class JobStatus(StrEnum):
     FAILED = "failed"
     PARTIAL = "partial"
 
-
-@dataclass
-class ExtractionJob:
-    """Tracks the state of a single extraction job.
-
-    Stored in-memory for now. Extension point: persist to a dedicated
-    `extraction_jobs` table for durability across restarts.
-    """
-
-    job_id: str
-    source_reference: str
-    source_type: str
-    status: JobStatus = JobStatus.QUEUED
-    fill_batch_id: str | None = None
-    extracted_count: int = 0
-    staged_count: int = 0
-    rejected_count: int = 0
-    error_message: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    element_systems: list[str] | None = None
-    cache_level: str | None = None
-    max_confidence: str | None = None
-    # Multimodal extraction fields (NFM-700)
-    extract_figures: bool = False
-    extract_tables: bool = False
-    confidence_threshold: float = 0.5
-    figure_types: list[str] | None = None
-    conflict_strategy: str = "prefer_vlm"
-    figures: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
-    tables: list[dict] = field(default_factory=list)  # type: ignore[type-arg]
-    # Ontology version provenance (NFM-2640)
-    ontology_version_id: uuid.UUID | None = None
-    ontology_version_str: str | None = None
-
-
-# Thread-safe in-memory store (access via async session in prod)
-_job_store: dict[str, ExtractionJob] = {}
-
+# ---------------------------------------------------------------------------
+# Job ID generation
+# ---------------------------------------------------------------------------
 
 def _generate_job_id() -> str:
     """Generate a unique job identifier."""
     return str(uuid.uuid4())
 
-
-def get_job(job_id: str) -> ExtractionJob | None:
-    """Retrieve a job by ID."""
-    return _job_store.get(job_id)
-
-
-def _update_job(job: ExtractionJob, **kwargs: Any) -> None:
-    """Immutable-style update for in-memory job state."""
-    for key, value in kwargs.items():
-        if hasattr(job, key):
-            setattr(job, key, value)
-
-
 # ---------------------------------------------------------------------------
 # Serialization boundary (NFM-2743, D3)
 # ---------------------------------------------------------------------------
-
 
 def _coalesce(value: Any, default: Any) -> Any:
     """Return *value* when it is not ``None``, else *default*.
@@ -264,69 +207,48 @@ def _coalesce(value: Any, default: Any) -> Any:
     """
     return value if value is not None else default
 
-
 def _extraction_job_to_dict(
-    job: ExtractionJob | OrmExtractionJob,
+    job: OrmExtractionJob,
 ) -> dict[str, Any]:
-    """Normalize either job representation to the canonical dict shape.
+    """Normalize an ORM ExtractionJob to the canonical dict shape.
 
-    The dataclass :class:`ExtractionJob` (in-memory orchestration/request
-    state) and the ORM :class:`ExtractionJob` (in
-    ``models/extraction_job.py`` — ingestion/results state) model
-    different lifecycle stages and have a 10-field gap. The dict — not
-    either class — is the stable public interface for callers. This
-    helper is the single point both paths converge on so call-sites
-    (e.g. ``trigger_extraction_pipeline``) never need their own
-    branch on ``is_extraction_v2_enabled``.
+    The dict — not the ORM class — is the stable public interface for
+    callers (e.g. ``trigger_extraction_pipeline``). This helper is the
+    single serialization point so call-sites never need their own
+    conversion logic.
 
     Binding contract (NFM-2743 AC):
 
-    - ``job_id`` is the canonical key. Dataclass reads ``job.job_id``
-      (already ``str``); ORM reads ``job.id`` (``uuid.UUID``) and
-      ``str()``-coerces it. The output is ALWAYS ``str``, never
+    - ``job_id`` is the canonical key. Reads ``job.id`` (``uuid.UUID``)
+      and ``str()``-coerces it. The output is ALWAYS ``str``, never
       ``uuid.UUID`` — this is the exact confusion that produced PR
       #726's CI failures.
-    - ``status`` is the ``str`` value. Dataclass carries the
-      :class:`JobStatus` enum (``StrEnum``) and we read ``.value``;
-      ORM carries the raw string column value.
+    - ``status`` is the ``str`` value. ORM carries the raw string
+      column value.
     - ``created_at`` / ``started_at`` / ``completed_at`` are
       ISO-8601 strings or ``None`` — never raw ``datetime``.
-    - The 10 dataclass-only fields (``fill_batch_id``,
-      ``extracted_count``, ``staged_count``, ``rejected_count``,
-      ``element_systems``, ``cache_level``, ``max_confidence``,
-      ``conflict_strategy``, ``figures``, ``tables``) are emitted with
-      their documented defaults on the ORM path so the key set is
-      IDENTICAL regardless of input type.
+    - Supplementary fields (``fill_batch_id``, ``extracted_count``,
+      ``staged_count``, ``rejected_count``, ``element_systems``,
+      ``cache_level``, ``max_confidence``, ``conflict_strategy``,
+      ``figures``, ``tables``) are emitted with their documented
+      defaults so the key set is stable across all callers.
 
     See ``docs/architecture/ADR-NFM-2739-extraction-job-dual-class.md``
     for the full field diff and the deferred migration to a single
     ORM row (NFM-2739).
     """
     # --- Identity: job_id is always str (NFM-2743 contract point 1) ---
-    # The dataclass has ``job_id`` (str); the ORM has ``id`` (UUID).
-    # They are disjoint — no current shape has both.
-    if hasattr(job, "job_id"):
-        job_id = str(job.job_id)
-    else:
-        job_id = str(job.id)
+    job_id = str(job.id)
 
     # --- Status: str value (contract point 2) ---
-    # Ducktyped via ``.value``: JobStatus (StrEnum) has ``.value``;
-    # plain str (ORM column value) does not. ``str(job.status).value``
-    # would fall through correctly too, but the ``.value`` test is
-    # what the contract asks for and matches the dispatch's existing
-    # ``job.status.value`` access pattern.
-    if hasattr(job.status, "value"):
-        status = job.status.value
-    else:
-        # ORM path — ``status`` is already a str column value.
-        status = str(job.status)
+    # ORM path — ``status`` is already a str column value.
+    status = str(job.status)
 
     # --- Datetimes: ISO-8601 strings or None (contract point 3) ---
     def _iso(dt: datetime | None) -> str | None:
         return dt.isoformat() if dt is not None else None
 
-    # --- The 10 dataclass-only fields with documented ORM defaults ---
+    # --- Supplementary fields with documented defaults ---
     # (contract point 4 — emitted on BOTH paths so the key set is
     # identical regardless of input type)
     return {
@@ -371,11 +293,9 @@ def _extraction_job_to_dict(
         "ontology_version_str": job.ontology_version_str,
     }
 
-
 # ---------------------------------------------------------------------------
 # OntoFuel extraction interface (LLM-backed with stub fallback)
 # ---------------------------------------------------------------------------
-
 
 def _is_stub_mode() -> bool:
     """Check if EXTRACTION_STUB_MODE is enabled.
@@ -384,7 +304,6 @@ def _is_stub_mode() -> bool:
         True if EXTRACTION_STUB_MODE env var is 'true' or '1'.
     """
     return os.environ.get("EXTRACTION_STUB_MODE", "").lower() in ("true", "1")
-
 
 def _load_source_content(source_reference: str) -> str:
     """Load Markdown content from a source file path.
@@ -402,7 +321,6 @@ def _load_source_content(source_reference: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Source file not found: {source_reference}")
     return path.read_text(encoding="utf-8")
-
 
 def _post_process_extracted(
     raw_properties: list[dict[str, Any]],
@@ -477,7 +395,6 @@ def _post_process_extracted(
         processed.append(item)
 
     return processed
-
 
 async def ontofuel_extract(
     source_reference: str,
@@ -651,7 +568,6 @@ async def ontofuel_extract(
         )
         return []
 
-
 def _stub_extraction_results(source: str) -> list[dict[str, Any]]:
     """Generate stub extraction results for pipeline testing.
 
@@ -704,11 +620,9 @@ def _stub_extraction_results(source: str) -> list[dict[str, Any]]:
         },
     ]
 
-
 # ---------------------------------------------------------------------------
 # Pipeline orchestration
 # ---------------------------------------------------------------------------
-
 
 async def trigger_extraction(
     session: AsyncSession,
@@ -722,7 +636,7 @@ async def trigger_extraction(
     extract_tables: bool = False,
     job_id: str | None = None,
     ontology_version_id: uuid.UUID | None = None,
-) -> ExtractionJob:
+) -> OrmExtractionJob:
     """Trigger a full extraction pipeline run.
 
     Pipeline stages:
@@ -738,398 +652,63 @@ async def trigger_extraction(
     endpoint hand out a job_id immediately for status polling
     (2026-07-28 follow-up).
     """
-    # NFM-2568-T1: Feature-flag routing to V2 orchestrator.
-    # When enabled, delegates to the step-based orchestrator and
-    # returns immediately — legacy code below is untouched.
-    from nfm_db.config import get_settings
+    # V2 orchestrator path (NFM-2739, NFM-3008 — flag removed).
+    from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
+    from nfm_db.services.extraction_orchestrator import (
+        ExtractionOrchestrator,
+    )
+    from nfm_db.services.extraction_pipeline_dispatch import (
+        load_v2_content,
+    )
 
-    settings = get_settings()
-    if settings.extraction_v2_enabled:
-        from nfm_db.models.extraction_job import ExtractionJob as ORMExtractionJob
-        from nfm_db.services.extraction_orchestrator import (
-            ExtractionOrchestrator,
-        )
-
-        if job_id is None:
-            job_id = _generate_job_id()
-        # NFM-2667: wire ontology provenance onto the persisted ORM row.
-        # PR #711 (NFM-2640) only updated the in-memory dataclass; the ORM
-        # row was always created with NULL ontology columns, defeating the
-        # migration.  Mirror the legacy path's discovery and pass the
-        # values into the constructor so session.add + flush persist them.
-        published_ov = await _get_latest_published_ontology(session)
-        ontology_version_id = published_ov.id if published_ov is not None else None
-        ontology_version_str = (
-            published_ov.version if published_ov is not None else None
-        )
-        orm_job = ORMExtractionJob(
-            source_reference=source_reference,
-            source_type=source_type,
-            extract_figures=extract_figures,
-            extract_tables=extract_tables,
-            ontology_version_id=ontology_version_id,
-            ontology_version_str=ontology_version_str,
-        )
-        session.add(orm_job)
-        await session.flush()
-
-        orchestrator = ExtractionOrchestrator(session, orm_job)
-        return await orchestrator.run(
-            element_systems=element_systems,
-            cache_level=cache_level,
-            max_confidence=max_confidence,
-        )
-
-    # --- Legacy pipeline (unchanged when flag is False) ---
     if job_id is None:
         job_id = _generate_job_id()
-    fill_batch_id = str(uuid.uuid4())
-
-    job = ExtractionJob(
-        job_id=job_id,
+    # NFM-2667: wire ontology provenance onto the persisted ORM row.
+    published_ov = await _get_latest_published_ontology(session)
+    ontology_version_id = published_ov.id if published_ov is not None else None
+    ontology_version_str = (
+        published_ov.version if published_ov is not None else None
+    )
+    orm_job = ORMExtractionJob(
         source_reference=source_reference,
         source_type=source_type,
-        fill_batch_id=fill_batch_id,
+        extract_figures=extract_figures,
+        extract_tables=extract_tables,
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
-        extract_figures=extract_figures,
-        extract_tables=extract_tables,
+        ontology_version_id=ontology_version_id,
+        ontology_version_str=ontology_version_str,
     )
-    _job_store[job_id] = job
+    session.add(orm_job)
+    await session.flush()
 
-    # NFM-2640: Query latest published ontology and set provenance on job
-    published_ov = await _get_latest_published_ontology(session)
-    if published_ov is not None:
-        _update_job(
-            job,
-            ontology_version_id=published_ov.id,
-            ontology_version_str=published_ov.version,
-        )
-
+    # NFM-2909: Load source content BEFORE the orchestrator runs so
+    # the chunk step has something to chunk.
     try:
-        # NFM-2871: Initialize build_result at the top of the try block so
-        # the post-commit ingest guard below (`if build_result and ...`)
-        # never raises UnboundLocalError when an earlier stage fails or
-        # the V2-flag-off legacy branch returns early. The early-return
-        # paths inside this try (DOI validation, EmptyExtractionError,
-        # empty raw_properties) all `return job` before reaching the
-        # post-commit block, but the except-handler path falls through
-        # to commit + the LightRAG ingest guard.
-        build_result: BuildResult | None = None
-
-        # Defense-in-depth: validate DOI format at pipeline entry (NFM-636)
-        if source_type == "doi":
-            clean_ref = source_reference.strip().lower().removeprefix("doi:")
-            if not _DOI_PATTERN.match(clean_ref):
-                _update_job(
-                    job,
-                    status=JobStatus.FAILED,
-                    error_message="Invalid DOI format (rejected by pipeline guard)",
-                    completed_at=datetime.now(UTC),
-                )
-                await session.commit()
-                return job
-        # Stage 1: Extraction
-        _update_job(job, status=JobStatus.RUNNING, started_at=datetime.now(UTC))
-        _update_job(job, status=JobStatus.EXTRACTING)
-
-        try:
-            raw_properties = await ontofuel_extract(
-                source_reference=source_reference,
-                source_type=source_type,
-                element_systems=element_systems,
-                db=session,
-            )
-        except EmptyExtractionError as exc:
-            # D1 fix (2026-07-28): structural failures (missing DataSource,
-            # missing content_md, etc.) now surface as FAILED with a clear
-            # error message instead of silently completing with zero results.
-            logger.warning(
-                "Job %s: EmptyExtractionError for %s — %s",
-                job_id,
-                source_reference,
-                exc.reason,
-            )
-
-            # Pipeline-fusion fallback (D2 fix, 2026-07-28): if the issue is
-            # simply that the PDF hasn't been parsed yet (content_md is None),
-            # kick off the full literature processing pipeline which handles
-            # PDF parsing + extraction + KG build in one Celery task. This
-            # closes the long-standing disconnect between the two pipelines
-            # (trigger_extraction vs process_literature).
-            fallback_scheduled = False
-            if (
-                source_type == "datasource"
-                and "no content_md" in exc.reason
-            ):
-                try:
-                    from uuid import UUID
-
-                    from nfm_db.services.literature_dispatcher import (
-                        process_literature_task,
-                    )
-
-                    ds_uuid = UUID(source_reference)
-                    # Celery @task adds .delay() at runtime; mypy sees the
-                    # underlying function type. (Compare md_tasks.py:10
-                    # which calls .delay() without any type ignore.)
-                    process_literature_task.delay(str(ds_uuid))
-                    fallback_scheduled = True
-                    logger.info(
-                        "Job %s: scheduled process_literature_task for %s",
-                        job_id,
-                        ds_uuid,
-                    )
-                except Exception as fallback_exc:
-                    logger.warning(
-                        "Job %s: process_literature_task fallback failed: %s",
-                        job_id,
-                        fallback_exc,
-                    )
-
-            error_msg = f"Extraction produced no results: {exc.reason}"
-            if fallback_scheduled:
-                error_msg += " — process_literature_task scheduled as fallback"
-
-            _update_job(
-                job,
-                status=JobStatus.FAILED,
-                error_message=error_msg,
-                completed_at=datetime.now(UTC),
-            )
-            await session.commit()
-            return job
-        _update_job(job, extracted_count=len(raw_properties))
-
-        logger.info(
-            "Job %s: extracted %d properties from %s",
-            job_id,
-            len(raw_properties),
-            source_reference,
+        content = load_v2_content(source_reference, source_type)
+    except (FileNotFoundError, NotImplementedError) as loader_exc:
+        orm_job.status = JobStatus.FAILED
+        orm_job.error_message = (
+            f"V2 content loader failed for source_type="
+            f"{source_type or '<empty>'!r}: {loader_exc}"
         )
+        orm_job.completed_at = datetime.now(UTC)
+        session.add(orm_job)
+        await session.commit()
+        return orm_job
 
-        if not raw_properties:
-            # D1 fix (2026-07-28): ontofuel_extract() raises EmptyExtractionError
-            # for structural failures (missing DataSource, missing content_md,
-            # etc.) so we should never reach here with an empty list. Defensive
-            # COMPLETED path remains for legitimate "source had no extractable
-            # properties" cases.
-            _update_job(
-                job,
-                status=JobStatus.COMPLETED,
-                completed_at=datetime.now(UTC),
-            )
-            return job
-
-        # Stage 2: Property mapping (normalize names)
-        _update_job(job, status=JobStatus.MAPPING)
-        mapped = _apply_property_mapping(raw_properties, cache_level)
-
-        # Stage 3: Quality gate + staging
-        _update_job(job, status=JobStatus.QUALITY_GATE)
-        gate = QualityGateService(session)
-        bulk_result = await gate.process_bulk(mapped)
-
-        staged = 0
-        rejected = 0
-
-        for gate_result in bulk_result.accepted:
-            matching_raw = _find_matching(mapped, gate_result.dedup_hash)
-            if matching_raw is not None:
-                matching_raw["fill_batch_id"] = fill_batch_id
-                await gate.stage_record(
-                    matching_raw,
-                    gate_result,
-                    fill_batch_id=uuid.UUID(fill_batch_id),
-                )
-                staged += 1
-
-        for _ in bulk_result.rejected:
-            rejected += 1
-
-        for _ in bulk_result.duplicates:
-            rejected += 1
-
-        _update_job(job, staged_count=staged, rejected_count=rejected)
-
-        logger.info(
-            "Job %s: staged=%d rejected=%d (of %d extracted)",
-            job_id,
-            staged,
-            rejected,
-            len(raw_properties),
-        )
-
-        # Stage 4: Gap re-scan (close the loop)
-        if staged > 0:
-            try:
-                scanner = GapScanService(session)
-                await scanner.scan_gaps()
-                logger.info("Job %s: gap re-scan completed after %d staged", job_id, staged)
-            except Exception:
-                logger.warning("Job %s: gap re-scan failed (non-fatal)", job_id, exc_info=True)
-
-        # Stage 4b: Auto-reopen wont_fix gaps (NFM-2582).
-        # When the extraction was triggered by a new ontology version,
-        # check whether any previously wont_fix gaps now have matching
-        # extraction results and reopen them.
-        if ontology_version_id is not None and mapped:
-            try:
-                from nfm_db.services.gap_reopen_service import (
-                    check_and_reopen_wont_fix_gaps,
-                )
-
-                extraction_results = [
-                    {"item_type": "property", "item_data": item}
-                    for item in mapped
-                ]
-                reopen_result = await check_and_reopen_wont_fix_gaps(
-                    session,
-                    new_ontology_version_id=ontology_version_id,
-                    extraction_results=extraction_results,
-                )
-                if reopen_result.gaps_reopened > 0:
-                    logger.info(
-                        "Job %s: auto-reopened %d wont_fix gaps "
-                        "(ontology_version=%s)",
-                        job_id,
-                        reopen_result.gaps_reopened,
-                        ontology_version_id,
-                    )
-            except Exception:
-                logger.warning(
-                    "Job %s: wont_fix gap auto-reopen failed (non-fatal)",
-                    job_id,
-                    exc_info=True,
-                )
-
-        # Stage 5: Build KG nodes/edges from extracted properties
-        # This bridges the gap between the extraction pipeline and the
-        # knowledge graph review system. Without this stage, extracted
-        # properties remain only in _ref_gap_fill_staging and never appear
-        # in the KG review queue (kg_nodes with review_status='pending').
-        build_result = None  # NFM-2871: populated if KG build succeeds
-        if mapped:
-            try:
-                from nfm_db.services.kg_re import GraphBuilder
-
-                builder = GraphBuilder(session, sync_to_age=False)
-
-                # Resolve source_id for provenance tracking
-                kg_source_id = None
-                if source_type == "datasource":
-                    try:
-                        kg_source_id = uuid.UUID(source_reference)
-                    except (ValueError, AttributeError) as exc:
-                        # Provenance is optional but losing it silently
-                        # makes KG nodes untraceable to their source.
-                        emit_health_event_sync(
-                            event_type="validation_drop",
-                            severity=SEVERITY_WARNING,
-                            source_service="extraction_pipeline",
-                            context=build_context(
-                                exc, source_reference=repr(source_reference)
-                            ),
-                        )
-
-                build_result = await builder.build_from_extraction(
-                    mapped,
-                    source_id=kg_source_id,
-                )
-                logger.info(
-                    "Job %s: KG build completed — nodes_created=%d nodes_matched=%d "
-                    "edges_created=%d review_queued=%d",
-                    job_id,
-                    build_result.nodes_created,
-                    build_result.nodes_matched,
-                    build_result.edges_created,
-                    build_result.review_queue_items,
-                )
-                _update_job(job, staged_count=staged)
-            except Exception:
-                logger.warning(
-                    "Job %s: KG build failed (non-fatal, staged data preserved)",
-                    job_id,
-                    exc_info=True,
-                )
-
-        # Stage 5b: Multimodal extraction (figures + tables)
-        # Runs after KG build so that text-extracted properties are already
-        # staged. VLM/OCR failures are non-fatal (caught inside
-        # run_multimodal_extraction). NFM-1366: previously dead code — the
-        # function existed but was never called from this pipeline.
-        if extract_figures or extract_tables:
-            try:
-                from nfm_db.services.multimodal_extraction import (
-                    run_multimodal_extraction,
-                )
-
-                await run_multimodal_extraction(job, text_props=mapped)
-
-                fig_count = len(job.figures)
-                tbl_count = len(job.tables)
-                logger.info(
-                    "Job %s: multimodal extraction completed — "
-                    "figures=%d tables=%d",
-                    job_id,
-                    fig_count,
-                    tbl_count,
-                )
-            except Exception:
-                logger.warning(
-                    "Job %s: multimodal extraction stage failed (non-fatal)",
-                    job_id,
-                    exc_info=True,
-                )
-
-        final_status = JobStatus.PARTIAL if rejected > 0 else JobStatus.COMPLETED
-        _update_job(
-            job,
-            status=final_status,
-            completed_at=datetime.now(UTC),
-        )
-
-    except Exception as exc:
-        logger.exception("Job %s: extraction pipeline failed", job_id)
-        _update_job(
-            job,
-            status=JobStatus.FAILED,
-            error_message=str(exc),
-            completed_at=datetime.now(UTC),
-        )
-
-    await session.commit()
-
-    # NFM-2871: Fire LightRAG ingest AFTER commit to prevent ghost entities
-    # on rollback. The ingest nodes/edges are carried on BuildResult by
-    # GraphBuilder.build_from_extraction() instead of being fired inline.
-    if build_result and (build_result.ingest_nodes or build_result.ingest_edges):
-        try:
-            from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
-
-            node_labels = {
-                n.id: n.label for n in build_result.ingest_nodes
-            }
-            fire_ingest_to_lightrag(
-                nodes=list(build_result.ingest_nodes),
-                edges=list(build_result.ingest_edges),
-                node_labels=node_labels,
-            )
-        except Exception:
-            logger.warning(
-                "Job %s: post-commit LightRAG ingest failed (non-fatal)",
-                job_id,
-                exc_info=True,
-            )
-
-    return job
-
+    orchestrator = ExtractionOrchestrator(session, orm_job)
+    return await orchestrator.run(
+        content=content,
+        element_systems=element_systems,
+        cache_level=cache_level,
+        max_confidence=max_confidence,
+    )
 
 # ---------------------------------------------------------------------------
 # Property mapping (normalization)
 # ---------------------------------------------------------------------------
-
 
 def _apply_property_mapping(
     raw_properties: list[dict[str, Any]],
@@ -1170,7 +749,6 @@ def _apply_property_mapping(
         mapped.append(item)
 
     return mapped
-
 
 def _find_matching(
     values: list[dict[str, Any]],
