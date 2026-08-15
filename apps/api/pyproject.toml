@@ -14,7 +14,7 @@ dependencies = [
     "pydantic-settings>=2.7.0",
     "passlib[bcrypt]>=1.7.4",
     "bcrypt<4.1",
-    "python-jose[cryptography]>=3.3.0",
+    "PyJWT>=2.10.0",
     "python-multipart>=0.0.20",
     "paramiko>=3.4.0",
     "celery[redis]>=5.4.0",
@@ -126,6 +126,13 @@ ignore = [
 # alloy optimization docstrings (NFM-1681)
 "src/nfm_db/optimization/*.py" = ["RUF001", "RUF002", "RUF003"]
 "src/nfm_db/schemas/prediction.py" = ["RUF001"]
+# NFM-3066: backup config schema field names (intervalMinutes, maxTotalBytes,
+# minFreeBytes, refuseOnFloorBreach, pushOnRefusal, retentionDays) are
+# camelCase to match the config.json keys verbatim — operators edit them
+# directly. Renaming to snake_case would fork the on-disk schema.
+"src/nfm_db/backup/*.py" = ["N815"]
+"tests/test_backup_config.py" = ["N815"]
+"tests/test_backup_deprecation.py" = ["N815"]
 "tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
 "tests/test_extraction_prompt.py" = ["RUF001"]
 "tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
@@ -346,6 +353,10 @@ markers = [
     "integration: Integration tests (require external services)",
     "golden: Golden regression tests",
     "performance: Performance benchmark tests",
+    # NFM-2893: V2 extraction regression vs. deterministic baseline.
+    # Run with: EXTRACTION_STUB_MODE=true pytest -m parity
+    # Skipped by default (see apps/api/tests/test_parity.py module guard).
+    "parity: Stub-mode regression parity vs. baseline fixtures",
 ]
 
 # NFM-2044 / KR-5.1: Core-module coverage emission (Cobertura XML at
