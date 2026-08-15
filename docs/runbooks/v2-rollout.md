@@ -1,9 +1,9 @@
 # V2 Extraction Pipeline Rollout Runbook
 
-> **Status:** Active — streak recording in progress per
-> [NFM-2924](/NFM/issues/NFM-2924). Pre-flight complete; staging green
-> streak section is being populated as the scheduled parity cron accumulates
-> consecutive green days.
+> **Status:** Active — awaiting first scheduled parity run. Per
+> [NFM-2924](/NFM/issues/NFM-2924): pre-flight complete, CI fix merged
+> (PR #843, 2026-08-15), streak table reset and ready for population from
+> the `extraction-parity` daily 06:00 UTC cron.
 
 This runbook is the operational source of truth for promoting the V2
 extraction pipeline from default-OFF to default-ON in production. The
@@ -68,17 +68,23 @@ are still PASS.
 
 | Date (UTC) | Parity fixtures run | V1 fail count | V2 fail count | Parity delta | Outcome | Operator initials |
 |------------|---------------------|---------------|---------------|--------------|---------|-------------------|
-| 2026-08-13 | 4 | 0 | 0 | 0.0% | PASS | LE |
-| 2026-08-14 | 4 | 0 | 0 | 0.0% | PASS | LE |
 | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+
+> **Streak not yet started.** The `schedule: cron: "0 6 * * *"` trigger was
+> added to `extraction-parity.yml` on 2026-08-15 (commit `cb05a81b`, PR
+> #843). Rows will be appended from the first scheduled run onward. Earlier
+> rows dated 2026-08-13 and 2026-08-14 were removed — they were sourced
+> from PR-triggered (observational) parity runs, not the scheduled cron per
+> ADR-0007 §4.
 
 **Parity fixtures** (4 canonical): mox-thermal-conductivity,
 thoria-mixed-oxide, uo2-fcc-lattice, zircaloy-cladding-modulus.
 
 **CI run log:** each row is sourced from the
-`extraction-parity-staging-cron` workflow artifacts, not local re-runs.
-Download the `extraction-parity-staging-summary` artifact from the
-corresponding run page.
+[`extraction-parity`](https://github.com/Etoile04/nucpot/actions/workflows/extraction-parity.yml)
+scheduled-run artifacts (`parity-report.json` / `parity-output.txt`), not from
+PR-triggered runs or local re-runs. Download the `parity-report` artifact
+from the corresponding run page.
 
 **Acceptance for promotion to Production shadow:** seven consecutive rows
 all showing `PASS`, the parity delta stays at or below the ADR-0007
