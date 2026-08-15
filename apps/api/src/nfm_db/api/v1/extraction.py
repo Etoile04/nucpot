@@ -27,14 +27,9 @@ from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMe
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES, ExtractionStep
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
-    ExtractionStatusResponse,
     ExtractionTriggerRequest,
 )
-from nfm_db.services.celery_app import celery_app
-from nfm_db.services.extraction_pipeline import (
-    _extraction_job_to_dict,
-    get_job,
-)
+from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
 from nfm_db.services.literature_dispatcher import (
     process_literature_task,
 )
@@ -203,67 +198,27 @@ async def trigger_extraction_job(
 )
 async def get_extraction_status(
     job_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
     """查询提取任务执行状态。
 
     Returns current status, counts of extracted/staged/rejected properties,
     timestamps, and error message (if failed).
     """
-    job = get_job(str(job_id))
+    try:
+        result = await session.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_id)
+        )
+        job = result.scalar_one_or_none()
+    except (ValueError, SQLAlchemyError) as exc:
+        logger.warning("ORM job lookup failed for %s: %s", job_id, exc)
+        job = None
 
     if job is not None:
         return {
             "success": True,
-            "data": ExtractionStatusResponse(
-                job_id=job.job_id,
-                source_reference=job.source_reference,
-                source_type=job.source_type,
-                status=job.status.value,
-                extracted_count=job.extracted_count,
-                staged_count=job.staged_count,
-                rejected_count=job.rejected_count,
-                error_message=job.error_message,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-            ).model_dump(),
+            "data": _extraction_job_to_dict(job),
         }
-
-    # Fallback: check Celery AsyncResult for trigger-dispatched jobs
-    # (NFM-2013 — in-memory store is per-process and empty for Celery
-    # worker jobs running in a separate process).
-    try:
-        async_result = celery_app.AsyncResult(str(job_id))
-        if async_result.state == "PENDING":
-            cel_status = "pending"
-        elif async_result.state == "STARTED":
-            cel_status = "processing"
-        elif async_result.state == "SUCCESS":
-            cel_status = "completed"
-        elif async_result.state == "FAILURE":
-            cel_status = "failed"
-        else:
-            cel_status = async_result.state.lower() if async_result.state else "unknown"
-
-        error_message: str | None = None
-        if async_result.state == "FAILURE" and async_result.result:
-            error_message = str(async_result.result)[:500]
-
-        return {
-            "success": True,
-            "data": {
-                "job_id": str(job_id),
-                "source_reference": "",
-                "source_type": "",
-                "status": cel_status,
-                "extracted_count": 0,
-                "staged_count": 0,
-                "rejected_count": 0,
-                "error_message": error_message,
-            },
-        }
-    except Exception:
-        logger.exception("Failed to check Celery status for job_id=%s", job_id)
 
     raise HTTPException(
         status_code=404,
@@ -588,11 +543,12 @@ async def ingest_extraction_batch(
 
 @router.get(
     "/extraction/ingest/{job_id}/status",
-    summary="查询提取任务状态（Celery）",
+    summary="查询提取任务状态",
     description=(
-        "查询由 /extraction/trigger 触发的 Celery 任务状态。\n\n"
-        "Check status of a Celery-dispatched extraction job. "
-        "Falls back to in-memory store for non-Celery jobs."
+        "通过 ORM 查询提取任务的状态（UUID → 数据库行）。\n"
+        "返回 404（未找到）或 503（数据库错误，Retry-After: 5s）。\n\n"
+        "Look up an extraction job by UUID via ORM. "
+        "Returns 404 if not found, or 503 with Retry-After on DB error."
     ),
 )
 async def get_ingest_job_status(
@@ -601,77 +557,67 @@ async def get_ingest_job_status(
 ) -> dict[str, object]:
     """查询提取任务状态（NFM-2013 AC-5）。
 
-    Reads from the ``extraction_jobs`` table persisted by the ingest
-    handler.  Returns 503 when the database is unreachable, 404 when
-    the UUID is valid but no row exists, and 400 for non-UUID (legacy
-    Celery) job IDs with deprecation headers.
+    Looks up the job by UUID in the ``extraction_jobs`` table via ORM.
+    Returns 404 if the row does not exist, or 503 with ``Retry-After: 5``
+    on a database error.
     """
     # NFM-2013 AC-5: try the persisted ExtractionJob row first.  This is
     # the canonical state for POST /extraction/ingest jobs.
     try:
         job_uuid = UUID(job_id)
     except ValueError:
-        # Not a UUID — must be a legacy Celery task id; fall through.
-        job_uuid = None
-
-    if job_uuid is not None:
-        try:
-            row = (
-                await session.execute(
-                    select(ExtractionJob).where(ExtractionJob.id == job_uuid)
-                )
-            ).scalar_one_or_none()
-        except SQLAlchemyError:
-            # DB-layer error (connection failure, schema drift, corrupt
-            # row).  Return 503 so SRE can distinguish "DB is down" from
-            # "row genuinely not found" (which yields 404 below).
-            logger.exception(
-                "get_ingest_job_status: DB error querying ExtractionJob for id=%s",
-                job_id,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail="Service temporarily unavailable. Please retry.",
-                headers={"Retry-After": "5"},
-            )
-        if row is not None:
-            # NFM-3007: use the canonical 24-key dict helper so the
-            # ORM-only path produces the identical key set as the
-            # dataclass path (ADR-NFM-2739 §2.1).
-            status_dict = _extraction_job_to_dict(row)
-            # Merge in ingest-specific ORM columns that the pipeline
-            # helper does not cover (it targets extraction pipeline
-            # status, not ingest ack shape).
-            status_dict.update({
-                "corpus_id": row.corpus_id,
-                "total_received": row.total_received,
-                "created_measurements": row.created_measurements,
-                "reused_entities": row.reused_entities,
-                "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
-                "skipped_unknown_properties": row.skipped_unknown_properties,
-                "skipped_duplicates": row.skipped_duplicates,
-                "validation_errors": row.validation_errors,
-            })
-            return {
-                "success": True,
-                "data": status_dict,
-            }
-        # UUID was valid but row not found — 404.
+        # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
+        # deprecated.  The ingest endpoint always generates UUIDs.
         raise HTTPException(
-            status_code=404,
-            detail=f"Extraction job '{job_id}' not found.",
+            status_code=400,
+            detail=(
+                f"Extraction job '{job_id}' is not a valid UUID. "
+                "Non-UUID (legacy Celery) job IDs are no longer supported. "
+                "Use a UUID-format job_id from a recent /extraction/ingest call."
+            ),
+            headers={"Deprecation": "true", "Sunset": "2026-12-31"},
         )
 
-    # NFM-3007 AC-3: Non-UUID job_id (legacy Celery task ID) is
-    # deprecated.  The ingest endpoint always generates UUIDs.
+    try:
+        row = (
+            await session.execute(
+                select(ExtractionJob).where(ExtractionJob.id == job_uuid)
+            )
+        ).scalar_one_or_none()
+    except SQLAlchemyError:
+        # DB-level failure (connection refused, bind quirk, etc.).  Surface
+        # as 503 so SRE can distinguish from a clean 404.
+        logger.exception(
+            "get_ingest_job_status: DB error querying ExtractionJob for id=%s",
+            job_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Retry after a short delay.",
+            headers={"Retry-After": "5"},
+        )
+    if row is not None:
+        canonical = _extraction_job_to_dict(row)
+        # Merge the 8 ingest-side extras on top of the canonical 24-key dict
+        # so the ingest endpoint preserves the full contract.
+        ingest_extras = {
+            "corpus_id": row.corpus_id or "",
+            "total_received": row.total_received,
+            "created_measurements": row.created_measurements,
+            "reused_entities": row.reused_entities,
+            "skipped_duplicate_measurements": row.skipped_duplicate_measurements,
+            "skipped_unknown_properties": row.skipped_unknown_properties,
+            "skipped_duplicates": row.skipped_duplicates,
+            "validation_errors": row.validation_errors,
+        }
+        return {
+            "success": True,
+            "data": {**canonical, **ingest_extras},
+        }
+
     raise HTTPException(
-        status_code=400,
-        detail=(
-            f"Extraction job '{job_id}' is not a valid UUID. "
-            "Non-UUID (legacy Celery) job IDs are no longer supported. "
-            "Use a UUID-format job_id from a recent /extraction/ingest call."
-        ),
-        headers={"Deprecation": "true", "Sunset": "2026-12-31"},
+        status_code=404,
+        detail=f"Extraction job '{job_id}' not found.",
     )
 
 
