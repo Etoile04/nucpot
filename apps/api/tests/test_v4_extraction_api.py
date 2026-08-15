@@ -13,14 +13,54 @@ from __future__ import annotations
 
 import asyncio
 
+# ---------------------------------------------------------------------------
+# V1 regression pin — NFM-2876 flipped the default to True; this file
+# exercises the HTTP /api/v4/extraction/* endpoints that still call into
+# the legacy ``trigger_extraction`` dataclass branch.
+# -----------------------------------------------------------------------
+from unittest.mock import MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.main import app
 from nfm_db.schemas.extraction import (
     V4ExtractionSubmitRequest,
     V4ValidateRequest,
 )
+
+
+def _make_settings_v1() -> MagicMock:
+    """Settings stub with ``extraction_v2_enabled=False`` (legacy branch)."""
+    settings = MagicMock()
+    settings.extraction_v2_enabled = False
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_extraction_v2_off():
+    """Route every test in this module through the V1 legacy branch.
+
+    The V2 orchestrator does NOT yet support ``source_type='doi'``
+    outside of stub mode (NFM-2909 partial fix), so these regression
+    tests must continue exercising V1 until V2 gains parity.
+    """
+    v1 = _make_settings_v1()
+    with (
+        patch("nfm_db.config.get_settings", return_value=v1),
+        patch(
+            "nfm_db.services.extraction_pipeline.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+        patch(
+            "nfm_db.services.extraction_pipeline_dispatch.get_settings",
+            return_value=v1,
+            create=True,
+        ),
+    ):
+        yield
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -86,6 +126,29 @@ async def submitted_job_id(v4_client: AsyncClient, submit_payload: dict) -> str:
     return job_id
 
 
+@pytest.fixture
+async def orm_completed_job_id(db_session: AsyncSession) -> str:
+    """Create a completed ORM ExtractionJob row and return its UUID string.
+
+    Used by tests for endpoints that have been migrated from the
+    dataclass ``_job_store`` to ORM reads (NFM-2996-T1).
+    """
+    import uuid as uuid_mod
+
+    from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+
+    job = OrmExtractionJob(
+        id=uuid_mod.uuid4(),
+        source_reference="orm_test_paper.md",
+        source_type="file",
+        status="completed",
+        extracted_count=3,
+    )
+    db_session.add(job)
+    await db_session.flush()
+    return str(job.id)
+
+
 # ---------------------------------------------------------------------------
 # 1. POST /api/v4/extraction/submit
 # ---------------------------------------------------------------------------
@@ -143,13 +206,6 @@ class TestSubmitExtraction:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason=(
-            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet support "
-            "source_type='url'. xfail until NFM-2912/NFM-2916."
-        ),
-        strict=True,
-    )
     async def test_submit_accepts_minimal_payload(self, v4_client: AsyncClient):
         payload = {
             "source_reference": "10.1016/test",
@@ -161,13 +217,6 @@ class TestSubmitExtraction:
         assert data["job_id"]
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason=(
-            "NFM-3008 R4 gate removed V1 pipeline; V2 does not yet resolve "
-            "source_type='doi'. xfail until NFM-2912/NFM-2916."
-        ),
-        strict=True,
-    )
     async def test_submit_accepts_all_valid_source_types(self, v4_client: AsyncClient):
         # Map each source_type to a representative valid source_reference.
         # DOI must match the regex guard added in NFM-632.
@@ -260,19 +309,37 @@ class TestExtractionResult:
         assert "not found" in body["error"]
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="NFM-3008: V1 dataclass/_job_store/get_job injection removed; rewrite with ORM fixture."
-    )
-
-    async def test_result_returns_409_for_non_completed_job(self, v4_client: AsyncClient):
-        """Accessing results on a running job must return 409 Conflict."""
-        pass
-
-
-    async def test_result_returns_200_for_completed_job(
-        self, v4_client: AsyncClient, submitted_job_id: str
+    async def test_result_returns_409_for_non_completed_job(
+        self, v4_client: AsyncClient, db_session: AsyncSession
     ):
-        result_resp = await v4_client.get(f"/api/v4/extraction/{submitted_job_id}/result")
+        """Accessing results on a running job must return 409 Conflict."""
+        import uuid as uuid_mod
+
+        from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+
+        job = OrmExtractionJob(
+            id=uuid_mod.uuid4(),
+            source_reference="test://ref",
+            source_type="url",
+            status="running",
+        )
+        db_session.add(job)
+        await db_session.flush()
+        job_id = str(job.id)
+        try:
+            response = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
+            assert response.status_code == 409
+            body = response.json()
+            assert body["success"] is False
+            assert "not 'completed'" in body["error"]
+        finally:
+            await db_session.rollback()
+
+    @pytest.mark.asyncio
+    async def test_result_returns_200_for_completed_job(
+        self, v4_client: AsyncClient, orm_completed_job_id: str
+    ):
+        result_resp = await v4_client.get(f"/api/v4/extraction/{orm_completed_job_id}/result")
         assert result_resp.status_code == 200
         body = result_resp.json()
         assert body["success"] is True
@@ -284,10 +351,10 @@ class TestExtractionResult:
 
     @pytest.mark.asyncio
     async def test_result_supports_pagination_params(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/result",
+            f"/api/v4/extraction/{orm_completed_job_id}/result",
             params={"page": 1, "limit": 10, "confidence": "high"},
         )
         assert result_resp.status_code == 200
@@ -299,10 +366,10 @@ class TestExtractionResult:
 
     @pytest.mark.asyncio
     async def test_result_returns_422_for_invalid_limit(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
         result_resp = await v4_client.get(
-            f"/api/v4/extraction/{submitted_job_id}/result",
+            f"/api/v4/extraction/{orm_completed_job_id}/result",
             params={"limit": 999},
         )
         assert result_resp.status_code == 422
@@ -418,29 +485,48 @@ class TestValidateExtraction:
         assert "not found" in body["error"]
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="NFM-3008: V1 dataclass/_job_store/get_job injection removed; rewrite with ORM fixture."
-    )
-
     async def test_validate_returns_409_for_non_completed_job(
-        self, v4_client: AsyncClient, validate_payload: dict
+        self, v4_client: AsyncClient, db_session: AsyncSession, validate_payload: dict
     ):
         """Triggering validation on a non-completed job must return 409 Conflict."""
-        pass
+        import uuid as uuid_mod
 
+        from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 
+        job = OrmExtractionJob(
+            id=uuid_mod.uuid4(),
+            source_reference="test://ref",
+            source_type="url",
+            status="extracting",
+        )
+        db_session.add(job)
+        await db_session.flush()
+        job_id = str(job.id)
+        try:
+            response = await v4_client.post(
+                f"/api/v4/extraction/{job_id}/validate",
+                json=validate_payload,
+            )
+            assert response.status_code == 409
+            body = response.json()
+            assert body["success"] is False
+            assert "not 'completed'" in body["error"]
+        finally:
+            await db_session.rollback()
+
+    @pytest.mark.asyncio
     async def test_validate_returns_202_for_completed_job(
-        self, v4_client: AsyncClient, submitted_job_id: str, validate_payload: dict
+        self, v4_client: AsyncClient, orm_completed_job_id: str, validate_payload: dict
     ):
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{submitted_job_id}/validate",
+            f"/api/v4/extraction/{orm_completed_job_id}/validate",
             json=validate_payload,
         )
         assert validate_resp.status_code == 202
         body = validate_resp.json()
         assert body["success"] is True
         data = body["data"]
-        assert data["job_id"] == submitted_job_id
+        assert data["job_id"] == orm_completed_job_id
         assert "validation_id" in data
         assert "total_properties" in data
         assert "auto_approved" in data
@@ -449,22 +535,22 @@ class TestValidateExtraction:
 
     @pytest.mark.asyncio
     async def test_validate_defaults_when_empty_body(
-        self, v4_client: AsyncClient, submitted_job_id: str
+        self, v4_client: AsyncClient, orm_completed_job_id: str
     ):
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{submitted_job_id}/validate",
+            f"/api/v4/extraction/{orm_completed_job_id}/validate",
             json={},
         )
         assert validate_resp.status_code == 202
         data = validate_resp.json()["data"]
-        assert data["job_id"] == submitted_job_id
+        assert data["job_id"] == orm_completed_job_id
 
     @pytest.mark.asyncio
     async def test_validate_includes_review_url(
-        self, v4_client: AsyncClient, submitted_job_id: str, validate_payload: dict
+        self, v4_client: AsyncClient, orm_completed_job_id: str, validate_payload: dict
     ):
         validate_resp = await v4_client.post(
-            f"/api/v4/extraction/{submitted_job_id}/validate",
+            f"/api/v4/extraction/{orm_completed_job_id}/validate",
             json=validate_payload,
         )
         data = validate_resp.json()["data"]
@@ -598,18 +684,52 @@ class TestMultimodalSubmitWiring:
         ),
         strict=True,
     )
-    @pytest.mark.skip(
-        reason="NFM-3008: V1 dataclass/_job_store/get_job injection removed; rewrite with ORM fixture."
-    )
-
     async def test_submit_passes_all_multimodal_options(self, v4_client: AsyncClient):
         """POST submit with all 5 multimodal fields stores them on the job."""
-        pass
+        payload = {
+            "source_reference": "10.1016/j.nucmat.2024.01.001",
+            "source_type": "doi",
+            "extract_figures": True,
+            "extract_tables": True,
+            "figure_types": ["line", "scatter"],
+            "confidence_threshold": 0.8,
+            "conflict_strategy": "merge",
+        }
+        resp = await v4_client.post("/api/v4/extraction/submit", json=payload)
+        assert resp.status_code == 202
+        job_id = resp.json()["data"]["job_id"]
 
+        # Verify the job was created with multimodal options stored
+        from nfm_db.services.extraction_pipeline import get_job
 
+        job = get_job(job_id)
+        assert job is not None
+        assert job.extract_figures is True
+        assert job.extract_tables is True
+        assert job.figure_types == ["line", "scatter"]
+        assert job.confidence_threshold == 0.8
+        assert job.conflict_strategy == "merge"
+
+    @pytest.mark.asyncio
     async def test_submit_defaults_multimodal_fields(self, v4_client: AsyncClient):
         """Omitting multimodal fields uses correct defaults."""
-        pass
+        payload = {
+            "source_reference": "10.1016/j.test.2024.01.001",
+            "source_type": "doi",
+        }
+        resp = await v4_client.post("/api/v4/extraction/submit", json=payload)
+        assert resp.status_code == 202
+        job_id = resp.json()["data"]["job_id"]
+
+        from nfm_db.services.extraction_pipeline import get_job
+
+        job = get_job(job_id)
+        assert job is not None
+        assert job.extract_figures is False
+        assert job.extract_tables is False
+        assert job.figure_types is None
+        assert job.confidence_threshold == 0.5
+        assert job.conflict_strategy == "prefer_vlm"
 
 
 class TestMultimodalResultWiring:
@@ -623,18 +743,96 @@ class TestMultimodalResultWiring:
         ),
         strict=True,
     )
-    @pytest.mark.skip(
-        reason="NFM-3008: V1 dataclass/_job_store/get_job injection removed; rewrite with ORM fixture."
-    )
-
     async def test_result_includes_figures_and_tables(self, v4_client: AsyncClient):
         """GET result returns populated figures[] and tables[] from job data."""
-        pass
+        from nfm_db.services.extraction_pipeline import (
+            ExtractionJob,
+            JobStatus,
+            _job_store,
+        )
 
+        job_id = "test-multimodal-result-populated"
+        _job_store[job_id] = ExtractionJob(
+            job_id=job_id,
+            source_reference="test://multimodal",
+            source_type="url",
+            status=JobStatus.COMPLETED,
+            figures=[
+                {
+                    "page_number": 3,
+                    "source_file": "paper.pdf",
+                    "extraction": {
+                        "figure_type": "plot",
+                        "plot_data": {
+                            "title": "Thermal Conductivity vs Temperature",
+                            "plot_type": "line",
+                            "x_axis": {
+                                "label": "Temperature",
+                                "unit": "K",
+                                "values": [300, 600, 900, 1200],
+                            },
+                            "y_axis": {
+                                "label": "Thermal Conductivity",
+                                "unit": "W/(m·K)",
+                                "values": [8.5, 4.2, 3.1, 2.5],
+                            },
+                            "series": [
+                                {
+                                    "name": "UO2",
+                                    "values": [8.5, 4.2, 3.1, 2.5],
+                                },
+                            ],
+                            "confidence": 0.92,
+                        },
+                        "provider": "openai",
+                        "model": "gpt-4o",
+                        "extraction_time_ms": 1250.0,
+                    },
+                },
+            ],
+            tables=[
+                {
+                    "page_number": 5,
+                    "source_file": "paper.pdf",
+                    "table_data": {
+                        "title": "Property Summary",
+                        "headers": {
+                            "columns": ["Property", "Value", "Unit"],
+                        },
+                        "rows": [
+                            [
+                                {"value": "Density"},
+                                {"value": "10.5"},
+                                {"value": "g/cm³"},
+                            ]
+                        ],
+                    },
+                },
+            ],
+        )
+        try:
+            resp = await v4_client.get(f"/api/v4/extraction/{job_id}/result")
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert "figures" in data
+            assert "tables" in data
+            assert len(data["figures"]) == 1
+            assert data["figures"][0]["page_number"] == 3
+            assert len(data["tables"]) == 1
+            assert data["tables"][0]["page_number"] == 5
+        finally:
+            _job_store.pop(job_id, None)
 
-    async def test_result_returns_empty_figures_tables_when_absent(self, v4_client: AsyncClient):
+    @pytest.mark.asyncio
+    async def test_result_returns_empty_figures_tables_when_absent(
+        self, v4_client: AsyncClient, orm_completed_job_id: str
+    ):
         """GET result returns empty arrays when job has no figures/tables (backward compat)."""
-        pass
+        resp = await v4_client.get(f"/api/v4/extraction/{orm_completed_job_id}/result")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["figures"] == []
+        assert data["tables"] == []
 
 
 # ---------------------------------------------------------------------------
