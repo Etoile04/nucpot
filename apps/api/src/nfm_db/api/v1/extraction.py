@@ -543,11 +543,12 @@ async def ingest_extraction_batch(
 
 @router.get(
     "/extraction/ingest/{job_id}/status",
-    summary="查询提取任务状态（Celery）",
+    summary="查询提取任务状态",
     description=(
-        "查询由 /extraction/trigger 触发的 Celery 任务状态。\n\n"
-        "Check status of a Celery-dispatched extraction job. "
-        "Falls back to in-memory store for non-Celery jobs."
+        "通过 ORM 查询提取任务的状态（UUID → 数据库行）。\n"
+        "返回 404（未找到）或 503（数据库错误，Retry-After: 5s）。\n\n"
+        "Look up an extraction job by UUID via ORM. "
+        "Returns 404 if not found, or 503 with Retry-After on DB error."
     ),
 )
 async def get_ingest_job_status(
@@ -556,10 +557,9 @@ async def get_ingest_job_status(
 ) -> dict[str, object]:
     """查询提取任务状态（NFM-2013 AC-5）。
 
-    Reads from the ``extraction_jobs`` table persisted by the ingest
-    handler.  Falls back to the in-memory store and Celery AsyncResult
-    for jobs dispatched via /extraction/trigger (which don't land in
-    the ingest-side table).
+    Looks up the job by UUID in the ``extraction_jobs`` table via ORM.
+    Returns 404 if the row does not exist, or 503 with ``Retry-After: 5``
+    on a database error.
     """
     # NFM-2013 AC-5: try the persisted ExtractionJob row first.  This is
     # the canonical state for POST /extraction/ingest jobs.
