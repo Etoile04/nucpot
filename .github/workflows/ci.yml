@@ -260,7 +260,13 @@ jobs:
             const failedJobs = failed.join(', ');
             const title = `[CI-AUTO] ${failedJobs} failed (${sha})`;
 
-            // Dedup: search for open issue with same title prefix + same SHA
+            // Dedup (NFM-848 fix, 2026-08-16): match on the FAILED-JOBS SIGNATURE,
+            // not the SHA. Previously every new failing SHA closed the old issue
+            // and opened a new one, which made downstream agents (SRE → LE)
+            // spawn a fresh worktree/branch per SHA for the SAME root cause
+            // (NFM-3221 → NFM-3227 → NFM-3228 chain). With signature dedup,
+            // a recurring failure appends to ONE open issue regardless of SHA.
+            const signature = failedJobs;
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -268,7 +274,10 @@ jobs:
               state: 'open',
             });
 
-            const match = existing.data.find(i => i.title.includes(sha));
+            const match = existing.data.find(i =>
+              i.title.startsWith(`[CI-AUTO] ${signature} failed`) ||
+              i.title.includes(sha)
+            );
 
             if (match) {
               // Append comment to existing issue
@@ -280,8 +289,12 @@ jobs:
               });
               core.info(`Updated existing issue #${match.number}`);
             } else {
-              // Close stale ci-failure issues from previous commits
+              // Close stale ci-failure issues ONLY when their failure signature
+              // differs (NFM-848: same-signature issues must never be closed by
+              // a newer SHA — that reset the dedup and respawned agent chains).
               for (const old of existing.data) {
+                const sameSignature = old.title.startsWith(`[CI-AUTO] ${signature} failed`);
+                if (sameSignature) continue;
                 await github.rest.issues.update({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
