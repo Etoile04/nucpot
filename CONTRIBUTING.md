@@ -177,6 +177,43 @@ review approvals being dismissed.
 See [`docs/verification/PR-GOVERNANCE.md`](docs/verification/PR-GOVERNANCE.md) for the
 full governance specification.
 
+### Merge Queue + Auto-Merge Workflow
+
+When the merge queue is enabled (per [NFM-3264](/NFM/issues/NFM-3264)),
+PRs can be merged automatically once CI passes — no manual merge step
+required.
+
+**Enable auto-merge when opening a PR:**
+
+```bash
+gh pr merge --auto --squash <PR_NUMBER>
+```
+
+This tells GitHub to squash-merge the PR as soon as all required status
+checks pass and the PR is not blocked by other queue entries.
+
+**Merge queue flow:**
+
+```
+PR opened → update-branch (sync with main) → enter merge queue → CI runs → squash merge to main
+```
+
+1. `update-branch` keeps the PR rebased on the latest `main` (handled by
+   `.github/workflows/update-stale-prs.yml` hourly, or manually via
+   `gh pr update-branch`).
+2. The merge queue serialises PRs so that each merges against a known-good
+   `main` tip — no fast-forward races, no CI waste from cascade commits.
+3. GitHub runs the full set of required status checks (Frontend, Backend,
+   commit-ref-gate) on the queued commit.
+4. On green CI, the PR is squash-merged automatically.
+
+**Constraint — `enforce_admins: false`:**
+
+`enforce_admins` must remain `false` for the auto-merge workflow to
+function. This means repo admins retain a bypass path for status checks
+and review requirements. Use it sparingly — the merge queue exists to
+guarantee every commit on `main` has passed CI.
+
 ---
 
 ## See also
