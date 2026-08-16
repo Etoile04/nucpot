@@ -1,0 +1,37 @@
+name: Docker ctx test (NFM-848 diagnostic)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/docker-ctx-test.yml
+
+jobs:
+  build-matrix:
+    runs-on: [self-hosted, production]
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [default, buildkit-off, clean-config, both]
+    steps:
+      - name: Matrix mode ${{ matrix.mode }}
+        run: |
+          echo "== mode: ${{ matrix.mode }} =="
+          echo "HOME=$HOME  USER=$(id -un)  session=$(launchctl managername 2>/dev/null || echo n/a)"
+          echo "DOCKER_CONFIG=${DOCKER_CONFIG:-<unset>}"
+          case "${{ matrix.mode }}" in
+            default)      ;;
+            buildkit-off) export DOCKER_BUILDKIT=0 ;;
+            clean-config)
+              export DOCKER_CONFIG="$RUNNER_TEMP/dcfg-${{ matrix.mode }}"
+              mkdir -p "$DOCKER_CONFIG"; printf '{}' > "$DOCKER_CONFIG/config.json" ;;
+            both)
+              export DOCKER_BUILDKIT=0
+              export DOCKER_CONFIG="$RUNNER_TEMP/dcfg-${{ matrix.mode }}"
+              mkdir -p "$DOCKER_CONFIG"; printf '{}' > "$DOCKER_CONFIG/config.json" ;;
+          esac
+          cd "$RUNNER_TEMP"
+          printf 'FROM python:3.12-slim\nRUN echo matrix-ok\n' > ctxtest.Dockerfile
+          echo "--- docker build (mode ${{ matrix.mode }}) ---"
+          docker build --no-cache -f ctxtest.Dockerfile . 2>&1 | tail -5
+          echo "MODE_${{ matrix.mode }}_EXIT=$?"
