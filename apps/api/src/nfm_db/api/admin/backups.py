@@ -1,4 +1,4 @@
-"""Admin backup monitoring endpoints (NFM-3024-D / NFM-3052 / NFM-3065).
+"""Admin backup monitoring endpoints (NFM-3024-D / NFM-3052 / NFM-3065 / NFM-3070).
 
 - ``GET /api/admin/backups`` — list backup snapshots with per-snapshot
   ``tier`` field (``hourly`` | ``daily`` | ``weekly`` | ``null`` for
@@ -10,6 +10,10 @@
 Both endpoints require ``BlogRole.ADMIN``. Both return ``404`` when the
 backup subsystem is disabled (``NFM_BACKUP_ENABLED=false``).  The stats
 endpoint returns ``503`` when the disk-stat call is unavailable.
+
+Path parameters (``backup_dir``) are validated against the
+``NFM_BACKUP_DIR_ROOTS`` allowlist from :class:`nfm_db.config.Settings`
+using :func:`nfm_db.core.path_safety.safe_resolve` (NFM-3070).
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_blog_role
+from nfm_db.config import get_settings
+from nfm_db.core.path_safety import PathNotAllowedError, safe_resolve
 from nfm_db.database import get_db
 from nfm_db.middleware.rate_limit import limiter
 from nfm_db.models.user import BlogRole, User
@@ -44,34 +50,40 @@ def _ensure_backup_enabled() -> None:
 
 
 def _resolve_backup_dir(override: str | None) -> Path:
-    """Canonicalize and validate a backup directory path.
+    """Canonicalize and validate a backup directory path (NFM-3070).
 
-    Rejects paths that resolve outside ``backup_service.BACKUP_DIR`` to
-    prevent admin-only directory traversal (CR review finding).  The
-    allowed root is read dynamically from the service module so that
-    test monkeypatches take effect without patching this module too.
+    Iterates over ``settings.backup_dir_roots`` and uses
+    :func:`safe_resolve` against each.  The first match wins, so
+    multiple roots can be configured.  Falls back to
+    ``backup_service.BACKUP_DIR`` when the override is ``None`` and
+    the root list is empty.
+
+    Raises:
+        HTTPException: 400 if the path escapes all allowed roots.
     """
-    target = Path(override) if override else backup_service.BACKUP_DIR
-    try:
-        resolved = target.resolve(strict=False)
-    except (OSError, ValueError) as exc:
-        logger.warning("Invalid backup_dir path %r: %s", override, exc)
-        raise HTTPException(status_code=400, detail="Invalid backup_dir path") from exc
+    settings = get_settings()
+    roots = settings.backup_dir_roots or [str(backup_service.BACKUP_DIR)]
+    target = override if override else str(backup_service.BACKUP_DIR)
 
-    allowed = backup_service.BACKUP_DIR.resolve(strict=False)
-    try:
-        resolved.relative_to(allowed)
-    except ValueError:
-        logger.warning(
-            "backup_dir %s resolved outside allowed root %s — rejected",
-            resolved,
-            allowed,
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="backup_dir must resolve inside the configured backup root",
-        )
-    return resolved
+    for root in roots:
+        try:
+            return safe_resolve(target, root)
+        except PathNotAllowedError:
+            logger.debug(
+                "backup_dir %r did not resolve inside root %r — trying next",
+                target,
+                root,
+            )
+            continue
+
+    logger.warning(
+        "Rejected backup_dir %r — not inside any allowed root",
+        target,
+    )
+    raise HTTPException(
+        status_code=400,
+        detail="Requested path is not inside the configured backup directory.",
+    )
 
 
 @router.get(

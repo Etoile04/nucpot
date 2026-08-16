@@ -1,4 +1,4 @@
-"""Tests for admin backup API endpoints (NFM-3024-D / NFM-3052).
+"""Tests for admin backup API endpoints (NFM-3024-D / NFM-3052 / NFM-3070).
 
 Acceptance criteria covered:
 
@@ -322,6 +322,13 @@ class TestAdminBackupsListEndpoint:
     ) -> None:
         monkeypatch.setattr(backup_service, "BACKUP_DIR", populated_backup_dir)
         backup_service.BACKUP_DIR = populated_backup_dir
+        from nfm_db.config import Settings as _Settings
+
+        _patched_settings = _Settings(backup_dir_roots=[str(populated_backup_dir)])
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: _patched_settings,
+        )
         resp = await client.get(LIST_ENDPOINT)
         assert resp.status_code == 200
         body = resp.json()
@@ -354,6 +361,13 @@ class TestAdminBackupsStatsEndpoint:
         self, client: AsyncClient, backup_dir: Path, monkeypatch
     ) -> None:
         backup_service.BACKUP_DIR = backup_dir
+        from nfm_db.config import Settings as _Settings
+
+        _patched_settings = _Settings(backup_dir_roots=[str(backup_dir)])
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: _patched_settings,
+        )
         resp = await client.get(STATS_ENDPOINT)
         assert resp.status_code == 200
         body = resp.json()
@@ -389,6 +403,13 @@ class TestAdminBackupsStatsEndpoint:
         backup_service.BACKUP_DIR = backup_dir
         monkeypatch.setattr(backup_service, "_DISK_USAGE_FN", boom)
         backup_service._DISK_USAGE_FN = boom
+        from nfm_db.config import Settings as _Settings
+
+        _patched_settings = _Settings(backup_dir_roots=[str(backup_dir)])
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: _patched_settings,
+        )
         resp = await client.get(STATS_ENDPOINT)
         assert resp.status_code == 503
 
@@ -403,6 +424,13 @@ class TestFreshAndLegacyInstallFixtures:
         """A fresh install: no snapshots, no refusals — both endpoints succeed."""
         backup_service._BACKUP_ENABLED = True
         backup_service.BACKUP_DIR = backup_dir
+        from nfm_db.config import Settings as _Settings
+
+        _patched_settings = _Settings(backup_dir_roots=[str(backup_dir)])
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: _patched_settings,
+        )
 
         list_resp = await client.get(LIST_ENDPOINT)
         stats_resp = await client.get(STATS_ENDPOINT)
@@ -427,6 +455,13 @@ class TestFreshAndLegacyInstallFixtures:
             (backup_dir / name).write_bytes(payload)
         backup_service._BACKUP_ENABLED = True
         backup_service.BACKUP_DIR = backup_dir
+        from nfm_db.config import Settings as _Settings
+
+        _patched_settings = _Settings(backup_dir_roots=[str(backup_dir)])
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: _patched_settings,
+        )
 
         list_resp = await client.get(LIST_ENDPOINT)
         stats_resp = await client.get(STATS_ENDPOINT)
@@ -447,6 +482,13 @@ class TestFreshAndLegacyInstallFixtures:
         backup_service.BACKUP_DIR = backup_dir
         backup_service._REFUSAL_FILE = refusal_file
         backup_service._load_refusals_from_disk()
+        from nfm_db.config import Settings as _Settings
+
+        _patched_settings = _Settings(backup_dir_roots=[str(backup_dir)])
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: _patched_settings,
+        )
 
         resp = await client.get(STATS_ENDPOINT)
         assert resp.status_code == 200
@@ -487,3 +529,307 @@ class TestBackupSchemas:
                 created_at=datetime(2026, 1, 1),
                 tier=BackupTier.HOURLY,
             )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3070: Path whitelisting (multi-root, traversal, symlink)
+# ---------------------------------------------------------------------------
+
+
+class TestPathWhitelistingNFM3070:
+    """Verify backup_dir is validated against NFM_BACKUP_DIR_ROOTS allowlist.
+
+    The upgraded ``_resolve_backup_dir`` iterates over
+    ``settings.backup_dir_roots`` using :func:`safe_resolve`.
+    """
+
+    @pytest.fixture
+    def allowed_root(self, tmp_path: Path) -> Path:
+        """Create an allowed backup root with a test snapshot."""
+        root = tmp_path / "allowed"
+        root.mkdir()
+        (root / "nucpot-20260816T050000.hourly.sql.gz").write_bytes(b"data")
+        return root
+
+    @pytest.fixture
+    def second_root(self, tmp_path: Path) -> Path:
+        """Create a second allowed root."""
+        root = tmp_path / "allowed2"
+        root.mkdir()
+        (root / "nucpot-20260815T050000.hourly.sql.gz").write_bytes(b"data2")
+        return root
+
+    @pytest.fixture
+    def settings_with_roots(self, allowed_root: Path, second_root: Path):
+        """Return a mock Settings with two backup_dir_roots."""
+        from unittest.mock import MagicMock
+
+        s = MagicMock()
+        s.backup_dir_roots = [str(allowed_root), str(second_root)]
+        return s
+
+    def test_allows_path_inside_single_root(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """backup_dir inside the configured root succeeds."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(LIST_ENDPOINT)
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 200
+
+    def test_rejects_parent_directory_traversal(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """backup_dir with ../ escapes the allowed root."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": str(allowed_root.parent)},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 400
+
+    def test_rejects_absolute_path_outside_root(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """An absolute path outside all roots returns 400."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": "/etc"},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 400
+
+    def test_rejects_symlink_escape(
+        self, client: AsyncClient, allowed_root: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A symlink inside the root that points outside is rejected."""
+        from nfm_db.config import Settings
+
+        # Create symlink inside allowed root pointing outside.
+        escape_link = allowed_root / "escape"
+        target_dir = tmp_path / "outside"
+        target_dir.mkdir()
+        escape_link.symlink_to(target_dir)
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": str(escape_link)},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 400
+
+    def test_multi_root_allows_second_root(
+        self, client: AsyncClient, allowed_root: Path, second_root: Path, monkeypatch
+    ) -> None:
+        """backup_dir inside the second configured root succeeds."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(
+                backup_dir_roots=[str(allowed_root), str(second_root)]
+            ),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": str(second_root)},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 200
+        assert resp.json()["data"]["total"] == 1
+
+    def test_empty_roots_falls_back_to_backup_service_dir(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """When backup_dir_roots is empty, falls back to BACKUP_DIR."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(LIST_ENDPOINT)
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 200
+        assert resp.json()["data"]["total"] == 1
+
+    def test_stats_endpoint_also_validates_path(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """The stats endpoint also rejects traversal attempts."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                STATS_ENDPOINT,
+                params={"backup_dir": str(allowed_root.parent)},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 400
+
+    def test_rejects_deeply_nested_traversal(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """Multi-level ../ traversal is still caught."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": f"{allowed_root}/../../../etc"},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 400
+
+    def test_allowed_root_path_normalization(
+        self, client: AsyncClient, allowed_root: Path, monkeypatch
+    ) -> None:
+        """A path with trailing slash still matches the root."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(backup_dir_roots=[str(allowed_root)]),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": str(allowed_root) + "/"},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 200
+
+    def test_multi_root_rejects_path_outside_both(
+        self, client: AsyncClient, allowed_root: Path, second_root: Path, monkeypatch
+    ) -> None:
+        """A path outside both configured roots returns 400."""
+        from nfm_db.config import Settings
+
+        backup_service._BACKUP_ENABLED = True
+        backup_service.BACKUP_DIR = allowed_root
+        monkeypatch.setattr(
+            "nfm_db.api.admin.backups.get_settings",
+            lambda: Settings(
+                backup_dir_roots=[str(allowed_root), str(second_root)]
+            ),
+        )
+        resp = None
+
+        async def _run():
+            nonlocal resp
+            resp = await client.get(
+                LIST_ENDPOINT,
+                params={"backup_dir": "/etc/passwd"},
+            )
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert resp is not None
+        assert resp.status_code == 400
