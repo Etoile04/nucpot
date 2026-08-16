@@ -2,10 +2,10 @@
 
 Tests validate:
 - All 15 SKILL.md sections are present in the generated prompt
-- Phase 2A rules (PropertyCategory, PhaseMapper, standard names) are injected
 - Output JSON schema matches ExtractedProperty exactly
 - Token count stays under 4000 tokens
-- Ontology-driven extraction prompt (NFM-2639)
+- Ontology-driven extraction prompt (NFM-2639, NFM-3258)
+- No legacy property_catalog imports or fallbacks (NFM-3258)
 """
 
 from __future__ import annotations
@@ -16,10 +16,8 @@ from typing import Any
 
 import pytest
 
-from nfm_db.core.property_catalog import PropertyCategory
 from nfm_db.services.extraction_prompt import (
     ONTOLOGY_CONTEXT_BUDGET_CHARS,
-    build_extraction_system_prompt,
     build_ontology_extraction_prompt,
 )
 
@@ -80,6 +78,13 @@ def _large_ontology(n_entity_types: int = 50) -> dict[str, Any]:
     ]
     return {"entity_types": entity_types, "relation_types": relation_types}
 
+
+def _build_prompt(ontology_data: dict[str, Any]) -> str:
+    """Helper to build a prompt from ontology data."""
+    ov = _FakeOntologyVersion(ontology_data=ontology_data)
+    return build_ontology_extraction_prompt(ov)
+
+
 # ---------------------------------------------------------------------------
 # Section presence tests (§0 through §15)
 # ---------------------------------------------------------------------------
@@ -89,7 +94,7 @@ class TestSkillSectionsPresent:
     """Validate that all 15 SKILL.md core sections are covered."""
 
     def setup_method(self) -> None:
-        self.prompt = build_extraction_system_prompt()
+        self.prompt = _build_prompt(_MINIMAL_ONTOLOGY)
 
     # §0: LLM semantic extraction (not regex)
     def test_section0_llm_semantic_extraction(self) -> None:
@@ -109,10 +114,10 @@ class TestSkillSectionsPresent:
     def test_section3_core_extraction_object(self) -> None:
         assert "核材料" in self.prompt or "nuclear material" in self.prompt.lower()
 
-    # §4: 11 property categories (9 core + 2 supporting)
-    def test_section4_property_categories(self) -> None:
-        for cat in PropertyCategory:
-            assert cat.value in self.prompt, f"Missing category: {cat.value}"
+    # §4: Property categories present in prompt
+    def test_section4_property_categories_present(self) -> None:
+        # Ontology-sourced categories must appear in the prompt
+        assert "NuclearFuel" in self.prompt
 
     # §5: 13 output fields with fixed order
     def test_section5_output_fields(self) -> None:
@@ -210,43 +215,6 @@ class TestSkillSectionsPresent:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2A injection tests
-# ---------------------------------------------------------------------------
-
-
-class TestPhase2AInjection:
-    """Validate that Phase 2A rules are injected from code, not hardcoded."""
-
-    def setup_method(self) -> None:
-        self.prompt = build_extraction_system_prompt()
-
-    def test_all_property_categories_injected(self) -> None:
-        """All 11 PropertyCategory enum values must appear."""
-        for cat in PropertyCategory:
-            assert cat.value in self.prompt, f"PropertyCategory.{cat.name} not injected"
-
-    def test_standard_property_names_injected(self) -> None:
-        """At least some standard property names from config must appear."""
-        # Pick a representative subset — not all 100+ aliases
-        representative = [
-            "密度",
-            "比热容",
-            "热导率",
-            "杨氏模量",
-            "屈服强度",
-            "蠕变应变",
-            "氧化膜厚度",
-            "硬度",
-        ]
-        for name in representative:
-            assert name in self.prompt, f"Standard property '{name}' not injected"
-
-    def test_phase_keywords_in_prompt(self) -> None:
-        """Prompt template references canonical phase names (alpha/beta/etc.)."""
-        assert "alpha" in self.prompt.lower() or "α" in self.prompt
-
-
-# ---------------------------------------------------------------------------
 # Schema alignment test
 # ---------------------------------------------------------------------------
 
@@ -255,7 +223,7 @@ class TestSchemaAlignment:
     """Validate output JSON schema matches ExtractedProperty."""
 
     def setup_method(self) -> None:
-        self.prompt = build_extraction_system_prompt()
+        self.prompt = _build_prompt(_MINIMAL_ONTOLOGY)
 
     def test_required_fields_present(self) -> None:
         """property and value are required (no default in Pydantic model)."""
@@ -283,7 +251,7 @@ class TestTokenBudget:
     """Validate prompt stays under 4000 tokens."""
 
     def test_token_count_under_limit(self) -> None:
-        prompt = build_extraction_system_prompt()
+        prompt = _build_prompt(_MINIMAL_ONTOLOGY)
         # Rough token estimate: ~4 chars per token for mixed CJK/English
         token_estimate = len(prompt) / 3.0  # CJK-heavy, ~3 chars/token
         assert token_estimate < 4000, (
@@ -300,7 +268,7 @@ class TestPromptStructure:
     """Validate prompt structure and JSON mode specification."""
 
     def setup_method(self) -> None:
-        self.prompt = build_extraction_system_prompt()
+        self.prompt = _build_prompt(_MINIMAL_ONTOLOGY)
 
     def test_returns_string(self) -> None:
         assert isinstance(self.prompt, str)
@@ -347,20 +315,17 @@ class TestBuildOntologyExtractionPrompt:
         # Verify the ontology section heading exists
         assert "本体" in prompt or "Ontology" in prompt
 
-    def test_fallback_still_works(self) -> None:
-        """Existing build_extraction_system_prompt() must remain unchanged."""
-        prompt = build_extraction_system_prompt()
-        assert isinstance(prompt, str)
-        assert len(prompt) > 500
-        # Must contain key sections from original template
-        assert "property_category" in prompt
-        assert "JSON" in prompt
-
     def test_exported_in_all(self) -> None:
         """build_ontology_extraction_prompt must be importable."""
         from nfm_db.services.extraction_prompt import __all__
 
         assert "build_ontology_extraction_prompt" in __all__
+
+    def test_build_extraction_system_prompt_not_exported(self) -> None:
+        """build_extraction_system_prompt must NOT be in __all__."""
+        from nfm_db.services.extraction_prompt import __all__
+
+        assert "build_extraction_system_prompt" not in __all__
 
     def test_entity_descriptions_included(self) -> None:
         ov = _FakeOntologyVersion(ontology_data=_MINIMAL_ONTOLOGY)
@@ -424,35 +389,77 @@ class TestOntologyContextBudget:
         )
 
 
-class TestOntologyExtractionNullSafety:
-    """Edge cases for ontology data."""
+# ---------------------------------------------------------------------------
+# NFM-3258: ValueError on empty ontology_data
+# ---------------------------------------------------------------------------
 
-    def test_none_ontology_data(self) -> None:
-        """None ontology_data should produce prompt without ontology section."""
+
+class TestValueErrorOnEmptyOntology:
+    """AC: build_ontology_extraction_prompt raises ValueError on empty ontology_data."""
+
+    def test_none_ontology_data_raises(self) -> None:
+        """None ontology_data must raise ValueError."""
         ov = _FakeOntologyVersion(ontology_data=None)
-        prompt = build_ontology_extraction_prompt(ov)
-        assert isinstance(prompt, str)
-        # Should still have the base prompt sections
-        assert "property_category" in prompt
+        with pytest.raises(ValueError, match="ontology_data is required"):
+            build_ontology_extraction_prompt(ov)
 
-    def test_empty_ontology_data(self) -> None:
-        """Empty ontology_data should produce prompt without ontology section."""
+    def test_empty_dict_ontology_data_raises(self) -> None:
+        """Empty dict ontology_data must raise ValueError."""
         ov = _FakeOntologyVersion(ontology_data={})
-        prompt = build_ontology_extraction_prompt(ov)
-        assert isinstance(prompt, str)
-        assert "property_category" in prompt
+        with pytest.raises(ValueError, match="ontology_data is required"):
+            build_ontology_extraction_prompt(ov)
 
-    def test_missing_entity_types_key(self) -> None:
-        """Missing entity_types key should not crash."""
-        ov = _FakeOntologyVersion(ontology_data={"relation_types": []})
-        prompt = build_ontology_extraction_prompt(ov)
-        assert isinstance(prompt, str)
+    def test_error_message_mentions_ontology(self) -> None:
+        """ValueError message must reference ontology for debuggability."""
+        ov = _FakeOntologyVersion(ontology_data=None)
+        with pytest.raises(ValueError) as exc_info:
+            build_ontology_extraction_prompt(ov)
+        assert "ontology" in str(exc_info.value).lower()
 
-    def test_missing_relation_types_key(self) -> None:
-        """Missing relation_types key should not crash."""
-        ov = _FakeOntologyVersion(ontology_data={"entity_types": []})
-        prompt = build_ontology_extraction_prompt(ov)
-        assert isinstance(prompt, str)
+
+# ---------------------------------------------------------------------------
+# NFM-3258: No legacy property names in prompt
+# ---------------------------------------------------------------------------
+
+
+class TestNoLegacyPropertyNames:
+    """AC: Prompt must not contain hardcoded legacy property names from STANDARD_PROPERTIES."""
+
+    def test_no_hardcoded_density_in_categories(self) -> None:
+        """Ontology prompt should not contain hardcoded '密度' from STANDARD_PROPERTIES."""
+        ontology_data = {
+            "entity_types": [
+                {
+                    "name": "Fuel",
+                    "required_properties": ["thermal_conductivity"],
+                },
+            ],
+        }
+        prompt = _build_prompt(ontology_data)
+        # '密度' is from STANDARD_PROPERTIES, not from our ontology
+        sn_start = prompt.find("## Standard Property Names")
+        sn_end = prompt.find("\n## 字段规则", sn_start)
+        if sn_start != -1 and sn_end != -1:
+            section = prompt[sn_start:sn_end]
+            assert "密度" not in section
+
+    def test_no_hardcoded_melting_point_from_legacy(self) -> None:
+        """Melting point should only appear if ontology includes it."""
+        ontology_data = {
+            "entity_types": [
+                {
+                    "name": "Cladding",
+                    "required_properties": ["corrosion_rate"],
+                },
+            ],
+        }
+        prompt = _build_prompt(ontology_data)
+        # 'melting_point' is a legacy property name, not in our ontology
+        sn_start = prompt.find("## Standard Property Names")
+        sn_end = prompt.find("\n## 字段规则", sn_start)
+        if sn_start != -1 and sn_end != -1:
+            section = prompt[sn_start:sn_end]
+            assert "melting_point" not in section
 
 
 # ---------------------------------------------------------------------------
@@ -471,8 +478,7 @@ class TestOntologyDrivenCategoriesBlock:
                 {"name": "Cladding", "required_properties": ["material"]},
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
 
         # Entity type names must appear in the categories section
         assert "NuclearFuel" in prompt
@@ -485,8 +491,7 @@ class TestOntologyDrivenCategoriesBlock:
                 {"name": "CustomMaterial", "required_properties": ["density"]},
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
 
         # The prompt should contain CustomMaterial
         assert "CustomMaterial" in prompt
@@ -509,8 +514,7 @@ class TestOntologyDrivenCategoriesBlock:
                 {"name": "Cladding", "required_properties": ["c"]},
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
         # "Fuel" should appear exactly once in categories section
         categories_start = prompt.find("## Property Categories")
         categories_end = prompt.find("\n## Standard Property Names", categories_start)
@@ -531,8 +535,7 @@ class TestOntologyDrivenStandardNamesBlock:
                 },
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
 
         assert "thermal_conductivity" in prompt
         assert "density" in prompt
@@ -548,8 +551,7 @@ class TestOntologyDrivenStandardNamesBlock:
                 },
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
 
         assert "custom_prop_x" in prompt
         # 标准名称 from STANDARD_PROPERTIES like "密度" should NOT appear
@@ -568,8 +570,7 @@ class TestOntologyDrivenStandardNamesBlock:
                 {"name": "TypeB", "required_properties": ["temp", "stress"]},
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
 
         sn_start = prompt.find("## Standard Property Names")
         sn_end = prompt.find("\n## 字段规则", sn_start)
@@ -588,8 +589,7 @@ class TestOntologyDrivenStandardNamesBlock:
                 },
             ],
         }
-        ov = _FakeOntologyVersion(ontology_data=ontology_data)
-        prompt = build_ontology_extraction_prompt(ov)
+        prompt = _build_prompt(ontology_data)
 
         sn_start = prompt.find("## Standard Property Names")
         sn_end = prompt.find("\n## 字段规则", sn_start)
@@ -600,79 +600,89 @@ class TestOntologyDrivenStandardNamesBlock:
         assert alpha_pos < mid_pos < zebra_pos
 
 
-class TestOntologyDrivenFallback:
-    """AC-4: Fallback to hardcoded when no ontology."""
+class TestNoLegacyFallbacks:
+    """AC-3: Ontology helpers have no legacy fallbacks."""
 
-    def test_none_ontology_uses_hardcoded_categories(self) -> None:
-        """None ontology_data should fall back to PropertyCategory enum."""
-        ov = _FakeOntologyVersion(ontology_data=None)
-        prompt = build_ontology_extraction_prompt(ov)
+    def test_empty_entity_types_produces_empty_categories(self) -> None:
+        """Empty entity_types should produce empty categories, not hardcoded."""
+        ontology_data: dict[str, Any] = {
+            "entity_types": [],
+            "relation_types": [],
+        }
+        prompt = _build_prompt(ontology_data)
+        # No categories block should be generated (empty string)
+        # The "## Property Categories" heading should NOT appear
+        assert "## Property Categories" not in prompt
 
-        for cat in PropertyCategory:
-            assert cat.value in prompt, f"Missing fallback category: {cat.value}"
-
-    def test_empty_ontology_uses_hardcoded_categories(self) -> None:
-        """Empty ontology_data should fall back to PropertyCategory enum."""
-        ov = _FakeOntologyVersion(ontology_data={})
-        prompt = build_ontology_extraction_prompt(ov)
-
-        for cat in PropertyCategory:
-            assert cat.value in prompt, f"Missing fallback category: {cat.value}"
-
-    def test_none_ontology_uses_hardcoded_standard_names(self) -> None:
-        """None ontology_data should fall back to STANDARD_PROPERTIES."""
-        ov = _FakeOntologyVersion(ontology_data=None)
-        prompt = build_ontology_extraction_prompt(ov)
-
-        assert "密度" in prompt
-        assert "热导率" in prompt
-
-    def test_empty_entity_types_uses_hardcoded_categories(self) -> None:
-        """Empty entity_types list should fall back to hardcoded categories."""
-        ov = _FakeOntologyVersion(ontology_data={"entity_types": []})
-        prompt = build_ontology_extraction_prompt(ov)
-
-        for cat in PropertyCategory:
-            assert cat.value in prompt, f"Missing fallback category: {cat.value}"
-
-    def test_empty_required_properties_uses_hardcoded_names(self) -> None:
-        """Entity types with no required_properties should fall back to hardcoded names."""
-        ov = _FakeOntologyVersion(ontology_data={
-            "entity_types": [{"name": "TypeA", "required_properties": []}]
-        })
-        prompt = build_ontology_extraction_prompt(ov)
-
-        assert "密度" in prompt
+    def test_empty_required_properties_produces_empty_names(self) -> None:
+        """Entity types with empty required_properties should produce empty names block."""
+        ontology_data: dict[str, Any] = {
+            "entity_types": [{"name": "TypeA", "required_properties": []}],
+        }
+        prompt = _build_prompt(ontology_data)
+        # No standard names block should be generated
+        assert "## Standard Property Names" not in prompt
 
 
-class TestV1PathUntouched:
-    """AC-3: V1 build_extraction_system_prompt() continues using hardcoded helpers."""
-
-    def test_v1_uses_hardcoded_categories(self) -> None:
-        prompt = build_extraction_system_prompt()
-        for cat in PropertyCategory:
-            assert cat.value in prompt, f"V1 missing category: {cat.value}"
-
-    def test_v1_uses_hardcoded_standard_names(self) -> None:
-        prompt = build_extraction_system_prompt()
-        assert "密度" in prompt
-        assert "热导率" in prompt
-        assert "杨氏模量" in prompt
-
-    def test_v1_no_ontology_context(self) -> None:
-        prompt = build_extraction_system_prompt()
-        assert "本体" not in prompt and "Ontology" not in prompt
+# ---------------------------------------------------------------------------
+# NFM-3258: No legacy imports
+# ---------------------------------------------------------------------------
 
 
-class TestOntologyDrivenImportPresence:
-    """AC-5: Imports of PropertyCategory/STANDARD_PROPERTIES remain (used by V1/fallback)."""
+class TestNoLegacyImports:
+    """AC: STANDARD_PROPERTIES and PropertyCategory no longer imported."""
 
-    def test_property_category_import_still_present(self) -> None:
-        """PropertyCategory must still be importable (V1 path uses it)."""
-        from nfm_db.core.property_catalog import PropertyCategory
-        assert len(list(PropertyCategory)) >= 11
+    @staticmethod
+    def _read_module_source() -> str:
+        """Read the extraction_prompt.py source file directly."""
+        import inspect
 
-    def test_standard_properties_import_still_present(self) -> None:
-        """STANDARD_PROPERTIES must still be importable (V1 path uses it)."""
-        from nfm_db.core.property_catalog import STANDARD_PROPERTIES as SP
-        assert len(SP) > 0
+        import nfm_db.services.extraction_prompt as mod
+
+        return inspect.getsource(mod)
+
+    def test_extraction_prompt_module_no_property_catalog_import(self) -> None:
+        """extraction_prompt.py must not import from property_catalog."""
+        source = self._read_module_source()
+        # Allow the docstring to mention property_catalog (NFM-3258 note)
+        import_lines = [
+            line for line in source.splitlines()
+            if line.strip().startswith("from ") or line.strip().startswith("import ")
+        ]
+        for line in import_lines:
+            assert "property_catalog" not in line, (
+                f"extraction_prompt.py still imports from property_catalog: {line}"
+            )
+
+    def test_extraction_prompt_no_standard_properties(self) -> None:
+        """extraction_prompt.py must not reference STANDARD_PROPERTIES in code."""
+        source = self._read_module_source()
+        # Strip docstrings
+        code_lines = [
+            line for line in source.splitlines()
+            if not line.strip().startswith('"""') and not line.strip().startswith("'")
+        ]
+        for line in code_lines:
+            assert "STANDARD_PROPERTIES" not in line, (
+                f"extraction_prompt.py still references STANDARD_PROPERTIES: {line}"
+            )
+
+    def test_extraction_prompt_no_property_category(self) -> None:
+        """extraction_prompt.py must not reference PropertyCategory in code."""
+        source = self._read_module_source()
+        code_lines = [
+            line for line in source.splitlines()
+            if not line.strip().startswith('"""') and not line.strip().startswith("'")
+        ]
+        for line in code_lines:
+            assert "PropertyCategory" not in line, (
+                f"extraction_prompt.py still references PropertyCategory: {line}"
+            )
+
+    def test_no_build_extraction_system_prompt(self) -> None:
+        """build_extraction_system_prompt must not exist as a callable."""
+        import nfm_db.services.extraction_prompt as mod
+
+        assert not hasattr(mod, "build_extraction_system_prompt"), (
+            "build_extraction_system_prompt still exists; should be removed"
+        )

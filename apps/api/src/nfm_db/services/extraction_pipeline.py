@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
 from nfm_db.models.ontology_version import OntologyVersion
 from nfm_db.services.extraction_prompt import (
-    build_extraction_system_prompt,
     build_ontology_extraction_prompt,
 )
 from nfm_db.services.llm_client import call_llm, is_llm_configured
@@ -497,20 +496,19 @@ async def ontofuel_extract(
         if source_type != "datasource":
             content = _load_source_content(source_reference)
 
-        # Build system prompt — ontology-aware when a published version exists
-        if db is not None:
-            ontology_version = await _get_latest_published_ontology(db)
-            if ontology_version is not None:
-                system_prompt = build_ontology_extraction_prompt(ontology_version)
-                logger.info(
-                    "Ontology-driven prompt: version=%s (id=%s)",
-                    ontology_version.version,
-                    ontology_version.id,
-                )
-            else:
-                system_prompt = build_extraction_system_prompt()
-        else:
-            system_prompt = build_extraction_system_prompt()
+        # Build system prompt — ontology-driven (NFM-3258)
+        ontology_version = await _get_latest_published_ontology(db) if db is not None else None
+        if ontology_version is None:
+            raise ValueError(
+                "A published ontology version is required for extraction. "
+                "No published OntologyVersion found in the database."
+            )
+        system_prompt = build_ontology_extraction_prompt(ontology_version)
+        logger.info(
+            "Ontology-driven prompt: version=%s (id=%s)",
+            ontology_version.version,
+            ontology_version.id,
+        )
 
         # Call LLM — with chunking for large inputs (NFM-1366 P3)
         # If content exceeds the model's context window, split into
