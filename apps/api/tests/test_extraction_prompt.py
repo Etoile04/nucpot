@@ -635,8 +635,9 @@ class TestNoLegacyImports:
     @staticmethod
     def _read_module_source() -> str:
         """Read the extraction_prompt.py source file directly."""
-        import nfm_db.services.extraction_prompt as mod
         import inspect
+
+        import nfm_db.services.extraction_prompt as mod
 
         return inspect.getsource(mod)
 
