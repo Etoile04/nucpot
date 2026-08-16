@@ -342,7 +342,7 @@ jobs:
                   },
                   "elements": [{
                     "tag": "markdown",
-                    "content": "**NucPot CI failed**\nTime: '"$TIMESTAMP"'\nSHA: `'"$SHA"'`\n[View Run]('"$RUN_URL"')\nJobs: Frontend='"${{ needs.frontend.result }}"', Backend='"${{ needs.backend.result }}"', E2E='"${{ needs.e2e.result }}"'"
+                    "content": "**NucPot CI failed**\nTime: '"$TIMESTAMP"'\nSHA: `'"$SHA"'`\n[View Run]('"$RUN_URL"')\nJobs: '"$FAILED_JOBS"'"
                   }]
                 }
               }' || true
