@@ -2,10 +2,11 @@
 
 Tests validate:
 - All 15 SKILL.md sections are present in the generated prompt
-- Phase 2A rules (PropertyCategory, PhaseMapper, standard names) are injected
+- Phase 2A rules (PropertyCategory, PhaseMapper) are injected
 - Output JSON schema matches ExtractedProperty exactly
 - Token count stays under 4000 tokens
 - Ontology-driven extraction prompt (NFM-2639)
+- NFM-3225 C1 fix: no STANDARD_PROPERTIES in generated prompts
 """
 
 from __future__ import annotations
@@ -225,21 +226,26 @@ class TestPhase2AInjection:
         for cat in PropertyCategory:
             assert cat.value in self.prompt, f"PropertyCategory.{cat.name} not injected"
 
-    def test_standard_property_names_injected(self) -> None:
-        """At least some standard property names from config must appear."""
-        # Pick a representative subset — not all 100+ aliases
-        representative = [
-            "密度",
-            "比热容",
-            "热导率",
-            "杨氏模量",
-            "屈服强度",
-            "蠕变应变",
-            "氧化膜厚度",
-            "硬度",
-        ]
-        for name in representative:
-            assert name in self.prompt, f"Standard property '{name}' not injected"
+    def test_legacy_standard_property_names_absent(self) -> None:
+        """NFM-3225 C1 fix: V1 prompt must NOT contain the Standard Property Names section.
+
+        The standard_names_block placeholder is now empty (ontology-driven only).
+        Note: some legacy names like '密度' also appear in PropertyCategory enum
+        values, so we check the standard names section specifically.
+        """
+        prompt = self.prompt
+        sn_start = prompt.find("## Standard Property Names")
+        if sn_start != -1:
+            # Section header should NOT appear when standard_names_block is empty
+            pytest.fail(
+                "Standard Property Names section must not appear in V1 prompt "
+                "(standard_names_block should be empty after C1 fix)"
+            )
+        # Additionally verify that the standard_names_block is truly empty:
+        # no "优先使用以下标准名称:" text in prompt
+        assert "优先使用以下标准名称" not in prompt, (
+            "Standard names injection text must not appear in V1 prompt"
+        )
 
     def test_phase_keywords_in_prompt(self) -> None:
         """Prompt template references canonical phase names (alpha/beta/etc.)."""
@@ -601,7 +607,7 @@ class TestOntologyDrivenStandardNamesBlock:
 
 
 class TestOntologyDrivenFallback:
-    """AC-4: Fallback to hardcoded when no ontology."""
+    """NFM-3225 C1 fix: categories fall back to enum; standard_names returns empty."""
 
     def test_none_ontology_uses_hardcoded_categories(self) -> None:
         """None ontology_data should fall back to PropertyCategory enum."""
@@ -619,13 +625,14 @@ class TestOntologyDrivenFallback:
         for cat in PropertyCategory:
             assert cat.value in prompt, f"Missing fallback category: {cat.value}"
 
-    def test_none_ontology_uses_hardcoded_standard_names(self) -> None:
-        """None ontology_data should fall back to STANDARD_PROPERTIES."""
+    def test_none_ontology_omits_legacy_standard_names(self) -> None:
+        """NFM-3225: None ontology_data must NOT inject Standard Property Names section."""
         ov = _FakeOntologyVersion(ontology_data=None)
         prompt = build_ontology_extraction_prompt(ov)
 
-        assert "密度" in prompt
-        assert "热导率" in prompt
+        # No Standard Property Names section when no ontology data
+        assert "## Standard Property Names" not in prompt
+        assert "优先使用以下标准名称" not in prompt
 
     def test_empty_entity_types_uses_hardcoded_categories(self) -> None:
         """Empty entity_types list should fall back to hardcoded categories."""
@@ -635,29 +642,29 @@ class TestOntologyDrivenFallback:
         for cat in PropertyCategory:
             assert cat.value in prompt, f"Missing fallback category: {cat.value}"
 
-    def test_empty_required_properties_uses_hardcoded_names(self) -> None:
-        """Entity types with no required_properties should fall back to hardcoded names."""
+    def test_empty_required_properties_omits_legacy_names(self) -> None:
+        """Entity types with no required_properties must NOT fall back to hardcoded names."""
         ov = _FakeOntologyVersion(ontology_data={
             "entity_types": [{"name": "TypeA", "required_properties": []}]
         })
         prompt = build_ontology_extraction_prompt(ov)
 
-        assert "密度" in prompt
+        assert "## Standard Property Names" not in prompt
 
 
 class TestV1PathUntouched:
-    """AC-3: V1 build_extraction_system_prompt() continues using hardcoded helpers."""
+    """NFM-3225 C1 fix: V1 path uses categories enum but no hardcoded standard names."""
 
     def test_v1_uses_hardcoded_categories(self) -> None:
         prompt = build_extraction_system_prompt()
         for cat in PropertyCategory:
             assert cat.value in prompt, f"V1 missing category: {cat.value}"
 
-    def test_v1_uses_hardcoded_standard_names(self) -> None:
+    def test_v1_omits_legacy_standard_names(self) -> None:
+        """NFM-3225: V1 prompt must not contain Standard Property Names section."""
         prompt = build_extraction_system_prompt()
-        assert "密度" in prompt
-        assert "热导率" in prompt
-        assert "杨氏模量" in prompt
+        assert "## Standard Property Names" not in prompt
+        assert "优先使用以下标准名称" not in prompt
 
     def test_v1_no_ontology_context(self) -> None:
         prompt = build_extraction_system_prompt()
@@ -665,14 +672,24 @@ class TestV1PathUntouched:
 
 
 class TestOntologyDrivenImportPresence:
-    """AC-5: Imports of PropertyCategory/STANDARD_PROPERTIES remain (used by V1/fallback)."""
+    """NFM-3225 C1 fix: PropertyCategory import remains; STANDARD_PROPERTIES removed."""
 
     def test_property_category_import_still_present(self) -> None:
         """PropertyCategory must still be importable (V1 path uses it)."""
         from nfm_db.core.property_catalog import PropertyCategory
         assert len(list(PropertyCategory)) >= 11
 
-    def test_standard_properties_import_still_present(self) -> None:
-        """STANDARD_PROPERTIES must still be importable (V1 path uses it)."""
-        from nfm_db.core.property_catalog import STANDARD_PROPERTIES as SP
-        assert len(SP) > 0
+    def test_standard_properties_not_in_module(self) -> None:
+        """NFM-3225: extraction_prompt.py must NOT import STANDARD_PROPERTIES."""
+        import importlib
+        import inspect
+
+        import nfm_db.services.extraction_prompt as mod
+        importlib.reload(mod)
+        source = inspect.getsource(mod)
+        assert "from nfm_db.core.property_catalog import STANDARD_PROPERTIES" not in source, (
+            "STANDARD_PROPERTIES import must be removed (C1 fix)"
+        )
+        assert "STANDARD_PROPERTIES" not in source or "C1 fix" in source, (
+            "STANDARD_PROPERTIES must not be referenced as code (comments OK)"
+        )

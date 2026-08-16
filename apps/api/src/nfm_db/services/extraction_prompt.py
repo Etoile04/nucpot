@@ -3,10 +3,11 @@
 Compresses v4 SKILL.md (15 sections) into a reusable system prompt template
 with dynamic Phase 2A rules injection:
 - PropertyCategory enum (11 values) from property_catalog.py
-- Standard property names from property_mapping.json
 - Phase identification rules from phase_rules.py
 
 NFM-2639 adds ontology-driven extraction prompt injection.
+NFM-3225 (C1 fix) replaces hardcoded STANDARD_PROPERTIES with
+ontology-only property name injection.
 
 Public API:
     build_extraction_system_prompt() -> str
@@ -24,7 +25,7 @@ __all__ = [
     "build_ontology_extraction_prompt",
 ]
 
-from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory
+from nfm_db.core.property_catalog import PropertyCategory
 
 if TYPE_CHECKING:
     from nfm_db.models.ontology_version import OntologyVersion
@@ -53,27 +54,6 @@ def _build_categories_block() -> str:
         lines.append(f"- {cat.value} [核心]")
     for cat in supporting:
         lines.append(f"- {cat.value} [支持]")
-    return "\n".join(lines)
-
-
-def _build_standard_names_block() -> str:
-    """Build representative standard property names from live config."""
-    # Collect unique standard names (values), deduplicate
-    seen: set[str] = set()
-    names: list[str] = []
-    for standard_name in STANDARD_PROPERTIES.values():
-        if standard_name not in seen:
-            seen.add(standard_name)
-            names.append(standard_name)
-    # Sort for determinism
-    names.sort()
-    lines = [
-        "## Standard Property Names (property)",
-        "优先使用以下标准名称:",
-        "",
-    ]
-    for name in names:
-        lines.append(f"- {name}")
     return "\n".join(lines)
 
 
@@ -114,10 +94,13 @@ def _build_ontology_standard_names_block(ontology_data: dict[str, Any]) -> str:
 
     Extracts unique property names from ``required_properties`` across
     all entity types in ``ontology_data``.
+
+    Returns an empty string when no ontology data or properties are available
+    (NFM-3225 C1 fix: no fallback to hardcoded STANDARD_PROPERTIES).
     """
     entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
     if not entity_types:
-        return _build_standard_names_block()
+        return ""
 
     names: list[str] = []
     seen: set[str] = set()
@@ -128,7 +111,7 @@ def _build_ontology_standard_names_block(ontology_data: dict[str, Any]) -> str:
                 names.append(prop)
 
     if not names:
-        return _build_standard_names_block()
+        return ""
 
     names.sort()
     lines = [
@@ -370,17 +353,19 @@ def build_extraction_system_prompt() -> str:
 
     Dynamically injects:
     - PropertyCategory enum values (from property_catalog.py)
-    - Standard property names (from property_mapping.json)
+
+    NFM-3225 C1 fix: standard_names_block is no longer populated from
+    hardcoded STANDARD_PROPERTIES. Use build_ontology_extraction_prompt()
+    for ontology-driven property name injection.
 
     Returns:
         Complete system prompt string ready for LLM consumption.
     """
     categories_block = _build_categories_block()
-    standard_names_block = _build_standard_names_block()
 
     return _PROMPT_TEMPLATE.format(
         categories_block=categories_block,
-        standard_names_block=standard_names_block,
+        standard_names_block="",
         ontology_context_block="",
     )
 
@@ -414,7 +399,7 @@ def build_ontology_extraction_prompt(
     if not ontology_data:
         ontology_context_block = ""
         categories_block = _build_categories_block()
-        standard_names_block = _build_standard_names_block()
+        standard_names_block = ""
     else:
         ontology_context_block = _build_ontology_context_block(ontology_data)
         categories_block = _build_ontology_categories_block(ontology_data)
