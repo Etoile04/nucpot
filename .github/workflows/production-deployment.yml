@@ -380,9 +380,12 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
-            export DOCKER_CONFIG="/tmp/no-cred-docker-config-${USER}"
-            mkdir -p "$DOCKER_CONFIG"
-            printf '{}' > "$DOCKER_CONFIG/config.json"
+            # NFM-848: literal path — this heredoc is UNQUOTED so the local
+            # GHA shell expands \$-vars; the runner env has no USER/HOME set,
+            # which made the earlier \${USER} form expand to an empty string.
+            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
+            mkdir -p /tmp/nfm848-no-cred-docker-config
+            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
             echo "===> Running pre-deploy-assert against ${CANDIDATE_TAG}..."
             bash tools/pre-deploy-assert-smoke/assert.sh \
               --image "${CANDIDATE_TAG}" \
@@ -549,9 +552,9 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
-            export DOCKER_CONFIG="/tmp/no-cred-docker-config-${USER}"
-            mkdir -p "$DOCKER_CONFIG"
-            printf '{}' > "$DOCKER_CONFIG/config.json"
+            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
+            mkdir -p /tmp/nfm848-no-cred-docker-config
+            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
 
             # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
             # commit SHA so a bad deploy can be rolled back by re-tagging, not
