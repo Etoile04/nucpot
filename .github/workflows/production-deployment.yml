@@ -340,13 +340,16 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            # NFM-848: SSH heredoc opens a fresh shell that does NOT inherit
+            # GHA env vars. Docker Desktop rewrites credsStore:"desktop" into
+            # ~/.docker/config.json on restart; in a non-interactive session
+            # the keychain is locked and docker-credential-desktop fails.
+            # Point DOCKER_CONFIG at a clean scratch dir — empirically
+            # honored by the docker CLI (2026-08-16 bogus-helper test).
+            export DOCKER_CONFIG="/tmp/no-cred-docker-config-\${USER}"
+            mkdir -p "\$DOCKER_CONFIG"
+            printf '{}' > "\$DOCKER_CONFIG/config.json"
             git config pull.rebase false
-            # Strip credsStore from ~/.docker/config.json to prevent
-            # docker-credential-desktop from prompting for the locked keychain.
-            DOCKER_CFG="\$HOME/.docker/config.json"
-            cp "\$DOCKER_CFG" "\$DOCKER_CFG.bak"
-            python3 -c "import json,pathlib; p=pathlib.Path('\$DOCKER_CFG'); c=json.loads(p.read_text()); c.pop('credsStore',None); p.write_text(json.dumps(c,indent=2))"
-            trap 'cp "\$DOCKER_CFG.bak" "\$DOCKER_CFG"' EXIT
             git pull origin main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
@@ -374,6 +377,9 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            export DOCKER_CONFIG="/tmp/no-cred-docker-config-${USER}"
+            mkdir -p "$DOCKER_CONFIG"
+            printf '{}' > "$DOCKER_CONFIG/config.json"
             echo "===> Running pre-deploy-assert against ${CANDIDATE_TAG}..."
             bash tools/pre-deploy-assert-smoke/assert.sh \
               --image "${CANDIDATE_TAG}" \
@@ -467,25 +473,23 @@ jobs:
           HTTPS_PROXY: http://127.0.0.1:7892
           NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16
         run: |
-          # Docker Desktop on macOS stores credsStore="desktop" in
-          # ~/.docker/config.json. When the keychain is locked during a
-          # non-interactive CI session, docker-credential-desktop prompts
-          # and fails. DOCKER_CONFIG override does NOT work reliably with
-          # Docker Desktop — it still reads ~/.docker/config.json for the
-          # credsStore directive. Fix: backup the original config, strip
-          # credsStore, restore at the end.
-          DOCKER_CFG="$HOME/.docker/config.json"
-          cp "$DOCKER_CFG" "$DOCKER_CFG.bak"
-          python3 -c "
-          import json, pathlib
-          p = pathlib.Path('$DOCKER_CFG')
-          cfg = json.loads(p.read_text())
-          cfg.pop('credsStore', None)
-          p.write_text(json.dumps(cfg, indent=2))
-          "
-          trap 'cp "$DOCKER_CFG.bak" "$DOCKER_CFG"' EXIT
-          # Skip pull if images already cached locally — avoids triggering
-          # docker-credential-desktop keychain prompt in non-interactive CI.
+          # NFM-848 root cause re-verified 2026-08-16 (empirical):
+          # DOCKER_CONFIG *is* honored by the docker CLI (a bogus credsStore
+          # under DOCKER_CONFIG fails immediately). The old "DOCKER_CONFIG
+          # does not work" belief came from SSH heredocs dropping the env
+          # var — not from Docker Desktop ignoring it.
+          #
+          # Docker Desktop rewrites credsStore:"desktop" into
+          # ~/.docker/config.json whenever Desktop restarts. The runner
+          # session is non-interactive, so the keychain is locked and
+          # docker-credential-desktop fails. Point DOCKER_CONFIG at a clean
+          # scratch dir: no credsStore → no credential helper → no keychain.
+          export DOCKER_CONFIG="$RUNNER_TEMP/no-cred-docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}' > "$DOCKER_CONFIG/config.json"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG (credsStore-free)"
+          # Skip pull if images already cached locally — avoids any network
+          # round-trip; credential helper is already bypassed above.
           for img in alpine:3.20 pgvector/pgvector:pg16; do
             if docker image inspect "$img" > /dev/null 2>&1; then
               echo "Image $img already cached, skipping pull"
@@ -542,6 +546,9 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
+            export DOCKER_CONFIG="/tmp/no-cred-docker-config-${USER}"
+            mkdir -p "$DOCKER_CONFIG"
+            printf '{}' > "$DOCKER_CONFIG/config.json"
 
             # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
             # commit SHA so a bad deploy can be rolled back by re-tagging, not
