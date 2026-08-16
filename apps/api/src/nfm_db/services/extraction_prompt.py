@@ -1,15 +1,14 @@
 """Extraction system prompt builder for LLM-based property extraction (NFM-523.2).
 
 Compresses v4 SKILL.md (15 sections) into a reusable system prompt template
-with dynamic Phase 2A rules injection:
-- PropertyCategory enum (11 values) from property_catalog.py
-- Standard property names from property_mapping.json
-- Phase identification rules from phase_rules.py
+with dynamic ontology-driven category/property injection.
 
 NFM-2639 adds ontology-driven extraction prompt injection.
+NFM-3258 removes legacy property_catalog dependencies; all categories and
+property names are sourced exclusively from the ontology entity_types
+and required_properties.
 
 Public API:
-    build_extraction_system_prompt() -> str
     build_ontology_extraction_prompt(ontology_version) -> str
 """
 
@@ -20,11 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 __all__ = [
     "ONTOLOGY_CONTEXT_BUDGET_CHARS",
-    "build_extraction_system_prompt",
     "build_ontology_extraction_prompt",
 ]
-
-from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory
 
 if TYPE_CHECKING:
     from nfm_db.models.ontology_version import OntologyVersion
@@ -33,48 +29,6 @@ logger = logging.getLogger(__name__)
 
 # ~8000 chars ≈ ~2000 tokens (CJK-heavy content).
 ONTOLOGY_CONTEXT_BUDGET_CHARS = 8000
-
-# ---------------------------------------------------------------------------
-# Phase 2A dynamic injection helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_categories_block() -> str:
-    """Build the 11 property categories block from the live enum."""
-    all_categories = list(PropertyCategory)
-    assert len(all_categories) == 11, (
-        f"PropertyCategory count changed ({len(all_categories)}); "
-        "review core/supporting boundary in _build_categories_block"
-    )
-    core = all_categories[:9]
-    supporting = all_categories[9:]
-    lines = ["## Property Categories (property_category)", ""]
-    for cat in core:
-        lines.append(f"- {cat.value} [核心]")
-    for cat in supporting:
-        lines.append(f"- {cat.value} [支持]")
-    return "\n".join(lines)
-
-
-def _build_standard_names_block() -> str:
-    """Build representative standard property names from live config."""
-    # Collect unique standard names (values), deduplicate
-    seen: set[str] = set()
-    names: list[str] = []
-    for standard_name in STANDARD_PROPERTIES.values():
-        if standard_name not in seen:
-            seen.add(standard_name)
-            names.append(standard_name)
-    # Sort for determinism
-    names.sort()
-    lines = [
-        "## Standard Property Names (property)",
-        "优先使用以下标准名称:",
-        "",
-    ]
-    for name in names:
-        lines.append(f"- {name}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -86,11 +40,11 @@ def _build_ontology_categories_block(ontology_data: dict[str, Any]) -> str:
     """Build categories block from ontology entity_types.
 
     Extracts unique category names from ``entity_types`` entries.
-    Falls back gracefully when entity_types is missing or empty.
+    Returns an empty string when no entity types are present.
     """
     entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
     if not entity_types:
-        return _build_categories_block()
+        return ""
 
     names: list[str] = []
     seen: set[str] = set()
@@ -101,7 +55,7 @@ def _build_ontology_categories_block(ontology_data: dict[str, Any]) -> str:
             names.append(name)
 
     if not names:
-        return _build_categories_block()
+        return ""
 
     lines = ["## Property Categories (property_category)", ""]
     for name in names:
@@ -114,10 +68,11 @@ def _build_ontology_standard_names_block(ontology_data: dict[str, Any]) -> str:
 
     Extracts unique property names from ``required_properties`` across
     all entity types in ``ontology_data``.
+    Returns an empty string when no properties are present.
     """
     entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
     if not entity_types:
-        return _build_standard_names_block()
+        return ""
 
     names: list[str] = []
     seen: set[str] = set()
@@ -128,7 +83,7 @@ def _build_ontology_standard_names_block(ontology_data: dict[str, Any]) -> str:
                 names.append(prop)
 
     if not names:
-        return _build_standard_names_block()
+        return ""
 
     names.sort()
     lines = [
@@ -267,7 +222,7 @@ def _build_ontology_context_block(
 # System prompt template (compressed SKILL.md)
 # ---------------------------------------------------------------------------
 
-# Template uses {variables} for dynamic Phase 2A injection.
+# Template uses {variables} for dynamic injection.
 # Static content is compressed from the 15 SKILL.md sections.
 _PROMPT_TEMPLATE = """\
 # 核材料性能数据抽取系统 v4
@@ -365,31 +320,6 @@ context → confidence → reference
 # ---------------------------------------------------------------------------
 
 
-def build_extraction_system_prompt() -> str:
-    """Build the extraction system prompt with Phase 2A rules injected.
-
-    Dynamically injects:
-    - PropertyCategory enum values (from property_catalog.py)
-    - Standard property names (from property_mapping.json)
-
-    Returns:
-        Complete system prompt string ready for LLM consumption.
-    """
-    categories_block = _build_categories_block()
-    standard_names_block = _build_standard_names_block()
-
-    return _PROMPT_TEMPLATE.format(
-        categories_block=categories_block,
-        standard_names_block=standard_names_block,
-        ontology_context_block="",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Ontology-driven prompt builder (NFM-2639)
-# ---------------------------------------------------------------------------
-
-
 def build_ontology_extraction_prompt(
     ontology_version: OntologyVersion,
 ) -> str:
@@ -408,17 +338,22 @@ def build_ontology_extraction_prompt(
 
     Returns:
         Complete system prompt string ready for LLM consumption.
+
+    Raises:
+        ValueError: If ``ontology_data`` is None or empty.
     """
     ontology_data: dict[str, Any] | None = ontology_version.ontology_data
 
     if not ontology_data:
-        ontology_context_block = ""
-        categories_block = _build_categories_block()
-        standard_names_block = _build_standard_names_block()
-    else:
-        ontology_context_block = _build_ontology_context_block(ontology_data)
-        categories_block = _build_ontology_categories_block(ontology_data)
-        standard_names_block = _build_ontology_standard_names_block(ontology_data)
+        raise ValueError(
+            "ontology_data is required for extraction prompt construction; "
+            "received None or empty. Ensure a valid OntologyVersion with "
+            "populated ontology_data is passed."
+        )
+
+    ontology_context_block = _build_ontology_context_block(ontology_data)
+    categories_block = _build_ontology_categories_block(ontology_data)
+    standard_names_block = _build_ontology_standard_names_block(ontology_data)
 
     return _PROMPT_TEMPLATE.format(
         categories_block=categories_block,
