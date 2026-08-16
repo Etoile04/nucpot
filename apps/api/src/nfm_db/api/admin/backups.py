@@ -69,6 +69,11 @@ def _resolve_backup_dir(override: str | None) -> Path:
         try:
             return safe_resolve(target, root)
         except PathNotAllowedError:
+            logger.debug(
+                "backup_dir %r did not resolve inside root %r — trying next",
+                target,
+                root,
+            )
             continue
 
     logger.warning(
