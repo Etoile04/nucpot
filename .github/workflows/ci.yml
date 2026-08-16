@@ -328,7 +328,8 @@ jobs:
             TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
             RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             SHA="${{ github.sha }}"
-            FAILED_JOBS="${{ needs.frontend.result }},${{ needs.backend.result }},${{ needs.e2e.result }}"
+            FAILED_JOBS="Frontend=${{ needs.frontend.result }}, Backend=${{ needs.backend.result }}, Docker-Build=${{ needs.docker-build.result }}, E2E=${{ needs.e2e.result }}"
+            # NFM-848: include Docker-Build in the alert (was silently omitted)
 
             curl -sf -X POST "$WEBHOOK_URL" \
               -H 'Content-Type: application/json' \
