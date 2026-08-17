@@ -23,6 +23,12 @@ on:
   # never seen by the pull_request run.
   push:
     branches: [main]
+  # NFM-3265: merge_queue requires all required-status-checks workflows to
+  # trigger on merge_group so the checks report and the queue can proceed.
+  # Commits were already validated in the pull_request run; this is a
+  # redundant but necessary re-validation for merge queue compatibility.
+  merge_group:
+    branches: [main]
 
 permissions:
   contents: read
@@ -110,6 +116,27 @@ jobs:
           {
             echo "RANGE_START=${RANGE_START}"
             echo "RANGE_END=${AFTER_SHA}"
+          } >> "${GITHUB_ENV}"
+
+      # NFM-3265: merge_group range resolver. The merge_group event fires
+      # after all pull_request checks pass and GitHub creates a temporary
+      # merge commit. Commits were already validated in the pull_request
+      # run; this resolver provides the range so the validation step (which
+      # is event-agnostic) can execute and report the required check.
+      - name: Resolve commit range (merge_group)
+        if: github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "Merge group base SHA: ${BASE_SHA}"
+          echo "Merge group head SHA: ${HEAD_SHA}"
+
+          {
+            echo "RANGE_START=${BASE_SHA}"
+            echo "RANGE_END=${HEAD_SHA}"
           } >> "${GITHUB_ENV}"
 
       - name: Validate commit subjects
