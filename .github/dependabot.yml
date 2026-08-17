@@ -8,6 +8,8 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    commit-message:
+      prefix: "chore(deps) [no-issue]"
 
   - package-ecosystem: "npm"
     directory: "/"
@@ -16,6 +18,22 @@ updates:
     labels:
       - "dependencies"
       - "javascript"
+    commit-message:
+      prefix: "chore(deps) [no-issue]"
+    # Packages pinned by pnpm.overrides in the root package.json (NFM-781
+    # security pinning) cannot be bumped by Dependabot alone — the root
+    # override must be updated in the same commit or pnpm's frozen install
+    # fails with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH (see PR #864). Managed
+    # manually: next, postcss, nanoid, js-yaml, brace-expansion, sharp.
+    ignore:
+      - dependency-name: "next"
+      - dependency-name: "postcss"
+      - dependency-name: "nanoid"
+      - dependency-name: "js-yaml"
+      - dependency-name: "brace-expansion"
+      - dependency-name: "sharp"
+      # @types packages of pinned runtimes follow the runtime pins
+      - dependency-name: "@types/node"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -24,3 +42,5 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    commit-message:
+      prefix: "chore(deps) [no-issue]"
