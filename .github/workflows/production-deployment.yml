@@ -424,6 +424,14 @@ jobs:
 
       - name: Run migration-on-main-assert against candidate image
         run: |
+          # NFM-848: CANDIDATE_TAG was written to GITHUB_ENV inside the
+          # pre-deploy-assert job — GITHUB_ENV writes do NOT cross job
+          # boundaries, so this job always saw it empty and the script
+          # failed with "ERROR: --image is required". Recompute the tag
+          # here from the same deterministic formula (SHORT_SHA of HEAD).
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
+          echo "CANDIDATE_TAG=${CANDIDATE_TAG}"
           bash tools/migration-on-main-assert/assert.sh \
             --image "${CANDIDATE_TAG}" \
             --base-ref origin/main \
