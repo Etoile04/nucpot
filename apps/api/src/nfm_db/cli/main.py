@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import click
 
+from nfm_db.cli.publish_default_ontology import publish_default_ontology_cmd
 from nfm_db.cli.seed_ontofuel import seed_ontofuel_cmd
 from nfm_db.cli.service_accounts import create_service_account
 
@@ -29,6 +30,7 @@ def cli() -> None:
 # Register subcommands.
 cli.add_command(create_service_account)
 cli.add_command(seed_ontofuel_cmd)
+cli.add_command(publish_default_ontology_cmd)
 
 
 __all__ = ["cli"]

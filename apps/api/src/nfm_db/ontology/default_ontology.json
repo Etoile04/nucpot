@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "comment": "Seeded fallback used by `nucpot publish-default-ontology` when the ontology_versions table is empty. Real ontology payloads should be authored by the Ontology Expert and inserted with status='draft' so this fallback is rarely (if ever) needed in production. Keep this minimal -- the LLM extractor only needs a non-empty JSONB blob to satisfy the 'has published OntologyVersion' precondition.",
+  "entities": [],
+  "relations": []
+}

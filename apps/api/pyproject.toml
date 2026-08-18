@@ -414,6 +414,14 @@ exclude_lines = [
     "pass",
 ]
 
+# NFM-3324: setuptools 75+ ships only .py by default; declare non-Python
+# files via [tool.setuptools.package-data] so the seeded ontology JSON
+# survives `uv sync` / `pip install -e .` (otherwise the script falls
+# back to "no candidate + no JSON" and exits non-zero with a clear
+# error). See also docs/services.md "Default ontology fallback".
+[tool.setuptools.package-data]
+"nfm_db" = ["ontology/*.json"]
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
