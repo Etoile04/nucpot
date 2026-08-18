@@ -919,3 +919,172 @@ class TestLightRAGIngestAfterCommit:
 
         # Empty payload → no fire, even though dispatch was called.
         mock_fire.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 8. Bibliographic metadata extraction (NFM-3301 / QA-E2E F7)
+# ---------------------------------------------------------------------------
+
+
+class TestBibliographicMetadataExtraction:
+    """After content_md is populated, process_literature should extract
+    DOI, journal, year, and abstract from the markdown and write them
+    to the DataSource row (only filling currently-null fields)."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_extracted_from_content_md(
+        self, db_session: AsyncSession
+    ) -> None:
+        """content_md contains DOI/journal/year/abstract → fields populated."""
+        content_md = (
+            "# Owen et al. - 2023 - Diffusion in UO2\n\n"
+            "## Abstract\n\n"
+            "Molecular dynamics study of diffusion.\n\n"
+            "## 1. Introduction\n\n"
+            "Journal of Nuclear Materials 576 (2023) 123-135\n\n"
+            "DOI: 10.1016/j.jnucmat.2023.01.001\n"
+        )
+        ds = await _add_datasource(
+            db_session,
+            title="L1-Owen2023.pdf",
+            content_md=content_md,
+            file_path=None,
+        )
+
+        empty_build_result = _make_empty_build_result()
+        with (
+            patch.object(
+                lit_svc, "_parse_pdf_to_markdown",
+            ) as mock_parse,
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        # PDF parse should NOT be called (content_md already set)
+        mock_parse.assert_not_called()
+
+        await db_session.refresh(ds)
+        assert ds.title == "Owen et al. - 2023 - Diffusion in UO2"
+        assert ds.doi == "10.1016/j.jnucmat.2023.01.001"
+        assert ds.year == 2023
+        assert ds.journal == "Journal of Nuclear Materials"
+        assert "Molecular dynamics" in (ds.abstract or "")
+
+    @pytest.mark.asyncio
+    async def test_metadata_does_not_overwrite_existing_values(
+        self, db_session: AsyncSession
+    ) -> None:
+        """If DOI/title etc. are already set, they should NOT be overwritten."""
+        content_md = (
+            "# Wrong Title\n\n"
+            "DOI: 10.1000/wrong-doi\n\n"
+            "## Abstract\n\nWrong abstract.\n\n"
+            "Journal of Wrong 1 (2020) 1-10\n"
+        )
+        ds = await _add_datasource(
+            db_session,
+            title="Existing Title",
+            content_md=content_md,
+            file_path=None,
+        )
+        # Set pre-existing metadata that should be preserved
+        ds.doi = "10.1016/existing-doi"
+        ds.year = 2021
+        ds.journal = "Existing Journal"
+        ds.abstract = "Existing abstract"
+        await db_session.commit()
+
+        empty_build_result = _make_empty_build_result()
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            await lit_svc.process_literature(db_session, ds.id)
+
+        await db_session.refresh(ds)
+        # Pre-existing values must NOT be overwritten
+        assert ds.doi == "10.1016/existing-doi"
+        assert ds.year == 2021
+        assert ds.journal == "Existing Journal"
+        assert ds.abstract == "Existing abstract"
+        # Title IS still updated because the filename-based title is a
+        # low-quality placeholder — we always improve it if we find an H1.
+        assert ds.title == "Wrong Title"
+
+    @pytest.mark.asyncio
+    async def test_metadata_extracted_after_pdf_parse(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Metadata is also extracted when content_md comes from PDF parsing."""
+        parsed_md = (
+            "# Parsed Paper Title\n\n"
+            "## Abstract\n\n"
+            "The abstract text.\n\n"
+            "## 1. Introduction\n\n"
+            "Journal of Materials 100 (2024) 1-5\n\n"
+            "DOI: 10.1000/jmat.2024.001\n"
+        )
+        ds = await _add_datasource(
+            db_session,
+            title="upload.pdf",
+            content_md=None,
+            file_path="abc/report.pdf",
+        )
+        mock_bytes = b"%PDF-1.4 mock content"
+
+        empty_build_result = _make_empty_build_result()
+        with (
+            patch.object(
+                lit_svc,
+                "_get_storage",
+                return_value=MagicMock(read=MagicMock(return_value=mock_bytes)),
+            ),
+            patch.object(
+                lit_svc,
+                "_parse_pdf_to_markdown",
+                return_value=parsed_md,
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        await db_session.refresh(ds)
+        assert ds.title == "Parsed Paper Title"
+        assert ds.doi == "10.1000/jmat.2024.001"
+        assert ds.year == 2024
+        assert ds.journal == "Journal of Materials"
+        assert ds.abstract == "The abstract text."

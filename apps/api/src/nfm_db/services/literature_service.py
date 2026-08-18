@@ -525,6 +525,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
     try:
         # --- Step 2: ensure content_md --------------------------------
+        pdf_bytes_for_meta: bytes | None = None
         if ds.content_md is None:
             reused_from: UUID | None = None
 
@@ -567,7 +568,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
                 storage = _get_storage()
                 pdf_bytes = storage.read(ds.file_path)
-                # Pass ds.id + storage so the MinerU happy path can persist
+                pdf_bytes_for_meta = pdf_bytes  # reuse for metadata extraction
                 # its extracted images and rewrite the markdown references
                 # (otherwise the saved ``content_md`` keeps broken
                 # ``images/<hash>`` links because the zip is discarded).
@@ -582,6 +583,44 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 ds.id,
                 len(ds.content_md or ""),
                 reused_from,
+            )
+
+        # --- Step 2c: extract bibliographic metadata from PDF + content_md --
+        # NFM-3301: populate DOI, journal, year, abstract (and improve
+        # title) using two strategies: PDF binary metadata (fast) and
+        # regex from parsed Markdown (broader).  Only writes fields
+        # that are currently null to avoid overwriting curated values.
+        try:
+            from nfm_db.services.bibliographic_metadata import (
+                extract_metadata_combined,
+            )
+
+            bib = extract_metadata_combined(pdf_bytes_for_meta, ds.content_md)
+            if bib["title"] is not None:
+                ds.title = bib["title"]
+            if bib["doi"] is not None and ds.doi is None:
+                ds.doi = bib["doi"]
+            if bib["year"] is not None and ds.year is None:
+                ds.year = bib["year"]
+            if bib["journal"] is not None and ds.journal is None:
+                ds.journal = bib["journal"]
+            if bib["abstract"] is not None and ds.abstract is None:
+                ds.abstract = bib["abstract"]
+            logger.info(
+                "process_literature: datasource_id=%s "
+                "bibliographic metadata extracted title=%s doi=%s year=%s journal=%s abstract_chars=%d",
+                ds.id,
+                bib["title"] is not None,
+                bib["doi"] is not None,
+                bib["year"] is not None,
+                bib["journal"] is not None,
+                len(bib["abstract"] or ""),
+            )
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "process_literature: bibliographic metadata extraction "
+                "failed for datasource_id=%s (non-fatal)",
+                ds.id,
             )
 
         # --- Step 3: extracting ----------------------------------------
