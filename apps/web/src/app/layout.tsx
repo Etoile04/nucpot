@@ -32,7 +32,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN" className="h-full antialiased">
-      <body className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white">
+      {/* suppressHydrationWarning: Ant Design CSS-in-JS + FloatButton portal
+          cause minor DOM differences between SSR and client hydration.
+          This is the standard fix recommended by both Next.js and Ant Design docs
+          for App Router + antd v5. See NFM-3309 W12. */}
+      <body className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white" suppressHydrationWarning>
         <AntdProvider>
           <QueryProvider>
             <AuthProvider>
