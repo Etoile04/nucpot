@@ -321,17 +321,27 @@ class EntityLinker:
         node_type: str,
         corpus_id: str | None,
     ) -> KGNode | None:
-        """Query for exact label + node_type match."""
-        query = select(KGNode).where(
-            KGNode.label == label,
-            KGNode.node_type == node_type,
-            KGNode.status == "active",
-        )
-        if corpus_id is not None:
-            query = query.where(KGNode.corpus_id == corpus_id)
+        """Query for exact label + node_type match.
 
-        result = await session.execute(query)
-        return result.scalar_one_or_none()
+        NFM-3322: wrapped in ``session.begin_nested()`` so a failure
+        inside the lookup rolls back ONLY this savepoint, preserving
+        the caller's outer transaction. Without this, an error here
+        (e.g. an unexpected NULL in ``aliases`` under asyncpg) would
+        poison the shared session and break every subsequent
+        ``process_literature`` DB op — including the failure-status
+        write — leaving ``parse_status='extracting'`` stuck forever.
+        """
+        async with session.begin_nested():
+            query = select(KGNode).where(
+                KGNode.label == label,
+                KGNode.node_type == node_type,
+                KGNode.status == "active",
+            )
+            if corpus_id is not None:
+                query = query.where(KGNode.corpus_id == corpus_id)
+
+            result = await session.execute(query)
+            return result.scalar_one_or_none()
 
     async def _fuzzy_alias_match(
         self,
@@ -339,16 +349,22 @@ class EntityLinker:
         label: str,
         corpus_id: str | None,
     ) -> KGNode | None:
-        """Query for active nodes whose aliases contain the label (case-insensitive)."""
-        query = select(KGNode).where(
-            KGNode.aliases.is_not(None),
-            KGNode.status == "active",
-        )
-        if corpus_id is not None:
-            query = query.where(KGNode.corpus_id == corpus_id)
+        """Query for active nodes whose aliases contain the label (case-insensitive).
 
-        result = await session.execute(query)
-        nodes = result.scalars().all()
+        NFM-3322: wrapped in ``session.begin_nested()`` for the same
+        reason as :meth:`_exact_label_match` — a transient failure
+        here must not break the caller's outer transaction.
+        """
+        async with session.begin_nested():
+            query = select(KGNode).where(
+                KGNode.aliases.is_not(None),
+                KGNode.status == "active",
+            )
+            if corpus_id is not None:
+                query = query.where(KGNode.corpus_id == corpus_id)
+
+            result = await session.execute(query)
+            nodes = result.scalars().all()
 
         label_lower = label.lower().strip()
         for node in nodes:

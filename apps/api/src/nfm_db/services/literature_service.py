@@ -525,6 +525,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
     try:
         # --- Step 2: ensure content_md --------------------------------
+        pdf_bytes_for_meta: bytes | None = None
         if ds.content_md is None:
             reused_from: UUID | None = None
 
@@ -567,7 +568,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
                 storage = _get_storage()
                 pdf_bytes = storage.read(ds.file_path)
-                # Pass ds.id + storage so the MinerU happy path can persist
+                pdf_bytes_for_meta = pdf_bytes  # reuse for metadata extraction
                 # its extracted images and rewrite the markdown references
                 # (otherwise the saved ``content_md`` keeps broken
                 # ``images/<hash>`` links because the zip is discarded).
@@ -582,6 +583,44 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 ds.id,
                 len(ds.content_md or ""),
                 reused_from,
+            )
+
+        # --- Step 2c: extract bibliographic metadata from PDF + content_md --
+        # NFM-3301: populate DOI, journal, year, abstract (and improve
+        # title) using two strategies: PDF binary metadata (fast) and
+        # regex from parsed Markdown (broader).  Only writes fields
+        # that are currently null to avoid overwriting curated values.
+        try:
+            from nfm_db.services.bibliographic_metadata import (
+                extract_metadata_combined,
+            )
+
+            bib = extract_metadata_combined(pdf_bytes_for_meta, ds.content_md)
+            if bib["title"] is not None:
+                ds.title = bib["title"]
+            if bib["doi"] is not None and ds.doi is None:
+                ds.doi = bib["doi"]
+            if bib["year"] is not None and ds.year is None:
+                ds.year = bib["year"]
+            if bib["journal"] is not None and ds.journal is None:
+                ds.journal = bib["journal"]
+            if bib["abstract"] is not None and ds.abstract is None:
+                ds.abstract = bib["abstract"]
+            logger.info(
+                "process_literature: datasource_id=%s "
+                "bibliographic metadata extracted title=%s doi=%s year=%s journal=%s abstract_chars=%d",
+                ds.id,
+                bib["title"] is not None,
+                bib["doi"] is not None,
+                bib["year"] is not None,
+                bib["journal"] is not None,
+                len(bib["abstract"] or ""),
+            )
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "process_literature: bibliographic metadata extraction "
+                "failed for datasource_id=%s (non-fatal)",
+                ds.id,
             )
 
         # --- Step 3: extracting ----------------------------------------
@@ -713,37 +752,64 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
     except Exception as exc:
         # --- Step 8: failure path --------------------------------------
+        # NFM-3322: the upstream LLM extract (or any earlier step) can
+        # leave the SQLAlchemy ``db`` session in an aborted transaction
+        # state. asyncpg surfaces that as
+        # ``InFailedSQLTransactionError: current transaction is aborted,
+        # commands ignored until end of transaction block``. Using the
+        # same aborted session here to persist the failure status would
+        # silently drop the write and leave ``DataSource.parse_status``
+        # stuck at ``'extracting'`` forever (the bug the worker hit in
+        # prod). Try the input session first (cheap path for the common
+        # case); if it raises — typically because the transaction is
+        # poisoned — open a FRESH session via :func:`async_session_factory`
+        # as a fallback so the failure-status write cannot be blocked.
         err_msg = str(exc)[:MAX_ERROR_LEN]
-        try:
-            # Re-load in case the session was invalidated by the failure.
-            fresh = await db.get(DataSource, datasource_id)
-            if fresh is not None:
-                fresh.parse_status = PARSE_STATUS_FAILED
-                fresh.parse_error = err_msg
-                await db.commit()
-        except Exception:
-            logger.exception(
-                "process_literature: failed to persist failure status for datasource_id=%s",
+        original_exc = exc
+        status_persisted = await _persist_failure_status(
+            db,
+            datasource_id,
+            err_msg,
+        )
+        if not status_persisted:
+            logger.warning(
+                "process_literature: input session refused failure-status "
+                "write for datasource_id=%s; falling back to a fresh "
+                "async_session_factory session (NFM-3322)",
                 datasource_id,
             )
             try:
-                await db.rollback()
-            except Exception as rollback_exc:
-                # A failed rollback leaves the session poisoned; emitting
-                # here is why the emitter uses its own session.
-                # ``rollback_failed`` is not in the NFM-2211-B spec enum;
-                # ``_prepare`` coerces it to ``generic_silent_catch`` while
-                # keeping the original label in the payload.
-                await emit_health_event(
-                    event_type=EVENT_GENERIC_SILENT_CATCH,
-                    severity=SEVERITY_ERROR,
-                    source_service="literature_service",
-                    context=build_context(
-                        rollback_exc,
-                        datasource_id=str(datasource_id),
-                        reported_event_type="rollback_failed",
-                    ),
+                async with async_session_factory() as fresh_session:
+                    fresh = await fresh_session.get(DataSource, datasource_id)
+                    if fresh is not None:
+                        fresh.parse_status = PARSE_STATUS_FAILED
+                        fresh.parse_error = err_msg
+                        await fresh_session.commit()
+            except Exception:
+                logger.exception(
+                    "process_literature: failed to persist failure status "
+                    "for datasource_id=%s (both sessions)",
+                    datasource_id,
                 )
+                try:
+                    async with async_session_factory() as rollback_session:
+                        await rollback_session.rollback()
+                except Exception as rollback_exc:
+                    # A failed rollback on a FRESH session means the DB
+                    # itself is unreachable. ``rollback_failed`` is
+                    # not in the NFM-2211-B spec enum; ``_prepare``
+                    # coerces it to ``generic_silent_catch`` while
+                    # keeping the original label in the payload.
+                    await emit_health_event(
+                        event_type=EVENT_GENERIC_SILENT_CATCH,
+                        severity=SEVERITY_ERROR,
+                        source_service="literature_service",
+                        context=build_context(
+                            rollback_exc,
+                            datasource_id=str(datasource_id),
+                            reported_event_type="rollback_failed",
+                        ),
+                    )
 
         logger.exception(
             "process_literature: pipeline failed for datasource_id=%s: %s",
@@ -751,7 +817,61 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             err_msg,
             extra={"datasource_id": str(datasource_id)},
         )
-        raise
+        # Re-raise the ORIGINAL upstream cause. Bare ``raise`` would
+        # surface the secondary "session is aborted" symptom (from the
+        # inner try/except) instead of the real cause, hiding the
+        # upstream error from operators and any Celery retry logic.
+        raise original_exc from None
+
+
+async def _persist_failure_status(
+    db: AsyncSession,
+    datasource_id: UUID,
+    err_msg: str,
+) -> bool:
+    """Write ``parse_status='failed'`` + truncated ``parse_error`` on ``db``.
+
+    Returns ``True`` when the write succeeded, ``False`` if the input
+    session refused the operation (typically because its transaction is
+    aborted upstream). NFM-3322 callers should fall back to a fresh
+    :func:`async_session_factory` session on ``False``.
+
+    This is a no-op when the row was deleted between extract-failure
+    and re-load — the worker logs and moves on rather than 500ing.
+    """
+    try:
+        # Re-load in case the session was invalidated by the failure.
+        fresh = await db.get(DataSource, datasource_id)
+        if fresh is not None:
+            fresh.parse_status = PARSE_STATUS_FAILED
+            fresh.parse_error = err_msg
+            await db.commit()
+        return True
+    except Exception:
+        logger.exception(
+            "process_literature: input-session failure-status write "
+            "raised for datasource_id=%s; will retry via fresh session",
+            datasource_id,
+        )
+        try:
+            await db.rollback()
+        except Exception as rollback_exc:
+            # A failed rollback leaves the session poisoned; emitting
+            # here is why the emitter uses its own session.
+            # ``rollback_failed`` is not in the NFM-2211-B spec enum;
+            # ``_prepare`` coerces it to ``generic_silent_catch`` while
+            # keeping the original label in the payload.
+            await emit_health_event(
+                event_type=EVENT_GENERIC_SILENT_CATCH,
+                severity=SEVERITY_ERROR,
+                source_service="literature_service",
+                context=build_context(
+                    rollback_exc,
+                    datasource_id=str(datasource_id),
+                    reported_event_type="rollback_failed",
+                ),
+            )
+        return False
 
 
 # ---------------------------------------------------------------------------
