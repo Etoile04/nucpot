@@ -124,11 +124,14 @@ export function MaterialPropertyTable({
         key: "source",
         width: 200,
         ellipsis: true,
-        render: (text: string) => (
-          <Text className="text-gray-400 text-sm" title={text}>
-            {text}
-          </Text>
-        ),
+        render: (text: string) => {
+          const display = text || "Unsourced"
+          return (
+            <Text className="text-gray-400 text-sm" title={display}>
+              {display}
+            </Text>
+          )
+        },
       },
       {
         title: "置信度",

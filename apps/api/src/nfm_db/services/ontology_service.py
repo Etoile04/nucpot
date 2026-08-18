@@ -17,11 +17,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.ref_gap_fill import RefGapFillStaging
@@ -37,6 +39,11 @@ from nfm_db.schemas.viz import Node, NvlResponse, Relationship, VizStatsResponse
 
 # Canonical provenance label for the ref-gap-fill derived view.
 SOURCE_ONTOLOGY = "nfmd/ref-gap-fill"
+
+# Safe slug — MUST stay in lockstep with CORPUS_ID_PATTERN in
+# ``api/v1/ontology.py`` (the graph path-param validator). Duplicated here so
+# the service layer does not import from the API layer.
+CORPUS_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 # Server hard ceiling — no single response may carry more nodes than this.
 HARD_MAX_NODES = 50_000
@@ -212,6 +219,62 @@ def _compute_source_digest(
     }
     raw = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Corpus discovery (NFM-3303) — dynamic corpus index
+# ---------------------------------------------------------------------------
+
+
+class OntologyCorpusInfo(BaseModel):
+    """One queryable corpus in the dynamic index (NFM-3303)."""
+
+    corpus_id: str = Field(min_length=1, max_length=64)
+    row_count: int = Field(ge=1)
+    last_updated: datetime | None = None
+
+
+class OntologyCorporaResponse(BaseModel):
+    """``GET /api/v1/ontology/corpora`` response envelope (NFM-3303)."""
+
+    corpora: list[OntologyCorpusInfo] = Field(default_factory=list)
+
+
+async def list_queryable_corpora(session: AsyncSession) -> OntologyCorporaResponse:
+    """Enumerate corpora that actually have staging rows (NFM-3303).
+
+    A corpus is queryable iff it resolves to >= 1 row in
+    ``_ref_gap_fill_staging`` (the exact predicate ``derive_ontology_graph``
+    uses to raise ``CorpusNotFoundError``) **and** its ``source`` is a valid
+    slug per ``CORPUS_ID_PATTERN`` (the graph path param validator) — so a
+    listed corpus can never 422/404 on its graph request. Legacy rows with a
+    blank ``source`` (written 2026-07-27/28 before the column was de-facto
+    mandatory) and DOI-shaped sources containing ``/`` are excluded for this
+    reason. Read-only single aggregate query.
+    """
+
+    stmt = (
+        select(
+            RefGapFillStaging.source,
+            func.count().label("row_count"),
+            func.max(RefGapFillStaging.updated_at).label("last_updated"),
+        )
+        .where(RefGapFillStaging.source != "")
+        .group_by(RefGapFillStaging.source)
+        .order_by(func.count().desc(), RefGapFillStaging.source.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    return OntologyCorporaResponse(
+        corpora=[
+            OntologyCorpusInfo(
+                corpus_id=source,
+                row_count=row_count,
+                last_updated=last_updated,
+            )
+            for source, row_count, last_updated in rows
+            if CORPUS_ID_RE.match(source)
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
