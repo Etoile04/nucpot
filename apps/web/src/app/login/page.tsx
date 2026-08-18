@@ -46,7 +46,7 @@ export default function LoginPage() {
       return
     }
     const emailMatch = regEmail.match(/^[^@]+@([^@]+)$/)
-    if (emailMatch && /^(test|example|invalid|localhost)$/i.test(emailMatch[1])) {
+    if (emailMatch?.[1] && /^(test|example|invalid|localhost)$/i.test(emailMatch[1])) {
       setError('不支持该邮箱域名')
       return
     }
