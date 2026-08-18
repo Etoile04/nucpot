@@ -149,3 +149,8 @@ NFM_DEBUG=true
 ## License
 
 Proprietary — all rights reserved.
+
+## Auto-Merge E2E Test
+
+> This section added by NFM-3334 to validate GitHub auto-merge flow (AC-3). Safe to remove.
+
