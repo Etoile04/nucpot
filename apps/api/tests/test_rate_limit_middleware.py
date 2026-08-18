@@ -286,3 +286,22 @@ async def test_docs_not_rate_limited(_app_3: FastAPI) -> None:
         # /docs is not rate-limited
         resp = await client.get("/docs")
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# NFM-3306 W5: limiter swallow_errors prevents 500 on header injection failure
+# ---------------------------------------------------------------------------
+
+
+def test_limiter_swallow_errors_flag() -> None:
+    """The production limiter must have swallow_errors=True.
+
+    Regression for NFM-3306: slowapi's ``_inject_headers`` raised on the
+    register endpoint (response type mismatch).  Without ``swallow_errors``,
+    the exception propagated as a 500 *after* the endpoint succeeded.
+    """
+    from nfm_db.middleware.rate_limit import limiter
+
+    assert limiter._swallow_errors is True, (
+        "limiter must have swallow_errors=True to prevent NFM-3306 W5 regressions"
+    )

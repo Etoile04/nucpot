@@ -82,7 +82,13 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        return { error: err.detail ?? '注册失败' }
+        // Backend validation errors return detail as an array of objects;
+        // extract the first human-readable message for display.
+        const detail = err.detail
+        const message = Array.isArray(detail)
+          ? (detail[0]?.msg ?? detail[0]?.message ?? '注册失败')
+          : (detail ?? '注册失败')
+        return { error: message }
       }
       return signIn(username, password)
     } catch { return { error: '网络错误' } }

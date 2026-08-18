@@ -42,6 +42,7 @@ limiter = Limiter(
     application_limits=[_DEFAULT_LIMIT, _BURST_LIMIT],
     storage_uri=_STORAGE_URI,
     headers_enabled=True,
+    swallow_errors=True,
 )
 
 
@@ -98,7 +99,18 @@ class NFMRateLimitMiddleware(SlowAPIMiddleware):
         path = request.url.path
         if not path.startswith("/api/"):
             return cast(Response, await call_next(request))
-        response = await super().dispatch(request, call_next)
+        try:
+            response = await super().dispatch(request, call_next)
+        except Exception:
+            # slowapi's internal _inject_headers may crash on certain
+            # response types (e.g. ORM objects wrapped by FastAPI's
+            # response_model).  Fall back to calling the endpoint
+            # directly so the response is never lost.
+            logger.warning(
+                "slowapi middleware error; falling back to direct call",
+                exc_info=True,
+            )
+            response = cast(Response, await call_next(request))
         # If slowapi didn't inject headers (no per-endpoint @limiter.limit),
         # inject global application_limits headers ourselves so every API
         # response carries transparent rate-limit info.  This applies to

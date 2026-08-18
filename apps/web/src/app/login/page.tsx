@@ -45,8 +45,13 @@ export default function LoginPage() {
       setError('用户名不能为空')
       return
     }
-    if (regPassword.length < 6) {
-      setError('密码至少需要 6 位')
+    const emailMatch = regEmail.match(/^[^@]+@([^@]+)$/)
+    if (emailMatch && /^(test|example|invalid|localhost)$/i.test(emailMatch[1])) {
+      setError('不支持该邮箱域名')
+      return
+    }
+    if (regPassword.length < 8) {
+      setError('密码至少需要 8 位')
       return
     }
     setLoading(true)
@@ -158,7 +163,7 @@ export default function LoginPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1">密码 <span className="text-gray-600">(至少 6 位)</span></label>
+                <label className="block text-sm text-gray-400 mb-1">密码 <span className="text-gray-600">(至少 8 位)</span></label>
                 <input
                   type="password"
                   required
