@@ -148,8 +148,7 @@ export default function LiteratureDetailView({
           type="error"
           message="加载失败"
           description={error ?? "无法加载文献详情"}
-          showReload
-          reloadButton={
+          action={
             <Button icon={<ReloadOutlined />} onClick={() => void fetchDetail()}>
               重试
             </Button>
@@ -216,7 +215,7 @@ export default function LiteratureDetailView({
             { key: "doi", label: "DOI", children: detail.doi ? <Text copyable>{detail.doi}</Text> : "—" },
             { key: "journal", label: "期刊", children: detail.journal ?? "—" },
             { key: "year", label: "年份", children: detail.year ?? "—" },
-            { key: "authors", label: "作者", children: detail.authors ?? "—" },
+            { key: "authors", label: "作者", children: (detail as Record<string, unknown>).authors ?? "—" },
             { key: "created", label: "创建时间", children: detail.created_at ?? "—" },
             { key: "updated", label: "更新时间", children: detail.updated_at ?? "—" },
           ]}
