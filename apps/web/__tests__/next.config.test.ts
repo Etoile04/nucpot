@@ -109,12 +109,12 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: [
+      afterFiles: lightragRewrites(),
+      fallback: [
         {
           source: "/api/:path*",
           destination: "http://nucpot-prod-api:8000/api/:path*",
         },
-        ...lightragRewrites(),
       ],
     })
   })
@@ -128,12 +128,12 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: [
+      afterFiles: lightragRewrites(),
+      fallback: [
         {
           source: "/api/:path*",
           destination: "http://nucpot-prod-api:8000/api/:path*",
         },
-        ...lightragRewrites(),
       ],
     })
   })
@@ -148,8 +148,9 @@ describe("next.config.ts rewrites", () => {
     const rewrites = (await config.rewrites!()) as {
       beforeFiles: Array<{ source: string; destination: string }>
       afterFiles: Array<{ source: string; destination: string }>
+      fallback: Array<{ source: string; destination: string }>
     }
-    const apiRewrite = rewrites.afterFiles.find((r) => r.source === "/api/:path*")
+    const apiRewrite = rewrites.fallback.find((r) => r.source === "/api/:path*")
     expect(apiRewrite).toBeDefined()
     expect(apiRewrite!.destination).not.toMatch(/^http:\/\/localhost:8000(\/|$)/)
   })
@@ -174,12 +175,12 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: [
+      afterFiles: lightragRewrites(),
+      fallback: [
         {
           source: "/api/:path*",
           destination: "http://localhost:8000/api/:path*",
         },
-        ...lightragRewrites(),
       ],
     })
   })
@@ -198,12 +199,12 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: [
+      afterFiles: lightragRewrites("http://nucpot-staging-lightrag:9621"),
+      fallback: [
         {
           source: "/api/:path*",
           destination: "http://nucpot-staging-api:8000/api/:path*",
         },
-        ...lightragRewrites("http://nucpot-staging-lightrag:9621"),
       ],
     })
   })
@@ -224,6 +225,39 @@ describe("next.config.ts rewrites", () => {
       expect(
         rewrites.beforeFiles.some((r) => r.source === "/ontology-viewer/data/corpus/index.json"),
         `scenario ${JSON.stringify(env)} missing corpus index rewrite`,
+      ).toBe(true)
+    }
+  })
+
+  // NFM-3317 regression guard: the /api/* proxy must live in the FALLBACK
+  // phase so dynamic BFF routes (/api/potentials/[id], /api/verify/[jobId],
+  // /api/ref-values/[id], /api/admin/ref-values/[id]/*) match BEFORE the
+  // catch-all forwards unmatched paths to FastAPI. As an afterFiles rewrite
+  // it ran before dynamic routes matched and hijacked them → the potential
+  // detail page (home of the download button) 404'd in production.
+  it("mounts the /api/* proxy in fallback, never beforeFiles/afterFiles (dynamic-route hijack guard)", async () => {
+    for (const env of [
+      { API_SERVER_URL: "http://nucpot-prod-api:8000" },
+      { API_SERVER_URL: "http://localhost:8000", DISABLE_API_REWRITE: "false" },
+      {},
+    ]) {
+      const config = await loadConfig(env)
+      const rewrites = (await config.rewrites!()) as {
+        beforeFiles: Array<{ source: string }>
+        afterFiles: Array<{ source: string }>
+        fallback: Array<{ source: string }>
+      }
+      expect(
+        rewrites.afterFiles.some((r) => r.source === "/api/:path*"),
+        `scenario ${JSON.stringify(env)}: /api/* must NOT be in afterFiles`,
+      ).toBe(false)
+      expect(
+        rewrites.beforeFiles.some((r) => r.source === "/api/:path*"),
+        `scenario ${JSON.stringify(env)}: /api/* must NOT be in beforeFiles`,
+      ).toBe(false)
+      expect(
+        rewrites.fallback.some((r) => r.source === "/api/:path*"),
+        `scenario ${JSON.stringify(env)}: /api/* must be in fallback`,
       ).toBe(true)
     }
   })

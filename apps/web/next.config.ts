@@ -134,16 +134,24 @@ const nextConfig: NextConfig = {
 
     return {
       ...corpusIndexRewrites,
-      afterFiles: [
+      afterFiles: lightragRewrites,
+      // NFM-3317: the /api/* proxy must be a FALLBACK rewrite, not
+      // afterFiles. afterFiles rewrites run BEFORE dynamic routes match, so
+      // the catch-all hijacked every dynamic BFF route (/api/potentials/[id],
+      // /api/verify/[jobId], /api/ref-values/[id], /api/admin/ref-values/[id])
+      // and forwarded them to FastAPI → 404 (the potential detail page — home
+      // of the download button — was dead in production). In the fallback
+      // phase the rewrite only fires when NO route (static or dynamic)
+      // matched, which is the intended "proxy everything the BFF doesn't
+      // own" semantics. Static BFF routes were never affected (filesystem
+      // matches before afterFiles), so this only un-breaks dynamic routes.
+      fallback: [
         {
           // Proxy /api/* requests to the backend, eliminating CORS for
           // same-origin browser requests in local dev and preview builds.
-          // App Router route handlers (e.g. /api/proxy/*) naturally match
-          // before this catch-all rewrite, so no phase ordering is needed.
           source: "/api/:path*",
           destination: `${API_SERVER_FALLBACK}/api/:path*`,
         },
-        ...lightragRewrites,
       ],
     }
   },
