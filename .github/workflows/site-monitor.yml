@@ -4,6 +4,8 @@ on:
   schedule:
     # Every 10 minutes
     - cron: '*/10 * * * *'
+    # Stale-container watchdog (NFM-3337) — every 6h, offset 17min
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -85,3 +87,21 @@ jobs:
           echo "- Failed: ${{ steps.health.outputs.failed_checks || '0' }}" >> $GITHUB_STEP_SUMMARY
           echo "- P0 failures: ${{ steps.health.outputs.p0_failures || '0' }}" >> $GITHUB_STEP_SUMMARY
           echo "- All passed: ${{ steps.health.outputs.all_passed || 'unknown' }}" >> $GITHUB_STEP_SUMMARY
+
+  # ----------------------------------------------------------------
+  # Stale-container watchdog (NFM-3337 / NFM-3320 AC-3)
+  # Runs on the Mac Studio self-hosted runner where Docker is available.
+  # ----------------------------------------------------------------
+  watchdog:
+    if: github.event.schedule == '17 */6 * * *'
+    runs-on: [self-hosted, production]
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run stale-container watchdog
+        id: watchdog
+        env:
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: bash tools/post-deploy-cutover-watchdog/watchdog.sh
