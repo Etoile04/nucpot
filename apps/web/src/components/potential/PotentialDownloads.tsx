@@ -4,6 +4,7 @@ import { Card, Button, Empty, Space, Typography } from "antd"
 import { DownloadOutlined, FileOutlined } from "@ant-design/icons"
 import Link from "next/link"
 import type { PotentialDetail } from "@/lib/potentials-api"
+import { resolveFileUrl } from "@/lib/file-url"
 
 const { Text } = Typography
 
@@ -15,11 +16,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-}
-
-function resolveFileUrl(fileUrl: string): string {
-  // file_url is a relative path under /uploads/ (e.g., "/uploads/foo.eam.alloy")
-  return fileUrl.startsWith("/") ? fileUrl : `/uploads/${fileUrl}`
 }
 
 function fileNameFromUrl(fileUrl: string): string {
