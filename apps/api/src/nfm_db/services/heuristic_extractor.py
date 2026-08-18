@@ -196,6 +196,8 @@ _PROPERTY_RULES: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"pre[\s_-]*exponential(?:\s+factor)?", re.I), "pre_exponential_factor", "diffusivity"),
     (re.compile(r"grain\s+size", re.I), "grain_size", "length"),
     (re.compile(r"\bporosity\b", re.I), "porosity", "dimensionless"),
+    (re.compile(r"radial\s+distribution\s+function|\bRDF\b", re.I), "rdf_peak", "length"),
+    (re.compile(r"\bbond[\s_-]*length\b", re.I), "bond_length", "length"),
 ]
 
 

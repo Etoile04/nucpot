@@ -262,3 +262,30 @@ class TestHeuristicExtract:
         text = "UO2 density 10.97 g/cm3."
         result = heuristic_extract(text, source_reference="ref6")
         assert all(r["confidence"] == "medium" for r in result)
+
+    # --- NFM-3302: RDF / bond-length property rules ---
+
+    def test_extracts_rdf_peak(self):
+        """RDF peaks (e.g. 2.28 angstrom) should be extracted as rdf_peak."""
+        text = "The RDF of UO2 shows peaks at 2.28 angstrom and 2.83 angstrom."
+        result = heuristic_extract(text, source_reference="rdf1")
+        rdf_props = [r for r in result if r["property_name"] == "rdf_peak"]
+        assert len(rdf_props) >= 1
+        assert any(abs(r["value"] - 2.28) < 0.01 for r in rdf_props)
+
+    def test_extracts_bond_length(self):
+        """Bond lengths (e.g. 2.02 angstrom) should be extracted as bond_length."""
+        text = "In UO2 the Cr-O bond length is 2.02 angstrom."
+        result = heuristic_extract(text, source_reference="bl1")
+        bond_props = [r for r in result if r["property_name"] == "bond_length"]
+        assert len(bond_props) >= 1
+        assert any(abs(r["value"] - 2.02) < 0.01 for r in bond_props)
+
+    def test_bond_length_unit_angstrom(self):
+        """Bond length in Å should be recognized."""
+        text = "UO2 Cr-O bond length 2.05 Å was measured."
+        result = heuristic_extract(text, source_reference="bl2")
+        assert any(
+            r["property_name"] == "bond_length" and abs(r["value"] - 2.05) < 0.01
+            for r in result
+        )
