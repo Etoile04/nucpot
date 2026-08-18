@@ -14,6 +14,7 @@ Phase 2 (NFM-820): Adds 4 new AGE-backed endpoints for graph queries:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC
 from email.utils import format_datetime
@@ -43,7 +44,9 @@ from nfm_db.services.gap_scanner import compute_ontology_coverage
 from nfm_db.services.ontology_service import (
     HARD_MAX_NODES,
     CorpusNotFoundError,
+    OntologyCorporaResponse,
     derive_ontology_graph,
+    list_queryable_corpora,
 )
 from nfm_db.services.ontology_sync import (
     GraphNotFoundError,
@@ -63,6 +66,35 @@ CORPUS_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 # no auth and no PII. If embargoed/pre-publication corpora ever land here, switch
 # to `private` and add an auth gate (T8 security review, MEDIUM-2).
 _CACHE_CONTROL = "public, max-age=60"
+
+
+@router.get(
+    "/ontology/corpora",
+    response_model=OntologyCorporaResponse,
+    summary="列出可查询的本体语料库",
+    description="返回当前派生层（``_ref_gap_fill_staging``）中实际存在数据的语料库列表及其行数，"
+    "供前端 corpus 下拉索引动态生成。列表中的每个 corpus 调用 "
+    "``GET /ontology/corpora/{corpus_id}/graph`` 均不会 404（NFM-3303）。",
+)
+async def list_corpora(
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(ontology_rate_limit),
+) -> OntologyCorporaResponse:
+    """Enumerate corpora that actually resolve to staging rows (NFM-3303).
+
+    The static viewer-side corpus index drifted from DB reality (advertised
+    ``nuclear`` which never had staging rows → 404). This endpoint is the
+    source of truth the frontend merges into its index.
+    """
+    result = await list_queryable_corpora(session)
+
+    # Derived, low-churn reference data — same caching posture as the graph
+    # endpoint. ETag over the response body so clients revalidate cheaply.
+    body = result.model_dump_json()
+    response.headers["Cache-Control"] = _CACHE_CONTROL
+    response.headers["ETag"] = f'"{hashlib.sha256(body.encode()).hexdigest()[:16]}"'
+    return result
 
 
 @router.get(
