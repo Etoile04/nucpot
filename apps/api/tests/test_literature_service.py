@@ -18,11 +18,13 @@ on the in-memory SQLite ``db_session`` fixture from ``conftest.py``.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.source import DataSource
@@ -430,6 +432,156 @@ class TestRollbackFailureEmitsHealthEvent:
         assert kwargs["context"]["datasource_id"] == str(ds.id)
         # The rollback failure — not the parse failure — is the cause recorded.
         assert "rollback exploded" in str(kwargs["context"])
+
+
+# ---------------------------------------------------------------------------
+# 4b. NFM-3322 regression: failure status persists even when the input
+#     session is left in an aborted SQLAlchemy transaction by the upstream
+#     extractor (e.g. ``No published OntologyVersion found in the database``).
+#
+#     Before the fix, :func:`process_literature` reused the same aborted
+#     ``db`` for the failure-status write, hit ``InFailedSQLTransactionError``
+#     / ``sqlite3.OperationalError`` ("cannot operate on a closed/broken
+#     transaction"), and the worker was stuck at ``parse_status='extracting'``
+#     forever. The fix opens a fresh session via :func:`async_session_factory`
+#     for the failure-status write so the aborted state cannot block it.
+# ---------------------------------------------------------------------------
+
+
+class TestFailureStatusPersistsAcrossAbortedSession:
+    """Regression guard for NFM-3322.
+
+    Simulates the production repro: the upstream LLM extractor leaves the
+    SQLAlchemy session in an aborted state (raises an error on any subsequent
+    operation), then :func:`process_literature`'s ``except`` block must
+    persist the failure status using a session it opens itself — NOT the
+    poisoned input one.
+    """
+
+    async def test_failure_status_persisted_when_input_session_is_aborted(
+        self, db_session: AsyncSession
+    ) -> None:
+        ds = await _add_datasource(
+            db_session,
+            content_md="Some body text with no properties.",
+        )
+
+        ontology_error = RuntimeError(
+            "A published ontology version is required for extraction. "
+            "No published OntologyVersion found in the database."
+        )
+
+        # Wrap the real session so that EVERY operation performed through
+        # the proxy succeeds while the pipeline is healthy, but starts
+        # failing once the LLM extract raises — exactly mimicking the
+        # asyncpg ``InFailedSQLTransactionError`` symptom: a failed
+        # upstream operation leaves the transaction in a state where any
+        # subsequent ``execute`` / ``commit`` / ``get`` raises.
+        class _AbortedAfterExtract:
+            def __init__(self, inner: AsyncSession) -> None:
+                self._inner = inner
+                self._extract_called = False
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._inner, name)
+
+            def _raise_if_aborted(self, op: str) -> None:
+                if self._extract_called:
+                    raise RuntimeError(
+                        "current transaction is aborted, commands ignored "
+                        "until end of transaction block"
+                    )
+
+            async def execute(self, *args: Any, **kwargs: Any) -> Any:
+                self._raise_if_aborted("execute")
+                return await self._inner.execute(*args, **kwargs)
+
+            async def get(self, *args: Any, **kwargs: Any) -> Any:
+                self._raise_if_aborted("get")
+                return await self._inner.get(*args, **kwargs)
+
+            async def commit(self) -> None:
+                self._raise_if_aborted("commit")
+                return await self._inner.commit()
+
+            async def rollback(self) -> None:
+                self._raise_if_aborted("rollback")
+                return await self._inner.rollback()
+
+            async def refresh(self, *args: Any, **kwargs: Any) -> Any:
+                self._raise_if_aborted("refresh")
+                return await self._inner.refresh(*args, **kwargs)
+
+            async def flush(self, *args: Any, **kwargs: Any) -> Any:
+                self._raise_if_aborted("flush")
+                return await self._inner.flush(*args, **kwargs)
+
+            def mark_extract_called(self) -> None:
+                self._extract_called = True
+
+        poisoned = _AbortedAfterExtract(db_session)
+
+        # The pipeline imports ``ontofuel_extract`` from
+        # ``nfm_db.services.extraction_pipeline`` lazily at step 3. Wrap
+        # it so it raises the upstream error AND trips the poisoned
+        # marker on the proxy so any later DB op reflects the aborted-tx
+        # symptom.
+        async def _fake_extract(*args: Any, **kwargs: Any) -> Any:
+            poisoned.mark_extract_called()
+            raise ontology_error
+
+        # In production ``async_session_factory`` is bound to the real
+        # Postgres engine. Bind it to this test's SQLite engine so the
+        # failure-handler's FRESH session operates on the same DB the
+        # test fixture populated.
+        @contextlib.asynccontextmanager
+        async def _sqlite_passthrough_factory():
+            yield db_session
+
+        # CRITICAL: the factory must be patched BEFORE process_literature
+        # is invoked — the fix calls ``async_session_factory()`` from
+        # inside the except block, which runs during the call below.
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=_fake_extract,
+            ),
+            patch.object(
+                lit_svc, "async_session_factory", _sqlite_passthrough_factory
+            ),
+        ):
+            # The upstream LLM extract raises. The contract is simply
+            # that *some* RuntimeError propagates so the Celery
+            # scheduler can take action. Don't pin the message — pre-fix
+            # it was "transaction aborted", post-fix it carries the
+            # original ``OntologyVersion`` cause.
+            with pytest.raises(RuntimeError):
+                await lit_svc.process_literature(
+                    poisoned,  # type: ignore[arg-type]
+                    ds.id,
+                )
+
+        # Verify the failure status landed in the DB through a SESSION
+        # OTHER THAN the poisoned input. A direct refresh on
+        # ``db_session`` proves the failure-status write did not depend
+        # on the aborted input session.
+        stmt = select(DataSource).where(DataSource.id == ds.id)
+        result = await db_session.execute(stmt)
+        refreshed = result.scalar_one()
+
+        assert refreshed.parse_status == lit_svc.PARSE_STATUS_FAILED, (
+            "NFM-3322 regression: parse_status must transition to "
+            f"'failed' on extractor failure, got {refreshed.parse_status!r}"
+        )
+        assert refreshed.parse_error, (
+            "NFM-3322 regression: parse_error must be non-empty so "
+            "operators can see the upstream cause"
+        )
+        # Operators must see the *original* upstream cause
+        # ('OntologyVersion...'), not the secondary symptom
+        # ('current transaction is aborted...'). The fix re-raises the
+        # original so Celery retries against the right cause.
+        assert "OntologyVersion" in refreshed.parse_error
 
 
 # ---------------------------------------------------------------------------
