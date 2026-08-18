@@ -124,6 +124,7 @@ class LiteratureDetailResponse(BaseModel):
     year: int | None = None
     abstract: str | None = None
     status: str = "uploaded"
+    parse_error: str | None = None
     source_id: UUID | None = None
     content_md: str | None = None
     figures: list[LiteratureFigure] = Field(default_factory=list)

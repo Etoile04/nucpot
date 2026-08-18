@@ -1240,3 +1240,177 @@ class TestBibliographicMetadataExtraction:
         assert ds.year == 2024
         assert ds.journal == "Journal of Materials"
         assert ds.abstract == "The abstract text."
+
+
+# ---------------------------------------------------------------------------
+# 9. Duplicate DOI detection (NFM-3339)
+# ---------------------------------------------------------------------------
+# When a PDF is uploaded whose DOI is extracted post-parse and that DOI
+# already exists on a completed record, the duplicate must be detected
+# BEFORE the extraction pipeline runs.  The duplicate record should be
+# marked "failed" with a descriptive parse_error, and no extraction or
+# KG-building should occur.
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateDoiDetection:
+    """NFM-3339: duplicate DOI uploads must not get stuck in parsing."""
+
+    DUPLICATE_DOI = "10.1016/j.jnucmat.2023.01.001"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_doi_marks_failed_before_extraction(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A new upload whose extracted DOI matches an existing completed
+        record must be marked failed with reason=duplicate_doi and
+        the extraction pipeline must NOT run."""
+        # Existing completed record that already has the DOI.
+        existing = await _add_datasource(
+            db_session,
+            title="Owen et al. - 2023 - Diffusion in UO2",
+            content_md="# Owen et al.\n\nDOI: " + self.DUPLICATE_DOI,
+        )
+        existing.doi = self.DUPLICATE_DOI
+        existing.parse_status = "completed"
+        await db_session.commit()
+
+        # New upload -- no DOI yet, will be extracted by bibliographic step.
+        new_ds = await _add_datasource(
+            db_session,
+            title="duplicate-upload.pdf",
+            content_md=(
+                "# Owen et al. - 2023\n\n"
+                "DOI: " + self.DUPLICATE_DOI + "\n"
+            ),
+        )
+        new_ds.parse_status = "parsing"
+        await db_session.commit()
+
+        # Extraction pipeline must NOT be invoked.
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(
+                    side_effect=AssertionError(
+                        "ontofuel_extract must NOT run for duplicate DOI"
+                    )
+                ),
+            ) as mock_extract,
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(
+                    side_effect=AssertionError(
+                        "map_and_persist must NOT run for duplicate DOI"
+                    )
+                ),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(
+                    side_effect=AssertionError(
+                        "GraphBuilder must NOT run for duplicate DOI"
+                    )
+                ),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, new_ds.id)
+
+        # Result must indicate duplicate failure.
+        assert result["status"] == "failed"
+        assert result["reason"] == "duplicate_doi"
+        assert result.get("existing_literature_id") == str(existing.id)
+
+        # Extraction pipeline was never touched.
+        mock_extract.assert_not_called()
+
+        # The new record must be marked failed with a descriptive error.
+        await db_session.refresh(new_ds)
+        assert new_ds.parse_status == "failed"
+        assert "duplicate" in (new_ds.parse_error or "").lower()
+        assert self.DUPLICATE_DOI in (new_ds.parse_error or "")
+
+        # The existing record must NOT be modified.
+        await db_session.refresh(existing)
+        assert existing.parse_status == "completed"
+        assert existing.doi == self.DUPLICATE_DOI
+
+    @pytest.mark.asyncio
+    async def test_same_doi_on_failed_record_allows_retry(
+        self, db_session: AsyncSession
+    ) -> None:
+        """If the only existing record with the same DOI is in a
+        non-completed state (e.g. failed), the duplicate check must NOT
+        block the new upload -- it should proceed normally."""
+        # Existing FAILED record with the DOI.
+        failed_ds = await _add_datasource(
+            db_session,
+            title="Previously failed upload",
+            content_md="# Some paper\n\nDOI: " + self.DUPLICATE_DOI,
+        )
+        failed_ds.doi = self.DUPLICATE_DOI
+        failed_ds.parse_status = "failed"
+        failed_ds.parse_error = "previous error"
+        await db_session.commit()
+
+        # New upload with the same DOI -- should proceed through extraction.
+        new_ds = await _add_datasource(
+            db_session,
+            content_md="# Paper\n\nDOI: " + self.DUPLICATE_DOI,
+        )
+
+        empty_build_result = _make_empty_build_result()
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ) as mock_extract,
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, new_ds.id)
+
+        # Should complete normally -- no duplicate block.
+        assert result["status"] == "completed"
+        mock_extract.assert_awaited_once()
+
+        await db_session.refresh(new_ds)
+        assert new_ds.parse_status == "completed"
+        assert new_ds.doi == self.DUPLICATE_DOI
+
+    @pytest.mark.asyncio
+    async def test_no_doi_extracted_skips_duplicate_check(
+        self, db_session: AsyncSession
+    ) -> None:
+        """If bibliographic extraction returns no DOI, the duplicate
+        check is bypassed entirely and the pipeline proceeds."""
+        new_ds = await _add_datasource(
+            db_session,
+            content_md="# No DOI in this paper\n\nJust content.",
+        )
+
+        empty_build_result = _make_empty_build_result()
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ) as mock_extract,
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, new_ds.id)
+
+        assert result["status"] == "completed"
+        mock_extract.assert_awaited_once()

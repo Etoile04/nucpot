@@ -590,38 +590,114 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         # title) using two strategies: PDF binary metadata (fast) and
         # regex from parsed Markdown (broader).  Only writes fields
         # that are currently null to avoid overwriting curated values.
-        try:
-            from nfm_db.services.bibliographic_metadata import (
-                extract_metadata_combined,
-            )
+        # Use no_autoflush so that setting ds.doi does not
+        # trigger a premature flush that would hit the UNIQUE
+        # constraint before the duplicate check below can run.
+        with db.no_autoflush:
+            try:
+                from nfm_db.services.bibliographic_metadata import (
+                    extract_metadata_combined,
+                )
 
-            bib = extract_metadata_combined(pdf_bytes_for_meta, ds.content_md)
-            if bib["title"] is not None:
-                ds.title = bib["title"]
-            if bib["doi"] is not None and ds.doi is None:
-                ds.doi = bib["doi"]
-            if bib["year"] is not None and ds.year is None:
-                ds.year = bib["year"]
-            if bib["journal"] is not None and ds.journal is None:
-                ds.journal = bib["journal"]
-            if bib["abstract"] is not None and ds.abstract is None:
-                ds.abstract = bib["abstract"]
-            logger.info(
-                "process_literature: datasource_id=%s "
-                "bibliographic metadata extracted title=%s doi=%s year=%s journal=%s abstract_chars=%d",
-                ds.id,
-                bib["title"] is not None,
-                bib["doi"] is not None,
-                bib["year"] is not None,
-                bib["journal"] is not None,
-                len(bib["abstract"] or ""),
-            )
-        except Exception:  # pragma: no cover — defensive
-            logger.exception(
-                "process_literature: bibliographic metadata extraction "
-                "failed for datasource_id=%s (non-fatal)",
-                ds.id,
-            )
+                bib = extract_metadata_combined(pdf_bytes_for_meta, ds.content_md)
+                if bib["title"] is not None:
+                    ds.title = bib["title"]
+                if bib["doi"] is not None and ds.doi is None:
+                    ds.doi = bib["doi"]
+                if bib["year"] is not None and ds.year is None:
+                    ds.year = bib["year"]
+                if bib["journal"] is not None and ds.journal is None:
+                    ds.journal = bib["journal"]
+                if bib["abstract"] is not None and ds.abstract is None:
+                    ds.abstract = bib["abstract"]
+                logger.info(
+                    "process_literature: datasource_id=%s "
+                    "bibliographic metadata extracted title=%s doi=%s year=%s journal=%s abstract_chars=%d",
+                    ds.id,
+                    bib["title"] is not None,
+                    bib["doi"] is not None,
+                    bib["year"] is not None,
+                    bib["journal"] is not None,
+                    len(bib["abstract"] or ""),
+                )
+            except Exception:  # pragma: no cover — defensive
+                logger.exception(
+                    "process_literature: bibliographic metadata extraction "
+                    "failed for datasource_id=%s (non-fatal)",
+                    ds.id,
+                )
+
+            # --- Step 2d: duplicate DOI detection (NFM-3339) -----------
+            # If a DOI was just extracted AND a completed record with the
+            # same DOI already exists, mark this upload as failed to
+            # prevent: (a) a UNIQUE constraint IntegrityError that leaves
+            # the record stuck in "parsing", (b) wasted extraction work.
+            if ds.doi is not None:
+                # Find any other record holding this DOI.
+                dup_any_stmt = (
+                    select(DataSource)
+                    .where(
+                        DataSource.doi == ds.doi,
+                        DataSource.id != ds.id,
+                    )
+                )
+                dup_any_result = await db.execute(dup_any_stmt)
+                dup_any = dup_any_result.scalars().all()
+
+                # 1) If a *completed* record exists, block this upload.
+                dup_completed = [
+                    d for d in dup_any
+                    if d.parse_status == PARSE_STATUS_COMPLETED
+                ]
+                if dup_completed:
+                    dup_existing = dup_completed[0]
+                    dup_doi = ds.doi
+                    ds.doi = None  # clear to avoid UNIQUE constraint on commit
+                    ds.parse_status = PARSE_STATUS_FAILED
+                    ds.parse_error = (
+                        f"Duplicate DOI: {dup_doi}. "
+                        f"Existing literature: {dup_existing.id} "
+                        f"(title: {dup_existing.title!r})"
+                    )
+                    await db.commit()
+                    logger.info(
+                        "process_literature: datasource_id=%s "
+                        "duplicate DOI detected, marked failed. "
+                        "existing_id=%s doi=%s",
+                        ds.id,
+                        dup_existing.id,
+                        dup_doi,
+                    )
+                    return {
+                        "status": "failed",
+                        "reason": "duplicate_doi",
+                        "datasource_id": str(ds.id),
+                        "existing_literature_id": str(dup_existing.id),
+                    }
+
+                # 2) Clear DOIs from non-completed duplicates (failed,
+                # parsing, etc.) so the UNIQUE constraint does not block
+                # the new upload when it commits at Step 3.
+                # Use a bulk UPDATE to avoid ORM flush-order issues.
+                if dup_any:
+                    from sqlalchemy import update as sa_update
+
+                    stale_ids = [s.id for s in dup_any]
+                    await db.execute(
+                        sa_update(DataSource)
+                        .where(DataSource.id.in_(stale_ids))
+                        .values(doi=None)
+                    )
+                    await db.flush()
+                    for stale in dup_any:
+                        # Mark the ORM objects as expired so they
+                        # re-read the cleared value on next access.
+                        db.expire(stale, ["doi"])
+                    logger.info(
+                        "process_literature: cleared stale DOIs from "
+                        "non-completed records: %s",
+                        stale_ids,
+                    )
 
         # --- Step 3: extracting ----------------------------------------
         ds.parse_status = PARSE_STATUS_EXTRACTING

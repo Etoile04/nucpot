@@ -271,6 +271,7 @@ def _source_to_detail(source: DataSource) -> LiteratureDetailResponse:
         year=source.year,
         abstract=source.abstract,
         status=source.parse_status or "uploaded",
+        parse_error=source.parse_error,
         source_id=source.id,
         extraction_results=[],
         created_at=source.created_at,
@@ -567,6 +568,7 @@ async def get_literature_status(
             id=source.id,
             status=status,
             progress=progress,
+            error=source.parse_error,
         ),
     )
 
@@ -622,6 +624,7 @@ async def get_literature_detail(
             year=source.year,
             abstract=source.abstract,
             status=source.parse_status or "uploaded",
+            parse_error=source.parse_error,
             source_id=source.id,
             content_md=source.content_md,
             figures=figures,
