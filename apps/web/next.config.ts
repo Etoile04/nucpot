@@ -70,6 +70,22 @@ const nextConfig: NextConfig = {
     ]
   },
   async rewrites() {
+    // NFM-3303: serve the viewer's corpus index dynamically. The vendored
+    // viewer fetches `/ontology-viewer/data/corpus/index.json` relative to
+    // its iframe origin; `beforeFiles` is required to shadow the build-time
+    // static file in `public/`. The aggregator merges the static default
+    // corpus with corpora the backend actually has staging rows for, and
+    // fails soft to the static-only index — it never 5xx's, and the viewer
+    // additionally falls back to the static graph on index failure.
+    const corpusIndexRewrites = {
+      beforeFiles: [
+        {
+          source: "/ontology-viewer/data/corpus/index.json",
+          destination: "/api/proxy/ontology/corpora",
+        },
+      ],
+    }
+
     // LightRAG WebUI reverse proxy — always active regardless of
     // DISABLE_API_REWRITE (which only gates /api/*). Mounts the LightRAG
     // sidecar's full stack (React SPA + API endpoints) under /lightrag/*
@@ -103,7 +119,7 @@ const nextConfig: NextConfig = {
     // Without this, the rewrite below would proxy /api/* back through
     // Next.js and either hang or fail (NFM-1407).
     if (DISABLE_API_REWRITE) {
-      return lightragRewrites
+      return { ...corpusIndexRewrites, afterFiles: lightragRewrites }
     }
 
     // Skip rewrite when API_SERVER_URL matches the public domain — nginx
@@ -113,20 +129,23 @@ const nextConfig: NextConfig = {
       new URL(API_SERVER_URL).host === new URL(publicUrl).host
 
     if (wouldLoop) {
-      return lightragRewrites
+      return { ...corpusIndexRewrites, afterFiles: lightragRewrites }
     }
 
-    return [
-      {
-        // Proxy /api/* requests to the backend, eliminating CORS for
-        // same-origin browser requests in local dev and preview builds.
-        // App Router route handlers (e.g. /api/proxy/*) naturally match
-        // before this catch-all rewrite, so no phase ordering is needed.
-        source: "/api/:path*",
-        destination: `${API_SERVER_FALLBACK}/api/:path*`,
-      },
-      ...lightragRewrites,
-    ]
+    return {
+      ...corpusIndexRewrites,
+      afterFiles: [
+        {
+          // Proxy /api/* requests to the backend, eliminating CORS for
+          // same-origin browser requests in local dev and preview builds.
+          // App Router route handlers (e.g. /api/proxy/*) naturally match
+          // before this catch-all rewrite, so no phase ordering is needed.
+          source: "/api/:path*",
+          destination: `${API_SERVER_FALLBACK}/api/:path*`,
+        },
+        ...lightragRewrites,
+      ],
+    }
   },
 }
 
