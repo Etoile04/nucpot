@@ -41,6 +41,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -71,6 +72,7 @@ import {
   KG_EDGE_BADGE,
   PROVENANCE_SECTION_ORDER,
 } from "@/lib/provenance"
+import { useAuth } from "@/components/AuthProvider"
 
 const { Title, Text, Paragraph } = Typography
 const { Dragger } = Upload
@@ -169,7 +171,27 @@ function mapDoiError(err: unknown): string {
 
 // ── Component ──────────────────────────────────────────────────────────
 
+/**
+ * Roles that satisfy the literature write requirement.
+ *
+ * Mirrors the backend `RequireRole(BlogRole.EDITOR)` gate on
+ * `/api/v1/literature/upload`, `/from-doi`, `/{id}/reextract` and
+ * `/DELETE` — see `apps/api/src/nfm_db/core/auth.py`.  Admins are
+ * implicitly granted editor rights on the backend (super-role).
+ */
+const UPLOAD_ROLES = new Set(["editor", "admin"])
+
+/** 403 detail prefix emitted by `RequireRole` when role is missing. */
+const ROLE_REQUIRED_DETAIL_FRAGMENT = "permission"
+
 export default function LiteratureManager() {
+  const { user } = useAuth()
+  // NFM-3307 W7: pre-emptively gate the upload UI on the editor role
+  // so users without write permission see a disabled control with a
+  // tooltip instead of getting a silent 403 from the API.
+  const blogRole = user?.blog_role ?? null
+  const canUpload = blogRole !== null && UPLOAD_ROLES.has(blogRole)
+
   const [state, setState] = useState<ListState>(INITIAL_STATE)
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS)
   const [searchInput, setSearchInput] = useState("")
@@ -264,6 +286,18 @@ export default function LiteratureManager() {
 
   const handleUpload = useCallback(
     async (file: File) => {
+      // Defensive role gate — the UI is also disabled when the user
+      // lacks the editor role, but if a non-editor manages to fire a
+      // synthetic event we surface a clear permission message instead
+      // of letting the request 403 silently.
+      if (!canUpload) {
+        message.warning(
+          "上传需要编辑权限，当前账号无权上传文献。请联系管理员申请 editor 或 admin 角色。",
+          6,
+        )
+        return false
+      }
+
       // Surface the filename up front so the user can see "we got the file"
       const key = `upload-${Date.now()}-${file.name}`
       message.open({
@@ -300,15 +334,36 @@ export default function LiteratureManager() {
           content: `上传成功：${file.name}（${STATUS_LABELS[resp.status as LiteratureStatus] ?? resp.status}）`,
           duration: 3,
         })
-        await fetchList(1, filters)
+        // NFM-3307 W8: after a fresh upload the row's status is "parsing".
+        // If the user previously had a status filter applied (e.g.
+        // "completed"), the new row would be invisible.  Force a refresh
+        // to page 1 with the status filter cleared so the new item is
+        // always visible without a manual reload.
+        const refreshFilters: Filters = {
+          ...filters,
+          status: "",
+        }
+        if (refreshFilters.status !== filters.status) {
+          setFilters(refreshFilters)
+        }
+        await fetchList(1, refreshFilters)
         // Defer drawer open so the user sees the success message first
         setTimeout(() => void openDetail(resp.literature_id), 600)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "上传失败"
+        // NFM-3307 W7: surface a permission-specific message when the
+        // API returns 403 so the user understands the cause instead of
+        // seeing the generic backend error string.
+        const raw = err instanceof Error ? err.message : "上传失败"
+        const isPermissionError =
+          /403|forbidden|权限|permission/i.test(raw) ||
+          raw.toLowerCase().includes(ROLE_REQUIRED_DETAIL_FRAGMENT)
+        const msg = isPermissionError
+          ? "上传失败：当前账号缺少编辑权限，无法上传文献。请联系管理员申请 editor 或 admin 角色。"
+          : `上传失败：${raw}`
         message.open({
           key,
           type: "error",
-          content: `上传失败：${msg}`,
+          content: msg,
           duration: 8,
         })
       } finally {
@@ -316,7 +371,7 @@ export default function LiteratureManager() {
       }
       return false // prevent antd's default upload
     },
-    [fetchList, filters, openDetail],
+    [canUpload, fetchList, filters, openDetail],
   )
 
   const handleDoiSubmit = useCallback(
@@ -325,11 +380,24 @@ export default function LiteratureManager() {
         message.warning("请输入 DOI")
         return
       }
+      if (!canUpload) {
+        message.warning(
+          "通过 DOI 提取需要编辑权限，当前账号无权操作。请联系管理员申请 editor 或 admin 角色。",
+          6,
+        )
+        return
+      }
       setIngestingDoi(true)
       try {
         const resp = await literatureApi.fromDoi(doi.trim())
         message.success("已触发 DOI 提取任务")
-        await fetchList(1, filters)
+        // NFM-3307 W8: clear the status filter on refresh so the newly
+        // created row (status="parsing") is visible.
+        const refreshFilters: Filters = { ...filters, status: "" }
+        if (refreshFilters.status !== filters.status) {
+          setFilters(refreshFilters)
+        }
+        await fetchList(1, refreshFilters)
         void openDetail(resp.literature_id)
       } catch (err) {
         message.error(mapDoiError(err), 8)
@@ -337,7 +405,7 @@ export default function LiteratureManager() {
         setIngestingDoi(false)
       }
     },
-    [fetchList, filters, openDetail],
+    [canUpload, fetchList, filters, openDetail],
   )
 
   const handleReextract = useCallback(
@@ -494,6 +562,15 @@ export default function LiteratureManager() {
         {/* Left — Upload / DOI / Filters */}
         <div className="space-y-4">
           <Card title="导入文献" size="small">
+            {canUpload ? null : (
+              <Alert
+                type="warning"
+                showIcon
+                className="!mb-3"
+                message="上传文献需要编辑权限"
+                description="当前账号没有 editor 或 admin 角色，无法上传 PDF 或通过 DOI 提取文献。请联系管理员申请相应角色后再试。"
+              />
+            )}
             <Tabs
               defaultActiveKey="pdf"
               items={[
@@ -505,26 +582,39 @@ export default function LiteratureManager() {
                     </span>
                   ),
                   children: (
-                    <Dragger
-                      multiple={false}
-                      accept="application/pdf"
-                      beforeUpload={(file) => {
-                        void handleUpload(file as unknown as File)
-                        return false
-                      }}
-                      showUploadList={false}
-                      disabled={uploading}
+                    <Tooltip
+                      title={
+                        canUpload
+                          ? ""
+                          : "上传需要编辑权限：当前账号没有 editor 或 admin 角色"
+                      }
+                      placement="topLeft"
                     >
-                      <p className="ant-upload-drag-icon">
-                        <CloudUploadOutlined />
-                      </p>
-                      <p className="ant-upload-text">
-                        点击或拖拽 PDF 文件至此处
-                      </p>
-                      <p className="ant-upload-hint">
-                        单文件 ≤ 50 MB；同一文件 SHA-256 哈希命中后自动复用。
-                      </p>
-                    </Dragger>
+                      {/* The wrapper div keeps the tooltip target stable
+                          when antd swaps the underlying DOM. */}
+                      <div>
+                        <Dragger
+                          multiple={false}
+                          accept="application/pdf"
+                          beforeUpload={(file) => {
+                            void handleUpload(file as unknown as File)
+                            return false
+                          }}
+                          showUploadList={false}
+                          disabled={uploading || !canUpload}
+                        >
+                          <p className="ant-upload-drag-icon">
+                            <CloudUploadOutlined />
+                          </p>
+                          <p className="ant-upload-text">
+                            点击或拖拽 PDF 文件至此处
+                          </p>
+                          <p className="ant-upload-hint">
+                            单文件 ≤ 50 MB；同一文件 SHA-256 哈希命中后自动复用。
+                          </p>
+                        </Dragger>
+                      </div>
+                    </Tooltip>
                   ),
                 },
                 {
@@ -535,10 +625,22 @@ export default function LiteratureManager() {
                     </span>
                   ),
                   children: (
-                    <DoiForm
-                      onSubmit={handleDoiSubmit}
-                      loading={ingestingDoi}
-                    />
+                    <Tooltip
+                      title={
+                        canUpload
+                          ? ""
+                          : "通过 DOI 提取需要编辑权限：当前账号没有 editor 或 admin 角色"
+                      }
+                      placement="topLeft"
+                    >
+                      <div>
+                        <DoiForm
+                          onSubmit={handleDoiSubmit}
+                          loading={ingestingDoi}
+                          disabled={!canUpload}
+                        />
+                      </div>
+                    </Tooltip>
                   ),
                 },
               ]}
@@ -704,9 +806,10 @@ export default function LiteratureManager() {
 interface DoiFormProps {
   readonly onSubmit: (doi: string) => void | Promise<void>
   readonly loading: boolean
+  readonly disabled?: boolean
 }
 
-function DoiForm({ onSubmit, loading }: DoiFormProps) {
+function DoiForm({ onSubmit, loading, disabled = false }: DoiFormProps) {
   const [doi, setDoi] = useState("")
   return (
     <div className="space-y-2 pt-2">
@@ -714,8 +817,11 @@ function DoiForm({ onSubmit, loading }: DoiFormProps) {
         placeholder="10.1016/j.jnucmat.2020.152307"
         value={doi}
         onChange={(e) => setDoi(e.target.value)}
-        onPressEnter={() => void onSubmit(doi)}
+        onPressEnter={() => {
+          if (!disabled) void onSubmit(doi)
+        }}
         allowClear
+        disabled={disabled}
       />
       <Button
         type="primary"
@@ -723,6 +829,7 @@ function DoiForm({ onSubmit, loading }: DoiFormProps) {
         loading={loading}
         onClick={() => void onSubmit(doi)}
         icon={<LinkOutlined />}
+        disabled={disabled}
       >
         通过 DOI 提取
       </Button>
