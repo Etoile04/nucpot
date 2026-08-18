@@ -9,6 +9,11 @@
  * NFM-741: LightRAG WebUI rewrites (/lightrag-api/*) are ALWAYS present,
  * independent of DISABLE_API_REWRITE, so the embedded LightRAG management
  * interface stays accessible in all environments.
+ *
+ * NFM-3303: the corpus index rewrite (beforeFiles) is ALWAYS present — it
+ * shadows the build-time static /ontology-viewer/data/corpus/index.json with
+ * the dynamic aggregator so the vendored viewer's corpus dropdown reflects
+ * corpora the backend actually has data for.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
@@ -42,6 +47,12 @@ function lightragRewrites(baseUrl = "http://localhost:9621") {
   ]
 }
 
+/** NFM-3303: the corpus index rewrite, always in beforeFiles. */
+const corpusIndexRewrite = {
+  source: "/ontology-viewer/data/corpus/index.json",
+  destination: "/api/proxy/ontology/corpora",
+}
+
 describe("next.config.ts rewrites", () => {
   const originalEnv = { ...process.env }
 
@@ -64,7 +75,7 @@ describe("next.config.ts rewrites", () => {
     vi.resetModules()
   })
 
-  it("returns only LightRAG rewrites when DISABLE_API_REWRITE=true (Docker production)", async () => {
+  it("returns corpus index + LightRAG rewrites when DISABLE_API_REWRITE=true (Docker production)", async () => {
     const config = await loadConfig({
       API_SERVER_URL: "http://nucpot-prod-api:8000",
       NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
@@ -72,47 +83,59 @@ describe("next.config.ts rewrites", () => {
       LIGHTRAG_WEBUI_URL: "http://nucpot-prod-lightrag:9621",
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual(lightragRewrites("http://nucpot-prod-lightrag:9621"))
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: lightragRewrites("http://nucpot-prod-lightrag:9621"),
+    })
   })
 
-  it("returns only LightRAG rewrites when DISABLE_API_REWRITE=1 (truthy shorthand)", async () => {
+  it("returns corpus index + LightRAG rewrites when DISABLE_API_REWRITE=1 (truthy shorthand)", async () => {
     const config = await loadConfig({
       API_SERVER_URL: "http://nucpot-prod-api:8000",
       DISABLE_API_REWRITE: "1",
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual(lightragRewrites())
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: lightragRewrites(),
+    })
   })
 
-  it("proxies /api/* + LightRAG when DISABLE_API_REWRITE is unset and no loop detected", async () => {
+  it("proxies /api/* + corpus index + LightRAG when DISABLE_API_REWRITE is unset and no loop detected", async () => {
     const config = await loadConfig({
       API_SERVER_URL: "http://nucpot-prod-api:8000",
       // NEXT_PUBLIC_APP_URL intentionally absent — Docker production scenario.
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual([
-      {
-        source: "/api/:path*",
-        destination: "http://nucpot-prod-api:8000/api/:path*",
-      },
-      ...lightragRewrites(),
-    ])
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: "http://nucpot-prod-api:8000/api/:path*",
+        },
+        ...lightragRewrites(),
+      ],
+    })
   })
 
-  it("proxies /api/* to the Docker-internal service DNS + LightRAG when API_SERVER_URL is unset (NFM-2786)", async () => {
+  it("proxies /api/* to the Docker-internal service DNS + corpus index + LightRAG when API_SERVER_URL is unset (NFM-2786)", async () => {
     const config = await loadConfig({
       // No API_SERVER_URL → uses API_SERVER_FALLBACK = http://nucpot-prod-api:8000
       // (Docker-internal DNS so the rewrite resolves inside any nucpot-*
       // network even when the operator forgets to set the env var.)
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual([
-      {
-        source: "/api/:path*",
-        destination: "http://nucpot-prod-api:8000/api/:path*",
-      },
-      ...lightragRewrites(),
-    ])
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: "http://nucpot-prod-api:8000/api/:path*",
+        },
+        ...lightragRewrites(),
+      ],
+    })
   })
 
   // NFM-2786 regression guard: the previous default `http://localhost:8100`
@@ -122,37 +145,43 @@ describe("next.config.ts rewrites", () => {
   // other host-loopback port when API_SERVER_URL is unset.
   it("never defaults the /api/* rewrite to http://localhost:8000 (Honcho collision guard)", async () => {
     const config = await loadConfig({})
-    const rewrites = (await config.rewrites!()) as Array<{
-      source: string
-      destination: string
-    }>
-    const apiRewrite = rewrites.find((r) => r.source === "/api/:path*")
+    const rewrites = (await config.rewrites!()) as {
+      beforeFiles: Array<{ source: string; destination: string }>
+      afterFiles: Array<{ source: string; destination: string }>
+    }
+    const apiRewrite = rewrites.afterFiles.find((r) => r.source === "/api/:path*")
     expect(apiRewrite).toBeDefined()
     expect(apiRewrite!.destination).not.toMatch(/^http:\/\/localhost:8000(\/|$)/)
   })
 
-  it("returns only LightRAG rewrites when API_SERVER_URL host matches NEXT_PUBLIC_APP_URL host (loop guard)", async () => {
+  it("returns corpus index + LightRAG rewrites when API_SERVER_URL host matches NEXT_PUBLIC_APP_URL host (loop guard)", async () => {
     const config = await loadConfig({
       API_SERVER_URL: "https://nucpot.dpdns.org",
       NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual(lightragRewrites())
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: lightragRewrites(),
+    })
   })
 
-  it("keeps both /api/* and LightRAG rewrites when DISABLE_API_REWRITE=false (explicit opt-in)", async () => {
+  it("keeps /api/*, corpus index, and LightRAG rewrites when DISABLE_API_REWRITE=false (explicit opt-in)", async () => {
     const config = await loadConfig({
       API_SERVER_URL: "http://localhost:8000",
       DISABLE_API_REWRITE: "false",
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual([
-      {
-        source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
-      },
-      ...lightragRewrites(),
-    ])
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: "http://localhost:8000/api/:path*",
+        },
+        ...lightragRewrites(),
+      ],
+    })
   })
 
   // NFM-2547: Staging has no nginx upstream, so Next.js must proxy /api/*
@@ -160,19 +189,42 @@ describe("next.config.ts rewrites", () => {
   // (Pre-NFM-2786 the fallback was localhost:8100; it is now the Docker-
   // internal service DNS — staging still wants the explicit staging DNS
   // name so the rewrite resolves inside the nucpot-staging-* network.)
-  it("proxies /api/* to staging API container + LightRAG (NFM-2547 staging config)", async () => {
+  it("proxies /api/* to staging API container + corpus index + LightRAG (NFM-2547 staging config)", async () => {
     const config = await loadConfig({
       API_SERVER_URL: "http://nucpot-staging-api:8000",
       LIGHTRAG_WEBUI_URL: "http://nucpot-staging-lightrag:9621",
       // DISABLE_API_REWRITE intentionally NOT set — staging needs the rewrite.
     })
     const rewrites = await config.rewrites!()
-    expect(rewrites).toEqual([
-      {
-        source: "/api/:path*",
-        destination: "http://nucpot-staging-api:8000/api/:path*",
-      },
-      ...lightragRewrites("http://nucpot-staging-lightrag:9621"),
-    ])
+    expect(rewrites).toEqual({
+      beforeFiles: [corpusIndexRewrite],
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: "http://nucpot-staging-api:8000/api/:path*",
+        },
+        ...lightragRewrites("http://nucpot-staging-lightrag:9621"),
+      ],
+    })
+  })
+
+  // NFM-3303 regression guard: the corpus index rewrite must ALWAYS be in
+  // beforeFiles (it has to shadow the build-time static file in public/ —
+  // afterFiles would never fire because static files match first).
+  it("always mounts the corpus index rewrite in beforeFiles, in every env scenario", async () => {
+    for (const env of [
+      { DISABLE_API_REWRITE: "true" },
+      { API_SERVER_URL: "https://nucpot.dpdns.org", NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org" },
+      {},
+    ]) {
+      const config = await loadConfig(env)
+      const rewrites = (await config.rewrites!()) as {
+        beforeFiles: Array<{ source: string; destination: string }>
+      }
+      expect(
+        rewrites.beforeFiles.some((r) => r.source === "/ontology-viewer/data/corpus/index.json"),
+        `scenario ${JSON.stringify(env)} missing corpus index rewrite`,
+      ).toBe(true)
+    }
   })
 })
