@@ -20,7 +20,6 @@
  */
 
 const VIEWER_ENTRY = "/ontology-viewer/index.html";
-const DEFAULT_DATA_URL = "/ontology-viewer/data/nvl_ontology_data.json";
 
 /**
  * Reusable host container styles — fills the parent flex area exactly.
@@ -76,11 +75,13 @@ export function buildOntologyViewerSrc(
   const params = new URLSearchParams();
   params.set("embed", "false");
 
-  // Corpus param takes precedence — viewer resolves data URL from corpus manifest.
+  // NFM-3325: stop pinning ?data=...nvl_ontology_data.json. When neither
+  // corpus nor data is provided the viewer fetches corpus/index.json and
+  // renders its dropdown — exposing the dynamic corpora NFM-3303 wired up.
+  // If we were to keep pinning data= here, the dropdown would be silently
+  // bypassed (viewer skips manifest fetch when ?data is present).
   if (corpus) {
     params.set("corpus", corpus);
-  } else {
-    params.set("data", DEFAULT_DATA_URL);
   }
 
   if (node) {
