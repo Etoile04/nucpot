@@ -70,9 +70,15 @@ export async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  // NFM-3362: always opt out of caching. The shared endpoint mix includes
+  // rapidly-mutating resources (literature list, upload responses, auth
+  // cookies) where stale reads block the user. Next.js 13+ defaults fetch()
+  // to `force-cache` unless told otherwise, and intermediaries will still
+  // honour `cache: "no-store"` as a hard opt-out.
   const response = await fetch(path, {
     ...options,
     credentials: "include",
+    cache: "no-store",
     headers: buildHeaders(
       options.headers as Record<string, string> | undefined,
     ),
