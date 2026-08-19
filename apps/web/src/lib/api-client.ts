@@ -533,7 +533,7 @@ export const literatureApi = {
       const body = (await response.json().catch(() => null)) as
         | { detail?: string }
         | null
-      throw new Error(body?.detail ?? `上传失败 (${response.status})`)
+      throw new Error(body?.detail ? `${body.detail} (${response.status})` : `上传失败 (${response.status})`)
     }
     const env = (await response.json()) as LiteratureUploadEnvelope
     return env.data

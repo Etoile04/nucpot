@@ -304,13 +304,22 @@ export default function LiteratureManager() {
         // Defer drawer open so the user sees the success message first
         setTimeout(() => void openDetail(resp.literature_id), 600)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "上传失败"
-        message.open({
-          key,
-          type: "error",
-          content: `上传失败：${msg}`,
-          duration: 8,
-        })
+        if (err instanceof Error && err.message.includes("403")) {
+          message.open({
+            key,
+            type: "error",
+            content: "需要编辑者(Editor)或管理员(Admin)权限才能上传文献，请联系管理员申请权限",
+            duration: 5,
+          })
+        } else {
+          const msg = err instanceof Error ? err.message : "上传失败"
+          message.open({
+            key,
+            type: "error",
+            content: `上传失败：${msg}`,
+            duration: 8,
+          })
+        }
       } finally {
         setUploading(false)
       }
