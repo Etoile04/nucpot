@@ -171,6 +171,27 @@ This reduces cascade CI waste. The hourly workflow handles this automatically,
 but a manual update before merge/review is still good practice to avoid stale
 review approvals being dismissed.
 
+### Auto-merge
+
+After a PR receives 1 approving review and all required status checks are
+green, use **auto-merge** instead of manual merge:
+
+```bash
+gh pr merge <PR_NUMBER> --auto --squash
+```
+
+This queues the PR for automatic squash-merge once CI passes. Benefits:
+
+- **No need to watch for CI completion** — GitHub merges automatically when green.
+- **Reduces CI cascade on remaining PRs** — the merge lands as soon as checks
+  pass rather than waiting for a human to click merge.
+
+**Prerequisites (already configured):**
+
+- PR must have at least 1 approving review (required by branch protection).
+- All required status checks (Frontend, Backend, commit-ref-gate) must pass.
+- Repo setting *Allow auto-merge* is enabled.
+
 See [`docs/verification/PR-GOVERNANCE.md`](docs/verification/PR-GOVERNANCE.md) for the
 full governance specification.
 
