@@ -10,19 +10,20 @@ import OntologyViewerFrame, {
  */
 
 describe("buildOntologyViewerSrc", () => {
-  it("produces the determinate embed src pointing at the vendored corpus", () => {
+  it("omits ?data= when no corpus is provided (NFM-3325) — viewer fetches corpus/index.json and renders its dropdown", () => {
     expect(buildOntologyViewerSrc()).toBe(
-      "/ontology-viewer/index.html?embed=false&data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json",
+      "/ontology-viewer/index.html?embed=false",
     );
+    expect(buildOntologyViewerSrc()).not.toContain("data=");
   });
 
   it("appends a node deep-link param when a node id is supplied", () => {
     expect(buildOntologyViewerSrc("Material")).toBe(
-      "/ontology-viewer/index.html?embed=false&data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json&node=Material",
+      "/ontology-viewer/index.html?embed=false&node=Material",
     );
   });
 
-  it("passes corpus param instead of data when corpus is provided (NFM-610)", () => {
+  it("passes corpus param when corpus is provided (NFM-610)", () => {
     const src = buildOntologyViewerSrc(undefined, "ontofuel");
     expect(src).toContain("corpus=ontofuel");
     expect(src).not.toContain("data=");
@@ -45,9 +46,8 @@ describe("OntologyViewerFrame", () => {
     const src = frame.getAttribute("src") ?? "";
     expect(src).toContain("/ontology-viewer/index.html");
     expect(src).toContain("embed=false");
-    expect(src).toContain(
-      "data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json",
-    );
+    // NFM-3325: no data= pinning — corpus dropdown inside viewer is reachable.
+    expect(src).not.toContain("data=");
     expect(src).not.toContain("node=");
   });
 

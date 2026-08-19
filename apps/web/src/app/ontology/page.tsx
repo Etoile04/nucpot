@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import OntologyRecordRef from '@/components/ontology/OntologyRecordRef';
+import OntologyCorpusBrowser from '@/components/ontology/OntologyCorpusBrowser';
 
 export const metadata: Metadata = {
   title: '本体可视化 - NFMD',
@@ -17,15 +17,6 @@ export default async function OntologyPage({ searchParams }: OntologyPageProps) 
   const safeNode = node && node.length <= 200 ? node : undefined;
   const safeCorpus = corpus && corpus.length <= 200 ? corpus : undefined;
   return (
-    <div className="ontology-page" style={{
-      position: 'fixed',
-      top: '65px',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      overflow: 'hidden',
-    }}>
-      <OntologyRecordRef node={safeNode} corpus={safeCorpus} />
-    </div>
+    <OntologyCorpusBrowser node={safeNode} corpus={safeCorpus} />
   );
 }
