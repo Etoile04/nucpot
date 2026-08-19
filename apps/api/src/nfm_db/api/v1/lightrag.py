@@ -1,9 +1,17 @@
-"""LightRAG sidecar integration endpoints (NFM-862, NFM-1223).
+"""LightRAG sidecar integration endpoints (NFM-862, NFM-1223, NFM-3368).
 
 Provides:
   GET  /lightrag/health  — check LightRAG service availability
   POST /lightrag/ingest   — ingest document text into the knowledge graph
   POST /lightrag/query    — semantic query against the knowledge graph
+
+NFM-3368 error-handling contract:
+  - All upstream exceptions are logged at WARNING level with full detail
+    (httpx status code, response body snippet, exception chain) so operators
+    can debug outages without raw error strings reaching the user.
+  - The user-facing API body contains a clean, generic message — no raw
+    ``LightRAG query failed:`` prefix, no leaked HTTP status codes, no
+    internal exception text.
 """
 
 from __future__ import annotations
@@ -30,6 +38,12 @@ from nfm_db.services.lightrag_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+# User-facing fallback message (NFM-3368 AC-2). Never contains raw exception
+# text — operators should consult server logs for the full detail.
+_FALLBACK_USER_MESSAGE = (
+    "Semantic search temporarily unavailable, please use keyword search"
+)
 
 router = APIRouter(tags=["LightRAG"])
 
@@ -132,16 +146,27 @@ async def ingest_document(
             ),
         )
     except LightRAGClientError as exc:
-        logger.error("LightRAG ingest error: %s", exc)
+        # NFM-3368 AC-1: preserve full detail (status code, body snippet) in log;
+        # AC-2: never leak raw exception text to the user.
+        logger.warning(
+            "LightRAG ingest error: %s",
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
-            error=f"LightRAG service error: {exc}",
+            error=_FALLBACK_USER_MESSAGE,
         )
     except Exception as exc:
-        logger.error("Unexpected ingest error: %s", exc)
+        # NFM-3368 AC-1 + AC-2: log full detail, return clean user-facing message.
+        logger.warning(
+            "Unexpected ingest error: %s",
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
-            error=f"Ingest failed: {exc}",
+            error=_FALLBACK_USER_MESSAGE,
         )
 
 
@@ -182,14 +207,25 @@ async def query_knowledge_graph(
             ),
         )
     except LightRAGClientError as exc:
-        logger.error("LightRAG query error: %s", exc)
+        # NFM-3368 AC-1: preserve full detail (status code, body snippet) in log;
+        # AC-2: never leak raw exception text to the user.
+        logger.warning(
+            "LightRAG query error: %s",
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
-            error=f"LightRAG service error: {exc}",
+            error=_FALLBACK_USER_MESSAGE,
         )
     except Exception as exc:
-        logger.error("Unexpected query error: %s", exc)
+        # NFM-3368 AC-1 + AC-2: log full detail, return clean user-facing message.
+        logger.warning(
+            "Unexpected query error: %s",
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
-            error=f"Query failed: {exc}",
+            error=_FALLBACK_USER_MESSAGE,
         )

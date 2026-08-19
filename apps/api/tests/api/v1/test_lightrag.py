@@ -157,7 +157,7 @@ async def test_ingest_without_file_source(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_ingest_client_error(async_client: AsyncClient) -> None:
-    """POST /lightrag/ingest returns success=False on LightRAGClientError."""
+    """POST /lightrag/ingest returns success=False on LightRAGClientError (NFM-3368)."""
     with patch(
         "nfm_db.api.v1.lightrag._get_client",
     ) as mock_get_client:
@@ -175,12 +175,15 @@ async def test_ingest_client_error(async_client: AsyncClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is False
-    assert "LightRAG service error" in body["error"]
+    # AC-2: clean user-facing message
+    assert "LightRAG ingest failed" not in body["error"]
+    assert "HTTP 500" not in body["error"]
+    assert "temporarily unavailable" in body["error"]
 
 
 @pytest.mark.asyncio
 async def test_ingest_unexpected_error(async_client: AsyncClient) -> None:
-    """POST /lightrag/ingest returns success=False on unexpected exception."""
+    """POST /lightrag/ingest returns success=False on unexpected exception (NFM-3368)."""
     with patch(
         "nfm_db.api.v1.lightrag._get_client",
     ) as mock_get_client:
@@ -196,7 +199,10 @@ async def test_ingest_unexpected_error(async_client: AsyncClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is False
-    assert "Ingest failed" in body["error"]
+    # AC-2: clean user-facing message
+    assert "Ingest failed" not in body["error"]
+    assert "Unexpected crash" not in body["error"]
+    assert "temporarily unavailable" in body["error"]
 
 
 @pytest.mark.asyncio
@@ -421,7 +427,11 @@ async def test_query_naive_mode(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_query_client_error(async_client: AsyncClient) -> None:
-    """POST /lightrag/query returns success=False on LightRAGClientError."""
+    """POST /lightrag/query returns success=False on LightRAGClientError (NFM-3368).
+
+    Body uses the clean user-facing fallback message; the raw exception text
+    is preserved only in the server-side WARNING log.
+    """
     with patch(
         "nfm_db.api.v1.lightrag._get_client",
     ) as mock_get_client:
@@ -439,12 +449,15 @@ async def test_query_client_error(async_client: AsyncClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is False
-    assert "LightRAG service error" in body["error"]
+    # AC-2: clean user-facing message, no raw exception text leaked
+    assert "LightRAG query failed" not in body["error"]
+    assert "HTTP 503" not in body["error"]
+    assert "temporarily unavailable" in body["error"]
 
 
 @pytest.mark.asyncio
 async def test_query_unexpected_error(async_client: AsyncClient) -> None:
-    """POST /lightrag/query returns success=False on unexpected exception."""
+    """POST /lightrag/query returns success=False on unexpected exception (NFM-3368)."""
     with patch(
         "nfm_db.api.v1.lightrag._get_client",
     ) as mock_get_client:
@@ -460,7 +473,115 @@ async def test_query_unexpected_error(async_client: AsyncClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is False
-    assert "Query failed" in body["error"]
+    # AC-2: clean user-facing message
+    assert "Query failed" not in body["error"]
+    assert "Timeout" not in body["error"]
+    assert "temporarily unavailable" in body["error"]
+
+
+# ===========================================================================
+# NFM-3368 — Error message verbosity (AC-1, AC-2)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_query_returns_clean_message_on_client_error(
+    async_client: AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC-1 + AC-2: on LightRAGClientError the API body is clean and the log keeps detail.
+
+    The user-facing error must NOT contain the raw 'LightRAG query failed:' prefix.
+    The full original exception (status code + body snippet) must be preserved
+    server-side at WARNING level so operators can debug.
+    """
+    import logging
+
+    full_error = (
+        "LightRAG query failed: HTTP 503 - "
+        '{"detail":"upstream dependency unavailable"}'
+    )
+    with patch(
+        "nfm_db.api.v1.lightrag._get_client",
+    ) as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.query.side_effect = LightRAGClientError(full_error)
+        mock_get_client.return_value = mock_client
+
+        with caplog.at_level(logging.WARNING):
+            response = await async_client.post(
+                "/api/v1/lightrag/query",
+                json={"query": "What is UO2?"},
+            )
+
+    body = response.json()
+    assert body["success"] is False
+    # AC-2: user-facing error must NOT contain the raw LightRAG error string
+    assert "LightRAG query failed" not in body["error"], (
+        f"User-facing error leaked raw LightRAG message: {body['error']!r}"
+    )
+    assert "HTTP 503" not in body["error"], (
+        f"User-facing error leaked HTTP status: {body['error']!r}"
+    )
+    # Should be a clean user-friendly message
+    assert "temporarily" in body["error"].lower() or "unavailable" in body["error"].lower()
+
+    # AC-1: full detail preserved in server-side WARNING log
+    warning_msgs = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ]
+    joined = " ".join(warning_msgs)
+    assert "HTTP 503" in joined, (
+        f"Expected 'HTTP 503' in WARNING log, got: {joined!r}"
+    )
+    assert "upstream dependency unavailable" in joined, (
+        f"Expected body snippet in WARNING log, got: {joined!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_returns_clean_message_on_unexpected_error(
+    async_client: AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC-1 + AC-2: on unexpected exception the API body is clean and the log keeps detail.
+
+    Non-LightRAGClientError exceptions must produce a clean user-facing message
+    (no 'Query failed:' or traceback text). Full detail preserved at WARNING.
+    """
+    import logging
+
+    with patch(
+        "nfm_db.api.v1.lightrag._get_client",
+    ) as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.query.side_effect = RuntimeError(
+            "internal: pydantic validation error: field 'foo' missing"
+        )
+        mock_get_client.return_value = mock_client
+
+        with caplog.at_level(logging.WARNING):
+            response = await async_client.post(
+                "/api/v1/lightrag/query",
+                json={"query": "Tell me about fuel"},
+            )
+
+    body = response.json()
+    assert body["success"] is False
+    # AC-2: no leak of internal exception text
+    assert "pydantic validation error" not in body["error"], (
+        f"User-facing error leaked internal exception: {body['error']!r}"
+    )
+    assert "Query failed" not in body["error"], (
+        f"User-facing error leaked implementation prefix: {body['error']!r}"
+    )
+
+    # AC-1: full detail preserved server-side
+    warning_msgs = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ]
+    joined = " ".join(warning_msgs)
+    assert "pydantic validation error" in joined, (
+        f"Expected internal exception detail in WARNING log, got: {joined!r}"
+    )
 
 
 @pytest.mark.asyncio

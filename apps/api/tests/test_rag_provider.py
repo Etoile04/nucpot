@@ -7,6 +7,7 @@ All external services are mocked:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -319,3 +320,133 @@ class TestRAGProviderSelector:
         status = selector.status
         assert status.active_provider == "lightrag"
         client.health_check.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # NFM-3368 — Broad exception fallback (AC-1, AC-2, AC-4)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_query_falls_back_on_unexpected_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """AC-1 + AC-2: unexpected exceptions must trigger PG fallback (not propagate).
+
+        LightRAG may raise exceptions that are not LightRAGClientError subclasses
+        (e.g. JSONDecodeError, RuntimeError, asyncio.TimeoutError). The selector
+        must catch these broadly and fall back to the rule-based provider, while
+        logging the full exception detail at WARNING level server-side.
+        """
+        client = _make_mock_lightrag_client(healthy=True)
+        client.query = AsyncMock(
+            side_effect=RuntimeError("upstream crashed: schema validation failed")
+        )
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = await selector.query(query="test")
+
+        # Fallback must succeed (returns fallback=True) — no exception leaks
+        assert result.fallback is True
+        assert result.provider == "rule-based-fallback"
+
+        # AC-1: full exception detail must be preserved server-side at WARNING
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "upstream crashed: schema validation failed" in r.getMessage()
+            for r in warning_records
+        ), (
+            "Expected WARNING log to contain full exception message, "
+            f"got: {[r.getMessage() for r in warning_records]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_raises_when_both_providers_fail(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """AC-4: when LightRAG and PG fallback both fail, raise HTTPException 503.
+
+        A clean 503 with a user-friendly message (no internal exception text)
+        must be raised.  The full exception chain must be logged at WARNING
+        server-side so operators can debug the outage.
+        """
+        from fastapi import HTTPException
+
+        client = _make_mock_lightrag_client(healthy=True)
+        client.query = AsyncMock(
+            side_effect=LightRAGClientError(
+                "LightRAG query failed: HTTP 503 - upstream down"
+            )
+        )
+        # DB fallback also fails
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=RuntimeError("database connection lost"))
+
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(HTTPException) as exc_info:
+                await selector.query(query="test")
+
+        # AC-4: 503 status
+        assert exc_info.value.status_code == 503
+
+        # AC-2: response body must NOT contain raw LightRAG or DB exception text
+        detail = str(exc_info.value.detail)
+        assert "LightRAG" not in detail, (
+            f"User-facing message leaked 'LightRAG': {detail!r}"
+        )
+        assert "database connection lost" not in detail, (
+            f"User-facing message leaked DB exception: {detail!r}"
+        )
+
+        # AC-1: full exception chain logged at WARNING server-side
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        messages = " ".join(r.getMessage() for r in warning_records)
+        assert "LightRAG" in messages or "HTTP 503" in messages, (
+            f"Expected WARNING log to preserve LightRAG detail, got: {messages!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_logs_full_exception_detail_on_failure(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """AC-1: server-side WARNING log must contain the full original exception.
+
+        When LightRAG fails with an httpx-style error like
+        'HTTP 500 - {"detail":"internal error"}', the WARNING record must
+        contain both the status code and the body snippet — not a truncated
+        version like 'LightRAG query failed:'.
+        """
+        client = _make_mock_lightrag_client(healthy=True)
+        full_error_msg = (
+            "LightRAG query failed: HTTP 500 - "
+            '{"detail":"upstream timeout after 30s"}'
+        )
+        client.query = AsyncMock(side_effect=LightRAGClientError(full_error_msg))
+        db = _make_mock_db()
+
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await selector.query(query="test")
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        joined = " ".join(r.getMessage() for r in warning_records)
+
+        # AC-1: full status code AND body snippet preserved (not truncated)
+        assert "HTTP 500" in joined, (
+            f"Expected 'HTTP 500' in WARNING log, got: {joined!r}"
+        )
+        assert "upstream timeout" in joined, (
+            f"Expected body snippet in WARNING log, got: {joined!r}"
+        )

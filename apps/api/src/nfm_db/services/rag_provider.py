@@ -26,6 +26,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -330,12 +331,43 @@ class RAGProviderSelector:
         return self._lightrag
 
     async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        """Query using LightRAG with automatic fallback on error."""
+        """Query using LightRAG with automatic fallback on any failure.
+
+        Broad ``except Exception`` (NFM-3368) ensures non-wrapped exceptions
+        (JSONDecodeError, RuntimeError, asyncio.TimeoutError, etc.) also
+        trigger the PG full-text fallback rather than propagating as 500.
+
+        Raises HTTPException(503) only when BOTH providers fail. The full
+        original exception detail is logged at WARNING level so operators
+        can debug the outage; the user-facing detail is a clean message
+        with no internal exception text.
+        """
         try:
             return await self._lightrag.query(query=query, **kwargs)
-        except LightRAGClientError:
-            logger.warning("LightRAG query failed, falling back to rule-based")
-            return await self._fallback.query(query=query, **kwargs)
+        except Exception as lightrag_exc:
+            # AC-1: full detail preserved server-side (status code, body snippet, etc.)
+            logger.warning(
+                "LightRAG query failed, falling back to rule-based: %s",
+                lightrag_exc,
+                exc_info=True,
+            )
+            try:
+                return await self._fallback.query(query=query, **kwargs)
+            except Exception as fallback_exc:
+                logger.warning(
+                    "Rule-based fallback query also failed: %s",
+                    fallback_exc,
+                    exc_info=True,
+                )
+                # AC-4: 503 when no results available due to service failure
+                # AC-2: detail is clean user-facing text — no leaked exception
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Semantic search temporarily unavailable, "
+                        "please use keyword search"
+                    ),
+                ) from fallback_exc
 
     async def ingest(self, *, text: str, source: str | None = None) -> str | None:
         """Ingest using LightRAG with automatic fallback on error.
