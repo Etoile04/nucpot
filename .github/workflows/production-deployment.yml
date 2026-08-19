@@ -470,6 +470,11 @@ jobs:
         run: |
           python3 -m pytest tools/pre-deploy-assert-smoke/test_assert.py -v
           python3 -m pytest tools/migration-on-main-assert/test_assert.py -v
+          # NFM-3320 AC-4: post-deploy cutover assertion. Runs without
+          # Docker (fake-docker shim on PATH) so it executes on PR runners.
+          # Catches logical regressions in the cutover assertion even when
+          # the live-Docker deploy-prod job is skipped.
+          python3 -m pytest tools/post-deploy-cutover-assert/test_assert.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
@@ -618,6 +623,26 @@ jobs:
             # apps/api/migrations/env.py for the lock primitive.
             ./scripts/prod_migrate.sh
 
+            # NFM-3320 AC-1/AC-2 — post-deploy cutover assertion. The 2026-08-18
+            # incident showed that `docker compose ... up -d` can return success
+            # while leaving the old containers in place. We now snapshot every
+            # nucpot-prod-* service container before `up -d` (Image ID + Created
+            # timestamp) and re-assert after, refusing to declare a green deploy
+            # unless each running container's Image ID matches a SHA-tagged image
+            # that was actually built this run, AND its Created timestamp moved
+            # forward. Distinct exit codes (71/72/73/74) let the workflow branch
+            # (skipped/failure) on the failure type.
+            #
+            # The snapshot directory lives on the host because the deploy-prod
+            # job runs on the Mac Studio self-hosted runner (loopback SSH) and
+            # /tmp survives both phases inside the same heredoc.
+            export NFM_CUTOVER_SNAPSHOT_DIR="/tmp/nfm-cutover-${PROD_IMAGE_TAG}"
+            rm -rf "${NFM_CUTOVER_SNAPSHOT_DIR}"
+            echo "==> Capturing BEFORE snapshot of nucpot-prod-* containers..."
+            bash tools/post-deploy-cutover-assert/assert.sh \
+              --phase before \
+              --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}"
+
             # Restart ALL containers using the SHA-tagged images. PROD_IMAGE_TAG
             # resolves each service's `image:` (docker-compose.prod.yml:62, :126,
             # :216, :275) to the matching SHA-tagged image we just built.
@@ -628,6 +653,24 @@ jobs:
 
             # Wait for services to start
             sleep 20
+
+            # NFM-3320 AC-1/AC-2 (continued) — AFTER-phase assertion. Hard-fails
+            # the deploy step on image-digest mismatch (exit 71), no-recreate
+            # (exit 72), missing expected tag (exit 73), or missing service
+            # container (exit 74). On success, prints the before/after cutover
+            # table so the reviewer can confirm a real cutover happened.
+            #
+            # This must run BEFORE the curl health checks — the original 2026-08-18
+            # bug was: curl against the old (still-healthy) containers returns
+            # 200 and the workflow reports green. The whole point of this
+            # assertion is to be the FIRST signal that the new code is live, with
+            # health checks serving as confirmation rather than the gate.
+            echo "==> Asserting post-deploy cutover (expected tag: ${PROD_IMAGE_TAG})..."
+            bash tools/post-deploy-cutover-assert/assert.sh \
+              --phase after \
+              --expected-tag "${PROD_IMAGE_TAG}" \
+              --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}" \
+              --distinct-exit 71
 
             # Schema authority: Alembic-only (ADR-NFM-2139 §5 D4, deploy-time
             # migration per §5 D3 — NFM-2146). All DDL is applied through
