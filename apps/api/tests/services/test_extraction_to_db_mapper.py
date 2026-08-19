@@ -25,6 +25,7 @@ from nfm_db.services.extraction_to_db_mapper import (
     ONTOFUEL_CATEGORY_TO_SLUG,
     MappingError,
     MappingResult,
+    _coerce_heuristic_payload,
     _normalize_category_slug,
     map_and_persist,
 )
@@ -137,19 +138,37 @@ class TestMapAndPersistValidation:
         assert result.validation_errors == 1
         assert result.created_measurements == 0
 
-    async def test_invalid_value_type_rejected(self, db_session: AsyncSession):
-        """Non-string value field should be rejected."""
+    async def test_float_value_now_coerced_and_validates(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Numeric ``value`` is now coerced to string (NFM-3374).
+
+        Before NFM-3374, ``value: 8.5`` raised ``ValidationError`` and the
+        item was silently dropped. After NFM-3374, the mapper coerces
+        numeric values to their ``str()`` representation, so the
+        heuristic-shaped payload validates and the rest of the pipeline
+        decides whether to persist (via PropertyType lookup).
+
+        Property "Thermal Conductivity" is intentionally NOT seeded, so
+        the mapper hits ``skipped_unknown_properties`` — the point of
+        this test is the coercion, not the persistence.
+        """
         bad_input = [
             {
                 "property": "Thermal Conductivity",
-                "value": 8.5,  # must be string per ExtractedProperty schema
+                "value": 8.5,  # float → coerced to "8.5"
                 "unit": "W/(m·K)",
             }
         ]
 
         result = await map_and_persist(db_session, bad_input)
 
-        assert result.validation_errors == 1
+        # Coercion succeeded → no validation errors.
+        assert result.validation_errors == 0
+        # PropertyType not seeded → item is skipped at the lookup stage,
+        # not at the schema stage. This proves the coercion layer let it
+        # through to the second phase.
+        assert result.skipped_unknown_properties == 1
         assert result.created_measurements == 0
 
 
@@ -1341,3 +1360,263 @@ class TestFiveTupleMeasurementDedup:
 
         assert result.created_measurements == 1
         assert result.skipped_duplicates == 1
+
+
+# ---------------------------------------------------------------------------
+# Heuristic-payload coercion (NFM-3374)
+# ---------------------------------------------------------------------------
+# The heuristic_regex fallback path emits items with a different shape than
+# what ``ExtractedProperty`` accepts:
+#   - field name is ``property_name`` instead of ``property``
+#   - ``value`` is a float instead of a string
+# Without coercion, every heuristic item raises ValidationError and the batch
+# is silently dropped (the pipeline reports ``extracted: 4`` but writes 0
+# rows).  ``_coerce_heuristic_payload`` normalises both shapes into the
+# canonical ``ExtractedProperty`` schema.
+
+
+@pytest.mark.unit
+class TestCoerceHeuristicPayload:
+    """Unit tests for the heuristic→canonical-payload coercion."""
+
+    def test_property_name_alias_to_property(self) -> None:
+        """``property_name`` is aliased to ``property`` when ``property`` missing."""
+        raw: dict[str, Any] = {
+            "property_name": "activation_energy",
+            "value": "0.3",
+            "unit": "eV",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+        assert coerced["property"] == "activation_energy"
+        # Original dict must not be mutated (immutable contract).
+        assert "property" not in raw
+
+    def test_float_value_coerced_to_string(self) -> None:
+        """Float ``value`` is coerced to its string representation."""
+        raw: dict[str, Any] = {
+            "property": "activation_energy",
+            "value": 0.3,
+            "unit": "eV",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+        assert coerced["value"] == "0.3"
+        assert isinstance(coerced["value"], str)
+        # Original dict must not be mutated.
+        assert isinstance(raw["value"], float)
+
+    def test_int_value_coerced_to_string(self) -> None:
+        """Int ``value`` is coerced to its string representation (heuristic may emit ints)."""
+        raw: dict[str, Any] = {
+            "property": "melting_point",
+            "value": 2800,
+            "unit": "K",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+        assert coerced["value"] == "2800"
+
+    def test_combined_alias_and_float_coercion(self) -> None:
+        """Both aliasing and float coercion apply in a single call."""
+        raw: dict[str, Any] = {
+            "property_name": "activation_energy",
+            "value": 0.3,
+            "unit": "eV",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+        assert coerced["property"] == "activation_energy"
+        assert coerced["value"] == "0.3"
+
+    def test_property_takes_precedence_over_property_name(self) -> None:
+        """When both ``property`` and ``property_name`` exist, ``property`` wins."""
+        raw: dict[str, Any] = {
+            "property": "canonical_name",
+            "property_name": "legacy_alias",
+            "value": "1.0",
+            "unit": "K",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+        assert coerced["property"] == "canonical_name"
+
+    def test_no_coercion_when_already_canonical(self) -> None:
+        """A canonical payload (string property + string value) is returned unchanged."""
+        raw: dict[str, Any] = {
+            "property": "thermal_conductivity",
+            "value": "8.5",
+            "unit": "W/(m·K)",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+        assert coerced == raw
+        # The returned object should be the same instance (no copy when no change).
+        assert coerced is raw
+
+    def test_non_dict_input_returned_unchanged(self) -> None:
+        """Non-dict inputs (defensive guard) are passed through."""
+        assert _coerce_heuristic_payload("not a dict") == "not a dict"  # type: ignore[arg-type]
+        assert _coerce_heuristic_payload(None) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+class TestMapAndPersistHeuristicPayload:
+    """Integration tests: heuristic-shaped items must reach the DB."""
+
+    async def test_heuristic_payload_passes_validation_and_persists(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """A heuristic_regex item with float value + ``property_name`` must write a row.
+
+        Reproduces the worker-log failure for source ``9320cb50-…``: all 4
+        heuristic items previously raised ``ValidationError`` and the
+        pipeline wrote 0 rows even though it reported ``extracted: 4``.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="activation_energy",
+            property_slug="activation-energy",
+        )
+
+        heuristic_item: dict[str, Any] = {
+            "element_system": "UO2",
+            "phase": "Unknown",
+            "property_name": "activation_energy",
+            "value": 0.3,
+            "unit": "eV",
+            "method": "heuristic_regex",
+            "source_doi": "10.1000/heuristic-test",
+            "confidence": "medium",
+            "uncertainty": 0.015,
+            "temperature": None,
+            "cache_level": "L2",
+            "property_category": "thermal",  # match _seed_property_type default
+        }
+
+        result = await map_and_persist(db_session, [heuristic_item])
+
+        assert result.validation_errors == 0
+        assert result.created_measurements == 1
+        measurements = (
+            await db_session.execute(select(PropertyMeasurement))
+        ).scalars().all()
+        assert len(measurements) == 1
+        # The float 0.3 was coerced to "0.3" then re-parsed by the mapper;
+        # value_scalar is stored as Decimal in the DB, so cast to float
+        # for comparison.
+        assert float(measurements[0].value_scalar) == pytest.approx(0.3)
+
+    async def test_multiple_heuristic_items_persist(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """All heuristic items in a batch must be persisted (>= 4 rows per AC-alpha)."""
+        await _seed_property_type(
+            db_session,
+            property_name="activation_energy",
+            property_slug="activation-energy",
+        )
+
+        items: list[dict[str, Any]] = [
+            {
+                "property_name": "activation_energy",
+                "value": 0.3,
+                "unit": "eV",
+                "source_doi": "10.1000/heuristic-batch",
+                "method": "heuristic_regex",
+                "property_category": "thermal",
+            },
+            {
+                "property_name": "activation_energy",
+                "value": 0.5,
+                "unit": "eV",
+                "source_doi": "10.1000/heuristic-batch",
+                "method": "heuristic_regex",
+                "property_category": "thermal",
+                "conditions": {"temperature": 1000},
+            },
+            {
+                "property_name": "activation_energy",
+                "value": 0.7,
+                "unit": "eV",
+                "source_doi": "10.1000/heuristic-batch",
+                "method": "heuristic_regex",
+                "property_category": "thermal",
+                "conditions": {"temperature": 1200},
+            },
+            {
+                "property_name": "activation_energy",
+                "value": 0.9,
+                "unit": "eV",
+                "source_doi": "10.1000/heuristic-batch",
+                "method": "heuristic_regex",
+                "property_category": "thermal",
+                "conditions": {"temperature": 1400},
+            },
+        ]
+
+        result = await map_and_persist(db_session, items)
+
+        assert result.validation_errors == 0
+        assert result.created_measurements >= 4
+        # AC-β: count(DISTINCT property_name) for that source ≥ 1.
+        meas_count = (
+            await db_session.execute(
+                select(PropertyMeasurement).join(Dataset).join(DataSource).where(
+                    DataSource.doi == "10.1000/heuristic-batch"
+                )
+            )
+        ).scalars().all()
+        assert len(meas_count) >= 4
+
+    async def test_heuristic_does_not_regress_llm_items(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """LLM-style items (string value + populated ``property``) still validate.
+
+        Regression guard: the coercion path must not break the canonical
+        LLM extraction flow.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="thermal_conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        llm_item = _make_extracted_property(
+            property_name="thermal_conductivity",
+            value="8.5",  # string — canonical LLM shape
+            unit="W/(m·K)",
+        )
+        heuristic_item: dict[str, Any] = {
+            "property_name": "thermal_conductivity",
+            "value": 9.2,  # float — heuristic shape
+            "unit": "W/(m·K)",
+            "source_doi": "10.1000/mixed",
+            "method": "heuristic_regex",
+            "property_category": "thermal",  # match _seed_property_type default
+        }
+
+        result = await map_and_persist(db_session, [llm_item, heuristic_item])
+
+        assert result.validation_errors == 0
+        assert result.created_measurements == 2
+
+    async def test_payload_missing_both_property_and_property_name_still_rejected(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Coercion must not invent a property name when both are absent.
+
+        Without ``property`` AND ``property_name``, the item is genuinely
+        invalid; the validator should still reject it (validation_errors=1).
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="thermal_conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        bad_item: dict[str, Any] = {
+            "value": "8.5",
+            "unit": "W/(m·K)",
+            # no property, no property_name → still invalid
+        }
+
+        result = await map_and_persist(db_session, [bad_item])
+
+        assert result.validation_errors == 1
+        assert result.created_measurements == 0
