@@ -17,7 +17,10 @@ from alembic.script import ScriptDirectory
 from nfm_db.models import KEntityType, KRelationType
 
 REVISION = "055_add_ontology_version_fk_to_type_tables"
-DOWN_REVISION = "053_align_extraction_gap_with_adr_nfm_2675"
+# NFM-3364: 055 now chains off 057 (which creates the missing tables
+# in prod).  The migration's own DDL is unchanged — only the chain
+# rewiring changed.
+DOWN_REVISION = "057_create_kg_entity_and_relation_type_tables"
 MIGRATION_PATH = f"migrations/versions/{REVISION}.py"
 
 FK_TARGET = "ontology_versions.id"
@@ -44,8 +47,8 @@ class TestMigrationChain:
         assert rev is not None, f"Migration {REVISION!r} not registered"
         assert rev.revision == REVISION
 
-    def test_down_revision_is_053(self, script_directory: ScriptDirectory) -> None:
-        """055 must chain off 053, the current sequential head."""
+    def test_down_revision_is_057(self, script_directory: ScriptDirectory) -> None:
+        """055 must chain off 057 (NFM-3364), which is itself a child of 053."""
         rev = script_directory.get_revision(REVISION)
         assert rev is not None
         assert rev.down_revision == DOWN_REVISION, (

@@ -17,7 +17,12 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "055_add_ontology_version_fk_to_type_tables"
-down_revision: str | Sequence[str] | None = "053_align_extraction_gap_with_adr_nfm_2675"
+# NFM-3364: rewired to chain off 057, which creates the underlying
+# tables if they are missing (production DB was bootstrapped via a
+# partial ``Base.metadata.create_all()`` and lacked kg_entity_types
+# / kg_relation_types entirely).  055's ADD COLUMN statements would
+# otherwise fail with UndefinedTableError on prod.
+down_revision: str | Sequence[str] | None = "057_create_kg_entity_and_relation_type_tables"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
