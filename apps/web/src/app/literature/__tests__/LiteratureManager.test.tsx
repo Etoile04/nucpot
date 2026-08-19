@@ -32,6 +32,23 @@ import {
 } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
+// `LiteratureManager` imports the full antd v5 component tree (Dragger,
+// Table, Descriptions, Tabs, …) plus @tanstack/react-query. Under jsdom
+// this pays a one-time cold-start cost (~5–10s) per test file, and antd
+// v5 + React 19 emits a "compatible" warning that slows the first render
+// further. CI runners under load add another 2–4s of variance on top.
+//
+// Default vitest test timeout is 5s and the @testing-library default
+// waitFor timeout is 1s — both are below our observed 2–8s per-test floor
+// and flake under any load. Bump the per-test timeout to 30s and every
+// waitFor to 10s so the suite is robust without touching production code.
+vi.setConfig({
+  testTimeout: 30_000,
+  hookTimeout: 30_000,
+})
+
+const WAITFOR_TIMEOUT = 10_000
+
 import type {
   LiteratureListItem,
   LiteratureDetail,
@@ -152,9 +169,12 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
 
     const { client } = await renderLiteratureManager()
 
-    await waitFor(() => {
-      expect(listLiterature).toHaveBeenCalledTimes(1)
-    })
+    await waitFor(
+      () => {
+        expect(listLiterature).toHaveBeenCalledTimes(1)
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     // Trigger invalidation directly. In the real component this happens
     // inside the uploadMutation.onSuccess callback — exactly:
@@ -163,9 +183,12 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
     // rendered client's cache.
     await client.invalidateQueries({ queryKey: ["literature-list"] })
 
-    await waitFor(() => {
-      expect(listLiterature.mock.calls.length).toBeGreaterThanOrEqual(2)
-    })
+    await waitFor(
+      () => {
+        expect(listLiterature.mock.calls.length).toBeGreaterThanOrEqual(2)
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     // After invalidation, QueryClient should have a fresh cache entry.
     // The actual key is `["literature-list", 1, filters]`, so we use
@@ -175,7 +198,7 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
       .findAll({ queryKey: ["literature-list"] })
     expect(listEntries.length).toBeGreaterThan(0)
     expect(listEntries[0]!.state.data).toBeDefined()
-  }, 15_000)
+  })
 
   it("AC-2: filter change creates a fresh queryKey with the new filter value", async () => {
     // Make listLiterature echo whatever filter it received, so we can
@@ -191,9 +214,12 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
 
     const { client } = await renderLiteratureManager()
 
-    await waitFor(() => {
-      expect(listLiterature).toHaveBeenCalledTimes(1)
-    })
+    await waitFor(
+      () => {
+        expect(listLiterature).toHaveBeenCalledTimes(1)
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     // Initial call has empty filters
     const firstCallArgs = listLiterature.mock.calls[0]![0]
@@ -224,9 +250,12 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
 
     await renderLiteratureManager()
 
-    await waitFor(() => {
-      expect(listLiterature).toHaveBeenCalled()
-    })
+    await waitFor(
+      () => {
+        expect(listLiterature).toHaveBeenCalled()
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     // The page-1 call must include page=1
     expect(listLiterature.mock.calls[0]![0]).toMatchObject({ page: 1 })
@@ -249,9 +278,12 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
 
     const { client } = await renderLiteratureManager()
 
-    await waitFor(() => {
-      expect(listLiterature).toHaveBeenCalled()
-    })
+    await waitFor(
+      () => {
+        expect(listLiterature).toHaveBeenCalled()
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     const callsBefore = listLiterature.mock.calls.length
 
@@ -269,17 +301,23 @@ describe("LiteratureManager (NFM-3366) — React Query refactor", () => {
     const submitBtn = screen.getByRole("button", { name: /通过 DOI 提取/ })
     fireEvent.click(submitBtn)
 
-    await waitFor(() => {
-      expect(fromDoiLiterature).toHaveBeenCalledWith(
-        "10.1016/j.jnucmat.2020.152307",
-      )
-    })
+    await waitFor(
+      () => {
+        expect(fromDoiLiterature).toHaveBeenCalledWith(
+          "10.1016/j.jnucmat.2020.152307",
+        )
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     // After DOI mutation succeeds, queryClient.invalidateQueries
     // refetches the list. Verify listLiterature was called again.
-    await waitFor(() => {
-      expect(listLiterature.mock.calls.length).toBeGreaterThan(callsBefore)
-    })
+    await waitFor(
+      () => {
+        expect(listLiterature.mock.calls.length).toBeGreaterThan(callsBefore)
+      },
+      { timeout: WAITFOR_TIMEOUT },
+    )
 
     void client // kept for symmetry with AC-1; no further assertion needed
   })
