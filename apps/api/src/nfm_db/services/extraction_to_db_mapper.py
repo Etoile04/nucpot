@@ -113,6 +113,55 @@ def _coerce_unknown_categories(raw: dict[str, Any]) -> dict[str, Any]:
         return raw
 
 
+def _coerce_heuristic_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise heuristic_regex fallback payloads to the canonical shape.
+
+    The ``heuristic_regex`` extraction path (used when the LLM is
+    unavailable or returns nothing) emits a payload shape that the strict
+    ``ExtractedProperty`` schema rejects:
+
+    - field name is ``property_name`` instead of ``property`` (the schema
+      marks ``property_name`` as ``deprecated=True`` and ``property`` is
+      ``Field(...)`` required)
+    - ``value`` is a ``float``/``int`` instead of the required ``str``
+
+    Without coercion, every heuristic item raises ``ValidationError`` and
+    the mapper silently drops the whole batch (the worker log shows
+    ``extracted: 4`` but writes 0 rows — see NFM-3374 / NFM-3369-AC-β).
+
+    This function:
+    - Returns ``raw`` unchanged when no coercion is needed (cheap fast-path
+      for the canonical LLM path).
+    - Returns a shallow copy only when a field is actually transformed —
+      never mutates the caller's dict (immutable contract).
+    - Does NOT invent a ``property`` value when both ``property`` and
+      ``property_name`` are absent; that case is genuinely invalid and
+      must surface as a ``ValidationError`` so it is counted in
+      ``validation_errors``.
+    """
+    if not isinstance(raw, dict):
+        return raw
+
+    coerced: dict[str, Any] = raw
+    needs_copy = False
+
+    # 1) property_name → property alias (only when property is absent)
+    if not raw.get("property") and raw.get("property_name"):
+        coerced = {**raw, "property": raw["property_name"]}
+        needs_copy = True
+
+    # 2) Numeric value → string value (heuristic emits raw floats/ints).
+    #    bool is a subclass of int in Python — exclude it explicitly so a
+    #    future caller passing ``value=True`` does not get stringified
+    #    silently.
+    value = coerced.get("value")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        coerced = {**coerced, "value": str(value)}
+        needs_copy = True
+
+    return coerced if needs_copy else raw
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -366,6 +415,14 @@ async def map_and_persist(
     validation_error_count = 0
 
     for idx, raw in enumerate(extraction_output):
+        # Preprocess: normalise heuristic_regex fallback shape (NFM-3374).
+        # The heuristic emits ``property_name`` (alias for ``property``)
+        # and a numeric ``value``; both are rejected by the strict
+        # ExtractedProperty schema, so the whole batch would otherwise be
+        # silently dropped.  This must run BEFORE _coerce_unknown_categories
+        # so the alias is in place when Pydantic inspects the dict.
+        raw = _coerce_heuristic_payload(raw)
+
         # Preprocess: coerce unknown property_category values (e.g. Chinese
         # LLM outputs like "比热容") to "other" instead of dropping the
         # entire item. The downstream PropertyCategory catalog translates
