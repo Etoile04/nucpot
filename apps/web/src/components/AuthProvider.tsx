@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { detailToMessage } from '@/lib/admin/admin-api-utils'
 
 export interface AppUser {
   id: string
@@ -65,7 +66,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        return { error: err.detail ?? '登录失败' }
+        return { error: detailToMessage(err.detail) ?? '登录失败' }
       }
       await fetchProfile()
       return { error: null }
@@ -82,7 +83,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        return { error: err.detail ?? '注册失败' }
+        return { error: detailToMessage(err.detail) ?? '注册失败' }
       }
       return signIn(username, password)
     } catch { return { error: '网络错误' } }
