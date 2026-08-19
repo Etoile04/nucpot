@@ -62,6 +62,7 @@ import {
   type LiteratureFigure,
   type LiteratureListItem,
   type LiteratureStatus,
+  uploadErrorStatus,
 } from "@/lib/api-client"
 import {
   resolveProvenanceBadge,
@@ -304,7 +305,13 @@ export default function LiteratureManager() {
         // Defer drawer open so the user sees the success message first
         setTimeout(() => void openDetail(resp.literature_id), 600)
       } catch (err) {
-        if (err instanceof Error && err.message.includes("403")) {
+        // NFM-3359 AC-3: classify by HTTP status, not by message text. The
+        // api-client throws an `ApiError` carrying the numeric `.status`
+        // field, so a 413 whose `detail` message contains an 8-digit byte
+        // count that happens to include "403" (e.g. "File too large:
+        // 54031234 bytes (max 52428800)") is correctly routed to the
+        // generic upload-failed toast — not the permission toast.
+        if (uploadErrorStatus(err) === 403) {
           message.open({
             key,
             type: "error",
