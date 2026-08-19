@@ -20,7 +20,12 @@
  * helper redirects to /admin/login when 401 is returned.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import {
   Alert,
   Button,
@@ -107,14 +112,6 @@ const STATUS_OPTIONS = [
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-interface ListState {
-  items: readonly LiteratureListItem[]
-  total: number
-  page: number
-  loading: boolean
-  error: string | null
-}
-
 interface Filters {
   search: string
   status: LiteratureStatus | ""
@@ -129,12 +126,32 @@ const INITIAL_FILTERS: Filters = {
   yearMax: null,
 }
 
-const INITIAL_STATE: ListState = {
-  items: [],
-  total: 0,
-  page: 1,
-  loading: true,
-  error: null,
+/** TanStack Query key prefix for the paginated literature list. Mutations
+ * invalidate this key (with the prefix matcher) so every cached page
+ * refetches with the user's current filters. */
+const LITERATURE_LIST_KEY = ["literature-list"] as const
+
+/** Translate the local filter shape into the API list params. Undefined
+ * fields are dropped so they don't appear in the query string. */
+function filtersToListParams(
+  filters: Filters,
+  page: number,
+): {
+  page: number
+  limit: number
+  search?: string
+  status?: string
+  yearMin?: number
+  yearMax?: number
+} {
+  return {
+    page,
+    limit: PAGE_SIZE,
+    search: filters.search || undefined,
+    status: filters.status || undefined,
+    yearMin: filters.yearMin ?? undefined,
+    yearMax: filters.yearMax ?? undefined,
+  }
 }
 
 /**
@@ -170,83 +187,35 @@ function mapDoiError(err: unknown): string {
 // ── Component ──────────────────────────────────────────────────────────
 
 export default function LiteratureManager() {
-  const [state, setState] = useState<ListState>(INITIAL_STATE)
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS)
   const [searchInput, setSearchInput] = useState("")
+  const [page, setPage] = useState(1)
 
   const [detail, setDetail] = useState<LiteratureDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  const [uploading, setUploading] = useState(false)
-  const [ingestingDoi, setIngestingDoi] = useState(false)
+  const queryClient = useQueryClient()
 
-  // ── List fetch ───────────────────────────────────────────────────────
-  const fetchList = useCallback(
-    async (page: number = 1, f: Filters = filters) => {
-      setState((s) => ({ ...s, loading: true, error: null }))
-      try {
-        const resp = await literatureApi.list({
-          page,
-          limit: PAGE_SIZE,
-          search: f.search || undefined,
-          status: f.status || undefined,
-          yearMin: f.yearMin ?? undefined,
-          yearMax: f.yearMax ?? undefined,
-        })
-        setState({
-          items: resp.items,
-          total: resp.total,
-          page,
-          loading: false,
-          error: null,
-        })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "加载文献列表失败"
-        setState((s) => ({ ...s, loading: false, error: msg }))
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  )
+  // ── List query (NFM-3366: React Query refactor) ──────────────────────
+  // queryKey includes page + filters so each filter combination gets its
+  // own cache entry. Mutations invalidate the whole prefix to refetch.
+  const listQuery = useQuery({
+    queryKey: [...LITERATURE_LIST_KEY, page, filters] as const,
+    queryFn: () => literatureApi.list(filtersToListParams(filters, page)),
+  })
 
-  useEffect(() => {
-    void fetchList(1, INITIAL_FILTERS)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const items: readonly LiteratureListItem[] = listQuery.data?.items ?? []
+  const total: number = listQuery.data?.total ?? 0
+  const isLoading = listQuery.isLoading
+  const listError =
+    listQuery.isError && listQuery.error instanceof Error
+      ? listQuery.error.message
+      : listQuery.isError
+        ? "加载文献列表失败"
+        : null
 
-  // ── Handlers ─────────────────────────────────────────────────────────
-  const handleSearch = useCallback(() => {
-    const next = { ...filters, search: searchInput.trim() }
-    setFilters(next)
-    void fetchList(1, next)
-  }, [filters, searchInput, fetchList])
-
-  const handleStatusFilter = useCallback(
-    (status: LiteratureStatus | "") => {
-      const next = { ...filters, status }
-      setFilters(next)
-      void fetchList(1, next)
-    },
-    [filters, fetchList],
-  )
-
-  const handleYearFilter = useCallback(
-    (yearMin: number | null, yearMax: number | null) => {
-      const next = { ...filters, yearMin, yearMax }
-      setFilters(next)
-      void fetchList(1, next)
-    },
-    [filters, fetchList],
-  )
-
-  const handlePageChange = useCallback(
-    (page: number) => {
-      void fetchList(page, filters)
-    },
-    [filters, fetchList],
-  )
-
+  // ── Detail fetch (kept outside React Query — drawer state is local UI) ─
   const openDetail = useCallback(async (id: string) => {
     setDrawerOpen(true)
     setDetail(null)
@@ -262,119 +231,131 @@ export default function LiteratureManager() {
     }
   }, [])
 
-  const handleUpload = useCallback(
-    async (file: File) => {
-      // Surface the filename up front so the user can see "we got the file"
-      const key = `upload-${Date.now()}-${file.name}`
-      message.open({
-        key,
-        type: "loading",
-        content: `正在上传 ${file.name}…`,
-        duration: 0,
-      })
-
-      if (file.type !== "application/pdf") {
-        message.open({
-          key,
-          type: "error",
-          content: "仅支持 PDF 文件",
-          duration: 4,
-        })
-        return false
-      }
-      if (file.size > 50 * 1024 * 1024) {
-        message.open({
-          key,
-          type: "error",
-          content: "PDF 文件超过 50 MB 上限",
-          duration: 4,
-        })
-        return false
-      }
-      setUploading(true)
-      try {
-        const resp = await literatureApi.upload(file)
-        message.open({
-          key,
-          type: "success",
-          content: `上传成功：${file.name}（${STATUS_LABELS[resp.status as LiteratureStatus] ?? resp.status}）`,
-          duration: 3,
-        })
-        await fetchList(1, filters)
-        // Defer drawer open so the user sees the success message first
-        setTimeout(() => void openDetail(resp.literature_id), 600)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "上传失败"
-        message.open({
-          key,
-          type: "error",
-          content: `上传失败：${msg}`,
-          duration: 8,
-        })
-      } finally {
-        setUploading(false)
-      }
-      return false // prevent antd's default upload
+  // ── Mutations ────────────────────────────────────────────────────────
+  // Each mutation invalidates the literature-list query so React Query
+  // refetches with the user's *current* filters automatically — no stale
+  // closure capture, no manual fetchList call needed.
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => literatureApi.upload(file),
+    onSuccess: (resp, file) => {
+      message.success(
+        `上传成功：${file.name}（${STATUS_LABELS[resp.status as LiteratureStatus] ?? resp.status}）`,
+        3,
+      )
+      void queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
+      // Defer drawer open so the user sees the success message first
+      setTimeout(() => void openDetail(resp.literature_id), 600)
     },
-    [fetchList, filters, openDetail],
-  )
-
-  const handleDoiSubmit = useCallback(
-    async (doi: string) => {
-      if (!doi.trim()) {
-        message.warning("请输入 DOI")
-        return
-      }
-      setIngestingDoi(true)
-      try {
-        const resp = await literatureApi.fromDoi(doi.trim())
-        message.success("已触发 DOI 提取任务")
-        await fetchList(1, filters)
-        void openDetail(resp.literature_id)
-      } catch (err) {
-        message.error(mapDoiError(err), 8)
-      } finally {
-        setIngestingDoi(false)
-      }
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "上传失败"
+      message.error(`上传失败：${msg}`, 8)
     },
-    [fetchList, filters, openDetail],
-  )
+  })
 
-  const handleReextract = useCallback(
-    async (id: string) => {
-      try {
-        await literatureApi.reextract(id)
-        message.success("已触发重新提取，请稍候刷新")
-        if (detail?.id === id) {
+  const doiMutation = useMutation({
+    mutationFn: (doi: string) => literatureApi.fromDoi(doi.trim()),
+    onSuccess: (resp) => {
+      message.success("已触发 DOI 提取任务")
+      void queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
+      void openDetail(resp.literature_id)
+    },
+    onError: (err: unknown) => {
+      message.error(mapDoiError(err), 8)
+    },
+  })
+
+  const reextractMutation = useMutation({
+    mutationFn: (id: string) => literatureApi.reextract(id),
+    onSuccess: async (_resp, id) => {
+      message.success("已触发重新提取，请稍候刷新")
+      if (detail?.id === id) {
+        try {
           const fresh = await literatureApi.get(id)
           setDetail(fresh)
+        } catch {
+          // Detail refresh is best-effort — list will reflect the new
+          // status when its next refetch lands.
         }
-        await fetchList(state.page, filters)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "重新提取失败"
-        message.error(msg, 8)
       }
+      await queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
     },
-    [detail?.id, fetchList, filters, state.page],
-  )
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "重新提取失败"
+      message.error(msg, 8)
+    },
+  })
 
-  const handleDelete = useCallback(
-    async (id: string) => {
-      try {
-        await literatureApi.delete(id)
-        message.success("已删除")
-        if (detail?.id === id) {
-          setDrawerOpen(false)
-          setDetail(null)
-        }
-        await fetchList(state.page, filters)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "删除失败"
-        message.error(msg, 8)
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => literatureApi.delete(id),
+    onSuccess: async (_resp, id) => {
+      message.success("已删除")
+      if (detail?.id === id) {
+        setDrawerOpen(false)
+        setDetail(null)
       }
+      await queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
     },
-    [detail?.id, fetchList, filters, state.page],
-  )
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "删除失败"
+      message.error(msg, 8)
+    },
+  })
+
+  // ── Filter / pagination handlers ─────────────────────────────────────
+  // Setting filters / page updates the queryKey, which React Query uses
+  // to refetch with the new params — no manual fetchList call.
+  const handleSearch = () => {
+    setFilters((prev) => ({ ...prev, search: searchInput.trim() }))
+    setPage(1)
+  }
+
+  const handleStatusFilter = (status: LiteratureStatus | "") => {
+    setFilters((prev) => ({ ...prev, status }))
+    setPage(1)
+  }
+
+  const handleYearFilter = (yearMin: number | null, yearMax: number | null) => {
+    setFilters((prev) => ({ ...prev, yearMin, yearMax }))
+    setPage(1)
+  }
+
+  const handlePageChange = (nextPage: number) => {
+    setPage(nextPage)
+  }
+
+  // ── Upload / DOI / re-extract / delete wrappers ──────────────────────
+  // Wrapper handlers preserve the existing UI surface (Dragger, DoiForm,
+  // DetailPanel buttons) while delegating the actual work to the
+  // mutations above. Pre-validation stays in the wrapper so the user sees
+  // the same error messages as before.
+  const handleUpload = async (file: File): Promise<boolean> => {
+    if (file.type !== "application/pdf") {
+      message.error("仅支持 PDF 文件", 4)
+      return false
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      message.error("PDF 文件超过 50 MB 上限", 4)
+      return false
+    }
+    uploadMutation.mutate(file)
+    return false // prevent antd's default upload behaviour
+  }
+
+  const handleDoiSubmit = (doi: string) => {
+    if (!doi.trim()) {
+      message.warning("请输入 DOI")
+      return
+    }
+    doiMutation.mutate(doi)
+  }
+
+  const handleReextract = (id: string) => {
+    reextractMutation.mutate(id)
+  }
+
+  const handleDelete = (id: string) => {
+    deleteMutation.mutate(id)
+  }
 
   // ── Table columns ────────────────────────────────────────────────────
   const columns = useMemo<ColumnsType<LiteratureListItem>>(
@@ -471,19 +452,19 @@ export default function LiteratureManager() {
         <Space>
           <Button
             icon={<ReloadOutlined />}
-            onClick={() => void fetchList(state.page, filters)}
-            loading={state.loading}
+            onClick={() => void listQuery.refetch()}
+            loading={listQuery.isFetching}
           >
             刷新
           </Button>
         </Space>
       </div>
 
-      {state.error && (
+      {listError && (
         <Alert
           type="error"
           message="加载失败"
-          description={state.error}
+          description={listError}
           closable
           className="!mb-4"
         />
@@ -513,7 +494,7 @@ export default function LiteratureManager() {
                         return false
                       }}
                       showUploadList={false}
-                      disabled={uploading}
+                      disabled={uploadMutation.isPending}
                     >
                       <p className="ant-upload-drag-icon">
                         <CloudUploadOutlined />
@@ -537,7 +518,7 @@ export default function LiteratureManager() {
                   children: (
                     <DoiForm
                       onSubmit={handleDoiSubmit}
-                      loading={ingestingDoi}
+                      loading={doiMutation.isPending}
                     />
                   ),
                 },
@@ -557,9 +538,8 @@ export default function LiteratureManager() {
                   allowClear
                   onClear={() => {
                     setSearchInput("")
-                    const next = { ...filters, search: "" }
-                    setFilters(next)
-                    void fetchList(1, next)
+                    setFilters((prev) => ({ ...prev, search: "" }))
+                    setPage(1)
                   }}
                 />
               </Form.Item>
@@ -605,7 +585,7 @@ export default function LiteratureManager() {
             <Space>
               <FileTextOutlined />
               <span>文献列表</span>
-              <Tag>{state.total}</Tag>
+              <Tag>{total}</Tag>
             </Space>
           }
           size="small"
@@ -613,12 +593,12 @@ export default function LiteratureManager() {
           <Table<LiteratureListItem>
             rowKey="id"
             size="middle"
-            dataSource={[...state.items]}
+            dataSource={[...items]}
             columns={columns}
-            loading={state.loading}
+            loading={isLoading}
             pagination={false}
             locale={{
-              emptyText: state.loading ? <Spin /> : <Empty description="暂无文献" />,
+              emptyText: isLoading ? <Spin /> : <Empty description="暂无文献" />,
             }}
             onRow={(record) => ({
               onClick: () => void openDetail(record.id),
@@ -627,8 +607,8 @@ export default function LiteratureManager() {
           />
           <div className="flex justify-end mt-4">
             <Pagination
-              current={state.page}
-              total={state.total}
+              current={page}
+              total={total}
               pageSize={PAGE_SIZE}
               onChange={handlePageChange}
               showSizeChanger={false}
