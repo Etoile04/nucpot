@@ -179,6 +179,85 @@ jobs:
         working-directory: ${{ github.workspace }}
 
   # ===========================================================================
+  # Schema-drift guard (NFM-3372 / NFM-3377) — catch the kg_entity_types
+  # class of defect: a SQLAlchemy model exists but no migration creates
+  # the table. Spins up a clean Postgres, runs `alembic upgrade head`,
+  # and diffs the resulting schema against Base.metadata. A non-empty
+  # diff fails the build with greppable `DRIFT:` lines naming the
+  # specific tables/columns. Wired into the same merge-gate workflow
+  # that runs on push/PR/merge_group to `main` so this defect class
+  # never reaches prod again (see NFM-3311 -> NFM-3349 -> NFM-3364/3369/3370).
+  # ===========================================================================
+  schema-drift-guard:
+    name: Schema-drift Guard (Postgres)
+    runs-on: ubuntu-latest
+    needs: [backend]
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nfm
+          POSTGRES_PASSWORD: nfm
+          POSTGRES_DB: nfm_drift_check
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nfm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NFM_DATABASE_URL: postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_drift_check
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # ``compare_metadata`` is sync — use psycopg for the diff connection.
+      # The async migrator in env.py uses asyncpg (already a project dep);
+      # the script transparently strips ``+asyncpg`` and re-dials with
+      # psycopg.
+      - name: Install psycopg[binary] for sync diff connection
+        run: uv pip install "psycopg[binary]"
+
+      - name: Install postgresql-client for readiness gate
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U nfm; then
+              echo "Postgres ready"
+              break
+            fi
+            echo "Waiting for Postgres (${i}/30)..."
+            sleep 2
+          done
+          pg_isready -h localhost -p 5432 -U nfm
+
+      - name: Run schema-drift check
+        # ``set -euo pipefail`` keeps the script's exit code visible through
+        # ``tee`` so a failure is not masked by the log pipeline.
+        # Working dir is apps/api per the job-level defaults so the script
+        # can resolve ``../../scripts/check_schema_drift.py`` correctly.
+        run: |
+          set -euo pipefail
+          uv run python ../../scripts/check_schema_drift.py
+
+  # ===========================================================================
   # Docker Build Verification — catches missing deps before production deploy
   # ===========================================================================
   # This job rebuilds both production Dockerfiles (API + Web) to catch:
@@ -190,7 +269,7 @@ jobs:
   docker-build:
     name: Docker Build Verification
     runs-on: ubuntu-latest
-    needs: [backend]
+    needs: [backend, schema-drift-guard]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
