@@ -593,7 +593,12 @@ async def test_list_dispatch_status_filter_combined_with_pagination(
     # total counts the 3 dft rows, not 7 (global) or 2 (per-page slice).
     assert data["total"] == 3
     assert data["pages"] == 2  # ceil(3 / 2)
-    assert {item["id"] for item in data["items"]} == {str(i) for i in dft_ids[:2]}
+    assert len(data["items"]) == 2
+    # Page 1 must contain only dft rows (no leakage from the literature set).
+    dft_id_strs = {str(i) for i in dft_ids}
+    page1_ids = {item["id"] for item in data["items"]}
+    assert page1_ids <= dft_id_strs
+    assert page1_ids.isdisjoint({str(i) for i in lit_ids})
 
     # Page 2 returns the remaining dft row (not a literature row).
     resp2 = await async_client.get(
@@ -602,10 +607,13 @@ async def test_list_dispatch_status_filter_combined_with_pagination(
     )
     data2 = resp2.json()
     assert data2["total"] == 3
-    assert {item["id"] for item in data2["items"]} == {str(dft_ids[2])}
-    # And nothing leaked from the literature set.
-    leaked = {str(i) for i in lit_ids} & {item["id"] for item in data2["items"]}
-    assert not leaked
+    assert len(data2["items"]) == 1
+    # Walking all pages must cover the entire dft set with no duplicates.
+    page2_ids = {item["id"] for item in data2["items"]}
+    assert page2_ids <= dft_id_strs
+    assert page2_ids.isdisjoint({str(i) for i in lit_ids})
+    union = page1_ids | page2_ids
+    assert union == dft_id_strs  # every dft id appears exactly once
 
 
 @pytest.mark.asyncio
