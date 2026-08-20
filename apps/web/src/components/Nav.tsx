@@ -12,7 +12,7 @@ const NAV_LINKS = [
   { href: '/materials', label: '材料库' },
   { href: '/ontology', label: '本体' },
   { href: '/literature', label: '文献管理' },
-  { href: '/search', label: '高级检索' },
+  { href: '/search', label: '势函数检索' },
   { href: '/compare', label: '对比' },
   { href: '/feedback', label: '反馈' },
   { href: '/about', label: '关于' },
