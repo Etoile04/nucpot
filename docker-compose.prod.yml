@@ -93,11 +93,13 @@ services:
       LLM_BASE_URL: ${PROD_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
       LLM_MODEL: ${PROD_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
       # NFM-1366: VLM env for multimodal extraction (figure/table detection).
-      # Uses the same Ollama endpoint as LLM but with a vision-capable model.
-      VLM_PROVIDER: ollama
-      VLM_API_KEY: ollama
-      VLM_BASE_URL: ${PROD_VLM_BASE_URL:-http://host.docker.internal:11434/v1}
-      VLM_MODEL: ${PROD_VLM_MODEL:-minicpm-v4.5:8b}
+      # NFM-3358: default to minimax provider so figure/table extraction works
+      # without a local Ollama vision model. Set ``PROD_VLM_PROVIDER=ollama``
+      # (or any other supported provider) to revert.
+      VLM_PROVIDER: ${PROD_VLM_PROVIDER:-minimax}
+      VLM_API_KEY: ${PROD_VLM_API_KEY:-}
+      VLM_BASE_URL: ${PROD_VLM_BASE_URL:-https://api.minimaxi.com/v1}
+      VLM_MODEL: ${PROD_VLM_MODEL:-MiniMax-M3}
       # NFM-1807: httpx does not support wildcards in NO_PROXY.
       # List every Docker-internal hostname the API may call so
       # requests bypass the host proxy and go directly over the
@@ -251,10 +253,11 @@ services:
       LLM_BASE_URL: ${PROD_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
       LLM_MODEL: ${PROD_LLM_MODEL:-qwen3.6:35b-a3b-coding-nvfp4}
       # NFM-1366: VLM env for multimodal extraction (figure/table detection).
-      VLM_PROVIDER: ollama
-      VLM_API_KEY: ollama
-      VLM_BASE_URL: ${PROD_VLM_BASE_URL:-http://host.docker.internal:11434/v1}
-      VLM_MODEL: ${PROD_VLM_MODEL:-minicpm-v4.5:8b}
+      # NFM-3358: mirror the api service provider — see api block above.
+      VLM_PROVIDER: ${PROD_VLM_PROVIDER:-minimax}
+      VLM_API_KEY: ${PROD_VLM_API_KEY:-}
+      VLM_BASE_URL: ${PROD_VLM_BASE_URL:-https://api.minimaxi.com/v1}
+      VLM_MODEL: ${PROD_VLM_MODEL:-MiniMax-M3}
       # NFM-MINERU-1: MinerU env must mirror the api service — the worker
       # runs ``process_literature_task`` which calls parse_pdf_to_markdown.
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
