@@ -67,7 +67,7 @@ class VisionProvider(StrEnum):
     OPENAI = "openai"
     OLLAMA = "ollama"
     LOCAL = "local"
-    MINIMAX = "minimax"  # NFM-3358 — MiniMax M2.7 via api.minimaxi.com/v1
+    MINIMAX = "minimax"  # NFM-3358 — MiniMax M3 (vision) via api.minimaxi.com/v1
 
 
 # ---------------------------------------------------------------------------
