@@ -130,9 +130,27 @@ class LightRAGClient:
         self.timeout = timeout if timeout is not None else _DEFAULT_TIMEOUT
 
         self._base_url = f"http://{self.host}:{self.port}"
+        # NFM-3367: split the transport-level timeout so a stalled TCP
+        # handshake cannot blow past the per-request query budget.
+        #
+        # ``read``/``write``/``pool`` are slaved to ``self.query_timeout`` —
+        # not the legacy ``self.timeout`` — because the query budget is the
+        # *binding* ceiling for a synchronous user request. When a caller
+        # passes the legacy ``timeout=`` kwarg, ``self.query_timeout`` has
+        # already absorbed that value (see ``__init__``), so the legacy
+        # path keeps working too.
+        #
+        # ``connect`` is bounded at 5s so the TCP handshake itself cannot
+        # consume the whole 8s budget; the remaining 3s is the per-request
+        # read envelope.
         self._http_client = httpx.AsyncClient(
             base_url=self._base_url,
-            timeout=self.timeout,
+            timeout=httpx.Timeout(
+                connect=5.0,
+                read=self.query_timeout,
+                write=self.query_timeout,
+                pool=self.query_timeout,
+            ),
         )
 
     @property

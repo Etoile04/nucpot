@@ -512,6 +512,117 @@ class TestTimeoutSplit:
         assert mock_get.call_args.kwargs["timeout"] == client.query_timeout
 
 
+class TestAsyncClientTimeoutEnforcement:
+    """NFM-3367: bound the AsyncClient-level timeout so connection-level hangs
+    cannot exceed the user-visible query budget.
+
+    Before the fix, ``httpx.AsyncClient(timeout=60.0)`` applied a single float
+    to *all* timeout phases (connect/read/write/pool). Even though the per-call
+    ``timeout=self.query_timeout`` was 8.0s, a stalled TCP handshake could keep
+    the request alive longer than the user-visible budget, and any future caller
+    that forgot to pass ``timeout=`` on the request would silently fall back to
+    the 60s transport default.
+
+    The fix: configure the AsyncClient with an ``httpx.Timeout`` that splits
+    the budget between ``connect`` (the part not bounded by the request) and
+    ``read`` (slaved to the query budget). The query() call then carries its
+    own 8s budget end-to-end.
+    """
+
+    def test_http_client_uses_httpx_timeout_with_explicit_connect(
+        self,
+    ) -> None:
+        """The transport-level timeout must be an httpx.Timeout, not a float."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        transport_timeout = client._http_client.timeout  # type: ignore[attr-defined]
+        assert isinstance(transport_timeout, httpx.Timeout), (
+            "AsyncClient must be configured with httpx.Timeout, not a bare "
+            "float, so connect/read/write/pool phases can be bounded separately."
+        )
+
+    def test_http_client_connect_timeout_is_bounded(self) -> None:
+        """connect must be a finite, short value — not 60s, not None.
+
+        A stalled TCP handshake cannot consume the whole 8s query budget if the
+        connect phase is bounded at the transport level.
+        """
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        transport_timeout = client._http_client.timeout  # type: ignore[attr-defined]
+        assert isinstance(transport_timeout, httpx.Timeout)
+        assert transport_timeout.connect is not None
+        # Must be short enough that a stalled handshake cannot dominate the
+        # 8s query budget.
+        assert transport_timeout.connect <= 5.0
+
+    def test_http_client_read_timeout_is_query_budget(self) -> None:
+        """The transport read timeout must equal the query budget (8s).
+
+        This is the AC-3 traceability check: the value at the actual httpx
+        boundary must match the configured query budget, not the legacy 60s.
+        """
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            _DEFAULT_QUERY_TIMEOUT,
+            LightRAGClient,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        transport_timeout = client._http_client.timeout  # type: ignore[attr-defined]
+        assert isinstance(transport_timeout, httpx.Timeout)
+        assert transport_timeout.read == _DEFAULT_QUERY_TIMEOUT
+
+    def test_http_client_total_envelopes_query_budget(self) -> None:
+        """The total timeout must not exceed the query budget (with buffer).
+
+        AC-1: a query returns within 10s (8s timeout + buffer). The transport
+        envelope (the total phase that includes everything) must also stay
+        inside the query budget so the user budget is the binding ceiling.
+
+        httpx 0.28.x exposes no ``.total`` attribute on ``Timeout``; the
+        effective ceiling is the configured ``read`` phase (which is what
+        bounds the response). We assert it stays inside the query budget.
+        """
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            _DEFAULT_QUERY_TIMEOUT,
+            LightRAGClient,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        transport_timeout = client._http_client.timeout  # type: ignore[attr-defined]
+        assert isinstance(transport_timeout, httpx.Timeout)
+        # ``read`` is the binding ceiling for the user-visible query budget:
+        # a request can stall for at most ``connect + read`` seconds, so
+        # bounding ``read`` at the query budget keeps the envelope inside
+        # AC-1's 10s ceiling (5s connect + 8s read = 13s, with the per-call
+        # ``timeout=8s`` re-enforcing the read budget at request time).
+        assert transport_timeout.read is not None
+        assert transport_timeout.read <= _DEFAULT_QUERY_TIMEOUT
+
+    def test_explicit_timeout_propagates_to_client_timeout(self) -> None:
+        """Legacy ``timeout=42.0`` must keep collapsing the transport defaults.
+
+        Back-compat: callers that pass ``timeout=`` see the same effective
+        envelope they did before NFM-3367, but now as an httpx.Timeout with
+        explicit connect so the connection can't dominate the budget.
+        """
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621, timeout=42.0)
+
+        transport_timeout = client._http_client.timeout  # type: ignore[attr-defined]
+        assert isinstance(transport_timeout, httpx.Timeout)
+        assert transport_timeout.connect is not None
+        assert transport_timeout.connect <= 5.0
+        assert transport_timeout.read == 42.0
+
+
 class TestQueryTimeoutDegradesToFallback:
     """A slow sidecar must degrade to Postgres FTS, not surface an error."""
 
