@@ -63,6 +63,7 @@ import type { ColumnsType } from "antd/es/table"
 import ReactMarkdown from "react-markdown"
 import {
   literatureApi,
+  uploadErrorStatus,
   type LiteratureDetail,
   type LiteratureFigure,
   type LiteratureListItem,
@@ -247,8 +248,17 @@ export default function LiteratureManager() {
       setTimeout(() => void openDetail(resp.literature_id), 600)
     },
     onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : "上传失败"
-      message.error(`上传失败：${msg}`, 8)
+      if (uploadErrorStatus(err) === 403) {
+        message.open({
+          type: "error",
+          content:
+            "需要编辑者(Editor)或管理员(Admin)权限才能上传文献，请联系管理员申请权限",
+          duration: 5,
+        })
+      } else {
+        const msg = err instanceof Error ? err.message : "上传失败"
+        message.error(`上传失败：${msg}`, 8)
+      }
     },
   })
 
