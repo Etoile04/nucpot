@@ -143,13 +143,13 @@ describe("AC-1 — AbortController timeout", () => {
 describe("AC-4 — Chinese fast-fail messages", () => {
   it("both canonical messages suggest keyword search", () => {
     expect(RAG_TIMEOUT_MESSAGE).toBe(
-      "查询超时，请稍后重试，或尝试使用关键词搜索。",
+      "查询超时，请稍后重试，或请尝试使用关键词搜索。",
     )
     expect(RAG_UNAVAILABLE_MESSAGE).toBe(
-      "语义检索暂时不可用，请稍后重试，或尝试使用关键词搜索。",
+      "语义检索暂时不可用，请稍后重试，或请尝试使用关键词搜索。",
     )
     for (const msg of [RAG_TIMEOUT_MESSAGE, RAG_UNAVAILABLE_MESSAGE]) {
-      expect(msg).toContain("尝试使用关键词搜索")
+      expect(msg).toContain("请尝试使用关键词搜索")
     }
   })
 
