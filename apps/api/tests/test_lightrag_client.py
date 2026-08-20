@@ -623,6 +623,297 @@ class TestAsyncClientTimeoutEnforcement:
         assert transport_timeout.read == 42.0
 
 
+class TestLightRAGClientErrorEnrichment:
+    """NFM-3407 — LightRAGClientError must carry enriched diagnostic fields.
+
+    Before NFM-3407 the exception was a bare ``Exception`` subclass with no
+    fields, so ``str(exc)`` lost the original httpx exception type and the
+    caller had no way to distinguish a ConnectTimeout from a ReadTimeout
+    from an HTTP 500 — the visible symptom was a blank/truncated error
+    string reaching the UI.
+
+    The contract:
+      * new fields are keyword-only with ``None`` defaults
+      * single-positional construction (``LightRAGClientError("msg")``)
+        keeps working — existing callers and tests rely on it
+      * all four raise sites (ingest/query across HTTPError/HTTPStatusError)
+        populate ``original_type`` / ``original_message`` /
+        ``response_body`` (capped at 2000 chars with ``...[truncated]``
+        marker) / ``status_code`` when applicable
+      * the rendered message string contains the original exception
+        **type name** so ConnectTimeout / ReadTimeout / HTTP 500 are
+        mutually distinguishable
+      * ``request_id`` (UUID4) can be attached by the API layer and
+        survives the raise so the log line and the API response share
+        the same correlation key
+    """
+
+    def test_back_compat_single_positional_construction(self) -> None:
+        """``LightRAGClientError("msg")`` must keep working unchanged."""
+        from nfm_db.services.lightrag_client import LightRAGClientError
+
+        exc = LightRAGClientError("plain message")
+
+        assert str(exc) == "plain message"
+        assert exc.original_type is None
+        assert exc.original_message is None
+        assert exc.response_body is None
+        assert exc.status_code is None
+        assert exc.request_id is None
+
+    def test_enriched_fields_are_keyword_only(self) -> None:
+        """All new diagnostic fields must be keyword-only."""
+        import pytest
+
+        from nfm_db.services.lightrag_client import LightRAGClientError
+
+        with pytest.raises(TypeError):
+            # Must reject positional diagnostic args; back-compat forbids it.
+            LightRAGClientError(  # type: ignore[call-arg]
+                "msg",
+                "ConnectTimeout",  # type — should be rejected
+            )
+
+    def test_enriched_construction_populates_all_fields(self) -> None:
+        """Keyword construction populates every diagnostic field."""
+        from nfm_db.services.lightrag_client import LightRAGClientError
+
+        exc = LightRAGClientError(
+            "LightRAG query failed: [ConnectTimeout] Connection refused",
+            original_type="ConnectTimeout",
+            original_message="Connection refused",
+            response_body="upstream payload",
+            status_code=503,
+            request_id="req-abc-123",
+        )
+
+        assert exc.original_type == "ConnectTimeout"
+        assert exc.original_message == "Connection refused"
+        assert exc.response_body == "upstream payload"
+        assert exc.status_code == 503
+        assert exc.request_id == "req-abc-123"
+
+    @pytest.mark.asyncio
+    async def test_query_http_status_error_enriches_all_fields(self) -> None:
+        """HTTPStatusError raise site populates type, message, body, status."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        body_text = '{"detail": "Query processing failed"}'
+        mock_response = httpx.Response(
+            500,
+            text=body_text,
+            request=httpx.Request("POST", "http://localhost:9621/query"),
+        )
+        http_exc = httpx.HTTPStatusError(
+            "Server Error",
+            request=httpx.Request("POST", "http://localhost:9621/query"),
+            response=mock_response,
+        )
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=http_exc,
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.query(query="test query")
+
+        exc = exc_info.value
+        assert exc.original_type == "HTTPStatusError"
+        assert exc.original_message  # non-empty
+        assert exc.response_body == body_text
+        assert exc.status_code == 500
+        # Message string must mention the type for downstream distinguishability.
+        assert "HTTPStatusError" in str(exc)
+
+    @pytest.mark.asyncio
+    async def test_query_connect_error_enriches_original_type(self) -> None:
+        """httpx.ConnectError surfaces as a distinguishable LightRAGClientError."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("Connection refused"),
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.query(query="test query")
+
+        exc = exc_info.value
+        assert exc.original_type == "ConnectError"
+        assert "Connection refused" in (exc.original_message or "")
+        assert exc.status_code is None  # connection failure has no HTTP status
+        assert "ConnectError" in str(exc)
+
+    @pytest.mark.asyncio
+    async def test_query_read_timeout_distinguishable_from_connect(self) -> None:
+        """ReadTimeout must produce a *different* error string from ConnectError."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ReadTimeout("Timed out"),
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.query(query="test query")
+
+        exc = exc_info.value
+        assert exc.original_type == "ReadTimeout"
+        assert "ReadTimeout" in str(exc)
+        # Crucially, must NOT contain ConnectError — that's how the
+        # caller distinguishes a stalled sidecar from a missing sidecar.
+        assert "ConnectError" not in str(exc)
+
+    @pytest.mark.asyncio
+    async def test_ingest_http_status_error_enriches_all_fields(self) -> None:
+        """Ingest HTTPStatusError raise site populates type, body, status."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        body_text = '{"detail": "Internal server error"}'
+        mock_response = httpx.Response(
+            500,
+            text=body_text,
+            request=httpx.Request("POST", "http://localhost:9621/documents/text"),
+        )
+        http_exc = httpx.HTTPStatusError(
+            "Server Error",
+            request=httpx.Request("POST", "http://localhost:9621/documents/text"),
+            response=mock_response,
+        )
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=http_exc,
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.ingest(text="some text")
+
+        exc = exc_info.value
+        assert exc.original_type == "HTTPStatusError"
+        assert exc.response_body == body_text
+        assert exc.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_ingest_connect_error_enriches_original_type(self) -> None:
+        """Ingest connection-error raise site also populates original_type."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("Connection refused"),
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.ingest(text="some text")
+
+        exc = exc_info.value
+        assert exc.original_type == "ConnectError"
+        assert exc.status_code is None
+
+    @pytest.mark.asyncio
+    async def test_response_body_is_truncated_at_2000_chars(self) -> None:
+        """response_body must be capped at 2000 chars + explicit marker."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        # 3000 char body — must be truncated
+        body_text = "x" * 3000
+        mock_response = httpx.Response(
+            500,
+            text=body_text,
+            request=httpx.Request("POST", "http://localhost:9621/query"),
+        )
+        http_exc = httpx.HTTPStatusError(
+            "Server Error",
+            request=httpx.Request("POST", "http://localhost:9621/query"),
+            response=mock_response,
+        )
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=http_exc,
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.query(query="test query")
+
+        body = exc_info.value.response_body
+        assert body is not None
+        assert body.endswith("...[truncated]")
+        # Truncated length: 2000 visible chars + marker = ~2014 chars
+        assert len(body) < len(body_text)
+        assert len(body) <= 2014  # 2000 + "..." (3) + "[truncated]" (11)
+
+    @pytest.mark.asyncio
+    async def test_request_id_kwarg_attaches_to_raised_error(self) -> None:
+        """``client.query(request_id=...)`` survives a raise onto the error."""
+        from nfm_db.services.lightrag_client import (
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("Connection refused"),
+            ),
+            pytest.raises(LightRAGClientError) as exc_info,
+        ):
+            await client.query(query="test", request_id="req-xyz")
+
+        assert exc_info.value.request_id == "req-xyz"
+
+
 class TestQueryTimeoutDegradesToFallback:
     """A slow sidecar must degrade to Postgres FTS, not surface an error."""
 
@@ -633,6 +924,7 @@ class TestQueryTimeoutDegradesToFallback:
         )
         from nfm_db.services.rag_provider import (  # type: ignore[import-untyped]
             RAGProviderSelector,
+            RAGQueryResult,
         )
 
         client = LightRAGClient(host="localhost", port=9621)
@@ -640,7 +932,15 @@ class TestQueryTimeoutDegradesToFallback:
 
         selector = RAGProviderSelector(lightrag_client=client, db_session=db_session)
 
-        fallback_result = AsyncMock()
+        # NFM-3407: the selector now wraps the fallback in a new frozen
+        # ``RAGQueryResult`` carrying ``degradation_reason`` and
+        # ``request_id``. ``dataclasses.replace`` requires a real
+        # dataclass instance, so the mock fallback returns one.
+        fallback_result = RAGQueryResult(
+            response="rule-based answer",
+            provider="rule-based-fallback",
+            fallback=True,
+        )
         with (
             patch.object(
                 client._http_client,  # type: ignore[attr-defined]
@@ -658,4 +958,7 @@ class TestQueryTimeoutDegradesToFallback:
             result = await selector.query(query="what is UO2?")
 
         mock_fallback.assert_awaited_once()
-        assert result is fallback_result
+        assert result is not fallback_result
+        assert result.fallback is True
+        assert result.provider == "rule-based-fallback"
+        assert result.degradation_reason == "upstream_timeout"

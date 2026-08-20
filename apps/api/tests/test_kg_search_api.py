@@ -21,6 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.kg import router
 from nfm_db.database import get_db
+from nfm_db.services.lightrag_client import LightRAGClientError
+from nfm_db.services.rag_provider import (
+    RAGQueryResult,
+    RuleBasedFallbackProvider,
+)
 
 
 def _make_client(db_override=None) -> TestClient:
@@ -240,6 +245,11 @@ class TestSemanticQueryBridge:
         mock_result.relationships = []
         mock_result.provider = "lightrag"
         mock_result.fallback = False
+        # NFM-3407: SemanticQueryResponse now also carries these diagnostic
+        # fields. Set them explicitly so Pydantic validation accepts the
+        # MagicMock-shaped value through the new schema fields.
+        mock_result.degradation_reason = None
+        mock_result.request_id = None
 
         mock_selector = AsyncMock()
         mock_selector.query = AsyncMock(return_value=mock_result)
@@ -339,3 +349,162 @@ class TestSemanticQueryBridge:
         assert resp.status_code == 200
         body = resp.json()
         assert body["items"][0]["label"] == "ZrO2"
+
+
+# ---------------------------------------------------------------------------
+# NFM-3407: Path B redaction regression (AC-7)
+# ---------------------------------------------------------------------------
+
+
+class TestPathBRedaction:
+    """NFM-3407 AC-7 — Path B response must redact upstream body; log must keep it.
+
+    ``GET /api/v1/kg/search?mode=lightrag`` is anonymously reachable (no
+    ``require_editor`` gate on the ``kg`` router). Surfacing the upstream
+    ``response_body`` — which may contain internal hostnames, ports,
+    service paths, or stack traces — to the public response would leak
+    operator-only diagnostic detail to anyone on the internet.
+
+    Contract:
+      * the response body NEVER contains the upstream ``response_body``
+        text — the caller only sees ``degradation_reason`` (a bounded
+        token) and ``request_id`` (a UUID4 for cross-reference)
+      * the corresponding server log record DOES contain the upstream
+        body, so an operator with the request_id can find the full
+        exception in the logs
+      * this is a regression guard — it is not optional
+    """
+
+    @pytest.mark.asyncio
+    async def test_path_b_response_redacts_upstream_body_but_log_captures(
+        self, caplog
+    ) -> None:
+        """End-to-end: LightRAG 500 → anonymous response has no body, log has body."""
+        SECRET = "internal-hostname:8500-stack-trace-marker-SECRET"
+
+        # A fake LightRAGClient whose query raises with our secret body.
+        fake_client = AsyncMock()
+        fake_client.query = AsyncMock(
+            side_effect=LightRAGClientError(
+                "LightRAG query failed: HTTP 500 - " + SECRET,
+                original_type="HTTPStatusError",
+                original_message="Server Error",
+                response_body=SECRET,
+                status_code=500,
+            )
+        )
+
+        # Rule-based fallback returns a clean result (no body leakage path).
+        fallback_result = RAGQueryResult(
+            response="",
+            provider="rule-based-fallback",
+            fallback=True,
+        )
+
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        with (
+            patch(
+                "nfm_db.services.lightrag_client.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.lightrag_lifecycle.get_shared_lightrag_client",
+                return_value=fake_client,
+            ),
+            patch.object(
+                RuleBasedFallbackProvider,
+                "query",
+                new_callable=AsyncMock,
+                return_value=fallback_result,
+            ),
+        ):
+            client = _make_client(lambda: mock_session)
+            with caplog.at_level("WARNING", logger="nfm_db"):
+                resp = client.get(
+                    "/kg/search",
+                    params={"q": "What is UO2?", "mode": "lightrag"},
+                )
+
+        # AC-7 (response redaction): the anonymous response MUST NOT
+        # carry the upstream body text under any field.
+        assert resp.status_code == 200
+        assert SECRET not in resp.text, (
+            f"upstream body leaked into anonymous response: {resp.text!r}"
+        )
+
+        # Path B contract: response is SemanticQueryResponse-shaped with
+        # fallback=True, a bounded degradation_reason token, and a UUID4
+        # request_id for log correlation.
+        body = resp.json()
+        assert body["fallback"] is True
+        assert body["degradation_reason"] in (
+            "upstream_error",
+            "upstream_unavailable",
+            "upstream_timeout",
+        ), (
+            f"degradation_reason must be a bounded token; got {body['degradation_reason']!r}"
+        )
+        import re
+
+        assert re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            body["request_id"],
+        ), f"request_id must be UUID4; got {body['request_id']!r}"
+
+        # AC-7 (log capture): the operator-side log MUST contain the
+        # upstream body so they can debug with the request_id.
+        # The selector logs with ``exc_info=True`` — the upstream body
+        # is attached to the LogRecord's ``exc_text`` (the formatted
+        # traceback), not the formatted message string.
+        def _record_text(r: object) -> str:
+            msg = r.getMessage()  # type: ignore[attr-defined]
+            exc_text = getattr(r, "exc_text", None) or ""
+            return f"{msg}\n{exc_text}"
+
+        log_with_secret = [r for r in caplog.records if SECRET in _record_text(r)]
+        assert log_with_secret, (
+            "expected server log to contain upstream body for operator debugging; "
+            f"records={[_record_text(r) for r in caplog.records]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_path_b_response_carries_request_id_on_success(self) -> None:
+        """Happy-path Path B also carries a request_id for log correlation."""
+        mock_result = MagicMock()
+        mock_result.response = "LightRAG answer"
+        mock_result.references = []
+        mock_result.entities = []
+        mock_result.relationships = []
+        mock_result.provider = "lightrag"
+        mock_result.fallback = False
+        mock_result.degradation_reason = None
+        mock_result.request_id = "req-success-1"
+
+        mock_selector = AsyncMock()
+        mock_selector.query = AsyncMock(return_value=mock_result)
+
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        with (
+            patch(
+                "nfm_db.services.lightrag_client.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.RAGProviderSelector",
+                return_value=mock_selector,
+            ),
+        ):
+            client = _make_client(lambda: mock_session)
+            resp = client.get(
+                "/kg/search",
+                params={"q": "What is UO2?", "mode": "lightrag"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["provider"] == "lightrag"
+        assert body["fallback"] is False
+        # request_id propagated from the selector's RAGQueryResult.
+        assert body["request_id"] == "req-success-1"

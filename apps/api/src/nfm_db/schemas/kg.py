@@ -37,6 +37,14 @@ class SemanticQueryResponse(BaseModel):
     """Response from the LightRAG semantic query bridge.
 
     Returned when ``mode=lightrag`` is used on the KG search endpoint.
+
+    NFM-3407 — on the anonymous Path B surface the upstream exception
+    must never be reflected verbatim. ``degradation_reason`` is a
+    bounded token (one of ``upstream_timeout``,
+    ``upstream_unavailable``, ``upstream_error``) so the caller can
+    tell degradation occurred without seeing the upstream payload;
+    ``request_id`` is the UUID4 correlation key the operator uses to
+    find the full traceback in the server log. ``None`` on success.
     """
 
     response: str = Field(default="")
@@ -45,6 +53,21 @@ class SemanticQueryResponse(BaseModel):
     relationships: list[dict[str, Any]] = Field(default_factory=list)
     provider: str = Field(default="")
     fallback: bool = Field(default=False)
+    degradation_reason: str | None = Field(
+        default=None,
+        description=(
+            "Bounded token describing why the LightRAG upstream was "
+            "not used (one of upstream_timeout, upstream_unavailable, "
+            "upstream_error). None on success."
+        ),
+    )
+    request_id: str | None = Field(
+        default=None,
+        description=(
+            "UUID4 correlation key. When present, an operator can find "
+            "the matching server log line via this ID."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

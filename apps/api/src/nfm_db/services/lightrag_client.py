@@ -55,8 +55,73 @@ _DEFAULT_TIMEOUT = 60.0
 # ---------------------------------------------------------------------------
 
 
+#: Cap on the upstream ``response_body`` text attached to a
+#: :class:`LightRAGClientError`. Bodies longer than this are truncated
+#: with an explicit ``...[truncated]`` marker so the exception payload
+#: stays bounded even when an upstream 500-page returns megabytes of
+#: HTML or stack traces.
+_MAX_RESPONSE_BODY_CHARS = 2000
+
+
+def _truncate_response_body(body: str | None) -> str | None:
+    """Cap an upstream response body at :data:`_MAX_RESPONSE_BODY_CHARS`.
+
+    Returns ``None`` for ``None`` input (no body to attach). For an
+    over-long body, returns the first ``_MAX_RESPONSE_BODY_CHARS``
+    characters followed by an explicit ``...[truncated]`` marker so the
+    operator can tell the body was clipped without losing the prefix
+    that usually contains the actionable error.
+    """
+    if body is None:
+        return None
+    if len(body) <= _MAX_RESPONSE_BODY_CHARS:
+        return body
+    return body[:_MAX_RESPONSE_BODY_CHARS] + "...[truncated]"
+
+
 class LightRAGClientError(Exception):
-    """Raised when a LightRAG API call fails."""
+    """Raised when a LightRAG API call fails.
+
+    Carries enriched diagnostic fields (NFM-3407) so the operator can
+    cross-reference a blank/truncated user-facing error back to the
+    real underlying cause in the server log:
+
+    * ``original_type``     — ``type(exc).__name__`` of the originating
+                              httpx / network exception, used to
+                              distinguish ``ConnectError``,
+                              ``ReadTimeout``, ``HTTPStatusError``, etc.
+    * ``original_message``  — ``str(exc)`` of the originating exception,
+                              preserved verbatim.
+    * ``response_body``     — bounded upstream HTTP response body
+                              (≤2000 chars + ``...[truncated]`` marker).
+    * ``status_code``       — HTTP status code when the originating
+                              exception carried one (``HTTPStatusError``).
+    * ``request_id``        — UUID4 correlation key assigned by the API
+                              layer; surfaced in both the log line and
+                              the response payload.
+
+    All five fields are **keyword-only** with ``None`` defaults so the
+    original single-positional construction
+    ``LightRAGClientError("msg")`` keeps working for existing callers
+    and tests.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        original_type: str | None = None,
+        original_message: str | None = None,
+        response_body: str | None = None,
+        status_code: int | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.original_type = original_type
+        self.original_message = original_message
+        self.response_body = response_body
+        self.status_code = status_code
+        self.request_id = request_id
 
 
 # ---------------------------------------------------------------------------
@@ -192,12 +257,17 @@ class LightRAGClient:
         *,
         text: str,
         file_source: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         """Ingest a text document into the LightRAG knowledge graph.
 
         Args:
             text: Document text content to ingest.
             file_source: Optional source identifier.
+            request_id: Optional UUID4 correlation key. When set, any
+                :class:`LightRAGClientError` raised by this call carries
+                the same ``request_id`` so the operator log line and
+                the API response payload can be cross-referenced.
 
         Returns:
             Parsed JSON response from LightRAG (includes track_id).
@@ -219,10 +289,21 @@ class LightRAGClient:
             return response.json()
         except httpx.HTTPStatusError as exc:
             raise LightRAGClientError(
-                f"LightRAG ingest failed: HTTP {exc.response.status_code} - {exc.response.text}"
+                f"LightRAG ingest failed: [HTTPStatusError] HTTP "
+                f"{exc.response.status_code} - {exc.response.text}",
+                original_type=type(exc).__name__,
+                original_message=str(exc),
+                response_body=_truncate_response_body(exc.response.text),
+                status_code=exc.response.status_code,
+                request_id=request_id,
             ) from exc
         except httpx.HTTPError as exc:
-            raise LightRAGClientError(f"LightRAG ingest failed: {exc}") from exc
+            raise LightRAGClientError(
+                f"LightRAG ingest failed: [{type(exc).__name__}] {exc}",
+                original_type=type(exc).__name__,
+                original_message=str(exc),
+                request_id=request_id,
+            ) from exc
 
     # ------------------------------------------------------------------
     # Query
@@ -234,6 +315,7 @@ class LightRAGClient:
         query: str,
         mode: str = "mix",
         include_references: bool = False,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         """Query the LightRAG knowledge graph.
 
@@ -241,6 +323,7 @@ class LightRAGClient:
             query: Natural language query.
             mode: Query mode (local, global, hybrid, mix, naive).
             include_references: Whether to include source references.
+            request_id: Optional UUID4 correlation key (see :meth:`ingest`).
 
         Returns:
             Parsed JSON response with answer and optional references.
@@ -264,10 +347,21 @@ class LightRAGClient:
             return response.json()
         except httpx.HTTPStatusError as exc:
             raise LightRAGClientError(
-                f"LightRAG query failed: HTTP {exc.response.status_code} - {exc.response.text}"
+                f"LightRAG query failed: [HTTPStatusError] HTTP "
+                f"{exc.response.status_code} - {exc.response.text}",
+                original_type=type(exc).__name__,
+                original_message=str(exc),
+                response_body=_truncate_response_body(exc.response.text),
+                status_code=exc.response.status_code,
+                request_id=request_id,
             ) from exc
         except httpx.HTTPError as exc:
-            raise LightRAGClientError(f"LightRAG query failed: {exc}") from exc
+            raise LightRAGClientError(
+                f"LightRAG query failed: [{type(exc).__name__}] {exc}",
+                original_type=type(exc).__name__,
+                original_message=str(exc),
+                request_id=request_id,
+            ) from exc
 
     # ------------------------------------------------------------------
     # Lifecycle

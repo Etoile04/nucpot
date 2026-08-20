@@ -13,6 +13,7 @@ Review queue endpoints have been migrated to /api/v1/review/*
 from __future__ import annotations
 
 import logging
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -153,13 +154,35 @@ async def _semantic_query(
     """Route a search query through LightRAG with automatic fallback.
 
     When LightRAG is healthy, returns a ``SemanticQueryResponse``.
-    When LightRAG is unavailable, falls back to structured search
-    and returns a ``KGSearchResponse``.
+    When LightRAG fails with a :class:`LightRAGClientError`, the
+    ``RAGProviderSelector`` itself returns a degraded
+    ``SemanticQueryResponse`` (with bounded ``degradation_reason`` and
+    a propagated ``request_id`` for operator correlation) — the
+    upstream exception text never crosses the wire on the anonymous
+    Path B surface.
+
+    The structured-search fallback below is only reached for genuinely
+    unexpected exceptions (DB outage, programming error).
+
+    NFM-3407: every call is stamped with a fresh UUID4 ``request_id``
+    so the anonymous Path B caller can quote it when filing a bug;
+    operators use the same ID to find the matching server log line.
     """
     from nfm_db.services.lightrag_client import is_lightrag_configured
 
+    # Generate the correlation key once at the API entry so it threads
+    # through every layer downstream (selector → client → log line →
+    # response payload). Same UUID4 on success and on the structured-
+    # search fallback so the caller has one stable identifier per
+    # request.
+    request_id = str(uuid.uuid4())
+
     if not is_lightrag_configured():
-        logger.info("LightRAG not configured — falling back to structured search")
+        logger.info(
+            "LightRAG not configured — falling back to structured search "
+            "(request_id=%s)",
+            request_id,
+        )
         return await _structured_search(
             q=q,
             type=None,
@@ -173,7 +196,7 @@ async def _semantic_query(
         from nfm_db.services.rag_provider import RAGProviderSelector
 
         selector = RAGProviderSelector(db_session=session)
-        result = await selector.query(query=q, limit=limit)
+        result = await selector.query(query=q, limit=limit, request_id=request_id)
 
         return SemanticQueryResponse(
             response=result.response,
@@ -182,10 +205,14 @@ async def _semantic_query(
             relationships=result.relationships,
             provider=result.provider,
             fallback=result.fallback,
+            degradation_reason=result.degradation_reason,
+            request_id=result.request_id,
         )
     except Exception:
         logger.warning(
-            "LightRAG semantic query failed — falling back to structured search",
+            "LightRAG semantic query failed — falling back to structured "
+            "search (request_id=%s)",
+            request_id,
             exc_info=True,
         )
         return await _structured_search(

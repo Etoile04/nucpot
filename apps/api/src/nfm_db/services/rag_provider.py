@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlalchemy import text
@@ -51,6 +51,39 @@ class RAGQueryResult:
     relationships: list[dict[str, Any]] = field(default_factory=list)
     provider: str = ""
     fallback: bool = False
+    # NFM-3407 — degradation diagnostics for the anonymous Path B surface.
+    # ``degradation_reason`` is a bounded token (e.g. ``upstream_timeout``)
+    # surfaced to the caller instead of the upstream exception text; the
+    # full exception detail lives in the server log keyed by
+    # ``request_id`` (UUID4 assigned at the API entry).
+    degradation_reason: str | None = None
+    request_id: str | None = None
+
+
+def _degradation_reason(exc: LightRAGClientError) -> str:
+    """Map a :class:`LightRAGClientError` to a bounded degradation token.
+
+    The token is a *closed set* — Path B callers see only one of these
+    strings, never ``str(exc)`` and never the upstream response body.
+    Operators find the full exception in the server log via
+    ``exc.request_id``.
+
+    Selection order:
+      1. ``upstream_timeout``  — exception type contains ``Timeout`` or
+         ``ReadTimeout`` (stalled sidecar).
+      2. ``upstream_unavailable`` — exception type contains ``Connect``
+         (sidecar not reachable at all) OR no HTTP status code at all.
+      3. ``upstream_error``    — everything else (HTTP 500/4xx/etc.).
+    """
+    ot = (exc.original_type or "").lower()
+    if "timeout" in ot:
+        return "upstream_timeout"
+    if "connect" in ot:
+        return "upstream_unavailable"
+    if exc.status_code is None:
+        # No HTTP status code reachable — connection-level failure.
+        return "upstream_unavailable"
+    return "upstream_error"
 
 
 # ---------------------------------------------------------------------------
@@ -111,24 +144,35 @@ class LightRAGProvider(RAGProvider):
     def name(self) -> str:
         return "lightrag"
 
-    async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        result = await self._client.query(query=query)
+    async def query(
+        self, *, query: str, request_id: str | None = None, **kwargs: Any
+    ) -> RAGQueryResult:
+        result = await self._client.query(query=query, request_id=request_id)
         return RAGQueryResult(
             response=result.get("response", ""),
             references=result.get("references", []),
             entities=result.get("entities", []),
             relationships=result.get("relationships", []),
             provider=self.name,
+            request_id=request_id,
         )
 
-    async def ingest(self, *, text: str, source: str | None = None) -> str | None:
+    async def ingest(
+        self,
+        *,
+        text: str,
+        source: str | None = None,
+        request_id: str | None = None,
+    ) -> str | None:
         """Ingest and return the LightRAG track_id (if any).
 
         Wraps :meth:`LightRAGClient.ingest` which returns a dict that
         may contain a ``track_id`` key.  Returns the string value or
         ``None`` when absent.
         """
-        result = await self._client.ingest(text=text, file_source=source)
+        result = await self._client.ingest(
+            text=text, file_source=source, request_id=request_id
+        )
         return result.get("track_id") if isinstance(result, dict) else None
 
     async def health(self) -> bool:
@@ -329,23 +373,78 @@ class RAGProviderSelector:
         """Return the primary (LightRAG) provider."""
         return self._lightrag
 
-    async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        """Query using LightRAG with automatic fallback on error."""
-        try:
-            return await self._lightrag.query(query=query, **kwargs)
-        except LightRAGClientError:
-            logger.warning("LightRAG query failed, falling back to rule-based")
-            return await self._fallback.query(query=query, **kwargs)
+    async def query(
+        self,
+        *,
+        query: str,
+        request_id: str | None = None,
+        **kwargs: Any,
+    ) -> RAGQueryResult:
+        """Query using LightRAG with automatic fallback on error.
 
-    async def ingest(self, *, text: str, source: str | None = None) -> str | None:
+        NFM-3407: when the primary provider raises a
+        :class:`LightRAGClientError`, the failure is **logged with the
+        full traceback** (``exc_info=True``) and the fallback result is
+        decorated with a bounded ``degradation_reason`` token and the
+        propagated ``request_id`` so the anonymous Path B caller can
+        see that degradation occurred without seeing the upstream
+        payload. The fallback result is a **new** frozen instance; the
+        rule-based provider's own ``RAGQueryResult`` is not mutated.
+        """
+        try:
+            return await self._lightrag.query(
+                query=query, request_id=request_id, **kwargs
+            )
+        except LightRAGClientError as exc:
+            logger.warning(
+                "LightRAG query failed (request_id=%s), falling back to "
+                "rule-based; degradation_reason=%s",
+                request_id,
+                _degradation_reason(exc),
+                exc_info=True,
+            )
+            fallback_result = await self._fallback.query(
+                query=query, **kwargs
+            )
+            # Build a NEW frozen instance (project immutability rule) so
+            # the rule-based provider's own result is left intact and
+            # callers downstream can mutate freely without leaking
+            # upstream diagnostic detail.
+            return replace(
+                fallback_result,
+                fallback=True,
+                degradation_reason=_degradation_reason(exc),
+                request_id=request_id,
+            )
+
+    async def ingest(
+        self,
+        *,
+        text: str,
+        source: str | None = None,
+        request_id: str | None = None,
+    ) -> str | None:
         """Ingest using LightRAG with automatic fallback on error.
 
         Returns the LightRAG ``track_id`` when the primary provider
         succeeds, or ``None`` on fallback.
+
+        NFM-3407: the failure is logged with the full traceback
+        (``exc_info=True``) and stamped with ``request_id`` for
+        correlation. The anonymous Path B caller sees only the
+        ``None`` return — no upstream body ever crosses the wire.
         """
         try:
-            return await self._lightrag.ingest(text=text, source=source)
-        except LightRAGClientError:
-            logger.warning("LightRAG ingest failed, falling back to rule-based")
+            return await self._lightrag.ingest(
+                text=text, source=source, request_id=request_id
+            )
+        except LightRAGClientError as exc:
+            logger.warning(
+                "LightRAG ingest failed (request_id=%s), falling back to "
+                "rule-based; degradation_reason=%s",
+                request_id,
+                _degradation_reason(exc),
+                exc_info=True,
+            )
             await self._fallback.ingest(text=text, source=source)
             return None

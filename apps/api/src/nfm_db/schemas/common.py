@@ -44,11 +44,18 @@ class PaginationParams(BaseModel):
 
 
 class ApiResponse(BaseModel, Generic[T]):
-    """Standard success/error envelope used by every endpoint."""
+    """Standard success/error envelope used by every endpoint.
+
+    NFM-3407: ``request_id`` is a UUID4 correlation key present on
+    *every* response so the caller can quote it when filing a bug;
+    operators use it to find the matching server log line. Defaults
+    to ``None`` for endpoints that don't generate a correlation key.
+    """
 
     success: bool
     data: T | None = None
     error: str | None = None
+    request_id: str | None = None
 
 
 class PaginatedResponse(BaseModel, Generic[T]):

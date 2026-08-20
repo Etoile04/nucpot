@@ -9,6 +9,7 @@ Provides:
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -118,10 +119,16 @@ async def ingest_document(
     Returns a track_id for monitoring async ingestion status.
     """
     client = _get_client()
+    # NFM-3407: every request gets a UUID4 correlation key stamped
+    # onto the log line and the response payload so the operator can
+    # cross-reference a caller-reported error with the matching
+    # server-side traceback.
+    request_id = str(uuid.uuid4())
     try:
         result = await client.ingest(
             text=request.text,
             file_source=request.file_source,
+            request_id=request_id,
         )
         return ApiResponse(
             success=True,
@@ -130,18 +137,37 @@ async def ingest_document(
                 message=result.get("message", ""),
                 track_id=result.get("track_id"),
             ),
+            request_id=request_id,
         )
     except LightRAGClientError as exc:
-        logger.error("LightRAG ingest error: %s", exc)
+        # NFM-3407 AC-4: log with exc_info so the operator gets the
+        # real traceback, and stamp the request_id so log↔response
+        # correlation works. ``exc.request_id`` may differ from the
+        # outer request_id if the exception was synthesized deeper
+        # upstream — prefer the outer one in the log message so the
+        # caller-quoted ID matches what they see in the response.
+        logger.error(
+            "LightRAG ingest error (request_id=%s): %s",
+            request_id,
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
             error=f"LightRAG service error: {exc}",
+            request_id=request_id,
         )
     except Exception as exc:
-        logger.error("Unexpected ingest error: %s", exc)
+        logger.error(
+            "Unexpected ingest error (request_id=%s): %s",
+            request_id,
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
             error=f"Ingest failed: {exc}",
+            request_id=request_id,
         )
 
 
@@ -166,11 +192,15 @@ async def query_knowledge_graph(
     with optional source references from the knowledge graph.
     """
     client = _get_client()
+    # NFM-3407: every request gets a UUID4 correlation key stamped
+    # onto the log line and the response payload (see ingest_document).
+    request_id = str(uuid.uuid4())
     try:
         result = await client.query(
             query=request.query,
             mode=request.mode.value,
             include_references=request.include_references,
+            request_id=request_id,
         )
         return ApiResponse(
             success=True,
@@ -180,16 +210,32 @@ async def query_knowledge_graph(
                 entities=result.get("entities", []),
                 relationships=result.get("relationships", []),
             ),
+            request_id=request_id,
         )
     except LightRAGClientError as exc:
-        logger.error("LightRAG query error: %s", exc)
+        # NFM-3407 AC-4: log with exc_info so the operator gets the
+        # real traceback, and stamp the request_id so log↔response
+        # correlation works.
+        logger.error(
+            "LightRAG query error (request_id=%s): %s",
+            request_id,
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
             error=f"LightRAG service error: {exc}",
+            request_id=request_id,
         )
     except Exception as exc:
-        logger.error("Unexpected query error: %s", exc)
+        logger.error(
+            "Unexpected query error (request_id=%s): %s",
+            request_id,
+            exc,
+            exc_info=True,
+        )
         return ApiResponse(
             success=False,
             error=f"Query failed: {exc}",
+            request_id=request_id,
         )

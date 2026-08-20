@@ -123,6 +123,11 @@ async def test_ingest_success(async_client: AsyncClient) -> None:
     mock_client.ingest.assert_awaited_once_with(
         text="UO2 is a nuclear fuel material with density 10.97 g/cm3.",
         file_source="paper_001.pdf",
+        # NFM-3407: every request carries a UUID4 request_id so the
+        # log↔response correlation works. Asserted via the captured
+        # value rather than a literal so the test doesn't pin a
+        # specific UUID.
+        request_id=mock_client.ingest.call_args.kwargs["request_id"],
     )
 
 
@@ -152,6 +157,7 @@ async def test_ingest_without_file_source(async_client: AsyncClient) -> None:
     mock_client.ingest.assert_awaited_once_with(
         text="Thermal conductivity of UO2 at 300K.",
         file_source=None,
+        request_id=mock_client.ingest.call_args.kwargs["request_id"],
     )
 
 
@@ -284,6 +290,8 @@ async def test_query_success(async_client: AsyncClient) -> None:
         query="What is the thermal conductivity of UO2?",
         mode="mix",
         include_references=True,
+        # NFM-3407: see ingest test above for rationale.
+        request_id=mock_client.query.call_args.kwargs["request_id"],
     )
 
 
@@ -315,6 +323,7 @@ async def test_query_default_mode(async_client: AsyncClient) -> None:
         query="What is UN used for?",
         mode="mix",
         include_references=False,
+        request_id=mock_client.query.call_args.kwargs["request_id"],
     )
 
 

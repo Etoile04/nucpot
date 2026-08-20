@@ -7,7 +7,7 @@ All external services are mocked:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -125,14 +125,21 @@ class TestLightRAGProvider:
         assert result.response == "LightRAG answer"
         assert result.provider == "lightrag"
         assert result.fallback is False
-        client.query.assert_called_once_with(query="What is UO2?")
+        # NFM-3407: ``request_id`` is forwarded as None when the caller
+        # doesn't supply one (the common case for background ingest).
+        client.query.assert_called_once_with(
+            query="What is UO2?", request_id=None
+        )
 
     @pytest.mark.asyncio
     async def test_ingest_delegates_to_client(self) -> None:
         client = _make_mock_lightrag_client()
         provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
         await provider.ingest(text="some text", source="doc.pdf")
-        client.ingest.assert_called_once_with(text="some text", file_source="doc.pdf")
+        # NFM-3407: ``request_id`` forwarded as None by default.
+        client.ingest.assert_called_once_with(
+            text="some text", file_source="doc.pdf", request_id=None
+        )
 
     @pytest.mark.asyncio
     async def test_health_delegates_to_client(self) -> None:
@@ -319,3 +326,253 @@ class TestRAGProviderSelector:
         status = selector.status
         assert status.active_provider == "lightrag"
         client.health_check.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# NFM-3407: Path B no-swallow + degradation_reason
+# ---------------------------------------------------------------------------
+
+
+class TestRAGProviderSelectorNoSwallow:
+    """NFM-3407 AC-5 — Path B (anonymous) must not swallow LightRAG errors.
+
+    Before NFM-3407 the selector had two bare ``except LightRAGClientError``
+    blocks (no ``as exc``) that called ``logger.warning("...")`` without
+    ``exc_info=True`` and silently fell back to the rule-based provider.
+    The caller had no way to tell that LightRAG was degraded.
+
+    Contract:
+      * both swallow sites bind ``as exc`` and call ``logger.warning(..., exc_info=True)``
+      * a LightRAG failure produces a ``RAGQueryResult`` with
+        ``fallback=True`` AND a populated ``degradation_reason`` (a
+        bounded token like ``upstream_timeout`` / ``upstream_unavailable``
+        / ``upstream_error`` — never ``str(exc)`` and never the upstream body)
+      * ``request_id`` (UUID4) is propagated onto the fallback result so
+        the operator can correlate the log line with the response
+      * the fallback result is a **new** frozen instance (project
+        immutability rule — the existing rule-based ``RAGQueryResult``
+        must not be mutated)
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_fallback_includes_degradation_reason_on_timeout(
+        self, caplog
+    ) -> None:
+        """LightRAG ReadTimeout → fallback with degradation_reason=upstream_timeout."""
+        from nfm_db.services.rag_provider import RAGProviderSelector
+
+        # LightRAG client raises an enriched LightRAGClientError for ReadTimeout.
+        client = _make_mock_lightrag_client()
+        client.query = AsyncMock(
+            side_effect=LightRAGClientError(
+                "LightRAG query failed: [ReadTimeout] Timed out",
+                original_type="ReadTimeout",
+                original_message="Timed out",
+            )
+        )
+        # Rule-based fallback returns a frozen RAGQueryResult we must NOT mutate.
+        original_fallback = RAGQueryResult(
+            response="rule-based answer",
+            references=[],
+            provider="rule-based-fallback",
+            fallback=True,
+        )
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with (
+            patch.object(
+                selector._fallback,  # type: ignore[attr-defined]
+                "query",
+                new_callable=AsyncMock,
+                return_value=original_fallback,
+            ),
+            caplog.at_level("WARNING", logger="nfm_db.services.rag_provider"),
+        ):
+            result = await selector.query(
+                query="test", request_id="req-timeout-1"
+            )
+
+        # New instance, not the original fallback.
+        assert result is not original_fallback
+        assert result.fallback is True
+        assert result.degradation_reason == "upstream_timeout"
+        assert result.request_id == "req-timeout-1"
+        # Original rule-based fields are preserved on the new instance.
+        assert result.response == "rule-based answer"
+        assert result.provider == "rule-based-fallback"
+        # AC-5: log carries the real exception, not just a static string.
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warning_records, "expected a WARNING log record"
+        assert any(r.exc_info is not None for r in warning_records), (
+            "logger.warning must be called with exc_info=True"
+        )
+        # request_id appears in the log so operator can correlate.
+        assert any("req-timeout-1" in r.getMessage() for r in warning_records)
+
+    @pytest.mark.asyncio
+    async def test_query_fallback_includes_degradation_reason_on_connect_error(
+        self,
+    ) -> None:
+        """LightRAG ConnectError → fallback with degradation_reason=upstream_unavailable."""
+        from nfm_db.services.rag_provider import RAGProviderSelector
+
+        client = _make_mock_lightrag_client()
+        client.query = AsyncMock(
+            side_effect=LightRAGClientError(
+                "LightRAG query failed: [ConnectError] Connection refused",
+                original_type="ConnectError",
+                original_message="Connection refused",
+            )
+        )
+        original_fallback = RAGQueryResult(
+            response="",
+            provider="rule-based-fallback",
+            fallback=True,
+        )
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with patch.object(
+            selector._fallback,  # type: ignore[attr-defined]
+            "query",
+            new_callable=AsyncMock,
+            return_value=original_fallback,
+        ):
+            result = await selector.query(query="test")
+
+        assert result is not original_fallback
+        assert result.degradation_reason == "upstream_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_query_fallback_includes_degradation_reason_on_http_error(
+        self,
+    ) -> None:
+        """HTTP 500 upstream → fallback with degradation_reason=upstream_error."""
+        from nfm_db.services.rag_provider import RAGProviderSelector
+
+        client = _make_mock_lightrag_client()
+        client.query = AsyncMock(
+            side_effect=LightRAGClientError(
+                "LightRAG query failed: HTTP 500 - Internal server error",
+                original_type="HTTPStatusError",
+                original_message="Server Error",
+                response_body="internal details",
+                status_code=500,
+            )
+        )
+        original_fallback = RAGQueryResult(
+            response="",
+            provider="rule-based-fallback",
+            fallback=True,
+        )
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with patch.object(
+            selector._fallback,  # type: ignore[attr-defined]
+            "query",
+            new_callable=AsyncMock,
+            return_value=original_fallback,
+        ):
+            result = await selector.query(query="test")
+
+        assert result.degradation_reason == "upstream_error"
+        # The upstream body must NEVER appear on the returned result
+        # (AC-7 redacts it on the wire; here we prove it never even
+        # touches the data layer's domain object).
+        assert "internal details" not in result.response
+
+    @pytest.mark.asyncio
+    async def test_query_does_not_swallow_without_exc_info(self, caplog) -> None:
+        """Regression guard: bare ``logger.warning('...')`` (no exc_info) fails."""
+        from nfm_db.services.rag_provider import RAGProviderSelector
+
+        client = _make_mock_lightrag_client()
+        client.query = AsyncMock(side_effect=LightRAGClientError("boom"))
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+        original_fallback = RAGQueryResult(
+            response="", provider="rule-based-fallback", fallback=True
+        )
+
+        with (
+            patch.object(
+                selector._fallback,  # type: ignore[attr-defined]
+                "query",
+                new_callable=AsyncMock,
+                return_value=original_fallback,
+            ),
+            caplog.at_level("WARNING", logger="nfm_db.services.rag_provider"),
+        ):
+            await selector.query(query="test")
+
+        # The exception must be logged with exc_info — the previous
+        # bare-message swallow made it invisible to operators.
+        exc_records = [r for r in caplog.records if r.exc_info is not None]
+        assert exc_records, (
+            "LightRAGClientError swallowed without traceback — must log exc_info=True"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ingest_fallback_logs_with_exc_info(self, caplog) -> None:
+        """Ingest swallow site also logs with exc_info=True."""
+        from nfm_db.services.rag_provider import RAGProviderSelector
+
+        client = _make_mock_lightrag_client()
+        client.ingest = AsyncMock(side_effect=LightRAGClientError("ingest boom"))
+        db = _make_mock_db()
+        selector = RAGProviderSelector(
+            lightrag_client=client,  # type: ignore[arg-type]
+            db_session=db,  # type: ignore[arg-type]
+        )
+
+        with caplog.at_level("WARNING", logger="nfm_db.services.rag_provider"):
+            await selector.ingest(text="some text", source="doc.pdf")
+
+        exc_records = [r for r in caplog.records if r.exc_info is not None]
+        assert exc_records, (
+            "LightRAGClientError on ingest swallowed without traceback — "
+            "must log exc_info=True"
+        )
+
+
+class TestRAGQueryResultNewFields:
+    """NFM-3407 — RAGQueryResult gains degradation_reason and request_id."""
+
+    def test_default_values(self) -> None:
+        """New fields default to None — back-compat for existing callers."""
+        result = RAGQueryResult(response="hello")
+        assert result.degradation_reason is None
+        assert result.request_id is None
+
+    def test_with_new_fields(self) -> None:
+        result = RAGQueryResult(
+            response="degraded answer",
+            fallback=True,
+            degradation_reason="upstream_timeout",
+            request_id="req-abc",
+        )
+        assert result.degradation_reason == "upstream_timeout"
+        assert result.request_id == "req-abc"
+
+    def test_frozen_immutability_with_new_fields(self) -> None:
+        result = RAGQueryResult(
+            response="x", degradation_reason="upstream_error", request_id="req-1"
+        )
+        with pytest.raises(AttributeError):
+            result.degradation_reason = "upstream_timeout"  # type: ignore[misc]
+        with pytest.raises(AttributeError):
+            result.request_id = "req-2"  # type: ignore[misc]
