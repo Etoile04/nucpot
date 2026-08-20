@@ -40,7 +40,7 @@ export function SearchPageContent() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <Title level={2} className="!m-0 text-white">
-            {mode === "text" ? "高级检索" : "语义检索"}
+            {mode === "text" ? "势函数检索" : "语义检索"}
           </Title>
           <Text type="secondary">
             {mode === "text"
