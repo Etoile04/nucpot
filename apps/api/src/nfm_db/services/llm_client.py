@@ -440,16 +440,21 @@ async def call_llm(
             await asyncio.sleep(backoff)
         except httpx.RequestError as exc:
             last_exc = exc
+            # Use ``!r`` so the exception class + args survive even when
+            # ``__str__`` returns empty (NFM-3358 — ReadTimeout.__str__ is
+            # ""; without ``!r`` the log line becomes "LLM request failed: "
+            # and the failure mode is opaque to operators).
+            exc_repr = repr(exc)
             if attempt == _CALL_LLM_MAX_RETRIES:
-                logger.error("LLM request error (attempt %d/%d): %s", attempt, _CALL_LLM_MAX_RETRIES, exc)
-                raise RuntimeError(f"LLM request failed: {exc}") from exc
+                logger.error("LLM request error (attempt %d/%d): %s", attempt, _CALL_LLM_MAX_RETRIES, exc_repr)
+                raise RuntimeError(f"LLM request failed: {exc_repr}") from exc
             backoff = _CALL_LLM_BASE_BACKOFF * (2 ** (attempt - 1))
             logger.warning(
                 "LLM request error (attempt %d/%d), retrying in %.1fs: %s",
                 attempt,
                 _CALL_LLM_MAX_RETRIES,
                 backoff,
-                exc,
+                exc_repr,
             )
             await asyncio.sleep(backoff)
 
