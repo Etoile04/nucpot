@@ -51,6 +51,63 @@ _DEFAULT_TIMEOUT = 60.0
 
 
 # ---------------------------------------------------------------------------
+# Env-var overrides (NFM-3404 / NFM-3425 — ADR §2.1 single source of truth)
+# ---------------------------------------------------------------------------
+# ``NFM_LIGHTRAG_QUERY_TIMEOUT_S`` binds the read/write/pool ceiling for the
+# query path (defaulting to ``_DEFAULT_QUERY_TIMEOUT`` below); the connect
+# ceiling was previously hardcoded at 5 s and now reads from
+# ``NFM_LIGHTRAG_QUERY_CONNECT_S``. Both fall back to the constants above
+# when the env vars are unset, preserving pre-NFM-3404 behaviour for
+# existing callers and tests.
+_ENV_QUERY_TIMEOUT_S = "NFM_LIGHTRAG_QUERY_TIMEOUT_S"
+_ENV_QUERY_CONNECT_S = "NFM_LIGHTRAG_QUERY_CONNECT_S"
+_DEFAULT_QUERY_CONNECT_S = 5.0
+
+
+def _read_env_float(name: str, default: float) -> float:
+    """Read a float from ``os.environ[name]``, falling back to ``default``.
+
+    Empty / whitespace strings, ``None``, and non-numeric values all fall
+    through to ``default``. This matches the contract documented in
+    ADR-NFM-3404 §2.1: env vars are the source of truth, but the module
+    constants are the safe fallback for callers that explicitly clear the
+    environment.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(
+            "LightRAG env override %s=%r is not a float; using default %s",
+            name,
+            raw,
+            default,
+        )
+        return default
+
+
+def _resolve_query_timeout(
+    explicit_query: float | None,
+    explicit_legacy: float | None,
+) -> float:
+    """Resolution chain for the query read budget.
+
+    Explicit ``query_timeout=`` wins over the legacy ``timeout=`` kwarg,
+    which wins over the ``NFM_LIGHTRAG_QUERY_TIMEOUT_S`` env var, which wins
+    over the module constant ``_DEFAULT_QUERY_TIMEOUT``. Each step is
+    optional; an unset env var or empty string falls straight through to
+    the next level (see ``_read_env_float``).
+    """
+    if explicit_query is not None:
+        return explicit_query
+    if explicit_legacy is not None:
+        return explicit_legacy
+    return _read_env_float(_ENV_QUERY_TIMEOUT_S, _DEFAULT_QUERY_TIMEOUT)
+
+
+# ---------------------------------------------------------------------------
 # Exception
 # ---------------------------------------------------------------------------
 
@@ -111,13 +168,10 @@ class LightRAGClient:
         self.port = port or int(os.environ.get("NFM_LIGHTRAG_PORT", str(_DEFAULT_PORT)))
 
         # An explicit ``timeout=`` collapses both paths onto that value.
-        self.query_timeout = (
-            query_timeout
-            if query_timeout is not None
-            else timeout
-            if timeout is not None
-            else _DEFAULT_QUERY_TIMEOUT
-        )
+        # NFM-3404 §2.1: when neither kwarg is passed, the query budget also
+        # honours ``NFM_LIGHTRAG_QUERY_TIMEOUT_S`` (falls back to the module
+        # constant ``_DEFAULT_QUERY_TIMEOUT`` if unset).
+        self.query_timeout = _resolve_query_timeout(query_timeout, timeout)
         self.ingest_timeout = (
             ingest_timeout
             if ingest_timeout is not None
@@ -130,8 +184,8 @@ class LightRAGClient:
         self.timeout = timeout if timeout is not None else _DEFAULT_TIMEOUT
 
         self._base_url = f"http://{self.host}:{self.port}"
-        # NFM-3367: split the transport-level timeout so a stalled TCP
-        # handshake cannot blow past the per-request query budget.
+        # NFM-3367 / NFM-3404: split the transport-level timeout so a stalled
+        # TCP handshake cannot blow past the per-request query budget.
         #
         # ``read``/``write``/``pool`` are slaved to ``self.query_timeout`` —
         # not the legacy ``self.timeout`` — because the query budget is the
@@ -140,13 +194,16 @@ class LightRAGClient:
         # already absorbed that value (see ``__init__``), so the legacy
         # path keeps working too.
         #
-        # ``connect`` is bounded at 5s so the TCP handshake itself cannot
-        # consume the whole 8s budget; the remaining 3s is the per-request
-        # read envelope.
+        # ``connect`` is bounded so the TCP handshake itself cannot consume
+        # the whole query budget; it honours ``NFM_LIGHTRAG_QUERY_CONNECT_S``
+        # (ADR §2.1) and falls back to ``_DEFAULT_QUERY_CONNECT_S`` (5 s).
+        self._connect_timeout = _read_env_float(
+            _ENV_QUERY_CONNECT_S, _DEFAULT_QUERY_CONNECT_S
+        )
         self._http_client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(
-                connect=5.0,
+                connect=self._connect_timeout,
                 read=self.query_timeout,
                 write=self.query_timeout,
                 pool=self.query_timeout,

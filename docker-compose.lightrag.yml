@@ -54,7 +54,7 @@ services:
       LLM_MODEL: ${LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
       LLM_BINDING_HOST: ${LIGHTRAG_LLM_HOST:-}
       LLM_BINDING_API_KEY: ${LIGHTRAG_LLM_API_KEY:-}
-      LLM_TIMEOUT: ${LIGHTRAG_LLM_TIMEOUT:-150}
+      LLM_TIMEOUT: ${LIGHTRAG_LLM_TIMEOUT_S:-8}
       MAX_ASYNC_LLM: ${LIGHTRAG_MAX_ASYNC_LLM:-4}
 
       # --- Embedding Configuration ---
