@@ -312,8 +312,8 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
-            git config pull.rebase false
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "===> Checking .env.prod <-> docker/.env.prod key drift..."
             # Only key *names* are printed, never values — safe for CI logs.
@@ -349,8 +349,8 @@ jobs:
             export DOCKER_CONFIG="/tmp/no-cred-docker-config-\${USER}"
             mkdir -p "\$DOCKER_CONFIG"
             printf '{}' > "\$DOCKER_CONFIG/config.json"
-            git config pull.rebase false
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
             # --no-cache prevents stale COPY layers (root cause of NFM-2376:
@@ -592,8 +592,8 @@ jobs:
             export PROD_IMAGE_TAG="${{ github.sha }}"
             echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
-            git config pull.rebase false
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
             # Build the 3 distinct images (D1, NFM-2148). The api image is
             # shared by the api and worker services (docker-compose.prod.yml:62,
