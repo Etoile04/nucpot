@@ -40,6 +40,10 @@ _PROVIDER_DEFAULTS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "ollama": "http://localhost:11434/v1",
     "local": "http://localhost:11434/v1",
+    # NFM-3358 — Minimax hosts an OpenAI-compatible vision endpoint at
+    # https://api.minimaxi.com/v1 (override VLM_BASE_URL to change host);
+    # we leave the model selection to VLM_MODEL.
+    "minimax": "https://api.minimaxi.com/v1",
 }
 
 
@@ -63,6 +67,7 @@ class VisionProvider(StrEnum):
     OPENAI = "openai"
     OLLAMA = "ollama"
     LOCAL = "local"
+    MINIMAX = "minimax"  # NFM-3358 — MiniMax M2.7 via api.minimaxi.com/v1
 
 
 # ---------------------------------------------------------------------------

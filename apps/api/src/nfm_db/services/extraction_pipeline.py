@@ -559,12 +559,88 @@ async def ontofuel_extract(
         return _post_process_extracted(raw_properties, source_reference)
 
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        # Carry the original exception class + args (use !r — NFM-3358) so
+        # operators can tell apart "LLM 5xx returned non-JSON", "LLM timed out
+        # after 300s", "No published ontology", "missing content_md", etc.
         logger.error(
-            "LLM extraction failed for %s: %s — returning empty list",
+            "LLM extraction failed for %s: %r — returning empty list",
             source_reference,
             exc,
         )
+        # NFM-3358: also surface a parse_error marker so downstream consumers
+        # can distinguish "completed with zero candidates" (genuinely empty
+        # PDF) from "LLM was unavailable" (infrastructure failure).
+        _mark_extraction_failure(source_reference, exc)
         return []
+
+
+def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
+    """Best-effort write of a structured parse_error marker for ``source_reference``.
+
+    NFM-3358 — the extractor returning ``[]`` after a failure was previously
+    indistinguishable from a genuinely-empty PDF. We annotate the DataSource
+    with a short ``parse_error`` and ``parse_status='llm_failed'`` when the
+    source is a UUID-shaped datasource id; everything else (legacy IDs) is
+    skipped. The function is best-effort: any DB/import error is swallowed
+    so it never breaks the caller's exception flow.
+    """
+    import asyncio
+    import uuid as _uuid
+
+    try:
+        ds_id = _uuid.UUID(str(source_reference))
+    except (ValueError, AttributeError, TypeError):
+        return
+
+    parse_status_llm_failed = "llm_failed"
+
+    async def _update() -> None:
+        try:
+            from sqlalchemy import update
+
+            from nfm_db.database import async_session_factory
+            from nfm_db.models.source import DataSource
+        except Exception:  # pragma: no cover — defensive
+            logger.debug(
+                "_mark_extraction_failure: import failure (non-fatal)",
+                exc_info=True,
+            )
+            return
+
+        try:
+            error_text = f"LLM extraction failed: {exc!r}"[:500]
+            async with async_session_factory() as session:
+                await session.execute(
+                    update(DataSource)
+                    .where(DataSource.id == ds_id)
+                    .values(
+                        parse_status=parse_status_llm_failed,
+                        parse_error=error_text,
+                    )
+                )
+                await session.commit()
+        except Exception:  # pragma: no cover — defensive
+            logger.debug(
+                "_mark_extraction_failure: DB write failure for %s (non-fatal)",
+                ds_id,
+                exc_info=True,
+            )
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            asyncio.run(_update())
+        except Exception:  # pragma: no cover — defensive
+            logger.debug("_mark_extraction_failure: sync fallback failed", exc_info=True)
+    else:
+        # ``create_task`` may log unhandled exceptions.  Attach a no-op
+        # done callback so the task is referenced and the runtime never
+        # prints "Task was destroyed but it is pending!" warnings.
+        # (RUF006 + the parent's expectation that we don't return until
+        # the task is queued.)
+        _task = loop.create_task(_update())
+        _task.add_done_callback(lambda _t: None)
 
 def _stub_extraction_results(source: str) -> list[dict[str, Any]]:
     """Generate stub extraction results for pipeline testing.
