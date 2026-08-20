@@ -99,7 +99,7 @@ services:
       VLM_PROVIDER: ${PROD_VLM_PROVIDER:-minimax}
       VLM_API_KEY: ${PROD_VLM_API_KEY:-}
       VLM_BASE_URL: ${PROD_VLM_BASE_URL:-https://api.minimaxi.com/v1}
-      VLM_MODEL: ${PROD_VLM_MODEL:-M2.7}
+      VLM_MODEL: ${PROD_VLM_MODEL:-MiniMax-M3}
       # NFM-1807: httpx does not support wildcards in NO_PROXY.
       # List every Docker-internal hostname the API may call so
       # requests bypass the host proxy and go directly over the
@@ -257,7 +257,7 @@ services:
       VLM_PROVIDER: ${PROD_VLM_PROVIDER:-minimax}
       VLM_API_KEY: ${PROD_VLM_API_KEY:-}
       VLM_BASE_URL: ${PROD_VLM_BASE_URL:-https://api.minimaxi.com/v1}
-      VLM_MODEL: ${PROD_VLM_MODEL:-M2.7}
+      VLM_MODEL: ${PROD_VLM_MODEL:-MiniMax-M3}
       # NFM-MINERU-1: MinerU env must mirror the api service — the worker
       # runs ``process_literature_task`` which calls parse_pdf_to_markdown.
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
