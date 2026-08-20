@@ -15,13 +15,22 @@ ENV LIGHTRAG_WEBUI_URL=$LIGHTRAG_WEBUI_URL
 
 WORKDIR /app
 
+# NFM-3328: corepack downloads pnpm from registry.npmjs.org by default; the
+# deploy host's direct route to npmjs is unreliable (TLS terminated mid-fetch
+# on 2026-08-19, breaking every web image build since 2026-08-18). Point
+# corepack AND pnpm at the CN mirror so both the shim download and the
+# dependency install survive flaky npmjs connectivity.
+ARG COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+ENV COREPACK_NPM_REGISTRY=${COREPACK_NPM_REGISTRY}
+
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/ ./packages/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm config set registry https://registry.npmmirror.com && \
+    pnpm install --frozen-lockfile
 
 COPY apps/web/ ./apps/web/
 RUN pnpm --filter @nfm-db/web build
