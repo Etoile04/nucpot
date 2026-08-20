@@ -25,7 +25,7 @@ test.describe("Search Page", { tag: "@smoke" }, () => {
 
     // Should show the search heading (default mode is "text")
     const heading = page.locator("h2").first()
-    await expect(heading).toContainText("高级检索")
+    await expect(heading).toContainText("势函数检索")
 
     // Mode toggle should be present (allows switching between text/semantic)
     const toggle = page.locator('[class*="ant-segmented"], [class*="SearchModeToggle"]').first()
@@ -50,7 +50,7 @@ test.describe("Search Page", { tag: "@smoke" }, () => {
     await page.goto("/search", { waitUntil: "domcontentloaded" })
 
     // Default is text search mode
-    await expect(page.locator("h2").first()).toContainText("高级检索")
+    await expect(page.locator("h2").first()).toContainText("势函数检索")
 
     // Click the semantic mode toggle option inside the Ant Design Segmented.
     // Ant Design renders segmented as a radiogroup with radio options.
