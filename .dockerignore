@@ -1,0 +1,28 @@
+# NFM-3328: build context hygiene. Without this, host-side node_modules
+# (macOS/pnpm symlinks pointing at darwin binaries) get COPY'd into the
+# image and shadow the container's own install — turbopack then resolves
+# @tailwindcss/postcss / lightningcss to the WRONG platform binaries and
+# the build fails with "Cannot find module". This has been latent debt
+# since the repo root never had a .dockerignore; it started biting on
+# 2026-08-18 when dependabot PR #869 bumped tailwindcss 4.3.2 -> 4.3.3
+# and every clean (--no-cache) prod web build since then failed.
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/.git
+**/.gitignore
+**/.DS_Store
+
+# pnpm / corepack caches never belong in a build
+**/.pnpm-store
+**/.corepack-cache
+
+# Local dev artifacts
+**/.env
+**/.env.local
+**/*.log
+**/coverage
+docs/
+*.md
+!README.md

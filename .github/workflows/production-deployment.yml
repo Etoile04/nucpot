@@ -563,11 +563,27 @@ jobs:
         id: deploy
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
+            # NFM-3328: fail-fast. Prior deploys slid past failed steps (build
+            # errors, `docker compose` unavailable) into green health checks
+            # against stale containers — four consecutive false-success deploys
+            # (2026-08-18..19). Without -e the heredoc reports the exit code of
+            # the LAST command only; every intermediate failure was swallowed.
+            set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
-            mkdir -p /tmp/nfm848-no-cred-docker-config
+            mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
+            # NFM-3328: DOCKER_CONFIG redirects the CLI-plugin search path, so
+            # an otherwise-empty config dir SILENTLY REMOVES `docker compose`
+            # (verified empirically: `docker compose version` → "unknown
+            # command"). Every `docker compose -f ...` line then failed with
+            # "unknown shorthand flag: 'f'" and the deploy continued on stale
+            # containers. Symlink the host's compose plugin into the override
+            # dir to keep compose available without restoring the keychain.
+            ln -sf ~/.docker/cli-plugins/docker-compose \
+              /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
+            docker compose version
 
             # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
             # commit SHA so a bad deploy can be rolled back by re-tagging, not
