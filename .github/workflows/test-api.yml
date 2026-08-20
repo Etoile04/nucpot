@@ -183,6 +183,103 @@ jobs:
         run: |
           uv run pytest tests/test_deploy_lock.py -v --no-cov --override-ini="addopts="
 
+  # NFM-3402 / NFM-3372: PR-time regression for the alembic <-> Base.metadata
+  # drift guard. Runs `alembic upgrade head` against a real Postgres 16
+  # service and diffs the resulting schema against ``nfm_db.models.Base.metadata``
+  # via ``alembic.autogenerate.compare_metadata``. Exits non-zero with a
+  # greppable ``DRIFT:`` line per missing table/column/index/fk when drift
+  # is detected. Catches the ``kg_entity_types`` class of defect (a model
+  # declared without a corresponding migration). Required to PASS on
+  # origin/main once NFM-3370 has landed; MUST FAIL when NFM-3370 is
+  # reverted.
+  #
+  # Job deliberately mirrors ``test-deploy-lock-pg``'s Postgres service
+  # wiring so the diff runs against the same Postgres dialect as prod
+  # (sqlite masks the class of bug this guard exists to catch).
+  schema-drift:
+    name: API Schema Drift (Postgres)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nfm
+          POSTGRES_PASSWORD: nfm
+          POSTGRES_DB: nfm_schema_drift
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nfm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NFM_DATABASE_URL: postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_schema_drift
+      DATABASE_URL: postgresql+psycopg://nfm:nfm@localhost:5432/nfm_schema_drift
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # Sync psycopg driver for the diff path — see check_schema_drift.py
+      #::_sync_engine_from_url. ``+asyncpg`` URLs are rewritten to ``+psycopg``
+      # so compare_metadata (sync) can introspect the live schema.
+      - name: Install psycopg[binary]
+        run: uv pip install "psycopg[binary]"
+
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U nfm; then
+              echo "Postgres ready"
+              break
+            fi
+            echo "Waiting for Postgres (${i}/30)..."
+            sleep 2
+          done
+          pg_isready -h localhost -p 5432 -U nfm
+
+      # Run the drift guard from the API working dir so ``apps/api/alembic.ini``
+      # and ``apps/api/migrations/`` resolve as the script expects. The script
+      # itself lives at ``../../scripts/check_schema_drift.py`` (repo root).
+      - name: Run schema drift check (NFM-3402)
+        run: |
+          set -o pipefail
+          uv run python ../../scripts/check_schema_drift.py 2>&1 | tee schema-drift-output.txt
+
+      # Upload output for triage when the guard fails. The check itself exits
+      # non-zero and gates merge — this artifact is for the human reviewer.
+      - name: Upload schema-drift output artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: schema-drift-output
+          path: apps/api/schema-drift-output.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Step summary
+        if: always()
+        run: |
+          echo "## Schema Drift Guard (NFM-3402)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Outcome:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run:** [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact:** Download \`schema-drift-output\` from the run page (30-day retention)" >> $GITHUB_STEP_SUMMARY
+
   # NFM-3199: Restore parity test execution inside the standard backend CI
   # workflow now that .github/workflows/extraction-parity*.yml have been
   # removed (NFM-3193 / PR #808). Mirrors the invocation shape of the deleted
