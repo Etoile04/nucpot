@@ -305,7 +305,7 @@ jobs:
   ci-failure-triage:
     name: CI Failure Triage
     runs-on: ubuntu-latest
-    needs: [frontend, backend, docker-build, e2e]
+    needs: [frontend, backend, docker-build, e2e, schema-drift-guard]
     if: failure() && github.event_name == 'push'
     permissions:
       issues: write
@@ -448,7 +448,7 @@ jobs:
   ci-recovery:
     name: CI Recovery — close stale issues
     runs-on: ubuntu-latest
-    needs: [frontend, backend, docker-build, e2e]
+    needs: [frontend, backend, docker-build, e2e, schema-drift-guard]
     if: success() && github.event_name == 'push'
     permissions:
       issues: write
