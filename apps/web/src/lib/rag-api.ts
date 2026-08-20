@@ -95,11 +95,11 @@ export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 14_000
 
 /** Shown when the client-side AbortController fires. */
 export const RAG_TIMEOUT_MESSAGE =
-  "查询超时，请稍后重试，或尝试使用关键词搜索。"
+  "查询超时，请稍后重试，或请尝试使用关键词搜索。"
 
 /** Shown for every other failure mode (network, 5xx, success:false). */
 export const RAG_UNAVAILABLE_MESSAGE =
-  "语义检索暂时不可用，请稍后重试，或尝试使用关键词搜索。"
+  "语义检索暂时不可用，请稍后重试，或请尝试使用关键词搜索。"
 
 /**
  * Resolve the abort budget from `NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS`.
