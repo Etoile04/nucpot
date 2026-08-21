@@ -243,7 +243,7 @@ export default function LiteratureManager() {
         `上传成功：${file.name}（${STATUS_LABELS[resp.status as LiteratureStatus] ?? resp.status}）`,
         3,
       )
-      void queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
+      void queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY, exact: false })
       // Defer drawer open so the user sees the success message first
       setTimeout(() => void openDetail(resp.literature_id), 600)
     },
@@ -270,7 +270,7 @@ export default function LiteratureManager() {
     mutationFn: (doi: string) => literatureApi.fromDoi(doi.trim()),
     onSuccess: (resp) => {
       message.success("已触发 DOI 提取任务")
-      void queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
+      void queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY, exact: false })
       void openDetail(resp.literature_id)
     },
     onError: (err: unknown) => {
@@ -291,7 +291,7 @@ export default function LiteratureManager() {
           // status when its next refetch lands.
         }
       }
-      await queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
+      await queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY, exact: false })
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : "重新提取失败"
@@ -307,7 +307,7 @@ export default function LiteratureManager() {
         setDrawerOpen(false)
         setDetail(null)
       }
-      await queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY })
+      await queryClient.invalidateQueries({ queryKey: LITERATURE_LIST_KEY, exact: false })
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : "删除失败"

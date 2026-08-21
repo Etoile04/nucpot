@@ -141,6 +141,13 @@ def upgrade() -> None:
                 CHECK (status IN ('pending', 'approved', 'rejected', 'modified'))
         );
     """)
+    # NFM-3383 guard: on the 011 fork path the table already exists with the
+    # older schema (review_status, not status) — index creation on a missing
+    # column aborted the chain. Create the column first when absent.
+    op.execute("""
+        ALTER TABLE kg_review_queue
+            ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'pending';
+    """)
     op.execute("CREATE INDEX IF NOT EXISTS ix_kg_review_queue_status ON kg_review_queue (status)")
     op.execute("CREATE INDEX IF NOT EXISTS ix_kg_review_queue_item ON kg_review_queue (item_id)")
 

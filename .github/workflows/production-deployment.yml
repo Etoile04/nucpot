@@ -342,13 +342,16 @@ jobs:
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
             # NFM-848: SSH heredoc opens a fresh shell that does NOT inherit
             # GHA env vars. Docker Desktop rewrites credsStore:"desktop" into
-            # ~/.docker/config.json on restart; in a non-interactive session
-            # the keychain is locked and docker-credential-desktop fails.
-            # Point DOCKER_CONFIG at a clean scratch dir — empirically
-            # honored by the docker CLI (2026-08-16 bogus-helper test).
-            export DOCKER_CONFIG="/tmp/no-cred-docker-config-\${USER}"
-            mkdir -p "\$DOCKER_CONFIG"
-            printf '{}' > "\$DOCKER_CONFIG/config.json"
+            # NFM-3328: rebuild deploy keychain failure chain. DOCKER_CONFIG
+            # is honored by the docker CLI (a bogus credsStore pointer made
+            # `docker pull` return 404 in 2026-08-16 controlled tests).
+            # NFM-848: GHA shell expands \$-vars; the runner env has no USER/
+            # HOME set, which made the earlier \${USER} form expand to an
+            # empty string and `mkdir -p ""` fail. Use literal paths so the
+            # heredoc never depends on env inheritance.
+            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
+            mkdir -p /tmp/nfm848-no-cred-docker-config
+            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
             git fetch origin main
             git reset --hard origin/main
 
@@ -475,6 +478,11 @@ jobs:
           # Catches logical regressions in the cutover assertion even when
           # the live-Docker deploy-prod job is skipped.
           python3 -m pytest tools/post-deploy-cutover-assert/test_assert.py -v
+          # NFM-3448: candidate-tag retention prune. Same fake-docker shim
+          # pattern as the cutover assertion; runs without the daemon so
+          # it executes on PR runners and catches regressions in
+          # `tools/prod-tag-retention/prune.sh` before they reach prod.
+          python3 -m pytest tools/prod-tag-retention/test_prune.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
@@ -732,6 +740,19 @@ jobs:
               else
                 echo "    ${REPO}: nothing to prune"
               fi
+            done
+
+            # NFM-3448: candidate-tag retention. The pre-deploy-assert job
+            # (ADR-NFM-2139 §5 D2) writes nucpot-prod-{api,web,lightrag}:
+            # candidate-<sha> at every build. Those tags are redundant with
+            # the SHA-tagged image deploy-prod just promoted (same content)
+            # and would otherwise accumulate at ~6 per 16 h (~13 GB/day
+            # across the three repositories) — see NFM-3447 disk pressure.
+            # Keep the most-recent 3 candidate tags per repository; remove
+            # older entries via tools/prod-tag-retention/prune.sh.
+            echo "==> Pruning candidate-* tags older than the last 3 per repository (NFM-3448)"
+            for REPO in nucpot-prod-api nucpot-prod-lightrag nucpot-prod-web; do
+              bash tools/prod-tag-retention/prune.sh --repo "$REPO" --keep 3
             done
             echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
           ENDSSH

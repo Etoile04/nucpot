@@ -20,6 +20,7 @@ from nfm_db.models import (
     PropertyCategory,
     PropertyMeasurement,
     PropertyType,
+    Unit,
 )
 from nfm_db.services.extraction_to_db_mapper import (
     ONTOFUEL_CATEGORY_TO_SLUG,
@@ -1620,3 +1621,190 @@ class TestMapAndPersistHeuristicPayload:
 
         assert result.validation_errors == 1
         assert result.created_measurements == 0
+
+
+# ---------------------------------------------------------------------------
+# NFM-3405: Source / Units / Confidence threading into material properties
+# ---------------------------------------------------------------------------
+
+
+class TestNFM3405ProvenanceThreading:
+    """Regression coverage for the three drop points in the mapper:
+
+    - DataSource.title uses ``reference`` (not the literal "Unknown Source").
+    - PropertyMeasurement.unit_id resolves to a Unit row matching the
+      extraction's ``unit`` string (so the API surfaces a real unit symbol
+      instead of ``—``).
+    - PropertyMeasurement.review_status is derived from per-property
+      ``confidence`` so the derived confidence is no longer a flat 0.70.
+    """
+
+    @pytest.mark.unit
+    async def test_source_uses_reference_not_unknown_source(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-1: when an extraction provides a citation, the persisted
+        DataSource title is that citation, NOT the "Unknown Source" fallback.
+        """
+        await _seed_property_type(db_session)
+
+        item = _make_extracted_property(
+            property_name="thermal_conductivity",
+            reference="Smith et al., J. Nucl. Mater. 2020",
+            source_file="literature/UO2_paper.md",
+        )
+
+        result = await map_and_persist(db_session, [item])
+
+        assert result.created_measurements == 1
+        assert result.validation_errors == 0
+
+        ds_rows = (
+            await db_session.execute(select(DataSource))
+        ).scalars().all()
+        assert len(ds_rows) == 1
+        # Source must NOT be the default "Unknown Source" string when a
+        # reference was supplied on the extraction item.
+        assert ds_rows[0].title != "Unknown Source"
+        assert "Smith et al" in ds_rows[0].title
+
+    @pytest.mark.unit
+    async def test_unit_resolved_from_extraction_unit_string(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-2: PropertyMeasurement carries a unit_id pointing at a Unit row
+        whose symbol matches the extraction's unit string, so the API
+        surfaces that symbol (not the placeholder "—").
+        """
+        await _seed_property_type(db_session)
+
+        item = _make_extracted_property(
+            property_name="thermal_conductivity",
+            unit="W/(m·K)",
+        )
+
+        result = await map_and_persist(db_session, [item])
+
+        assert result.created_measurements == 1
+        assert result.validation_errors == 0
+
+        measurements = (
+            await db_session.execute(select(PropertyMeasurement))
+        ).scalars().all()
+        assert len(measurements) == 1
+        measurement = measurements[0]
+
+        # unit_id must be set (not None) — previously dropped on the floor.
+        assert measurement.unit_id is not None
+
+        unit = await db_session.get(Unit, measurement.unit_id)
+        assert unit is not None
+        # The persisted Unit's symbol must reflect the extraction's unit
+        # string. We accept either a normalized form ("W/(m·K)") or the
+        # raw symbol — but it MUST NOT be the placeholder "—".
+        assert unit.symbol not in ("—", "-", "")
+        assert unit.symbol == "W/(m·K)" or unit.name == "W/(m·K)"
+
+    @pytest.mark.unit
+    async def test_confidence_threads_to_review_status_per_property(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-3: per-property confidence drives review_status so the derived
+        confidence is no longer a flat 0.70. We assert:
+
+        - ``high`` → ``approved`` (the highest trust bucket)
+        - ``medium`` → ``pending`` (the default review bucket)
+        - ``low`` → ``flagged`` (the lowest trust bucket)
+        """
+        await _seed_property_type(db_session)
+
+        items = [
+            _make_extracted_property(
+                property_name="thermal_conductivity",
+                value="8.5",
+                reference="Ref A",
+                confidence="high",
+            ),
+            _make_extracted_property(
+                property_name="thermal_conductivity",
+                value="9.0",
+                reference="Ref B",
+                confidence="medium",
+            ),
+            _make_extracted_property(
+                property_name="thermal_conductivity",
+                value="9.5",
+                reference="Ref C",
+                confidence="low",
+            ),
+        ]
+
+        result = await map_and_persist(db_session, items)
+
+        assert result.created_measurements == 3
+        assert result.validation_errors == 0
+
+        measurements = (
+            (await db_session.execute(select(PropertyMeasurement)))
+            .scalars()
+            .all()
+        )
+        assert len(measurements) == 3
+
+        # Group by reference so we can assert per-property mapping without
+        # relying on iteration order.
+        by_ref: dict[str, PropertyMeasurement] = {}
+        for m in measurements:
+            dataset = await db_session.get(Dataset, m.dataset_id)
+            assert dataset is not None
+            ds = await db_session.get(DataSource, dataset.source_id)
+            assert ds is not None
+            by_ref[ds.title] = m
+
+        assert by_ref["Ref A"].review_status == "approved"
+        assert by_ref["Ref B"].review_status == "pending"
+        assert by_ref["Ref C"].review_status == "flagged"
+
+    @pytest.mark.unit
+    async def test_heuristic_path_threads_three_fields(self, db_session: AsyncSession) -> None:
+        """NFM-3374 fallback path: even when items come through the heuristic
+        extractor, source / unit / confidence must all be threaded through to
+        the persisted rows.
+        """
+        await _seed_property_type(db_session)
+
+        # Build a payload in the heuristic shape and coerce it so the mapper
+        # accepts it on the regex/fallback path.
+        raw: dict[str, Any] = {
+            "source_file": "literature/UO2_heuristic.md",
+            "material_name": "UO2",
+            "composition": "UO2",
+            "property_category": "thermal",
+            "property": "thermal_conductivity",
+            "value": "8.5",
+            "unit": "W/(m·K)",
+            "reference": "Heuristic Ref",
+            "confidence": "high",
+        }
+        coerced = _coerce_heuristic_payload(raw)
+
+        result = await map_and_persist(db_session, [coerced])
+
+        assert result.created_measurements == 1
+        assert result.validation_errors == 0
+
+        ds_rows = (
+            (await db_session.execute(select(DataSource))).scalars().all()
+        )
+        assert len(ds_rows) == 1
+        assert ds_rows[0].title == "Heuristic Ref"
+
+        measurements = (
+            (await db_session.execute(select(PropertyMeasurement)))
+            .scalars()
+            .all()
+        )
+        assert len(measurements) == 1
+        m = measurements[0]
+        assert m.unit_id is not None
+        assert m.review_status == "approved"  # high → approved
