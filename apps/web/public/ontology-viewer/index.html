@@ -114,6 +114,20 @@
           /* follow-up re-layout best-effort; if user changes layout mid-flight, ignore */
         }
       });
+      // NFM-3478 follow-up #2: viewer sometimes fails to fit small corpora (e.g. Smirnov2014
+      // with 5 nodes) into the viewport after layout completes - nodes render at very small
+      // coordinates and end up clustered in one corner of the canvas. Force a viewport fit
+      // with generous padding on every layoutstop (covers every layout the user picks).
+      cy.on('layoutstop', function () {
+        try {
+          var nodeCount = cy.nodes().length;
+          if (nodeCount === 0) return;
+          var padding = nodeCount < 50 ? 120 : (nodeCount < 500 ? 60 : 30);
+          cy.fit(undefined, padding);
+        } catch (err) {
+          /* fit is best-effort */
+        }
+      });
     } catch (err) {
       /* cytoscape not ready or different bundle shape; silently skip */
     }
