@@ -350,7 +350,7 @@ async def test_register_with_role(_mock_hash, async_client) -> None:
 @pytest.mark.asyncio
 @patch("nfm_db.api.v1.auth_endpoints.get_password_hash", return_value=_HASHED_PW)
 async def test_register_duplicate_username(_mock_hash, async_client, db_session) -> None:
-    """Registering with an existing username returns 400."""
+    """Registering with an existing username returns 409."""
     # Seed user directly in DB (no password hashing needed)
     user = User(
         username="dup",
@@ -366,7 +366,7 @@ async def test_register_duplicate_username(_mock_hash, async_client, db_session)
         "password": "securepassword1",
     }
     response = await async_client.post("/api/v1/auth/register", json=payload)
-    assert response.status_code == 400
+    assert response.status_code == 409
     body = response.json()
     assert "Username already exists" in body["detail"]
 
@@ -376,7 +376,7 @@ async def test_register_duplicate_username(_mock_hash, async_client, db_session)
 
 @pytest.mark.no_auto_auth
 async def test_register_duplicate_email(_mock_hash, async_client, db_session) -> None:
-    """Registering with an existing email returns 400."""
+    """Registering with an existing email returns 409."""
     user = User(
         username="emaildup",
         email="same@example.com",
@@ -391,7 +391,7 @@ async def test_register_duplicate_email(_mock_hash, async_client, db_session) ->
         "password": "securepassword1",
     }
     response = await async_client.post("/api/v1/auth/register", json=payload)
-    assert response.status_code == 400
+    assert response.status_code == 409
     body = response.json()
     assert "Email already exists" in body["detail"]
 
