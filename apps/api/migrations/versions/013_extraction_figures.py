@@ -28,7 +28,7 @@ def upgrade() -> None:
     """Create extraction_figures table with indexes."""
 
     op.execute("""
-        CREATE TABLE extraction_figures (
+        CREATE TABLE IF NOT EXISTS extraction_figures (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             source_id UUID REFERENCES data_sources(id) ON DELETE SET NULL,
             page_number INTEGER NOT NULL,
@@ -49,22 +49,65 @@ def upgrade() -> None:
         )
     """)
 
+    # NFM-3383: the 014-fork stub may pre-exist with only (id, job_id,
+    # figure_type, image_path). Reconcile the full column set.
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS source_id UUID REFERENCES data_sources(id) ON DELETE SET NULL;
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS page_number INTEGER NOT NULL DEFAULT 1;
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS figure_type VARCHAR(50) NOT NULL DEFAULT 'figure';
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS bounding_box JSONB;
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS caption TEXT;
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS extracted_data JSONB NOT NULL DEFAULT '{}';
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS confidence FLOAT NOT NULL DEFAULT 0.0;
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS extraction_method VARCHAR(50);
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    """)
+    op.execute("""
+        ALTER TABLE extraction_figures
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    """)
+
     # Indexes for common query patterns
     op.execute(
-        "CREATE INDEX ix_extraction_figures_source_id "
+        "CREATE INDEX IF NOT EXISTS ix_extraction_figures_source_id "
         "ON extraction_figures (source_id)"
     )
     op.execute(
-        "CREATE INDEX ix_extraction_figures_figure_type "
+        "CREATE INDEX IF NOT EXISTS ix_extraction_figures_figure_type "
         "ON extraction_figures (figure_type)"
     )
     op.execute(
-        "CREATE INDEX ix_extraction_figures_page_number "
+        "CREATE INDEX IF NOT EXISTS ix_extraction_figures_page_number "
         "ON extraction_figures (page_number)"
     )
     # GIN index on JSONB extracted_data for property queries
     op.execute(
-        "CREATE INDEX ix_extraction_figures_extracted_data "
+        "CREATE INDEX IF NOT EXISTS ix_extraction_figures_extracted_data "
         "ON extraction_figures USING gin (extracted_data)"
     )
 

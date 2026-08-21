@@ -308,18 +308,27 @@ def _dedupe_datasets() -> None:
 
 def upgrade() -> None:
     """Add the 5-tuple columns, backfill, dedupe, and enforce the unique indexes."""
+    from sqlalchemy import inspect as _sa_inspect
+
+    _insp = _sa_inspect(op.get_bind())
+    _pm_cols = {
+        c["name"] for c in _insp.get_columns("property_measurements")
+    }
+
     # 1. Add method column (nullable first so the ALTER COLUMN ... NOT NULL
     #    later can backfill into existing rows without violating the new
     #    constraint during the column change).
-    op.add_column(
-        "property_measurements",
-        sa.Column(
-            "method",
-            sa.String(100),
-            nullable=True,
-            comment="Measurement method (NFM-2032 5-tuple dedup).",
-        ),
-    )
+    #    NFM-3383: guarded — 009's full schema already carries method.
+    if "method" not in _pm_cols:
+        op.add_column(
+            "property_measurements",
+            sa.Column(
+                "method",
+                sa.String(100),
+                nullable=True,
+                comment="Measurement method (NFM-2032 5-tuple dedup).",
+            ),
+        )
 
     # 2. Backfill method = '' for legacy rows so the column can be set
     #    NOT NULL.
@@ -339,9 +348,12 @@ def upgrade() -> None:
 
     # 4. Add conditions_hash column if it does not exist (the column
     #    was originally created by the rejected migration 032 which may
-    #    or may not have been applied to a given DB).  We use a
-    #    try/except so the migration is idempotent regardless.
-    try:
+    #    or may not have been applied to a given DB).
+    #    NFM-3383: replaced the bare try/except with an inspector check —
+    #    with asyncpg, a swallowed DuplicateColumnError leaves the whole
+    #    transaction aborted and every later statement fails with
+    #    InFailedSQLTransactionError.
+    if "conditions_hash" not in _pm_cols:
         op.add_column(
             "property_measurements",
             sa.Column(
@@ -351,8 +363,6 @@ def upgrade() -> None:
                 comment="SHA1 of JSON conditions dict (NFM-2032 dedup).",
             ),
         )
-    except Exception:
-        pass  # column already exists from a prior 032 run
 
     # 5. Backfill conditions_hash from MeasurementCondition rows.  Legacy
     #    rows may already have a non-NULL hash (from the rejected 032
@@ -386,29 +396,26 @@ def upgrade() -> None:
     _dedupe_datasets()
 
     # 8. Drop the non-unique single-column index from the rejected 032
-    #    migration (if it exists — wrapped in try/except because the
-    #    column was never deployed to production).
-    try:
-        op.drop_index("idx_pm_conditions_hash", table_name="property_measurements")
-    except Exception:  # pragma: no cover — index may not exist on fresh DBs
-        pass
+    #    migration (if it exists). NFM-3383: raw DROP INDEX IF EXISTS —
+    #    the old try/except poisoned the asyncpg transaction (a swallowed
+    #    UndefinedObjectError aborts every later statement).
+    op.execute("DROP INDEX IF EXISTS idx_pm_conditions_hash")
 
     # 9. Create the composite UNIQUE INDEX that makes the 5-tuple a DB
     #    invariant.  This is the linchpin of cross-request dedup: even
     #    two concurrent inserts racing on an empty SELECT will fail
     #    one with IntegrityError, which the mapper catches and counts
     #    as skipped_duplicate_measurements.
-    op.create_index(
-        "uq_pm_dedup",
-        "property_measurements",
-        ["dataset_id", "property_type_id", "conditions_hash", "method"],
-        unique=True,
+    #    NFM-3383: raw SQL with IF NOT EXISTS — 032 may have already
+    #    created these on databases that ran it.
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_pm_dedup "
+        "ON property_measurements (dataset_id, property_type_id, "
+        "conditions_hash, method)"
     )
-    op.create_index(
-        "uq_datasets_source_material",
-        "datasets",
-        ["source_id", "material_id"],
-        unique=True,
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_datasets_source_material "
+        "ON datasets (source_id, material_id)"
     )
 
 

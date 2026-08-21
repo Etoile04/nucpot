@@ -37,6 +37,33 @@ REVIEW_THRESHOLD = 0.6
 def upgrade() -> None:
     """Backfill review_status for existing high-confidence items."""
 
+    # NFM-3383: this revision id (38 chars) exceeds alembic_version's
+    # default varchar(32). Prod was widened manually; clean databases get
+    # the same widening here BEFORE alembic stamps this revision.
+    from sqlalchemy import text as _sa_text
+
+    op.get_bind().execute(
+        _sa_text(
+            "ALTER TABLE alembic_version ALTER COLUMN version_num "
+            "TYPE VARCHAR(128)"
+        )
+    )
+
+    # NFM-3383 guard: property_measurements.confidence does not exist on
+    # any real environment (009 never created it; prod's live table has
+    # review_status/reviewed_at but no confidence column). Guard the third
+    # UPDATE so it only fires when the column is actually present.
+    from sqlalchemy import text as _sa_text
+
+    _bind = op.get_bind()
+    _has_conf = _bind.execute(
+        _sa_text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'property_measurements' "
+            "AND column_name = 'confidence'"
+        )
+    ).scalar()
+
     # kg_nodes: auto-approve items with confidence >= threshold that are
     # still in the default 'pending' state.
     op.execute(
@@ -65,14 +92,15 @@ def upgrade() -> None:
     # status — leave as-is if no review_status column exists.)
     # NOTE: property_measurements.review_status may not exist on all DBs;
     # the IF EXISTS clause makes this safe.
-    op.execute(
-        f"""
-        UPDATE property_measurements
-        SET reviewed_at = COALESCE(reviewed_at, NOW())
-        WHERE reviewed_at IS NULL
-          AND confidence >= {REVIEW_THRESHOLD}
-        """
-    )
+    if _has_conf:
+        op.execute(
+            f"""
+            UPDATE property_measurements
+            SET reviewed_at = COALESCE(reviewed_at, NOW())
+            WHERE reviewed_at IS NULL
+              AND confidence >= {REVIEW_THRESHOLD}
+            """
+        )
 
 
 def downgrade() -> None:
