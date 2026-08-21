@@ -163,24 +163,26 @@ while IFS='|' read -r _repo _tag image_id _created; do
   if [[ -z "$image_id" || -z "$_tag" ]]; then
     continue
   fi
-  # The fake docker shim used by tests returns no `sha256:` prefix; real
-  # `docker images --format '{{.ID}}'` returns just the hex. Strip anyway
-  # so the script tolerates either form without surprise.
+  # Strip a `sha256:` prefix if present (real Docker emits it on some
+  # storage drivers; the test fake-docker shim does not). The normalised
+  # id is only used in the log line — we never pass it to `docker rmi`.
   image_id="${image_id#sha256:}"
-  if docker image rm -f "$image_id" >/dev/null 2>&1; then
+  # ALWAYS remove by <repo>:<tag>, never by bare image ID.
+  #
+  # Why this matters (NFM-3448, Code Review run d9f679fb, F1 CRITICAL):
+  # `docker image rm -f <id>` untags every tag sharing that ID. The
+  # rebuild pipeline (`production-deployment.yml:374`) writes both
+  # `nucpot-prod-api:candidate-<sha>` AND `nucpot-prod-api:latest` from
+  # the same image, so they share an ID. Targeting the bare ID would
+  # silently destroy `:latest`, which is the alias `docker compose up -d`
+  # actually starts — making the next deploy fall back to a stale image.
+  # `<repo>:<tag>` removes only the one tag we asked to remove, leaving
+  # siblings (`:latest`, SHA tags) intact.
+  if docker image rm -f "${_repo}:${_tag}" >/dev/null 2>&1; then
     REMOVED_COUNT=$((REMOVED_COUNT + 1))
     echo "  removed ${_repo}:${_tag} (${image_id})"
   else
-    # Fall back to removing by repository:tag in case `docker rmi <id>`
-    # was rejected (most often: ID is referenced by another tag we should
-    # not have removed). Surface a warning but continue — the next row may
-    # still be removable independently.
-    if docker image rm -f "${_repo}:${_tag}" >/dev/null 2>&1; then
-      REMOVED_COUNT=$((REMOVED_COUNT + 1))
-      echo "  removed ${_repo}:${_tag} (via tag fallback)"
-    else
-      echo "  WARN: could not remove ${_repo}:${_tag} (${image_id}); skipped" >&2
-    fi
+    echo "  WARN: could not remove ${_repo}:${_tag} (${image_id}); skipped" >&2
   fi
 done < "$TO_REMOVE_FILE"
 

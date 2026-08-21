@@ -162,6 +162,118 @@ def _read_rmi_log(log_path: Path) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Stateful fake-docker shim — models real Docker's "image ID shared by
+# multiple tags" semantics. The stateless shim above can only assert which
+# arguments the script passed to ``docker rmi``; it cannot detect the
+# production-breaking case where ``rmi <id>`` silently removes every tag
+# sharing that ID (including :latest, the alias ``docker compose up -d``
+# actually starts).
+#
+# The state lives in $FAKE_DOCKER_STATE_FILE — one row per line in
+# ``repo|tag|id|created`` form. ``docker images --format '{{.Repository}}|{{.Tag}}|{{.ID}}|{{.CreatedAt}}'``
+# prints every row; ``docker rmi <id>`` removes EVERY row with that ID
+# (real Docker behaviour); ``docker rmi <repo>:<tag>`` removes only that one
+# row. Both ``rmi <id>`` and ``image rm -f <id>`` forms are recognised so
+# the test surfaces regressions whichever top-level subcommand the script
+# picks.
+# ---------------------------------------------------------------------------
+
+
+def _fake_docker_stateful() -> str:
+    """Return a fake docker shim body that mirrors real Docker ID-sharing
+    semantics. The caller seeds an initial $FAKE_DOCKER_STATE_FILE before
+    invoking the script; the shim mutates the file in place as the script
+    issues ``rmi`` calls. After the run, the test inspects the file to see
+    which tags survived.
+    """
+    images_block = (
+        'if [[ "$2" == "--format" ]]; then\n'
+        '  cat "$FAKE_DOCKER_STATE_FILE"\n'
+        "fi"
+    )
+
+    rmi_log = '"${DOCKER_RMI_LOG:-/tmp/nfmd-prune-rmi-default.log}"'
+
+    return f"""
+{images_block}
+
+# rmi / image rm -f — strip top-level command tokens, then classify the
+# remaining args by form:
+#   <id>      → remove EVERY row in the state file whose 3rd column equals <id>
+#               (this is the dangerous form: silently removes :latest when
+#               it shares the ID with a candidate tag)
+#   <repo>:<tag> → remove only that one row
+# All recognised removals are appended to $DOCKER_RMI_LOG so tests can
+# also assert which arguments the script chose.
+if [[ "$1" == "rmi" ]] || ([[ "$1" == "image" ]] && [[ "$2" == "rm" ]]); then
+  skip_next=0
+  targets=()
+  for arg in "$@"; do
+    if [[ $skip_next -eq 1 ]]; then
+      skip_next=0
+      continue
+    fi
+    case "$arg" in
+      rmi|image|rm|-f)
+        continue
+        ;;
+    esac
+    targets+=("$arg")
+  done
+
+  for target in "${{targets[@]}}"; do
+    echo "rmi $target" >> "{rmi_log}"
+    if [[ "$target" == *:* ]]; then
+      # repo:tag form — remove only that exact row
+      repo="${{target%%:*}}"
+      tag="${{target#*:}}"
+      awk -F'|' -v r="$repo" -v t="$tag" \\
+        '$1 != r || $2 != t {{ print }}' \\
+        "$FAKE_DOCKER_STATE_FILE" > "{rmi_log}.state.tmp"
+      mv "{rmi_log}.state.tmp" "$FAKE_DOCKER_STATE_FILE"
+    else
+      # bare image-id form — remove EVERY row sharing that ID
+      id="$target"
+      id="${{id#sha256:}}"
+      awk -F'|' -v i="$id" \\
+        '$3 != i && $3 != "sha256:" i {{ print }}' \\
+        "$FAKE_DOCKER_STATE_FILE" > "{rmi_log}.state.tmp"
+      mv "{rmi_log}.state.tmp" "$FAKE_DOCKER_STATE_FILE"
+    fi
+  done
+
+  echo "removed"
+  exit 0
+fi
+
+echo ""
+exit 0
+""".rstrip()
+
+
+def _seed_state_file(bin_dir: Path, rows: list[tuple[str, str, str, str]]) -> Path:
+    state = bin_dir / "docker-state.txt"
+    state.write_text(
+        "\n".join(f"{repo}|{tag}|{img_id}|{created}" for repo, tag, img_id, created in rows)
+        + "\n"
+    )
+    return state
+
+
+def _read_state_tags(state: Path) -> list[tuple[str, str]]:
+    """Return surviving (repo, tag) pairs from the state file, sorted."""
+    if not state.exists():
+        return []
+    out: list[tuple[str, str]] = []
+    for line in state.read_text().splitlines():
+        if not line:
+            continue
+        repo, tag, _id, _created = line.split("|", 3)
+        out.append((repo, tag))
+    return sorted(out)
+
+
+# ---------------------------------------------------------------------------
 # 1. Usage / argument validation
 # ---------------------------------------------------------------------------
 
@@ -280,8 +392,19 @@ def test_overflow_keeps_newest_drops_oldest():
     )
     assert result.returncode == 0, result.stderr
     removed = _read_rmi_log(log_path)
-    assert sorted(removed) == sorted(["img-1", "img-2", "img-3"])
-    for kept in ("img-4", "img-5", "img-6"):
+    # NFM-3448: prune.sh always targets <repo>:<tag>, never the bare ID.
+    # Asserting on the repo:tag form catches a regression to image-ID
+    # removal, which would silently destroy :latest in production.
+    assert sorted(removed) == sorted([
+        "nucpot-prod-api:candidate-1111111",
+        "nucpot-prod-api:candidate-2222222",
+        "nucpot-prod-api:candidate-3333333",
+    ])
+    for kept in (
+        "nucpot-prod-api:candidate-4444444",
+        "nucpot-prod-api:candidate-5555555",
+        "nucpot-prod-api:candidate-6666666",
+    ):
         assert kept not in removed
 
 
@@ -313,9 +436,20 @@ def test_mixed_tags_leaves_sha_tags_alone():
     )
     assert result.returncode == 0, result.stderr
     removed = _read_rmi_log(log_path)
-    assert sorted(removed) == sorted(["img-c1", "img-c2"])
-    for sha_id in ("img-s1", "img-s2", "img-l1", "img-c3", "img-c4"):
-        assert sha_id not in removed
+    # NFM-3448: prune.sh always targets <repo>:<tag>, never the bare ID,
+    # so :latest and SHA tags are explicitly preserved in the rmi log.
+    assert sorted(removed) == sorted([
+        "nucpot-prod-api:candidate-old1",
+        "nucpot-prod-api:candidate-old2",
+    ])
+    for preserved in (
+        "nucpot-prod-api:caedcc9...",
+        "nucpot-prod-api:9a210e8...",
+        "nucpot-prod-api:latest",
+        "nucpot-prod-api:candidate-old3",
+        "nucpot-prod-api:candidate-new",
+    ):
+        assert preserved not in removed
 
 
 # ---------------------------------------------------------------------------
@@ -354,11 +488,121 @@ def test_multi_repo_each_pruned_independently():
         assert result.returncode == 0, f"{repo}: {result.stderr}"
 
     removed = _read_rmi_log(log_path)
-    assert "api-img-1" in removed
-    assert "api-img-2" in removed
-    assert "api-img-3" not in removed
-    assert "api-img-4" not in removed
-    assert "web-img-1" not in removed
-    assert "lr-img-1" in removed
-    assert "lr-img-2" in removed
-    assert "lr-img-3" not in removed
+    # NFM-3448: prune.sh always targets <repo>:<tag>, never the bare ID,
+    # so the rmi log records the full repo:tag form.
+    assert "nucpot-prod-api:candidate-a1" in removed
+    assert "nucpot-prod-api:candidate-a2" in removed
+    assert "nucpot-prod-api:candidate-a3" not in removed
+    assert "nucpot-prod-api:candidate-a4" not in removed
+    assert "nucpot-prod-web:candidate-w1" not in removed
+    assert "nucpot-prod-lightrag:candidate-l1" in removed
+    assert "nucpot-prod-lightrag:candidate-l2" in removed
+    assert "nucpot-prod-lightrag:candidate-l3" not in removed
+
+
+# ---------------------------------------------------------------------------
+# 7. STATEFUL — regression guard for the Code-Review bug (run d9f679fb,
+# NFM-3448) where prune.sh removed images by IMAGE ID, not by repo:tag.
+# Real Docker's ``docker image rm -f <id>`` untags every tag sharing that
+# ID — so when ``pre-deploy-assert`` tags the candidate as both
+# ``nucpot-prod-api:candidate-<sha>`` and ``nucpot-prod-api:latest``
+# (production-deployment.yml:374), the previous implementation silently
+# destroyed :latest, which is the alias ``docker compose up -d`` actually
+# starts. The stateless shim above cannot model this because it never
+# tracks tag↔ID relationships; the stateful shim here does.
+# ---------------------------------------------------------------------------
+
+
+def test_prune_does_not_destroy_latest_when_id_shared():
+    """Regression: candidate-aaaa shares its image ID with :latest. After
+    prune.sh runs with --keep 1, :latest must still be present, and the
+    script must have targeted the candidate by repo:tag, never by bare ID.
+    """
+    # candidate-old1 (to be pruned) and :latest share img-1
+    rows = [
+        ("nucpot-prod-api", "candidate-old1", "img-1", "2026-08-21 00:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "candidate-old2", "img-2", "2026-08-21 02:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "candidate-old3", "img-3", "2026-08-21 04:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "candidate-new",  "img-4", "2026-08-21 08:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "latest",         "img-1", "2026-08-21 08:00:00 +0000 UTC"),
+    ]
+    bin_dir = _write_fake_docker(
+        Path("/tmp/nfmd-prune-shared-id"),
+        _fake_docker_stateful(),
+    )
+    state = _seed_state_file(bin_dir, rows)
+    log_path = bin_dir / "rmi.log"
+    _reset_log(log_path)
+    result = _run_prune(
+        ["--repo", "nucpot-prod-api", "--keep", "1"],
+        bin_dir=bin_dir,
+        env_extra={
+            "DOCKER_RMI_LOG": str(log_path),
+            "FAKE_DOCKER_STATE_FILE": str(state),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+    surviving = _read_state_tags(state)
+    # :latest must survive even though it shares img-1 with the pruned candidate
+    assert ("nucpot-prod-api", "latest") in surviving, (
+        f"REGRESSION (NFM-3448 / run d9f679fb): :latest was destroyed. "
+        f"surviving tags: {surviving}"
+    )
+    # The oldest three candidate tags should be gone; the newest one kept.
+    assert ("nucpot-prod-api", "candidate-old1") not in surviving
+    assert ("nucpot-prod-api", "candidate-old2") not in surviving
+    assert ("nucpot-prod-api", "candidate-old3") not in surviving
+    assert ("nucpot-prod-api", "candidate-new") in surviving
+
+    # Belt-and-braces: the script must NOT have issued a bare-ID rmi for
+    # any of the removed rows. A bare-ID call would also destroy :latest,
+    # so even if a future regression re-tries it on the kept candidate
+    # the test still surfaces the danger.
+    rmi_calls = _read_rmi_log(log_path)
+    bare_id_calls = [c for c in rmi_calls if ":" not in c]
+    assert not bare_id_calls, (
+        f"REGRESSION (NFM-3448 / run d9f679fb): prune.sh removed by "
+        f"image ID {bare_id_calls!r}; this would silently destroy "
+        f":latest and any SHA tag sharing the ID."
+    )
+
+
+def test_prune_does_not_destroy_sha_tag_when_id_shared():
+    """Regression: SHA tags (ADR-NFM-2139 §5 D1 rollback primitive) must
+    survive a candidate prune even when they share an image ID. Real
+    Docker would remove them all if prune.sh targeted the bare ID.
+    """
+    rows = [
+        # candidate-old1 shares its ID with the active SHA tag — a real
+        # possibility when ``docker tag`` was used twice with the same
+        # source.
+        ("nucpot-prod-api", "candidate-old1", "img-1", "2026-08-21 00:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "candidate-old2", "img-2", "2026-08-21 02:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "candidate-new",  "img-3", "2026-08-21 08:00:00 +0000 UTC"),
+        ("nucpot-prod-api", "9a210e8abcdef",  "img-1", "2026-08-21 04:30:00 +0000 UTC"),
+    ]
+    bin_dir = _write_fake_docker(
+        Path("/tmp/nfmd-prune-shared-id-sha"),
+        _fake_docker_stateful(),
+    )
+    state = _seed_state_file(bin_dir, rows)
+    log_path = bin_dir / "rmi.log"
+    _reset_log(log_path)
+    result = _run_prune(
+        ["--repo", "nucpot-prod-api", "--keep", "1"],
+        bin_dir=bin_dir,
+        env_extra={
+            "DOCKER_RMI_LOG": str(log_path),
+            "FAKE_DOCKER_STATE_FILE": str(state),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+    surviving = _read_state_tags(state)
+    assert ("nucpot-prod-api", "9a210e8abcdef") in surviving, (
+        f"REGRESSION (NFM-3448): SHA tag was destroyed. "
+        f"surviving tags: {surviving}"
+    )
+    assert ("nucpot-prod-api", "candidate-old1") not in surviving
+    assert ("nucpot-prod-api", "candidate-new") in surviving

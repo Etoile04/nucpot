@@ -88,7 +88,7 @@ message is printed on success so the workflow log shows what happened.
 | Mode                                          | Behaviour                                                            |
 |-----------------------------------------------|----------------------------------------------------------------------|
 | Daemon offline                                | Exit 3; deploy-prod fails loudly (NFM-3328 regression guard)         |
-| Image ID shared with `:latest`                | First `docker rmi` fails; falls back to `docker rmi repo:tag`        |
+| Image ID shared with `:latest` / SHA tags     | Each removal targets `<repo>:<tag>`, never the bare ID. The script is structurally incapable of destroying a sibling tag (`docker image rm -f <id>` is never called). |
 | Fewer than `keep` candidates                  | No-op, exit 0                                                        |
 
 ## Related docs
