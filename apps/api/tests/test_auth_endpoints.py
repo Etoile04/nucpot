@@ -34,7 +34,15 @@ class TestRegisterEndpoint:
 
     @pytest.mark.asyncio
     async def test_register_duplicate_username_fails(self, async_client: AsyncClient) -> None:
-        """Test that duplicate username registration fails."""
+        """Test that duplicate username registration returns 409 Conflict.
+
+        Production raises ``HTTPException(status_code=409, detail=\"Username
+        already exists\")`` (auth_endpoints.py duplicate-username branch).
+        The pre-bump contract (400) was retired as part of NFM-3352 along
+        with the slowapi header-injection fix; this test contract now pins
+        the REST-canonical 409 so a future regression to 400 would surface
+        here instead of at the duplicate-username branch.
+        """
         # First registration
         await async_client.post(
             "/api/v1/auth/register",
@@ -55,7 +63,7 @@ class TestRegisterEndpoint:
             },
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_409_CONFLICT
 
 
 class TestLoginEndpoint:
