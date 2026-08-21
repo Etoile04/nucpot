@@ -63,6 +63,7 @@ import type { ColumnsType } from "antd/es/table"
 import ReactMarkdown from "react-markdown"
 import {
   literatureApi,
+  uploadErrorStatus,
   type LiteratureDetail,
   type LiteratureFigure,
   type LiteratureListItem,
@@ -247,8 +248,21 @@ export default function LiteratureManager() {
       setTimeout(() => void openDetail(resp.literature_id), 600)
     },
     onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : "上传失败"
-      message.error(`上传失败：${msg}`, 8)
+      // NFM-3359 AC-3: classify by HTTP status, not by message text. The
+      // api-client throws an `ApiError` carrying the numeric `.status`
+      // field, so a 413 whose `detail` message contains an 8-digit byte
+      // count that happens to include "403" (e.g. "File too large:
+      // 54031234 bytes (max 52428800)") is correctly routed to the generic
+      // upload-failed toast — not the permission toast.
+      if (uploadErrorStatus(err) === 403) {
+        message.error(
+          "需要编辑者(Editor)或管理员(Admin)权限才能上传文献，请联系管理员申请权限",
+          5,
+        )
+      } else {
+        const msg = err instanceof Error ? err.message : "上传失败"
+        message.error(`上传失败：${msg}`, 8)
+      }
     },
   })
 
