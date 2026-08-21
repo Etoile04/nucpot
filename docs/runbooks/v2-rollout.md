@@ -68,11 +68,22 @@ are still PASS.
 | Date (UTC) | Parity fixtures run | V1 fail count | V2 fail count | Parity delta | Outcome | Operator initials |
 |------------|---------------------|---------------|---------------|--------------|---------|-------------------|
 | 2026-08-15 | 4/4 (mox-thermal, thoria-mixed-oxide, uo2-fcc, zircaloy) | 0 | 0 | 0% | **PASS** | CTO-auto |
+| 2026-08-16 | 4/4 | 0 | 0 | 0% | **PASS** | RE (agent) |
+| 2026-08-17 | 4/4 | 0 | 0 | 0% | **PASS** | RE (agent) |
+| 2026-08-18 | 4/4 | 0 | 0 | 0% | **PASS** | RE (agent) |
+| 2026-08-19 | 4/4 | 0 | 0 | 0% | **PASS** | RE (agent) |
+| 2026-08-20 | 4/4 | 0 | 0 | 0% | **PASS** | RE (agent) |
+| 2026-08-21 | 4/4 | 0 | 0 | 0% | **PASS** | RE (agent) |
 
-> **Streak: 1/7.** Day 1 recorded from scheduled run
+> **Streak: 7/7 — COMPLETE.** Day 1 recorded from scheduled run
 > [31869721752](https://github.com/Etoile04/nucpot/actions/runs/31869721752)
 > (2026-08-15 06:00 UTC). All 4 fixtures passed (4/4 GREEN, 0 failed).
 > Parity delta: 0% — within ADR-0007 ±5% tolerance.
+>
+> **Streak complete.** 7 consecutive PASS days (2026-08-15 – 2026-08-21).
+> Total: 7 runs, 28/28 fixtures passed, 0 failures.
+> Sourced from `extraction-parity.yml` scheduled-run artifacts.
+> Run IDs: [#31869721752](https://github.com/Etoile04/nucpot/actions/runs/31869721752), [#31931753899](https://github.com/Etoile04/nucpot/actions/runs/31931753899), [#32003158651](https://github.com/Etoile04/nucpot/actions/runs/32003158651), [#32107729955](https://github.com/Etoile04/nucpot/actions/runs/32107729955), [#32224280199](https://github.com/Etoile04/nucpot/actions/runs/32224280199), [#32340580894](https://github.com/Etoile04/nucpot/actions/runs/32340580894), [#32455328813](https://github.com/Etoile04/nucpot/actions/runs/32455328813).
 
 **Parity fixtures** (4 canonical): mox-thermal-conductivity,
 thoria-mixed-oxide, uo2-fcc-lattice, zircaloy-cladding-modulus.
