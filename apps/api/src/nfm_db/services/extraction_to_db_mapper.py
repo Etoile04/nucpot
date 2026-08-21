@@ -33,6 +33,7 @@ from nfm_db.models import (
     PropertyCategory,
     PropertyMeasurement,
     PropertyType,
+    Unit,
 )
 from nfm_db.schemas.extraction import ExtractedProperty
 from nfm_db.services.health_event_emitter import (
@@ -326,6 +327,73 @@ def _build_condition_kwargs(
 
 
 # ---------------------------------------------------------------------------
+# Confidence → review_status mapping (NFM-3405 AC-3)
+# ---------------------------------------------------------------------------
+
+# PropertyMeasurement.review_status is the column from which
+# property_service._derive_confidence reads to produce the per-measurement
+# confidence surfaced by the API.  Map the LLM-emitted confidence literal
+# ("high" | "medium" | "low") onto the corresponding review_status so the
+# derived confidence varies per-property instead of being a flat 0.70
+# (which is what "pending" produces).
+_CONFIDENCE_TO_REVIEW_STATUS: dict[str, str] = {
+    "high": "approved",
+    "medium": "pending",
+    "low": "flagged",
+}
+
+
+def _confidence_to_review_status(confidence: str | None) -> str:
+    """Map an extraction confidence literal to a PropertyMeasurement.review_status.
+
+    Unknown / missing confidence keeps the existing default ("pending") so
+    downstream behaviour is unchanged for ambiguous inputs.
+    """
+    if not confidence:
+        return "pending"
+    return _CONFIDENCE_TO_REVIEW_STATUS.get(confidence.lower(), "pending")
+
+
+# ---------------------------------------------------------------------------
+# Unit resolution (NFM-3405 AC-2)
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_unit(db: AsyncSession, symbol: str | None) -> Unit | None:
+    """Find or create a Unit row matching ``symbol``.
+
+    The extraction pipeline emits a unit *string* per property.  Previously
+    the mapper dropped that string on the floor and PropertyMeasurement
+    carried ``unit_id = NULL``, which made the API surface the placeholder
+    "—".  This helper looks the Unit up by its unique symbol, or — when the
+    symbol is brand new — creates a stub row so we never lose provenance.
+
+    Returns ``None`` only if ``symbol`` is falsy / empty.
+    """
+    if not symbol or not symbol.strip():
+        return None
+
+    symbol = symbol.strip()
+    stmt = select(Unit).where(Unit.symbol == symbol)
+    existing = (await db.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    # Brand-new symbol — create a stub Unit so the FK on PropertyMeasurement
+    # is satisfied.  ``dimension`` is unknown at this stage; "unknown" is the
+    # documented sentinel for "not yet classified".
+    unit = Unit(
+        name=symbol,
+        symbol=symbol,
+        dimension="unknown",
+        description="Auto-created from extraction pipeline (NFM-3405).",
+    )
+    db.add(unit)
+    await db.flush()
+    return unit
+
+
+# ---------------------------------------------------------------------------
 # PropertyType lookup
 # ---------------------------------------------------------------------------
 
@@ -500,7 +568,15 @@ async def map_and_persist(
         # --- DataSource (find or create) ---
         if s_key not in source_map:
             doi = item.source_doi
-            title = item.reference or item.source_file or "Unknown Source"
+            # NFM-3405 AC-1: prefer the citation reference (Author, Title) so
+            # the API surfaces a real literature label.  Only fall back to the
+            # source filename (informative) and finally to the explicit
+            # placeholder when the extraction genuinely supplied nothing.
+            title = (
+                item.reference
+                or item.source_file
+                or f"Unattributed source ({item.source_doi or 'no DOI'})"
+            )
 
             if doi:
                 existing = await _find_source_by_doi(db, doi)
@@ -622,6 +698,15 @@ async def map_and_persist(
         cond_h = _conditions_hash(item.conditions)
         method_str = (item.method or "").strip() or ""
 
+        # NFM-3405 AC-2: resolve the extraction's unit string to a Unit FK
+        # so the API surfaces a real symbol instead of the "—" placeholder.
+        unit = await _resolve_unit(db, item.unit)
+
+        # NFM-3405 AC-3: derive review_status from the per-property
+        # confidence so the API's derived confidence varies per-property
+        # instead of being a flat 0.70.
+        review_status = _confidence_to_review_status(item.confidence)
+
         # NFM-2032 CR Finding #4: wrap the per-measurement INSERT in a
         # SAVEPOINT so a concurrent cross-request dedup race produces
         # IntegrityError without poisoning the outer transaction.
@@ -630,9 +715,10 @@ async def map_and_persist(
                 measurement = PropertyMeasurement(
                     dataset_id=dataset.id,
                     property_type_id=property_type.id,
+                    unit_id=unit.id if unit is not None else None,
                     uncertainty=item.uncertainty,
                     notes=item.context,
-                    review_status="pending",
+                    review_status=review_status,
                     conditions_hash=cond_h,
                     method=method_str,
                     **value_kwargs,
