@@ -86,6 +86,34 @@
           try { cy.layout({ name: 'grid', animate: false, fit: true, padding: 30 }).run(); } catch (e) { /* layout swap best-effort */ }
         }
       }
+      // NFM-3478 follow-up: Force Directed layout in viewer uses tile:false which packs nodes
+      // densely and visually overlaps parallel edges. After viewer's own layout completes,
+      // re-run cose-bilkent with tile:true + larger node repulsion + edges so parallel
+      // edges spread enough to show their arrows. Skip if user picked a non-FD layout.
+      cy.one('layoutstop', function () {
+        try {
+          var userLayout = cy._private && cy._private.layout && cy._private.layout.options && cy._private.layout.options.name;
+          if (!userLayout) return;
+          if (userLayout !== 'cose-bilkent' && userLayout !== 'cose' && userLayout !== 'fcose') return;
+          cy.layout({
+            name: 'cose-bilkent',
+            animate: false,
+            quality: 'default',
+            randomize: false,
+            fit: true,
+            padding: 40,
+            tile: true,
+            idealEdgeLength: function () { return 140; },
+            nodeRepulsion: function () { return 9000; },
+            edgeElasticity: function () { return 0.45; },
+            gravity: 0.25,
+            numIter: 2500,
+            componentSpacing: 80
+          }).run();
+        } catch (err) {
+          /* follow-up re-layout best-effort; if user changes layout mid-flight, ignore */
+        }
+      });
     } catch (err) {
       /* cytoscape not ready or different bundle shape; silently skip */
     }
