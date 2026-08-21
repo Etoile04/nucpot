@@ -12,9 +12,53 @@
  * => exactly 1 refresh fired").
  */
 
-export interface ApiError {
+/**
+ * Thrown for non-OK HTTP responses. Carries the numeric status so callers
+ * can classify the error without parsing the message text — see
+ * `uploadErrorStatus` and NFM-3359 (AC-3).
+ */
+export class ApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
+/**
+ * Legacy JSON-body shape returned by the backend for non-OK responses.
+ * Used internally by `request()` and `literatureApi.upload()` to extract
+ * the server's `detail` / `message` field before constructing an
+ * `ApiError`. Internal-only — external callers should consume `ApiError`.
+ */
+interface ApiErrorBody {
   readonly detail?: string
   readonly message?: string
+}
+
+/**
+ * Extract the HTTP status from an unknown thrown value.
+ *
+ * Returns the numeric status for `ApiError` instances (and any other value
+ * with a numeric `status` property); returns `null` for network errors,
+ * plain `Error`s, and non-error values. Use this instead of inspecting the
+ * message body — message text may contain user-controlled content that
+ * happens to include digits matching other status codes (NFM-3359 AC-3:
+ * e.g. a 413 detail "File too large: 54031234 bytes (max 52428800)" must
+ * not be classified as 403 just because the byte count contains "403").
+ */
+export function uploadErrorStatus(err: unknown): number | null {
+  if (err instanceof ApiError) return err.status
+  if (
+    err !== null &&
+    typeof err === "object" &&
+    "status" in err &&
+    typeof (err as { status: unknown }).status === "number"
+  ) {
+    return (err as { status: number }).status
+  }
+  return null
 }
 
 function buildHeaders(custom?: Record<string, string>): HeadersInit {
@@ -99,9 +143,9 @@ export async function request<T>(
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as ApiError | null
+    const body = (await response.json().catch(() => null)) as ApiErrorBody | null
     const message = body?.detail ?? body?.message ?? `请求失败 (${response.status})`
-    throw new Error(message)
+    throw new ApiError(message, response.status)
   }
 
   // 204 No Content
@@ -530,10 +574,15 @@ export const literatureApi = {
       credentials: "include",
     })
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as
-        | { detail?: string }
-        | null
-      throw new Error(body?.detail ?? `上传失败 (${response.status})`)
+      const body = (await response.json().catch(() => null)) as ApiErrorBody | null
+      // NFM-3359 AC-3: throw ApiError so the UI can classify by status code
+      // (e.g. 403 → permission toast) instead of substring-matching the
+      // message body, which would mis-classify a 413 whose byte count
+      // happens to contain "403" as a permission error.
+      throw new ApiError(
+        body?.detail ?? `上传失败 (${response.status})`,
+        response.status,
+      )
     }
     const env = (await response.json()) as LiteratureUploadEnvelope
     return env.data
