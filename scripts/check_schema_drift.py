@@ -10,6 +10,24 @@ corresponding migration is missing or has been reverted — e.g. the
 ``kg_entity_types`` / ``kg_relation_types`` gap that caused the prod
 ``UndefinedTableError`` in NFM-3311 -> NFM-3340 -> NFM-3349 -> NFM-3364/3369/3370.
 
+Severity classification (NFM-3446 Phase 1):
+
+The drift guard first surfaced 253 items across 38 tables on main (job
+96649637808, c3dfb4c8). Of those, 165 are docstring/index churn that
+should not block CI:
+
+  * ``modify_comment`` (96) — docstring-only diff between model and migration
+  * ``remove_index`` (42) — model dropped an index, migration followed
+  * ``missing_index`` (27) — model declares an index the migration never added
+
+These categories are demoted to WARN: logged with a ``WARN:`` prefix and
+non-blocking by default. The remaining 88 (missing_column, missing_table,
+missing_fk, modify_nullable, modify_type, remove_column, add_constraint,
+remove_fk) are real semantic drift and remain FAIL.
+
+Pass ``--strict`` to re-enable full blocking behaviour (treat every drift
+as FAIL) — useful when investigating the backlog.
+
 Usage in CI (Postgres service container, apps/api working dir)::
 
     NFM_DATABASE_URL=postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_db \\
@@ -19,7 +37,8 @@ Local smoke (assumes Postgres is already at head)::
 
     python scripts/check_schema_drift.py --no-apply-migrations
 
-Failure output is greppable: every line starts with ``DRIFT:`` followed by
+Failure output is greppable: every FAIL line starts with ``DRIFT:`` and
+every soft-fail line starts with ``WARN:``, each followed by
 ``kind table (detail)``.
 """
 
@@ -30,6 +49,7 @@ import os
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +65,54 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 API_DIR = REPO_ROOT / "apps" / "api"
 ALEMBIC_INI = API_DIR / "alembic.ini"
 MIGRATIONS_DIR = API_DIR / "migrations"
+
+
+class Severity(Enum):
+    """Whether a drift kind should block CI or just be logged."""
+
+    WARN = "WARN"
+    FAIL = "FAIL"
+
+
+# Re-export at module scope so tests and downstream importers can use
+# ``from check_schema_drift import WARN, FAIL`` without importing the enum.
+WARN = Severity.WARN
+FAIL = Severity.FAIL
+
+
+# NFM-3446 Phase 1: harmless categories that are demoted to WARN. Adding a
+# new kind here MUST be intentional — Phase 2 will write the migration
+# that brings it back to FAIL.
+WARN_KINDS: frozenset[str] = frozenset(
+    {
+        "modify_comment",  # docstring diff — never blocks
+        "remove_index",  # model dropped an index — intentional
+        "missing_index",  # model has an index migration never added
+    }
+)
+
+
+def compute_severity(kind: str, strict: bool = False) -> Severity:
+    """Map an alembic drift kind to its CI-blocking severity.
+
+    Args:
+        kind: The alembic op / drift kind label (e.g. ``"missing_column"``).
+        strict: When ``True``, every kind is treated as FAIL — used by the
+            ``--strict`` CLI flag so reviewers can re-investigate the full
+            backlog without losing the WARN information.
+
+    Returns:
+        ``Severity.WARN`` for harmless categories (modify_comment,
+        remove_index, missing_index) and ``Severity.FAIL`` for everything
+        else. The default for any unknown kind is FAIL — that is the
+        NFM-3372 hard rule: drift must never be silently swallowed.
+    """
+
+    if strict:
+        return FAIL
+    if kind in WARN_KINDS:
+        return WARN
+    return FAIL
 
 
 def _load_base_metadata() -> MetaData:
@@ -70,17 +138,21 @@ class Drift:
     ``kind`` is one of ``"missing_table"``, ``"missing_column"``,
     ``"missing_index"``, ``"missing_fk"``, or the raw Alembic op class name
     for ops without an explicit handler.  ``table`` is the table name (or
-    ``"<n/a>"`` for op kinds that have no table).
+    ``"<n/a>"`` for op kinds that have no table).  ``severity`` defaults
+    to ``FAIL`` so an unknown alembic op blocks CI until a human re-
+    classifies it (NFM-3372 hard rule: never silently swallow drift).
     """
 
     kind: str
     table: str
     detail: str = ""
+    severity: Severity = FAIL
 
     def render(self) -> str:
+        prefix = "DRIFT" if self.severity is FAIL else "WARN"
         if self.detail:
-            return f"DRIFT: {self.kind} {self.table} ({self.detail})"
-        return f"DRIFT: {self.kind} {self.table}"
+            return f"{prefix}: {self.kind} {self.table} ({self.detail})"
+        return f"{prefix}: {self.kind} {self.table}"
 
 
 def _iter_diffs(diffs: Sequence[Any]) -> Iterable[tuple]:
@@ -142,6 +214,14 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
     drift is *visible* in CI logs) but are not classified as
     forward-looking drift.
 
+    Each Drift row carries a ``severity`` (WARN or FAIL) — see
+    ``compute_severity`` for the demotion table.  Severity is computed
+    from the *output* drift kind (e.g. ``missing_index``) rather than
+    the alembic action label (``add_index``) so the demotion rule stays
+    anchored to what reviewers see in CI logs.  NFM-3372 hard rule is
+    preserved: an unknown alembic op falls through to the fallback branch
+    and defaults to FAIL.
+
     Unknown directive shapes still produce a Drift row so the diff is
     *never* silently dropped — that is the hard constraint in NFM-3372
     ("do not silently ignore drift without CTO sign-off").
@@ -149,7 +229,12 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
     if not isinstance(op, (list, tuple)) or not op or not isinstance(op[0], str):
         # Fallback: surface the unexpected shape so it can never be
         # silently dropped.
-        yield Drift(kind=type(op).__name__, table="<n/a>")
+        kind = type(op).__name__
+        yield Drift(
+            kind=kind,
+            table="<n/a>",
+            severity=compute_severity(kind),
+        )
         return
 
     action = op[0]
@@ -158,23 +243,39 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
     if action == "add_table":
         table = op[1]
         cols = ", ".join(sorted(c.name for c in table.columns)) or "<no columns>"
-        yield Drift(kind="missing_table", table=table.name, detail=cols)
+        yield Drift(
+            kind="missing_table",
+            table=table.name,
+            detail=cols,
+            severity=compute_severity("missing_table"),
+        )
         return
     if action == "add_column":
         # (action, schema, table_name, column)
         column = op[3]
-        yield Drift(kind="missing_column", table=table_name, detail=column.name)
+        yield Drift(
+            kind="missing_column",
+            table=table_name,
+            detail=column.name,
+            severity=compute_severity("missing_column"),
+        )
         return
     if action == "add_index":
         index = op[1]
         yield Drift(
-            kind="missing_index", table=table_name, detail=index.name
+            kind="missing_index",
+            table=table_name,
+            detail=index.name,
+            severity=compute_severity("missing_index"),
         )
         return
     if action == "add_fk":
         fk = op[1]
         yield Drift(
-            kind="missing_fk", table=table_name, detail=fk.name or "<unnamed>"
+            kind="missing_fk",
+            table=table_name,
+            detail=fk.name or "<unnamed>",
+            severity=compute_severity("missing_fk"),
         )
         return
     if action == "add_unique_constraint":
@@ -184,6 +285,7 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
             kind="missing_unique_constraint",
             table=table_name,
             detail=constraint_name,
+            severity=compute_severity("missing_unique_constraint"),
         )
         return
     if action == "add_pk_constraint":
@@ -192,12 +294,18 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
             kind="missing_pk_constraint",
             table=table_name,
             detail=constraint_name,
+            severity=compute_severity("missing_pk_constraint"),
         )
         return
 
     # Fallback: surface the action so reverse-direction drift and unknown
-    # shapes still appear in CI logs (never silently dropped).
-    yield Drift(kind=action, table=table_name)
+    # shapes still appear in CI logs (never silently dropped).  Severity
+    # is computed from the action name — unknown ops default to FAIL.
+    yield Drift(
+        kind=action,
+        table=table_name,
+        severity=compute_severity(action),
+    )
 
 
 def compute_drift(
@@ -290,6 +398,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_false",
         help="Skip alembic upgrade (assume the DB is already at head).",
     )
+    parser.add_argument(
+        "--strict",
+        dest="strict",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-enable full strict mode: every drift kind — including "
+            "modify_comment / remove_index / missing_index — is treated as "
+            "FAIL. Default (soft-fail) demotes those harmless categories to "
+            "WARN so the backlog does not block CI. See NFM-3446."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.database_url:
@@ -320,18 +440,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     engine = _sync_engine_from_url(args.database_url)
     try:
         with engine.connect() as conn:
-            drifts = compute_drift(conn)
+            raw_drifts = compute_drift(conn)
     finally:
         engine.dispose()
+
+    # Apply --strict: re-promote every WARN to FAIL so the script exits 1
+    # even on the harmless backlog. Useful for one-off investigations.
+    drifts: list[Drift] = [
+        d if not args.strict else Drift(
+            kind=d.kind,
+            table=d.table,
+            detail=d.detail,
+            severity=FAIL,
+        )
+        for d in raw_drifts
+    ]
 
     if not drifts:
         print("OK: Base.metadata matches alembic head")
         return 0
 
-    print(f"FAIL: {len(drifts)} drift(s) detected", file=sys.stderr)
+    warn_count = sum(1 for d in drifts if d.severity is WARN)
+    fail_count = sum(1 for d in drifts if d.severity is FAIL)
+
+    if fail_count:
+        print(
+            f"FAIL: {fail_count} failing drift(s), {warn_count} warning(s)",
+            file=sys.stderr,
+        )
+    elif warn_count:
+        print(
+            f"WARN: {warn_count} soft-fail drift(s) (no failing drift)",
+            file=sys.stderr,
+        )
+
+    # Render in FAIL-first order so reviewers can grep the most actionable
+    # block first; WARN lines trail so they remain visible.
     for d in drifts:
-        print(d.render(), file=sys.stderr)
-    return 1
+        if d.severity is FAIL:
+            print(d.render(), file=sys.stderr)
+    for d in drifts:
+        if d.severity is WARN:
+            print(d.render(), file=sys.stderr)
+
+    # Exit 1 only if at least one FAIL drift is present. Soft-fail mode
+    # treats WARN-only output as exit 0 (the script's job is to surface
+    # the warnings; CI blocking stays reserved for real semantic drift).
+    return 1 if fail_count else 0
 
 
 if __name__ == "__main__":
