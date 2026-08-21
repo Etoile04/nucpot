@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
 """
-categorize_cases.py — Inspect VASP .out files and assign each non-converged case to
-one of five error categories defined in NFM-3381 analysis-plan.md Section 1.
+categorize_cases.py — Inspect Quantum ESPRESSO .out files and assign each
+non-converged case to one of five error categories defined in NFM-3381
+analysis-plan.md Section 1.
+
+This is a QE adaptation of the VASP-targeted script committed at 9b8d9b486.
+The original (renamed to categorize_cases.py.vasp) targeted VASP markers
+(`DAV:|RMM:`, `energy without entropy`, `FORCES: max`, `OUTCAR`). The on-disk
+campaign on xingyi is actually Quantum ESPRESSO (PWSCF v.7.6, `estimated scf
+accuracy`, `negative rho (up, down)`, `.upf` pseudopotentials). Categories
+A-E and per-category overrides are unchanged per the pre-registered plan.
 
 Categories:
-  A — SCF oscillation    (energy oscillating, charge-density mixing issue)
-  B — SCF stagnation     (energy nearly flat, electron step too small)
-  C — Cell/ionic divergence (forces diverging, structural instability)
-  D — Time-limit exit    (12h TIME_LIMIT reached without divergence markers)
-  E — k-point / symmetry crash (IBZKPT error or numerical noise)
+  A — SCF oscillation     (estimated scf accuracy oscillates in last 20 steps)
+  B — SCF stagnation      (final accuracy high, monotonic but plateaued)
+  C — Cell/ionic divergence (negative rho large OR force/stress diverging)
+  D — Time-limit exit     (wall_seconds >= 11h of 12h budget, no other marker)
+  E — kpoint/symmetry/diag crash (Sub-Space-Matrix / ZHEGV / IBZKPT error)
 
 Usage:
-    # Run on xingyi where the 54-atom campaign lives:
     python3 categorize_cases.py \\
         --campaign-root /HOME/npic_dsun/npic_dsun_6/dft_pipeline/scaleup/dft_54atom_top500/runs \\
         --output case-params.tsv
 
     # Or against an arbitrary directory of .out files:
     python3 categorize_cases.py \\
-        --out-glob 'runs/comp_*/OUTCAR' \\
+        --out-glob 'runs/comp_*/comp_*.out' \\
         --output case-params.tsv
 """
 from __future__ import annotations
@@ -30,21 +37,30 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Category detection markers (analysis-plan.md §1)
-MARKERS = {
-    "energy_oscillating": re.compile(r"energy.*oscillat", re.IGNORECASE),
-    "energy_stagnant": re.compile(r"energy.*(stagnat|flat|stationary)", re.IGNORECASE),
-    "forces_diverging": re.compile(r"(force|stress).*diverg", re.IGNORECASE),
-    "kpoint_crash": re.compile(r"(IBZKPT|k-point|symmetry).*error", re.IGNORECASE),
-    "not_converged": re.compile(r"convergence NOT achieved", re.IGNORECASE),
-    "subspace_error": re.compile(r"Sub-Space-Matrix is not hermitian|ZHEGV failed", re.IGNORECASE),
-}
+# --- QE markers (analysis-plan.md §1, mapped to QE output) -------------------
 
-# Energy / force extraction
-ENERGY_RE = re.compile(r"energy without entropy\s*=\s*(-?\d+\.\d+)")
-FORCE_RE = re.compile(r"FORCES:\s*max\s*=\s*(-?\d+\.\d+)")
-ELAPSED_RE = re.compile(r"Elapsed time\s*=\s*(\d+):(\d+):(\d+)")
-SCF_STEP_RE = re.compile(r"^\s*(DAV:|RMM:|N E :)", re.MULTILINE)
+SCF_ACC_RE = re.compile(r"estimated scf accuracy\s*<\s*(-?\d+\.\d+(?:E[-+]?\d+)?)", re.IGNORECASE)
+NOT_CONV_RE = re.compile(r"convergence NOT achieved", re.IGNORECASE)
+NEG_RHO_RE = re.compile(r"negative rho \(up, down\):\s*(-?\d+\.\d+(?:E[-+]?\d+)?)\s+(-?\d+\.\d+(?:E[-+]?\d+)?)", re.IGNORECASE)
+FORCE_DIV_RE = re.compile(r"force.*diverg|stress.*diverg|Total force.*[1-9]\.\d+E\+|atomic force exceeded", re.IGNORECASE)
+KPT_CRASH_RE = re.compile(r"IBZKPT|k-point.*error|symmetry.*error", re.IGNORECASE)
+SUBSPACE_RE = re.compile(r"Sub-Space-Matrix is not hermitian|ZHEGV failed", re.IGNORECASE)
+JOB_DONE_RE = re.compile(r"^\s*JOB DONE\.\s*$", re.MULTILINE)
+
+# PWSCF total timing line: "PWSCF        :   1d 0h45m CPU      7h57m WALL"
+# Find PWSCF ... : ... WALL and capture the trailing "Nh Nm". The CPU part
+# may have "Nd " day prefix; we don't try to parse it. Use re.search with a
+# permissive gap so we don't have to enumerate CPU shapes.
+PWSCF_WALL_RE = re.compile(
+    r"PWSCF[\s\S]{0,200}?(\d+)h(\d+)m\s+WALL",
+    re.IGNORECASE,
+)
+
+# QE energy: "!    total energy              =    -XXXXX.XXXXX Ry"
+ENERGY_RE = re.compile(r"!\s*total energy\s*=\s*(-?\d+\.\d+)")
+
+# Final force: "Total force =     0.047614"
+TOTAL_FORCE_RE = re.compile(r"Total force\s*=\s*(-?\d+\.\d+(?:E[-+]?\d+)?)", re.IGNORECASE)
 
 
 @dataclass
@@ -54,14 +70,16 @@ class CaseRecord:
     category: str = "UNCATEGORIZED"
     wall_seconds: int = 0
     scf_steps_attempted: int = 0
-    final_energy_eV: float | None = None
-    max_force_eV_per_A: float | None = None
+    final_energy_Ry: float | None = None
+    max_total_force: float | None = None
+    max_negative_rho: float | None = None
+    final_scf_accuracy_Ry: float | None = None
     markers_found: dict = field(default_factory=dict)
     notes: str = ""
 
 
 def parse_outfile(path: Path) -> CaseRecord:
-    """Parse one VASP .out / OUTCAR file and return a CaseRecord."""
+    """Parse one QE .out file and return a CaseRecord."""
     rec = CaseRecord(case_id=path.parent.name, outfile=path)
     try:
         text = path.read_text(errors="replace")
@@ -69,55 +87,118 @@ def parse_outfile(path: Path) -> CaseRecord:
         rec.notes = f"read_error: {exc}"
         return rec
 
-    for name, rx in MARKERS.items():
-        rec.markers_found[name] = bool(rx.search(text))
+    rec.markers_found["not_converged"] = bool(NOT_CONV_RE.search(text))
+    rec.markers_found["forces_diverging"] = bool(FORCE_DIV_RE.search(text))
+    rec.markers_found["kpoint_crash"] = bool(KPT_CRASH_RE.search(text))
+    rec.markers_found["subspace_error"] = bool(SUBSPACE_RE.search(text))
+    rec.markers_found["job_done"] = bool(JOB_DONE_RE.search(text))
 
-    m = ELAPSED_RE.search(text)
-    if m:
-        h, mm, s = (int(g) for g in m.groups())
-        rec.wall_seconds = h * 3600 + mm * 60 + s
+    # Wall time from PWSCF timing line (final occurrence)
+    timings = PWSCF_WALL_RE.findall(text)
+    if timings:
+        h, mm = timings[-1]
+        rec.wall_seconds = int(h) * 3600 + int(mm) * 60
 
-    rec.scf_steps_attempted = len(SCF_STEP_RE.findall(text))
+    # SCF steps attempted: count "estimated scf accuracy" lines
+    scf_accs = SCF_ACC_RE.findall(text)
+    rec.scf_steps_attempted = len(scf_accs)
+    if scf_accs:
+        try:
+            rec.final_scf_accuracy_Ry = float(scf_accs[-1])
+        except ValueError:
+            pass
 
+    # Final energy
     energies = ENERGY_RE.findall(text)
     if energies:
         try:
-            rec.final_energy_eV = float(energies[-1])
-        except ValueError:
-            pass
-    forces = FORCE_RE.findall(text)
-    if forces:
-        try:
-            rec.max_force_eV_per_A = float(forces[-1])
+            rec.final_energy_Ry = float(energies[-1])
         except ValueError:
             pass
 
-    # Categorize by priority: E (hard error) > C (divergence) > A/B (energy) > D (fallback)
-    if rec.markers_found["kpoint_crash"] or rec.markers_found["subspace_error"]:
+    # Final total force
+    forces = TOTAL_FORCE_RE.findall(text)
+    if forces:
+        try:
+            rec.max_total_force = float(forces[-1])
+        except ValueError:
+            pass
+
+    # Max negative rho across all SCF steps
+    nrho = NEG_RHO_RE.findall(text)
+    if nrho:
+        try:
+            rec.max_negative_rho = max(float(a) for pair in nrho for a in pair)
+        except ValueError:
+            pass
+
+    # --- Categorize by priority: E > C > A > B > D (fallback) ---
+    if rec.markers_found["subspace_error"] or rec.markers_found["kpoint_crash"]:
         rec.category = "E"
-    elif rec.markers_found["forces_diverging"]:
+    elif rec.max_negative_rho is not None and rec.max_negative_rho > 1.0:
         rec.category = "C"
-    elif rec.markers_found["energy_oscillating"]:
+    elif rec.markers_found["forces_diverging"] or (
+        rec.max_total_force is not None and rec.max_total_force > 1.0
+    ):
+        rec.category = "C"
+    elif _is_oscillating(scf_accs):
         rec.category = "A"
-    elif rec.markers_found["energy_stagnant"]:
-        rec.category = "B"
     elif rec.markers_found["not_converged"]:
-        # Default fallback — time-limit or unclear stagnation
-        if rec.wall_seconds >= 11 * 3600:  # >=11h of 12h budget
+        if rec.final_scf_accuracy_Ry is not None and rec.final_scf_accuracy_Ry > 100.0:
+            tail = [float(x) for x in scf_accs[-5:]] if len(scf_accs) >= 5 else []
+            if tail and _is_plateau(tail):
+                rec.category = "B"
+            elif rec.wall_seconds >= 11 * 3600:
+                rec.category = "D"
+            else:
+                rec.category = "B"
+        elif rec.wall_seconds >= 11 * 3600:
             rec.category = "D"
         else:
-            rec.category = "B"  # conservatively assume stagnation
+            rec.category = "B"  # conservative fallback
+    elif not rec.markers_found["job_done"]:
+        rec.category = "D"  # no JOB DONE and no other marker → incomplete run
+
     return rec
 
 
+def _is_oscillating(scf_accs: list[str]) -> bool:
+    """Detect oscillation in the tail of SCF accuracy values.
+
+    Heuristic: at least 3 direction reversals in the last <=20 values.
+    """
+    if len(scf_accs) < 4:
+        return False
+    tail = [float(x) for x in scf_accs[-20:]] if len(scf_accs) >= 20 else [float(x) for x in scf_accs]
+    diffs = [tail[i + 1] - tail[i] for i in range(len(tail) - 1)]
+    nonzero = [1 if d > 0 else (-1 if d < 0 else 0) for d in diffs if d != 0]
+    if len(nonzero) < 3:
+        return False
+    reversals = sum(1 for i in range(1, len(nonzero)) if nonzero[i] != nonzero[i - 1])
+    return reversals >= 3
+
+
+def _is_plateau(tail: list[float]) -> bool:
+    """Heuristic: last 5 SCF accuracy values are within 2x and > 100 Ry.
+
+    Distinguishes stagnation (B) from divergence (C).
+    """
+    if not tail:
+        return False
+    mx, mn = max(tail), min(tail)
+    if mn <= 0:
+        return False
+    return (mx / mn) < 2.0 and mx > 100.0
+
+
 def collect_outfiles(campaign_root, out_glob):
+    """Collect QE .out files (one level deep; matches campaign layout)."""
     if out_glob:
         return sorted(Path(".").glob(out_glob))
     files = []
-    for out in campaign_root.rglob("OUTCAR"):
-        files.append(out)
-    for out in campaign_root.rglob("*.out"):
-        files.append(out)
+    if campaign_root is None:
+        return []
+    files.extend(Path(campaign_root).glob("*/*.out"))
     return sorted(set(files))
 
 
@@ -129,15 +210,28 @@ def write_tsv(records, output):
     fields = [
         "case_id", "category", "AMIX", "BMIX", "MAGMOM", "ALGO", "NELM",
         "EDIFFG", "ISIF", "SMASS", "POTIM", "KPAR", "NCORE",
-        "KPOINTS_densify", "ICHARG", "wall_seconds", "scf_steps_attempted", "notes",
+        "KPOINTS_densify", "ICHARG", "wall_seconds", "scf_steps_attempted",
+        "final_scf_accuracy_Ry", "max_negative_rho", "notes",
     ]
-    # Pre-fill parameter overrides from category (analysis-plan.md §2)
+    # QE parameter overrides (analysis-plan.md §2, adapted to QE keywords).
+    # The VASP-named AMIX/BMIX/MAGMOM/ALGO/etc columns carry QE `key=value`
+    # strings so the rest of the pipeline (selection, batch) keeps the same
+    # schema and the QE-keyword mapping is visible in the TSV itself.
     overrides = {
-        "A": {"AMIX": "0.1", "BMIX": "0.00005", "MAGMOM": "AFM", "ALGO": "Normal", "ICHARG": "0"},
-        "B": {"AMIX": "0.2", "BMIX": "0.0001", "MAGMOM": "FM", "ALGO": "All", "NELM": "300"},
-        "C": {"AMIX": "0.2", "BMIX": "0.0001", "MAGMOM": "FM", "EDIFFG": "-0.02", "ISIF": "2", "SMASS": "-3", "POTIM": "0.015"},
-        "D": {"AMIX": "0.2", "BMIX": "0.0001", "MAGMOM": "FM", "ALGO": "Fast", "KPAR": "4", "NCORE": "4"},
-        "E": {"AMIX": "0.2", "BMIX": "0.0001", "MAGMOM": "FM", "KPOINTS_densify": "yes"},
+        # Cat A (SCF oscillation): reduce mixing_beta, more iters
+        "A": {"AMIX": "mixing_beta=0.2", "BMIX": "electron_maxstep=200",
+              "MAGMOM": "starting_magnetization=tight", "ALGO": "diagonalization=Dav"},
+        # Cat B (SCF stagnation): boost electron_maxstep
+        "B": {"AMIX": "mixing_beta=0.5", "BMIX": "electron_maxstep=400",
+              "MAGMOM": "starting_magnetization=rescale", "ALGO": "diagonalization=Dav"},
+        # Cat C (negative rho / divergence): very small mixing_beta
+        "C": {"AMIX": "mixing_beta=0.1", "BMIX": "conv_thr=1.0d-5",
+              "MAGMOM": "starting_magnetization=AFM_init", "EDIFFG": "force_thr=1.0d-4"},
+        # Cat D (time-limit): KPAR for parallel speedup
+        "D": {"AMIX": "mixing_beta=0.4", "BMIX": "electron_maxstep=300",
+              "KPAR": "KPAR=8", "NCORE": "NCORE=4"},
+        # Cat E (diag/sym crash): densify kpoints
+        "E": {"AMIX": "mixing_beta=0.4", "KPOINTS_densify": "yes"},
     }
     with output.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t")
@@ -148,6 +242,8 @@ def write_tsv(records, output):
             row["category"] = r.category
             row["wall_seconds"] = str(r.wall_seconds)
             row["scf_steps_attempted"] = str(r.scf_steps_attempted)
+            row["final_scf_accuracy_Ry"] = "" if r.final_scf_accuracy_Ry is None else f"{r.final_scf_accuracy_Ry:.6e}"
+            row["max_negative_rho"] = "" if r.max_negative_rho is None else f"{r.max_negative_rho:.6e}"
             row["notes"] = r.notes
             for k, v in overrides.get(r.category, {}).items():
                 row[k] = v
@@ -169,7 +265,7 @@ def main():
 
     records = [parse_outfile(f) for f in files]
     non_conv = filter_non_converged(records)
-    print(f"Non-converged: {len(non_conv)} (expected 30)")
+    print(f"Non-converged: {len(non_conv)} (plan §1 expected ~30; current count below)")
 
     dist = Counter(r.category for r in non_conv)
     print("Category distribution:")
