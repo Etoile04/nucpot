@@ -1,4 +1,6 @@
 case_id	category	selection_reason	wall_seconds	scf_steps_attempted
-comp_comp_0272_I	A	median_wall_clock_category_A	30900	100
-comp_comp_0126_III	C	median_wall_clock_category_C	39300	100
-comp_comp_0072_I	A	most_scf_steps_attempted_overall	28620	100
+comp_comp_0049_I	A	median_wall_clock_category_A	0	13
+comp_comp_0275_II	B	median_wall_clock_category_B	0	8
+comp_comp_0045_I	C	median_wall_clock_category_C	0	54
+comp_comp_0284_I	D	median_wall_clock_category_D	0	90
+comp_comp_0029_II	A	most_scf_steps_attempted_overall	0	98

@@ -1,20 +1,80 @@
 case_id	category	AMIX	BMIX	MAGMOM	ALGO	NELM	EDIFFG	ISIF	SMASS	POTIM	KPAR	NCORE	KPOINTS_densify	ICHARG	wall_seconds	scf_steps_attempted	final_scf_accuracy_Ry	max_negative_rho	notes
-comp_comp_0072_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										28620	100	3.712606e-02	7.602000e-02	
-comp_comp_0073_II	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										0	100	4.912789e+00	1.847000e-01	
-comp_comp_0106_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										33420	100	1.818517e+02	1.030000e-01	
-comp_comp_0113_III	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										29940	100	1.914150e-03	1.159000e-01	
-comp_comp_0125_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										30120	100	1.251470e+02	1.322000e-01	
-comp_comp_0126_III	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								39300	100	4.202000e+03	3.072000e+03	
-comp_comp_0132_IV	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										31080	100	1.229537e+01	1.363000e-01	
-comp_comp_0134_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										30180	100	9.053720e-03	7.644000e-02	
-comp_comp_0154_II	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										29400	100	4.659132e-02	1.146000e-01	
-comp_comp_0184_II	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										31440	100	2.783753e-01	1.158000e-01	
-comp_comp_0185_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										34740	100	2.852087e+02	1.183000e-01	
-comp_comp_0218_III	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										34080	100	6.195525e+01	1.762000e-01	
-comp_comp_0223_III	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										29400	100	8.452946e+00	1.343000e-01	
-comp_comp_0255_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										33660	100	1.514059e+02	1.329000e-01	
-comp_comp_0257_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										35400	100	1.270405e+01	1.061000e-01	
-comp_comp_0272_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										30900	100	3.681082e+00	1.195000e-01	
-comp_comp_0318_I	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										35040	100	2.319282e+02	1.646000e-01	
-comp_comp_0320_IV	A	mixing_beta=0.2	electron_maxstep=200		diagonalization=Dav										0	100	2.140824e+02	2.436000e-01	
-comp_comp_0393_III	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								38220	100	2.823820e+03	3.068000e+03	
+comp_comp_0005_I	A	mixing_beta=0.2	electron_maxstep=200												0	61	7.360433e+02	1.069000e-01	
+comp_comp_0008_II	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	73	7.740200e-04	1.072000e-01	
+comp_comp_0009_III	A	mixing_beta=0.2	electron_maxstep=200												0	93	4.585261e+01	1.799000e-01	
+comp_comp_0011_I	A	mixing_beta=0.2	electron_maxstep=200												0	57	1.866422e+01	1.384000e-01	
+comp_comp_0013_II	A	mixing_beta=0.2	electron_maxstep=200												0	58	1.295354e+03	1.013000e-01	
+comp_comp_0016_III	A	mixing_beta=0.2	electron_maxstep=200												0	52	1.256671e+03	1.805000e-01	
+comp_comp_0019_III	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								0	61	7.348419e+03	3.066000e+03	
+comp_comp_0022_I	A	mixing_beta=0.2	electron_maxstep=200												0	19	1.162211e+02	1.507000e-01	
+comp_comp_0023_II	A	mixing_beta=0.2	electron_maxstep=200												0	35	7.213462e+02	1.895000e-01	
+comp_comp_0024_III	A	mixing_beta=0.2	electron_maxstep=200												0	88	7.097200e-04	7.248000e-02	
+comp_comp_0026_I	A	mixing_beta=0.2	electron_maxstep=200												0	20	6.948390e+00	1.367000e-01	
+comp_comp_0029_II	A	mixing_beta=0.2	electron_maxstep=200												0	98	9.036400e-04	2.265000e-01	
+comp_comp_0030_III	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								0	7	1.132165e+06	8.579000e+02	
+comp_comp_0031_II	A	mixing_beta=0.2	electron_maxstep=200												0	43	7.968581e+02	3.555000e-01	
+comp_comp_0034_I	A	mixing_beta=0.2	electron_maxstep=200												0	85	3.993200e-04	1.357000e-01	
+comp_comp_0035_III	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								0	37	3.437815e+03	3.067000e+03	
+comp_comp_0036_III	A	mixing_beta=0.2	electron_maxstep=200												0	45	1.242052e+03	1.205000e-01	
+comp_comp_0037_I	A	mixing_beta=0.2	electron_maxstep=200												0	96	2.016118e+00	1.473000e-01	
+comp_comp_0038_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	78	6.041100e-04	1.566000e-01	
+comp_comp_0040_I	A	mixing_beta=0.2	electron_maxstep=200												0	14	2.586995e+00	5.467000e-02	
+comp_comp_0043_II	A	mixing_beta=0.2	electron_maxstep=200												0	36	2.625145e+03	3.238000e-01	
+comp_comp_0045_I	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								0	54	5.770823e+01	2.612000e+00	
+comp_comp_0047_I	A	mixing_beta=0.2	electron_maxstep=200												0	61	1.992912e+03	8.316000e-01	
+comp_comp_0049_I	A	mixing_beta=0.2	electron_maxstep=200												0	13	1.876549e+01	1.373000e-01	
+comp_comp_0050_III	A	mixing_beta=0.2	electron_maxstep=200												0	5	1.992779e+02	8.102000e-04	
+comp_comp_0054_IV	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	64	8.310800e-04	1.507000e-01	
+comp_comp_0056_IV	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								0	59	2.525958e+02	2.282000e+00	
+comp_comp_0057_III	A	mixing_beta=0.2	electron_maxstep=200												0	50	5.883981e+00	1.170000e-01	
+comp_comp_0058_III	C	mixing_beta=0.1	conv_thr=1.0d-5				force_thr=1.0d-4								0	27	5.869791e+04	2.370000e+03	
+comp_comp_0061_II	A	mixing_beta=0.2	electron_maxstep=200												0	35	1.030014e+03	3.255000e-01	
+comp_comp_0064_IV	A	mixing_beta=0.2	electron_maxstep=200												0	35	2.820030e+02	1.699000e-01	
+comp_comp_0065_I	A	mixing_beta=0.2	electron_maxstep=200												0	88	2.222328e+00	1.464000e-01	
+comp_comp_0068_II	A	mixing_beta=0.2	electron_maxstep=200												0	77	1.930469e+02	2.106000e-01	
+comp_comp_0069_III	A	mixing_beta=0.2	electron_maxstep=200												0	42	3.537600e-04	1.673000e-01	
+comp_comp_0070_IV	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	85	2.507435e+02	1.370000e+03	
+comp_comp_0071_I	A	mixing_beta=0.2	electron_maxstep=200												0	44	2.657713e+02	9.247000e-02	
+comp_comp_0104_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	84	6.970655e+01	1.010000e-01	
+comp_comp_0105_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	87	2.376169e+01	1.910000e-01	
+comp_comp_0117_III	A	mixing_beta=0.2	electron_maxstep=200												0	43	1.852532e+03	1.821000e-01	
+comp_comp_0118_II	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	56	1.344188e+03	3.243000e-01	
+comp_comp_0159_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	74	2.506118e+03	2.281000e+00	
+comp_comp_0175_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	84	4.312566e+02	1.370000e-01	
+comp_comp_0178_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	46	8.567000e-04	2.059000e-01	
+comp_comp_0180_II	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	39	1.649311e+02	2.411000e-01	
+comp_comp_0183_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	63	7.784876e+01	1.964000e-01	
+comp_comp_0205_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	62	3.579594e+00	1.168000e-01	
+comp_comp_0237_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	49	3.636291e+03	3.060000e+03	
+comp_comp_0251_II	A	mixing_beta=0.2	electron_maxstep=200												0	11	3.564862e+00	2.136000e-01	
+comp_comp_0252_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	71	1.398958e+03	1.802000e-01	
+comp_comp_0261_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	41	8.897000e-04	6.863000e-01	
+comp_comp_0271_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	84	5.395427e+01	9.169000e-02	
+comp_comp_0274_II	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	89	7.590521e+02	1.163000e-01	
+comp_comp_0275_II	B	mixing_beta=0.5	electron_maxstep=400												0	8	7.184029e+00	1.655000e-01	
+comp_comp_0281_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	93	7.179256e+02	1.052000e-01	
+comp_comp_0284_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	90	2.134168e+02	1.337000e-01	
+comp_comp_0324_I	A	mixing_beta=0.2	electron_maxstep=200												0	82	3.720708e+02	1.891000e-01	
+comp_comp_0326_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	94	1.228030e+02	1.651000e-01	
+comp_comp_0328_IV	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	55	3.265200e-04	1.561000e-01	
+comp_comp_0334_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	20	2.405391e+05	2.553000e+03	
+comp_comp_0336_I	A	mixing_beta=0.2	electron_maxstep=200												0	92	1.519402e+03	1.358000e-01	
+comp_comp_0346_I	A	mixing_beta=0.2	electron_maxstep=200												0	12	2.385414e+01	7.208000e-02	
+comp_comp_0360_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	70	1.500641e+03	1.701000e-01	
+comp_comp_0361_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	39	7.824100e-04	1.434000e-01	
+comp_comp_0374_II	A	mixing_beta=0.2	electron_maxstep=200												0	84	6.620900e-04	1.256000e-01	
+comp_comp_0380_II	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	47	9.745615e+01	1.694000e-01	
+comp_comp_0395_II	A	mixing_beta=0.2	electron_maxstep=200												0	12	1.304497e+02	1.321000e-01	
+comp_comp_0404_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	86	1.844862e+01	1.651000e-01	
+comp_comp_0405_IV	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	38	7.188700e-04	3.371000e-01	
+comp_comp_0417_II	A	mixing_beta=0.2	electron_maxstep=200												0	77	5.206400e-04	1.215000e-01	
+comp_comp_0440_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	91	3.832237e+02	1.207000e-01	
+comp_comp_0455_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	89	2.810417e+02	1.027000e-01	
+comp_comp_0458_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	45	8.184543e+02	1.396000e-01	
+comp_comp_0474_III	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	73	6.774500e-04	8.396000e-02	
+comp_comp_0479_II	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	52	1.447700e+03	3.198000e-01	
+comp_comp_0482_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	65	2.182590e+00	1.047000e-01	
+comp_comp_0483_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	87	2.492433e+01	1.125000e-01	
+comp_comp_0485_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	84	2.336928e+01	1.319000e-01	
+comp_comp_0487_IV	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	91	8.994800e-04	1.696000e-01	
+comp_comp_0494_I	D	mixing_beta=0.4	electron_maxstep=300								KPAR=8	NCORE=4			0	93	1.947967e+01	1.009000e-01	
