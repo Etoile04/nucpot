@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repo (for gh auth)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Update stale PR branches
         env:
