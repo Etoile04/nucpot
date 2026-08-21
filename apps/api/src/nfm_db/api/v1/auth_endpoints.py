@@ -234,16 +234,30 @@ async def refresh(
 @limiter.limit("3/minute")
 async def register(
     request: Request,
+    response: Response,
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """注册新用户。Password must be >=8 chars with letters and digits."""
+    """注册新用户。Password must be >=8 chars with letters and digits.
+
+    ``response: Response`` is required by slowapi's ``@limiter.limit``
+    decorator (NFM-3352).  The decorator's ``async_wrapper`` calls
+    ``self._inject_headers(kwargs.get("response"), ...)`` when the
+    endpoint returns a non-``Response`` value (here a Pydantic ``User``
+    model).  Without a ``response`` parameter, ``kwargs.get("response")``
+    returns ``None`` and ``_inject_headers(None, ...)`` fails its
+    ``isinstance(response, Response)`` check, crashing the response with
+    HTTP 500 even though the DB row was already committed.  FastAPI
+    populates this parameter with a real ``Response`` instance that
+    slowapi uses to inject ``X-RateLimit-*`` headers before the response
+    is sent.
+    """
     _validate_password_strength(user_data.password)
     # Check if username exists
     result = await db.execute(select(User).where(User.username == user_data.username))
     if result.scalar_one_or_none():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Username already exists",
         )
 
@@ -251,7 +265,7 @@ async def register(
     result = await db.execute(select(User).where(User.email == user_data.email))
     if result.scalar_one_or_none():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Email already exists",
         )
 
