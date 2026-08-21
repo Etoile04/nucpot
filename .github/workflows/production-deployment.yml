@@ -342,13 +342,16 @@ jobs:
             export HTTP_PROXY=http://127.0.0.1:7892 HTTPS_PROXY=http://127.0.0.1:7892
             # NFM-848: SSH heredoc opens a fresh shell that does NOT inherit
             # GHA env vars. Docker Desktop rewrites credsStore:"desktop" into
-            # ~/.docker/config.json on restart; in a non-interactive session
-            # the keychain is locked and docker-credential-desktop fails.
-            # Point DOCKER_CONFIG at a clean scratch dir — empirically
-            # honored by the docker CLI (2026-08-16 bogus-helper test).
-            export DOCKER_CONFIG="/tmp/no-cred-docker-config-\${USER}"
-            mkdir -p "\$DOCKER_CONFIG"
-            printf '{}' > "\$DOCKER_CONFIG/config.json"
+            # NFM-3328: rebuild deploy keychain failure chain. DOCKER_CONFIG
+            # is honored by the docker CLI (a bogus credsStore pointer made
+            # `docker pull` return 404 in 2026-08-16 controlled tests).
+            # NFM-848: GHA shell expands \$-vars; the runner env has no USER/
+            # HOME set, which made the earlier \${USER} form expand to an
+            # empty string and `mkdir -p ""` fail. Use literal paths so the
+            # heredoc never depends on env inheritance.
+            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
+            mkdir -p /tmp/nfm848-no-cred-docker-config
+            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
             git fetch origin main
             git reset --hard origin/main
 
