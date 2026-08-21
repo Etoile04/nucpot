@@ -66,12 +66,14 @@ if [[ -f "$in_file" ]]; then
   calc=$(awk -F"'" '/calculation/ {print $2; exit}' "$in_file" 2>/dev/null || echo "scf")
 fi
 if [[ "$calc" == "relax" || "$calc" == "vc-relax" ]]; then
-  max_force=$(grep "Total force" "$out" 2>/dev/null | tail -1 | awk '{print $3}')
+  max_force=$( (grep "Total force" "$out" 2>/dev/null || true) | tail -1 | awk '{print $NF}')
   if [[ -z "$max_force" ]]; then
     reasons+=("ionic_no_force_data")
-  force_e=$(echo "$max_force" | tr 'dD' 'eE')
-  elif ! python3 -c "import sys; sys.exit(0 if float('$force_e') < 1.0e-3 else 1)" 2>/dev/null; then
-    reasons+=("ionic_not_converged_force=${max_force}")
+  else
+    force_e=$(echo "$max_force" | tr 'dD' 'eE')
+    if ! python3 -c "import sys; sys.exit(0 if float('$force_e') < 1.0e-3 else 1)" 2>/dev/null; then
+      reasons+=("ionic_not_converged_force=${max_force}")
+    fi
   fi
 fi
 

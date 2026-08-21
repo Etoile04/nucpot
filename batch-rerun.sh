@@ -214,9 +214,11 @@ if [[ "$MODE" == "validation" ]]; then
   CONV_COUNT=$(tail -n +2 "$RESULTS" | awk -F'\t' '$3=="YES"' | wc -l)
   TOTAL=$(tail -n +2 "$RESULTS" | wc -l)
   echo "[===] Validation outcome: $CONV_COUNT / $TOTAL"
-  if [[ $CONV_COUNT -ge 4 ]]; then
+  if [[ "$TOTAL" -eq 0 ]]; then
+    echo "[===] VERDICT: NO-GO - no cases submitted"
+  elif [[ $CONV_COUNT -eq $TOTAL ]]; then
     echo "[===] VERDICT: GO - proceed with full 30-case batch"
-  elif [[ $CONV_COUNT -ge 3 ]]; then
+  elif [[ $CONV_COUNT -ge $((TOTAL * 2 / 3)) ]]; then
     echo "[===] VERDICT: CONDITIONAL - analyze failures before full batch"
   else
     echo "[===] VERDICT: NO-GO - escalate to NDE; non-convergence may be structural"
