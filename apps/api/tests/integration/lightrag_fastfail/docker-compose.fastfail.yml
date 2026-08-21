@@ -1,0 +1,58 @@
+# =============================================================================
+# NFM-3427 — fast-fail integration harness (AC-3)
+# =============================================================================
+# A two-container stand-in for the production LightRAG topology in
+# docker-compose.lightrag.yml:
+#
+#   LightRAGClient (pytest, host) --> mock-lightrag:8001 --> mock-llm:9000
+#
+# The real `lightrag` service needs a multi-minute image build plus a healthy
+# Postgres (pgvector + AGE) and a live LLM API key, none of which belong in a
+# test — and it has no upstream-LLM container for AC-3 step 3 to stop. What
+# AC-3 actually pins is the *timeout topology*, so this harness keeps the wire
+# shape (real containers, real TCP, real `docker stop`) and swaps only the two
+# endpoints' internals.
+#
+# Both services run stdlib-only scripts inside a stock python:3.12-slim, so
+# there is no build step and no registry pull beyond an image the repo already
+# uses elsewhere.
+#
+# Driven by apps/api/tests/integration/test_lightrag_kill_llm_fast_fail.py —
+# not intended for manual use. The test always passes an explicit `-p` project
+# name so concurrent runs cannot collide.
+# =============================================================================
+
+services:
+  # ---- Upstream LLM (the container AC-3 stops) -----------------------------
+  mock-llm:
+    image: python:3.12-slim
+    command: ["python", "/srv/mock_llm.py"]
+    volumes:
+      - ./mock_llm.py:/srv/mock_llm.py:ro
+    environment:
+      PORT: "9000"
+    networks: [fastfail]
+
+  # ---- LightRAG sidecar stand-in ------------------------------------------
+  mock-lightrag:
+    image: python:3.12-slim
+    command: ["python", "/srv/mock_sidecar.py"]
+    volumes:
+      - ./mock_sidecar.py:/srv/mock_sidecar.py:ro
+    environment:
+      PORT: "8001"
+      LLM_BINDING_HOST: "http://mock-llm:9000"
+      # Layer 1 of the ADR-NFM-3404 chain. Mirrors the LLM_TIMEOUT wiring in
+      # docker-compose.lightrag.yml, which reads the same LIGHTRAG_LLM_TIMEOUT_S
+      # variable from .env.lightrag.
+      LLM_TIMEOUT: "${LIGHTRAG_LLM_TIMEOUT_S:-8}"
+    ports:
+      # Container port only -> Docker assigns an ephemeral host port, which the
+      # test resolves via `docker compose port mock-lightrag 8001`. Avoids
+      # colliding with the production sidecar on host 9621.
+      - "8001"
+    depends_on: [mock-llm]
+    networks: [fastfail]
+
+networks:
+  fastfail:

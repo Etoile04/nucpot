@@ -18,6 +18,9 @@ coverage.xml
 .env
 .env.local
 .env.*.local
+.env.lightrag
+.env.lightrag.*
+!.env.lightrag.example
 
 # Live deployment secrets — never commit (keep .env.*.example templates tracked)
 docker/.env.*

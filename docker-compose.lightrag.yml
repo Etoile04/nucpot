@@ -5,7 +5,9 @@
 # The sidecar connects to the same PostgreSQL instance used by the NFM API.
 #
 # Usage:
-#   # Start the full stack (API + LightRAG):
+#   # First-time setup — copy the operator template and fill in real values:
+#   cp .env.lightrag.example .env.lightrag
+#   # Then start the full stack (API + LightRAG):
 #   docker compose -f docker-compose.prod.yml -f docker-compose.lightrag.yml \
 #     --env-file docker/.env.prod --env-file .env.lightrag \
 #     up -d --build
@@ -14,6 +16,9 @@
 #   docker compose -f docker-compose.prod.yml -f docker-compose.lightrag.yml \
 #     --env-file docker/.env.prod --env-file .env.lightrag \
 #     up -d lightrag
+#
+# .env.lightrag is intentionally untracked (see .gitignore); the
+# .env.lightrag.example template ships in-repo for safe distribution.
 #
 # Architecture:
 #   NFM FastAPI (8000) <--> LightRAG Sidecar (8001) <--> PostgreSQL (pgvector + AGE)
@@ -54,7 +59,7 @@ services:
       LLM_MODEL: ${LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
       LLM_BINDING_HOST: ${LIGHTRAG_LLM_HOST:-}
       LLM_BINDING_API_KEY: ${LIGHTRAG_LLM_API_KEY:-}
-      LLM_TIMEOUT: ${LIGHTRAG_LLM_TIMEOUT:-150}
+      LLM_TIMEOUT: ${LIGHTRAG_LLM_TIMEOUT_S:-8}
       MAX_ASYNC_LLM: ${LIGHTRAG_MAX_ASYNC_LLM:-4}
 
       # --- Embedding Configuration ---
