@@ -1,0 +1,27 @@
+# case-params.tsv — Per-case SCF parameter overrides for the 30 non-converged 54-atom cases
+# Reference: NFM-3381 analysis-plan.md Section 2 (proposed parameter changes by category)
+#
+# Schema (tab-separated, one row per case):
+#   case_id           — structure directory name (e.g. comp_0019_III from NFM-3378 evidence)
+#   category          — A=oscillation, B=stagnation, C=divergence, D=time-limit, E=kpoint-crash
+#   AMIX              — linear mixing fraction (default 0.2)
+#   BMIX              — Broyden mixing weight (default 0.0001)
+#   MAGMOM            — starting magnetization: "FM", "AFM", or per-atom list
+#   ALGO              — VASP algorithm: Normal | Fast | All | VeryFast
+#   NELM              — max SCF steps (default 100)
+#   EDIFFG            — force convergence threshold (default -0.01 eV/Å)
+#   ISIF              — relaxation mode: 2=ions only, 3=full
+#   SMASS             — ionic damping: 0(default), -3=velocity-Verlet
+#   POTIM             — ionic step size (default 0, VASP picks)
+#   KPAR              — k-point parallelism (default 1)
+#   NCORE             — bands-per-core parallelism
+#   KPOINTS_densify   — if "yes", upgrade 2×2×2 → 3×3×3 (Category E)
+#   ICHARG            — charge initialization: 0=atom-like, 1=read CHGCAR, 2=superposition
+#   wall_seconds      — wall-clock consumed by original (failed) attempt
+#   scf_steps_attempted — SCF steps before original failure
+#   notes             — free-text rationale
+#
+# Populated from inspection of `convergence NOT achieved` .out files on xingyi.
+# Left blank intentionally — NDE fills via categorize_cases.py when xingyi access is available.
+
+case_id	category	AMIX	BMIX	MAGMOM	ALGO	NELM	EDIFFG	ISIF	SMASS	POTIM	KPAR	NCORE	KPOINTS_densify	ICHARG	wall_seconds	scf_steps_attempted	notes
