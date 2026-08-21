@@ -37,15 +37,45 @@ ONTOLOGY_CONTEXT_BUDGET_CHARS = 8000
 
 
 def _build_ontology_categories_block(ontology_data: dict[str, Any]) -> str:
-    """Build categories block from ontology entity_types.
+    """Build categories block from ontology.
 
-    Extracts unique category names from ``entity_types`` entries.
-    Returns an empty string when no entity types are present.
+    Prefers the structured ``property_categories`` list (ontology 0.2.0+),
+    where each entry carries ``name`` and ``standard_properties``. Falls
+    back to the legacy behavior (unique entity-type names) for ontologies
+    that predate the key, so old versions keep rendering as before.
+
+    NFM-3004 sourced categories from entity_types because 0.1.0 had no
+    property_categories; that rendered Material/Property/Condition/
+    Experiment — entity names, not property categories — leaving the
+    prompt's "property_category 属于固定枚举 / 9 个核心类别" rules
+    unsubstantiated (landa.pdf 质量排查发现). The 0.2.0 ontology adds the
+    canonical 11-category / 74-property catalog so the enum the prompt
+    demands actually reaches the LLM.
     """
-    entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
-    if not entity_types:
-        return ""
+    property_categories: list[dict[str, Any]] = ontology_data.get(
+        "property_categories", []
+    )
 
+    lines: list[str] = ["## Property Categories (property_category)", ""]
+    if property_categories:
+        for pc in property_categories:
+            name = pc.get("name")
+            if not name:
+                continue
+            props = pc.get("standard_properties") or []
+            if props:
+                props_str = "、".join(str(p) for p in props[:12])
+                if len(props) > 12:
+                    props_str += f" … (+{len(props) - 12})"
+                lines.append(f"- {name}: {props_str}")
+            else:
+                lines.append(f"- {name}")
+        if len(lines) > 2:
+            return "\n".join(lines)
+        lines = ["## Property Categories (property_category)", ""]
+
+    # Legacy fallback: unique entity-type names (pre-0.2.0 ontologies).
+    entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
     names: list[str] = []
     seen: set[str] = set()
     for et in entity_types:
@@ -57,25 +87,30 @@ def _build_ontology_categories_block(ontology_data: dict[str, Any]) -> str:
     if not names:
         return ""
 
-    lines = ["## Property Categories (property_category)", ""]
     for name in names:
         lines.append(f"- {name}")
     return "\n".join(lines)
 
 
 def _build_ontology_standard_names_block(ontology_data: dict[str, Any]) -> str:
-    """Build standard names block from ontology required_properties.
+    """Build standard names block from ontology.
 
-    Extracts unique property names from ``required_properties`` across
-    all entity types in ``ontology_data``.
+    Union of ``property_categories[].standard_properties`` (0.2.0+) and the
+    legacy ``entity_types[].required_properties`` entries, so both old and
+    new ontologies contribute names.
+
     Returns an empty string when no properties are present.
     """
-    entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
-    if not entity_types:
-        return ""
-
     names: list[str] = []
     seen: set[str] = set()
+
+    for pc in ontology_data.get("property_categories", []):
+        for prop in pc.get("standard_properties") or []:
+            if prop and prop not in seen:
+                seen.add(prop)
+                names.append(prop)
+
+    entity_types: list[dict[str, Any]] = ontology_data.get("entity_types", [])
     for et in entity_types:
         for prop in et.get("required_properties", []):
             if prop not in seen:
