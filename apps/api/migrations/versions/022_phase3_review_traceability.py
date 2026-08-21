@@ -87,6 +87,65 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
     """)
+    # NFM-3383: 012's authority includes CHECK constraints, a composite
+    # UNIQUE edge key, and the trgm/query indexes. When the 022 stub built
+    # these tables (012 fork runs later and skips), recreate those here so a
+    # clean-DB chain matches 012's schema.
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE kg_nodes
+                ADD CONSTRAINT ck_kg_nodes_node_type
+                    CHECK (node_type IN ('Material', 'Property', 'Experiment',
+                                         'Condition', 'Publication'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE kg_nodes
+                ADD CONSTRAINT ck_kg_nodes_status
+                    CHECK (status IN ('active', 'merged', 'deprecated',
+                                      'pending_review'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE kg_nodes
+                ADD CONSTRAINT ck_kg_nodes_confidence
+                    CHECK (confidence >= 0.0 AND confidence <= 1.0);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE kg_edges
+                ADD CONSTRAINT ck_kg_edges_confidence
+                    CHECK (confidence >= 0.0 AND confidence <= 1.0);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE kg_edges
+                ADD CONSTRAINT uq_kg_edges_source_target_relation
+                    UNIQUE (source_node_id, target_node_id, relation_type);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_kg_nodes_type ON kg_nodes (node_type)")
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS ix_kg_nodes_label_trgm
+        ON kg_nodes USING gin (label gin_trgm_ops)
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_kg_edges_source ON kg_edges (source_node_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_kg_edges_target ON kg_edges (target_node_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_kg_edges_relation ON kg_edges (relation_type)")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_kg_edges_source_relation "
+        "ON kg_edges (source_node_id, relation_type)"
+    )
     # property_measurements (009 fork table). NFM-3383: minimal stub with
     # the columns 028 backfills against — 009 builds the full schema on the
     # 010-fork path; this covers the parallel d3ddb691ae20 path.
