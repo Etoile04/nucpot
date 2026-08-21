@@ -16,7 +16,9 @@ Adds four columns to the extraction_jobs table to support multimodal
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "013"
 down_revision: Union[str, None, Sequence[str]] = "012"
@@ -28,19 +30,19 @@ def upgrade() -> None:
     """Add multimodal extraction columns to extraction_jobs."""
     op.add_column(
         "extraction_jobs",
-        op.column("extract_figures", op.Boolean(), nullable=False, server_default="false"),
+        sa.Column("extract_figures", sa.Boolean(), nullable=False, server_default="false"),
     )
     op.add_column(
         "extraction_jobs",
-        op.column("extract_tables", op.Boolean(), nullable=False, server_default="false"),
+        sa.Column("extract_tables", sa.Boolean(), nullable=False, server_default="false"),
     )
     op.add_column(
         "extraction_jobs",
-        op.column("confidence_threshold", op.Float(), nullable=False, server_default="0.5"),
+        sa.Column("confidence_threshold", sa.Float(), nullable=False, server_default="0.5"),
     )
     op.add_column(
         "extraction_jobs",
-        op.column("figure_types", op.JSONB(astext_type=op.Text()), nullable=True),
+        sa.Column("figure_types", JSONB(astext_type=sa.Text()), nullable=True),
     )
 
 

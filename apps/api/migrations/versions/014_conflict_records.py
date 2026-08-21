@@ -44,7 +44,7 @@ def upgrade() -> None:
     # TABLE: conflict_records
     # =========================================================================
     op.execute("""
-        CREATE TABLE conflict_records (
+        CREATE TABLE IF NOT EXISTS conflict_records (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             material_node_id UUID NOT NULL
                 REFERENCES kg_nodes(id) ON DELETE CASCADE,
@@ -74,20 +74,47 @@ def upgrade() -> None:
     # =========================================================================
     # INDEXES: conflict_records
     # =========================================================================
+    # NFM-3383: the 014-fork stub may pre-exist with a different column set
+    # (material_id / source_values / resolution). Reconcile this file's
+    # columns before indexing on them.
+    op.execute("""
+        ALTER TABLE conflict_records
+            ADD COLUMN IF NOT EXISTS material_node_id UUID REFERENCES kg_nodes(id) ON DELETE CASCADE;
+    """)
+    op.execute("""
+        ALTER TABLE conflict_records
+            ADD COLUMN IF NOT EXISTS property_node_id UUID REFERENCES kg_nodes(id) ON DELETE CASCADE;
+    """)
+    op.execute("""
+        ALTER TABLE conflict_records
+            ADD COLUMN IF NOT EXISTS conflicting_values JSONB NOT NULL DEFAULT '[]';
+    """)
+    op.execute("""
+        ALTER TABLE conflict_records
+            ADD COLUMN IF NOT EXISTS strategy VARCHAR(50) NOT NULL DEFAULT 'confidence';
+    """)
+    op.execute("""
+        ALTER TABLE conflict_records
+            ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending';
+    """)
+    op.execute("""
+        ALTER TABLE conflict_records
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    """)
     op.execute(
-        "CREATE INDEX ix_conflict_records_material "
+        "CREATE INDEX IF NOT EXISTS ix_conflict_records_material "
         "ON conflict_records (material_node_id)"
     )
     op.execute(
-        "CREATE INDEX ix_conflict_records_property "
+        "CREATE INDEX IF NOT EXISTS ix_conflict_records_property "
         "ON conflict_records (property_node_id)"
     )
     op.execute(
-        "CREATE INDEX ix_conflict_records_status "
+        "CREATE INDEX IF NOT EXISTS ix_conflict_records_status "
         "ON conflict_records (status)"
     )
     op.execute(
-        "CREATE INDEX ix_conflict_records_material_property "
+        "CREATE INDEX IF NOT EXISTS ix_conflict_records_material_property "
         "ON conflict_records (material_node_id, property_node_id)"
     )
 

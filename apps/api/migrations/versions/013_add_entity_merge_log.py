@@ -52,7 +52,7 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE TABLE entity_merge_log (
+        CREATE TABLE IF NOT EXISTS entity_merge_log (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             canonical_id UUID NOT NULL
                 REFERENCES materials(id) ON DELETE RESTRICT,
@@ -70,10 +70,10 @@ def upgrade() -> None:
         )
     """)
 
-    op.execute("CREATE INDEX ix_entity_merge_log_canonical ON entity_merge_log (canonical_id)")
-    op.execute("CREATE INDEX ix_entity_merge_log_merged ON entity_merge_log (merged_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_entity_merge_log_canonical ON entity_merge_log (canonical_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_entity_merge_log_merged ON entity_merge_log (merged_id)")
     op.execute(
-        "CREATE INDEX ix_entity_merge_log_method_score "
+        "CREATE INDEX IF NOT EXISTS ix_entity_merge_log_method_score "
         "ON entity_merge_log (match_method, match_score DESC)"
     )
 

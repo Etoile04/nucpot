@@ -19,6 +19,7 @@ Indexes:
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision: str = "048_data_collection_request"
@@ -96,7 +97,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "metadata_",
-            sa.JSONB(),
+            JSONB(),
             nullable=True,
             comment="Flexible metadata bag.",
         ),
