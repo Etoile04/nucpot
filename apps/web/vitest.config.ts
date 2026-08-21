@@ -18,6 +18,12 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Default vitest testTimeout (5000ms) is shorter than the multi-waitFor
+    // budget of any test that drives a TanStack Query mutation through the
+    // UI (each `waitFor` is up to 10s). Bump the per-test budget so the
+    // suite can complete the actual work — the inner `waitFor` timeouts
+    // still bound each individual assertion.
+    testTimeout: 30000,
     include: [
       "src/**/*.test.{ts,tsx}",
       "__tests__/**/*.test.{ts,tsx}",

@@ -30,7 +30,19 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create kg_nodes and kg_edges tables with indexes."""
+    """Create kg_nodes and kg_edges tables with indexes.
+
+    NFM-3383 guard: 022 (on the parallel d3ddb691ae20 fork) now pre-creates
+    guarded kg_nodes/kg_edges stubs, and topological order can run that fork
+    first. Skip everything when kg_nodes already exists — schema parity is
+    guaranteed (022's stub mirrors this file's DDL) and 014 reconciles any
+    missing columns afterwards.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    inspector = sa_inspect(op.get_bind())
+    if "kg_nodes" in set(inspector.get_table_names()):
+        return
 
     # =========================================================================
     # EXTENSION: pg_trgm for fuzzy label matching

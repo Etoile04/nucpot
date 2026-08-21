@@ -36,6 +36,12 @@ def upgrade() -> None:
     # so each statement commits immediately, rather than issuing a
     # bare COMMIT which breaks alembic's own transaction wrapping
     # (CR #679 finding 1).
+    # NFM-3383: SQLAlchemy 2.x forbids switching isolation_level while a
+    # Transaction is active (alembic's env autobegins one). Commit the
+    # ambient transaction before re-dialing with AUTOCOMMIT.
+    _ambient = bind.in_transaction()
+    if _ambient:
+        bind.commit()
     autocommit = bind.execution_options(isolation_level="AUTOCOMMIT")
     autocommit.execute(
         sa.text(

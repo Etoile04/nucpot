@@ -24,7 +24,17 @@ WORKDIR /app
 
 # Install LightRAG API server + dependencies
 # The [api] extra includes FastAPI/Uvicorn for the built-in server
-RUN pip install --no-cache-dir "lightrag-hku[api]==${LIGHTRAG_VERSION}"
+#
+# NFM-3328: pip against pypi.org from the deploy host is unreliable
+# (2026-08-20 deploy failed resolving aiohttp: "No matching distribution
+# found"). Mirror-first with retry ladder, mirroring prod-api.Dockerfile:
+# tuna twice, then tuna for deps, then pypi.org as the last resort.
+RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}" || \
+    (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}") || \
+    (sleep 15 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}")
 
 # Knowledge graph data directory (persisted via volume mount)
 RUN mkdir -p /app/data
