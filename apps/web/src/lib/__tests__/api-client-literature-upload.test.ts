@@ -69,7 +69,7 @@ describe("literatureApi.upload error status", () => {
     const err = await literatureApi.upload(pdf()).catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(Error)
-    expect((err as Error).message).toBe("Unsupported file type")
+    expect((err as Error).message).toBe("Unsupported file type (415)")
   })
 })
 

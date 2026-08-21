@@ -580,7 +580,9 @@ export const literatureApi = {
       // message body, which would mis-classify a 413 whose byte count
       // happens to contain "403" as a permission error.
       throw new ApiError(
-        body?.detail ?? `上传失败 (${response.status})`,
+        body?.detail
+          ? `${body.detail} (${response.status})`
+          : `上传失败 (${response.status})`,
         response.status,
       )
     }

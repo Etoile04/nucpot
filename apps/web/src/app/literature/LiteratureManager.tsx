@@ -255,10 +255,12 @@ export default function LiteratureManager() {
       // 54031234 bytes (max 52428800)") is correctly routed to the generic
       // upload-failed toast — not the permission toast.
       if (uploadErrorStatus(err) === 403) {
-        message.error(
-          "需要编辑者(Editor)或管理员(Admin)权限才能上传文献，请联系管理员申请权限",
-          5,
-        )
+        message.open({
+          type: "error",
+          content:
+            "需要编辑者(Editor)或管理员(Admin)权限才能上传文献，请联系管理员申请权限",
+          duration: 5,
+        })
       } else {
         const msg = err instanceof Error ? err.message : "上传失败"
         message.error(`上传失败：${msg}`, 8)
