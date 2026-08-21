@@ -29,4 +29,73 @@
     });
   };
 })();
-</script><script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
+</script>
+<script>
+/* NFM-3478: viewer visual fix - multigraph edge separation + faster default layout on large graphs.
+ * The viewer is vendored (no source), so we hook cytoscape's per-element _cyreg registry
+ * to intercept every cytoscape instance the moment it is created, then:
+ *   1. Patch its style to spread parallel edges (curve-style bezier + control-point-step-size).
+ *   2. If the graph has > 200 nodes, switch the default layout from cose-bilkent
+ *      (O(n^2) force-directed, slow on dense corpora) to grid (O(n), deterministic, instant).
+ * Both behaviors only kick in when cytoscape is available; if the bundle ever ships
+ * without the registry hook (e.g. cytoscape version bump), this script no-ops silently. */
+(function () {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  var ELEMENT_PROTO = window.Element && window.Element.prototype;
+  if (!ELEMENT_PROTO) return;
+  var originalDescriptor = Object.getOwnPropertyDescriptor(ELEMENT_PROTO, '_cyreg');
+  function defineSetter(setHook) {
+    Object.defineProperty(ELEMENT_PROTO, '_cyreg', {
+      configurable: true,
+      enumerable: false,
+      get: originalDescriptor ? originalDescriptor.get : function () { return this.__cyreg; },
+      set: function (value) {
+        setHook.call(this, value);
+        if (value && value.cy) { try { applyNfm3478Fix(value.cy); } catch (err) { /* noop */ } }
+      }
+    });
+  }
+  if (!originalDescriptor) {
+    defineSetter(function (value) { this.__cyreg = value; });
+  } else if (originalDescriptor.set) {
+    var origSet = originalDescriptor.set;
+    defineSetter(function (value) { origSet.call(this, value); });
+  } else {
+    return;
+  }
+  function applyNfm3478Fix(cy) {
+    if (!cy || cy.__nfm3478Applied) return;
+    cy.__nfm3478Applied = true;
+    try {
+      cy.style()
+        .selector('edge')
+        .style({
+          'curve-style': 'bezier',
+          'control-point-step-size': 40,
+          'control-point-weights': '0.5',
+          'segment-distances': 20,
+          'segment-weights': '0.5'
+        })
+        .selector('edge[?bend]')
+        .style({ 'bend-shape': 'quadratic' })
+        .update();
+      var nodeCount = cy.nodes().length;
+      if (nodeCount > 200) {
+        var currentLayout = cy._private && cy._private.layout && cy._private.layout.options && cy._private.layout.options.name;
+        if (currentLayout && (currentLayout === 'cose-bilkent' || currentLayout === 'cose' || currentLayout === 'fcose')) {
+          try { cy.layout({ name: 'grid', animate: false, fit: true, padding: 30 }).run(); } catch (e) { /* layout swap best-effort */ }
+        }
+      }
+    } catch (err) {
+      /* cytoscape not ready or different bundle shape; silently skip */
+    }
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    var root = document.getElementById('root');
+    if (root && root.__cyreg && root.__cyreg.cy) {
+      try { applyNfm3478Fix(root.__cyreg.cy); } catch (err) { /* noop */ }
+    }
+  });
+})();
+</script>
+<script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
