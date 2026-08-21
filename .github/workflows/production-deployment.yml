@@ -478,6 +478,11 @@ jobs:
           # Catches logical regressions in the cutover assertion even when
           # the live-Docker deploy-prod job is skipped.
           python3 -m pytest tools/post-deploy-cutover-assert/test_assert.py -v
+          # NFM-3448: candidate-tag retention prune. Same fake-docker shim
+          # pattern as the cutover assertion; runs without the daemon so
+          # it executes on PR runners and catches regressions in
+          # `tools/prod-tag-retention/prune.sh` before they reach prod.
+          python3 -m pytest tools/prod-tag-retention/test_prune.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
@@ -735,6 +740,19 @@ jobs:
               else
                 echo "    ${REPO}: nothing to prune"
               fi
+            done
+
+            # NFM-3448: candidate-tag retention. The pre-deploy-assert job
+            # (ADR-NFM-2139 §5 D2) writes nucpot-prod-{api,web,lightrag}:
+            # candidate-<sha> at every build. Those tags are redundant with
+            # the SHA-tagged image deploy-prod just promoted (same content)
+            # and would otherwise accumulate at ~6 per 16 h (~13 GB/day
+            # across the three repositories) — see NFM-3447 disk pressure.
+            # Keep the most-recent 3 candidate tags per repository; remove
+            # older entries via tools/prod-tag-retention/prune.sh.
+            echo "==> Pruning candidate-* tags older than the last 3 per repository (NFM-3448)"
+            for REPO in nucpot-prod-api nucpot-prod-lightrag nucpot-prod-web; do
+              bash tools/prod-tag-retention/prune.sh --repo "$REPO" --keep 3
             done
             echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
           ENDSSH
