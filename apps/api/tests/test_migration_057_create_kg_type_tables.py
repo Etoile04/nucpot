@@ -20,7 +20,7 @@ REVISION = "057_create_kg_entity_and_relation_type_tables"
 DOWN_REVISION = "053_align_extraction_gap_with_adr_nfm_2675"
 MIGRATION_PATH = f"migrations/versions/{REVISION}.py"
 
-HEAD_REVISION = "056_add_track_id_to_extraction_job"
+HEAD_REVISION = "058_align_schema_drift_backlog"
 DOWNSTREAM_REVISION = "055_add_ontology_version_fk_to_type_tables"
 
 
