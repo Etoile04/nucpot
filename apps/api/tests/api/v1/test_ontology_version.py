@@ -181,6 +181,53 @@ async def test_create_draft_with_ontology_data(
     assert data["ontology_data"] == {"key": "val"}
 
 
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_create_draft_second_does_not_collide_nfm928(
+    async_client, domain_expert_headers, db_session,
+):
+    """NFM-928: hardcoded 0.1.0 placeholder hit the UNIQUE constraint
+    (version spans all statuses) → IntegrityError → 500 on the second
+    create once any 0.1.0 row existed. The placeholder must be allocated
+    past the table max instead."""
+    await _create_version(db_session, version="0.1.0", status="published")
+    await db_session.commit()
+
+    resp = await async_client.post(
+        BASE, json={"changelog": "second draft"}, headers=domain_expert_headers,
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "draft"
+    assert data["version"] != "0.1.0"
+    assert data["version"] == "0.1.1"
+
+    # And a third one keeps incrementing.
+    resp2 = await async_client.post(
+        BASE, json={"changelog": "third draft"}, headers=domain_expert_headers,
+    )
+    assert resp2.status_code == 201
+    assert resp2.json()["version"] == "0.1.2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_auto_auth
+async def test_upload_ontology_second_does_not_collide_nfm928(
+    async_client, domain_expert_headers, db_session,
+):
+    """Same NFM-928 collision via the upload endpoint."""
+    await _create_version(db_session, version="0.2.0", status="published")
+    await db_session.commit()
+
+    resp = await async_client.post(
+        f"{BASE}/upload",
+        json={"changelog": "uploaded draft", "ontology_data": _VALID_ONTOLOGY},
+        headers=domain_expert_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["version"] == "0.2.1"
+
+
 # ---------------------------------------------------------------------------
 # PUT /ontology/versions/{id} — update draft
 # ---------------------------------------------------------------------------
