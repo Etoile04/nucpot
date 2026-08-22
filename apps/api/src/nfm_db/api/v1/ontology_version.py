@@ -66,6 +66,38 @@ def _bump_semver(current: str, level: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def _parse_semver(value: str) -> tuple[int, int, int]:
+    """Parse ``X.Y.Z`` into a sortable tuple; unparseable → (0, 0, 0)."""
+    parts = value.split(".")
+    if len(parts) != 3:
+        return (0, 0, 0)
+    try:
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return (0, 0, 0)
+
+
+async def _next_placeholder_version(session: AsyncSession) -> str:
+    """Allocate a non-colliding placeholder version for a new draft.
+
+    Draft versions are placeholders — ``publish_version`` recomputes the
+    real semver from the latest published row at publish time. But the
+    UNIQUE constraint on ``ontology_versions.version`` spans ALL statuses,
+    so the placeholder must not collide with any existing row.
+
+    NFM-928: both create_draft and upload_ontology hardcoded ``0.1.0``,
+    so the second-ever create (any status row already holding 0.1.0)
+    blew up with IntegrityError → 500. Allocate ``max(existing)+patch``
+    instead; empty table keeps the historical ``0.1.0`` first version.
+    """
+    result = await session.execute(select(OntologyVersion.version))
+    existing = [row[0] for row in result.all()]
+    if not existing:
+        return _INITIAL_VERSION
+    major, minor, patch = max(_parse_semver(v) for v in existing)
+    return f"{major}.{minor}.{patch + 1}"
+
+
 def _validate_ontology_data(data: dict[str, Any]) -> None:
     """Validate that ontology JSON has required top-level keys.
 
@@ -191,7 +223,7 @@ async def create_draft(
 ) -> OntologyVersionRead:
     """Create a new draft ontology version."""
     version = OntologyVersion(
-        version=_INITIAL_VERSION,
+        version=await _next_placeholder_version(session),
         status="draft",
         changelog=body.changelog,
         ontology_data=body.ontology_data,
@@ -337,7 +369,7 @@ async def upload_ontology(
         ) from exc
 
     version = OntologyVersion(
-        version=_INITIAL_VERSION,
+        version=await _next_placeholder_version(session),
         status="draft",
         changelog=body.changelog,
         ontology_data=body.ontology_data,
