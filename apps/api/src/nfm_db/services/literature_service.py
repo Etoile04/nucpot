@@ -719,6 +719,33 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         ds.id,
                         len(mineru_figures),
                     )
+                    # NFM-929: persist VLM figure/table extractions.
+                    # Previously the results were only logged — every figure
+                    # row was ephemeral and extraction_figures stayed empty,
+                    # so table-heavy papers (DFT studies) lost their primary
+                    # numerical content before it reached review/KG.
+                    from nfm_db.models.extraction_figure import ExtractionFigure
+
+                    fig_rows = [
+                        ExtractionFigure(
+                            source_id=ds.id,
+                            figure_type=fig.get("figure_type"),
+                            caption=(fig.get("title") or "")[:500] or None,
+                            image_path=fig.get("image_ref"),
+                            extracted_data=fig,
+                            confidence=float(fig.get("confidence") or 0.0),
+                            extraction_method=fig.get("extraction_method")
+                            or "mineru_vlm",
+                        )
+                        for fig in mineru_figures
+                    ]
+                    db.add_all(fig_rows)
+                    logger.info(
+                        "process_literature: datasource_id=%s — persisted "
+                        "%d rows to extraction_figures",
+                        ds.id,
+                        len(fig_rows),
+                    )
             except Exception:
                 logger.warning(
                     "process_literature: datasource_id=%s — MinerU+VLM "
