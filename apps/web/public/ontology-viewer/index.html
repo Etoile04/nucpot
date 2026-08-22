@@ -32,51 +32,26 @@
 </script>
 <script>
 /* NFM-3478: viewer visual fix - multigraph edge separation + faster default layout on large graphs.
- * The viewer is vendored (no source), so we hook cytoscape's per-element _cyreg registry
- * to intercept every cytoscape instance the moment it is created, then:
- *   1. Patch its style to spread parallel edges (curve-style bezier + control-point-step-size).
- *   2. If the graph has > 200 nodes, switch the default layout from cose-bilkent
- *      (O(n^2) force-directed, slow on dense corpora) to grid (O(n), deterministic, instant).
- * Both behaviors only kick in when cytoscape is available; if the bundle ever ships
- * without the registry hook (e.g. cytoscape version bump), this script no-ops silently. */
+ * The viewer is vendored (no source). Hooking strategy (in order, fall through):
+ *   1. Element.prototype._cyreg setter (cytoscape internal registry hook)
+ *   2. MutationObserver watching #root for cytoscape canvas insertion
+ *   3. Periodic DOM scan for any element with a _cyreg.cy
+ * Whichever finds the cyto instance first wins. Once captured, we patch styles + force fit.
+ * If no cytoscape instance ever appears the script no-ops (debug panel will report it). */
 (function () {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  var ELEMENT_PROTO = window.Element && window.Element.prototype;
-  if (!ELEMENT_PROTO) return;
-  var originalDescriptor = Object.getOwnPropertyDescriptor(ELEMENT_PROTO, '_cyreg');
-  function defineSetter(setHook) {
-    Object.defineProperty(ELEMENT_PROTO, '_cyreg', {
-      configurable: true,
-      enumerable: false,
-      get: originalDescriptor ? originalDescriptor.get : function () { return this.__cyreg; },
-      set: function (value) {
-        setHook.call(this, value);
-        if (value && value.cy) { try { applyNfm3478Fix(value.cy); } catch (err) { /* noop */ } }
-      }
-    });
-  }
-  if (!originalDescriptor) {
-    defineSetter(function (value) { this.__cyreg = value; });
-  } else if (originalDescriptor.set) {
-    var origSet = originalDescriptor.set;
-    defineSetter(function (value) { origSet.call(this, value); });
-  } else {
-    return;
-  }
-  function applyNfm3478Fix(cy) {
-    if (!cy || cy.__nfm3478Applied) return;
-    cy.__nfm3478Applied = true;
-    // NFM-3478 DEBUG: install status reporter onto debug panel + window global
-    var panel = function () {
-      var el = document.getElementById('nfm3478-debug-content');
-      return el;
-    };
-    var report = function () {
-      var el = panel();
-      if (!el) return;
-      var lines = [];
-      lines.push('cy: ' + (cy ? 'OK' : 'NULL'));
+  // --- DEBUG PANEL HELPERS ---
+  function panelEl() { return document.getElementById('nfm3478-debug-content'); }
+  var seenCys = []; // debug: every cy capture attempt
+  function reportDebug(cy, source) {
+    var el = panelEl();
+    var lines = [];
+    lines.push('=== NFM-3478 DEBUG ===');
+    lines.push('hook source: ' + source);
+    lines.push('cy captures: ' + seenCys.length);
+    if (cy) {
       try {
+        lines.push('cy: OK');
         lines.push('nodes: ' + cy.nodes().length);
         lines.push('edges: ' + cy.edges().length);
         var n0 = cy.nodes()[0];
@@ -85,18 +60,138 @@
         lines.push('extent: ' + JSON.stringify(cy.extent()));
         var layout = cy._private && cy._private.layout;
         lines.push('layout: ' + (layout && layout.options ? layout.options.name : 'null'));
+        lines.push('container: ' + (cy.container() ? cy.container().tagName + '#' + cy.container().id : 'null'));
       } catch (e) {
         lines.push('probe err: ' + e.message);
       }
-      el.textContent = lines.join('\n');
-      window.__NFM3478_DEBUG = lines.join('\n');
-    };
-    cy.on('add', 'node, edge', report);
-    cy.on('layoutstop', report);
-    cy.on('viewport', report);
-    setTimeout(report, 500);
-    setTimeout(report, 2000);
-    setTimeout(report, 6000);
+    } else {
+      lines.push('cy: NOT FOUND');
+      // Diagnostic: scan DOM for canvas elements
+      var canvases = document.querySelectorAll('canvas');
+      lines.push('canvases in DOM: ' + canvases.length);
+      var cytoscapeCanvases = [];
+      for (var i = 0; i < canvases.length; i++) {
+        var c = canvases[i];
+        var reg = c._cyreg;
+        if (reg && reg.cy) cytoscapeCanvases.push('canvas#' + i + '->cy OK');
+      }
+      lines.push('cytoscape-registered canvases: ' + cytoscapeCanvases.length);
+      // Count any element with _cyreg
+      var allWithCyreg = document.querySelectorAll('*');
+      var count = 0;
+      for (var j = 0; j < allWithCyreg.length; j++) {
+        if (allWithCyreg[j]._cyreg) count++;
+      }
+      lines.push('elements with _cyreg attr: ' + count);
+    }
+    if (el) el.textContent = lines.join('\n');
+    window.__NFM3478_DEBUG = lines.join('\n');
+  }
+  function registerCy(cy, source) {
+    seenCys.push({src: source, t: Date.now()});
+    if (!cy) { reportDebug(null, source); return; }
+    try { applyNfm3478Fix(cy); reportDebug(cy, source); }
+    catch (err) { reportDebug(cy, source + ' (apply err: ' + err.message + ')'); }
+  }
+  // Strategy 1: hook _cyreg setter (same as before)
+  var ELEMENT_PROTO = window.Element && window.Element.prototype;
+  var hookInstalled = false;
+  if (ELEMENT_PROTO) {
+    var originalDescriptor = Object.getOwnPropertyDescriptor(ELEMENT_PROTO, '_cyreg');
+    function defineSetter(setHook) {
+      Object.defineProperty(ELEMENT_PROTO, '_cyreg', {
+        configurable: true,
+        enumerable: false,
+        get: originalDescriptor ? originalDescriptor.get : function () { return this.__cyreg; },
+        set: function (value) {
+          setHook.call(this, value);
+          if (value && value.cy) registerCy(value.cy, '_cyreg setter');
+        }
+      });
+    }
+    if (!originalDescriptor) {
+      defineSetter(function (value) { this.__cyreg = value; });
+      hookInstalled = true;
+    } else if (originalDescriptor.set) {
+      var origSet = originalDescriptor.set;
+      defineSetter(function (value) { origSet.call(this, value); });
+      hookInstalled = true;
+    }
+  }
+  // Strategy 2: MutationObserver on #root catches viewer-added canvas elements
+  // whose parentElement._cyreg.cy becomes available
+  function observeRoot() {
+    var root = document.getElementById('root');
+    if (!root) { setTimeout(observeRoot, 50); return; }
+    var mo = new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        for (var j = 0; j < m.addedNodes.length; j++) {
+          var n = m.addedNodes[j];
+          if (n && n.nodeType === 1 && n._cyreg && n._cyreg.cy) {
+            registerCy(n._cyreg.cy, 'MutationObserver');
+          }
+          // also check descendants
+          if (n && n.nodeType === 1 && n.querySelectorAll) {
+            var els = n.querySelectorAll('*');
+            for (var k = 0; k < els.length; k++) {
+              if (els[k]._cyreg && els[k]._cyreg.cy) {
+                registerCy(els[k]._cyreg.cy, 'MutationObserver descendant');
+                break;
+              }
+            }
+          }
+        }
+      }
+    });
+    mo.observe(root, { childList: true, subtree: true });
+    // initial scan
+    var all = root.querySelectorAll('*');
+    for (var k = 0; k < all.length; k++) {
+      if (all[k]._cyreg && all[k]._cyreg.cy) { registerCy(all[k]._cyreg.cy, 'initial scan'); break; }
+    }
+  }
+  observeRoot();
+  // Strategy 3: periodic DOM scan - catches cases where viewer creates the cy
+  // on an element that does NOT trigger our _cyreg setter (different storage)
+  var scanCount = 0;
+  var periodicScan = setInterval(function () {
+    scanCount++;
+    var root = document.getElementById('root');
+    if (!root) { reportDebug(null, 'scan #' + scanCount + ' (no root)'); return; }
+    var all = root.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var reg = all[i]._cyreg;
+      if (reg && reg.cy && !reg.cy.__nfm3478Applied) {
+        registerCy(reg.cy, 'periodic scan #' + scanCount);
+        return;
+      }
+    }
+    // also try to find cytoscape instance attached to window or any global
+    if (window.cy && !window.cy.__nfm3478Applied) {
+      registerCy(window.cy, 'window.cy #' + scanCount);
+      return;
+    }
+    if (scanCount <= 3 || scanCount % 10 === 0) {
+      reportDebug(null, 'scan #' + scanCount + ' (no cy yet)');
+    }
+  }, 2000);
+  if (!hookInstalled) {
+    reportDebug(null, 'init: _cyreg hook NOT installed');
+  } else {
+    reportDebug(null, 'init: _cyreg hook installed + MO + scan');
+  }
+  function applyNfm3478Fix(cy) {
+    if (!cy || cy.__nfm3478Applied) return;
+    cy.__nfm3478Applied = true;
+    // Wire events to keep debug panel live
+    function reportLive() { reportDebug(cy, 'event'); }
+    cy.on('add', 'node, edge', reportLive);
+    cy.on('layoutstop', reportLive);
+    cy.on('viewport', reportLive);
+    setTimeout(reportLive, 500);
+    setTimeout(reportLive, 2000);
+    setTimeout(reportLive, 6000);
     try {
       cy.style()
         .selector('edge')
