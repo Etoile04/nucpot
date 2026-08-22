@@ -69,7 +69,10 @@ services:
     restart: unless-stopped
     ports:
       - "${PROD_API_HOST_PORT:-8001}:8000"
-      - "8002:8000"  # CF Tunnel ingress (verify.nucpot.dpdns.org)
+      # Port 8002 released back to the AutoVC stack (verify.nucpot.dpdns.org
+      # CF Tunnel ingress is hardcoded to localhost:8002 and must reach the
+      # AutoVC API, not nucpot main API). See GitHub issue #933.
+      # - "8002:8000"
     environment:
       NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
       NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
