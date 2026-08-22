@@ -147,6 +147,11 @@ services:
     volumes:
       - prod-lightrag-data:/app/data
     environment:
+      # NFM-932: TiktokenTokenizer downloads o200k_base.tiktoken (3.6MB) from
+      # openaipublic.blob.core.windows.net at startup. GFW breaks the transfer
+      # (IncompleteRead) and startup hangs/crash-loops. Point the cache dir at
+      # the persisted volume — the file is seeded there (see issue #932).
+      TIKTOKEN_CACHE_DIR: /app/data/tiktoken-cache
       # --- PostgreSQL (shared with NFM API) ---
       POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-prod-db}
       POSTGRES_PORT: ${LIGHTRAG_PG_PORT:-5432}

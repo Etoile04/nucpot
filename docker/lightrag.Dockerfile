@@ -29,12 +29,17 @@ WORKDIR /app
 # (2026-08-20 deploy failed resolving aiohttp: "No matching distribution
 # found"). Mirror-first with retry ladder, mirroring prod-api.Dockerfile:
 # tuna twice, then tuna for deps, then pypi.org as the last resort.
+#
+# NFM-932: prod uses PGVectorStorage, whose postgres_impl imports asyncpg
+# at runtime. lightrag-hku[api] does NOT pull it in; without it baked into
+# the image, pipmaster tries `pip install --upgrade asyncpg` at container
+# START (against pypi.org, GFW-blocked) and startup crash-loops. Bake it.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}" || \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}") || \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg) || \
     (sleep 15 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
-      "lightrag-hku[api]==${LIGHTRAG_VERSION}")
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg)
 
 # Knowledge graph data directory (persisted via volume mount)
 RUN mkdir -p /app/data
