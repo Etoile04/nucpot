@@ -66,6 +66,37 @@
   function applyNfm3478Fix(cy) {
     if (!cy || cy.__nfm3478Applied) return;
     cy.__nfm3478Applied = true;
+    // NFM-3478 DEBUG: install status reporter onto debug panel + window global
+    var panel = function () {
+      var el = document.getElementById('nfm3478-debug-content');
+      return el;
+    };
+    var report = function () {
+      var el = panel();
+      if (!el) return;
+      var lines = [];
+      lines.push('cy: ' + (cy ? 'OK' : 'NULL'));
+      try {
+        lines.push('nodes: ' + cy.nodes().length);
+        lines.push('edges: ' + cy.edges().length);
+        var n0 = cy.nodes()[0];
+        lines.push('node[0]: ' + (n0 ? (n0.id() + ' pos=' + JSON.stringify(n0.position())) : 'null'));
+        lines.push('zoom: ' + cy.zoom().toFixed(3) + ' pan=' + JSON.stringify(cy.pan()));
+        lines.push('extent: ' + JSON.stringify(cy.extent()));
+        var layout = cy._private && cy._private.layout;
+        lines.push('layout: ' + (layout && layout.options ? layout.options.name : 'null'));
+      } catch (e) {
+        lines.push('probe err: ' + e.message);
+      }
+      el.textContent = lines.join('\n');
+      window.__NFM3478_DEBUG = lines.join('\n');
+    };
+    cy.on('add', 'node, edge', report);
+    cy.on('layoutstop', report);
+    cy.on('viewport', report);
+    setTimeout(report, 500);
+    setTimeout(report, 2000);
+    setTimeout(report, 6000);
     try {
       cy.style()
         .selector('edge')
@@ -223,4 +254,18 @@
   });
 })();
 </script>
-<script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
+</script><script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet">
+<style>
+  /* NFM-3478 DEBUG: floating panel visible to user when cytoscape nodes don't render */
+  #nfm3478-debug-panel {
+    position: fixed; top: 8px; right: 8px; z-index: 99999;
+    background: rgba(255, 240, 200, 0.95); border: 2px solid #c00;
+    padding: 8px 12px; max-width: 360px; font-family: monospace; font-size: 11px;
+    line-height: 1.4; color: #222; border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 99999;
+  }
+  #nfm3478-debug-panel button { margin-top: 6px; padding: 2px 6px; font-size: 11px; }
+  #nfm3478-debug-panel pre { margin: 4px 0; white-space: pre-wrap; word-break: break-all; }
+</style>
+<div id="nfm3478-debug-panel"><b>NFM-3478 DEBUG</b><pre id="nfm3478-debug-content">loading...</pre></div>
+</head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div>
