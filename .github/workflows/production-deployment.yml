@@ -32,11 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Install yamllint
         run: pip install yamllint
@@ -50,11 +45,6 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Run security scan
         run: |
@@ -77,11 +67,6 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -105,11 +90,6 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: actions/setup-python@v7
         with:
@@ -137,11 +117,6 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -175,11 +150,6 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: actions/setup-python@v7
         with:
@@ -214,11 +184,6 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: actions/setup-python@v7
         with:
@@ -278,11 +243,6 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -337,11 +297,6 @@ jobs:
       ASSERT_DISTINCT_EXIT: "64"
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Verify env key sync (NFM-2406)
         run: |
@@ -357,7 +312,16 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
-            git fetch origin main
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
+            for i in 1 2 3 4 5; do
+              git fetch origin main && break
+              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+            done
             git reset --hard origin/main
 
             echo "===> Checking .env.prod <-> docker/.env.prod key drift..."
@@ -385,6 +349,11 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
             # NFM-848: SSH heredoc opens a fresh shell that does NOT inherit
             # GHA env vars. Docker Desktop rewrites credsStore:"desktop" into
             # NFM-3328: rebuild deploy keychain failure chain. DOCKER_CONFIG
@@ -397,7 +366,11 @@ jobs:
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
-            git fetch origin main
+            for i in 1 2 3 4 5; do
+              git fetch origin main && break
+              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+            done
             git reset --hard origin/main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
@@ -428,6 +401,11 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
             # NFM-848: literal path — this heredoc is UNQUOTED so the local
             # GHA shell expands \$-vars; the runner env has no USER/HOME set,
             # which made the earlier \${USER} form expand to an empty string.
@@ -469,11 +447,6 @@ jobs:
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Run migration-on-main-assert against candidate image
         run: |
@@ -516,11 +489,6 @@ jobs:
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Run assert.sh unit tests (no Docker required)
         # Catches logical regressions in the bash script even when the
@@ -621,11 +589,6 @@ jobs:
       PROD_IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Deploy via Docker Compose (loopback SSH)
         id: deploy
@@ -639,6 +602,11 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
@@ -660,7 +628,11 @@ jobs:
             export PROD_IMAGE_TAG="${{ github.sha }}"
             echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
-            git fetch origin main
+            for i in 1 2 3 4 5; do
+              git fetch origin main && break
+              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+            done
             git reset --hard origin/main
 
             # Build the 3 distinct images (D1, NFM-2148). The api image is
@@ -950,11 +922,6 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -1020,11 +987,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GFW intermittently kills direct github.com TLS (runner env
-          # deliberately routes github.com direct via NO_PROXY). Retries
-          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
-          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Compute deploy duration in milliseconds
         id: duration
