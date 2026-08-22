@@ -809,13 +809,19 @@ jobs:
           curl -f https://nucpot.dpdns.org/ | grep -q "NFMD" || exit 1
 
           echo "=== API health endpoint ==="
-          curl -f https://verify.nucpot.dpdns.org/api/v1/health || exit 1
+          # NFM-3317/#934: verify.* was returned to AutoVC (localhost:8002).
+          # The main API is served through the main domain's /api route.
+          curl -f https://nucpot.dpdns.org/api/v1/health || exit 1
 
           echo "=== API /potentials endpoint (key data route) ==="
-          curl -sf https://verify.nucpot.dpdns.org/api/v1/potentials -o /dev/null || exit 1
+          curl -sf https://nucpot.dpdns.org/api/v1/potentials -o /dev/null || exit 1
 
           echo "=== API /reference-values/pending-review endpoint ==="
-          curl -sf https://verify.nucpot.dpdns.org/api/v1/reference-values/pending-review -o /dev/null || exit 1
+          curl -sf https://nucpot.dpdns.org/api/v1/reference-values/pending-review -o /dev/null || exit 1
+
+          echo "=== AutoVC (verify domain) health ==="
+          # AutoVC owns verify.nucpot.dpdns.org; its health path is /api/health
+          curl -sf https://verify.nucpot.dpdns.org/api/health -o /dev/null || exit 1
 
           echo "=== All external smoke tests passed ==="
 
@@ -948,7 +954,7 @@ jobs:
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org
-          API_BASE_URL: https://verify.nucpot.dpdns.org
+          API_BASE_URL: https://nucpot.dpdns.org
           CI: true
 
       - uses: actions/upload-artifact@v7
