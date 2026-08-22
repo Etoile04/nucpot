@@ -137,9 +137,16 @@ print(asyncio.run(check()))
 done
 
 # ---------------------------------------------------------------------------
-# 7. Launch LightRAG server
+# 7. Launch LightRAG server (with startup timeout)
 # ---------------------------------------------------------------------------
-exec lightrag-server \
+# Fails fast if lightrag-server hangs during init (e.g. PG connect under
+# disk pressure).  SIGQUIT lets Python flush logs; SIGKILL after 30s
+# guarantees exit.  Override via LIGHTRAG_STARTUP_TIMEOUT env var.
+# ---------------------------------------------------------------------------
+STARTUP_TIMEOUT="${LIGHTRAG_STARTUP_TIMEOUT:-300}"
+
+exec timeout --signal=SIGQUIT --kill-after=30 "${STARTUP_TIMEOUT}" \
+    lightrag-server \
     --host "${HOST}" \
     --port "${PORT}" \
     --working-dir "${WORKING_DIR}"
