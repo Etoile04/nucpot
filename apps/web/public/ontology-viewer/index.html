@@ -128,6 +128,55 @@
           /* fit is best-effort */
         }
       });
+      // NFM-3478 follow-up #3: user reports nodes are invisible (suspected color issue).
+      // The vendored neo4j-nvl viewer uses a default stylesheet that maps domain color
+      // tokens; some tokens may resolve to near-transparent for default corpora. Override
+      // node + edge styles to ensure every element is visible regardless of corpus content.
+      try {
+        cy.style()
+          .selector('node')
+          .style({
+            'width': 44,
+            'height': 44,
+            'background-color': '#4A90E2',
+            'border-width': 2,
+            'border-color': '#1B4F8A',
+            'label': 'data(label)',
+            'color': '#111',
+            'font-size': 12,
+            'font-weight': 'bold',
+            'text-valign': 'bottom',
+            'text-halign': 'center',
+            'text-margin-y': 6,
+            'text-wrap': 'wrap',
+            'text-max-width': 120,
+            'text-outline-color': '#fff',
+            'text-outline-width': 2,
+            'min-zoomed-font-size': 8,
+            'z-index': 10
+          })
+          .selector('node[class_id = "individual"], node[type = "individual"]')
+          .style({
+            'background-color': '#E27D60',
+            'border-color': '#9C3F22',
+            'shape': 'round-rectangle'
+          })
+          .selector('edge')
+          .style({
+            'width': 2.5,
+            'line-color': '#888',
+            'target-arrow-shape': 'triangle',
+            'target-arrow-color': '#4A90E2',
+            'source-arrow-color': '#4A90E2',
+            'arrow-scale': 1.4,
+            'curve-style': 'bezier',
+            'control-point-step-size': 40,
+            'control-point-weights': '0.5'
+          })
+          .update();
+      } catch (err) {
+        /* style override best-effort */
+      }
     } catch (err) {
       /* cytoscape not ready or different bundle shape; silently skip */
     }
