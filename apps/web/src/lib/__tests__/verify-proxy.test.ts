@@ -9,8 +9,10 @@ vi.stubGlobal('fetch', mockFetch)
 
 const { proxyFetch } = await import('@/lib/verify-proxy')
 
-function lastInit() {
-  return mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1]
+function lastInit(): RequestInit {
+  const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1]
+  if (!call) throw new Error('no fetch call recorded')
+  return call[1] as RequestInit
 }
 
 describe('verify-proxy auth injection (#933/#935)', () => {
