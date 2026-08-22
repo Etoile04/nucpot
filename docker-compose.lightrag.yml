@@ -74,6 +74,10 @@ services:
       WORKING_DIR: /app/rag_storage
       INPUT_DIR: /app/inputs
 
+      # --- PostgreSQL connection timeout (psycopg2 has no default) ---
+      # Prevents silent hangs when PG is under disk/conn pressure.
+      PGCONNECT_TIMEOUT: "10"
+
       # --- Server ---
       PORT: "8001"
       HOST: "0.0.0.0"

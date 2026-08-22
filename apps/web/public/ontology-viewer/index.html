@@ -32,40 +32,166 @@
 </script>
 <script>
 /* NFM-3478: viewer visual fix - multigraph edge separation + faster default layout on large graphs.
- * The viewer is vendored (no source), so we hook cytoscape's per-element _cyreg registry
- * to intercept every cytoscape instance the moment it is created, then:
- *   1. Patch its style to spread parallel edges (curve-style bezier + control-point-step-size).
- *   2. If the graph has > 200 nodes, switch the default layout from cose-bilkent
- *      (O(n^2) force-directed, slow on dense corpora) to grid (O(n), deterministic, instant).
- * Both behaviors only kick in when cytoscape is available; if the bundle ever ships
- * without the registry hook (e.g. cytoscape version bump), this script no-ops silently. */
+ * The viewer is vendored (no source). Hooking strategy (in order, fall through):
+ *   1. Element.prototype._cyreg setter (cytoscape internal registry hook)
+ *   2. MutationObserver watching #root for cytoscape canvas insertion
+ *   3. Periodic DOM scan for any element with a _cyreg.cy
+ * Whichever finds the cyto instance first wins. Once captured, we patch styles + force fit.
+ * If no cytoscape instance ever appears the script no-ops (debug panel will report it). */
 (function () {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  // --- DEBUG PANEL HELPERS ---
+  function panelEl() { return document.getElementById('nfm3478-debug-content'); }
+  var seenCys = []; // debug: every cy capture attempt
+  function reportDebug(cy, source) {
+    var el = panelEl();
+    var lines = [];
+    lines.push('=== NFM-3478 DEBUG ===');
+    lines.push('hook source: ' + source);
+    lines.push('cy captures: ' + seenCys.length);
+    if (cy) {
+      try {
+        lines.push('cy: OK');
+        lines.push('nodes: ' + cy.nodes().length);
+        lines.push('edges: ' + cy.edges().length);
+        var n0 = cy.nodes()[0];
+        lines.push('node[0]: ' + (n0 ? (n0.id() + ' pos=' + JSON.stringify(n0.position())) : 'null'));
+        lines.push('zoom: ' + cy.zoom().toFixed(3) + ' pan=' + JSON.stringify(cy.pan()));
+        lines.push('extent: ' + JSON.stringify(cy.extent()));
+        var layout = cy._private && cy._private.layout;
+        lines.push('layout: ' + (layout && layout.options ? layout.options.name : 'null'));
+        lines.push('container: ' + (cy.container() ? cy.container().tagName + '#' + cy.container().id : 'null'));
+      } catch (e) {
+        lines.push('probe err: ' + e.message);
+      }
+    } else {
+      lines.push('cy: NOT FOUND');
+      // Diagnostic: scan DOM for canvas elements
+      var canvases = document.querySelectorAll('canvas');
+      lines.push('canvases in DOM: ' + canvases.length);
+      var cytoscapeCanvases = [];
+      for (var i = 0; i < canvases.length; i++) {
+        var c = canvases[i];
+        var reg = c._cyreg;
+        if (reg && reg.cy) cytoscapeCanvases.push('canvas#' + i + '->cy OK');
+      }
+      lines.push('cytoscape-registered canvases: ' + cytoscapeCanvases.length);
+      // Count any element with _cyreg
+      var allWithCyreg = document.querySelectorAll('*');
+      var count = 0;
+      for (var j = 0; j < allWithCyreg.length; j++) {
+        if (allWithCyreg[j]._cyreg) count++;
+      }
+      lines.push('elements with _cyreg attr: ' + count);
+    }
+    if (el) el.textContent = lines.join('\n');
+    window.__NFM3478_DEBUG = lines.join('\n');
+  }
+  function registerCy(cy, source) {
+    seenCys.push({src: source, t: Date.now()});
+    if (!cy) { reportDebug(null, source); return; }
+    try { applyNfm3478Fix(cy); reportDebug(cy, source); }
+    catch (err) { reportDebug(cy, source + ' (apply err: ' + err.message + ')'); }
+  }
+  // Strategy 1: hook _cyreg setter (same as before)
   var ELEMENT_PROTO = window.Element && window.Element.prototype;
-  if (!ELEMENT_PROTO) return;
-  var originalDescriptor = Object.getOwnPropertyDescriptor(ELEMENT_PROTO, '_cyreg');
-  function defineSetter(setHook) {
-    Object.defineProperty(ELEMENT_PROTO, '_cyreg', {
-      configurable: true,
-      enumerable: false,
-      get: originalDescriptor ? originalDescriptor.get : function () { return this.__cyreg; },
-      set: function (value) {
-        setHook.call(this, value);
-        if (value && value.cy) { try { applyNfm3478Fix(value.cy); } catch (err) { /* noop */ } }
+  var hookInstalled = false;
+  if (ELEMENT_PROTO) {
+    var originalDescriptor = Object.getOwnPropertyDescriptor(ELEMENT_PROTO, '_cyreg');
+    function defineSetter(setHook) {
+      Object.defineProperty(ELEMENT_PROTO, '_cyreg', {
+        configurable: true,
+        enumerable: false,
+        get: originalDescriptor ? originalDescriptor.get : function () { return this.__cyreg; },
+        set: function (value) {
+          setHook.call(this, value);
+          if (value && value.cy) registerCy(value.cy, '_cyreg setter');
+        }
+      });
+    }
+    if (!originalDescriptor) {
+      defineSetter(function (value) { this.__cyreg = value; });
+      hookInstalled = true;
+    } else if (originalDescriptor.set) {
+      var origSet = originalDescriptor.set;
+      defineSetter(function (value) { origSet.call(this, value); });
+      hookInstalled = true;
+    }
+  }
+  // Strategy 2: MutationObserver on #root catches viewer-added canvas elements
+  // whose parentElement._cyreg.cy becomes available
+  function observeRoot() {
+    var root = document.getElementById('root');
+    if (!root) { setTimeout(observeRoot, 50); return; }
+    var mo = new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        for (var j = 0; j < m.addedNodes.length; j++) {
+          var n = m.addedNodes[j];
+          if (n && n.nodeType === 1 && n._cyreg && n._cyreg.cy) {
+            registerCy(n._cyreg.cy, 'MutationObserver');
+          }
+          // also check descendants
+          if (n && n.nodeType === 1 && n.querySelectorAll) {
+            var els = n.querySelectorAll('*');
+            for (var k = 0; k < els.length; k++) {
+              if (els[k]._cyreg && els[k]._cyreg.cy) {
+                registerCy(els[k]._cyreg.cy, 'MutationObserver descendant');
+                break;
+              }
+            }
+          }
+        }
       }
     });
+    mo.observe(root, { childList: true, subtree: true });
+    // initial scan
+    var all = root.querySelectorAll('*');
+    for (var k = 0; k < all.length; k++) {
+      if (all[k]._cyreg && all[k]._cyreg.cy) { registerCy(all[k]._cyreg.cy, 'initial scan'); break; }
+    }
   }
-  if (!originalDescriptor) {
-    defineSetter(function (value) { this.__cyreg = value; });
-  } else if (originalDescriptor.set) {
-    var origSet = originalDescriptor.set;
-    defineSetter(function (value) { origSet.call(this, value); });
+  observeRoot();
+  // Strategy 3: periodic DOM scan - catches cases where viewer creates the cy
+  // on an element that does NOT trigger our _cyreg setter (different storage)
+  var scanCount = 0;
+  var periodicScan = setInterval(function () {
+    scanCount++;
+    var root = document.getElementById('root');
+    if (!root) { reportDebug(null, 'scan #' + scanCount + ' (no root)'); return; }
+    var all = root.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var reg = all[i]._cyreg;
+      if (reg && reg.cy && !reg.cy.__nfm3478Applied) {
+        registerCy(reg.cy, 'periodic scan #' + scanCount);
+        return;
+      }
+    }
+    // also try to find cytoscape instance attached to window or any global
+    if (window.cy && !window.cy.__nfm3478Applied) {
+      registerCy(window.cy, 'window.cy #' + scanCount);
+      return;
+    }
+    if (scanCount <= 3 || scanCount % 10 === 0) {
+      reportDebug(null, 'scan #' + scanCount + ' (no cy yet)');
+    }
+  }, 2000);
+  if (!hookInstalled) {
+    reportDebug(null, 'init: _cyreg hook NOT installed');
   } else {
-    return;
+    reportDebug(null, 'init: _cyreg hook installed + MO + scan');
   }
   function applyNfm3478Fix(cy) {
     if (!cy || cy.__nfm3478Applied) return;
     cy.__nfm3478Applied = true;
+    // Wire events to keep debug panel live
+    function reportLive() { reportDebug(cy, 'event'); }
+    cy.on('add', 'node, edge', reportLive);
+    cy.on('layoutstop', reportLive);
+    cy.on('viewport', reportLive);
+    setTimeout(reportLive, 500);
+    setTimeout(reportLive, 2000);
+    setTimeout(reportLive, 6000);
     try {
       cy.style()
         .selector('edge')
@@ -128,6 +254,89 @@
           /* fit is best-effort */
         }
       });
+      // NFM-3478 follow-up #3: user reports nodes are invisible (suspected color issue).
+      // The vendored neo4j-nvl viewer uses a default stylesheet that maps domain color
+      // tokens; some tokens may resolve to near-transparent for default corpora. Override
+      // node + edge styles to ensure every element is visible regardless of corpus content.
+      // User asked to make nodes 10x larger (44 -> 200). Bumped width/height, increased
+      // border-width, font-size, and made visibility properties explicit so cytoscape cannot
+      // fall back to invisible defaults from viewer style.
+      function applyNfm3478Styles() {
+        try {
+          cy.style()
+            .selector('node')
+            .style({
+              'width': 200,
+              'height': 200,
+              'background-color': '#0066FF',
+              'background-opacity': 1,
+              'background-fill': 'solid',
+              'border-width': 4,
+              'border-color': '#003366',
+              'border-opacity': 1,
+              'label': 'data(label)',
+              'color': '#000000',
+              'font-size': 24,
+              'font-weight': 'bold',
+              'text-valign': 'bottom',
+              'text-halign': 'center',
+              'text-margin-y': 10,
+              'text-wrap': 'wrap',
+              'text-max-width': 200,
+              'text-outline-color': '#FFFFFF',
+              'text-outline-width': 3,
+              'text-outline-opacity': 1,
+              'min-zoomed-font-size': 12,
+              'opacity': 1,
+              'visibility': 'visible',
+              'display': 'element',
+              'events': 'yes',
+              'ghost': 'no',
+              'z-index': 10
+            })
+            .selector('node[type = "individual"]')
+            .style({
+              'background-color': '#FF8800',
+              'border-color': '#993300',
+              'shape': 'round-rectangle'
+            })
+            .selector('edge')
+            .style({
+              'width': 4,
+              'line-color': '#333333',
+              'line-opacity': 1,
+              'target-arrow-shape': 'triangle',
+              'target-arrow-color': '#0066FF',
+              'source-arrow-color': '#0066FF',
+              'arrow-scale': 2,
+              'curve-style': 'bezier',
+              'control-point-step-size': 40,
+              'control-point-weights': '0.5',
+              'opacity': 1,
+              'visibility': 'visible',
+              'display': 'element'
+            })
+            .update();
+        } catch (err) {
+          /* style override best-effort */
+        }
+      }
+      applyNfm3478Styles();
+      // Re-apply styles after every add + every layout (viewer may overwrite between these).
+      cy.on('add', 'node, edge', function () {
+        try { applyNfm3478Styles(); } catch (err) { /* noop */ }
+      });
+      cy.on('layoutstop', function () {
+        try { applyNfm3478Styles(); } catch (err) { /* noop */ }
+        try {
+          var nodeCount = cy.nodes().length;
+          if (nodeCount === 0) return;
+          var padding = nodeCount < 50 ? 200 : (nodeCount < 500 ? 80 : 40);
+          cy.fit(undefined, padding);
+        } catch (err) {
+          /* fit is best-effort */
+        }
+      });
     } catch (err) {
       /* cytoscape not ready or different bundle shape; silently skip */
     }
@@ -140,4 +349,18 @@
   });
 })();
 </script>
-<script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
+</script><script defer="defer" src="/static/js/main.75e65dd0.js"></script><link href="/static/css/main.a776edc4.css" rel="stylesheet">
+<style>
+  /* NFM-3478 DEBUG: floating panel visible to user when cytoscape nodes don't render */
+  #nfm3478-debug-panel {
+    position: fixed; top: 8px; right: 8px; z-index: 99999;
+    background: rgba(255, 240, 200, 0.95); border: 2px solid #c00;
+    padding: 8px 12px; max-width: 360px; font-family: monospace; font-size: 11px;
+    line-height: 1.4; color: #222; border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 99999;
+  }
+  #nfm3478-debug-panel button { margin-top: 6px; padding: 2px 6px; font-size: 11px; }
+  #nfm3478-debug-panel pre { margin: 4px 0; white-space: pre-wrap; word-break: break-all; }
+</style>
+<div id="nfm3478-debug-panel"><b>NFM-3478 DEBUG</b><pre id="nfm3478-debug-content">loading...</pre></div>
+</head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div>
