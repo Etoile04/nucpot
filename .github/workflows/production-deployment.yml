@@ -32,6 +32,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Install yamllint
         run: pip install yamllint
@@ -45,6 +50,11 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Run security scan
         run: |
@@ -67,6 +77,11 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -90,6 +105,11 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: actions/setup-python@v7
         with:
@@ -117,6 +137,11 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -150,6 +175,11 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: actions/setup-python@v7
         with:
@@ -184,6 +214,11 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: actions/setup-python@v7
         with:
@@ -243,6 +278,11 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -297,6 +337,11 @@ jobs:
       ASSERT_DISTINCT_EXIT: "64"
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Verify env key sync (NFM-2406)
         run: |
@@ -424,6 +469,11 @@ jobs:
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Run migration-on-main-assert against candidate image
         run: |
@@ -466,6 +516,11 @@ jobs:
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Run assert.sh unit tests (no Docker required)
         # Catches logical regressions in the bash script even when the
@@ -566,6 +621,11 @@ jobs:
       PROD_IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Deploy via Docker Compose (loopback SSH)
         id: deploy
@@ -890,6 +950,11 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - uses: pnpm/action-setup@v6
 
@@ -955,6 +1020,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # GFW intermittently kills direct github.com TLS (runner env
+          # deliberately routes github.com direct via NO_PROXY). Retries
+          # absorb the transient SSL_ERROR_SYSCALL / 75s timeouts.
+          git-fetch-flags: "--retry-all-errors --tries 5 --wait 10 --verbose"
 
       - name: Compute deploy duration in milliseconds
         id: duration
