@@ -165,6 +165,107 @@ class ExtractionOrchestrator:
         await self._session.flush()
         return self._job
 
+    async def rerun_step(
+        self,
+        step_name: str,
+        *,
+        track_id: uuid.UUID,
+        **kwargs: Any,
+    ) -> ExtractionStep:
+        """Re-execute one pipeline step with an explicit track_id.
+
+        NFM-3543-D (NFM-3598): the ``POST /jobs/{id}/steps/{name}/rerun``
+        route calls into the orchestrator with a fresh track_id so the
+        rerun row is logically distinct from the historical one. Returns
+        the newly-persisted :class:`ExtractionStep` row carrying the
+        ``track_id`` in its ``metadata_`` JSONB (under
+        ``"track_id"`` / ``"rerun": true``); the route echoes this id in
+        the 202 response.
+
+        Unlike :meth:`run`, this method only walks a single step
+        (``step_name``), leaving the job's overall status untouched.
+        The historical step's ``track_id`` (or step.id pre-track-id
+        columns) is preserved — only this new row carries the rerun's
+        ``track_id``.
+        """
+        if step_name not in EXTRACTION_STEP_TYPES:
+            raise ValueError(
+                f"Unknown step type '{step_name!r}'; "
+                f"must be one of {EXTRACTION_STEP_TYPES}"
+            )
+
+        step_params = self._build_step_params(step_name, **kwargs)
+        input_hash = compute_input_hash(step_params)
+
+        rerun_metadata: dict[str, Any] = {
+            "track_id": str(track_id),
+            "rerun": True,
+        }
+
+        # Skip detection — same logic as :meth:`_execute_step`. A
+        # previous completed step with the same input hash means we can
+        # safely mark this rerun as skipped without re-running the work.
+        existing = await self._find_completed_step(
+            self._job.id, step_name, input_hash,
+        )
+        if existing is not None:
+            logger.info(
+                "Rerun step '%s' for job %s — hash match, skipping "
+                "(track_id=%s)",
+                step_name, self._job.id, track_id,
+            )
+            skipped = ExtractionStep(
+                job_id=self._job.id,
+                step_type=step_name,
+                status="skipped",
+                input_hash=input_hash,
+                metadata_=rerun_metadata,
+            )
+            self._session.add(skipped)
+            await self._session.flush()
+            return skipped
+
+        step = ExtractionStep(
+            job_id=self._job.id,
+            step_type=step_name,
+            status="running",
+            input_hash=input_hash,
+            started_at=datetime.now(UTC),
+            metadata_=rerun_metadata,
+        )
+        self._session.add(step)
+
+        step_fn = {
+            "chunk": self._step_chunk,
+            "extract": self._step_extract,
+            "map": self._step_map,
+            "quality_gate": self._step_quality_gate,
+            "gap_scan": self._step_gap_scan,
+        }[step_name]
+
+        try:
+            await step_fn(step, **kwargs)
+        except Exception as exc:
+            step.status = "failed"
+            step.error_message = str(exc)
+            step.completed_at = datetime.now(UTC)
+            self._session.add(step)
+            await self._session.flush()
+            logger.warning(
+                "Rerun step '%s' for job %s failed: %s",
+                step_name, self._job.id, exc,
+            )
+            return step
+
+        # Mirror ``_execute_step``'s terminal-status discipline:
+        # gap_scan self-reports 'failed' and must not be overwritten.
+        if step.status == "running":
+            step.status = "completed"
+            step.completed_at = datetime.now(UTC)
+        self._session.add(step)
+        await self._session.flush()
+        return step
+
     # ------------------------------------------------------------------
     # Step execution
     # ------------------------------------------------------------------

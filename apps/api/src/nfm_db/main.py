@@ -23,6 +23,7 @@ from nfm_db.api.v1 import (
     extraction_gaps,
     feedback,
     health,
+    jobs,
     kg,
     kg_graph,
     lightrag,
@@ -334,6 +335,7 @@ app.include_router(upload.router, prefix="/api/v1", tags=["断点续传"])
 app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
 app.include_router(dedup.router, prefix="/api/v1", tags=["实体去重"])
 app.include_router(dft.router, prefix="/api/v1", tags=["DFT 计算"])
+app.include_router(jobs.router, prefix="/api/v1", tags=["任务步骤管理"])
 app.include_router(
     hub_nodes_router, prefix="/api/v1", tags=["Hub 节点管理"]
 )
