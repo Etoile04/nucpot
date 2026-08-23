@@ -111,8 +111,42 @@ export default function AdminVerifyPage() {
   const [activePotentialName, setActivePotentialName] = useState<string>('')
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Verification history (in-memory for now)
+  // Verification history — restored from AutoVC /api/verifications on mount,
+  // then appended in-memory as jobs complete (near-realtime; remote is source
+  // of truth for cross-reload persistence).
   const [history, setHistory] = useState<VerificationRecord[]>([])
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/verifications?limit=50')
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { items: VerificationRecord[] }) => {
+        if (cancelled) return
+        // Rows come from Supabase: map to the panel shape (potential_name is
+        // not stored per-row; fall back to a short id label until the
+        // potential list loads and names can be resolved client-side).
+        setHistory(
+          (data.items ?? []).map(v => ({
+            id: v.id,
+            potential_id: v.potential_id,
+            potential_name: v.potential_name ?? '',
+            template: v.template ?? 'basic',
+            status: v.status,
+            overall_grade: v.overall_grade ?? null,
+            created_at: v.created_at ?? new Date().toISOString(),
+            completed_at: v.completed_at ?? null,
+            results: (v.results as PropertyResult[] | null) ?? null,
+          }))
+        )
+        setHistoryLoaded(true)
+      })
+      .catch(() => {
+        // History restore is best-effort: the panel still works in-memory.
+        setHistoryLoaded(true)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   // 批量验证状态
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -595,15 +629,25 @@ export default function AdminVerifyPage() {
         )}
 
         {/* Verification history */}
-        {history.length > 0 && (
+        {(history.length > 0 || historyLoaded) && (
           <div className="mt-8">
             <h2 className="text-lg font-semibold text-white mb-4">验证历史</h2>
             <div className="space-y-3">
-              {history.map(h => (
+              {history.length === 0 && historyLoaded && (
+                <p className="text-sm text-gray-500">暂无验证记录</p>
+              )}
+              {history.map(h => {
+                // Remote rows lack potential_name: resolve from the loaded
+                // potential list, else show a short id so the row stays usable.
+                const name = h.potential_name
+                  || potentials.find(p => p.id === h.potential_id)?.display_name
+                  || potentials.find(p => p.id === h.potential_id)?.name
+                  || h.potential_id.slice(0, 8)
+                return (
                 <div key={h.id} className="bg-gray-800 border border-gray-700 rounded-xl p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
-                      <span className="font-medium text-white">{h.potential_name}</span>
+                      <span className="font-medium text-white">{name}</span>
                       <span className="text-xs text-gray-500">{TEMPLATE_INFO[h.template as Template]?.label || h.template}</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -652,7 +696,8 @@ export default function AdminVerifyPage() {
                     {new Date(h.created_at).toLocaleString('zh-CN')} · 任务 {h.id}
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
