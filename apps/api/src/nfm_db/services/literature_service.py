@@ -146,9 +146,7 @@ def _parse_pdf_to_markdown(
                 zip_bytes_for_assets: bytes | None = None
                 if ds_id is not None and storage is not None:
                     result = _run_async(
-                        client.parse_pdf(
-                            pdf_bytes, filename="upload.pdf", return_zip=True
-                        )
+                        client.parse_pdf(pdf_bytes, filename="upload.pdf", return_zip=True)
                     )
                     markdown = result.markdown
                     zip_bytes_for_assets = result.zip_bytes
@@ -166,11 +164,7 @@ def _parse_pdf_to_markdown(
                     len(pdf_bytes),
                 )
 
-                if (
-                    ds_id is not None
-                    and storage is not None
-                    and zip_bytes_for_assets is not None
-                ):
+                if ds_id is not None and storage is not None and zip_bytes_for_assets is not None:
                     try:
                         markdown = _persist_mineru_assets(
                             storage=storage,
@@ -202,9 +196,7 @@ def _parse_pdf_to_markdown(
             source_service="mineru_extraction",
             context=build_context(exc, fallback="pymupdf"),
         )
-        logger.warning(
-            "_parse_pdf_to_markdown: mineru_client unavailable — using PyMuPDF"
-        )
+        logger.warning("_parse_pdf_to_markdown: mineru_client unavailable — using PyMuPDF")
 
     if markdown:
         return markdown
@@ -300,9 +292,7 @@ async def _extract_via_mineru_vlm(
     try:
         pdf_bytes = storage.read(ds.file_path)
     except Exception as exc:
-        logger.warning(
-            "_extract_via_mineru_vlm: failed to read PDF for %s: %s", ds.id, exc
-        )
+        logger.warning("_extract_via_mineru_vlm: failed to read PDF for %s: %s", ds.id, exc)
         return []
 
     mineru_client = MinerUClient(api_key=api_key, poll_interval=0.5, timeout_seconds=300)
@@ -388,9 +378,7 @@ async def _extract_via_mineru_vlm(
 
         vlm_client: Any = _vlm_call
     except Exception as exc:
-        logger.warning(
-            "_extract_via_mineru_vlm: could not initialize VLM client: %s", exc
-        )
+        logger.warning("_extract_via_mineru_vlm: could not initialize VLM client: %s", exc)
         return []
 
     try:
@@ -401,14 +389,10 @@ async def _extract_via_mineru_vlm(
             max_images=max_images,
         )
     except MinerUError as exc:
-        logger.warning(
-            "_extract_via_mineru_vlm: MinerU failed for %s: %s", ds.id, exc
-        )
+        logger.warning("_extract_via_mineru_vlm: MinerU failed for %s: %s", ds.id, exc)
         return []
     except Exception as exc:
-        logger.warning(
-            "_extract_via_mineru_vlm: unexpected error for %s: %s", ds.id, exc
-        )
+        logger.warning("_extract_via_mineru_vlm: unexpected error for %s: %s", ds.id, exc)
         return []
 
     figures: list[dict[str, Any]] = []
@@ -418,15 +402,9 @@ async def _extract_via_mineru_vlm(
             figures.append(fig_dict)
 
     # Summary log
-    high = sum(
-        1 for r in results if (r.verification or {}).get("accuracy") == "high"
-    )
-    med = sum(
-        1 for r in results if (r.verification or {}).get("accuracy") == "medium"
-    )
-    low = sum(
-        1 for r in results if (r.verification or {}).get("accuracy") == "low"
-    )
+    high = sum(1 for r in results if (r.verification or {}).get("accuracy") == "high")
+    med = sum(1 for r in results if (r.verification or {}).get("accuracy") == "medium")
+    low = sum(1 for r in results if (r.verification or {}).get("accuracy") == "low")
     logger.info(
         "_extract_via_mineru_vlm: %s — %d figures (high=%d med=%d low=%d)",
         ds.id,
@@ -692,9 +670,49 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             from nfm_db.services.kg_re import GraphBuilder
 
             builder = GraphBuilder(db, sync_to_age=False)
-            build_result = await builder.build_from_extraction(
-                raw_properties, source_id=ds.id
-            )
+            build_result = await builder.build_from_extraction(raw_properties, source_id=ds.id)
+
+            # --- Step 5a: bridge KG → staging (NFM-3478 Layer B) ------
+            # The viewer reads _ref_gap_fill_staging, not kg_nodes; without
+            # this bridge a freshly extracted paper stays invisible to the
+            # ontology viewer. Corpus id: explicit metadata_.corpus_id if
+            # present, else slugified DOI (matches CORPUS_ID_RE).
+            try:
+                from nfm_db.services.kg_to_staging_bridge import (
+                    _slugify,
+                    bridge_kg_to_staging,
+                )
+
+                meta = ds.metadata_ or {}
+                corpus_id = str(meta.get("corpus_id") or "").strip()
+                if not corpus_id and ds.doi:
+                    corpus_id = _slugify(ds.doi)
+                if corpus_id:
+                    bridged = await bridge_kg_to_staging(
+                        db,
+                        source_id=ds.id,
+                        corpus_id=corpus_id,
+                        source_doi=ds.doi,
+                    )
+                    logger.info(
+                        "process_literature: datasource_id=%s — bridged %d "
+                        "rows to _ref_gap_fill_staging (corpus=%s)",
+                        ds.id,
+                        bridged,
+                        corpus_id,
+                    )
+                else:
+                    logger.info(
+                        "process_literature: datasource_id=%s — no corpus_id, "
+                        "KG→staging bridge skipped",
+                        ds.id,
+                    )
+            except Exception:
+                logger.warning(
+                    "process_literature: datasource_id=%s — KG→staging bridge failed (non-fatal)",
+                    ds.id,
+                    exc_info=True,
+                )
         else:
             logger.info(
                 "process_literature: datasource_id=%s — nothing to extract",
@@ -734,8 +752,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                             image_path=fig.get("image_ref"),
                             extracted_data=fig,
                             confidence=float(fig.get("confidence") or 0.0),
-                            extraction_method=fig.get("extraction_method")
-                            or "mineru_vlm",
+                            extraction_method=fig.get("extraction_method") or "mineru_vlm",
                         )
                         for fig in mineru_figures
                     ]
@@ -748,8 +765,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                     )
             except Exception:
                 logger.warning(
-                    "process_literature: datasource_id=%s — MinerU+VLM "
-                    "stage failed (non-fatal)",
+                    "process_literature: datasource_id=%s — MinerU+VLM stage failed (non-fatal)",
                     ds.id,
                     exc_info=True,
                 )
