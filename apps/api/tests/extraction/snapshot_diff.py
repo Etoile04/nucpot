@@ -33,13 +33,11 @@ from pathlib import Path
 from typing import Any
 
 from nfm_db.services.extraction_prompt import build_ontology_extraction_prompt
-
 from tests.extraction.v1_prompt_legacy import (
     build_extraction_system_prompt_v1,
     list_v1_category_values,
     list_v1_standard_names,
 )
-
 
 # Repository-root resolution — pytest may run from apps/api/ or repo root,
 # so resolve via this file rather than cwd.

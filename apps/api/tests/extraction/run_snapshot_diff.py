@@ -39,7 +39,6 @@ for _p in (str(_API_SRC), str(_API_ROOT)):
 
 from tests.extraction.snapshot_diff import (  # noqa: E402
     REPO_ROOT,
-    SnapshotReport,
     build_snapshot_report,
     render_baseline_markdown,
 )
@@ -73,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     start = time.monotonic()
     try:
         report = build_snapshot_report()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"snapshot_diff: failed to build report: {exc}", file=sys.stderr)
         return 2
 

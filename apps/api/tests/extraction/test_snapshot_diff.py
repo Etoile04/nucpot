@@ -37,7 +37,6 @@ from tests.extraction.v1_prompt_legacy import (
     list_v1_standard_names,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
 GOLDEN_DIR = REPO_ROOT / "apps" / "api" / "tests" / "fixtures" / "golden"
 BASELINE_MD = REPO_ROOT / "docs" / "verification" / "NFM-3531-v1-v2-baseline.md"
