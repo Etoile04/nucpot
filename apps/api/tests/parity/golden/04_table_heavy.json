@@ -1,0 +1,91 @@
+{
+  "_description": "Table-heavy scenario: ontology dominated by structured numerical properties typical of data tables. Stress-tests both paths' handling of many required_properties with consistent naming.",
+  "_scenario": "table_heavy",
+  "_scenario_notes": "Single material (HT9 steel) with 25+ tabular properties (creep, swelling, yield, etc.). Tests both paths' sorting/dedup behavior.",
+  "version": "0.2.0",
+  "property_categories": [
+    {
+      "name": "密度",
+      "standard_properties": ["密度"]
+    },
+    {
+      "name": "比热容",
+      "standard_properties": ["比热容"]
+    },
+    {
+      "name": "热导率",
+      "standard_properties": ["热导率"]
+    },
+    {
+      "name": "弹塑性模型",
+      "standard_properties": [
+        "杨氏模量",
+        "剪切模量",
+        "体积模量",
+        "泊松比",
+        "屈服强度",
+        "抗拉强度",
+        "延伸率"
+      ]
+    },
+    {
+      "name": "热膨胀",
+      "standard_properties": ["平均线膨胀系数"]
+    },
+    {
+      "name": "辐照蠕变",
+      "standard_properties": ["稳态蠕变速率", "瞬态蠕变速率", "应力指数"]
+    },
+    {
+      "name": "辐照肿胀",
+      "standard_properties": ["体积膨胀率", "空洞密度", "平均空洞尺寸"]
+    },
+    {
+      "name": "腐蚀",
+      "standard_properties": ["腐蚀速率"]
+    },
+    {
+      "name": "硬化性能",
+      "standard_properties": ["硬度", "辐照硬化量", "硬化指数"]
+    },
+    {
+      "name": "材料规格/组织信息",
+      "standard_properties": ["样品外径", "样品内径", "壁厚", "晶粒尺寸", "位错密度"]
+    }
+  ],
+  "entity_types": [
+    {
+      "name": "HT9_Steel",
+      "description": "HT9 ferritic-martensitic steel: 12Cr-1MoVW. Used for fast reactor cladding/duct.",
+      "required_properties": [
+        "density",
+        "specific_heat",
+        "thermal_conductivity",
+        "youngs_modulus",
+        "shear_modulus",
+        "bulk_modulus",
+        "poissons_ratio",
+        "yield_strength",
+        "ultimate_tensile_strength",
+        "elongation",
+        "thermal_expansion",
+        "creep_rate_steady",
+        "creep_rate_transient",
+        "stress_exponent",
+        "swelling",
+        "void_density",
+        "mean_void_size",
+        "corrosion_rate",
+        "hardness",
+        "irradiation_hardening",
+        "strain_hardening_exponent",
+        "outer_diameter",
+        "inner_diameter",
+        "wall_thickness",
+        "grain_size",
+        "dislocation_density"
+      ]
+    }
+  ],
+  "relation_types": []
+}
