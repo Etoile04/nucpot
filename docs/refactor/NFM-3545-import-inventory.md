@@ -3,7 +3,7 @@
 > **Issue:** NFM-3561 — `[NFM-3545-D1] Inventory every internal import of gap_scan_service`
 > **Parent:** NFM-3545 — `[NFM-2868-P1-3] Delete legacy gap_scan_service.py after parity with gap_scanner.py`
 > **Author:** Lead Engineer (NFM-3561, run `c4d45adc-…`)
-> **Source of truth:** `rg gap_scan_service apps/` (verified 2026-08-24)
+> **Source of truth:** `rg gap_scan_service apps/` (re-verified 2026-08-24 against `main`@`79054022e`; 14 hits, matches §2 enumeration)
 > **Status:** D1 deliverable — handed off to D2 (parity fixture) and D3 (migration)
 
 This document is the machine-checkable inventory required by NFM-3545 D1. It
@@ -79,7 +79,7 @@ helper: gap_scanner.{extract_entity_types, iter_property_names}   (shared ontolo
 ## 2. Import inventory
 
 All Python files referencing `gap_scan_service` (verified via
-`rg -n 'gap_scan_service' apps/` on 2026-08-24 against `main`@`67e20fee1`):
+`rg -n 'gap_scan_service' apps/` on 2026-08-24, re-run after rebasing onto `main`@`79054022e`):
 
 ### 2.1 Production code
 
