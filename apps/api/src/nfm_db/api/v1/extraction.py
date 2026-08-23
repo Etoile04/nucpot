@@ -9,13 +9,14 @@ Trigger and monitor OntoFuel extraction jobs:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -618,6 +619,247 @@ async def get_ingest_job_status(
     raise HTTPException(
         status_code=404,
         detail=f"Extraction job '{job_id}' not found.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/jobs/{job_id}/steps/{step_name}  (NFM-3597 — Sibling C)
+# ---------------------------------------------------------------------------
+# Contract (from NFM-3543 AC):
+#   200 → {job_id, step_name, status, track_id, artifacts,
+#          started_at, finished_at, error}
+#   404 → {"error": "step_not_found", "job_id": ..., "step_name": ...}
+#         (unified shape; avoids existence disclosure)
+#   ETag over (track_id, status, finished_at) — If-None-Match → 304.
+#
+# Distinction from NFM-2883 (``/extraction/jobs/.../steps/...``):
+#   * adds ``artifacts`` (from ``step.metadata_.artifacts``) and ``error``
+#     (from ``step.error_message``);
+#   * renames ``completed_at`` → ``finished_at`` per the CTO contract;
+#   * normalizes status ``completed`` → ``succeeded`` per the spec enum;
+#   * adds ETag/304 revalidation.
+#
+# track_id is read from ``step.track_id`` when the NFM-3595 column lands,
+# falling back to ``job.track_id`` (NFM-2881) so the route is usable
+# before integration.
+# ---------------------------------------------------------------------------
+
+
+# Status normalization: the on-disk enum is
+# ``(pending, running, completed, failed, skipped)`` but the CTO contract
+# exposes the more conventional ``succeeded`` rather than ``completed``.
+_STATUS_NORMALIZE = {"completed": "succeeded"}
+
+
+def _normalize_status(raw: str) -> str:
+    """Map on-disk status to the public contract enum."""
+    return _STATUS_NORMALIZE.get(raw, raw)
+
+
+def _step_track_id(step_row: ExtractionStep, job_row: ExtractionJob) -> str | None:
+    """Return the durable step track_id, preferring the per-step column.
+
+    Falls back to the parent job's track_id (NFM-2881) so the route is
+    useful before NFM-3595's column lands. Returns ``None`` when neither
+    is set.
+    """
+    step_tid = getattr(step_row, "track_id", None)
+    if step_tid is not None:
+        return str(step_tid)
+    job_tid = getattr(job_row, "track_id", None)
+    return str(job_tid) if job_tid is not None else None
+
+
+def _step_artifacts(step_row: ExtractionStep) -> list[dict[str, object]]:
+    """Pull artifacts list from ``step.metadata_["artifacts"]``.
+
+    Returns an empty list when the column is empty or missing the key.
+    Filters out malformed entries so the response shape stays predictable.
+    """
+    raw = getattr(step_row, "metadata_", None) or {}
+    artifacts = raw.get("artifacts") if isinstance(raw, dict) else None
+    if not isinstance(artifacts, list):
+        return []
+    cleaned: list[dict[str, object]] = []
+    for item in artifacts:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cleaned.append(
+                {
+                    "key": str(item.get("key", "")),
+                    "url": str(item.get("url", "")),
+                    "size_bytes": int(item.get("size_bytes", 0)),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    return cleaned
+
+
+def _step_etag(track_id: str | None, status: str, finished_at: datetime | None) -> str:
+    """Compute a stable ETag over (track_id, status, finished_at).
+
+    The hash is deterministic so successive GETs against an unchanged step
+    produce identical validators; any state transition invalidates the
+    cache.
+    """
+    payload = f"{track_id or ''}|{status}|{finished_at.isoformat() if finished_at else ''}"
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f'"{digest}"'
+
+
+def _etag_matches(header_value: str | None, etag: str) -> bool:
+    """RFC 7232 §3.2 weak/strong comparison.
+
+    Both sides are quoted strings of the form ``"abc"`` (strong) or
+    ``W/"abc"`` (weak). We accept either matching the stored ETag because
+    the values we emit are always strong.
+    """
+    if not header_value:
+        return False
+    candidates = {tag.strip() for tag in header_value.split(",")}
+    return etag in candidates or etag.lstrip("W/") in candidates
+
+
+@router.get(
+    "/jobs/{job_id}/steps/{step_name}",
+    summary="查询单个作业步骤详情 (NFM-3597)",
+    description=(
+        "返回指定提取任务中某个步骤的完整状态：状态、track_id、产物、"
+        "时间戳与错误信息。支持 ETag/304 重新校验。\n\n"
+        "Return the full state of a single pipeline step within an "
+        "extraction job: status, track_id, artifacts, timestamps, and "
+        "error message. Supports ETag/304 revalidation."
+    ),
+    responses={
+        200: {
+            "description": "Step state.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "job_id": "00000000-0000-0000-0000-000000000000",
+                        "step_name": "extract",
+                        "status": "succeeded",
+                        "track_id": "00000000-0000-0000-0000-000000000000",
+                        "artifacts": [
+                            {
+                                "key": "chunks.json",
+                                "url": "s3://bucket/chunks.json",
+                                "size_bytes": 12345,
+                            }
+                        ],
+                        "started_at": "2026-08-24T00:00:00+00:00",
+                        "finished_at": "2026-08-24T00:00:05+00:00",
+                        "error": None,
+                    }
+                }
+            },
+        },
+        304: {"description": "Not modified (If-None-Match matched ETag)."},
+        404: {
+            "description": "Step not found (unified shape for unknown "
+            "job_id and unknown step_name).",
+        },
+    },
+)
+async def get_job_step(
+    job_id: UUID,
+    step_name: str,
+    response: Response,
+    if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None,
+    session: AsyncSession = Depends(get_db),
+) -> object:
+    """查询单个作业步骤详情 (NFM-3597 / Sibling C).
+
+    Reads are pure (DB SELECT) so the response is fully cacheable. The
+    ETag folds in ``track_id`` (durable identity for Sibling D rerun),
+    ``status``, and ``finished_at`` so any state transition invalidates
+    the cache while unchanged steps return 304 cheaply.
+    """
+    # Validate step_name against the known set (defense in depth — also
+    # gates the 404 path so unknown step names never reach the DB).
+    if step_name not in EXTRACTION_STEP_TYPES:
+        # 404 envelope is unified: callers cannot distinguish "unknown
+        # job" from "unknown step".
+        return _step_not_found_response(job_id, step_name)
+
+    # Fetch the parent job.
+    job_row = (
+        await session.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_id)
+        )
+    ).scalar_one_or_none()
+
+    if job_row is None:
+        return _step_not_found_response(job_id, step_name)
+
+    # Fetch the specific step.
+    step_row = (
+        await session.execute(
+            select(ExtractionStep).where(
+                ExtractionStep.job_id == job_id,
+                ExtractionStep.step_type == step_name,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if step_row is None:
+        return _step_not_found_response(job_id, step_name)
+
+    track_id = _step_track_id(step_row, job_row)
+    artifacts = _step_artifacts(step_row)
+    finished_at = step_row.completed_at
+    public_status = _normalize_status(step_row.status)
+    etag = _step_etag(track_id, public_status, finished_at)
+
+    # ETag short-circuit: per RFC 7232 §4.1, a 304 must carry the same
+    # validators and an empty body.
+    if _etag_matches(if_none_match, etag):
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": etag},
+        )
+
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return {
+        "job_id": str(job_id),
+        "step_name": step_name,
+        "status": public_status,
+        "track_id": track_id,
+        "artifacts": artifacts,
+        "started_at": (
+            step_row.started_at.isoformat() if step_row.started_at else None
+        ),
+        "finished_at": (
+            finished_at.isoformat() if finished_at else None
+        ),
+        "error": step_row.error_message,
+    }
+
+
+def _step_not_found_response(job_id: UUID, step_name: str) -> Response:
+    """Unified 404 body for unknown job_id or step_name.
+
+    Per the spec AC, both errors return the same shape to avoid leaking
+    job/step existence. We return a ``Response`` directly so we can pin
+    status_code=404 *and* ship the exact body shape the AC requires
+    (``HTTPException`` would force the ``{"detail": ...}`` envelope).
+    """
+    import json as _json
+
+    body = _json.dumps(
+        {
+            "error": "step_not_found",
+            "job_id": str(job_id),
+            "step_name": step_name,
+        }
+    )
+    return Response(
+        content=body,
+        status_code=status.HTTP_404_NOT_FOUND,
+        media_type="application/json",
     )
 
 
