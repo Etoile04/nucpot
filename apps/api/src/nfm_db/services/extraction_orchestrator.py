@@ -98,9 +98,15 @@ class ExtractionOrchestrator:
         self,
         session: AsyncSession,
         job: ExtractionJob,
+        *,
+        track_id: uuid.UUID | None = None,
     ) -> None:
         self._session = session
         self._job = job
+        # NFM-3596 / NFM-3543-B: optional logical track for rerun idempotency.
+        # When None, each step row falls back to the model's
+        # server_default=gen_random_uuid() — see ``models/extraction_step.py``.
+        self._track_id: uuid.UUID | None = track_id
         # Shared context passed between steps (populated by each step).
         self._context: dict[str, Any] = {}
 
@@ -121,7 +127,16 @@ class ExtractionOrchestrator:
         the V2 orchestrator. The per-step contexts already carry
         the right values; this method just promotes them to the ORM
         row before the run-level completion flush.
+
+        NFM-3596 / NFM-3543-B: a caller-supplied ``track_id`` keyword
+        pins every step row written during this run to a single
+        logical track for rerun idempotency. If omitted, each row
+        gets a fresh UUID via the model's ``server_default``.
         """
+        # NFM-3596: capture caller-supplied track_id (if any) before
+        # forwarding the rest of kwargs to step dispatchers.
+        if "track_id" in kwargs:
+            self._track_id = kwargs.pop("track_id")
         self._job.status = "processing"
         self._job.started_at = datetime.now(UTC)
         self._session.add(self._job)
@@ -208,6 +223,11 @@ class ExtractionOrchestrator:
                 step_type=step_type,
                 status="skipped",
                 input_hash=input_hash,
+                # NFM-3596 / NFM-3543-B: forward the orchestrator's
+                # track_id so skipped rows stay attached to the
+                # same logical track as the rest of the run. When
+                # None, the model's server_default supplies a UUID.
+                track_id=self._track_id,
             )
             self._session.add(skipped)
             # Defer the insert flush to the run-level boundary so skipped
@@ -226,6 +246,11 @@ class ExtractionOrchestrator:
             status="running",
             input_hash=input_hash,
             started_at=datetime.now(UTC),
+            # NFM-3596 / NFM-3543-B: forward the orchestrator's
+            # track_id so every step row joins the same logical
+            # track. When None, the model's server_default supplies
+            # a UUID (matching the gen_random_uuid() in the DB).
+            track_id=self._track_id,
         )
         self._session.add(step)
 

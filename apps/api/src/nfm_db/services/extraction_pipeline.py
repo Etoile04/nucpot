@@ -710,6 +710,7 @@ async def trigger_extraction(
     extract_tables: bool = False,
     job_id: str | None = None,
     ontology_version_id: uuid.UUID | None = None,
+    track_id: uuid.UUID | None = None,
 ) -> OrmExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -778,6 +779,11 @@ async def trigger_extraction(
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
+        # NFM-3596 / NFM-3543-B: forward caller-supplied track_id
+        # so all step rows persist with the same logical track.
+        # When None, each row falls back to the model's
+        # server_default=gen_random_uuid().
+        track_id=track_id,
     )
 
 # ---------------------------------------------------------------------------
