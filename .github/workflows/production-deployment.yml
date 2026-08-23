@@ -296,6 +296,19 @@ jobs:
       # never collide on a single exit-code namespace.
       ASSERT_DISTINCT_EXIT: "64"
     steps:
+      - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Direct github.com TLS is intermittently killed by GFW. Probe
+          # until it answers so the checkout's git fetch lands on a live
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
+          for i in 1 2 3 4 5; do
+            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
+            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
+          done
+          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Verify env key sync (NFM-2406)
@@ -312,7 +325,16 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
-            git fetch origin main
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
+            for i in 1 2 3 4 5; do
+              git fetch origin main && break
+              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+            done
             git reset --hard origin/main
 
             echo "===> Checking .env.prod <-> docker/.env.prod key drift..."
@@ -340,6 +362,11 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
             # NFM-848: SSH heredoc opens a fresh shell that does NOT inherit
             # GHA env vars. Docker Desktop rewrites credsStore:"desktop" into
             # NFM-3328: rebuild deploy keychain failure chain. DOCKER_CONFIG
@@ -352,7 +379,11 @@ jobs:
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
-            git fetch origin main
+            for i in 1 2 3 4 5; do
+              git fetch origin main && break
+              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+            done
             git reset --hard origin/main
 
             echo "===> Building candidate image ${CANDIDATE_TAG}..."
@@ -383,6 +414,11 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
             # NFM-848: literal path — this heredoc is UNQUOTED so the local
             # GHA shell expands \$-vars; the runner env has no USER/HOME set,
             # which made the earlier \${USER} form expand to an empty string.
@@ -423,6 +459,19 @@ jobs:
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
+      - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Direct github.com TLS is intermittently killed by GFW. Probe
+          # until it answers so the checkout's git fetch lands on a live
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
+          for i in 1 2 3 4 5; do
+            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
+            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
+          done
+          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Run migration-on-main-assert against candidate image
@@ -465,6 +514,19 @@ jobs:
       HTTPS_PROXY: http://127.0.0.1:7897
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
+      - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Direct github.com TLS is intermittently killed by GFW. Probe
+          # until it answers so the checkout's git fetch lands on a live
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
+          for i in 1 2 3 4 5; do
+            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
+            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
+          done
+          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Run assert.sh unit tests (no Docker required)
@@ -565,6 +627,19 @@ jobs:
       # compose step and the manual rollback recipe both use the same tag.
       PROD_IMAGE_TAG: ${{ github.sha }}
     steps:
+      - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Direct github.com TLS is intermittently killed by GFW. Probe
+          # until it answers so the checkout's git fetch lands on a live
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
+          for i in 1 2 3 4 5; do
+            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
+            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
+          done
+          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Deploy via Docker Compose (loopback SSH)
@@ -579,6 +654,11 @@ jobs:
             set -euo pipefail
             cd ~/Projects/nucpot
             export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            # github.com must go DIRECT: the proxy route for it is dead
+            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
+            # do not inherit job env, so this must be re-exported here.
+            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+            export no_proxy=$NO_PROXY
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
@@ -600,7 +680,11 @@ jobs:
             export PROD_IMAGE_TAG="${{ github.sha }}"
             echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
-            git fetch origin main
+            for i in 1 2 3 4 5; do
+              git fetch origin main && break
+              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+            done
             git reset --hard origin/main
 
             # Build the 3 distinct images (D1, NFM-2148). The api image is
@@ -777,13 +861,19 @@ jobs:
           curl -f https://nucpot.dpdns.org/ | grep -q "NFMD" || exit 1
 
           echo "=== API health endpoint ==="
-          curl -f https://verify.nucpot.dpdns.org/api/v1/health || exit 1
+          # NFM-3317/#934: verify.* was returned to AutoVC (localhost:8002).
+          # The main API is served through the main domain's /api route.
+          curl -f https://nucpot.dpdns.org/api/v1/health || exit 1
 
           echo "=== API /potentials endpoint (key data route) ==="
-          curl -sf https://verify.nucpot.dpdns.org/api/v1/potentials -o /dev/null || exit 1
+          curl -sf https://nucpot.dpdns.org/api/v1/potentials -o /dev/null || exit 1
 
           echo "=== API /reference-values/pending-review endpoint ==="
-          curl -sf https://verify.nucpot.dpdns.org/api/v1/reference-values/pending-review -o /dev/null || exit 1
+          curl -sf https://nucpot.dpdns.org/api/v1/reference-values/pending-review -o /dev/null || exit 1
+
+          echo "=== AutoVC (verify domain) health ==="
+          # AutoVC owns verify.nucpot.dpdns.org; its health path is /api/health
+          curl -sf https://verify.nucpot.dpdns.org/api/health -o /dev/null || exit 1
 
           echo "=== All external smoke tests passed ==="
 
@@ -916,7 +1006,7 @@ jobs:
         env:
           E2E_TARGET: live
           BASE_URL: https://nucpot.dpdns.org
-          API_BASE_URL: https://verify.nucpot.dpdns.org
+          API_BASE_URL: https://nucpot.dpdns.org
           CI: true
 
       - uses: actions/upload-artifact@v7
