@@ -45,7 +45,6 @@ import pytest
 from nfm_db.services import gap_scan_service as legacy_module
 from nfm_db.services import gap_scanner as canonical_module
 
-
 # ---------------------------------------------------------------------------
 # Fixture loading
 # ---------------------------------------------------------------------------
@@ -133,7 +132,7 @@ def _run_parity(fixture: dict[str, Any]) -> list[ParityFailure]:
     #            triple and emit a comparable scalar / iterable).
     try:
         legacy_priority = legacy_module._compute_priority(*triple)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         failures.append(
             ParityFailure(
                 fixture_id=fid,
@@ -151,7 +150,7 @@ def _run_parity(fixture: dict[str, Any]) -> list[ParityFailure]:
     ontology_like = _ontology_like_for_triple(fixture)
     try:
         entity_types = canonical_module.extract_entity_types(ontology_like)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         failures.append(
             ParityFailure(
                 fixture_id=fid,
@@ -169,7 +168,7 @@ def _run_parity(fixture: dict[str, Any]) -> list[ParityFailure]:
             property_names.extend(canonical_module.iter_property_names(
                 et.get("properties"),
             ))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         failures.append(
             ParityFailure(
                 fixture_id=fid,
@@ -205,7 +204,7 @@ def _run_parity(fixture: dict[str, Any]) -> list[ParityFailure]:
         lambda: legacy_module.GapScanService.__init__(
             object.__new__(legacy_module.GapScanService),
             session=object(),
-            target_tuples=[dict(zip(("element_system", "phase", "property_name"), triple))],
+            target_tuples=[dict(zip(("element_system", "phase", "property_name"), triple, strict=True))],
         )
     )
     canonical_emit, canonical_emitted_warning = _capture_warning(

@@ -40,7 +40,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Property sets per element system.  These are intentionally rich — every
 # legacy ``_DEFAULT_TARGET_TUPLES`` property is present in the matching
@@ -119,7 +118,7 @@ def _ontology_for_element(
     """
     props = _PROPERTIES_BY_ELEMENT[element_system]
     if whitespace_property is not None:
-        props = list(props) + [whitespace_property]
+        props = [*list(props), whitespace_property]
 
     if property_format == "str":
         properties: list[Any] = list(props)
