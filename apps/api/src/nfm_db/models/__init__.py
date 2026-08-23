@@ -325,6 +325,7 @@ __all__ = [
     "PropertyType",
     "ReExtractionQueue",
     "RefGapFillStaging",
+    "RerunIdempotencyKey",
     "ResolutionStrategy",
     "ResourceNode",
     "ReviewMixin",
