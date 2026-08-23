@@ -163,13 +163,13 @@ def fixture_text_dir() -> str:
 
 
 __all__ = [
-    "Fixture",
-    "SHORT",
-    "LONG",
-    "MULTI_DOC",
     "ALL_FIXTURES",
-    "SHORT_TEXT",
+    "LONG",
     "LONG_TEXT",
+    "MULTI_DOC",
     "MULTI_DOC_TEXT",
+    "SHORT",
+    "SHORT_TEXT",
+    "Fixture",
     "fixture_text_dir",
 ]

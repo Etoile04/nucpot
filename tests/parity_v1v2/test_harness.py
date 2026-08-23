@@ -18,15 +18,12 @@ logic that the runnable harness depends on.
 
 from __future__ import annotations
 
-from tests.parity_v1v2.fixtures import ALL_FIXTURES, SHORT, LONG, MULTI_DOC
+from tests.parity_v1v2.fixtures import ALL_FIXTURES, LONG, MULTI_DOC, SHORT
 from tests.parity_v1v2.harness import (
-    ALL_CLASSES,
     CLASS_BLOCKING,
     CLASS_COSMETIC,
     CLASS_NON_COSMETIC,
     DBSnapshot,
-    DivergenceRow,
-    ParityReport,
     _equal_classification,
     _ratio_classification,
     build_report,

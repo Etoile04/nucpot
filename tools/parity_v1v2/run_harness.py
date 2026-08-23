@@ -50,6 +50,7 @@ from tests.parity_v1v2.harness import (  # noqa: E402
     build_report,
     render_markdown,
 )
+
 from nfm_db.services.extraction.steps.chunk_builder import (  # noqa: E402
     ChunkBuilder,
 )
@@ -66,7 +67,6 @@ from nfm_db.services.extraction.steps.section_segmenter import (  # noqa: E402
     SectionSegmenter,
 )
 from nfm_db.services.extraction.types import ExtractionChunk  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixture loading
