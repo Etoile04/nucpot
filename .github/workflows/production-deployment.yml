@@ -579,11 +579,21 @@ jobs:
           echo "DOCKER_CONFIG=$DOCKER_CONFIG (credsStore-free)"
           # Skip pull if images already cached locally — avoids any network
           # round-trip; credential helper is already bypassed above.
+          # NFM-2564 follow-up (run 32612021153): pulling through Docker
+          # Desktop's daemon can still hit credsStore:"desktop" → locked
+          # keychain in non-interactive sessions even WITH the clean
+          # DOCKER_CONFIG (daemon-side auth path). The pull here is an
+          # optimization, not a correctness gate — smoke.sh fails loudly on
+          # its own if an image is truly missing. So: advisory only.
+          PULL_FAILED=0
           for img in alpine:3.20 pgvector/pgvector:pg16; do
             if docker image inspect "$img" > /dev/null 2>&1; then
               echo "Image $img already cached, skipping pull"
             else
-              docker pull "$img"
+              if ! docker pull "$img"; then
+                echo "::warning::docker pull $img failed (keychain/daemon auth); smoke.sh will surface a clear error if the image is truly needed"
+                PULL_FAILED=1
+              fi
             fi
           done
           docker image ls alpine:3.20 && docker image ls pgvector/pgvector:pg16
