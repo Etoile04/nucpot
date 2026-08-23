@@ -6,6 +6,8 @@ from collections.abc import AsyncGenerator
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+# NFM-3522: register the after_commit listener at import time.
+import nfm_db.services.lightrag_dispatcher  # noqa: F401
 from nfm_db.config import get_settings
 
 logger = logging.getLogger(__name__)

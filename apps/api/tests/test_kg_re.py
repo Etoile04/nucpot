@@ -706,19 +706,19 @@ def test_all_build_from_extraction_callers_dispatch() -> None:
             called, build_lines = _build_calls_in_function(node)
             if not build_lines:
                 continue
-            if "dispatch_build_result" not in called:
+            if "dispatch_build_result" not in called and "register_pending_lightrag_ingest" not in called:
                 for lineno in build_lines:
                     rel = py_file.relative_to(src_root.parent.parent)
                     offenders.append(
                         f"{rel}:{lineno} in {node.name}() — build_from_extraction "
-                        "without dispatch_build_result()"
+                        "without dispatch_build_result() or register_pending_lightrag_ingest()"
                     )
 
     assert files_scanned > 0, "no source files scanned (path wrong?)"
     assert not offenders, (
         "BuildResult dispatch contract violated. Every GraphBuilder."
         "build_from_extraction() call in apps/api/src must be paired with a "
-        "dispatch_build_result() call in the same function scope. Offenders:\n"
+        "dispatch_build_result() OR register_pending_lightrag_ingest() call in the same function scope. Offenders:\n"
         + "\n".join(offenders)
     )
 
@@ -761,3 +761,227 @@ def test_dispatch_build_result_is_the_only_dispatch_entry_point() -> None:
         "Route every dispatch through kg_re.dispatch_build_result. "
         "Direct callers:\n" + "\n".join(direct_callers)
     )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3522: after_commit listener for LightRAG dispatch (C6.1 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lightrag_dispatch_suppressed_on_commit_failure() -> None:
+    """AC2: A forced commit failure must NOT trigger LightRAG dispatch.
+
+    Registers a pending BuildResult, then forces a commit failure
+    (flush a duplicate PK). The after_commit listener must not fire,
+    so dispatch_build_result is never called.
+    """
+    from unittest.mock import patch
+
+    from sqlalchemy import Column, Integer, String
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.orm import declarative_base
+
+    Base = declarative_base()
+
+    class DummyModel(Base):
+        __tablename__ = "test_dummy_3522"
+        id = Column(Integer, primary_key=True)
+        name = Column(String(50), unique=True)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    # Import the dispatcher module to register the listener.
+    import importlib
+
+    import nfm_db.services.lightrag_dispatcher
+    importlib.reload(nfm_db.services.lightrag_dispatcher)
+
+    async with session_factory() as session:
+        # Seed one row.
+        session.add(DummyModel(id=1, name="unique_name"))
+        await session.commit()
+
+    async with session_factory() as session:
+        # Register pending lightrag ingest BEFORE the commit.
+        from nfm_db.services.kg_re import BuildResult
+        from nfm_db.services.kg_re import KGNode as _KGNode
+        from nfm_db.services.lightrag_dispatcher import register_pending_lightrag_ingest
+
+        node = _KGNode(
+            id=uuid.uuid4(),
+            label="TestNode",
+            node_type="material",
+            properties={},
+            source_id=uuid.uuid4(),
+        )
+        build_result = BuildResult(
+            nodes_created=1,
+            ingest_nodes=(node,),
+        )
+        register_pending_lightrag_ingest(
+            session, build_result,
+            source_id=str(node.source_id),
+            extraction_version="v1",
+        )
+
+        # Flush a duplicate to trigger IntegrityError on commit.
+        session.add(DummyModel(id=2, name="unique_name"))
+        with patch(
+            "nfm_db.services.kg_re.dispatch_build_result"
+        ) as mock_dispatch:
+            with pytest.raises(Exception):
+                await session.commit()
+            # after_commit must NOT have fired.
+            mock_dispatch.assert_not_called()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_lightrag_dispatch_fires_once_on_successful_commit() -> None:
+    """AC3 + AC6: A successful commit must fire dispatch_build_result exactly once
+    with the [lightrag][after_commit] log marker.
+    """
+    from unittest.mock import patch
+
+    from sqlalchemy import Column, Integer, String
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.orm import declarative_base
+
+    Base = declarative_base()
+
+    class DummyModel(Base):
+        __tablename__ = "test_dummy_3522_success"
+        id = Column(Integer, primary_key=True)
+        name = Column(String(50))
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    # Import the dispatcher module to register the listener.
+    import importlib
+
+    import nfm_db.services.lightrag_dispatcher
+    importlib.reload(nfm_db.services.lightrag_dispatcher)
+
+    async with session_factory() as session:
+        from nfm_db.services.kg_re import BuildResult
+        from nfm_db.services.kg_re import KGNode as _KGNode
+        from nfm_db.services.lightrag_dispatcher import register_pending_lightrag_ingest
+
+        node = _KGNode(
+            id=uuid.uuid4(),
+            label="TestNode",
+            node_type="material",
+            properties={},
+            source_id=uuid.uuid4(),
+        )
+        build_result = BuildResult(
+            nodes_created=1,
+            ingest_nodes=(node,),
+        )
+        register_pending_lightrag_ingest(
+            session, build_result,
+            source_id=str(node.source_id),
+            extraction_version="v1",
+        )
+
+        session.add(DummyModel(id=1, name="test"))
+        with patch(
+            "nfm_db.services.kg_re.dispatch_build_result", return_value=1
+        ) as mock_dispatch, patch(
+            "nfm_db.services.lightrag_dispatcher.logger"
+        ) as mock_logger:
+            await session.commit()
+            mock_dispatch.assert_called_once_with(build_result)
+            # AC6: verify log marker
+            log_calls = [str(c) for c in mock_logger.info.call_args_list]
+            assert any(
+                "[lightrag][after_commit]" in c for c in log_calls
+            ), f"Expected [lightrag][after_commit] in log calls, got: {log_calls}"
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_lightrag_dispatch_idempotent_across_commits() -> None:
+    """AC5: Two commits for the same source each fire the listener exactly once.
+
+    The LightRAG sidecar deduplicates by source ID; our dispatcher must
+    fire dispatch_build_result exactly once per successful commit (no
+    double-fire, no skipped-fire).
+    """
+    from unittest.mock import patch
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    import importlib
+
+    import nfm_db.services.lightrag_dispatcher
+    importlib.reload(nfm_db.services.lightrag_dispatcher)
+
+    async with session_factory() as session:
+        from nfm_db.services.kg_re import BuildResult
+        from nfm_db.services.kg_re import KGNode as _KGNode
+        from nfm_db.services.lightrag_dispatcher import register_pending_lightrag_ingest
+
+        # First commit for source_id=S1.
+        node1 = _KGNode(
+            id=uuid.uuid4(),
+            label="Node1",
+            node_type="material",
+            properties={},
+            source_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        )
+        br1 = BuildResult(nodes_created=1, ingest_nodes=(node1,))
+        register_pending_lightrag_ingest(
+            session, br1,
+            source_id="11111111-1111-1111-1111-111111111111",
+            extraction_version="v1",
+        )
+        with patch("nfm_db.services.kg_re.dispatch_build_result") as mock_dispatch:
+            await session.commit()
+            mock_dispatch.assert_called_once_with(br1)
+
+    # Second commit for the SAME source_id — must dispatch again.
+    async with session_factory() as session:
+        node2 = _KGNode(
+            id=uuid.uuid4(),
+            label="Node2",
+            node_type="material",
+            properties={},
+            source_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        )
+        br2 = BuildResult(nodes_created=1, ingest_nodes=(node2,))
+        register_pending_lightrag_ingest(
+            session, br2,
+            source_id="11111111-1111-1111-1111-111111111111",
+            extraction_version="v1",
+        )
+        with patch("nfm_db.services.kg_re.dispatch_build_result") as mock_dispatch:
+            await session.commit()
+            # Each commit fires once. LightRAG sidecar deduplicates by source_id.
+            mock_dispatch.assert_called_once_with(br2)
+
+    await engine.dispose()

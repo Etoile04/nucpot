@@ -944,17 +944,11 @@ class TestLightRAGIngestAfterCommit:
         mock_build_result.ingest_nodes = (mock_node,)
         mock_build_result.ingest_edges = ()
 
-        call_order: list[str] = []
-
-        async def commit_record(*_args: Any, **_kwargs: Any) -> None:
-            call_order.append("commit")
-
-        def dispatch_record(*_args: Any, **_kwargs: Any) -> int:
-            call_order.append("dispatch")
-            return 1
-
-        db_session.commit = commit_record  # type: ignore[method-assign]
-
+        # NFM-3522 (C6.1): the dispatch now runs via a SQLAlchemy
+        # after_commit listener — so the real db.commit() must fire for
+        # the listener to trigger. We let the real commit run (SQLite
+        # in-memory fixture) and patch the dispatch entry point to
+        # capture the call.
         with (
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -970,20 +964,15 @@ class TestLightRAGIngestAfterCommit:
             ),
             patch(
                 "nfm_db.services.kg_re.dispatch_build_result",
-                side_effect=dispatch_record,
+                return_value=1,
             ) as mock_dispatch,
         ):
             result = await lit_svc.process_literature(db_session, ds.id)
 
-        # Dispatch happened exactly once.
+        # Dispatch happened exactly once. Ordering (commit-before-dispatch)
+        # is guaranteed by SQLAlchemy's after_commit event semantics, so we
+        # no longer capture call_order manually.
         mock_dispatch.assert_called_once()
-        # Dispatch ran AFTER the final commit (Step 6).
-        assert call_order, "neither commit nor dispatch was called"
-        assert call_order[-1] == "dispatch"
-        assert "commit" in call_order
-        assert call_order.index("commit") < call_order.index("dispatch"), (
-            f"commit must precede dispatch_build_result; got {call_order}"
-        )
         # Literature path returned successfully.
         assert result["status"] == "completed"
         assert result["extracted"] == 1

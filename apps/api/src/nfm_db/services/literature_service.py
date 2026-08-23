@@ -757,15 +757,24 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         # --- Step 6: completed -----------------------------------------
         ds.parse_status = PARSE_STATUS_COMPLETED
         ds.parse_error = None
-        await db.commit()
 
-        # NFM-2928: dispatch the carried BuildResult to LightRAG AFTER the
-        # commit so we never ship ghost entities on rollback. dispatch_build_result
-        # is the single public entry point for BuildResult consumption.
+        # NFM-3522 (C6.1): register the BuildResult for after-commit
+        # dispatch BEFORE committing. The after_commit listener in
+        # lightrag_dispatcher.py fires dispatch_build_result only on
+        # successful commit — rollback silently drops the payload.
         if build_result is not None:
-            from nfm_db.services.kg_re import dispatch_build_result
+            from nfm_db.services.lightrag_dispatcher import (
+                register_pending_lightrag_ingest,
+            )
 
-            dispatch_build_result(build_result)
+            register_pending_lightrag_ingest(
+                db,
+                build_result,
+                source_id=str(ds.id),
+                extraction_version="v1",
+            )
+
+        await db.commit()
 
         logger.info(
             "process_literature: datasource_id=%s completed",
