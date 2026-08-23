@@ -209,13 +209,15 @@ async def test_derive_populates_record_ref_on_material_individuals(
     assert nodes["mat:UO2"]["record_ref"] == "/materials/UO2?corpus=smirnov2014"
     assert nodes["mat:U"]["record_ref"] == "/materials/U?corpus=smirnov2014"
 
-    # Class nodes carry no single-material record link.
-    for class_node in (
-        "prop:lattice_constant",
-        "method:DFT",
-        f"src:{_CORPUS}",
-    ):
-        assert nodes[class_node]["record_ref"] is None, class_node
+    # Layer A (NFM-3478): prop nodes now carry a property-scoped deep link
+    # (first material's edge), per the Phase 2 extension direction; method/src
+    # class nodes still omit it — no single material record to point at.
+    assert (
+        nodes["prop:lattice_constant"]["record_ref"]
+        == "/materials/UO2?corpus=smirnov2014&property=lattice_constant"
+    )
+    assert nodes["method:DFT"]["record_ref"] is None
+    assert nodes[f"src:{_CORPUS}"]["record_ref"] is None
 
 
 def test_build_record_ref_is_deterministic_relative_and_encoded() -> None:
@@ -281,3 +283,56 @@ async def test_derive_nodes_carry_visual_defaults_nfm3478(db_session: AsyncSessi
         node = nodes[node_id]
         assert node["color"] == color, (node_id, node["color"])
         assert node["size"] == 30.0, (node_id, node["size"])
+
+
+@pytest.mark.asyncio
+async def test_derive_prop_nodes_carry_measurement_detail_nfm3478(
+    db_session: AsyncSession,
+) -> None:
+    """Layer A (NFM-3478): staging values surface in the viewer's node panel.
+
+    The whole point of the ontology viewer: clicking bulk_modulus must show
+    the measured value — 115±5 GPa (DFT, T=0 K) — not a bare name with
+    comment/uri/record_ref all null.
+    """
+    await seed_corpus(
+        db_session,
+        source=_CORPUS,
+        rows=[
+            {
+                "element_system": "U",
+                "property_name": "bulk_modulus",
+                "value": 115.0,
+                "unit": "GPa",
+                "method": "DFT",
+                "source_doi": "10.2172/1335129",
+                "uncertainty": 5.0,
+                "temperature": 0.0,
+            },
+            {
+                "element_system": "UO2",
+                "property_name": "lattice_constant",
+                "value": 5.47,
+                "unit": "angstrom",
+                "method": "DFT",
+            },
+        ],
+    )
+    graph = await derive_ontology_graph(db_session, _CORPUS)
+    nodes = _node_map(graph)
+
+    prop = nodes["prop:bulk_modulus"]
+    assert prop["comment"] == "115 ±5 GPa (DFT, T=0 K) [U]"
+    assert prop["uri"] == "https://doi.org/10.2172/1335129"
+    assert prop["record_ref"] == "/materials/U?corpus=smirnov2014&property=bulk_modulus"
+
+    mat = nodes["mat:U"]
+    assert mat["comment"] == "bulk_modulus = 115 ±5 GPa"
+    assert mat["uri"] == "https://doi.org/10.2172/1335129"
+
+    src = nodes[f"src:{_CORPUS}"]
+    assert src["uri"] == "https://doi.org/10.2172/1335129"
+    assert "2 measurement(s)" in src["comment"]
+
+    # Enrichment only adds optional fields — the NVL contract still holds.
+    assert_nvl_contract(graph.model_dump(by_alias=True), corpus_id=_CORPUS)

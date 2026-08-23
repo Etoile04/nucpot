@@ -21,7 +21,8 @@ async def seed_corpus(
     """Persist staging rows for a corpus (identified by ``source``).
 
     Each row dict accepts: element_system, property_name, value, unit, and
-    optional method/phase. ``source`` is set on every row (= corpus_id).
+    optional method/phase/source_doi/uncertainty/temperature. ``source`` is
+    set on every row (= corpus_id).
     """
     for index, row in enumerate(rows):
         record = RefGapFillStaging(
@@ -32,6 +33,9 @@ async def seed_corpus(
             source=source,
             method=row.get("method"),
             phase=row.get("phase"),
+            source_doi=row.get("source_doi"),
+            uncertainty=row.get("uncertainty"),
+            temperature=row.get("temperature"),
             confidence=Confidence.MEDIUM,
             dedup_hash=(f"{source}:{index}:{row['element_system']}:{row['property_name']}"),
             range_validated=True,
