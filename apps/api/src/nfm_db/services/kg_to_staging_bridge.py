@@ -222,6 +222,12 @@ async def bridge_kg_to_staging(
     existing.clear()
 
     written = 0
+    # NFM-3478 B2'+: alias labels (e.g. 相平衡线斜率 and Clausius-Clapeyron斜率)
+    # canonicalize to the same slug with the same value.  Collapse them into
+    # one staging row per (material, slug, value): first node wins the row,
+    # later aliases merge their conditions (method prefers non-empty, context
+    # parts union).
+    merged_rows: dict[tuple[str, str, float], dict[str, Any]] = {}
     for mat_id, props in mat_props.items():
         mat = by_id[mat_id]
         element_system = _canonical_element_system(mat.label)
@@ -262,32 +268,57 @@ async def bridge_kg_to_staging(
                 else:
                     context_parts.append(f"{key}={val}")
 
-            dedup = compute_dedup_hash(element_system, None, property_name, method, corpus_id)
-            if dedup in existing:
+            dedup_key = (element_system, property_name, value)
+            if dedup_key in merged_rows:
+                row = merged_rows[dedup_key]
+                if row["method"] is None and method:
+                    row["method"] = method
+                if row["temperature"] is None and temperature is not None:
+                    row["temperature"] = temperature
+                for part in context_parts:
+                    if part not in row["context_parts"]:
+                        row["context_parts"].append(part)
                 continue
-            existing.add(dedup)
+            merged_rows[dedup_key] = {
+                "element_system": element_system,
+                "property_name": property_name,
+                "value": value,
+                "unit": unit,
+                "method": method,
+                "uncertainty": unc,
+                "temperature": temperature,
+                "confidence": _confidence_from_kg(prop.confidence),
+                "context_parts": list(context_parts),
+            }
 
-            db.add(
-                RefGapFillStaging(
-                    element_system=element_system,
-                    phase=None,
-                    property_name=property_name,
-                    value=value,
-                    unit=unit,
-                    method=method,
-                    source=corpus_id,
-                    source_doi=source_doi,
-                    uncertainty=unc,
-                    temperature=temperature,
-                    confidence=_confidence_from_kg(prop.confidence),
-                    status=StagingStatus.PENDING,
-                    dedup_hash=dedup,
-                    range_validated=True,
-                    source_file=f"kg:{source_id}",
-                    context="; ".join(context_parts) or None,
-                )
+    for row in merged_rows.values():
+        dedup = compute_dedup_hash(
+            row["element_system"], None, row["property_name"], row["method"], corpus_id
+        )
+        if dedup in existing:
+            continue
+        existing.add(dedup)
+        db.add(
+            RefGapFillStaging(
+                element_system=row["element_system"],
+                phase=None,
+                property_name=row["property_name"],
+                value=row["value"],
+                unit=row["unit"],
+                method=row["method"],
+                source=corpus_id,
+                source_doi=source_doi,
+                uncertainty=row["uncertainty"],
+                temperature=row["temperature"],
+                confidence=row["confidence"],
+                status=StagingStatus.PENDING,
+                dedup_hash=dedup,
+                range_validated=True,
+                source_file=f"kg:{source_id}",
+                context="; ".join(row["context_parts"]) or None,
             )
-            written += 1
+        )
+        written += 1
 
     logger.info(
         "bridge_kg_to_staging: source_id=%s corpus=%s wrote %d staging rows",
