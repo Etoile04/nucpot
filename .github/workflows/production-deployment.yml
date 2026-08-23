@@ -31,16 +31,6 @@ jobs:
     name: YAML Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Install yamllint
@@ -54,16 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Run security scan
@@ -86,16 +66,6 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
@@ -119,16 +89,6 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
@@ -156,16 +116,6 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
@@ -199,16 +149,6 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
@@ -243,16 +183,6 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
@@ -312,16 +242,6 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
@@ -377,10 +297,13 @@ jobs:
       ASSERT_DISTINCT_EXIT: "64"
     steps:
       - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
         run: |
           # Direct github.com TLS is intermittently killed by GFW. Probe
           # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
           for i in 1 2 3 4 5; do
             curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
             echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
@@ -537,10 +460,13 @@ jobs:
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
       - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
         run: |
           # Direct github.com TLS is intermittently killed by GFW. Probe
           # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
           for i in 1 2 3 4 5; do
             curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
             echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
@@ -589,10 +515,13 @@ jobs:
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
       - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
         run: |
           # Direct github.com TLS is intermittently killed by GFW. Probe
           # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
           for i in 1 2 3 4 5; do
             curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
             echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
@@ -699,10 +628,13 @@ jobs:
       PROD_IMAGE_TAG: ${{ github.sha }}
     steps:
       - name: Warm up direct route to github.com (GFW transience)
+        working-directory: ${{ github.workspace }}
         run: |
           # Direct github.com TLS is intermittently killed by GFW. Probe
           # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
+          # route instead of racing a 75s connect timeout. Must run before
+          # checkout with an absolute working-directory (repo dirs don't
+          # exist yet; job defaults point at apps/* subdirs).
           for i in 1 2 3 4 5; do
             curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
             echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
@@ -1047,16 +979,6 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
@@ -1122,16 +1044,6 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
-        run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout.
-          for i in 1 2 3 4 5; do
-            curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
-            echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
-          done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
 
       - name: Compute deploy duration in milliseconds
