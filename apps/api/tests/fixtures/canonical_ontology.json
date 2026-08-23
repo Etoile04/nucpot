@@ -1,0 +1,7 @@
+{
+  "_description": "Canonical ontology 0.2.0+ payload driving extraction prompt property injection (NFM-3582). Populated by NFM-3531-C / integration; until then this fixture MUST keep property_categories[] and entity_types[] structurally present but empty so the coverage gate fails with a clear, machine-readable diff. The pytest gate (apps/api/tests/test_ontology_property_coverage.py) unions property_categories[].standard_properties with entity_types[].required_properties, mirroring apps/api/src/nfm_db/services/extraction_prompt.py:_build_ontology_standard_names_block.",
+  "version": "0.2.0",
+  "property_categories": [],
+  "entity_types": [],
+  "relation_types": []
+}
