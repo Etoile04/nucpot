@@ -1,0 +1,95 @@
+{
+  "_comment": "Canonical ontology fixture for NFM-3535 snapshot-diff harness. Synthetic but representative subset of the production 0.2.0 ontology (apps/api/src/nfm_db/data/material_ontology_enhanced.json) covering all 11 PropertyCategory values so the V2 prompt path can be exercised deterministically. Used by apps/api/tests/extraction/snapshot_diff.py.",
+  "metadata": {
+    "name": "snapshot-diff-test-ontology",
+    "version": "0.2.0-baseline",
+    "schema_version": "0.2.0",
+    "purpose": "Canonical input for V1 vs V2 prompt snapshot diff (NFM-3535)"
+  },
+  "entity_types": [
+    {
+      "name": "UO2",
+      "description": "Stoichiometric uranium dioxide nuclear fuel matrix.",
+      "required_properties": ["密度", "比热容", "热传导率"]
+    },
+    {
+      "name": "Zr-2.5Nb",
+      "description": "Zirconium-2.5% niobium pressure-tube alloy (CANDU).",
+      "required_properties": ["密度", "热膨胀", "腐蚀", "弹塑性模型"]
+    },
+    {
+      "name": "Inconel718",
+      "description": "Ni-based superalloy for high-temperature structural use.",
+      "required_properties": ["密度", "硬化性能", "弹塑性模型"]
+    },
+    {
+      "name": "EUROFER97",
+      "description": "Reduced-activation ferritic-martensitic steel (fusion blanket).",
+      "required_properties": ["密度", "硬化性能", "辐照肿胀", "辐照蠕变"]
+    },
+    {
+      "name": "SiC-SiC",
+      "description": "silicon-carbide fibre-reinforced SiC matrix composite.",
+      "required_properties": ["密度", "热传导率", "热膨胀", "弹塑性模型"]
+    },
+    {
+      "name": "Graphite",
+      "description": "Nuclear-grade graphite moderator.",
+      "required_properties": ["密度", "热传导率", "比热容"]
+    }
+  ],
+  "property_categories": [
+    {
+      "name": "密度",
+      "standard_properties": ["密度", "理论密度", "烧结密度", "TD"]
+    },
+    {
+      "name": "比热容",
+      "standard_properties": ["比热容", "热容", "Cp"]
+    },
+    {
+      "name": "热传导率",
+      "standard_properties": ["热传导率", "热导率", "热扩散率", "κ"]
+    },
+    {
+      "name": "弹塑性模型",
+      "standard_properties": ["屈服强度", "抗拉强度", "杨氏模量", "剪切模量", "泊松比", "硬化指数"]
+    },
+    {
+      "name": "热膨胀",
+      "standard_properties": ["热膨胀系数", "CTE", "线膨胀系数"]
+    },
+    {
+      "name": "辐照蠕变",
+      "standard_properties": ["辐照蠕变速率", "蠕变系数", "蠕变应变"]
+    },
+    {
+      "name": "辐照肿胀",
+      "standard_properties": ["辐照肿胀率", "体积肿胀", "肿胀百分比"]
+    },
+    {
+      "name": "腐蚀",
+      "standard_properties": ["腐蚀速率", "氧化膜厚度", "腐蚀深度", "氧化速率"]
+    },
+    {
+      "name": "硬化性能",
+      "standard_properties": ["硬度", "维氏硬度", "洛氏硬度", "HV", "HRC"]
+    },
+    {
+      "name": "材料规格/组织信息",
+      "standard_properties": ["晶粒尺寸", "织构", "相组成", "位错密度", "沉淀相"]
+    },
+    {
+      "name": "其他性能",
+      "standard_properties": ["电阻率", "热电势", "光学反射率"]
+    }
+  ],
+  "relation_types": [
+    {
+      "name": "hasProperty",
+      "description": "An entity exhibits a measured material property under specified conditions.",
+      "source_types": ["UO2", "Zr-2.5Nb", "Inconel718", "EUROFER97", "SiC-SiC", "Graphite"],
+      "target_types": ["密度", "比热容", "热传导率", "弹塑性模型", "热膨胀", "辐照蠕变", "辐照肿胀", "腐蚀", "硬化性能", "材料规格/组织信息", "其他性能"]
+    }
+  ]
+}

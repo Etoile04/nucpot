@@ -136,6 +136,9 @@ ignore = [
 "tests/test_extraction_pipeline_integration.py" = ["RUF001", "RUF002"]
 "tests/test_extraction_prompt.py" = ["RUF001"]
 "tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
+# NFM-3535: V1 prompt template is a faithful reconstruction of the pre-NFM-3258
+# production prompt; Chinese fullwidth punctuation is intentional content.
+"tests/extraction/v1_prompt_legacy.py" = ["RUF001"]
 "tests/test_phase_rules.py" = ["RUF001", "RUF002"]
 "tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
 # Multiplication sign × is intentional in alloy-population math docs (NFM-1681)
