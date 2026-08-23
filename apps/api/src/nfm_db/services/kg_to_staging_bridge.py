@@ -182,8 +182,9 @@ async def bridge_kg_to_staging(
         if e.relation_type == "hasProperty":
             if src.node_type == "Material" and tgt.node_type == "Property":
                 mat_props.setdefault(src.id, []).append(tgt)
-        elif e.relation_type == "relatedTo":
-            # conditions hang off properties (either direction)
+        elif e.relation_type in ("relatedTo", "hasCondition"):
+            # conditions hang off properties (either direction).  B2' emits
+            # scoped hasCondition edges; legacy graphs only had relatedTo.
             if src.node_type == "Property" and tgt.node_type == "Condition":
                 prop_conditions.setdefault(src.id, []).append(tgt)
             elif src.node_type == "Condition" and tgt.node_type == "Property":

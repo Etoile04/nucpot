@@ -134,10 +134,10 @@ def _stub_nodes_edges():
             source_node_id=mat_u2mo.id, target_node_id=p_bulk.id, relation_type="hasProperty"
         ),
         SimpleNamespace(
-            source_node_id=p_bulk.id, target_node_id=c_temp.id, relation_type="relatedTo"
+            source_node_id=p_bulk.id, target_node_id=c_temp.id, relation_type="hasCondition"
         ),
         SimpleNamespace(
-            source_node_id=p_bulk.id, target_node_id=c_method.id, relation_type="relatedTo"
+            source_node_id=p_bulk.id, target_node_id=c_method.id, relation_type="hasCondition"
         ),
         SimpleNamespace(
             source_node_id=p_slope.id, target_node_id=c_press.id, relation_type="relatedTo"
