@@ -192,7 +192,7 @@ export function BrowseView() {
             浏览势函数
           </Title>
           <Link href="/search" className="text-blue-400 hover:text-blue-300 text-sm">
-            高级检索
+            势函数检索
           </Link>
         </div>
       </Space>
