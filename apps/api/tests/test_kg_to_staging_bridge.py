@@ -148,6 +148,27 @@ def _stub_nodes_edges():
         confidence=0.7,
     )
     nodes = [mat_u, mat_u2mo, p_bulk, p_lat, p_slope, c_temp, c_method, c_press]
+    # Alias-collapse case (NFM-3478 B2'+): Clausius-Clapeyron斜率 is the same
+    # measurement as 相平衡线斜率 (same value 110±10, same unit) — extraction
+    # emits both labels.  The bridge must collapse to one staging row.
+    p_cc = SimpleNamespace(
+        id="p_cc",
+        node_type="Property",
+        label="Clausius-Clapeyron斜率",
+        properties={"unit": "K/GPa", "value": "110±10"},
+        confidence=0.9,
+    )
+    c_cc_method = SimpleNamespace(
+        id="c_cc_method",
+        node_type="Condition",
+        label="simulation_method=ADP MD, Clausius-Clapeyron relation",
+        properties={
+            "condition_key": "simulation_method",
+            "condition_value": "ADP MD, Clausius-Clapeyron relation",
+        },
+        confidence=0.7,
+    )
+    nodes = [*nodes, p_cc, c_cc_method]
     edges = [
         SimpleNamespace(
             source_node_id=mat_u.id, target_node_id=p_bulk.id, relation_type="hasProperty"
@@ -157,6 +178,9 @@ def _stub_nodes_edges():
         ),
         SimpleNamespace(
             source_node_id=mat_u.id, target_node_id=p_slope.id, relation_type="hasProperty"
+        ),
+        SimpleNamespace(
+            source_node_id=mat_u.id, target_node_id=p_cc.id, relation_type="hasProperty"
         ),
         SimpleNamespace(
             source_node_id=mat_u2mo.id, target_node_id=p_bulk.id, relation_type="hasProperty"
@@ -169,6 +193,9 @@ def _stub_nodes_edges():
         ),
         SimpleNamespace(
             source_node_id=p_slope.id, target_node_id=c_press.id, relation_type="relatedTo"
+        ),
+        SimpleNamespace(
+            source_node_id=p_cc.id, target_node_id=c_cc_method.id, relation_type="hasCondition"
         ),
     ]
     return nodes, edges
@@ -221,7 +248,8 @@ async def test_bridge_writes_staging_rows_for_extracted_paper(db_session, monkey
     )
     await db_session.flush()
 
-    # 3 U properties + 1 U₂Mo property (bulk modulus on both materials).
+    # 3 U properties + 1 U₂Mo property (bulk modulus on both materials);
+    # the Clausius-Clapeyron alias collapses into 相平衡线斜率's row.
     assert written == 4
 
     from sqlalchemy import select as _select
@@ -236,6 +264,11 @@ async def test_bridge_writes_staging_rows_for_extracted_paper(db_session, monkey
         .all()
     )
     assert len(rows) == 4
+    slope_rows = [r for r in rows if r.property_name == "phase_boundary_slope"]
+    assert len(slope_rows) == 1, "alias labels must collapse to one row"
+    # alias merged its richer method into the first-seen row
+    assert slope_rows[0].method == "ADP MD, Clausius-Clapeyron relation"
+    assert slope_rows[0].context == "pressure_MPa=4000"
 
     bulk_u = next(r for r in rows if r.property_name == "bulk_modulus" and r.element_system == "U")
     assert bulk_u.value == 97.0
