@@ -196,29 +196,86 @@ _PROPERTY_RULES: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"pre[\s_-]*exponential(?:\s+factor)?", re.I), "pre_exponential_factor", "diffusivity"),
     (re.compile(r"grain\s+size", re.I), "grain_size", "length"),
     (re.compile(r"\bporosity\b", re.I), "porosity", "dimensionless"),
+    # NFM-3517 [NFM-3424-A]: two NEW F8 scorecard property classes \u2014
+    # additive rules appended below; existing patterns above are NOT
+    # modified (per AC-A5 regression guard).
+    #
+    # Maps to kg_nodes.label 'RDF\u5cf0' (radial distribution function peaks)
+    # for the NDE F8 checkpoint #7 (2.28 \u00c5, 2.83 \u00c5).
+    # The regex tolerates up to 60 chars between the RDF indicator and
+    # the word "peak"/"peaks" so it matches natural prose like
+    # "the radial distribution function (RDF) of UO2 shows two
+    # prominent peaks at 2.28 angstrom" \u2014 not just the bare
+    # "RDF peak" / "radial distribution function peak" forms.
+    (
+        re.compile(
+            r"(?:rdf|radial\s+distribution\s+function|g\s*\(\s*r\s*\))"
+            r"(?:[^.]{1,120})"
+            r"\bpeaks?\b"
+            r"|\brdf\s+peak|radial\s+distribution\s+function\s+peak|\bg\(r\)\s+peak",
+            re.I,
+        ),
+        "rdf_peak",
+        "length",
+    ),
+    # Maps to kg_nodes.label '\u952e\u957f' (bond length) for the NDE F8
+    # checkpoint #8 (Cr-O bond length 2.02\u20132.05 \u00c5).
+    (
+        re.compile(
+            r"[A-Za-z]{1,3}[\s\-]*[A-Za-z]{1,3}\s+bond\s+(?:length|distance)"
+            r"|\bbond\s+(?:length|distance)\b",
+            re.I,
+        ),
+        "bond_length",
+        "length",
+    ),
 ]
 
 
-def _match_property(text: str, idx: int) -> tuple[str, str] | None:
+def _match_property(
+    text: str,
+    idx: int,
+    *,
+    unit: str | None = None,
+) -> tuple[str, str] | None:
     """Walk back from idx to find a property name. Returns (name, family).
 
     Search up to 250 chars back so distant headers/captions like
     "Lattice parameter measured using X-ray diffraction ... 5.47 angstrom"
     still match even when the property label sits a sentence or two
     earlier in the paragraph.
+
+    NFM-3517: prefer the CLOSEST (most recent) match in the walk-back
+    window, regardless of rule-list order. Previously the first rule in
+    ``_PROPERTY_RULES`` order that had *any* match in the window won \u2014
+    so ``density`` (early in the list) beat ``activation_energy`` for
+    eV values whenever "density" appeared earlier in the paragraph.
+    The fix is restricted to picking the closest position; the rule
+    list itself is not reordered.
+
+    If ``unit`` is provided, rules whose declared family is compatible
+    with that unit are preferred over closer-but-incompatible rules.
+    E.g. ``1.27e-9 cm2/s`` should pick ``diffusion_coefficient``
+    (diffusivity family) over a closer ``activation_energy`` (energy
+    family) mention. When no compatible rule matches in the window,
+    falls back to the closest rule regardless of family.
     """
     start = max(0, idx - 250)
     section = text[start:idx]
-    # Prefer the LAST (closest) match in the walk-back window.
     best: tuple[str, str] | None = None
+    best_pos = -1
+    best_compat: tuple[str, str] | None = None
+    best_compat_pos = -1
     for pattern, name, family in _PROPERTY_RULES:
-        last = None
         for m in pattern.finditer(section):
-            last = m
-        if last is not None:
-            best = (name, family)
-            break  # first match in _PROPERTY_RULES order wins
-    return best
+            if m.start() > best_pos:
+                best = (name, family)
+                best_pos = m.start()
+            if unit is not None and _units_compatible(unit, family):
+                if m.start() > best_compat_pos:
+                    best_compat = (name, family)
+                    best_compat_pos = m.start()
+    return best_compat if best_compat is not None else best
 
 
 _UNIT_FAMILIES: dict[str, frozenset[str]] = {
@@ -307,7 +364,7 @@ def heuristic_extract(
         if value is None:
             continue
         unit = m.group("unit")
-        prop = _match_property(normalized, m.start())
+        prop = _match_property(normalized, m.start(), unit=unit)
         if prop is None:
             continue
         name, family = prop
