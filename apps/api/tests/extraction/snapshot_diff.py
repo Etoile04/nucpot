@@ -236,12 +236,20 @@ def _unified_diff(left: str, right: str, *, label_left: str, label_right: str) -
 
 
 def _extract_block(prompt: str, header_regex: str) -> str:
-    """Slice a block from a prompt by header regex. Returns the
-    matched block including header and following lines until the next
-    non-bullet, non-blank line.
+    """Slice a block from a prompt by header regex.
 
-    Used to isolate ``## Property Categories`` and
-    ``## Standard Property Names`` blocks for structural diff.
+    Returns the matched header plus every line that belongs to the
+    section: blanks, the prompt's preamble text (e.g. V2's
+    ``优先使用以下标准名称:`` line under ``## Standard Property Names``),
+    and ``- <bullet>`` entries. The block ends at the next ``## ...``
+    section header (start of the next section) or at end-of-input.
+
+    NFM-3535 HIGH-1: the previous heuristic terminated on the first
+    non-bullet, non-blank line, which prematurely cut V2's standard
+    names block to a 37-byte header because V2 emits a ``优先使用以下
+    标准名称:`` preamble before its bullets. The new heuristic terminates
+    only on the next ``## ...`` header so preamble lines and the entire
+    bullet list are preserved.
     """
     pattern = re.compile(header_regex, re.MULTILINE)
     match = pattern.search(prompt)
@@ -251,13 +259,15 @@ def _extract_block(prompt: str, header_regex: str) -> str:
     lines = prompt[start:].splitlines(keepends=True)
     block_lines: list[str] = []
     for idx, line in enumerate(lines):
-        block_lines.append(line)
         if idx == 0:
+            # Header line itself; always include and keep going.
+            block_lines.append(line)
             continue
         stripped = line.strip()
-        if stripped and not stripped.startswith("- "):
-            block_lines.pop()
+        if stripped.startswith("## "):
+            # Start of the next section — stop without including this line.
             break
+        block_lines.append(line)
     return "".join(block_lines).rstrip("\n")
 
 

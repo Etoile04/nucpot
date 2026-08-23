@@ -144,3 +144,57 @@ def test_baseline_report_file_exists_when_committed() -> None:
         "`python apps/api/tests/extraction/run_snapshot_diff.py` "
         "and commit the result."
     )
+
+
+# ---------------------------------------------------------------------------
+# _extract_block regression (NFM-3535 HIGH-1)
+#
+# The original heuristic stopped at the first non-bullet, non-blank line
+# after the section header. V2's `## Standard Property Names (property)`
+# block has a preamble line `优先使用以下标准名称:` after the header but
+# before the bullets, so the heuristic sliced the entire block down to
+# the header line — producing a false baseline of "V2 has 0 standard
+# names; V1 has 74". The regression tests below lock in the fix.
+# ---------------------------------------------------------------------------
+
+
+def test_extract_block_captures_full_v2_standard_names_block(
+    report: SnapshotReport,
+) -> None:
+    """The V2 standard-names block must include ALL `## Standard Property
+    Names (property)` bullets, not just the header.
+
+    Prior to the fix, ``standard_names_section.right_bytes`` was 37 —
+    the size of the header line alone — and the report falsely claimed
+    74 only-in-V1 / 0 only-in-V2. After the fix, the block must contain
+    every `- <name>` bullet the V2 builder emits.
+    """
+    block = report.standard_names_section.right_text
+    assert block.startswith("## Standard Property Names (property)")
+    assert "优先使用以下标准名称:" in block
+    v2_names = report.standard_names_section.list_diff
+    if v2_names is None:
+        pytest.fail("standard_names_section.list_diff must be set")
+    for name in v2_names.right_ordered:
+        assert f"- {name}" in block, (
+            f"V2 standard name `{name}` missing from extracted block; "
+            "_extract_block likely stopped prematurely at the preamble "
+            "line. See NFM-3535 HIGH-1."
+        )
+
+
+def test_v2_standard_names_block_size_matches_v2_emitted_names(
+    report: SnapshotReport,
+) -> None:
+    """Guard against any future heuristic that truncates the V2 block.
+
+    The block size must be large enough to hold every V2 standard name
+    as a separate bullet line. With 49 unique names at ~10 bytes each
+    plus header/preamble/blank lines, the block must be >500 bytes.
+    """
+    assert report.standard_names_section.right_bytes > 500, (
+        f"V2 standard-names block is only "
+        f"{report.standard_names_section.right_bytes} bytes — the "
+        "_extract_block heuristic is likely truncating at a non-bullet "
+        "preamble line. See NFM-3535 HIGH-1."
+    )
