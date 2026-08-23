@@ -1,0 +1,7 @@
+{
+  "_description": "Canonical ontology 0.2.0+ payload driving extraction prompt property injection (NFM-3531-A). Populated by NFM-3531-C — until then this file MUST contain an empty property_categories list so the coverage test fails with a clear diff. The test loader unions property_categories[].standard_properties with entity_types[].required_properties, mirroring apps/api/src/nfm_db/services/extraction_prompt.py:_build_ontology_standard_names_block.",
+  "version": "0.2.0",
+  "property_categories": [],
+  "entity_types": [],
+  "relation_types": []
+}
