@@ -37,6 +37,19 @@ from nfm_db.schemas.ontology import (
 )
 from nfm_db.schemas.viz import Node, NvlResponse, Relationship, VizStatsResponse
 
+# Per-kind visual defaults (NFM-3478): dynamic-corpus nodes previously shipped
+# with color=null/size=null, which NVL renders as invisible zero-size dots
+# (arrows still drawn — the "arrows but no nodes" symptom). Colors align with
+# the vendored viewer's domain legend palette (wP) so both corpus kinds look
+# coherent; size matches the static corpus default (30).
+_KIND_COLORS: dict[str, str] = {
+    "mat": "#FF5722",  # 材料 Material — deep orange (legend: 反应堆/材料)
+    "prop": "#2ECC71",  # 性能 Property — green
+    "method": "#F39C12",  # 方法/测量 — orange (legend: 模型/方法)
+    "src": "#1ABC9C",  # 来源 Source — teal (legend: 辐照/来源)
+}
+_NODE_BASE_SIZE = 30.0
+
 # Canonical provenance label for the ref-gap-fill derived view.
 SOURCE_ONTOLOGY = "nfmd/ref-gap-fill"
 
@@ -412,6 +425,8 @@ async def derive_ontology_graph(
                 name=key,
                 label=key,
                 record_ref=record_ref,
+                color=_KIND_COLORS.get(kind),
+                size=_NODE_BASE_SIZE,
             )
 
     def add_relationship(src: str, rel_type: str, dst: str) -> None:
@@ -437,6 +452,8 @@ async def derive_ontology_graph(
                 name=row.element_system,
                 label=row.element_system,
                 record_ref=build_record_ref(corpus_id, row.element_system),
+                color=_KIND_COLORS["mat"],
+                size=_NODE_BASE_SIZE,
             )
         add_node("prop", row.property_name, node_type="class")
         add_relationship(material_id, "HAS_PROPERTY", property_id)

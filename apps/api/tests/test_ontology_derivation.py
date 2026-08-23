@@ -243,3 +243,41 @@ def test_build_record_ref_is_deterministic_relative_and_encoded() -> None:
 
     # URL-encodes unsafe path/query segments.
     assert build_record_ref("smirnov 2014", "U O2") == ("/materials/U%20O2?corpus=smirnov%202014")
+
+
+@pytest.mark.asyncio
+async def test_derive_nodes_carry_visual_defaults_nfm3478(db_session: AsyncSession) -> None:
+    """NFM-3478 regression: every derived node must ship color+size.
+
+    Dynamic-corpus nodes previously left color/size null; NVL renders null-size
+    nodes as invisible dots (arrows still drawn). Pin the per-kind palette and
+    the base size so the regression cannot silently return.
+    """
+    await seed_corpus(
+        db_session,
+        source=_CORPUS,
+        rows=[
+            {
+                "element_system": "UO2",
+                "property_name": "lattice_constant",
+                "value": 5.47,
+                "unit": "angstrom",
+                "method": "DFT",
+            },
+        ],
+    )
+
+    graph = await derive_ontology_graph(db_session, _CORPUS)
+    nodes = _node_map(graph)
+
+    expected: dict[str, str] = {
+        "mat:UO2": "#FF5722",
+        "prop:lattice_constant": "#2ECC71",
+        "method:DFT": "#F39C12",
+        f"src:{_CORPUS}": "#1ABC9C",
+    }
+    assert set(nodes) == set(expected), nodes.keys()
+    for node_id, color in expected.items():
+        node = nodes[node_id]
+        assert node["color"] == color, (node_id, node["color"])
+        assert node["size"] == 30.0, (node_id, node["size"])
