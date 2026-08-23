@@ -19,6 +19,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -235,7 +236,7 @@ def _doi_to_uri(doi: str) -> str:
 
 def _enrich_nodes(
     nodes: dict[str, OntologyNode],
-    rows: list[RefGapFillStaging],
+    rows: Sequence[RefGapFillStaging],
     corpus_id: str,
 ) -> None:
     """Layer-A enrichment (NFM-3478): propagate measurement detail into nodes.
