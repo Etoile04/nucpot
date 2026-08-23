@@ -55,6 +55,13 @@ class ExtractedEntity:
     properties: dict[str, Any] = field(default_factory=dict)
     source_id: uuid.UUID | None = None
     aliases: list[str] = field(default_factory=list)
+    # NFM-3478 B2': scoping link for Condition entities back to the
+    # Property dict they were extracted from.  Without it the global
+    # pairwise scan either misses Property↔Condition edges entirely
+    # (no rule in _TYPE_PAIR_RULES) or would connect every condition to
+    # every property.  The raw extraction dict is the ground truth for
+    # which property a temperature/method belongs to.
+    parent_property_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +180,37 @@ class RelationExtractor:
             List of inferred relations with confidence scores.
         """
         relations: list[ExtractedRelation] = []
+
+        # NFM-3478 B2': scoped Property→Condition edges first.  The raw
+        # extraction dict is the ground truth for which property a
+        # temperature / method / pressure belongs to; the global pairwise
+        # scan below has no (Property, Condition) rule (by design — a
+        # document-wide rule would connect every condition to every
+        # property).  Each Condition entity carries parent_property_label
+        # from _convert_to_entities; emit one hasCondition edge per
+        # (property, condition) scoped pairing here.
+        prop_labels = {e.label for e in entities if e.entity_type == "Property"}
+        for cond in entities:
+            if cond.entity_type != "Condition" or not cond.parent_property_label:
+                continue
+            parent = cond.parent_property_label
+            if parent not in prop_labels:
+                continue
+            relations.append(
+                ExtractedRelation(
+                    source_label=parent,
+                    source_type="Property",
+                    target_label=cond.label,
+                    target_type="Condition",
+                    relation_type="hasCondition",
+                    confidence=self._compute_relation_confidence(
+                        cond.confidence,
+                        cond.confidence,
+                    ),
+                    properties={"scoped": True},
+                    source_id=cond.source_id,
+                )
+            )
 
         for i, source in enumerate(entities):
             for target in entities[i + 1 :]:
@@ -432,6 +470,15 @@ class GraphBuilder:
         review_count = 0
 
         for entity in entities:
+            # NFM-3478 B2': shadow condition entities (same label, different
+            # scoped parent) must reuse the already-created node instead of
+            # creating a duplicate — one shared node, one edge per property.
+            shadow = node_map.get(entity.label)
+            if shadow is not None:
+                node_map[entity.label] = shadow
+                nodes_matched += 1
+                continue
+
             existing = await self._linker.find_matching_node(
                 self._session,
                 entity,
@@ -577,8 +624,14 @@ class GraphBuilder:
                 )
 
             # Condition entity (from temperature, pressure, etc.)
+            # NFM-3478 B2': keep the scoping link to the property dict this
+            # condition came from, so relation extraction can emit a scoped
+            # hasCondition edge instead of relying on the global pairwise
+            # type scan (which has no Property↔Condition rule and would
+            # wrongly connect every condition to every property).
             conditions = prop.get("conditions")
             if isinstance(conditions, dict):
+                parent_label = str(prop_name) if prop_name else None
                 for cond_key, cond_value in conditions.items():
                     cond_label = f"{cond_key}={cond_value}"
                     if cond_label not in seen_labels:
@@ -593,8 +646,39 @@ class GraphBuilder:
                                     "condition_value": str(cond_value),
                                 },
                                 source_id=source_id,
+                                parent_property_label=parent_label,
                             )
                         )
+                    else:
+                        # Duplicate label (same condition co-mentioned with a
+                        # different property): record the scoped pairing too,
+                        # so each property that shares this condition gets
+                        # its own hasCondition edge to the single node.
+                        already_paired = any(
+                            ent.label == cond_label
+                            and ent.entity_type == "Condition"
+                            and ent.parent_property_label == parent_label
+                            for ent in entities
+                        )
+                        prototype = next(
+                            (
+                                e
+                                for e in entities
+                                if e.label == cond_label and e.entity_type == "Condition"
+                            ),
+                            None,
+                        )
+                        if not already_paired and prototype is not None:
+                            entities.append(
+                                ExtractedEntity(
+                                    label=prototype.label,
+                                    entity_type="Condition",
+                                    confidence=prototype.confidence,
+                                    properties=dict(prototype.properties),
+                                    source_id=source_id,
+                                    parent_property_label=parent_label,
+                                )
+                            )
 
             # Experiment entity (from method)
             method = prop.get("method")

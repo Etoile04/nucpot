@@ -294,6 +294,24 @@ def _enrich_nodes(
         if doi and not node.uri:
             node.uri = _doi_to_uri(doi)
 
+    # Method nodes (NFM-3478): summarize what was measured with this method.
+    # The derivation loop creates method class nodes (DFT, ADP, …) but Layer A
+    # only enriched prop/mat/src, leaving method comments null (user-visible
+    # regression: "DFT 是null"). Aggregate per-method measurements here.
+    method_rows: dict[str, list[RefGapFillStaging]] = defaultdict(list)
+    for row in rows:
+        if row.method:
+            method_rows[row.method].append(row)
+    for method_name, mrows in method_rows.items():
+        node = nodes.get(_node_id("method", method_name))
+        if node is None:
+            continue
+        used_for = ", ".join(sorted({f"{r.property_name} ({r.element_system})" for r in mrows}))
+        node.comment = f"{len(mrows)} measurement(s): {used_for}"
+        doi = next((r.source_doi for r in mrows if r.source_doi), None)
+        if doi and not node.uri:
+            node.uri = _doi_to_uri(doi)
+
     # Source nodes: DOI deep link + provenance summary.
     src_node = nodes.get(_node_id("src", corpus_id))
     if src_node is not None:

@@ -234,7 +234,12 @@ async def test_bridge_writes_staging_rows_for_extracted_paper(db_session, monkey
 
 
 @pytest.mark.asyncio
-async def test_bridge_skips_duplicates_across_runs(db_session, monkeypatch):
+async def test_bridge_regenerates_rows_on_rerun(db_session, monkeypatch):
+    """NFM-3478 B2' contract upgrade: a re-extraction of the same source
+    REGENERATES its corpus rows (delete-then-write), because the new run
+    may fill method/temperature fields the old hash (computed with empty
+    method) would treat as duplicates. Row count stays stable, no
+    cross-source leakage into other corpora."""
     nodes, edges = _stub_nodes_edges()
     execute, real_execute = _dispatch_execute(db_session, nodes, edges)
     monkeypatch.setattr(db_session, "execute", execute)
@@ -256,7 +261,7 @@ async def test_bridge_skips_duplicates_across_runs(db_session, monkeypatch):
     await db_session.flush()
 
     assert first == 4
-    assert second == 0  # dedup: same 5-field key must not duplicate
+    assert second == 4  # regenerate: same corpus rows replaced, not skipped
 
     from sqlalchemy import func
     from sqlalchemy import select as _select
@@ -268,4 +273,4 @@ async def test_bridge_skips_duplicates_across_runs(db_session, monkeypatch):
             .where(RefGapFillStaging.source == "Smirnov2023")
         )
     ).scalar_one()
-    assert count == 4
+    assert count == 4  # exactly one generation of rows, no accumulation

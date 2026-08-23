@@ -199,6 +199,21 @@ async def bridge_kg_to_staging(
         .all()
     )
 
+    # NFM-3478 B2': re-running the bridge for a source regenerates that
+    # source's rows.  compute_dedup_hash includes the method field, so a
+    # rerun that fills in temperature/method (after the scoped hasCondition
+    # edges land) would produce different hashes and duplicate rows under
+    # the old skip-if-hash-exists logic.  Delete this source's rows first
+    # so the corpus stays unique per (element_system, property) measurement.
+    from sqlalchemy import delete as _delete
+
+    await db.execute(_delete(RefGapFillStaging).where(RefGapFillStaging.source == corpus_id))
+
+    # The pre-delete scan fed the old skip-if-exists logic; after the
+    # delete those hashes are gone from the table. Keep only the
+    # within-run guard (same run writing the same 5-field key twice).
+    existing.clear()
+
     written = 0
     for mat_id, props in mat_props.items():
         mat = by_id[mat_id]
