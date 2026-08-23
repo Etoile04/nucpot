@@ -58,11 +58,17 @@ _PROPERTY_SLUGS: dict[str, str] = {
     "晶格参数b": "lattice_constant_b",
     "晶格参数c": "lattice_constant_c",
     "形成能": "formation_energy",
+    "混合焓": "mixing_enthalpy",
+    "相分数": "composition_range",
     "相变温度": "phase_transition_temperature",
-    "相平衡线斜率": "phase_boundary_slope",
     "相变体积变化": "phase_transition_volume_change",
     "相变潜热": "phase_transition_latent_heat",
+    "相变类型": "phase_transition_type",
+    "相平衡线斜率": "phase_boundary_slope",
+    "相稳定温度下限": "phase_stability_lower_temp",
     "熔点": "melting_point",
+    "Clausius-Clapeyron斜率": "phase_boundary_slope",
+    "弹性常数": "elastic_constants",
 }
 
 _UNIT_ALIASES: dict[str, str] = {
@@ -228,6 +234,14 @@ async def bridge_kg_to_staging(
                 str(prop.properties.get("unit", "")), _slugify(str(prop.properties.get("unit", "")))
             )
             property_name = _PROPERTY_SLUGS.get(prop.label, _slugify(prop.label))
+            if not property_name or property_name == "unknown":
+                # Unmapped non-ASCII label with no ASCII fallback: skip
+                # rather than writing a meaningless "unknown" row.
+                logger.warning(
+                    "bridge_kg_to_staging: skipping Property '%s' (no slug mapping)",
+                    prop.label,
+                )
+                continue
 
             temperature: float | None = None
             method: str | None = None

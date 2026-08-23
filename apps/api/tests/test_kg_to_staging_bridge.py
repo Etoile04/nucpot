@@ -20,6 +20,7 @@ import pytest
 
 from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
 from nfm_db.services.kg_to_staging_bridge import (
+    _PROPERTY_SLUGS,
     _canonical_element_system,
     _parse_numeric,
     _slugify,
@@ -40,6 +41,33 @@ from nfm_db.services.kg_to_staging_bridge import (
 )
 def test_canonical_element_system(label, expected):
     assert _canonical_element_system(label) == expected
+
+
+def test_property_slug_map_covers_starikov2023_labels():
+    """NFM-3478 B2'+ mapping table must cover every Property label the
+    Starikov & Smirnova 2023 extraction produced (2026-08-23 rerun), so no
+    row falls to the unknown/empty slug fallback."""
+    labels = [
+        "体积模量",
+        "晶格参数a",
+        "晶格参数b",
+        "晶格参数c",
+        "形成能",
+        "混合焓",
+        "相分数",
+        "相变温度",
+        "相变体积变化",
+        "相变潜热",
+        "相变类型",
+        "相平衡线斜率",
+        "相稳定温度下限",
+        "Clausius-Clapeyron斜率",
+        "弹性常数",
+    ]
+    for label in labels:
+        assert label in _PROPERTY_SLUGS, f"missing slug mapping for {label!r}"
+    # both slope labels canonicalize to the same slug (dedup-safe)
+    assert _PROPERTY_SLUGS["相平衡线斜率"] == _PROPERTY_SLUGS["Clausius-Clapeyron斜率"]
 
 
 @pytest.mark.parametrize(
