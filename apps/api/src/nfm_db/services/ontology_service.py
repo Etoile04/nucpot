@@ -19,6 +19,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -190,6 +191,119 @@ def _node_id(kind: str, key: str) -> str:
 
 def _relationship_id(source: str, rel_type: str, target: str) -> str:
     return f"{source}|{rel_type}|{target}"
+
+
+def _format_measurement(
+    value: float,
+    unit: str,
+    *,
+    uncertainty: float | None,
+    temperature: float | None,
+    method: str | None,
+    element_system: str,
+    phase: str | None,
+) -> str:
+    """One staging row as a compact human-readable measurement string.
+
+    E.g. ``"115 ±5 GPa (DFT, T=0 K) [U, bcc]"`` — the exact fields materials
+    users ask about when clicking a property node.
+    """
+    parts: list[str] = []
+    value_str = f"{value:g}"
+    if uncertainty is not None:
+        value_str += f" ±{uncertainty:g}"
+    parts.append(f"{value_str} {unit}")
+    qualifiers: list[str] = []
+    if method:
+        qualifiers.append(method)
+    if temperature is not None:
+        qualifiers.append(f"T={temperature:g} K")
+    if qualifiers:
+        parts.append(f"({', '.join(qualifiers)})")
+    provenance = element_system
+    if phase:
+        provenance += f", {phase}"
+    parts.append(f"[{provenance}]")
+    return " ".join(parts)
+
+
+def _doi_to_uri(doi: str) -> str:
+    """Normalize a bare DOI into a resolvable https URI."""
+    if doi.startswith(("http://", "https://")):
+        return doi
+    return f"https://doi.org/{doi.lstrip('/')}"
+
+
+def _enrich_nodes(
+    nodes: dict[str, OntologyNode],
+    rows: Sequence[RefGapFillStaging],
+    corpus_id: str,
+) -> None:
+    """Layer-A enrichment (NFM-3478): propagate measurement detail into nodes.
+
+    Mutates the node dicts in place, AFTER the main derivation loop. The loop
+    only carries bare names; the staging rows carry value/unit/uncertainty/
+    temperature/method/DOI. Property nodes aggregate every measurement of that
+    property in this corpus; material nodes summarize their property values;
+    source nodes get the corpus's DOI when any row carries one.
+    """
+    prop_rows: dict[str, list[RefGapFillStaging]] = defaultdict(list)
+    mat_rows: dict[str, list[RefGapFillStaging]] = defaultdict(list)
+    for row in rows:
+        prop_rows[row.property_name].append(row)
+        mat_rows[row.element_system].append(row)
+
+    # Property nodes: one comment line per measurement + DOI + deep link.
+    for prop_name, prows in prop_rows.items():
+        node = nodes.get(_node_id("prop", prop_name))
+        if node is None:
+            continue
+        lines = [
+            _format_measurement(
+                r.value,
+                r.unit,
+                uncertainty=r.uncertainty,
+                temperature=r.temperature,
+                method=r.method,
+                element_system=r.element_system,
+                phase=r.phase,
+            )
+            for r in prows
+        ]
+        node.comment = "\n".join(lines)
+        doi = next((r.source_doi for r in prows if r.source_doi), None)
+        if doi:
+            node.uri = _doi_to_uri(doi)
+        node.record_ref = build_record_ref(
+            corpus_id, prows[0].element_system, property_name=prop_name
+        )
+
+    # Material nodes: summary comment listing each measured property value.
+    for mat_name, mrows in mat_rows.items():
+        node = nodes.get(_node_id("mat", mat_name))
+        if node is None:
+            continue
+        summary_lines = []
+        for r in mrows:
+            value_str = f"{r.value:g} {r.unit}"
+            if r.uncertainty is not None:
+                value_str = f"{r.value:g} ±{r.uncertainty:g} {r.unit}"
+            summary_lines.append(f"{r.property_name} = {value_str}")
+        node.comment = "\n".join(summary_lines)
+        doi = next((r.source_doi for r in mrows if r.source_doi), None)
+        if doi and not node.uri:
+            node.uri = _doi_to_uri(doi)
+
+    # Source nodes: DOI deep link + provenance summary.
+    src_node = nodes.get(_node_id("src", corpus_id))
+    if src_node is not None:
+        doi = next((r.source_doi for r in rows if r.source_doi), None)
+        if doi:
+            src_node.uri = _doi_to_uri(doi)
+        src_node.comment = (
+            f"{len(rows)} measurement(s) from {len(mat_rows)} material(s), "
+            f"{len(prop_rows)} property type(s)"
+        )
 
 
 def build_record_ref(
@@ -471,6 +585,17 @@ async def derive_ontology_graph(
     full_nodes = sorted(nodes.values(), key=lambda n: n.id)
     relationship_list = list(relationships.values())
     total_nodes = len(full_nodes)
+
+    # --- NFM-3478 Layer A: enrich nodes with measured-value detail ----------
+    # The staging rows carry the full measurement record (value/unit/±/T/DOI),
+    # but the loop above only propagates bare names. Aggregate per node kind so
+    # the viewer's property panel shows what materials users actually ask for:
+    #   prop  -> comment: "115 ±5 GPa (DFT, T=0 K) [U]" + uri: DOI + record_ref
+    #   mat   -> comment: property list with values, e.g. "bulk_modulus=115 GPa"
+    #   src   -> uri: first DOI, comment: provenance summary
+    # All fields stay optional in the contract (null when the row lacks data),
+    # so the digest drifts only when the underlying measurements change.
+    _enrich_nodes(nodes, rows, corpus_id)
 
     # Corpus-level digest (NFM-227 semantics): stable across pages so it acts as
     # a corpus identity for provenance/drift, not a per-page value. Computed
