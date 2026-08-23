@@ -22,9 +22,19 @@ Architectural constraint (NFM-3513):
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from nfm_db.services.kg_re import BuildResult
+
+# ``AsyncSession`` is not a subclass of ``Session`` at the type level
+# (they share ``session.info`` and the ``after_commit`` event in the
+# runtime SQLAlchemy model), so accept both for type-checking purposes.
+SessionT = Session | AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +49,8 @@ _PENDING_EXTRACTION_VERSION_KEY = "_pending_lightrag_extraction_version"
 
 
 def register_pending_lightrag_ingest(
-    session: object,
-    build_result: object,
+    session: SessionT,
+    build_result: BuildResult,
     *,
     source_id: str,
     extraction_version: str,
@@ -50,8 +60,13 @@ def register_pending_lightrag_ingest(
     Must be called **before** ``await session.commit()``.  The
     ``after_commit`` listener will pop the payload and dispatch it.
 
+    Works for both sync ``Session`` and ``AsyncSession`` — both expose
+    ``session.info`` and both fire the SQLAlchemy ``after_commit`` event
+    on the ``Session`` class (since ``AsyncSession`` inherits from it).
+
     Args:
-        session: The SQLAlchemy async session that will be committed.
+        session: The SQLAlchemy session that will be committed
+            (sync ``Session`` or ``AsyncSession``).
         build_result: A :class:`~nfm_db.services.kg_re.BuildResult` carrying
             the LightRAG ingest payload.
         source_id: Source identifier for structured logging.
