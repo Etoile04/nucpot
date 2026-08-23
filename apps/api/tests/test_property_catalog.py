@@ -6,11 +6,57 @@ Tests for:
 - UnitNormalizer.normalize() (unit normalization from §7)
 
 TDD: These tests are written FIRST, before any production code.
+
+NFM-3580: STANDARD_PROPERTIES is now a backward-compat shim. The shim
+returns the ontology-derived alias mapping, populated by the ontology
+loader at runtime. Tests that previously asserted the hardcoded JSON
+catalog now register the v4 aliases via set_ontology_aliases() to
+exercise the legacy-assertion contract — this represents the ontology
+loader having populated the shim with the v4-derived mapping.
 """
 
 from __future__ import annotations
 
-from nfm_db.core.property_catalog import STANDARD_PROPERTIES, PropertyCategory, UnitNormalizer
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from nfm_db.core.property_catalog import (
+    STANDARD_PROPERTIES,
+    PropertyCategory,
+    UnitNormalizer,
+    reset_ontology_state,
+    set_ontology_aliases,
+)
+
+
+@pytest.fixture
+def v4_aliases_loaded() -> Iterator[None]:
+    """Register the v4 property_mapping.json aliases into the shim.
+
+    Represents the production ontology loader having populated the shim
+    with the v4-derived alias mapping. Restores the empty shim after
+    the test so other tests are not affected.
+    """
+    config_path = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "nfm_db"
+        / "config"
+        / "property_mapping.json"
+    )
+    import json
+
+    with open(config_path) as f:
+        data = json.load(f)
+    aliases = data["property_aliases"]
+
+    set_ontology_aliases(aliases)
+    try:
+        yield
+    finally:
+        reset_ontology_state()
 
 # ---------------------------------------------------------------------------
 # PropertyCategory Enum
@@ -71,28 +117,37 @@ class TestPropertyCategory:
 
 
 class TestStandardProperties:
-    """Tests for STANDARD_PROPERTIES alias→standard name mapping (v4 §4)."""
+    """Tests for STANDARD_PROPERTIES alias→standard name mapping (v4 §4).
+
+    NFM-3580: these tests now require the ontology loader to have
+    populated the shim with the v4 aliases via set_ontology_aliases().
+    The ``v4_aliases_loaded`` fixture handles that registration.
+    """
 
     def test_is_dict(self):
-        """STANDARD_PROPERTIES must be a dict."""
+        """STANDARD_PROPERTIES must be a dict (backward-compat)."""
         assert isinstance(STANDARD_PROPERTIES, dict)
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_has_sixty_plus_entries(self):
         """Must contain at least 60 standard property entries."""
         assert len(STANDARD_PROPERTIES) >= 60
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_aliases_are_strings(self):
         """All alias keys must be non-empty strings."""
         for alias in STANDARD_PROPERTIES:
             assert isinstance(alias, str)
             assert len(alias) > 0
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_standard_names_are_strings(self):
         """All standard name values must be non-empty strings."""
         for name in STANDARD_PROPERTIES.values():
             assert isinstance(name, str)
             assert len(name) > 0
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_density_aliases_present(self):
         """Density category aliases from v4 §4.1."""
         mapping = STANDARD_PROPERTIES
@@ -100,6 +155,7 @@ class TestStandardProperties:
         assert mapping.get("theoretical density") == "理论密度"
         assert mapping.get("relative density") == "相对密度"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_specific_heat_aliases_present(self):
         """Specific heat aliases from v4 §4.2."""
         mapping = STANDARD_PROPERTIES
@@ -107,6 +163,7 @@ class TestStandardProperties:
         assert mapping.get("heat capacity") == "比热容"
         assert mapping.get("cp") == "定压比热容"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_thermal_conductivity_aliases_present(self):
         """Thermal conductivity aliases from v4 §4.3."""
         mapping = STANDARD_PROPERTIES
@@ -114,6 +171,7 @@ class TestStandardProperties:
         assert mapping.get("thermal diffusivity") == "热扩散率"
         assert mapping.get("thermal resistance") == "热阻"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_elastoplastic_aliases_present(self):
         """Elastoplastic model aliases from v4 §4.4."""
         mapping = STANDARD_PROPERTIES
@@ -124,6 +182,7 @@ class TestStandardProperties:
         assert mapping.get("tensile strength") == "抗拉强度"
         assert mapping.get("flow stress") == "流动应力"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_corrosion_aliases_present(self):
         """Corrosion aliases from v4 §4.8."""
         mapping = STANDARD_PROPERTIES
@@ -133,6 +192,7 @@ class TestStandardProperties:
         assert mapping.get("crack growth rate") == "裂纹扩展速率"
         assert mapping.get("scc threshold") == "应力腐蚀阈值"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_hardening_aliases_present(self):
         """Hardening aliases from v4 §4.9."""
         mapping = STANDARD_PROPERTIES
@@ -140,6 +200,7 @@ class TestStandardProperties:
         assert mapping.get("vickers hardness") == "硬度"
         assert mapping.get("irradiation hardening") == "辐照硬化量"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_case_insensitive_lookup(self):
         """Alias lookup is case-insensitive via lowered keys."""
         mapping = STANDARD_PROPERTIES
@@ -149,6 +210,7 @@ class TestStandardProperties:
         assert mapping.get("Density".lower()) == "密度"
         assert mapping.get("DENSITY".lower()) == "密度"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_irradiation_creeep_aliases_present(self):
         """Irradiation creep aliases from v4 §4.6."""
         mapping = STANDARD_PROPERTIES
@@ -156,6 +218,7 @@ class TestStandardProperties:
         assert mapping.get("steady-state creep rate") == "稳态蠕变速率"
         assert mapping.get("stress exponent") == "应力指数"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_irradiation_swelling_aliases_present(self):
         """Irradiation swelling aliases from v4 §4.7."""
         mapping = STANDARD_PROPERTIES
@@ -163,6 +226,7 @@ class TestStandardProperties:
         assert mapping.get("void swelling") == "空洞肿胀率"
         assert mapping.get("void density") == "空洞密度"
 
+    @pytest.mark.usefixtures("v4_aliases_loaded")
     def test_thermal_expansion_aliases_present(self):
         """Thermal expansion aliases from v4 §4.5."""
         mapping = STANDARD_PROPERTIES
@@ -283,3 +347,95 @@ class TestUnitNormalizer:
         assert "unit_normalization" in data, (
             "property_mapping.json must contain 'unit_normalization' key"
         )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3580: Backward-compat shim with DeprecationWarning
+# ---------------------------------------------------------------------------
+
+
+class TestStandardPropertiesShim:
+    """NFM-3580 AC: STANDARD_PROPERTIES is a thin shim returning the
+    ontology-derived list and issues DeprecationWarning on import/access.
+
+    The hardcoded JSON-config-driven mapping is deprecated; the ontology
+    is now the single source of truth for property keys. The shim remains
+    importable so legacy callers (v4_mapper) continue to function until
+    they migrate to the ontology loader path.
+    """
+
+    def test_standard_properties_import_emits_deprecation_warning(self) -> None:
+        """Importing STANDARD_PROPERTIES must emit DeprecationWarning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            # Re-import to trigger the module-level warning
+            import importlib
+
+            from nfm_db.core import property_catalog
+
+            importlib.reload(property_catalog)
+            _ = property_catalog.STANDARD_PROPERTIES
+
+        deprecation_warnings = [
+            w for w in caught if issubclass(w.category, DeprecationWarning)
+        ]
+        assert deprecation_warnings, (
+            "STANDARD_PROPERTIES must emit DeprecationWarning; "
+            f"got {[str(w.message) for w in caught]}"
+        )
+
+    def test_standard_properties_is_dict(self) -> None:
+        """Shim exposes STANDARD_PROPERTIES as a dict (backward-compat)."""
+        assert isinstance(STANDARD_PROPERTIES, dict)
+
+    def test_shim_returns_empty_when_no_ontology_loaded(self) -> None:
+        """Without an ontology loaded, shim returns an empty mapping.
+
+        The ontology is the single source of truth. Until an ontology is
+        registered, the shim returns {} so legacy callers get a no-op
+        rather than the stale hardcoded list.
+        """
+        # Reset to "no ontology loaded" state
+        from nfm_db.core.property_catalog import reset_ontology_state
+
+        reset_ontology_state()
+        assert STANDARD_PROPERTIES == {}
+
+    def test_shim_reflects_registered_ontology_aliases(self) -> None:
+        """When an ontology registers aliases via set_ontology_aliases(),
+        the shim reflects them.
+        """
+        from nfm_db.core.property_catalog import (
+            reset_ontology_state,
+            set_ontology_aliases,
+        )
+
+        reset_ontology_state()
+        # Ontology-derived: alias → standard_name (case-insensitive keys)
+        aliases = {"density": "密度", "young's modulus": "杨氏模量"}
+        set_ontology_aliases(aliases)
+        try:
+            assert STANDARD_PROPERTIES.get("density") == "密度"
+            assert STANDARD_PROPERTIES.get("young's modulus") == "杨氏模量"
+            # Case-insensitive: keys are lowered at registration time
+            assert STANDARD_PROPERTIES.get("DENSITY") == "密度"
+        finally:
+            reset_ontology_state()
+
+    def test_shim_set_ontology_aliases_lowers_keys(self) -> None:
+        """set_ontology_aliases() lowercases keys to match the original
+        case-insensitive contract.
+        """
+        from nfm_db.core.property_catalog import (
+            reset_ontology_state,
+            set_ontology_aliases,
+        )
+
+        reset_ontology_state()
+        try:
+            set_ontology_aliases({"Density": "密度", "DENSITY": "密度"})
+            assert STANDARD_PROPERTIES.get("density") == "密度"
+        finally:
+            reset_ontology_state()
