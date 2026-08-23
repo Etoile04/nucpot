@@ -1,0 +1,724 @@
+{
+  "candidates": [
+    {
+      "candidate_id": "cand-000",
+      "score_old": 0.8979,
+      "signals": {
+        "ontology": 0.5,
+        "atf": 1.0,
+        "citation": 0.7397
+      }
+    },
+    {
+      "candidate_id": "cand-001",
+      "score_old": 0.8674,
+      "signals": {
+        "ontology": 0.9818,
+        "atf": 0.8824,
+        "citation": 0.7578
+      }
+    },
+    {
+      "candidate_id": "cand-002",
+      "score_old": 0.4853,
+      "signals": {
+        "ontology": 0.7578,
+        "atf": 0.585,
+        "citation": 0.0
+      }
+    },
+    {
+      "candidate_id": "cand-003",
+      "score_old": 0.3383,
+      "signals": {
+        "ontology": 0.1561,
+        "atf": 0.2476,
+        "citation": 0.7471
+      }
+    },
+    {
+      "candidate_id": "cand-004",
+      "score_old": 0.1762,
+      "signals": {
+        "ontology": 0.0583,
+        "atf": 0.0289,
+        "citation": 0.7505
+      }
+    },
+    {
+      "candidate_id": "cand-005",
+      "score_old": 0.083,
+      "signals": {
+        "ontology": 0.6076,
+        "atf": 0.0318,
+        "citation": 0.0
+      }
+    },
+    {
+      "candidate_id": "cand-006",
+      "score_old": 0.4292,
+      "signals": {
+        "ontology": 0.9993,
+        "atf": 0.2549,
+        "citation": 0.7543
+      }
+    },
+    {
+      "candidate_id": "cand-007",
+      "score_old": 0.6299,
+      "signals": {
+        "ontology": 0.6595,
+        "atf": 0.5933,
+        "citation": 0.7432
+      }
+    },
+    {
+      "candidate_id": "cand-008",
+      "score_old": 0.6301,
+      "signals": {
+        "ontology": 0.0861,
+        "atf": 0.8878,
+        "citation": 0.0001
+      }
+    },
+    {
+      "candidate_id": "cand-009",
+      "score_old": 0.8642,
+      "signals": {
+        "ontology": 0.119,
+        "atf": 0.9999,
+        "citation": 0.7615
+      }
+    },
+    {
+      "candidate_id": "cand-010",
+      "score_old": 0.832,
+      "signals": {
+        "ontology": 0.7101,
+        "atf": 0.877,
+        "citation": 0.7358
+      }
+    },
+    {
+      "candidate_id": "cand-011",
+      "score_old": 0.5031,
+      "signals": {
+        "ontology": 0.9934,
+        "atf": 0.5767,
+        "citation": 0.0004
+      }
+    },
+    {
+      "candidate_id": "cand-012",
+      "score_old": 0.3774,
+      "signals": {
+        "ontology": 0.5539,
+        "atf": 0.2404,
+        "citation": 0.7687
+      }
+    },
+    {
+      "candidate_id": "cand-013",
+      "score_old": 0.1675,
+      "signals": {
+        "ontology": 0.0354,
+        "atf": 0.0261,
+        "citation": 0.7284
+      }
+    },
+    {
+      "candidate_id": "cand-014",
+      "score_old": 0.0443,
+      "signals": {
+        "ontology": 0.1976,
+        "atf": 0.0348,
+        "citation": 0.0008
+      }
+    },
+    {
+      "candidate_id": "cand-015",
+      "score_old": 0.419,
+      "signals": {
+        "ontology": 0.8028,
+        "atf": 0.2622,
+        "citation": 0.7757
+      }
+    },
+    {
+      "candidate_id": "cand-016",
+      "score_old": 0.6617,
+      "signals": {
+        "ontology": 0.9644,
+        "atf": 0.6015,
+        "citation": 0.7209
+      }
+    },
+    {
+      "candidate_id": "cand-017",
+      "score_old": 0.6699,
+      "signals": {
+        "ontology": 0.4457,
+        "atf": 0.893,
+        "citation": 0.0013
+      }
+    },
+    {
+      "candidate_id": "cand-018",
+      "score_old": 0.857,
+      "signals": {
+        "ontology": 0.0065,
+        "atf": 0.9997,
+        "citation": 0.7827
+      }
+    },
+    {
+      "candidate_id": "cand-019",
+      "score_old": 0.7817,
+      "signals": {
+        "ontology": 0.2903,
+        "atf": 0.8714,
+        "citation": 0.7133
+      }
+    },
+    {
+      "candidate_id": "cand-020",
+      "score_old": 0.4864,
+      "signals": {
+        "ontology": 0.8813,
+        "atf": 0.5684,
+        "citation": 0.002
+      }
+    },
+    {
+      "candidate_id": "cand-021",
+      "score_old": 0.4125,
+      "signals": {
+        "ontology": 0.9137,
+        "atf": 0.2332,
+        "citation": 0.7896
+      }
+    },
+    {
+      "candidate_id": "cand-022",
+      "score_old": 0.1916,
+      "signals": {
+        "ontology": 0.34,
+        "atf": 0.0235,
+        "citation": 0.7057
+      }
+    },
+    {
+      "candidate_id": "cand-023",
+      "score_old": 0.0272,
+      "signals": {
+        "ontology": 0.0008,
+        "atf": 0.0379,
+        "citation": 0.0028
+      }
+    },
+    {
+      "candidate_id": "cand-024",
+      "score_old": 0.3873,
+      "signals": {
+        "ontology": 0.3929,
+        "atf": 0.2697,
+        "citation": 0.7964
+      }
+    },
+    {
+      "candidate_id": "cand-025",
+      "score_old": 0.6606,
+      "signals": {
+        "ontology": 0.9419,
+        "atf": 0.6097,
+        "citation": 0.698
+      }
+    },
+    {
+      "candidate_id": "cand-026",
+      "score_old": 0.7138,
+      "signals": {
+        "ontology": 0.8436,
+        "atf": 0.8982,
+        "citation": 0.0037
+      }
+    },
+    {
+      "candidate_id": "cand-027",
+      "score_old": 0.8844,
+      "signals": {
+        "ontology": 0.2419,
+        "atf": 0.9994,
+        "citation": 0.8031
+      }
+    },
+    {
+      "candidate_id": "cand-028",
+      "score_old": 0.7459,
+      "signals": {
+        "ontology": 0.0183,
+        "atf": 0.8657,
+        "citation": 0.6902
+      }
+    },
+    {
+      "candidate_id": "cand-029",
+      "score_old": 0.443,
+      "signals": {
+        "ontology": 0.5004,
+        "atf": 0.56,
+        "citation": 0.0048
+      }
+    },
+    {
+      "candidate_id": "cand-030",
+      "score_old": 0.4184,
+      "signals": {
+        "ontology": 0.9819,
+        "atf": 0.2261,
+        "citation": 0.8098
+      }
+    },
+    {
+      "candidate_id": "cand-031",
+      "score_old": 0.2269,
+      "signals": {
+        "ontology": 0.7574,
+        "atf": 0.021,
+        "citation": 0.6824
+      }
+    },
+    {
+      "candidate_id": "cand-032",
+      "score_old": 0.0456,
+      "signals": {
+        "ontology": 0.1558,
+        "atf": 0.0412,
+        "citation": 0.0061
+      }
+    },
+    {
+      "candidate_id": "cand-033",
+      "score_old": 0.3631,
+      "signals": {
+        "ontology": 0.0585,
+        "atf": 0.2772,
+        "citation": 0.8163
+      }
+    },
+    {
+      "candidate_id": "cand-034",
+      "score_old": 0.6282,
+      "signals": {
+        "ontology": 0.608,
+        "atf": 0.6179,
+        "citation": 0.6746
+      }
+    },
+    {
+      "candidate_id": "cand-035",
+      "score_old": 0.7337,
+      "signals": {
+        "ontology": 0.9993,
+        "atf": 0.9032,
+        "citation": 0.0074
+      }
+    },
+    {
+      "candidate_id": "cand-036",
+      "score_old": 0.9297,
+      "signals": {
+        "ontology": 0.6591,
+        "atf": 0.9989,
+        "citation": 0.8228
+      }
+    },
+    {
+      "candidate_id": "cand-037",
+      "score_old": 0.7439,
+      "signals": {
+        "ontology": 0.0858,
+        "atf": 0.8599,
+        "citation": 0.6667
+      }
+    },
+    {
+      "candidate_id": "cand-038",
+      "score_old": 0.3999,
+      "signals": {
+        "ontology": 0.1193,
+        "atf": 0.5517,
+        "citation": 0.0089
+      }
+    },
+    {
+      "candidate_id": "cand-039",
+      "score_old": 0.3903,
+      "signals": {
+        "ontology": 0.7105,
+        "atf": 0.2191,
+        "citation": 0.8292
+      }
+    },
+    {
+      "candidate_id": "cand-040",
+      "score_old": 0.2442,
+      "signals": {
+        "ontology": 0.9933,
+        "atf": 0.0187,
+        "citation": 0.6587
+      }
+    },
+    {
+      "candidate_id": "cand-041",
+      "score_old": 0.0887,
+      "signals": {
+        "ontology": 0.5534,
+        "atf": 0.0446,
+        "citation": 0.0106
+      }
+    },
+    {
+      "candidate_id": "cand-042",
+      "score_old": 0.3699,
+      "signals": {
+        "ontology": 0.0353,
+        "atf": 0.2847,
+        "citation": 0.8354
+      }
+    },
+    {
+      "candidate_id": "cand-043",
+      "score_old": 0.5882,
+      "signals": {
+        "ontology": 0.1979,
+        "atf": 0.6261,
+        "citation": 0.6507
+      }
+    },
+    {
+      "candidate_id": "cand-044",
+      "score_old": 0.7185,
+      "signals": {
+        "ontology": 0.8031,
+        "atf": 0.9081,
+        "citation": 0.0124
+      }
+    },
+    {
+      "candidate_id": "cand-045",
+      "score_old": 0.9635,
+      "signals": {
+        "ontology": 0.9642,
+        "atf": 0.9982,
+        "citation": 0.8416
+      }
+    },
+    {
+      "candidate_id": "cand-046",
+      "score_old": 0.7709,
+      "signals": {
+        "ontology": 0.4452,
+        "atf": 0.854,
+        "citation": 0.6427
+      }
+    },
+    {
+      "candidate_id": "cand-047",
+      "score_old": 0.3838,
+      "signals": {
+        "ontology": 0.0065,
+        "atf": 0.5433,
+        "citation": 0.0143
+      }
+    },
+    {
+      "candidate_id": "cand-048",
+      "score_old": 0.3472,
+      "signals": {
+        "ontology": 0.2907,
+        "atf": 0.2122,
+        "citation": 0.8477
+      }
+    },
+    {
+      "candidate_id": "cand-049",
+      "score_old": 0.2266,
+      "signals": {
+        "ontology": 0.8816,
+        "atf": 0.0165,
+        "citation": 0.6346
+      }
+    },
+    {
+      "candidate_id": "cand-050",
+      "score_old": 0.1283,
+      "signals": {
+        "ontology": 0.9134,
+        "atf": 0.0482,
+        "citation": 0.0164
+      }
+    },
+    {
+      "candidate_id": "cand-051",
+      "score_old": 0.4093,
+      "signals": {
+        "ontology": 0.3396,
+        "atf": 0.2923,
+        "citation": 0.8537
+      }
+    },
+    {
+      "candidate_id": "cand-052",
+      "score_old": 0.5693,
+      "signals": {
+        "ontology": 0.0008,
+        "atf": 0.6342,
+        "citation": 0.6265
+      }
+    },
+    {
+      "candidate_id": "cand-053",
+      "score_old": 0.6821,
+      "signals": {
+        "ontology": 0.3933,
+        "atf": 0.9129,
+        "citation": 0.0186
+      }
+    },
+    {
+      "candidate_id": "cand-054",
+      "score_old": 0.9644,
+      "signals": {
+        "ontology": 0.9421,
+        "atf": 0.9975,
+        "citation": 0.8596
+      }
+    },
+    {
+      "candidate_id": "cand-055",
+      "score_old": 0.8016,
+      "signals": {
+        "ontology": 0.8432,
+        "atf": 0.848,
+        "citation": 0.6183
+      }
+    },
+    {
+      "candidate_id": "cand-056",
+      "score_old": 0.4028,
+      "signals": {
+        "ontology": 0.2415,
+        "atf": 0.5349,
+        "citation": 0.0209
+      }
+    },
+    {
+      "candidate_id": "cand-057",
+      "score_old": 0.3187,
+      "signals": {
+        "ontology": 0.0185,
+        "atf": 0.2054,
+        "citation": 0.8654
+      }
+    },
+    {
+      "candidate_id": "cand-058",
+      "score_old": 0.1822,
+      "signals": {
+        "ontology": 0.5009,
+        "atf": 0.0144,
+        "citation": 0.6101
+      }
+    },
+    {
+      "candidate_id": "cand-059",
+      "score_old": 0.1392,
+      "signals": {
+        "ontology": 0.982,
+        "atf": 0.0518,
+        "citation": 0.0234
+      }
+    },
+    {
+      "candidate_id": "cand-060",
+      "score_old": 0.4599,
+      "signals": {
+        "ontology": 0.757,
+        "atf": 0.3,
+        "citation": 0.8711
+      }
+    },
+    {
+      "candidate_id": "cand-061",
+      "score_old": 0.5855,
+      "signals": {
+        "ontology": 0.1555,
+        "atf": 0.6423,
+        "citation": 0.6019
+      }
+    },
+    {
+      "candidate_id": "cand-062",
+      "score_old": 0.6534,
+      "signals": {
+        "ontology": 0.0587,
+        "atf": 0.9176,
+        "citation": 0.026
+      }
+    },
+    {
+      "candidate_id": "cand-063",
+      "score_old": 0.9338,
+      "signals": {
+        "ontology": 0.6084,
+        "atf": 0.9965,
+        "citation": 0.8767
+      }
+    },
+    {
+      "candidate_id": "cand-064",
+      "score_old": 0.808,
+      "signals": {
+        "ontology": 0.9993,
+        "atf": 0.8419,
+        "citation": 0.5937
+      }
+    },
+    {
+      "candidate_id": "cand-065",
+      "score_old": 0.4402,
+      "signals": {
+        "ontology": 0.6587,
+        "atf": 0.5265,
+        "citation": 0.0287
+      }
+    },
+    {
+      "candidate_id": "cand-066",
+      "score_old": 0.324,
+      "signals": {
+        "ontology": 0.0856,
+        "atf": 0.1986,
+        "citation": 0.8821
+      }
+    },
+    {
+      "candidate_id": "cand-067",
+      "score_old": 0.1378,
+      "signals": {
+        "ontology": 0.1196,
+        "atf": 0.0125,
+        "citation": 0.5854
+      }
+    },
+    {
+      "candidate_id": "cand-068",
+      "score_old": 0.1163,
+      "signals": {
+        "ontology": 0.7109,
+        "atf": 0.0556,
+        "citation": 0.0316
+      }
+    },
+    {
+      "candidate_id": "cand-069",
+      "score_old": 0.4922,
+      "signals": {
+        "ontology": 0.9932,
+        "atf": 0.3077,
+        "citation": 0.8875
+      }
+    },
+    {
+      "candidate_id": "cand-070",
+      "score_old": 0.6259,
+      "signals": {
+        "ontology": 0.553,
+        "atf": 0.6503,
+        "citation": 0.5771
+      }
+    },
+    {
+      "candidate_id": "cand-071",
+      "score_old": 0.656,
+      "signals": {
+        "ontology": 0.0351,
+        "atf": 0.9222,
+        "citation": 0.0346
+      }
+    },
+    {
+      "candidate_id": "cand-072",
+      "score_old": 0.8952,
+      "signals": {
+        "ontology": 0.1983,
+        "atf": 0.9955,
+        "citation": 0.8928
+      }
+    },
+    {
+      "candidate_id": "cand-073",
+      "score_old": 0.7791,
+      "signals": {
+        "ontology": 0.8035,
+        "atf": 0.8358,
+        "citation": 0.5688
+      }
+    },
+    {
+      "candidate_id": "cand-074",
+      "score_old": 0.4667,
+      "signals": {
+        "ontology": 0.9641,
+        "atf": 0.5181,
+        "citation": 0.0378
+      }
+    },
+    {
+      "candidate_id": "cand-075",
+      "score_old": 0.3584,
+      "signals": {
+        "ontology": 0.4448,
+        "atf": 0.192,
+        "citation": 0.8979
+      }
+    },
+    {
+      "candidate_id": "cand-076",
+      "score_old": 0.1202,
+      "signals": {
+        "ontology": 0.0064,
+        "atf": 0.0107,
+        "citation": 0.5605
+      }
+    },
+    {
+      "candidate_id": "cand-077",
+      "score_old": 0.079,
+      "signals": {
+        "ontology": 0.2911,
+        "atf": 0.0595,
+        "citation": 0.041
+      }
+    },
+    {
+      "candidate_id": "cand-078",
+      "score_old": 0.4896,
+      "signals": {
+        "ontology": 0.8819,
+        "atf": 0.3155,
+        "citation": 0.9029
+      }
+    },
+    {
+      "candidate_id": "cand-079",
+      "score_old": 0.6625,
+      "signals": {
+        "ontology": 0.9132,
+        "atf": 0.6583,
+        "citation": 0.5521
+      }
+    }
+  ]
+}
