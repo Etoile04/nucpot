@@ -31,8 +31,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "059_add_track_id_to_extraction_step"
-down_revision: str | Sequence[str] | None = "058_align_schema_drift_backlog"
+revision: str = "061_add_track_id_to_extraction_step"
+down_revision: str | Sequence[str] | None = "060_backfill_ref_gap_fill_staging_source"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

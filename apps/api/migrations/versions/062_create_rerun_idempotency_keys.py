@@ -10,8 +10,8 @@ execution.
 The TTL is documented but the periodic cleanup job is out of scope for
 this issue — see ``docs/api/jobs.md``.
 
-Revision ID: 059_create_rerun_idempotency_keys
-Revises: 058_align_schema_drift_backlog
+Revision ID: 062_create_rerun_idempotency_keys
+Revises: 061_add_track_id_to_extraction_step
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "059_create_rerun_idempotency_keys"
-down_revision: str | Sequence[str] | None = "058_align_schema_drift_backlog"
+revision: str = "062_create_rerun_idempotency_keys"
+down_revision: str | Sequence[str] | None = "061_add_track_id_to_extraction_step"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
