@@ -117,11 +117,11 @@ def build_enhanced_layer(doc: MaterialOntologyDocument) -> dict[str, Any]:
         }
 
     datatype_properties: dict[str, dict[str, Any]] = {}
-    for name, prop in doc.datatype_properties.items():
-        datatype_properties[name] = {
-            "uri": prop.uri,
-            "comment": prop.rdfs_comment or "",
-            "domain": _norm_ref(prop.domain),
+    for dname, dprop in doc.datatype_properties.items():
+        datatype_properties[dname] = {
+            "uri": dprop.uri,
+            "comment": dprop.rdfs_comment or "",
+            "domain": _norm_ref(dprop.domain),
         }
 
     return {
