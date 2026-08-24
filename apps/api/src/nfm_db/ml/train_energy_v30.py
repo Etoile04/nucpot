@@ -300,8 +300,8 @@ def main() -> None:
     logger.info("R² (train): %.4f", metrics["r2_train"])
 
     # Cross-validation summary
-    metrics["cv_r2"] = round(cv_r2, 4)
-    metrics["cv_r2_std"] = round(cv_r2_std, 4)
+    metrics["cv_r2"] = float(round(cv_r2, 4))
+    metrics["cv_r2_std"] = float(round(cv_r2_std, 4))
     metrics["cv_rmse"] = round(float(np.mean(cv_metrics["rmse"])), 6)
     metrics["cv_mae"] = round(float(np.mean(cv_metrics["mae"])), 6)
 
