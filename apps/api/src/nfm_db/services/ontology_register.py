@@ -58,9 +58,7 @@ class ChecksumMismatchError(ValueError):
     """
 
     def __init__(self, expected: str, observed: str) -> None:
-        super().__init__(
-            f"checksum mismatch: expected {expected}, got {observed}"
-        )
+        super().__init__(f"checksum mismatch: expected {expected}, got {observed}")
         self.expected = expected
         self.observed = observed
 
@@ -135,9 +133,7 @@ async def _fetch_source_body(source_url: str) -> bytes:
             return Path(parsed.path).read_bytes()
         except OSError as exc:
             raise SourceFetchError(source_url, str(exc)) from exc
-    raise SourceFetchError(
-        source_url, f"unsupported scheme: {parsed.scheme!r}"
-    )
+    raise SourceFetchError(source_url, f"unsupported scheme: {parsed.scheme!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +152,7 @@ def _parse_checksum(value: str) -> str:
     scheme, _, hex_part = value.partition(":")
     if scheme.lower() != "sha256":
         raise ValueError(f"checksum scheme must be 'sha256' (got {scheme!r})")
-    if len(hex_part) != 64 or any(
-        c not in "0123456789abcdefABCDEF" for c in hex_part
-    ):
+    if len(hex_part) != 64 or any(c not in "0123456789abcdefABCDEF" for c in hex_part):
         raise ValueError("checksum hex must be exactly 64 hex chars")
     return hex_part
 
@@ -249,10 +243,7 @@ async def register_ontology_version(
         # duplicate ``version_tag`` detection (model declares
         # ``UniqueConstraint('version', name='uq_ontology_versions_version')``).
         # Translate the driver-level error into our domain error.
-        if (
-            "uq_ontology_versions_version" in str(exc.orig)
-            or "UNIQUE" in str(exc.orig).upper()
-        ):
+        if "uq_ontology_versions_version" in str(exc.orig) or "UNIQUE" in str(exc.orig).upper():
             raise VersionTagExistsError(version_tag) from exc
         raise
     await session.refresh(ov)
