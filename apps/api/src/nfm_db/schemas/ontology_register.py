@@ -54,8 +54,7 @@ class OntologyVersionRegisterRequest(BaseModel):
         min_length=1,
         max_length=200,
         description=(
-            "Expected SHA-256 of the source_url body, formatted as "
-            "'sha256:<64-hex-chars>'."
+            "Expected SHA-256 of the source_url body, formatted as 'sha256:<64-hex-chars>'."
         ),
     )
 
@@ -66,16 +65,12 @@ class OntologyVersionRegisterResponse(BaseModel):
     id: uuid.UUID
     version_tag: str = Field(
         ...,
-        description=(
-            "The registered identifier — mirrors OntologyVersion.version."
-        ),
+        description=("The registered identifier — mirrors OntologyVersion.version."),
     )
     created_at: datetime
     created_by: str = Field(
         ...,
-        description=(
-            "The display identity supplied in the request body."
-        ),
+        description=("The display identity supplied in the request body."),
     )
     source_url: str | None
     checksum: str
