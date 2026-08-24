@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
 
+    # NFM-3577 / NFM-3548-B: A/B flag for the new priority scoring
+    # formula.  ``False`` (default) routes ``extraction_pipeline`` to the
+    # legacy inline heuristic (preserved verbatim from the original
+    # code path); ``True`` delegates to ``nfm_db.services.priority.score``
+    # which implements the weighted-sum formula in priority.py.  The
+    # flag is off by default so a deployment without an explicit flip
+    # does not change behaviour.
+    priority_v2_enabled: bool = False
+
     model_config = {"env_file": ".env", "env_prefix": "NFM_", "extra": "ignore"}
 
 

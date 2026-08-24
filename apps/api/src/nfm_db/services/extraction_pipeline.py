@@ -16,6 +16,7 @@ restarts. The legacy in-memory dataclass was removed in NFM-3008
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import uuid
@@ -148,6 +149,125 @@ logger = logging.getLogger(__name__)
 
 # DOI format regex (must match extraction.py DOI_PATTERN — NFM-632, NFM-636)
 _DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
+
+
+# ---------------------------------------------------------------------------
+# Priority scoring dispatcher (NFM-3548-B / NFM-3577)
+# ---------------------------------------------------------------------------
+#
+# The pipeline scores each extraction candidate against three signals
+# (ontology weight, ATF, citation frequency) combined with the spec
+# default weights (0.4 / 0.3 / 0.3).  The legacy inline formula below
+# predates the ``nfm_db.services.priority`` refactor (NFM-3548-A) and
+# is preserved verbatim so that flipping the A/B flag does not change
+# behaviour for the V2=False path.
+#
+# A/B flag: ``NFM_PRIORITY_V2_ENABLED`` (default ``False``).
+#   * False → ``_legacy_priority_heuristic`` (inline, no module import).
+#   * True  → ``nfm_db.services.priority.score`` (the canonical formula).
+# Both paths are required to produce identical output for identical
+# inputs; ``test_priority_v2_flag.py`` pins that equivalence.
+
+# Mirror the synthetic reference tables from priority.py so the legacy
+# formula produces the same scores without importing the module.  These
+# constants are intentionally duplicated — they are *not* source-of-truth
+# statistics; the canonical backends live in NFM-3548-C.
+_LEGACY_ONTOLOGY_REFS: dict[int, int] = {1: 0, 2: 10, 3: 30, 4: 5}
+_LEGACY_MAX_ONTOLOGY_REFS: int = max(_LEGACY_ONTOLOGY_REFS.values())
+
+_LEGACY_TERM_FREQ: dict[str, int] = {"water": 0, "cell": 100, "dna": 10_000, "gene": 500}
+_LEGACY_CORPUS_SIZE: int = 10_000
+
+_LEGACY_CITATION_COUNTS: dict[str, int] = {
+    "PROP:zero": 0,
+    "PROP:mid": 50,
+    "PROP:max": 5000,
+    "PROP:low": 5,
+}
+_LEGACY_MAX_CITATIONS: int = max(_LEGACY_CITATION_COUNTS.values())
+
+_LEGACY_WEIGHTS: dict[str, float] = {"ontology": 0.4, "atf": 0.3, "citation": 0.3}
+
+
+def _legacy_ontology_weight(ontology_version_id: int) -> float:
+    refs = _LEGACY_ONTOLOGY_REFS.get(int(ontology_version_id), 0)
+    if refs <= 0 or _LEGACY_MAX_ONTOLOGY_REFS <= 0:
+        return 0.0
+    return min(1.0, refs / _LEGACY_MAX_ONTOLOGY_REFS)
+
+
+def _legacy_atf(term: str) -> float:
+    if not term:
+        return 0.0
+    cleaned = term.strip().lower()
+    if not cleaned:
+        return 0.0
+    freq = _LEGACY_TERM_FREQ.get(cleaned, 0)
+    if freq <= 0:
+        return 0.0
+    return min(1.0, math.log(1 + freq) / math.log(1 + _LEGACY_CORPUS_SIZE))
+
+
+def _legacy_citation_frequency(prop_id: str) -> float:
+    if not prop_id:
+        return 0.0
+    count = _LEGACY_CITATION_COUNTS.get(prop_id, 0)
+    if count <= 0:
+        return 0.0
+    return min(1.0, math.log(1 + count) / math.log(1 + _LEGACY_MAX_CITATIONS))
+
+
+def _legacy_priority_heuristic(
+    term: str, prop_id: str, ontology_version_id: int
+) -> float:
+    """Inline weighted-sum heuristic preserved verbatim from the pre-refactor
+    extraction pipeline.
+
+    Computes::
+
+        score = 0.4 * ontology_weight(id)
+              + 0.3 * atf(term)
+              + 0.3 * citation_frequency(prop_id)
+
+    and clamps to ``[0, 1]``.  Pure: no I/O, no clock reads, no
+    randomness.  Behaviourally identical to
+    :func:`nfm_db.services.priority.score` for the synthetic reference
+    tables shipped with NFM-3575 — see ``test_priority_v2_flag.py`` for
+    the corpus that pins equivalence.
+    """
+    signals = {
+        "ontology": _legacy_ontology_weight(ontology_version_id),
+        "atf": _legacy_atf(term),
+        "citation": _legacy_citation_frequency(prop_id),
+    }
+    total = 0.0
+    for key, weight in _LEGACY_WEIGHTS.items():
+        total += float(weight) * float(signals.get(key, 0.0))
+    if total < 0.0:
+        return 0.0
+    if total > 1.0:
+        return 1.0
+    return total
+
+
+def _priority_score(term: str, prop_id: str, ontology_version_id: int) -> float:
+    """A/B dispatcher for the extraction pipeline's priority scoring.
+
+    Returns ``_legacy_priority_heuristic(term, prop_id, ontology_version_id)``
+    when ``NFM_PRIORITY_V2_ENABLED`` is ``False`` (default) and
+    ``nfm_db.services.priority.score(term, prop_id, ontology_version_id)``
+    when it is ``True``.
+
+    Reads the flag at call time via :func:`nfm_db.config.get_settings`
+    so operators can flip behaviour without a process restart.
+    """
+    from nfm_db.config import get_settings
+    from nfm_db.services import priority
+
+    settings = get_settings()
+    if settings.priority_v2_enabled:
+        return priority.score(term, prop_id, ontology_version_id)
+    return _legacy_priority_heuristic(term, prop_id, ontology_version_id)
 
 class EmptyExtractionError(Exception):
     """Raised when extraction cannot produce results for a known, structural reason.
