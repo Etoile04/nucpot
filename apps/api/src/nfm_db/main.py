@@ -11,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from nfm_db.api import admin as admin_api
+from nfm_db.api.routes.ontology import ontology_router as register_router
 from nfm_db.api.v1 import (
     blog,
     composition,
@@ -304,6 +305,9 @@ app.include_router(extraction_gaps.router, prefix="/api/v1", tags=["提取缺口
 app.include_router(viz.router, prefix="/api/v1", tags=["可视化"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["本体管理"])
 app.include_router(ontology_version.router, prefix="/api/v1", tags=["本体版本管理"])
+# NFM-3591 — register-version endpoint with SHA-256 source validation.
+# Mounted at /api (no /v1 prefix) per the issue's API spec.
+app.include_router(register_router, prefix="/api", tags=["本体版本注册"])
 app.include_router(data_collection.router, prefix="/api/v1", tags=["数据采集管理"])
 app.include_router(re_extraction.router, prefix="/api/v1", tags=["重新提取管理"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["领域专家审核"])
