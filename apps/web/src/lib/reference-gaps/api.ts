@@ -2,8 +2,11 @@
 
 import type {
   ApiResponse,
+  CandidateHistoryResponse,
   FillRequest,
   FillResponse,
+  PostDecisionRequest,
+  PostDecisionResponse,
   ReferenceGapsSummaryResponse,
 } from "./types"
 
@@ -50,6 +53,56 @@ export async function fillGap(
 
   if (!result.success || !result.data) {
     throw new Error(result.error || "Failed to fill gap")
+  }
+
+  return result.data
+}
+
+// ── Gap Candidate Decision APIs (NFM-3706) ───────────────────────
+
+/**
+ * Fetch prior decision history for a gap candidate.
+ */
+export async function getCandidateHistory(
+  candidateId: string,
+): Promise<CandidateHistoryResponse> {
+  const response = await fetch(`/api/v1/gap/candidates/${candidateId}/history`)
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch candidate history: ${response.statusText}`)
+  }
+
+  const result: ApiResponse<CandidateHistoryResponse> = await response.json()
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error || "Failed to fetch candidate history")
+  }
+
+  return result.data
+}
+
+/**
+ * Post a single accept/reject/defer decision on a gap candidate.
+ */
+export async function postDecision(
+  payload: PostDecisionRequest,
+): Promise<PostDecisionResponse> {
+  const response = await fetch(`/api/v1/gap/decisions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to post decision: ${response.statusText}`)
+  }
+
+  const result: ApiResponse<PostDecisionResponse> = await response.json()
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error || "Failed to post decision")
   }
 
   return result.data
