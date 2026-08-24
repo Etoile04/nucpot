@@ -1,7 +1,11 @@
-/** API client for reference gaps endpoints. */
+/**
+ * API client for reference gaps and audit-log endpoints.
+ */
 
 import type {
   ApiResponse,
+  AuditLogFilters,
+  AuditLogResponse,
   CandidateHistoryResponse,
   FillRequest,
   FillResponse,
@@ -58,7 +62,7 @@ export async function fillGap(
   return result.data
 }
 
-// ── Gap Candidate Decision APIs (NFM-3706) ───────────────────────
+// ── Gap Candidate Decision APIs (NFM-3706) ────────────────
 
 /**
  * Fetch prior decision history for a gap candidate.
@@ -103,6 +107,41 @@ export async function postDecision(
 
   if (!result.success || !result.data) {
     throw new Error(result.error || "Failed to post decision")
+  }
+
+  return result.data
+}
+
+// ── Audit Log API (NFM-3708) ────────────────────────
+
+/**
+ * Fetch the decision audit log with optional filters and pagination.
+ */
+export async function getAuditLog(
+  page = 1,
+  limit = 50,
+  filters: AuditLogFilters = {},
+): Promise<AuditLogResponse> {
+  const params = new URLSearchParams()
+  params.set('page', String(page))
+  params.set('limit', String(limit))
+  if (filters.reviewer_id) params.set('reviewer_id', filters.reviewer_id)
+  if (filters.date_from) params.set('date_from', filters.date_from)
+  if (filters.date_to) params.set('date_to', filters.date_to)
+  if (filters.decision) params.set('decision', filters.decision)
+  if (filters.entity_name) params.set('entity_name', filters.entity_name)
+
+  const qs = params.toString()
+  const response = await fetch(`/api/gap/audit-log?${qs}`)
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audit log: ${response.statusText}`)
+  }
+
+  const result: ApiResponse<AuditLogResponse> = await response.json()
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error || 'Failed to fetch audit log')
   }
 
   return result.data
