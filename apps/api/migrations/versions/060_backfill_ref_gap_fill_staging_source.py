@@ -113,8 +113,8 @@ from collections.abc import Sequence
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "059_backfill_ref_gap_fill_staging_source"
-down_revision: str | Sequence[str] | None = "058_align_schema_drift_backlog"
+revision: str = "060_backfill_ref_gap_fill_staging_source"
+down_revision: str | Sequence[str] | None = "059_add_adr009_reconcile_audit_log"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

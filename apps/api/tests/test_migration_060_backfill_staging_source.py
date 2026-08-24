@@ -38,7 +38,7 @@ import pytest
 from sqlalchemy import create_engine, event, text
 
 _MIGRATION_PATH = Path(
-    "migrations/versions/059_backfill_ref_gap_fill_staging_source.py"
+    "migrations/versions/060_backfill_ref_gap_fill_staging_source.py"
 ).resolve()
 
 # Public paper_id from NFM-3424 (Owen et al. 2023). Synthetic other-paper
