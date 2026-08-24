@@ -97,3 +97,20 @@ export interface PostDecisionResponse {
   readonly decided_at: string
   readonly reviewer_id: string
 }
+
+// ── Audit Log page types (NFM-3708) ─────────────────────────────
+
+export interface AuditLogResponse {
+  readonly items: readonly AuditEntry[]
+  readonly total: number
+  readonly page: number
+  readonly limit: number
+}
+
+export interface AuditLogFilters {
+  readonly reviewer_id?: string
+  readonly date_from?: string
+  readonly date_to?: string
+  readonly decision?: DecisionKind
+  readonly entity_name?: string
+}
