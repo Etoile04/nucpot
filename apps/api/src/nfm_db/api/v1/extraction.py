@@ -692,7 +692,17 @@ def _step_artifacts(step_row: ExtractionStep) -> list[dict[str, object]]:
                     "size_bytes": int(item.get("size_bytes", 0)),
                 }
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            # Malformed artifact entry — log and skip so one bad row does not
+            # poison the whole step response. The endpoint contract only
+            # promises well-formed entries; persisted metadata may contain
+            # legacy or upstream-evolved shapes that don't fit the current
+            # schema.
+            logger.warning(
+                "step_artifacts: skipping malformed artifact entry %r: %s",
+                item,
+                exc,
+            )
             continue
     return cleaned
 
