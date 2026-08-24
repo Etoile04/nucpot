@@ -1,0 +1,6 @@
+{
+  "ontology": 0.7,
+  "atf": 0.2,
+  "citation": 0.1,
+  "_comment": "NFM-3575 / NFM-3548-A — example override weight table consumed by services.priority.combine when NFM_PRIORITY_WEIGHTS is set. Intentionally asymmetric (ontology-heavy) so tests can distinguish the override from the default 0.4/0.3/0.3 table."
+}

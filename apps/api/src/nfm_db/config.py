@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
+    # NFM-3575 / NFM-3548-A: feature gate for the Phase 5.3 priority
+    # scoring refactor.  When False (default) callers fall back to the
+    # pre-refactor scoring path; when True ``extraction_pipeline`` (see
+    # NFM-3548-B) reads from ``services/priority.py``.  Wired via the
+    # ``NFM_PRIORITY_V2_ENABLED`` env var.
+    priority_v2_enabled: bool = False
+    # NFM-3575 / NFM-3548-A: optional JSON override for the priority
+    # weight table consumed by ``services/priority.py``.  Expected
+    # keys: ``ontology``, ``atf``, ``citation``.  When unset the module
+    # defaults (0.4 / 0.3 / 0.3) apply.  Wired via the
+    # ``NFM_PRIORITY_WEIGHTS`` env var.
+    priority_weights: str = ""
 
     model_config = {"env_file": ".env", "env_prefix": "NFM_", "extra": "ignore"}
 
