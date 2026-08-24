@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.extraction_job import ExtractionJob as OrmExtractionJob
+from nfm_db.models.extraction_step import ExtractionStep
 from nfm_db.models.ontology_version import OntologyVersion
 from nfm_db.services.extraction_prompt import (
     build_ontology_extraction_prompt,
@@ -731,6 +732,7 @@ async def trigger_extraction(
     extract_tables: bool = False,
     job_id: str | None = None,
     ontology_version_id: uuid.UUID | None = None,
+    track_id: uuid.UUID | None = None,
 ) -> OrmExtractionJob:
     """Trigger a full extraction pipeline run.
 
@@ -796,6 +798,11 @@ async def trigger_extraction(
         element_systems=element_systems,
         cache_level=cache_level,
         max_confidence=max_confidence,
+        # NFM-3596 / NFM-3543-B: forward caller-supplied track_id
+        # so all step rows persist with the same logical track.
+        # When None, each row falls back to the model's
+        # server_default=gen_random_uuid().
+        track_id=track_id,
     )
 
 
@@ -863,3 +870,274 @@ def _find_matching(
         if raw_hash == dedup_hash:
             return raw
     return None
+
+# ---------------------------------------------------------------------------
+# Step rerun (NFM-3543-D / NFM-3598)
+# ---------------------------------------------------------------------------
+
+#: Status that maps to a "succeeded" terminal state for the rerun gate.
+#: ``completed`` is the canonical V2 orchestrator terminal status;
+#: ``skipped`` is treated as a successful no-op so a skip-rerun still
+#: mints a new ``track_id`` for traceability but does not re-execute.
+_RERUN_ALLOWED_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "skipped"})
+
+#: 24h idempotency window — rows older than this are ignored on
+#: replay detection. The cleanup job is out of scope for this issue
+#: but documented in ``docs/api/jobs.md``.
+_IDEMPOTENCY_TTL = timedelta(hours=24)
+
+
+async def trigger_step_rerun(
+    session: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    step_name: str,
+    idempotency_key: str | None,
+    force: bool = False,
+) -> tuple[OrmExtractionJob, ExtractionStep, bool, uuid.UUID]:
+    """Re-execute a single pipeline step and return the rerun row.
+
+    NFM-3543-D (NFM-3598). Returns ``(job, step, replayed, original_track_id)``:
+
+    - ``job`` — the parent :class:`ExtractionJob` (re-fetched here).
+    - ``step`` — the newly-persisted :class:`ExtractionStep` row that
+      carries the new ``track_id`` in its ``metadata_`` JSONB
+      (``{"track_id": ..., "rerun": True}``).
+    - ``replayed`` — ``True`` when this call was a duplicate request
+      within the 24h idempotency window and we returned the original
+      row instead of creating a new one.
+    - ``original_track_id`` — the ``track_id`` of the historical step
+      being rerun; preserved on the historical row.
+
+    Raises:
+
+    - :class:`StepRerunJobNotFound` — when ``job_id`` is unknown (route
+      maps this to ``404 step_not_found``).
+    - :class:`StepRerunUnknownStep` — when ``step_name`` is not in
+      ``EXTRACTION_STEP_TYPES`` (route maps to ``404 step_not_found``).
+    - :class:`StepRerunInFlight` — when an existing rerun row with a
+      *different* idempotency key is still in-flight for the same
+      ``(job_id, step_name)`` (route maps to ``409 step_in_flight``).
+    - :class:`StepRerunSucceeded` — when the latest step's status is
+      ``succeeded`` (i.e. ``completed`` here) and ``force=False``
+      (route maps to ``422 step_succeeded``).
+    """
+    from nfm_db.models.extraction_job import ExtractionJob as _ORMJob
+    from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES
+    from nfm_db.models.rerun_idempotency_key import RerunIdempotencyKey
+    from nfm_db.services.extraction_orchestrator import ExtractionOrchestrator
+
+    # 1. Resolve job
+    job = await session.get(_ORMJob, job_id)
+    if job is None:
+        raise StepRerunJobNotFoundError(
+            f"extraction_job {job_id} not found",
+        )
+
+    # 2. Validate step name
+    if step_name not in EXTRACTION_STEP_TYPES:
+        raise StepRerunUnknownStepError(
+            f"Unknown step name '{step_name}'; "
+            f"must be one of {EXTRACTION_STEP_TYPES}",
+        )
+
+    # 3. Idempotency replay — same key within 24h returns the original.
+    if idempotency_key:
+        now = datetime.now(UTC)
+        cutoff = now - _IDEMPOTENCY_TTL
+        existing_key = await session.get(RerunIdempotencyKey, idempotency_key)
+        if existing_key is not None:
+            # SQLite (the test DB) drops the tzinfo on read; treat
+            # naive values as UTC so the comparison doesn't blow up.
+            stored_at = existing_key.created_at
+            if stored_at is not None and stored_at.tzinfo is None:
+                stored_at = stored_at.replace(tzinfo=UTC)
+            if stored_at is not None and stored_at >= cutoff:
+                # Same idempotency key + same job/step → replay.
+                if (
+                    existing_key.job_id == job_id
+                    and existing_key.step_name == step_name
+                ):
+                    stmt = (
+                        select(ExtractionStep)
+                        .where(
+                            ExtractionStep.job_id == job_id,
+                            ExtractionStep.step_type == step_name,
+                        )
+                    )
+                    result = await session.execute(stmt)
+                    for candidate in result.scalars().all():
+                        meta = candidate.metadata_ or {}
+                        if meta.get("track_id") == str(
+                            existing_key.track_id,
+                        ):
+                            return (
+                                job,
+                                candidate,
+                                True,
+                                existing_key.track_id,
+                            )
+                    # Idempotency row exists but the original step
+                    # was pruned — fall through and create a fresh
+                    # rerun. The TTL cleanup job will evict the
+                    # stale idempotency row shortly.
+
+    # 4. In-flight detection: any non-terminal rerun row for this
+    # (job_id, step_name) blocks the new request. We treat
+    # ``pending|running`` as in-flight and skip ``failed`` rows so a
+    # transient failure can be retried with a fresh idempotency key.
+    inflight_q = (
+        select(ExtractionStep)
+        .where(
+            ExtractionStep.job_id == job_id,
+            ExtractionStep.step_type == step_name,
+        )
+    )
+    inflight_res = await session.execute(inflight_q)
+    candidates = inflight_res.scalars().all()
+    in_flight = next(
+        (
+            row
+            for row in candidates
+            if (row.metadata_ or {}).get("rerun") is True
+            and row.status in ("pending", "running")
+        ),
+        None,
+    )
+    if in_flight is not None:
+        if idempotency_key:
+            # If the in-flight rerun is bound to OUR idempotency key,
+            # it's the same logical request still running → return
+            # the row with replayed=True. Otherwise 409.
+            inflight_track = (in_flight.metadata_ or {}).get("track_id")
+            if inflight_track:
+                existing = await session.get(RerunIdempotencyKey, idempotency_key)
+                if (
+                    existing is not None
+                    and existing.job_id == job_id
+                    and existing.step_name == step_name
+                    and str(existing.track_id) == inflight_track
+                ):
+                    return job, in_flight, True, existing.track_id
+        raise StepRerunInFlightError(
+            f"Step '{step_name}' for job {job_id} has an in-flight rerun",
+        )
+
+    # 5. Succeeded guard (force=False) — locate the most-recent
+    # terminal row for this (job_id, step_name). If it is ``completed``
+    # and force is false, refuse.
+    latest_q = (
+        select(ExtractionStep)
+        .where(
+            ExtractionStep.job_id == job_id,
+            ExtractionStep.step_type == step_name,
+        )
+        .order_by(ExtractionStep.started_at.desc().nullslast())
+        .limit(1)
+    )
+    latest_res = await session.execute(latest_q)
+    latest = latest_res.scalar_one_or_none()
+    if latest is not None and not force:
+        if latest.status in _RERUN_ALLOWED_TERMINAL_STATUSES:
+            raise StepRerunSucceededError(
+                f"Step '{step_name}' for job {job_id} is in a "
+                f"terminal-success state ('{latest.status}'); pass "
+                f"force=true to rerun.",
+            )
+
+    # 6. Determine original_track_id from the historical row (the
+    # step we are rerunning). If no history exists, the rerun is
+    # effectively the first execution; use a fresh UUID as the
+    # "original" so the response shape stays consistent.
+    historical_track_id: uuid.UUID
+    if latest is not None:
+        existing_meta = latest.metadata_ or {}
+        existing_track = existing_meta.get("track_id")
+        try:
+            historical_track_id = (
+                uuid.UUID(existing_track)
+                if existing_track
+                else uuid.uuid4()
+            )
+        except (TypeError, ValueError):
+            historical_track_id = uuid.uuid4()
+    else:
+        historical_track_id = uuid.uuid4()
+
+    new_track_id = uuid.uuid4()
+
+    # 7. Persist idempotency row first so a later replay (e.g. an
+    # immediate retry) finds it even if the rerun body fails.
+    if idempotency_key:
+        idem_row = RerunIdempotencyKey(
+            idempotency_key=idempotency_key,
+            track_id=new_track_id,
+            job_id=job_id,
+            step_name=step_name,
+            created_at=datetime.now(UTC),
+        )
+        session.add(idem_row)
+        try:
+            await session.flush()
+        except Exception:
+            # Concurrent insert lost the race — re-read and replay.
+            await session.rollback()
+            existing = await session.get(RerunIdempotencyKey, idempotency_key)
+            if existing is not None:
+                stmt2 = (
+                    select(ExtractionStep)
+                    .where(
+                        ExtractionStep.job_id == job_id,
+                        ExtractionStep.step_type == step_name,
+                    )
+                )
+                res2 = await session.execute(stmt2)
+                for cand in res2.scalars().all():
+                    if (cand.metadata_ or {}).get("track_id") == str(
+                        existing.track_id,
+                    ):
+                        return job, cand, True, existing.track_id
+            # Could not reconcile — propagate.
+            raise
+
+    # 8. Dispatch to orchestrator. The orchestrator's ``rerun_step``
+    # method creates a fresh ExtractionStep row with the new track_id
+    # in its metadata_ and runs the step body.
+    orchestrator = ExtractionOrchestrator(session, job)
+    step = await orchestrator.rerun_step(
+        step_name,
+        track_id=new_track_id,
+    )
+
+    await session.commit()
+    await session.refresh(step)
+    return job, step, False, historical_track_id
+
+
+class StepRerunError(Exception):
+    """Base class for step-rerun dispatch errors.
+
+    Subclasses map cleanly to the route's HTTP status codes:
+    - :class:`StepRerunJobNotFoundError` → 404
+    - :class:`StepRerunUnknownStepError` → 404
+    - :class:`StepRerunInFlightError` → 409
+    - :class:`StepRerunSucceededError` → 422
+    """
+
+
+class StepRerunJobNotFoundError(StepRerunError):
+    """Raised when ``job_id`` is unknown."""
+
+
+class StepRerunUnknownStepError(StepRerunError):
+    """Raised when ``step_name`` is not in ``EXTRACTION_STEP_TYPES``."""
+
+
+class StepRerunInFlightError(StepRerunError):
+    """Raised when another rerun is already in flight for the same step."""
+
+
+class StepRerunSucceededError(StepRerunError):
+    """Raised when the latest step is in a terminal-success state and
+    ``force`` is false.
+    """

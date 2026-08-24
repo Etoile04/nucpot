@@ -300,15 +300,18 @@ async def test_get_step_returns_job_track_id(db_session: AsyncSession) -> None:
     app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
-    # Either the job track_id (no step column yet) or the step track_id
-    # (post-NFM-3595 integration) — both acceptable per the spec wording
-    # "the durable identity that ties rerun requests to the original step".
-    assert response.json()["track_id"] == "track-abc-123"
+    # Post-NFM-3595 integration the step carries its own track_id (UUID),
+    # which the endpoint returns in preference to the job-level value.
+    # The important property is that track_id is present and is a valid UUID.
+    track_id = response.json()["track_id"]
+    assert track_id is not None
+    import uuid as _uuid
+    _uuid.UUID(track_id)
 
 
 @pytest.mark.asyncio
-async def test_get_step_track_id_null_when_unset(db_session: AsyncSession) -> None:
-    """track_id is null when neither job nor step carries one."""
+async def test_get_step_track_id_present_after_nfm3595(db_session: AsyncSession) -> None:
+    """track_id is always a valid UUID post-NFM-3595 (NOT NULL + uuid4 default)."""
     job, _ = await _create_job_with_step(
         db_session, step_type="chunk", step_status="pending", job_track_id=None
     )
@@ -321,7 +324,10 @@ async def test_get_step_track_id_null_when_unset(db_session: AsyncSession) -> No
     app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
-    assert response.json()["track_id"] is None
+    track_id = response.json()["track_id"]
+    assert track_id is not None
+    import uuid as _uuid
+    _uuid.UUID(track_id)  # must be a valid UUID
 
 
 # ---------------------------------------------------------------------------
