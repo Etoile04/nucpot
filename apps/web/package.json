@@ -39,7 +39,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
     "@playwright/test": "^1.62.1",
-    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.1.0",
     "@types/d3-force": "^3.0.0",
     "@types/d3-selection": "^3.0.0",
