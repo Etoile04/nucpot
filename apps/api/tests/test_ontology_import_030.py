@@ -110,8 +110,12 @@ class TestAdditivity:
 
     def test_merge_adds_layer_keys(self, layer):
         merged = merge_ontology_data(_BASE_PAYLOAD, layer)
-        for key in ("classes", "object_properties", "datatype_properties",
-                    "enhanced_ontology_source"):
+        for key in (
+            "classes",
+            "object_properties",
+            "datatype_properties",
+            "enhanced_ontology_source",
+        ):
             assert key in merged
 
     def test_merge_refuses_reimport(self, layer):
@@ -164,9 +168,7 @@ class TestBudget:
 
 class TestScriptGuards:
     def test_import_script_exists_and_parses(self):
-        script = (
-            Path(__file__).resolve().parents[1] / "scripts" / "ontology_import_030.py"
-        )
+        script = Path(__file__).resolve().parents[1] / "scripts" / "ontology_import_030.py"
         assert script.exists()
         compile(script.read_text(encoding="utf-8"), str(script), "exec")
 

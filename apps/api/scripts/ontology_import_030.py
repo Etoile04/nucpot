@@ -33,8 +33,20 @@ import sys
 import uuid
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_API_SRC = _REPO_ROOT / "src"
+
+# Resolve the API source dir: repo checkout (apps/api/scripts/) or a
+# container with /app/src already on disk (docker cp'd copy at /tmp).
+def _repo_src() -> Path:
+    """apps/api/scripts/x.py → apps/api/src (IndexError-safe)."""
+    parents = Path(__file__).resolve().parents
+    return (parents[2] / "src") if len(parents) > 2 else Path("/app/src")
+
+
+_CANDIDATES = [
+    _repo_src(),  # repo: apps/api/scripts → apps/api/src
+    Path("/app/src"),  # container layout (prod-api image)
+]
+_API_SRC = next((p for p in _CANDIDATES if p.is_dir()), _CANDIDATES[0])
 if str(_API_SRC) not in sys.path:
     sys.path.insert(0, str(_API_SRC))
 
@@ -74,9 +86,7 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
         # --- Guards -------------------------------------------------------
         existing = (
             await session.execute(
-                select(OntologyVersion).where(
-                    OntologyVersion.version == TARGET_VERSION
-                )
+                select(OntologyVersion).where(OntologyVersion.version == TARGET_VERSION)
             )
         ).scalar_one_or_none()
         if existing is not None:
@@ -103,13 +113,9 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
             return 2
 
         if created_by is None:
-            any_user = (
-                await session.execute(select(User).limit(1))
-            ).scalar_one_or_none()
+            any_user = (await session.execute(select(User).limit(1))).scalar_one_or_none()
             if any_user is None:
-                print(
-                    "ERROR: no --created-by given and the users table is empty."
-                )
+                print("ERROR: no --created-by given and the users table is empty.")
                 return 2
             created_by = any_user.id
             print(f"No --created-by given; attributing draft to {any_user.id}.")
