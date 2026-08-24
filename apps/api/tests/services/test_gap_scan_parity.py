@@ -9,8 +9,8 @@ representative inputs and verifies that:
 1. Both modules are importable and expose a ``GapScanService`` class.
 2. Both modules expose public dataclasses with comparable shapes
    (``frozen=True`` and a stable field set).
-3. The legacy module emits ``DeprecationWarning`` on instantiation;
-   the canonical module does not.
+3. Both services are non-deprecated; parity is structural / symbolic
+   only — they cover different domains.
 4. For each of the 100 fixture entries, the module-level pure helpers
    of both modules agree on the structural shape of the input:
    the legacy's ``_compute_priority`` accepts the same
@@ -25,9 +25,10 @@ Per NFM-3545-D1 (commit ``d1ce5e98f``) the two ``GapScanService``
 classes cover different domains — legacy is ``RefGapFillStaging``-based
 (hardcoded 12 tuples) and canonical is ``ExtractionGap``-based
 (ontology-driven).  They are not byte-for-byte interchangeable, so
-"parity" here is **structural / symbolic** parity (same public symbol
-shape, same dataclass field conventions, same warning behaviour), not
-output equality.
+"parity" here is **structural / symbolic** parity only: same public
+symbol shape, same dataclass field conventions.  NFM-3679 cancelled the
+NFM-2620 premature deprecation, so deprecation behaviour is no longer
+a parity surface.
 """
 
 from __future__ import annotations
@@ -198,42 +199,9 @@ def _run_parity(fixture: dict[str, Any]) -> list[ParityFailure]:
             )
         )
 
-    # Surface B: deprecation warning must be emitted by the legacy module
-    # but NOT by the canonical module on instantiation.
-    legacy_emit, legacy_emitted_warning = _capture_warning(
-        lambda: legacy_module.GapScanService.__init__(
-            object.__new__(legacy_module.GapScanService),
-            session=object(),
-            target_tuples=[dict(zip(("element_system", "phase", "property_name"), triple, strict=True))],
-        )
-    )
-    canonical_emit, canonical_emitted_warning = _capture_warning(
-        lambda: canonical_module.GapScanService.__init__(
-            object.__new__(canonical_module.GapScanService),
-            session=object(),
-        )
-    )
-
-    if not legacy_emit:
-        failures.append(
-            ParityFailure(
-                fixture_id=fid,
-                surface="legacy_emits_deprecation",
-                legacy_value=legacy_emitted_warning,
-                canonical_value=None,
-                rationale="legacy GapScanService no longer emits DeprecationWarning",
-            )
-        )
-    if canonical_emit:
-        failures.append(
-            ParityFailure(
-                fixture_id=fid,
-                surface="canonical_no_deprecation",
-                legacy_value=None,
-                canonical_value=canonical_emitted_warning,
-                rationale="canonical GapScanService emitted an unexpected DeprecationWarning",
-            )
-        )
+    # Surface B (removed by NFM-3679): deprecation behaviour is no longer a
+    # parity surface — both modules are non-deprecated (NFM-3679 cancelled
+    # the NFM-2620 premature deprecation).
 
     # Surface C: priority ranking sanity — legacy's _compute_priority must
     # return an int and that int must fall in a sane range (>= 1).
@@ -327,21 +295,6 @@ class TestSymbolicParity:
             assert frozen_dataclasses, (
                 f"{label} module exposes no frozen dataclasses"
             )
-
-    def test_legacy_emits_deprecation_on_init(self) -> None:
-        """Legacy ``GapScanService.__init__`` emits ``DeprecationWarning``."""
-        emitted, _ = _capture_warning(
-            lambda: legacy_module.GapScanService.__init__(
-                object.__new__(legacy_module.GapScanService),
-                session=object(),
-                target_tuples=[],
-            )
-        )
-        assert emitted, (
-            "Legacy GapScanService no longer emits DeprecationWarning. "
-            "The D4 DeprecationWarning-shim removal cannot proceed if this"
-            " regression lands."
-        )
 
     def test_canonical_does_not_emit_deprecation_on_init(self) -> None:
         """Canonical ``GapScanService.__init__`` must not emit any warning."""
