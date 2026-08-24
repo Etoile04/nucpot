@@ -3,7 +3,8 @@
 Maps the 13 v4 extraction fields from ExtractedProperty to the
 RefGapFillStaging column schema. Uses Phase 2A normalization modules:
 - PhaseMapper for phase field normalization
-- STANDARD_PROPERTIES for property name normalization
+- ``load_standard_properties`` (NFM-3537 migration target) for property
+  name normalization
 - parse_value for numeric value parsing
 """
 
@@ -13,12 +14,19 @@ from typing import Any
 
 from nfm_db.core.extraction_rules import parse_value
 from nfm_db.core.phase_rules import PhaseMapper
-from nfm_db.core.property_catalog import STANDARD_PROPERTIES
+from nfm_db.core.property_catalog import load_standard_properties
 from nfm_db.services.health_event_emitter import (
     SEVERITY_WARNING,
     build_context,
     emit_health_event_sync,
 )
+
+# Module-level snapshot of the standard-properties alias mapping. The
+# canonical loader is called once at import time so hot-path
+# normalization stays a plain ``dict.get`` lookup. NFM-3537 migrates
+# callers off the deprecated ``STANDARD_PROPERTIES`` shim; refresh this
+# snapshot if the underlying ontology mapping changes within a process.
+_STANDARD_PROPERTIES: dict[str, str] = load_standard_properties()
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded singleton (expensive JSON config read happens once)
@@ -134,7 +142,7 @@ def v4_record_to_staging(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_property_name(raw_property: str) -> str:
-    """Normalize a property name using STANDARD_PROPERTIES catalog.
+    """Normalize a property name using the canonical property catalog.
 
     Args:
         raw_property: The raw property name from extraction.
@@ -144,7 +152,7 @@ def _normalize_property_name(raw_property: str) -> str:
     """
     if not raw_property:
         return raw_property
-    return STANDARD_PROPERTIES.get(raw_property.lower(), raw_property)
+    return _STANDARD_PROPERTIES.get(raw_property.lower(), raw_property)
 
 
 def _decompose_conditions(
