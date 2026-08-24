@@ -93,17 +93,30 @@ def _iter_all_paperclip_issues() -> list[dict[str, Any]]:
     blockers — the routine needs them to recognise which dependents to
     clear.
     """
-    from paperclip_issue_lookup import lookup_issues
+    from paperclip_issue_lookup import ApiError, Ok, lookup_issues
 
-    result = lookup_issues(query=None)
-    if not result.ok:
-        # ``lookup_issues`` raises on auth/wrong-path; a non-ok
-        # ``ApiError`` return means the API itself failed.
+    # ``lookup_issues`` accepts ``q=``, ``status=``, ``assignee_agent_id=``,
+    # ``project_id=``, ``max_pages=`` — there is no ``query=`` kwarg (NFM-3600
+    # RE smoke). Pass no filters so the helper returns every issue in the
+    # company-scoped collection.
+    result = lookup_issues()
+    if isinstance(result, ApiError):
+        # ``lookup_issues`` raises on auth/wrong-path; an ``ApiError``
+        # return means the API itself returned an unparseable payload.
         raise RuntimeError(
-            f"paperclip lookup_issues returned {result.kind}: "
-            f"{getattr(result, 'error', None)}"
+            f"paperclip lookup_issues returned ApiError("
+            f"http_status={result.http_status}, kind={result.kind}): "
+            f"{result.body}"
         )
-    return list(result.issues)  # type: ignore[attr-defined]
+    if not isinstance(result, Ok):
+        # Defensive: ``lookup_issues`` only ever returns ``Ok`` or ``ApiError``
+        # in practice, but the Union allows ``NotFound`` too. Anything else
+        # is a contract drift and must surface loudly.
+        raise RuntimeError(
+            f"paperclip lookup_issues returned unexpected "
+            f"{type(result).__name__}: {result!r}"
+        )
+    return list(result.issues)
 
 
 def _collect_paperclip_dependents() -> tuple[list[IssueLike], dict[uuid.UUID, str]]:
