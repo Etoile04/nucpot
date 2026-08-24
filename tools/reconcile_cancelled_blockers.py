@@ -136,7 +136,7 @@ def _collect_paperclip_dependents() -> tuple[list[IssueLike], dict[uuid.UUID, st
         ``{issue_id: status}`` for every issue (used as the
         ``lookup_status`` callback for the routine).
     """
-    from paperclip_issue_lookup import lookup_issue
+    from paperclip_issue_lookup import Ok, lookup_issue
 
     issues: list[IssueLike] = []
     status_map: dict[uuid.UUID, str] = {}
@@ -147,10 +147,18 @@ def _collect_paperclip_dependents() -> tuple[list[IssueLike], dict[uuid.UUID, st
             continue
 
         # Re-fetch the expanded view so blockedByIssueIds is present.
+        # ``lookup_issue`` returns ``Ok`` (with ``.issues``), ``NotFound``,
+        # or ``ApiError``; ``AuthError``/``WrongPath`` raise. The LE-fix at
+        # ``f67ccdf8`` corrected the outer ``_iter_all_paperclip_issues``
+        # lookup but missed this inner expansion loop, which still
+        # referenced the legacy ``.ok`` / ``.issue`` attributes that
+        # ``Ok`` does not carry. RE pre-merge smoke caught the regression:
+        # the script crashed with "'Ok' object has no attribute 'ok'" on
+        # the very first dependent.
         expanded = lookup_issue(ident)
-        if not expanded.ok:
+        if not isinstance(expanded, Ok) or not expanded.issues:
             continue
-        issue_dict: dict[str, Any] = expanded.issue  # type: ignore[attr-defined]
+        issue_dict: dict[str, Any] = expanded.issues[0]
 
         try:
             issue_id = uuid.UUID(issue_dict["id"])
