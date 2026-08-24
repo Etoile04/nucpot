@@ -52,7 +52,7 @@ class _UuidListJSONB(TypeDecorator[list[uuid.UUID] | None]):
     impl = String
     cache_ok = True
 
-    def load_dialect_impl(self, dialect: Dialect):  # type: ignore[override]
+    def load_dialect_impl(self, dialect: Dialect) -> Any:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(_NATIVE_JSONB())
         return dialect.type_descriptor(String())
