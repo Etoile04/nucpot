@@ -39,6 +39,19 @@ class ProfileUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=64)
 
 
+class ChangePasswordRequest(BaseModel):
+    """Payload for POST /api/v1/auth/change-password (NFM-3489).
+
+    ``new_password`` has never been part of ``ProfileUpdate`` — before this
+    endpoint existed the profile page PATCHed ``new_password`` onto
+    /auth/profile, where Pydantic silently dropped the unknown field and
+    returned success without changing anything.
+    """
+
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 class RecentPotentialItem(BaseModel):
     """Lightweight summary of a recently added potential."""
 
@@ -71,6 +84,7 @@ class ContributionItem(BaseModel):
 
 
 __all__ = [
+    "ChangePasswordRequest",
     "ContributionItem",
     "ProfileResponse",
     "ProfileUpdate",

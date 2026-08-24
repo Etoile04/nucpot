@@ -96,20 +96,16 @@ export default function ProfilePage() {
     if (pwdForm.newPwd.length < 8) { setPwdMsg({ type: 'err', text: '新密码至少需要 8 位，且包含字母和数字' }); return }
     setPwdSaving(true)
     try {
-      const verifyBody = new URLSearchParams()
-      verifyBody.append('username', user!.username)
-      verifyBody.append('password', pwdForm.current)
-      const verifyRes = await fetch('/api/v1/auth/login', {
+      // NFM-3489: server-side change-password endpoint. The old flow
+      // PATCHed {new_password} to /auth/profile where Pydantic silently
+      // dropped the unknown field and returned a fake success.
+      const res = await fetch('/api/v1/auth/change-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: verifyBody, credentials: 'include',
-      })
-      if (!verifyRes.ok) { setPwdMsg({ type: 'err', text: '当前密码错误' }); setPwdSaving(false); return }
-
-      const res = await fetch('/api/v1/auth/profile', {
-        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_password: pwdForm.newPwd }),
+        body: JSON.stringify({
+          current_password: pwdForm.current,
+          new_password: pwdForm.newPwd,
+        }),
         credentials: 'include',
       })
       if (res.ok) {
