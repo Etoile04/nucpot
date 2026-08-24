@@ -12,6 +12,8 @@ Tests cover:
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -20,7 +22,6 @@ REVISION = "057_create_kg_entity_and_relation_type_tables"
 DOWN_REVISION = "053_align_extraction_gap_with_adr_nfm_2675"
 MIGRATION_PATH = f"migrations/versions/{REVISION}.py"
 
-HEAD_REVISION = "059_add_adr009_reconcile_audit_log"
 DOWNSTREAM_REVISION = "055_add_ontology_version_fk_to_type_tables"
 
 
@@ -40,6 +41,13 @@ def migration_source() -> str:
 class TestMigrationChain:
     """057 chains correctly into the migration graph."""
 
+    # Long-term fix (8-24): the head revision used to be hardcoded here and
+    # broke every PR that added a new migration (056 → 058 → 059, three
+    # breakages recorded). We now assert the *invariant* instead of a
+    # snapshot: exactly one head, and it is the highest-numbered revision
+    # present in versions/. Any new migration keeps this passing without a
+    # test edit; a forked chain (two heads) still fails.
+
     def test_revision_loadable(self, script_directory: ScriptDirectory) -> None:
         rev = script_directory.get_revision(REVISION)
         assert rev is not None, f"Migration {REVISION!r} not registered"
@@ -54,14 +62,41 @@ class TestMigrationChain:
             f"got {rev.down_revision!r}"
         )
 
+    def _version_numbers(self, script_directory: ScriptDirectory) -> list[int]:
+        """Collect every NNN_ prefix number across the revision graph."""
+        numbers: list[int] = []
+        for rev in script_directory.walk_revisions():
+            m = re.match(r"^(\d+)", rev.revision)
+            if m:
+                numbers.append(int(m.group(1)))
+        return numbers
+
     def test_single_head(self, script_directory: ScriptDirectory) -> None:
-        """Exactly one head after adding 057 (head remains 056)."""
+        """Exactly one head in the chain — fork detection, no snapshot pin."""
         heads = script_directory.get_heads()
         assert len(heads) == 1, (
-            f"Expected exactly 1 alembic head, got {len(heads)}: {heads!r}"
+            f"Expected exactly 1 alembic head, got {len(heads)}: {heads!r}. "
+            "Unite forked branches with `alembic merge` or renumber the "
+            "conflicting migration."
         )
-        assert heads[0] == HEAD_REVISION, (
-            f"Expected head {HEAD_REVISION!r}, got {heads[0]!r}"
+
+    def test_head_is_latest_numbered_revision(self, script_directory: ScriptDirectory) -> None:
+        """The single head must be the highest NNN_ numbered revision.
+
+        Guards against a stale chain tip (e.g. head stuck at 059 while a
+        060 exists as a non-head leaf) without pinning the literal id, so
+        adding migration 060/061/... never breaks this test again.
+        """
+        heads = script_directory.get_heads()
+        assert len(heads) == 1
+        numbers = self._version_numbers(script_directory)
+        assert numbers, "No numbered revisions found in script directory"
+        m = re.match(r"^(\d+)", heads[0])
+        assert m is not None, f"Head revision {heads[0]!r} is not NNN_-prefixed"
+        assert int(m.group(1)) == max(numbers), (
+            f"Head {heads[0]!r} is numbered {int(m.group(1))} but the highest "
+            f"numbered revision present is {max(numbers)}. A later-numbered "
+            "migration is not on the chain tip — check down_revision wiring."
         )
 
     def test_055_chains_off_057(self, script_directory: ScriptDirectory) -> None:
