@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Weekly Docker image prune (NFM-3672 / NFM-3670 recurrence prevention)
+# =============================================================================
+#
+# Runs `docker image prune -af` weekly to reclaim dangling + un-tagged image
+# layers produced by the deploy pipeline (4 deploys/8h observed at NFM-3670).
+#
+# This is the lowest-risk preventive measure for the disk-pressure pattern
+# captured in NFM-3670: image accumulation at 3.5 GiB/hr drove `/` to 86%
+# (~62 GiB free) before the SRE heartbeat triggered action #5, which
+# reclaimed 29.81 GB (86% → 80%).
+#
+# Schedule: Sunday 03:00 local time (off-hours, avoids weekday deploy windows).
+# See docs/runbooks/image-prune.md for full install / verify / rollback steps.
+#
+# Operational guardrails (do NOT change without NFM review):
+#   - NO `--filter until=...` — documented as a no-op in this environment
+#     (Docker keeps re-creating intermediate layers with current timestamps,
+#     so the time filter matches everything and reclaims nothing).
+#     See NFM-3670 recovery note + memory `docker-prune-until-filter-is-a-noop`.
+#   - `--all -f` is safe: the active image set is preserved by Docker's
+#     reference counting; only dangling + un-tagged layers are reclaimed.
+#   - Do NOT run during deploy windows — schedule for off-hours only.
+#   - Log rotation: prune logs older than 30 days.
+#
+# Install paths:
+#   macOS (per-user launchd — recommended for the prod dev host):
+#     install -m 0644 \
+#         scripts/cron/nucpot-image-prune.d/com.nucpot.docker-image-prune.plist \
+#         ~/Library/LaunchAgents/
+#     launchctl load -w ~/Library/LaunchAgents/com.nucpot.docker-image-prune.plist
+#
+#   Linux (system cron — future staging host):
+#     sudo install -o root -g root -m 0644 \
+#         scripts/cron/nucpot-image-prune.d/nucpot-image-prune \
+#         /etc/cron.d/nucpot-image-prune
+#     sudo systemctl restart cron
+#
+# Env vars (override defaults by exporting in the cron user's shell or by
+# editing the `NUCPOT_PRUNE_*` lines below):
+#   NUCPOT_PRUNE_LOG_DIR    (default: /Users/lwj04/.local/log/nucpot)
+#   NUCPOT_PRUNE_LOG_NAME   (default: image-prune.log)
+#   NUCPOT_PRUNE_RETENTION  (default: 30 days)
+# =============================================================================
+
+set -euo pipefail
+
+# ---- Defaults (override via env) --------------------------------------------
+NUCPOT_PRUNE_LOG_DIR="${NUCPOT_PRUNE_LOG_DIR:-/Users/lwj04/.local/log/nucpot}"
+NUCPOT_PRUNE_LOG_NAME="${NUCPOT_PRUNE_LOG_NAME:-image-prune.log}"
+NUCPOT_PRUNE_RETENTION="${NUCPOT_PRUNE_RETENTION:-30}"
+
+LOG_FILE="${NUCPOT_PRUNE_LOG_DIR}/${NUCPOT_PRUNE_LOG_NAME}"
+
+# ---- Preconditions ----------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+    echo "[$(date -u +%FT%TZ)] FATAL: docker not on PATH; aborting" >> "${LOG_FILE}"
+    exit 127
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "[$(date -u +%FT%TZ)] FATAL: docker daemon unreachable; aborting" >> "${LOG_FILE}"
+    exit 1
+fi
+
+mkdir -p "${NUCPOT_PRUNE_LOG_DIR}"
+
+# ---- Snapshot: pre-prune ----------------------------------------------------
+{
+    echo "================================================================"
+    echo "[$(date -u +%FT%TZ)] nucpot image prune -- start"
+    echo "host: $(uname -srm)"
+    echo "----------------------------------------------------------------"
+    echo ">>> df -h /System/Volumes/Data (pre)"
+    df -h /System/Volumes/Data
+    echo
+    echo ">>> docker system df (pre)"
+    docker system df
+    echo "----------------------------------------------------------------"
+} >> "${LOG_FILE}" 2>&1
+
+# ---- Prune ------------------------------------------------------------------
+# NO `--filter until=...` -- see guardrail at top of file.
+PRUNE_RC=0
+docker image prune -af >> "${LOG_FILE}" 2>&1 || PRUNE_RC=$?
+
+# ---- Snapshot: post-prune ---------------------------------------------------
+{
+    echo ">>> docker image prune -af exit=${PRUNE_RC}"
+    echo "----------------------------------------------------------------"
+    echo ">>> df -h /System/Volumes/Data (post)"
+    df -h /System/Volumes/Data
+    echo
+    echo ">>> docker system df (post)"
+    docker system df
+    echo
+    echo ">>> docker images --format '{{.Repository}}:{{.Tag}}@{{.Digest}} {{.Size}}' (post)"
+    docker images --format '{{.Repository}}:{{.Tag}}@{{.Digest}} {{.Size}}' || true
+    echo "[$(date -u +%FT%TZ)] nucpot image prune -- done (rc=${PRUNE_RC})"
+    echo "================================================================"
+    echo
+} >> "${LOG_FILE}" 2>&1
+
+# ---- Log rotation: prune logs older than NUCPOT_PRUNE_RETENTION days --------
+if [[ -d "${NUCPOT_PRUNE_LOG_DIR}" ]]; then
+    find "${NUCPOT_PRUNE_LOG_DIR}" \
+        -maxdepth 1 \
+        -type f \
+        -name "${NUCPOT_PRUNE_LOG_NAME}*" \
+        -mtime "+${NUCPOT_PRUNE_RETENTION}" \
+        -delete 2>/dev/null || true
+fi
+
+exit "${PRUNE_RC}"
