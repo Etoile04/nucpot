@@ -192,11 +192,18 @@ class TestFiveCancelledWedgeFixture:
         assert len(rows) == 5, f"expected 5 audit rows, got {len(rows)}"
 
         # Every row has the correct shape per the §4.1-c spec.
+        # §4.3-b (NFM-3688): because the fixture dependents have
+        # ``status="blocked"`` and the sweep cleared their only blocker,
+        # the auto-transition branch fires with ``status_transition=
+        # {from: blocked, to: todo}``. The §4.3-a fixture deliberately
+        # omits an ``assignee_agent_id``, so ``wake_fired`` is ``False``
+        # even though the transition fires — this exercises the
+        # §4.3-b "no assignee -> transition but no wake" edge.
         for row in rows:
             assert row.routine == "adr009-daily-reconcile"
             assert row.after_blockedByIssueIds == []
             assert len(row.before_blockedByIssueIds) == 1
-            assert row.status_transition is None
+            assert row.status_transition == {"from": "blocked", "to": "todo"}
             assert row.wake_fired is False
             assert row.feature_flag == "ADR_009_RECONCILIATION_HOOK_ENABLED"
             assert row.closing_issue_identifier.startswith("UNKNOWN-")
