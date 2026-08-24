@@ -26,3 +26,9 @@
 docs/
 *.md
 !README.md
+# Agent/workspace artifacts (35G+ — would stall the build context transfer)
+.paperclip
+.worktrees
+.venv
+.gitnexus
+.git
