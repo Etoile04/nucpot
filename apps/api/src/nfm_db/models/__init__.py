@@ -100,6 +100,9 @@ class TimestampMixin:
     )
 
 
+from nfm_db.models.adr009_reconcile_audit import (  # noqa: E402
+    Adr009ReconcileAuditLog,
+)
 from nfm_db.models.blog_post import (  # noqa: E402
     BlogPostMetadata,
     PostStatus,
@@ -256,6 +259,7 @@ __all__ = [
     "VALID_NODE_TYPES",
     "VALID_RELATION_TYPES",
     "VALID_TRANSITIONS",
+    "Adr009ReconcileAuditLog",
     "Author",
     "Base",
     "BlogPostMetadata",
