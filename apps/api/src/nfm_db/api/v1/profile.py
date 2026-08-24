@@ -76,12 +76,12 @@ async def update_profile(
     )
 
 
-@profile_router.post("/change-password", response_model=ApiResponse[dict])
+@profile_router.post("/change-password", response_model=ApiResponse[dict[str, str]])
 async def change_password(
     payload: ChangePasswordRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> ApiResponse[dict]:
+) -> ApiResponse[dict[str, str]]:
     """Change the current user's password (NFM-3489).
 
     Verifies the current password server-side (never trust the client's
