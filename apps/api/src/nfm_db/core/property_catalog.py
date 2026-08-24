@@ -3,14 +3,24 @@
 Ported from v4 property_catalog.md (NFM-524).
 
 Exports:
-    PropertyCategory  - 11-category enum for property classification
-    STANDARD_PROPERTIES - dict of alias (lowered) → standard Chinese name
-    UnitNormalizer   - class that normalizes unit strings from JSON config
+    PropertyCategory          - 11-category enum for property classification
+    load_standard_properties  - canonical loader for the alias→standard_name
+                                mapping (ontology-driven migration target).
+    STANDARD_PROPERTIES       - DEPRECATED shim that resolves through
+                                ``load_standard_properties`` and emits a
+                                ``DeprecationWarning`` pointing callers at
+                                the ontology loader. Kept for backward
+                                compatibility with legacy imports
+                                (``v4_mapper.py``, ``extraction_pipeline.py``,
+                                ``ontology_coverage_report.py``) until each
+                                migrates. See NFM-3537.
+    UnitNormalizer            - class that normalizes unit strings from JSON config
 """
 
 from __future__ import annotations
 
 import json
+import warnings
 from enum import Enum
 from pathlib import Path
 from typing import Any, Final
@@ -57,10 +67,15 @@ def _load_config() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# STANDARD_PROPERTIES Mapping (v4 §4)
+# STANDARD_PROPERTIES Mapping (v4 §4) — deprecated shim
 # ---------------------------------------------------------------------------
-
-_raw_aliases: dict[str, str] = _load_config()["property_aliases"]
+#
+# The hardcoded alias→standard_name mapping is preserved as a module-level
+# ``__getattr__`` shim for backward compatibility (NFM-3537). New code MUST
+# call ``load_standard_properties()`` (the ontology-driven canonical loader)
+# directly. The shim issues a ``DeprecationWarning`` per access; legacy
+# importers (``v4_mapper.py``, ``extraction_pipeline.py``,
+# ``ontology_coverage_report.py``) should be migrated off this name.
 
 
 def _build_case_insensitive_mapping(
@@ -70,9 +85,60 @@ def _build_case_insensitive_mapping(
     return {alias.lower(): name for alias, name in raw.items()}
 
 
-STANDARD_PROPERTIES: dict[str, str] = _build_case_insensitive_mapping(_raw_aliases)
+def load_standard_properties() -> dict[str, str]:
+    """Canonical loader for the standard-properties alias mapping.
 
-STANDARD_PROPERTIES
+    Returns the alias (lowered) → standard Chinese name dict sourced from
+    the v4 property catalog config. This is the migration target the
+    NFM-3531 (NFM-2868-P0-2) effort funnels callers onto — NFM-3531-C
+    will swap the underlying source to the canonical ontology payload
+    without changing this signature.
+
+    Returns:
+        A fresh ``dict[str, str]`` copy of the alias mapping. A new dict
+        is returned on every call so callers cannot accidentally share
+        state; the cost is negligible (≤113 entries today).
+
+    Note:
+        This function does NOT emit a ``DeprecationWarning`` — it is the
+        supported path. The deprecated name ``STANDARD_PROPERTIES`` is
+        the one that warns (via the module-level ``__getattr__``).
+    """
+    raw_aliases: dict[str, str] = _load_config()["property_aliases"]
+    return _build_case_insensitive_mapping(raw_aliases)
+
+
+_DEPRECATION_MSG = (
+    "nfm_db.core.property_catalog.STANDARD_PROPERTIES is deprecated; "
+    "use the ontology loader (`load_standard_properties()`) instead."
+)
+
+
+def __getattr__(name: str) -> Any:
+    """Module-level ``__getattr__`` that backs the deprecated shim.
+
+    Resolves ``STANDARD_PROPERTIES`` to a fresh dict from
+    ``load_standard_properties()`` while emitting a
+    ``DeprecationWarning`` that names the canonical migration target.
+    Any other attribute raises ``AttributeError`` so accidental typos
+    surface immediately rather than silently returning ``None``.
+    """
+    if name == "STANDARD_PROPERTIES":
+        warnings.warn(
+            _DEPRECATION_MSG,
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return load_standard_properties()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "STANDARD_PROPERTIES",  # noqa: F822 — resolved lazily via __getattr__
+    "PropertyCategory",
+    "UnitNormalizer",
+    "load_standard_properties",
+]
 
 
 # ---------------------------------------------------------------------------
