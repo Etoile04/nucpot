@@ -269,8 +269,14 @@ def reconcile_blocked_by_issue_ids(
 
         touched += 1
 
-        if not dry_run:
+        if not dry_run and session is not None:
             # One audit row per removed UUID (§4.1-c shape parity).
+            # Guard added (NFM-3600 follow-up): `session` is typed
+            # `Session | None` and `write_audit_entry` requires a live
+            # `Session`; without the None-check mypy fails CI on main
+            # (adr009_reconcile_routine.py:283 [arg-type]) and callers
+            # that legitimately pass session=None (pure scan mode)
+            # would crash at write time.
             for removed_id in sorted_remove:
                 closing_status = remove_statuses[removed_id]
                 # closing_issue_identifier is unknown to the scanner;
