@@ -73,4 +73,17 @@ if [ -n "$MISSING" ]; then
   exit 1
 fi
 
+# NFM-3727: PAPERCLIP_BOARD_API_KEY is required for the ADR-009
+# daily reconcile cron to perform cross-agent wakeup.  It is
+# docker-only (not in the host root .env.prod) so the sync check
+# above won't catch a missing deployment.  Fail explicitly.
+MANDATORY_DOCKER_KEYS="PAPERCLIP_BOARD_API_KEY"
+for _key in $MANDATORY_DOCKER_KEYS; do
+  if ! printf '%s\n' "$DOCKER_KEYS" | grep -qx "$_key"; then
+    echo "MISSING mandatory key in $DOCKER_ENV: $_key" >&2
+    echo "" >&2
+    echo "This key is required for ADR-009 §4.3-b cross-agent wake." >&2
+    exit 1
+  fi
+done
 echo "OK: env key sets are in sync ($ROOT_ENV -> $DOCKER_ENV)"

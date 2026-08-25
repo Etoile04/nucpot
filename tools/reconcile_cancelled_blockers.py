@@ -28,8 +28,25 @@ Usage::
 
     # explicit env vars override any shell defaults
     PAPERCLIP_API_URL=http://localhost:3101 \\
+    PAPERCLIP_BOARD_API_KEY=$PAPERCLIP_BOARD_API_KEY \\
+        python tools/reconcile_cancelled_blockers.py --dry-run
+
+    # agent-self JWT also works but returns 403 for cross-agent wake:
+    # PAPERCLIP_BOARD_API_KEY is preferred. See NFM-3726.
+    PAPERCLIP_API_URL=http://localhost:3101 \\
     PAPERCLIP_API_KEY=$PAPERCLIP_RUN_JWT \\
         python tools/reconcile_cancelled_blockers.py --dry-run
+
+Required credentials (NFM-3727):
+
+* ``PAPERCLIP_BOARD_API_KEY`` — **preferred**.  Board-actor API key
+  (e.g. ``name=lobster-coo``) that can wake *any* assignee agent.
+  Required for the ADR-009 daily reconcile cron to perform cross-agent
+  wakeup; the agent-self JWT returns 403 for other agents.
+* ``PAPERCLIP_API_KEY`` — fallback.  Agent-self JWT injected by the
+  Paperclip runtime.  Only usable for self-wake scenarios.
+* ``PAPERCLIP_API_URL`` — base URL of the Paperclip API server
+  (defaults to ``http://paperclip-api:3101`` in production).
 
 References:
 

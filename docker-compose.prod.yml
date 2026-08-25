@@ -110,6 +110,13 @@ services:
       # is forwarded to host.docker.internal:7892 → 502.
       NO_PROXY: ${PROD_API_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
       no_proxy: ${PROD_API_no_proxy:-localhost,127.0.0.1,nucpot-prod-lightrag,nucpot-prod-db,nucpot-prod-redis,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      # NFM-3727: Paperclip board-actor API key for ADR-009 wake.
+      # PAPERCLIP_BOARD_API_KEY (board-actor, e.g. lobster-coo) is
+      # preferred over PAPERCLIP_API_KEY (agent-self JWT) because the
+      # daily reconcile cron must wake *other* agents' assignees.
+      PAPERCLIP_BOARD_API_KEY: ${PAPERCLIP_BOARD_API_KEY:-}
+      PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:-}
+      PAPERCLIP_API_URL: ${PAPERCLIP_API_URL:-http://paperclip-api:3101}
       # NFM-MINERU-1: MinerU PDF parsing (literature pipeline primary parser)
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
       MINERU_API_KEY: ${MINERU_API_KEY:-}

@@ -111,14 +111,24 @@ def _resolve_paperclip_base_url() -> str:
 def _resolve_paperclip_api_key() -> str | None:
     """Return the Paperclip API key for outbound calls.
 
-    The Paperclip runtime injects ``PAPERCLIP_API_KEY`` automatically;
-    we surface it via ``os.environ`` so nucpot workers see the same
-    env var the agent runtime provides.
+    Priority order:
+
+    1. ``PAPERCLIP_BOARD_API_KEY`` — the board-actor key
+       (e.g. ``lobster-coo``) that can wake *any* assignee agent.
+       Required for the ADR-009 daily reconcile cron to perform
+       cross-agent wakeup (the agent-self JWT returns 403 for
+       other agents).
+    2. ``PAPERCLIP_API_KEY`` — the agent-self JWT injected by the
+       Paperclip runtime.  Only usable for self-wake scenarios.
+
+    Returns ``None`` when neither variable is set or both are
+    blank/whitespace-only.
     """
-    raw = os.environ.get("PAPERCLIP_API_KEY")
-    if not raw:
-        return None
-    return raw.strip() or None
+    for env_var in ("PAPERCLIP_BOARD_API_KEY", "PAPERCLIP_API_KEY"):
+        raw = os.environ.get(env_var)
+        if raw and raw.strip():
+            return raw.strip()
+    return None
 
 
 def fire_wake_intent(intent: WakeIntent, *, timeout: float = 5.0) -> bool:
@@ -141,7 +151,8 @@ def fire_wake_intent(intent: WakeIntent, *, timeout: float = 5.0) -> bool:
     api_key = _resolve_paperclip_api_key()
     if api_key is None:
         logger.warning(
-            "adr009 wake skipped: PAPERCLIP_API_KEY not set "
+            "adr009 wake skipped: PAPERCLIP_BOARD_API_KEY and "
+            "PAPERCLIP_API_KEY both unset "
             "(dependent=%s, idempotencyKey=%s)",
             intent.dependent_identifier,
             intent.idempotency_key,
