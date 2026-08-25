@@ -8,21 +8,27 @@ These endpoints replace Supabase-dependent Next.js API routes for:
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import get_current_active_user
+from nfm_db.api.v1.auth_endpoints import _validate_password_strength
 from nfm_db.database import get_db
 from nfm_db.models.potential import Potential
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.profile import (
+    ChangePasswordRequest,
     ContributionItem,
     ProfileResponse,
     ProfileUpdate,
     RecentPotentialItem,
     StatsResponse,
+)
+from nfm_db.services.auth_service import (
+    authenticate_user,
+    get_password_hash,
 )
 
 # --- routers ---------------------------------------------------------------
@@ -68,6 +74,36 @@ async def update_profile(
         success=True,
         data=ProfileResponse.model_validate(current_user),
     )
+
+
+@profile_router.post("/change-password", response_model=ApiResponse[dict[str, str]])
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ApiResponse[dict[str, str]]:
+    """Change the current user's password (NFM-3489).
+
+    Verifies the current password server-side (never trust the client's
+    login pre-check), enforces the shared password-strength policy, and
+    writes the new bcrypt hash.
+
+    Replaces the broken flow where the profile page PATCHed
+    ``new_password`` to /auth/profile — Pydantic silently dropped the
+    unknown field and returned success without changing anything.
+    """
+    if not authenticate_user(current_user, payload.current_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="当前密码错误",
+        )
+
+    _validate_password_strength(payload.new_password)
+
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    await db.commit()
+
+    return ApiResponse(success=True, data={"message": "密码修改成功"})
 
 
 # --- contributions endpoint ------------------------------------------------
