@@ -288,8 +288,8 @@ jobs:
     needs: [build-web, test-api]
     if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success'
     env:
-      HTTP_PROXY: http://127.0.0.1:7897
-      HTTPS_PROXY: http://127.0.0.1:7897
+      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
+      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org
       # ADR §5 D2 "distinct exit code". 64 = EX_USAGE (sysexits.h).
       # The smoke-test job uses a different value (42) so the two jobs
@@ -324,7 +324,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             set -euo pipefail
             cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
             # github.com must go DIRECT: the proxy route for it is dead
             # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
             # do not inherit job env, so this must be re-exported here.
@@ -361,7 +361,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
             cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
             # github.com must go DIRECT: the proxy route for it is dead
             # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
             # do not inherit job env, so this must be re-exported here.
@@ -413,7 +413,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
             cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
             # github.com must go DIRECT: the proxy route for it is dead
             # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
             # do not inherit job env, so this must be re-exported here.
@@ -454,8 +454,8 @@ jobs:
     needs: [build-web, test-api, pre-deploy-assert]
     if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success' && needs.pre-deploy-assert.result == 'success'
     env:
-      HTTP_PROXY: http://127.0.0.1:7897
-      HTTPS_PROXY: http://127.0.0.1:7897
+      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
+      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
@@ -510,8 +510,8 @@ jobs:
     name: Pre-deploy-assert smoke test (NFM-2149)
     runs-on: [self-hosted, production]
     env:
-      HTTP_PROXY: http://127.0.0.1:7897
-      HTTPS_PROXY: http://127.0.0.1:7897
+      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
+      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
       - name: Warm up direct route to github.com (GFW transience)
@@ -629,8 +629,8 @@ jobs:
     needs: [build-web, test-api, pre-deploy-assert, migration-on-main-assert]
     if: always() && needs.build-web.result == 'success' && needs.pre-deploy-assert.result == 'success' && needs.migration-on-main-assert.result == 'success'
     env:
-      HTTP_PROXY: http://127.0.0.1:7897
-      HTTPS_PROXY: http://127.0.0.1:7897
+      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
+      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org
       # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
       # commit SHA. The deploy heredoc re-exports this on the host so the
@@ -663,7 +663,7 @@ jobs:
             # the LAST command only; every intermediate failure was swallowed.
             set -euo pipefail
             cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897
+            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
             # github.com must go DIRECT: the proxy route for it is dead
             # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
             # do not inherit job env, so this must be re-exported here.
