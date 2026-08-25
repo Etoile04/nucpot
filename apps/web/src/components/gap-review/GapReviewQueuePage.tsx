@@ -18,6 +18,8 @@ import { GapReviewFilters } from './GapReviewFilters'
 import { ConfidenceMeter } from './ConfidenceMeter'
 import { GapCandidateDrawer } from './GapCandidateDrawer'
 import { BulkActionToolbar } from './BulkActionToolbar'
+import { useGapKeyboardShortcuts, GapShortcutsOverlay } from './useGapKeyboardShortcuts'
+import { submitBulkDecisions, buildDecisionPayload } from '@/lib/gap-decisions/bulk-decisions-api'
 import ErrorEmptyState from '@/components/v4-extraction/error-empty-state'
 import { fetchGapCandidates, PAGE_SIZE } from '@/lib/reference-gaps/gap-candidates-api'
 import { DEFAULT_FILTERS } from '@/lib/reference-gaps/gap-candidates'
@@ -134,6 +136,89 @@ export function GapReviewQueuePage() {
     },
     [messageApi],
   )
+
+  // ── Keyboard shortcuts (AC-4) ────────────────────────────────────────
+
+  const visibleItems = useMemo(
+    () => candidates.map(toBulkItem),
+    [candidates],
+  )
+
+  const selectedIds = useMemo(
+    () => new Set(selectedRowKeys.map(String)),
+    [selectedRowKeys],
+  )
+
+  const handleKbAccept = useCallback(
+    async (ids: ReadonlyArray<string>) => {
+      if (ids.length === 0) return
+      const payload = buildDecisionPayload(
+        ids.map((id) => visibleItems.find((c) => c.candidate_id === id)).filter(Boolean) as ReadonlyArray<import('@/lib/gap-decisions/types').GapCandidate>,
+        'accepted',
+      )
+      try {
+        await submitBulkDecisions(payload)
+        setSelectedRowKeys([])
+        refetch()
+        messageApi.success('Accepted ' + ids.length + ' item(s)')
+      } catch (err) {
+        messageApi.error(err instanceof Error ? err.message : 'Accept failed')
+      }
+    },
+    [visibleItems, refetch, messageApi],
+  )
+
+  const handleKbReject = useCallback(
+    async (ids: ReadonlyArray<string>) => {
+      if (ids.length === 0) return
+      const payload = buildDecisionPayload(
+        ids.map((id) => visibleItems.find((c) => c.candidate_id === id)).filter(Boolean) as ReadonlyArray<import('@/lib/gap-decisions/types').GapCandidate>,
+        'rejected',
+      )
+      try {
+        await submitBulkDecisions(payload)
+        setSelectedRowKeys([])
+        refetch()
+        messageApi.success('Rejected ' + ids.length + ' item(s)')
+      } catch (err) {
+        messageApi.error(err instanceof Error ? err.message : 'Reject failed')
+      }
+    },
+    [visibleItems, refetch, messageApi],
+  )
+
+  const handleKbDefer = useCallback(
+    async (ids: ReadonlyArray<string>) => {
+      if (ids.length === 0) return
+      const payload = buildDecisionPayload(
+        ids.map((id) => visibleItems.find((c) => c.candidate_id === id)).filter(Boolean) as ReadonlyArray<import('@/lib/gap-decisions/types').GapCandidate>,
+        'deferred',
+      )
+      try {
+        await submitBulkDecisions(payload)
+        setSelectedRowKeys([])
+        refetch()
+        messageApi.success('Deferred ' + ids.length + ' item(s)')
+      } catch (err) {
+        messageApi.error(err instanceof Error ? err.message : 'Defer failed')
+      }
+    },
+    [visibleItems, refetch, messageApi],
+  )
+
+  const { showShortcutsOverlay, closeShortcutsOverlay } = useGapKeyboardShortcuts({
+    visibleItems,
+    selectedIds,
+    confidenceThreshold: 0.7,
+    isDrawerOpen: drawerOpen,
+    onAccept: handleKbAccept,
+    onReject: handleKbReject,
+    onDefer: handleKbDefer,
+    onCloseDrawer: handleDrawerClose,
+    onDeselectAll: useCallback(() => setSelectedRowKeys([]), []),
+    onSuccess: handleBulkSuccess,
+    onError: handleBulkError,
+  })
 
   const rowSelection = useMemo(
     () => ({
@@ -280,6 +365,11 @@ export function GapReviewQueuePage() {
           open={drawerOpen}
           onClose={handleDrawerClose}
           onDecision={handleDrawerDecision}
+        />
+
+        <GapShortcutsOverlay
+          visible={showShortcutsOverlay}
+          onClose={closeShortcutsOverlay}
         />
       </Space>
     </div>
