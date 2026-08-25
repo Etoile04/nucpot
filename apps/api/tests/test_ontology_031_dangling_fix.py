@@ -155,7 +155,7 @@ class TestMetadata:
         return _load_json(_ENHANCED_JSON)
 
     def test_version_is_031(self, data):
-        assert data["metadata"]["version"] == "0.3.1"
+        assert data["metadata"]["version"] == "0.4.0"
 
 
 class TestNewClassesSchema:
