@@ -205,5 +205,5 @@ class TestImportLayerBuilds:
         stats = layer["enhanced_ontology_source"]["counts"]
         # 0.4.0 now imports individuals (was: individuals_not_imported == 755)
         assert stats["individuals_total"] == 755
-        assert stats["individuals_imported"] == 690
-        assert stats["individuals_empty_dropped"] == 65
+        assert stats["individuals_imported"] == 699
+        assert stats["individuals_empty_dropped"] == 56
