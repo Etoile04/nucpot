@@ -93,8 +93,8 @@ jobs:
     # scripts' `REPO_DIR="${STAGING_REPO_DIR:-...}"` resolves it. Only
     # STAGING_REPO_DIR is forwarded — proxy vars are not needed remotely.
     env:
-      HTTP_PROXY: http://127.0.0.1:7897
-      HTTPS_PROXY: http://127.0.0.1:7897
+      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
+      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       NO_PROXY: 127.0.0.1,localhost
       STAGING_REPO_DIR: /home/z203/nucpot-staging/repo
       # NFM-162: fetch drone-ssh from a DIRECT-reachable GitHub-release mirror
