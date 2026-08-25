@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, renderHook, act } from '@testing-library/react'
 import { useGapKeyboardShortcuts, GapShortcutsOverlay } from './useGapKeyboardShortcuts'
 import type { GapCandidate } from '@/lib/gap-decisions/types'
-import * as api from '@/lib/gap-decisions/bulk-decisions-api'
 
 // ── Fixtures ──────────────────────────────────────────────────────────
 

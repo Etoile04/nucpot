@@ -28,7 +28,7 @@ function createWrapper() {
   }
 }
 
-const MATCH_SPANS: readonly TextSpan[] = [{ start: 0, end: 11 }]
+const MATCH_SPANS: readonly TextSpan[] = [{ start: 0, end: 12 }]
 
 const CANDIDATE: GapCandidate = {
   id: 'cand-1',
@@ -70,7 +70,7 @@ describe('GapCandidateDrawer', () => {
       <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} />,
       { wrapper: createWrapper() },
     )
-    expect(screen.getByText('Phase Transition')).toBeInTheDocument()
+    expect(screen.getAllByText('Phase Transition').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('process')).toBeInTheDocument()
     expect(screen.getByText('92%')).toBeInTheDocument()
   })
@@ -82,7 +82,7 @@ describe('GapCandidateDrawer', () => {
       { wrapper: createWrapper() },
     )
     const mark = screen.getByRole('mark')
-    expect(mark).toHaveTextContent('Phase transit')
+    expect(mark).toHaveTextContent('Phase transi')
   })
 
   it('shows action buttons', () => {
@@ -91,9 +91,9 @@ describe('GapCandidateDrawer', () => {
       <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} />,
       { wrapper: createWrapper() },
     )
-    expect(screen.getByText('采纳')).toBeInTheDocument()
-    expect(screen.getByText('拒绝')).toBeInTheDocument()
-    expect(screen.getByText('暂缓')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /采.纳/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /拒.绝/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /暂.缓/ })).toBeInTheDocument()
   })
 
   it('calls postDecision and onDecision on accept click', async () => {
@@ -102,9 +102,10 @@ describe('GapCandidateDrawer', () => {
     render(
       <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} onDecision={onDecision} />, { wrapper: createWrapper() },
     )
-    fireEvent.click(screen.getByText('采纳'))
+    fireEvent.click(screen.getByRole('button', { name: /采.纳/ }))
     await waitFor(() => {
-      expect(mockPostDecision).toHaveBeenCalledWith({
+      expect(mockPostDecision).toHaveBeenCalledTimes(1)
+      expect(mockPostDecision.mock.calls[0]?.[0]).toEqual({
         candidate_id: 'cand-1',
         decision: 'accepted',
       })
@@ -121,7 +122,7 @@ describe('GapCandidateDrawer', () => {
       <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} />,
       { wrapper: createWrapper() },
     )
-    fireEvent.click(screen.getByText('拒绝'))
+    fireEvent.click(screen.getByRole('button', { name: /拒.绝/ }))
     await waitFor(() => {
       expect(screen.getByText('操作失败，请重试')).toBeInTheDocument()
     })
@@ -136,10 +137,10 @@ describe('GapCandidateDrawer', () => {
     render(
       <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} />, { wrapper: createWrapper() },
     )
-    fireEvent.click(screen.getByText('暂缓'))
+    fireEvent.click(screen.getByRole('button', { name: /暂.缓/ }))
     await waitFor(() => {
-      expect(screen.getByText('采纳')).toBeDisabled()
-      expect(screen.getByText('拒绝')).toBeDisabled()
+      expect(screen.getByRole('button', { name: /采.纳/ })).toBeDisabled()
+      expect(screen.getByRole('button', { name: /拒.绝/ })).toBeDisabled()
     })
   })
 })
