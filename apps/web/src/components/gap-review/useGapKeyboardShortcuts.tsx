@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal } from 'antd'
 
-import type { GapCandidate, GapDecision } from '@/lib/gap-decisions/types'
+import type { GapCandidate } from '@/lib/gap-decisions/types'
 import { GAP_REVIEW_SHORTCUTS } from '@/lib/gap-decisions/types'
 import {
   buildDecisionPayload,

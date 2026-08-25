@@ -29,8 +29,8 @@ describe('buildDecisionPayload', () => {
   })
 
   it('preserves decision type', () => {
-    expect(buildDecisionPayload([CANDIDATE_A], 'deferred').decisions[0].decision).toBe('deferred')
-    expect(buildDecisionPayload([CANDIDATE_A], 'rejected').decisions[0].decision).toBe('rejected')
+    expect(buildDecisionPayload([CANDIDATE_A], 'deferred').decisions[0]!.decision).toBe('deferred')
+    expect(buildDecisionPayload([CANDIDATE_A], 'rejected').decisions[0]!.decision).toBe('rejected')
   })
 })
 
