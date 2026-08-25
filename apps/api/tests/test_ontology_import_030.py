@@ -32,6 +32,7 @@ from nfm_db.services.extraction_prompt import (
 )
 from nfm_db.services.ontology_import import (
     build_enhanced_layer,
+    build_individuals_layer,
     load_enhanced_document,
     merge_ontology_data,
 )
@@ -79,7 +80,9 @@ class TestParity:
         assert stats["classes"] >= 139
         assert stats["object_properties"] == 162
         assert stats["datatype_properties"] == 279
-        assert stats["individuals_not_imported"] == 755
+        assert stats["individuals_total"] == 755
+        assert stats["individuals_imported"] > 600
+        assert stats["individuals_empty_dropped"] > 0
 
     def test_every_class_has_uri_and_label(self, layer):
         missing_uri = [k for k, v in layer["classes"].items() if not v["uri"]]
@@ -116,6 +119,7 @@ class TestAdditivity:
             "classes",
             "object_properties",
             "datatype_properties",
+            "individuals",
             "enhanced_ontology_source",
         ):
             assert key in merged
@@ -160,12 +164,109 @@ class TestBudget:
     def test_merged_payload_size_reasonable(self, layer):
         merged = merge_ontology_data(_BASE_PAYLOAD, layer)
         size = len(json.dumps(merged, ensure_ascii=False))
-        assert size < 200_000, f"merged payload ballooned to {size} bytes"
+        # Individuals add ~300KB of DB-only JSONB (excluded from prompt).
+        # With individuals: ~400KB.  Without: ~100KB.
+        assert size < 500_000, f"merged payload ballooned to {size} bytes"
 
 
 # ---------------------------------------------------------------------------
 # Script guard-rails (pure-function level; DB flow covered by dry-run docs)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Gate 4: individuals projection (NFM-3716)
+# ---------------------------------------------------------------------------
+
+
+class TestIndividualsProjection:
+    def test_individuals_count_matches(self, enhanced_doc):
+        """build_individuals_layer returns all non-empty individuals."""
+        individuals, counts = build_individuals_layer(enhanced_doc)
+        assert counts["total"] == 755
+        assert counts["imported"] > 600
+        assert counts["empty_shells_dropped"] > 0
+        assert counts["with_numeric_values"] > 300
+
+    def test_empty_shells_dropped(self, enhanced_doc):
+        """owl:NamedIndividual entries with no data are excluded."""
+        individuals, _ = build_individuals_layer(enhanced_doc)
+        for key, rec in individuals.items():
+            assert rec["description"] or rec["source"] or rec["properties"], (
+                f"{key} has no description, source, or properties — should be dropped"
+            )
+
+    def test_shape_a_normalized(self, enhanced_doc):
+        """OWL-style individuals (with uri) project correctly."""
+        individuals, _ = build_individuals_layer(enhanced_doc)
+        # U10Zr_VacancyDiffusion is a known Shape A individual
+        rec = individuals["U10Zr_VacancyDiffusion"]
+        assert rec["iri"] != ""
+        assert rec["type"] == "VacancyDiffusion"
+        assert len(rec["properties"]) > 0
+
+    def test_shape_b_normalized(self, enhanced_doc):
+        """Textbook-style individuals project with description + properties."""
+        individuals, _ = build_individuals_layer(enhanced_doc)
+        # Find a textbook-style individual with description
+        found = False
+        for _key, rec in individuals.items():
+            if rec["description"] and rec["properties"]:
+                found = True
+                assert isinstance(rec["type"], str)
+                assert isinstance(rec["label"], str)
+                for prop in rec["properties"]:
+                    assert "name" in prop
+                    assert "value" in prop
+                break
+        assert found, "No Shape B individual with both description and properties found"
+
+    def test_shape_c_rdf_type_resolved(self, enhanced_doc):
+        """RDF-style individuals (rdf:type array) get their type resolved."""
+        individuals, _ = build_individuals_layer(enhanced_doc)
+        # CoCrFeMnNi_DiffusionCoefficient_Cu_001 has rdf:type, not type
+        rec = individuals["CoCrFeMnNi_DiffusionCoefficient_Cu_001"]
+        assert rec["type"] == "DiffusionCoefficient"
+        assert len(rec["properties"]) > 0
+
+    def test_uniform_record_shape(self, enhanced_doc):
+        """Every projected individual has the same top-level keys."""
+        individuals, _ = build_individuals_layer(enhanced_doc)
+        expected_keys = {"iri", "type", "label", "description", "properties", "source"}
+        for key, rec in individuals.items():
+            assert set(rec.keys()) == expected_keys, (
+                f"{key} has keys {set(rec.keys())}, expected {expected_keys}"
+            )
+
+    def test_individuals_in_layer_output(self, layer):
+        """build_enhanced_layer includes individuals in its output."""
+        assert "individuals" in layer
+        assert isinstance(layer["individuals"], dict)
+        assert len(layer["individuals"]) > 600
+
+    def test_individuals_excluded_from_prompt(self, layer):
+        """Individuals do NOT appear in the extraction prompt (AC-4)."""
+        merged = merge_ontology_data(_BASE_PAYLOAD, layer)
+        for builder in (
+            _build_ontology_context_block,
+            _build_ontology_categories_block,
+            _build_ontology_standard_names_block,
+        ):
+            assert builder(merged) == builder(_BASE_PAYLOAD)
+
+    def test_merge_guard_catches_individuals(self, layer):
+        """Re-import guard also catches individuals key (AC-5)."""
+        merged = merge_ontology_data(_BASE_PAYLOAD, layer)
+        with pytest.raises(ValueError, match="already contains"):
+            merge_ontology_data(merged, layer)
+
+    def test_counts_in_enhanced_source(self, layer):
+        """enhanced_ontology_source.counts has individuals breakdown."""
+        counts = layer["enhanced_ontology_source"]["counts"]
+        assert "individuals_total" in counts
+        assert "individuals_imported" in counts
+        assert "individuals_empty_dropped" in counts
+        assert "individuals_with_values" in counts
 
 
 class TestScriptGuards:
