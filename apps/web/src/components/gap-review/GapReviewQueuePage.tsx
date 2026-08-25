@@ -11,15 +11,32 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Table, Tag, Button, Space, Card, Empty } from 'antd'
+import { Table, Tag, Button, Space, Card, Empty, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { GapReviewFilters } from './GapReviewFilters'
 import { ConfidenceMeter } from './ConfidenceMeter'
+import { GapCandidateDrawer } from './GapCandidateDrawer'
+import { BulkActionToolbar } from './BulkActionToolbar'
 import ErrorEmptyState from '@/components/v4-extraction/error-empty-state'
 import { fetchGapCandidates, PAGE_SIZE } from '@/lib/reference-gaps/gap-candidates-api'
 import { DEFAULT_FILTERS } from '@/lib/reference-gaps/gap-candidates'
-import type { GapCandidateFilters } from '@/lib/reference-gaps/gap-candidates'
+import type { GapCandidate, GapCandidateFilters } from '@/lib/reference-gaps/gap-candidates'
+import type { GapCandidate as BulkGapCandidate } from '@/lib/gap-decisions/types'
+import type { GapCandidate as DrawerGapCandidate } from '@/lib/reference-gaps/types'
+
+function toBulkItem(c: GapCandidate): BulkGapCandidate {
+  return { candidate_id: c.id, confidence: c.confidence }
+}
+
+function toDrawerCandidate(c: GapCandidate): DrawerGapCandidate {
+  return {
+    ...c,
+    source_document: c.source_doc,
+    match_spans: c.matched_spans,
+    suggested_properties: [],
+  }
+}
 
 function parseFilters(searchParams: URLSearchParams): GapCandidateFilters {
   return {
@@ -46,6 +63,10 @@ export function GapReviewQueuePage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [page, setPage] = useState(1)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [drawerCandidate, setDrawerCandidate] = useState<DrawerGapCandidate | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [messageApi, contextHolder] = message.useMessage()
 
   const filters = useMemo(() => parseFilters(searchParams), [searchParams])
 
@@ -78,6 +99,49 @@ export function GapReviewQueuePage() {
   const handlePageChange = useCallback((newPage: number) => {
     setPage(newPage)
   }, [])
+
+  const candidates = data?.items ?? []
+
+  const handleRowClick = useCallback((record: GapCandidate) => {
+    setDrawerCandidate(toDrawerCandidate(record))
+    setDrawerOpen(true)
+  }, [])
+
+  const handleDrawerClose = useCallback(() => {
+    setDrawerOpen(false)
+    setDrawerCandidate(null)
+  }, [])
+
+  const handleDrawerDecision = useCallback(
+    (_candidateId: string, _decision: string) => {
+      setDrawerOpen(false)
+      setDrawerCandidate(null)
+      setSelectedRowKeys([])
+      refetch()
+    },
+    [refetch],
+  )
+
+  const handleBulkSuccess = useCallback(() => {
+    setSelectedRowKeys([])
+    refetch()
+    messageApi.success('Bulk decision submitted')
+  }, [refetch, messageApi])
+
+  const handleBulkError = useCallback(
+    (msg: string) => {
+      messageApi.error(msg)
+    },
+    [messageApi],
+  )
+
+  const rowSelection = useMemo(
+    () => ({
+      selectedRowKeys,
+      onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
+    }),
+    [selectedRowKeys],
+  )
 
   const columns = useMemo(
     () => [
@@ -131,6 +195,7 @@ export function GapReviewQueuePage() {
 
   return (
     <div style={{ padding: 24 }}>
+      {contextHolder}
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <Card
           title="Gap Review Queue"
@@ -155,6 +220,15 @@ export function GapReviewQueuePage() {
             title="Failed to load gap candidates"
             description={error instanceof Error ? error.message : undefined}
             onRetry={() => refetch()}
+          />
+        )}
+
+        {selectedRowKeys.length > 0 && (
+          <BulkActionToolbar
+            selectedItems={candidates.filter((c) => selectedRowKeys.includes(c.id)).map(toBulkItem)}
+            confidenceThreshold={0.7}
+            onSuccess={handleBulkSuccess}
+            onError={handleBulkError}
           />
         )}
 
@@ -184,8 +258,10 @@ export function GapReviewQueuePage() {
 
         <Table
           columns={columns}
-          dataSource={data?.items ?? []}
+          dataSource={candidates}
           rowKey="id"
+          rowSelection={rowSelection}
+          onRow={(record) => ({ onClick: () => handleRowClick(record), style: { cursor: 'pointer' } })}
           loading={isLoading}
           pagination={{
             current: page,
@@ -197,6 +273,13 @@ export function GapReviewQueuePage() {
           }}
           scroll={{ x: 1000 }}
           size="middle"
+        />
+
+        <GapCandidateDrawer
+          candidate={drawerCandidate}
+          open={drawerOpen}
+          onClose={handleDrawerClose}
+          onDecision={handleDrawerDecision}
         />
       </Space>
     </div>
