@@ -72,7 +72,6 @@ def _first_label(labels: list[Any]) -> str:
     return ""
 
 
-
 # -- Individuals normalisation (NFM-3716) -----------------------------------
 
 
@@ -149,9 +148,17 @@ def _extract_numeric_properties(
     result: list[dict[str, Any]] = []
     _SKIP_KEYS = frozenset(
         {
-            "uri", "type", "label", "rdfs:label", "description",
-            "source", "properties", "operatesIn", "validFor",
-            "rdf:type", "rdfs:comment",
+            "uri",
+            "type",
+            "label",
+            "rdfs:label",
+            "description",
+            "source",
+            "properties",
+            "operatesIn",
+            "validFor",
+            "rdf:type",
+            "rdfs:comment",
         }
     )
     # Shape A: flat fields / sub-dicts with numeric structure
@@ -163,13 +170,15 @@ def _extract_numeric_properties(
         elif isinstance(val, dict):
             numeric_val = val.get("average") or val.get("max") or val.get("min") or val.get("value")
             if numeric_val is not None:
-                result.append({
-                    "name": key,
-                    "value": numeric_val,
-                    "unit": str(val.get("unit", "")),
-                    "source": str(val.get("source", "")),
-                    "confidence": str(val.get("confidence", "")),
-                })
+                result.append(
+                    {
+                        "name": key,
+                        "value": numeric_val,
+                        "unit": str(val.get("unit", "")),
+                        "source": str(val.get("source", "")),
+                        "confidence": str(val.get("confidence", "")),
+                    }
+                )
 
     # Shape B: properties dict/list
     props = individual.get("properties")
@@ -178,40 +187,52 @@ def _extract_numeric_properties(
             if isinstance(pval, dict):
                 pval_value = pval.get("value")
                 if pval_value is not None and any(c.isdigit() for c in str(pval_value)):
-                    result.append({
-                        "name": pname,
-                        "value": pval_value,
-                        "unit": str(pval.get("unit", "")),
-                        "source": str(pval.get("source", "")),
-                        "confidence": str(pval.get("confidence", "")),
-                    })
+                    result.append(
+                        {
+                            "name": pname,
+                            "value": pval_value,
+                            "unit": str(pval.get("unit", "")),
+                            "source": str(pval.get("source", "")),
+                            "confidence": str(pval.get("confidence", "")),
+                        }
+                    )
     elif isinstance(props, list):
         for prop in props:
             if isinstance(prop, dict):
                 prop_value = prop.get("value")
                 if prop_value is not None and any(c.isdigit() for c in str(prop_value)):
-                    result.append({
-                        "name": prop.get("name", ""),
-                        "value": prop_value,
-                        "unit": str(prop.get("unit", "")),
-                        "source": str(prop.get("source", "")),
-                        "confidence": str(prop.get("confidence", "")),
-                    })
+                    result.append(
+                        {
+                            "name": prop.get("name", ""),
+                            "value": prop_value,
+                            "unit": str(prop.get("unit", "")),
+                            "source": str(prop.get("source", "")),
+                            "confidence": str(prop.get("confidence", "")),
+                        }
+                    )
 
     # Shape C (RDF): hasValue/hasUnit/hasConfidence/hasSource
     has_value = individual.get("hasValue")
     if has_value:
-        actual_value = has_value[0].get("value") if isinstance(has_value, list) else has_value.get("value") if isinstance(has_value, dict) else has_value
+        actual_value = (
+            has_value[0].get("value")
+            if isinstance(has_value, list)
+            else has_value.get("value")
+            if isinstance(has_value, dict)
+            else has_value
+        )
         actual_unit = _rdf_field_value(individual.get("hasUnit"))
         actual_confidence = _rdf_field_value(individual.get("hasConfidence"))
         actual_source = _rdf_field_value(individual.get("hasSource"))
-        result.append({
-            "name": "value",
-            "value": actual_value,
-            "unit": str(actual_unit),
-            "source": str(actual_source),
-            "confidence": str(actual_confidence),
-        })
+        result.append(
+            {
+                "name": "value",
+                "value": actual_value,
+                "unit": str(actual_unit),
+                "source": str(actual_source),
+                "confidence": str(actual_confidence),
+            }
+        )
 
     return result
 
