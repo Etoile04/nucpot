@@ -70,7 +70,7 @@ def test_script_exists_and_is_executable():
 def test_identical_key_sets_exit_zero(env_pair):
     root, docker = env_pair(
         "DATABASE_URL=postgres://root\nREDIS_URL=redis://root\n",
-        "DATABASE_URL=postgres://docker\nREDIS_URL=redis://docker\n",
+        "DATABASE_URL=postgres://docker\nREDIS_URL=redis://docker\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
@@ -102,7 +102,7 @@ def test_extra_keys_in_docker_are_allowed(env_pair):
     """Docker-only keys (e.g. container tuning) are not drift — direction matters."""
     root, docker = env_pair(
         "DATABASE_URL=x\n",
-        "DATABASE_URL=y\nCONTAINER_ONLY_TUNABLE=z\n",
+        "DATABASE_URL=y\nCONTAINER_ONLY_TUNABLE=z\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
@@ -116,7 +116,7 @@ def test_extra_keys_in_docker_are_allowed(env_pair):
 def test_comments_and_blank_lines_are_ignored(env_pair):
     root, docker = env_pair(
         "# COMMENTED_KEY=should-be-skipped\n\nDATABASE_URL=x\n\n#ANOTHER_COMMENT=y\n",
-        "DATABASE_URL=y\n",
+        "DATABASE_URL=y\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
@@ -126,7 +126,7 @@ def test_lowercase_and_indented_lines_are_ignored(env_pair):
     """Only uppercase env-var names anchored at column 0 count as keys."""
     root, docker = env_pair(
         "lowercase_key=x\n  INDENTED_KEY=y\nREAL_KEY=z\n",
-        "REAL_KEY=z\n",
+        "REAL_KEY=z\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
@@ -136,7 +136,7 @@ def test_export_prefixed_lines_do_not_crash(env_pair):
     """`export FOO=bar` is not matched as key FOO; it must not break the run."""
     root, docker = env_pair(
         "export SHELL_STYLE=1\nREAL_KEY=z\n",
-        "REAL_KEY=z\n",
+        "REAL_KEY=z\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
@@ -179,8 +179,12 @@ def test_missing_docker_file_exits_one_with_clear_message(tmp_path: Path):
 
 
 def test_both_files_empty_exits_zero(env_pair):
-    """An empty file yields zero keys — that is in-sync, not a crash."""
-    root, docker = env_pair("", "")
+    """Root-empty, docker-only-mandatory: zero drift from root, passes sync.
+
+    NFM-3726 added a mandatory docker-only key (PAPERCLIP_BOARD_API_KEY),
+    so a truly empty docker env is no longer valid. This test validates
+    that root-empty + docker-mandatory-only is still zero-drift."""
+    root, docker = env_pair("", "PAPERCLIP_BOARD_API_KEY=dummy\n")
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, f"empty files should be in sync; stderr={result.stderr!r}"
 
@@ -193,7 +197,7 @@ def test_empty_docker_file_with_populated_root_exits_one(env_pair):
 
 
 def test_comment_only_files_exit_zero(env_pair):
-    root, docker = env_pair("# nothing here\n", "# nor here\n")
+    root, docker = env_pair("# nothing here\n", "# nor here\nPAPERCLIP_BOARD_API_KEY=dummy\n")
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
 
@@ -205,7 +209,7 @@ def test_comment_only_files_exit_zero(env_pair):
 
 def test_defaults_to_project_root_paths(tmp_path: Path, env_pair):
     """Running `./scripts/verify-env-sync.sh` with no args uses the CWD defaults."""
-    env_pair("DATABASE_URL=x\n", "DATABASE_URL=y\n")
+    env_pair("DATABASE_URL=x\n", "DATABASE_URL=y\nPAPERCLIP_BOARD_API_KEY=dummy\n")
     result = run_script(cwd=tmp_path)
     assert result.returncode == 0, result.stderr
 
@@ -262,7 +266,7 @@ def test_docker_only_keys_are_reported_but_do_not_fail(env_pair):
     """
     root, docker = env_pair(
         "DATABASE_URL=postgres://root\n",
-        "DATABASE_URL=postgres://docker\nDOCKER_ONLY_KNOB=1\n",
+        "DATABASE_URL=postgres://docker\nDOCKER_ONLY_KNOB=1\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 0, result.stderr
