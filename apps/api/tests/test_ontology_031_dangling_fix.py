@@ -9,7 +9,7 @@ Gates:
    objectProperties, and all datatypeProperties are byte-identical to
    the 0.3.0 file on ``origin/main``.  AC-4.
 3. **Class count** — 139 + 14 = 153 classes total.
-4. **Version** — metadata.version == "0.3.1".
+4. **Version** — metadata.version == "0.4.0" (bumped from 0.3.1 for NFM-3716 individuals import).
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ class TestMetadata:
         return _load_json(_ENHANCED_JSON)
 
     def test_version_is_031(self, data):
-        assert data["metadata"]["version"] == "0.3.1"
+        assert data["metadata"]["version"] == "0.4.0"
 
 
 class TestNewClassesSchema:
