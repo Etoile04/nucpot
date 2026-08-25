@@ -56,6 +56,10 @@ def upgrade() -> None:
             nullable=False,
             comment="extraction_jobs.id the rerun was bound to.",
         ),
+        sa.ForeignKeyConstraint(
+            ["job_id"],
+            ["extraction_jobs.id"],
+        ),
         sa.Column(
             "step_name",
             sa.Text(),
