@@ -54,26 +54,6 @@ export function useGapKeyboardShortcuts({
 
   const closeOverlay = useCallback(() => setShowOverlay(false), [])
 
-  const executeForSelected = useCallback(
-    async (decision: GapDecision) => {
-      if (loadingRef.current) return
-      const selected = visibleItems.filter((c) => selectedIds.has(c.candidate_id))
-      if (selected.length === 0) return
-
-      loadingRef.current = true
-      try {
-        const payload = buildDecisionPayload(selected, decision)
-        await submitBulkDecisions(payload)
-        onSuccess()
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Bulk operation failed'
-        onError(msg)
-      } finally {
-        loadingRef.current = false
-      }
-    },
-    [visibleItems, selectedIds, onSuccess, onError],
-  )
 
   const executeAcceptAllVisible = useCallback(async () => {
     if (loadingRef.current) return

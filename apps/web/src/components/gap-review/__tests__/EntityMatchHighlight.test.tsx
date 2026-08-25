@@ -15,7 +15,7 @@ describe('EntityMatchHighlight', () => {
   })
 
   it('highlights a single span', () => {
-    const spans: readonly TextSpan[] = [{ start: 4, end: 19 }]
+    const spans: readonly TextSpan[] = [{ start: 4, end: 20 }]
     render(<EntityMatchHighlight text={text} matchSpans={spans} />)
     const mark = screen.getByRole('mark')
     expect(mark).toHaveTextContent('phase transition')
@@ -23,8 +23,8 @@ describe('EntityMatchHighlight', () => {
 
   it('highlights multiple non-overlapping spans', () => {
     const spans: readonly TextSpan[] = [
-      { start: 4, end: 19 },
-      { start: 28, end: 32 },
+      { start: 4, end: 20 },
+      { start: 24, end: 29 },
     ]
     render(<EntityMatchHighlight text={text} matchSpans={spans} />)
     const marks = screen.getAllByRole('mark')
@@ -35,8 +35,8 @@ describe('EntityMatchHighlight', () => {
 
   it('merges overlapping spans into one highlight', () => {
     const spans: readonly TextSpan[] = [
-      { start: 4, end: 15 },
-      { start: 10, end: 19 },
+      { start: 4, end: 16 },
+      { start: 10, end: 20 },
     ]
     render(<EntityMatchHighlight text={text} matchSpans={spans} />)
     const marks = screen.getAllByRole('mark')
