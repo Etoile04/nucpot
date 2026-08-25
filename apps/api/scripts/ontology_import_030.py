@@ -63,10 +63,10 @@ from nfm_db.services.ontology_import import (  # noqa: E402
 )
 
 DEFAULT_CHANGELOG = (
-    "ontology 0.3.x: import enhanced material ontology (139+ classes, "
+    "ontology 0.3.x→0.4.0: import enhanced material ontology (139+ classes, "
     "162 objectProperties, 279 datatypeProperties) as additive classes "
-    "layer; extraction keys unchanged (NFM-3478 前置治理 Step 1). "
-    "Individuals intentionally not imported (instance data, not schema)."
+    "layer; normalize and import 665+ individuals (NFM-3716); "
+    "extraction keys unchanged (NFM-3478 前置治理 Step 1)."
 )
 
 
@@ -151,8 +151,10 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
         print(
             f"Layer: {counts['classes']} classes, "
             f"{counts['object_properties']} objectProperties, "
-            f"{counts['datatype_properties']} datatypeProperties "
-            f"({counts['individuals_not_imported']} individuals not imported)"
+            f"{counts['datatype_properties']} datatypeProperties, "
+            f"{counts['individuals_imported']} individuals "
+            f"({counts['individuals_empty_dropped']} empty dropped, "
+            f"{counts['individuals_with_values']} with values)"
         )
         print(f"Merged payload: {len(json.dumps(merged))} bytes, keys={list(merged.keys())}")
 
