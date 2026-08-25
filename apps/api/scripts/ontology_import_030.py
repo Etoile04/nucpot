@@ -55,19 +55,32 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 
 from nfm_db.models.ontology_version import OntologyVersion  # noqa: E402
 from nfm_db.models.user import User  # noqa: E402
+from nfm_db.schemas.ontofuel_ontology import MaterialOntologyDocument  # noqa: E402
 from nfm_db.services.ontology_import import (  # noqa: E402
     build_enhanced_layer,
     load_enhanced_document,
     merge_ontology_data,
 )
 
-TARGET_VERSION = "0.3.0"
 DEFAULT_CHANGELOG = (
-    "ontology 0.3.0: import enhanced material ontology (139 classes, "
+    "ontology 0.3.x: import enhanced material ontology (139+ classes, "
     "162 objectProperties, 279 datatypeProperties) as additive classes "
     "layer; extraction keys unchanged (NFM-3478 前置治理 Step 1). "
     "Individuals intentionally not imported (instance data, not schema)."
 )
+
+
+def _target_version(doc: MaterialOntologyDocument) -> str:
+    """Derive the import target version from the enhanced JSON metadata.
+
+    The script never overwrites an existing row; deriving the version
+    from the file means each ontology file revision imports as its own
+    draft without editing this script (NFM-3715 follow-up).
+    """
+    v = doc.metadata.version
+    if not v:
+        raise ValueError("enhanced JSON metadata.version missing — cannot derive target version")
+    return str(v)
 
 
 async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
@@ -83,15 +96,19 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
     engine = create_async_engine(db_url)
 
     async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        # --- Load enhanced doc first: it defines the target version ------
+        doc = load_enhanced_document()
+        target_version = _target_version(doc)
+
         # --- Guards -------------------------------------------------------
         existing = (
             await session.execute(
-                select(OntologyVersion).where(OntologyVersion.version == TARGET_VERSION)
+                select(OntologyVersion).where(OntologyVersion.version == target_version)
             )
         ).scalar_one_or_none()
         if existing is not None:
             print(
-                f"REFUSED: ontology version {TARGET_VERSION} already exists "
+                f"REFUSED: ontology version {target_version} already exists "
                 f"(id={existing.id}, status={existing.status}). Inspect it "
                 "via GET /ontology/versions — this script never overwrites."
             )
@@ -126,7 +143,6 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
                 return 2
 
         # --- Build merged payload ------------------------------------------
-        doc = load_enhanced_document()
         layer = build_enhanced_layer(doc)
         merged = merge_ontology_data(base.ontology_data, layer)
 
@@ -145,7 +161,7 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
             return 0
 
         draft = OntologyVersion(
-            version=TARGET_VERSION,
+            version=target_version,
             status="draft",
             changelog=DEFAULT_CHANGELOG,
             ontology_data=merged,
@@ -154,7 +170,7 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
         session.add(draft)
         await session.commit()
         print(
-            f"CREATED draft: version=0.3.0 id={draft.id} "
+            f"CREATED draft: version={target_version} id={draft.id} "
             f"created_by={created_by} — review then publish via API "
             f"(changelog required)."
         )
