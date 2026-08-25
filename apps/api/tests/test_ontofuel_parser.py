@@ -4,7 +4,7 @@ TDD RED phase: these tests define the contract for ontofuel_ontology models
 and ontofuel_parser functions.
 
 Acceptance criteria counts from source data:
-- material_ontology_enhanced.json: 139 classes, 755 individuals,
+- material_ontology_enhanced.json: 153 classes, 755 individuals,
   162 object properties, 279 datatype properties
 - nvl_ontology_data.json: 927 nodes, 1061 relationships
 
@@ -72,11 +72,11 @@ class TestParseMaterialOntology:
     def test_metadata_parsed(self, material_doc: MaterialOntologyDocument):
         meta = material_doc.metadata
         assert meta.name == "Imported Ontology"
-        assert meta.version == "1.10.5.1"
+        assert meta.version == "0.3.1"
         assert meta.source != ""
 
     def test_class_count(self, material_doc: MaterialOntologyDocument):
-        assert len(material_doc.classes) == 139
+        assert len(material_doc.classes) == 153
 
     def test_individual_count(self, material_doc: MaterialOntologyDocument):
         assert len(material_doc.individuals) == 755
@@ -148,7 +148,7 @@ class TestValidateOntologyStats:
     def test_stats_counts(self, material_doc: MaterialOntologyDocument):
         stats = validate_ontology_stats(material_doc)
         assert stats == {
-            "classes": 139,
+            "classes": 153,
             "individuals": 755,
             "object_properties": 162,
             "data_properties": 279,
