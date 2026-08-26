@@ -56,9 +56,26 @@ const ALL_ENTRIES: ReadonlyArray<AuditEntry> = [ENTRY_1, ENTRY_2, ENTRY_3]
 
 const FIXTURE_DATA: AuditLogResponse = {
   items: ALL_ENTRIES,
-  total: 3,
-  page: 1,
-  limit: 50,
+  next_cursor: 'eyJpZCI6ImF1ZGl0LTMifQ==',
+  prev_cursor: null,
+}
+
+const FIXTURE_FIRST_PAGE: AuditLogResponse = {
+  items: ALL_ENTRIES,
+  next_cursor: 'eyJpZCI6ImF1ZGl0LTMifQ==',
+  prev_cursor: null,
+}
+
+const FIXTURE_MIDDLE_PAGE: AuditLogResponse = {
+  items: [ENTRY_2, ENTRY_3],
+  next_cursor: 'eyJpZCI6ImF1ZGl0LTEifQ==',
+  prev_cursor: 'eyJwcmV2IjoiYXVkaXQtMyJ9',
+}
+
+const FIXTURE_LAST_PAGE: AuditLogResponse = {
+  items: [ENTRY_1],
+  next_cursor: null,
+  prev_cursor: 'eyJwcmV2IjoiYXVkaXQtMiJ9',
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -92,27 +109,18 @@ describe('DecisionAuditLog', () => {
     render(<DecisionAuditLog initialData={FIXTURE_DATA} />)
     expect(screen.getAllByText('doi:10.1016/j.jnucmat.2020.01.001')[0]).toBeDefined()
     expect(screen.getAllByText('handbook-v3.pdf')[0]).toBeDefined()
-    // ENTRY_3 has empty source_document, should show dash
     const dashes = screen.getAllByText('—')
     expect(dashes.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders total count', () => {
-    render(<DecisionAuditLog initialData={FIXTURE_DATA} />)
-    // The count format from the component
-    expect(screen.getAllByText('共 3 条')[0]).toBeDefined()
-  })
-
   it('is read-only: no edit/delete/action buttons', () => {
     render(<DecisionAuditLog initialData={FIXTURE_DATA} />)
-    // Should NOT have action buttons like the ReviewQueueTable
     expect(screen.queryByText('action')).toBeNull()
   })
 
   it('shows empty state when no entries', () => {
-    const emptyData: AuditLogResponse = { items: [], total: 0, page: 1, limit: 50 }
+    const emptyData: AuditLogResponse = { items: [], next_cursor: null, prev_cursor: null }
     render(<DecisionAuditLog initialData={emptyData} />)
-    // Should show some empty state text (check for table existing but empty)
     expect(screen.getByRole('table')).toBeDefined()
   })
 
@@ -124,8 +132,43 @@ describe('DecisionAuditLog', () => {
 
   it('renders date inputs for date range filter', () => {
     render(<DecisionAuditLog initialData={FIXTURE_DATA} />)
-    // Labels for date range are always present
     expect(screen.getAllByText('开始日期')[0]).toBeDefined()
     expect(screen.getAllByText('结束日期')[0]).toBeDefined()
+  })
+
+  it('shows pagination when next_cursor is present', () => {
+    render(<DecisionAuditLog initialData={FIXTURE_FIRST_PAGE} />)
+    // Should show next button enabled
+    expect(screen.getByLabelText('下一页')).toBeDefined()
+  })
+
+  it('shows first page button disabled when prev_cursor is null', () => {
+    render(<DecisionAuditLog initialData={FIXTURE_FIRST_PAGE} />)
+    const firstBtn = screen.getByLabelText('首页')
+    expect(firstBtn).toBeDisabled()
+    const prevBtn = screen.getByLabelText('上一页')
+    expect(prevBtn).toBeDisabled()
+  })
+
+  it('enables prev/first buttons when prev_cursor exists', () => {
+    render(<DecisionAuditLog initialData={FIXTURE_MIDDLE_PAGE} />)
+    const firstBtn = screen.getByLabelText('首页')
+    expect(firstBtn).not.toBeDisabled()
+    const prevBtn = screen.getByLabelText('上一页')
+    expect(prevBtn).not.toBeDisabled()
+  })
+
+  it('disables next button when next_cursor is null', () => {
+    render(<DecisionAuditLog initialData={FIXTURE_LAST_PAGE} />)
+    const nextBtn = screen.getByLabelText('下一页')
+    expect(nextBtn).toBeDisabled()
+  })
+
+  it('hides pagination entirely when both cursors are null', () => {
+    const singlePageData: AuditLogResponse = { items: ALL_ENTRIES, next_cursor: null, prev_cursor: null }
+    render(<DecisionAuditLog initialData={singlePageData} />)
+    expect(screen.queryByLabelText('下一页')).toBeNull()
+    expect(screen.queryByLabelText('上一页')).toBeNull()
+    expect(screen.queryByLabelText('首页')).toBeNull()
   })
 })

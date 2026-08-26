@@ -1,36 +1,28 @@
 /**
  * Tests for useAuditLogFilters — URL param sync logic.
  *
- * We test the pure functions (parseFilters, buildParams, parsePage)
+ * We test the pure functions (parseFilters, buildParams, parseCursor)
  * directly since they contain all the logic. The hook itself
  * just wraps useSearchParams + history.replaceState.
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseFilters, buildParams, parsePage } from '../useAuditLogFilters'
+import { parseFilters, buildParams, parseCursor } from '../useAuditLogFilters'
 import type { AuditLogFilters } from '@/lib/reference-gaps/types'
 
-// ── parsePage ──────────────────────────────────────────────────────
+// ── parseCursor ────────────────────────────────────────────────
 
-describe('parsePage', () => {
-  it('defaults to 1 when no param', () => {
-    expect(parsePage(new URLSearchParams())).toBe(1)
+describe('parseCursor', () => {
+  it('returns undefined when no param', () => {
+    expect(parseCursor(new URLSearchParams())).toBeUndefined()
   })
 
-  it('parses a valid page number', () => {
-    expect(parsePage(new URLSearchParams('page=3'))).toBe(3)
+  it('parses a valid cursor', () => {
+    expect(parseCursor(new URLSearchParams('cursor=abc123'))).toBe('abc123')
   })
 
-  it('clamps zero to 1', () => {
-    expect(parsePage(new URLSearchParams('page=0'))).toBe(1)
-  })
-
-  it('clamps negative to 1', () => {
-    expect(parsePage(new URLSearchParams('page=-5'))).toBe(1)
-  })
-
-  it('treats NaN as 1', () => {
-    expect(parsePage(new URLSearchParams('page=abc'))).toBe(1)
+  it('returns undefined for empty cursor', () => {
+    expect(parseCursor(new URLSearchParams('cursor='))).toBeUndefined()
   })
 })
 
@@ -77,13 +69,14 @@ describe('parseFilters', () => {
 // ── buildParams ────────────────────────────────────────────────────
 
 describe('buildParams', () => {
-  it('includes page only when > 1', () => {
-    const base = new URLSearchParams()
-    const p1 = buildParams(base, {}, 1)
-    expect(p1.has('page')).toBe(false)
+  it('omits cursor when undefined (first page)', () => {
+    const result = buildParams(new URLSearchParams(), {}, undefined)
+    expect(result.has('cursor')).toBe(false)
+  })
 
-    const p2 = buildParams(base, {}, 2)
-    expect(p2.get('page')).toBe('2')
+  it('includes cursor when provided', () => {
+    const result = buildParams(new URLSearchParams(), {}, 'abc123')
+    expect(result.get('cursor')).toBe('abc123')
   })
 
   it('sets all filter params', () => {
@@ -94,7 +87,7 @@ describe('buildParams', () => {
       decision: 'accepted',
       entity_name: 'UO2',
     }
-    const result = buildParams(new URLSearchParams(), filters, 1)
+    const result = buildParams(new URLSearchParams(), filters, undefined)
     expect(result.get('reviewer_id')).toBe('user1')
     expect(result.get('date_from')).toBe('2026-08-01')
     expect(result.get('date_to')).toBe('2026-08-25')
@@ -104,7 +97,7 @@ describe('buildParams', () => {
 
   it('removes undefined filter values', () => {
     const prev = new URLSearchParams('reviewer_id=old&decision=rejected')
-    const result = buildParams(prev, {}, 1)
+    const result = buildParams(prev, {}, undefined)
     expect(result.has('reviewer_id')).toBe(false)
     expect(result.has('decision')).toBe(false)
   })
@@ -115,9 +108,19 @@ describe('buildParams', () => {
       date_from: '2026-08-01',
       decision: 'accepted',
     }
-    const built = buildParams(new URLSearchParams(), filters, 3)
-    expect(built.get('page')).toBe('3')
+    const built = buildParams(new URLSearchParams(), filters, 'cur-xyz')
+    expect(built.get('cursor')).toBe('cur-xyz')
     const parsed = parseFilters(built)
     expect(parsed).toEqual(filters)
+  })
+
+  it('round-trips: buildParams → parseCursor preserves cursor', () => {
+    const built = buildParams(new URLSearchParams(), {}, 'my-cursor')
+    expect(parseCursor(built)).toBe('my-cursor')
+  })
+
+  it('round-trips without cursor: parseCursor returns undefined', () => {
+    const built = buildParams(new URLSearchParams(), {}, undefined)
+    expect(parseCursor(built)).toBeUndefined()
   })
 })

@@ -2,10 +2,11 @@
  * DecisionAuditLog — read-only table of immutable decision history.
  *
  * Displays audit entries with filters (reviewer, date range, decision type,
- * entity name) and pagination. All filters sync to URL params.
+ * entity name) and cursor-based pagination. All filters sync to URL params.
  * No edit/delete actions — this is an immutable ledger.
  *
  * Spec: NFM-3708, UX ref NFM-3682 §3.4/§7
+ * NFM-3750: migrated from offset-based to cursor-based pagination.
  */
 
 'use client'
@@ -38,10 +39,6 @@ function formatDateTime(iso: string): string {
         minute: '2-digit',
         second: '2-digit',
       })
-}
-
-function totalPages(pageSize: number, total: number): number {
-  return Math.ceil(total / pageSize)
 }
 
 // ── Sub-components ───────────────────────────────────────────────────
@@ -139,19 +136,19 @@ function FilterBar({
 
 function AuditTable({
   entries,
-  total,
-  page,
-  pageSize,
-  onPageChange,
+  nextCursor,
+  prevCursor,
+  onPrev,
+  onNext,
+  onFirst,
 }: {
   readonly entries: ReadonlyArray<AuditEntry>
-  readonly total: number
-  readonly page: number
-  readonly pageSize: number
-  readonly onPageChange: (page: number) => void
+  readonly nextCursor: string | null
+  readonly prevCursor: string | null
+  readonly onPrev: () => void
+  readonly onNext: () => void
+  readonly onFirst: () => void
 }) {
-  const pages = totalPages(pageSize, total)
-
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
       {/* Desktop table */}
@@ -234,47 +231,37 @@ function AuditTable({
         </div>
       )}
 
-      {/* Pagination */}
-      {total > 0 && (
-        <div className="px-4 py-3 bg-gray-900 border-t border-gray-700 flex items-center justify-between">
-          <span className="text-sm text-gray-400">共 {total} 条</span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => onPageChange(page - 1)}
-              className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              aria-label="上一页"
-            >
-              ‹
-            </button>
-            {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => onPageChange(p)}
-                className={[
-                  'px-3 py-1 text-sm rounded border transition-colors',
-                  p === page
-                    ? 'border-emerald-500 bg-emerald-600/20 text-emerald-400'
-                    : 'border-gray-600 text-gray-400 hover:bg-gray-700',
-                ].join(' ')}
-                aria-label={`第 ${p} 页`}
-                aria-current={p === page ? 'page' : undefined}
-              >
-                {p}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled={page >= pages}
-              onClick={() => onPageChange(page + 1)}
-              className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              aria-label="下一页"
-            >
-              ›
-            </button>
-          </div>
+      {/* Cursor-based pagination */}
+      {(prevCursor !== null || nextCursor !== null) && entries.length > 0 && (
+        <div className="px-4 py-3 bg-gray-900 border-t border-gray-700 flex items-center justify-end gap-1">
+          <button
+            type="button"
+            disabled={prevCursor === null}
+            onClick={onFirst}
+            className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            aria-label="首页"
+            title="回到首页"
+          >
+            «
+          </button>
+          <button
+            type="button"
+            disabled={prevCursor === null}
+            onClick={onPrev}
+            className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            aria-label="上一页"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            disabled={nextCursor === null}
+            onClick={onNext}
+            className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            aria-label="下一页"
+          >
+            ›
+          </button>
         </div>
       )}
     </div>
@@ -289,7 +276,7 @@ export interface DecisionAuditLogProps {
 }
 
 export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
-  const { filters, page, pageSize, decisionOptions, setPage, setFilters, resetFilters } =
+  const { filters, cursor, pageSize, decisionOptions, setCursor, setFilters, resetFilters } =
     useAuditLogFilters()
 
   const [data, setData] = useState<AuditLogResponse | null>(initialData ?? null)
@@ -300,7 +287,7 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
     setLoading(true)
     setError(null)
     try {
-      const result = await getAuditLog(page, pageSize, filters)
+      const result = await getAuditLog(cursor, pageSize, filters)
       setData(result)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '加载审核日志失败'
@@ -308,7 +295,7 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, filters])
+  }, [cursor, pageSize, filters])
 
   useEffect(() => {
     if (initialData) return // testing mode — skip fetch
@@ -320,7 +307,8 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
   }, [setFilters])
 
   const entries: ReadonlyArray<AuditEntry> = data?.items ?? []
-  const total = data?.total ?? 0
+  const nextCursor = data?.next_cursor ?? null
+  const prevCursor = data?.prev_cursor ?? null
 
   return (
     <section aria-label="决策审核日志">
@@ -348,10 +336,11 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
       <div className="relative">
         <AuditTable
           entries={entries}
-          total={total}
-          page={page}
-          pageSize={pageSize}
-          onPageChange={setPage}
+          nextCursor={nextCursor}
+          prevCursor={prevCursor}
+          onPrev={() => setCursor(prevCursor ?? undefined)}
+          onNext={() => setCursor(nextCursor ?? undefined)}
+          onFirst={() => setCursor(undefined)}
         />
 
         {/* Loading overlay */}

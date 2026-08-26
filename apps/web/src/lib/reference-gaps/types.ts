@@ -98,13 +98,12 @@ export interface PostDecisionResponse {
   readonly reviewer_id: string
 }
 
-// ── Audit Log page types (NFM-3708) ─────────────────────────────
+// ── Audit Log page types (NFM-3708, NFM-3750 cursor pagination) ─────────
 
 export interface AuditLogResponse {
   readonly items: readonly AuditEntry[]
-  readonly total: number
-  readonly page: number
-  readonly limit: number
+  readonly next_cursor: string | null
+  readonly prev_cursor: string | null
 }
 
 export interface AuditLogFilters {
