@@ -29,6 +29,12 @@ from nfm_db.models.ref_gap_fill import (
 )
 from nfm_db.models.user import User
 from nfm_db.schemas.common import PaginationParams
+from nfm_db.schemas.cursor_pagination import (
+    CursorPaginatedResponse,
+    CursorPaginationParams,
+    decode_cursor,
+    encode_cursor,
+)
 from nfm_db.schemas.reference_values import (
     BulkStagingItemResult,
     BulkStagingRequest,
@@ -154,6 +160,39 @@ def _find_matching_raw(
 
 
 # ---------------------------------------------------------------------------
+# Shared filter builder
+# ---------------------------------------------------------------------------
+
+
+def _build_staging_filters(
+    status: str | None,
+    element_system: str | None,
+    phase: str | None,
+    property_name: str | None,
+    confidence: Confidence | None,
+) -> list:
+    """Build SQLAlchemy filter conditions for staging record queries."""
+    base_filter: list = []
+
+    if status is None or status == "pending":
+        base_filter.append(RefGapFillStaging.status == StagingStatus.PENDING)
+    elif status != "all":
+        status_enum = StagingStatus(status)
+        base_filter.append(RefGapFillStaging.status == status_enum)
+
+    if element_system is not None:
+        base_filter.append(RefGapFillStaging.element_system == element_system)
+    if phase is not None:
+        base_filter.append(RefGapFillStaging.phase == phase)
+    if property_name is not None:
+        base_filter.append(RefGapFillStaging.property_name == property_name)
+    if confidence is not None:
+        base_filter.append(RefGapFillStaging.confidence == confidence)
+
+    return base_filter
+
+
+# ---------------------------------------------------------------------------
 # GET /api/v1/reference-values/pending-review
 # ---------------------------------------------------------------------------
 
@@ -196,33 +235,17 @@ async def list_pending_review(
                 detail=f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}",
             )
 
+    # Validate status parameter
+    if status is not None:
+        valid_statuses = {"pending", "approved", "rejected", "promoted", "all"}
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}",
+            )
+
     # Build base filter
-    base_filter = []
-
-    # Apply status filter
-    if status is None or status == "pending":
-        # Default behavior: only pending records
-        base_filter.append(RefGapFillStaging.status == StagingStatus.PENDING)
-    elif status != "all":
-        # Filter by specific status (status is already lowercase)
-        status_enum = StagingStatus(status)
-        base_filter.append(RefGapFillStaging.status == status_enum)
-    # When status == "all", don't add any status filter
-
-    if element_system is not None:
-        base_filter.append(
-            RefGapFillStaging.element_system == element_system,
-        )
-    if phase is not None:
-        base_filter.append(RefGapFillStaging.phase == phase)
-    if property_name is not None:
-        base_filter.append(
-            RefGapFillStaging.property_name == property_name,
-        )
-    if confidence is not None:
-        base_filter.append(
-            RefGapFillStaging.confidence == confidence,
-        )
+    base_filter = _build_staging_filters(status, element_system, phase, property_name, confidence)
 
     # Count query
     count_stmt = select(func.count()).select_from(RefGapFillStaging).where(*base_filter)
@@ -248,6 +271,113 @@ async def list_pending_review(
             per_page=pagination.per_page,
         ).model_dump(),
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/reference-values/pending-review-cursor
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/reference-values/pending-review-cursor",
+    summary="Cursor-paginated staging records",
+    description="Cursor-based pagination for staging records. Stable under inserts.\n\nCursor format is opaque — use ``next_cursor``/``prev_cursor`` from the response.",
+)
+async def list_pending_review_cursor(
+    element_system: str | None = Query(default=None, max_length=50),
+    phase: str | None = Query(default=None, max_length=50),
+    property_name: str | None = Query(default=None, max_length=100),
+    confidence: Confidence | None = Query(default=None),
+    status: str | None = Query(
+        default=None,
+        description="Filter by status: pending, approved, rejected, promoted, all",
+    ),
+    cursor_params: CursorPaginationParams = Depends(CursorPaginationParams),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cursor-paginated staging records.
+
+    Same filters as the offset-based endpoint, but uses opaque cursors
+    instead of page numbers.  Ordering is ``(created_at DESC, id DESC)``.
+    """
+    # Validate status parameter
+    if status is not None:
+        valid_statuses = {"pending", "approved", "rejected", "promoted", "all"}
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}",
+            )
+
+    # Build base filter
+    base_filter = _build_staging_filters(status, element_system, phase, property_name, confidence)
+
+    limit = cursor_params.limit + 1  # fetch one extra to determine has_next/has_prev
+
+    if cursor_params.after_cursor:
+        cursor_at, cursor_id = decode_cursor(cursor_params.after_cursor)
+        base_filter.append(
+            (RefGapFillStaging.created_at < cursor_at)
+            | (
+                (RefGapFillStaging.created_at == cursor_at)
+                & (RefGapFillStaging.id < cursor_id)
+            )
+        )
+
+    if cursor_params.before_cursor:
+        cursor_at, cursor_id = decode_cursor(cursor_params.before_cursor)
+        base_filter.append(
+            (RefGapFillStaging.created_at > cursor_at)
+            | (
+                (RefGapFillStaging.created_at == cursor_at)
+                & (RefGapFillStaging.id > cursor_id)
+            )
+        )
+
+    # Fetch with reversed order for before_cursor, then re-reverse
+    if cursor_params.before_cursor:
+        data_stmt = (
+            select(RefGapFillStaging)
+            .where(*base_filter)
+            .order_by(RefGapFillStaging.created_at.asc(), RefGapFillStaging.id.asc())
+            .limit(limit)
+        )
+        result = await session.execute(data_stmt)
+        records = list(result.scalars().all())
+        records.reverse()
+    else:
+        data_stmt = (
+            select(RefGapFillStaging)
+            .where(*base_filter)
+            .order_by(RefGapFillStaging.created_at.desc(), RefGapFillStaging.id.desc())
+            .limit(limit)
+        )
+        result = await session.execute(data_stmt)
+        records = list(result.scalars().all())
+
+    # Determine pagination boundaries
+    has_next = len(records) > cursor_params.limit
+    has_prev = cursor_params.after_cursor is not None or cursor_params.before_cursor is not None
+    records = records[: cursor_params.limit]
+
+    # Build cursors from edge items
+    next_cursor = None
+    prev_cursor = None
+    if records:
+        last = records[-1]
+        next_cursor = encode_cursor(str(last.created_at), str(last.id)) if has_next else None
+        first = records[0]
+        prev_cursor = encode_cursor(str(first.created_at), str(first.id)) if has_prev else None
+
+    response_data = CursorPaginatedResponse[StagingRecordResponse](
+        items=[StagingRecordResponse.model_validate(r) for r in records],
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor,
+        has_next=has_next,
+        has_prev=has_prev,
+    )
+
+    return {"success": True, "data": response_data.model_dump()}
 
 
 # ---------------------------------------------------------------------------

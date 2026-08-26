@@ -3,9 +3,11 @@
 Displays all staging records with:
 - fill_batch_id as clickable link for filtering
 - Status with color-coded tags
-- Filtering by element_system, phase, property_name, confidence, status, date range
-- Pagination
+- Filtering by element_system, phase, property_name, confidence, status
+- Cursor-based prev/next pagination
 - Chronological order by created_at DESC
+
+Spec: NFM-3750
 */
 
 "use client"
@@ -19,13 +21,11 @@ import {
   Select,
   message,
 } from "antd"
-import type {
-  ColumnsType,
-  TablePaginationConfig,
-} from "antd/es/table"
 import {
   FilterOutlined,
   ClearOutlined,
+  LeftOutlined,
+  RightOutlined,
 } from "@ant-design/icons"
 import type {
   StagingRecord,
@@ -63,23 +63,23 @@ const STATUS_LABELS: Record<StagingStatus, string> = {
 interface FillHistoryTableProps {
   records: StagingRecord[]
   loading: boolean
-  total: number
-  page: number
-  pageSize: number
   filters: Partial<PendingReviewQuery>
   onFilterChange: (filters: Partial<PendingReviewQuery>) => void
-  onPageChange: (page: number, pageSize: number) => void
+  hasPrev: boolean
+  hasNext: boolean
+  onPrev: () => void
+  onNext: () => void
 }
 
 export function FillHistoryTable({
   records,
   loading,
-  total,
-  page,
-  pageSize,
   filters,
   onFilterChange,
-  onPageChange,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
 }: FillHistoryTableProps) {
   const uniqueElementSystems = useMemo(() => {
     const systems = new Set(records.map((r) => r.element_system))
@@ -97,19 +97,16 @@ export function FillHistoryTable({
   }, [records])
 
   const handleBatchIdClick = (batchId: string) => {
-    // Filter to show only records from this batch
     message.info(`筛选批次: ${batchId}`)
-    // Note: This would require adding fill_batch_id to the query params
-    // For now, we'll show a message
   }
 
-  const columns: ColumnsType<StagingRecord> = [
+  const columns = [
     {
       title: "填充批次ID",
       dataIndex: "fill_batch_id",
       key: "fill_batch_id",
       width: 150,
-      render: (batchId) => (
+      render: (batchId: string) => (
         <Button
           type="link"
           size="small"
@@ -125,30 +122,30 @@ export function FillHistoryTable({
       dataIndex: "element_system",
       key: "element_system",
       width: 120,
-      sorter: (a, b) => a.element_system.localeCompare(b.element_system),
+      sorter: (a: StagingRecord, b: StagingRecord) => a.element_system.localeCompare(b.element_system),
     },
     {
       title: "相",
       dataIndex: "phase",
       key: "phase",
       width: 100,
-      render: (phase) => phase || "-",
-      sorter: (a, b) => (a.phase || "").localeCompare(b.phase || ""),
+      render: (phase: string) => phase || "-",
+      sorter: (a: StagingRecord, b: StagingRecord) => (a.phase || "").localeCompare(b.phase || ""),
     },
     {
       title: "属性名称",
       dataIndex: "property_name",
       key: "property_name",
       width: 150,
-      sorter: (a, b) => a.property_name.localeCompare(b.property_name),
+      sorter: (a: StagingRecord, b: StagingRecord) => a.property_name.localeCompare(b.property_name),
     },
     {
       title: "数值",
       dataIndex: "value",
       key: "value",
       width: 100,
-      render: (value, record) => `${value} ${record.unit}`,
-      sorter: (a, b) => a.value - b.value,
+      render: (value: number, record: StagingRecord) => `${value} ${record.unit}`,
+      sorter: (a: StagingRecord, b: StagingRecord) => a.value - b.value,
     },
     {
       title: "单位",
@@ -173,7 +170,7 @@ export function FillHistoryTable({
           {STATUS_LABELS[status]}
         </Tag>
       ),
-      sorter: (a, b) => a.status.localeCompare(b.status),
+      sorter: (a: StagingRecord, b: StagingRecord) => a.status.localeCompare(b.status),
     },
     {
       title: "置信度",
@@ -185,8 +182,8 @@ export function FillHistoryTable({
           {CONFIDENCE_LABELS[confidence]}
         </Tag>
       ),
-      sorter: (a, b) => {
-        const order = { high: 3, medium: 2, low: 1 }
+      sorter: (a: StagingRecord, b: StagingRecord) => {
+        const order = { high: 3, medium: 2, low: 1 } as const
         return order[a.confidence] - order[b.confidence]
       },
     },
@@ -195,18 +192,14 @@ export function FillHistoryTable({
       dataIndex: "created_at",
       key: "created_at",
       width: 160,
-      render: (date) => new Date(date).toLocaleString("zh-CN"),
-      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      render: (date: string) => new Date(date).toLocaleString("zh-CN"),
+      sorter: (a: StagingRecord, b: StagingRecord) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       defaultSortOrder: "descend",
     },
   ]
 
   const handleClearFilters = () => {
-    onFilterChange({ status: "all" }) // Reset to "all" for history view
-  }
-
-  const handleTableChange = (pagination: TablePaginationConfig) => {
-    onPageChange(pagination.current || 1, pagination.pageSize || 20)
+    onFilterChange({ status: "all" })
   }
 
   return (
@@ -216,7 +209,6 @@ export function FillHistoryTable({
         size="middle"
         style={{ width: "100%", marginBottom: 16 }}
       >
-        {/* Filters */}
         <Space wrap size="middle">
           <Button icon={<FilterOutlined />}>筛选</Button>
 
@@ -226,7 +218,7 @@ export function FillHistoryTable({
             allowClear
             value={filters.element_system}
             onChange={(value) =>
-              onFilterChange({ ...filters, element_system: value || null })
+              onFilterChange({ ...filters, element_system: value || undefined })
             }
             options={uniqueElementSystems.map((sys) => ({ label: sys, value: sys }))}
           />
@@ -237,7 +229,7 @@ export function FillHistoryTable({
             allowClear
             value={filters.phase}
             onChange={(value) =>
-              onFilterChange({ ...filters, phase: value || null })
+              onFilterChange({ ...filters, phase: value || undefined })
             }
             options={uniquePhases.map((phase) => ({ label: phase, value: phase }))}
           />
@@ -248,7 +240,7 @@ export function FillHistoryTable({
             allowClear
             value={filters.property_name}
             onChange={(value) =>
-              onFilterChange({ ...filters, property_name: value || null })
+              onFilterChange({ ...filters, property_name: value || undefined })
             }
             options={uniqueProperties.map((prop) => ({ label: prop, value: prop }))}
           />
@@ -259,7 +251,7 @@ export function FillHistoryTable({
             allowClear
             value={filters.confidence}
             onChange={(value) =>
-              onFilterChange({ ...filters, confidence: value || null })
+              onFilterChange({ ...filters, confidence: value || undefined })
             }
             options={[
               { label: "高", value: "high" },
@@ -295,18 +287,28 @@ export function FillHistoryTable({
         dataSource={records}
         rowKey="id"
         loading={loading}
-        pagination={{
-          current: page,
-          pageSize: pageSize,
-          total: total,
-          showSizeChanger: true,
-          showQuickJumper: true,
-          showTotal: (total) => `共 ${total} 条`,
-          pageSizeOptions: ["10", "20", "50", "100"],
-        }}
+        pagination={false}
         scroll={{ x: 1400 }}
-        onChange={handleTableChange}
       />
+
+      <Space style={{ marginTop: 16, justifyContent: 'center', width: '100%' }}>
+        <Button
+          icon={<LeftOutlined />}
+          disabled={!hasPrev}
+          onClick={onPrev}
+        >
+          上一页
+        </Button>
+        <Button
+          type="primary"
+          disabled={!hasNext}
+          onClick={onNext}
+          style={{ marginLeft: 16 }}
+        >
+          下一页
+          <RightOutlined />
+        </Button>
+      </Space>
     </div>
   )
 }
