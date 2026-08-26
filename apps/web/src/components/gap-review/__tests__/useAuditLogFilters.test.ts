@@ -7,30 +7,33 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseFilters, buildParams, parsePage } from '../useAuditLogFilters'
+/**
+ * Tests for useAuditLogFilters — URL param sync logic.
+ *
+ * We test the pure functions (parseFilters, buildParams, parseCursor)
+ * directly since they contain all the logic. The hook itself
+ * just wraps useSearchParams + history.replaceState.
+ */
+
+import { describe, it, expect } from 'vitest'
+import { parseFilters, buildParams, parseCursor } from '../useAuditLogFilters'
 import type { AuditLogFilters } from '@/lib/reference-gaps/types'
 
-// ── parsePage ──────────────────────────────────────────────────────
+// ── parseCursor ───────────────────────────────────────────────────
 
-describe('parsePage', () => {
-  it('defaults to 1 when no param', () => {
-    expect(parsePage(new URLSearchParams())).toBe(1)
+describe('parseCursor', () => {
+  it('returns empty for no params', () => {
+    expect(parseCursor(new URLSearchParams())).toEqual({})
   })
 
-  it('parses a valid page number', () => {
-    expect(parsePage(new URLSearchParams('page=3'))).toBe(3)
+  it('parses after_cursor', () => {
+    const params = new URLSearchParams('after_cursor=abc123')
+    expect(parseCursor(params)).toEqual({ after: 'abc123' })
   })
 
-  it('clamps zero to 1', () => {
-    expect(parsePage(new URLSearchParams('page=0'))).toBe(1)
-  })
-
-  it('clamps negative to 1', () => {
-    expect(parsePage(new URLSearchParams('page=-5'))).toBe(1)
-  })
-
-  it('treats NaN as 1', () => {
-    expect(parsePage(new URLSearchParams('page=abc'))).toBe(1)
+  it('parses before_cursor', () => {
+    const params = new URLSearchParams('before_cursor=xyz789')
+    expect(parseCursor(params)).toEqual({ before: 'xyz789' })
   })
 })
 
@@ -77,13 +80,29 @@ describe('parseFilters', () => {
 // ── buildParams ────────────────────────────────────────────────────
 
 describe('buildParams', () => {
-  it('includes page only when > 1', () => {
-    const base = new URLSearchParams()
-    const p1 = buildParams(base, {}, 1)
-    expect(p1.has('page')).toBe(false)
+  it('sets after_cursor in params', () => {
+    const result = buildParams(new URLSearchParams(), {}, { after: 'abc' })
+    expect(result.get('after_cursor')).toBe('abc')
+    expect(result.has('before_cursor')).toBe(false)
+  })
 
-    const p2 = buildParams(base, {}, 2)
-    expect(p2.get('page')).toBe('2')
+  it('sets before_cursor in params', () => {
+    const result = buildParams(new URLSearchParams(), {}, { before: 'xyz' })
+    expect(result.get('before_cursor')).toBe('xyz')
+    expect(result.has('after_cursor')).toBe(false)
+  })
+
+  it('omits cursor params for first page', () => {
+    const result = buildParams(new URLSearchParams(), {}, {})
+    expect(result.has('after_cursor')).toBe(false)
+    expect(result.has('before_cursor')).toBe(false)
+  })
+
+  it('strips legacy page param', () => {
+    const prev = new URLSearchParams('page=3')
+    const result = buildParams(prev, {}, { after: 'abc' })
+    expect(result.has('page')).toBe(false)
+    expect(result.get('after_cursor')).toBe('abc')
   })
 
   it('sets all filter params', () => {
@@ -94,7 +113,7 @@ describe('buildParams', () => {
       decision: 'accepted',
       entity_name: 'UO2',
     }
-    const result = buildParams(new URLSearchParams(), filters, 1)
+    const result = buildParams(new URLSearchParams(), filters, {})
     expect(result.get('reviewer_id')).toBe('user1')
     expect(result.get('date_from')).toBe('2026-08-01')
     expect(result.get('date_to')).toBe('2026-08-25')
@@ -104,20 +123,24 @@ describe('buildParams', () => {
 
   it('removes undefined filter values', () => {
     const prev = new URLSearchParams('reviewer_id=old&decision=rejected')
-    const result = buildParams(prev, {}, 1)
+    const result = buildParams(prev, {}, {})
     expect(result.has('reviewer_id')).toBe(false)
     expect(result.has('decision')).toBe(false)
   })
 
-  it('round-trips: buildParams → parseFilters preserves data', () => {
+  it('round-trips: buildParams → parseFilters + parseCursor', () => {
     const filters: AuditLogFilters = {
       reviewer_id: 'user1',
       date_from: '2026-08-01',
       decision: 'accepted',
     }
-    const built = buildParams(new URLSearchParams(), filters, 3)
-    expect(built.get('page')).toBe('3')
+    const cursor = { after: 'cursorABC' }
+    const built = buildParams(new URLSearchParams(), filters, cursor)
+    expect(built.get('after_cursor')).toBe('cursorABC')
+    expect(built.has('page')).toBe(false)
     const parsed = parseFilters(built)
     expect(parsed).toEqual(filters)
+    const parsedCursor = parseCursor(built)
+    expect(parsedCursor).toEqual(cursor)
   })
 })

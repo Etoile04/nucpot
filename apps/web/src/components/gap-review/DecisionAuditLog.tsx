@@ -2,10 +2,11 @@
  * DecisionAuditLog — read-only table of immutable decision history.
  *
  * Displays audit entries with filters (reviewer, date range, decision type,
- * entity name) and pagination. All filters sync to URL params.
+ * entity name) and cursor-based pagination. All filters and cursor
+ * position sync to URL params for shareability.
  * No edit/delete actions — this is an immutable ledger.
  *
- * Spec: NFM-3708, UX ref NFM-3682 §3.4/§7
+ * Spec: NFM-3708, NFM-3759 cursor pagination, UX ref NFM-3682 §3.4/§7
  */
 
 'use client'
@@ -38,10 +39,6 @@ function formatDateTime(iso: string): string {
         minute: '2-digit',
         second: '2-digit',
       })
-}
-
-function totalPages(pageSize: number, total: number): number {
-  return Math.ceil(total / pageSize)
 }
 
 // ── Sub-components ───────────────────────────────────────────────────
@@ -139,18 +136,17 @@ function FilterBar({
 
 function AuditTable({
   entries,
-  total,
-  page,
-  pageSize,
-  onPageChange,
+  hasNext,
+  hasPrev,
+  onPrev,
+  onNext,
 }: {
   readonly entries: ReadonlyArray<AuditEntry>
-  readonly total: number
-  readonly page: number
-  readonly pageSize: number
-  readonly onPageChange: (page: number) => void
+  readonly hasNext: boolean
+  readonly hasPrev: boolean
+  readonly onPrev: () => void
+  readonly onNext: () => void
 }) {
-  const pages = totalPages(pageSize, total)
 
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -234,45 +230,28 @@ function AuditTable({
         </div>
       )}
 
-      {/* Pagination */}
-      {total > 0 && (
+      {/* Cursor-based pagination */}
+      {(hasNext || hasPrev) && (
         <div className="px-4 py-3 bg-gray-900 border-t border-gray-700 flex items-center justify-between">
-          <span className="text-sm text-gray-400">共 {total} 条</span>
+          <span className="text-sm text-gray-400">{entries.length} 条</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
-              disabled={page <= 1}
-              onClick={() => onPageChange(page - 1)}
+              disabled={!hasPrev}
+              onClick={onPrev}
               className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               aria-label="上一页"
             >
-              ‹
+              ‹ 上一页
             </button>
-            {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => onPageChange(p)}
-                className={[
-                  'px-3 py-1 text-sm rounded border transition-colors',
-                  p === page
-                    ? 'border-emerald-500 bg-emerald-600/20 text-emerald-400'
-                    : 'border-gray-600 text-gray-400 hover:bg-gray-700',
-                ].join(' ')}
-                aria-label={`第 ${p} 页`}
-                aria-current={p === page ? 'page' : undefined}
-              >
-                {p}
-              </button>
-            ))}
             <button
               type="button"
-              disabled={page >= pages}
-              onClick={() => onPageChange(page + 1)}
+              disabled={!hasNext}
+              onClick={onNext}
               className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               aria-label="下一页"
             >
-              ›
+              下一页 ›
             </button>
           </div>
         </div>
@@ -289,7 +268,7 @@ export interface DecisionAuditLogProps {
 }
 
 export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
-  const { filters, page, pageSize, decisionOptions, setPage, setFilters, resetFilters } =
+  const { filters, cursor, pageSize, decisionOptions, setCursor, setFilters, resetFilters } =
     useAuditLogFilters()
 
   const [data, setData] = useState<AuditLogResponse | null>(initialData ?? null)
@@ -300,7 +279,7 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
     setLoading(true)
     setError(null)
     try {
-      const result = await getAuditLog(page, pageSize, filters)
+      const result = await getAuditLog(cursor, pageSize, filters)
       setData(result)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '加载审核日志失败'
@@ -308,7 +287,7 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, filters])
+  }, [cursor, pageSize, filters])
 
   useEffect(() => {
     if (initialData) return // testing mode — skip fetch
@@ -319,8 +298,19 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
     setFilters(update as Partial<import('@/lib/reference-gaps/types').AuditLogFilters>)
   }, [setFilters])
 
+  const handleNext = useCallback(() => {
+    if (!data?.next_cursor) return
+    setCursor({ after: data.next_cursor })
+  }, [data?.next_cursor, setCursor])
+
+  const handlePrev = useCallback(() => {
+    if (!data?.prev_cursor) return
+    setCursor({ before: data.prev_cursor })
+  }, [data?.prev_cursor, setCursor])
+
   const entries: ReadonlyArray<AuditEntry> = data?.items ?? []
-  const total = data?.total ?? 0
+  const hasNext = data?.has_next ?? false
+  const hasPrev = data?.has_prev ?? false
 
   return (
     <section aria-label="决策审核日志">
@@ -348,10 +338,10 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
       <div className="relative">
         <AuditTable
           entries={entries}
-          total={total}
-          page={page}
-          pageSize={pageSize}
-          onPageChange={setPage}
+          hasNext={hasNext}
+          hasPrev={hasPrev}
+          onNext={handleNext}
+          onPrev={handlePrev}
         />
 
         {/* Loading overlay */}
@@ -365,7 +355,7 @@ export function DecisionAuditLog({ initialData }: DecisionAuditLogProps) {
               aria-hidden="true"
             >
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 8-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
           </div>
         )}
