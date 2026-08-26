@@ -56,6 +56,21 @@ DOCKER_KEYS="$(extract_keys "$DOCKER_ENV")"
 MISSING="$(comm -23 <(printf '%s\n' "$ROOT_KEYS") <(printf '%s\n' "$DOCKER_KEYS"))"
 DOCKER_ONLY="$(comm -13 <(printf '%s\n' "$ROOT_KEYS") <(printf '%s\n' "$DOCKER_KEYS"))"
 
+# Critical keys that MUST be present in the docker env.  A key absent from
+# *both* files would pass the drift check above silently — this catches that.
+# (NFM-3727: PAPERCLIP_BOARD_API_KEY is the board-actor credential required
+# for ADR-009 cross-agent wake.)
+REQUIRED_KEYS=(
+  PAPERCLIP_BOARD_API_KEY
+)
+
+for key in "${REQUIRED_KEYS[@]}"; do
+  if ! printf '%s\n' "$DOCKER_KEYS" | grep -qx "$key"; then
+    echo "MISSING REQUIRED KEY: $key not found in $DOCKER_ENV" >&2
+    exit 1
+  fi
+done
+
 # Reported, never fatal. Drift in this direction is usually deliberate (a
 # container tuning knob), but naming it makes a typo'd key visible instead of
 # leaving it to look like a legitimate docker-only setting.
