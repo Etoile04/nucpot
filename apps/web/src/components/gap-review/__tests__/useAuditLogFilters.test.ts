@@ -70,12 +70,12 @@ describe('parseFilters', () => {
 
 describe('buildParams', () => {
   it('omits cursor when undefined (first page)', () => {
-    const result = buildParams(new URLSearchParams(), {}, undefined)
+    const result = buildParams({}, undefined)
     expect(result.has('cursor')).toBe(false)
   })
 
   it('includes cursor when provided', () => {
-    const result = buildParams(new URLSearchParams(), {}, 'abc123')
+    const result = buildParams({}, 'abc123')
     expect(result.get('cursor')).toBe('abc123')
   })
 
@@ -87,7 +87,7 @@ describe('buildParams', () => {
       decision: 'accepted',
       entity_name: 'UO2',
     }
-    const result = buildParams(new URLSearchParams(), filters, undefined)
+    const result = buildParams(filters, undefined)
     expect(result.get('reviewer_id')).toBe('user1')
     expect(result.get('date_from')).toBe('2026-08-01')
     expect(result.get('date_to')).toBe('2026-08-25')
@@ -96,8 +96,7 @@ describe('buildParams', () => {
   })
 
   it('removes undefined filter values', () => {
-    const prev = new URLSearchParams('reviewer_id=old&decision=rejected')
-    const result = buildParams(prev, {}, undefined)
+    const result = buildParams({}, undefined)
     expect(result.has('reviewer_id')).toBe(false)
     expect(result.has('decision')).toBe(false)
   })
@@ -108,19 +107,19 @@ describe('buildParams', () => {
       date_from: '2026-08-01',
       decision: 'accepted',
     }
-    const built = buildParams(new URLSearchParams(), filters, 'cur-xyz')
+    const built = buildParams(filters, 'cur-xyz')
     expect(built.get('cursor')).toBe('cur-xyz')
     const parsed = parseFilters(built)
     expect(parsed).toEqual(filters)
   })
 
   it('round-trips: buildParams → parseCursor preserves cursor', () => {
-    const built = buildParams(new URLSearchParams(), {}, 'my-cursor')
+    const built = buildParams({}, 'my-cursor')
     expect(parseCursor(built)).toBe('my-cursor')
   })
 
   it('round-trips without cursor: parseCursor returns undefined', () => {
-    const built = buildParams(new URLSearchParams(), {}, undefined)
+    const built = buildParams({}, undefined)
     expect(parseCursor(built)).toBeUndefined()
   })
 })

@@ -49,7 +49,7 @@ export function parseCursor(params: URLSearchParams): string | undefined {
  * Build a new URLSearchParams with the given filters and cursor applied.
  */
 export function buildParams(
-  prev: URLSearchParams,
+
   filters: AuditLogFilters,
   cursor: string | undefined,
 ): URLSearchParams {
@@ -103,7 +103,7 @@ export function useAuditLogFilters(): UseAuditLogFiltersReturn {
   const cursor = useMemo(() => parseCursor(searchParams), [searchParams])
 
   const setCursor = useCallback((c: string | undefined) => {
-    const next = buildParams(searchParams, filters, c)
+    const next = buildParams(filters, c)
     window.history.replaceState(null, '', `?${next.toString()}`)
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, [searchParams, filters])
@@ -111,13 +111,13 @@ export function useAuditLogFilters(): UseAuditLogFiltersReturn {
   const setFilters = useCallback((update: Partial<AuditLogFilters>) => {
     const merged: AuditLogFilters = { ...filters, ...update }
     // Reset cursor when filters change
-    const next = buildParams(searchParams, merged, undefined)
+    const next = buildParams(merged, undefined)
     window.history.replaceState(null, '', `?${next.toString()}`)
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, [searchParams, filters])
 
   const resetFilters = useCallback(() => {
-    const next = buildParams(searchParams, {}, undefined)
+    const next = buildParams({}, undefined)
     window.history.replaceState(null, '', `?${next.toString()}`)
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, [searchParams])
