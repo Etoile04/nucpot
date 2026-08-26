@@ -12,6 +12,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button, Drawer, Descriptions, Spin, Tag, Divider, Space, Empty } from 'antd'
+import { CheckOutlined } from '@ant-design/icons'
 import { EntityMatchHighlight } from './EntityMatchHighlight'
 import { getCandidateHistory, postDecision } from '@/lib/reference-gaps/api'
 import type {
@@ -19,6 +20,7 @@ import type {
   DecisionKind,
   GapCandidate,
 } from '@/lib/reference-gaps/types'
+import type { MessageInstance } from 'antd/es/message/interface'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -28,6 +30,8 @@ interface GapCandidateDrawerProps {
   readonly onClose: () => void
   /** Called after a successful decision so the parent list can update. */
   readonly onDecision?: (candidateId: string, decision: DecisionKind) => void
+  /** Antd message API instance for showing toasts. */
+  readonly messageApi?: MessageInstance
 }
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -118,22 +122,22 @@ export function GapCandidateDrawer({
   open,
   onClose,
   onDecision,
+  messageApi,
 }: GapCandidateDrawerProps) {
   const queryClient = useQueryClient()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const [optimisticDecision, setOptimisticDecision] = useState<DecisionKind | null>(null)
-  const [rollbackError, setRollbackError] = useState(false)
 
   const mutation = useMutation({
     mutationFn: postDecision,
     onMutate: async (variables) => {
-      // Snapshot current state for rollback
+      // Snapshot current cache for potential rollback
       void queryClient.getQueryData(['gap-candidate-history', variables.candidate_id])
+      // Optimistic: immediately show the decision as applied
       setOptimisticDecision(variables.decision)
-      setRollbackError(false)
     },
     onSuccess: (_data, variables) => {
-      // Invalidate history so it refetches
+      // Invalidate history so it refetches with the new decision
       void queryClient.invalidateQueries({
         queryKey: ['gap-candidate-history', variables.candidate_id],
       })
@@ -141,10 +145,11 @@ export function GapCandidateDrawer({
       onDecision?.(variables.candidate_id, variables.decision)
       onClose()
     },
-    onError: () => {
-      // Rollback optimistic state
-      setRollbackError(true)
+    onError: (_error, _variables, _context) => {
+      // Rollback: revert the optimistic UI state
       setOptimisticDecision(null)
+      // Show error toast so the user knows the operation failed
+      messageApi?.error('操作失败，请重试')
     },
   })
 
@@ -180,27 +185,27 @@ export function GapCandidateDrawer({
       afterOpenChange={handleAfterOpenChange}
       placement="right"
       footer={
-        <div className="flex items-center justify-between">
-          {rollbackError && (
-            <span className="text-xs text-red-400">操作失败，请重试</span>
-          )}
-          <Space>
-            {DECISION_CONFIG.map((cfg) => (
+        <Space>
+          {DECISION_CONFIG.map((cfg) => {
+            const isOptimistic = optimisticDecision === cfg.kind
+            const isPending = mutation.isPending
+            const isDisabled = isPending && !isOptimistic
+            return (
               <Button
                 key={cfg.kind}
-                type={cfg.buttonType}
+                type={isOptimistic ? 'primary' : cfg.buttonType}
                 danger={cfg.danger}
-                loading={
-                  mutation.isPending && optimisticDecision === cfg.kind
-                }
-                disabled={mutation.isPending}
+                icon={isOptimistic ? <CheckOutlined /> : undefined}
+                loading={isPending && isOptimistic}
+                disabled={isDisabled}
                 onClick={() => handleDecision(cfg.kind)}
+                data-testid={`drawer-${cfg.kind}`}
               >
-                {cfg.label}
+                {isOptimistic ? cfg.label + '...' : cfg.label}
               </Button>
-            ))}
-          </Space>
-        </div>
+            )
+          })}
+        </Space>
       }
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>

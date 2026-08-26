@@ -365,6 +365,7 @@ export function GapReviewQueuePage() {
           open={drawerOpen}
           onClose={handleDrawerClose}
           onDecision={handleDrawerDecision}
+          messageApi={messageApi}
         />
 
         <GapShortcutsOverlay

@@ -115,16 +115,17 @@ describe('GapCandidateDrawer', () => {
     })
   })
 
-  it('shows error message when postDecision fails', async () => {
+  it('shows error toast when postDecision fails', async () => {
     mockPostDecision.mockRejectedValueOnce(new Error('Network error'))
     const onClose = vi.fn()
+    const fakeMessageApi = { error: vi.fn() } as unknown as import('antd/es/message/interface').MessageInstance
     render(
-      <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} />,
+      <GapCandidateDrawer candidate={CANDIDATE} open={true} onClose={onClose} messageApi={fakeMessageApi} />,
       { wrapper: createWrapper() },
     )
     fireEvent.click(screen.getByRole('button', { name: /拒.绝/ }))
     await waitFor(() => {
-      expect(screen.getByText('操作失败，请重试')).toBeInTheDocument()
+      expect(fakeMessageApi.error).toHaveBeenCalledWith('操作失败，请重试')
     })
   })
 
