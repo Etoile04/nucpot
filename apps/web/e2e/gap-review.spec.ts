@@ -272,7 +272,7 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
     // Navigate forward
     await nextBtn.click()
     await expect(page.getByText("Zr-4")).toBeVisible({ timeout: 10_000 })
-    expect(page.getByText("UO2")).not.toBeVisible()
+    await expect(page.getByText("UO2")).not.toBeVisible()
 
     // After navigation: prev enabled, next disabled
     await expect(prevBtn).toBeEnabled()

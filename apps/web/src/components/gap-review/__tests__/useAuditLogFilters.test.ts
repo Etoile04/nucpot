@@ -1,15 +1,6 @@
 /**
  * Tests for useAuditLogFilters — URL param sync logic.
  *
- * We test the pure functions (parseFilters, buildParams, parsePage)
- * directly since they contain all the logic. The hook itself
- * just wraps useSearchParams + history.replaceState.
- */
-
-import { describe, it, expect } from 'vitest'
-/**
- * Tests for useAuditLogFilters — URL param sync logic.
- *
  * We test the pure functions (parseFilters, buildParams, parseCursor)
  * directly since they contain all the logic. The hook itself
  * just wraps useSearchParams + history.replaceState.
