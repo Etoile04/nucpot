@@ -613,27 +613,48 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             db=db,
         )
 
-        # --- Step 3b: heuristic fallback when LLM unavailable ----------
-        # If the LLM extractor returned nothing (offline / 502 / etc.) but
-        # the markdown is plausible, run the regex extractor so reviewers
-        # still see candidate materials+properties in the review queue.
-        if not raw_properties and ds.content_md:
+        # --- Step 3b: heuristic supplement (NFM-3424) --------------------
+        # Always run the regex extractor alongside the LLM path.
+        # The LLM catches narrative prose; the heuristic catches inline
+        # values in tables, captions, and figure descriptions that the
+        # LLM may skip.  Results are deduplicated by (element_system,
+        # property_name, value) so overlapping hits don't create duplicates.
+        if ds.content_md:
             try:
                 from nfm_db.services.heuristic_extractor import heuristic_extract
 
-                raw_properties = heuristic_extract(
+                heuristic_props = heuristic_extract(
                     ds.content_md,
                     source_reference=str(ds.id),
                 )
-                logger.info(
-                    "process_literature: datasource_id=%s heuristic fallback "
-                    "produced %d candidate properties",
-                    ds.id,
-                    len(raw_properties),
-                )
+
+                if heuristic_props:
+                    # Dedup key matches heuristic_extractor's own dedup.
+                    existing_keys = {
+                        (r.get("element_system"), r.get("property_name"), f"{r.get("value", 0):g}")
+                        for r in raw_properties
+                    }
+                    new_count = 0
+                    for item in heuristic_props:
+                        key = (
+                            item.get("element_system"),
+                            item.get("property_name"),
+                            f"{item.get("value", 0):g}",
+                        )
+                        if key not in existing_keys:
+                            raw_properties.append(item)
+                            existing_keys.add(key)
+                            new_count += 1
+                    logger.info(
+                        "process_literature: datasource_id=%s heuristic supplement "
+                        "added %d new properties (total now %d)",
+                        ds.id,
+                        new_count,
+                        len(raw_properties),
+                    )
             except Exception:  # pragma: no cover — defensive
                 logger.exception(
-                    "Heuristic extractor failed for %s; leaving raw_properties=[]",
+                    "Heuristic extractor failed for %s; keeping LLM results",
                     ds.id,
                 )
 
