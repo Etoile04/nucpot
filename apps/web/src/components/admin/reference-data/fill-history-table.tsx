@@ -194,7 +194,7 @@ export function FillHistoryTable({
       width: 160,
       render: (date: string) => new Date(date).toLocaleString("zh-CN"),
       sorter: (a: StagingRecord, b: StagingRecord) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      defaultSortOrder: "descend",
+      defaultSortOrder: "descend" as const,
     },
   ]
 

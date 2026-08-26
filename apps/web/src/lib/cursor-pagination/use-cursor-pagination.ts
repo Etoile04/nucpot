@@ -9,7 +9,7 @@
 "use client"
 
 import { useCallback, useMemo } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 
 export interface CursorPaginatedResponse<T> {
@@ -53,7 +53,10 @@ export function useCursorPagination<TData>(
 ): CursorPaginationControls<TData> {
   const { queryKey, queryFn, pageSize = 20 } = options
 
-  const [searchParams, setSearchParams] = useSearchParams()
+  // Next.js useSearchParams returns ReadonlyURLSearchParams directly (not a tuple)
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
 
   const cursor = searchParams.get(CURSOR_PARAM) ?? null
   const direction = searchParams.get(DIRECTION_PARAM) === 'prev' ? 'prev' as const : 'after' as const
@@ -85,7 +88,7 @@ export function useCursorPagination<TData>(
 
   const updateUrl = useCallback(
     (newCursor: string | null, dir: 'after' | 'prev') => {
-      const next = new URLSearchParams(searchParams)
+      const next = new URLSearchParams(searchParams.toString())
       if (newCursor) {
         next.set(CURSOR_PARAM, newCursor)
         next.set(DIRECTION_PARAM, dir)
@@ -93,9 +96,9 @@ export function useCursorPagination<TData>(
         next.delete(CURSOR_PARAM)
         next.delete(DIRECTION_PARAM)
       }
-      setSearchParams(next, { replace: true })
+      router.replace(`${pathname}?${next.toString()}`)
     },
-    [searchParams, setSearchParams],
+    [searchParams, router, pathname],
   )
 
   const next = useCallback(() => {
