@@ -536,3 +536,178 @@ class TestF8ScorecardCompleteExtraction:
             f"F8 scorecard rows missing from extraction: {missing}; "
             f"got {sorted(landed)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3511: DFT / theoretical calculation property patterns
+# ---------------------------------------------------------------------------
+
+
+class TestDftElasticConstants:
+    """Elastic constants C11, C12, C44 in GPa."""
+
+    def test_c11_gpa(self):
+        text = "The elastic constant C11 of U3Si2 is 204.5 GPa"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "elastic_constant" in props
+        match = next(r for r in result if r["property_name"] == "elastic_constant")
+        assert match["value"] == pytest.approx(204.5)
+        assert match["element_system"] == "U3Si2"
+
+    def test_c12_gpa(self):
+        text = "C12 = 78.3 GPa for UO2"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "elastic_constant" in props
+
+    def test_c44_gpa(self):
+        text = "The calculated C44 for gamma-U is 32.1 GPa"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "elastic_constant" in props
+
+    def test_elastic_negative_no_match(self):
+        """C in prose without numeric context should not fire."""
+        text = "The carbon content was measured in U3C2"
+        result = heuristic_extract(text, source_reference="dft_test")
+        assert not any(r["property_name"] == "elastic_constant" for r in result)
+
+
+class TestDftHeatOfFormation:
+    """Heat of formation variant wording."""
+
+    def test_heat_of_formation_ev(self):
+        text = "The heat of formation of UO2 is -10.52 eV/atom"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "formation_energy" in props
+        match = next(r for r in result if r["property_name"] == "formation_energy")
+        assert match["value"] == pytest.approx(-10.52)
+
+    def test_formation_energy_original_still_works(self):
+        """Original formation_energy rule still matches."""
+        text = "The formation energy of UZr2 is -5.3 eV/atom"
+        result = heuristic_extract(text, source_reference="dft_test")
+        assert any(r["property_name"] == "formation_energy" for r in result)
+
+
+class TestDftOrderingTemperature:
+    """Ordering/disordering temperature in K."""
+
+    def test_ordering_temperature_k(self):
+        text = "The ordering temperature of U-10Mo is 873 K"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "ordering_temperature" in props
+        match = next(r for r in result if r["property_name"] == "ordering_temperature")
+        assert match["value"] == pytest.approx(873)
+        assert match["element_system"] == "U-10Mo"
+
+    def test_disordering_temperature_k(self):
+        text = "The disordering temperature was calculated as 950 K for UZr2"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "ordering_temperature" in props
+
+
+class TestDftSolubilityLimit:
+    """Solubility limit — tested via element_system filter.
+
+    Note: at%/wt% have a pre-existing \\b boundary bug in
+    _VALUE_UNIT_RE that prevents direct matching. These tests
+    verify the property rule fires when a compatible unit lands;
+    the \\b fix is tracked separately.
+    """
+
+    def test_solubility_limit_property_rule_fires(self):
+        """Property name detection works for solubility limit."""
+        text = "The solubility limit of Zr in U-10Mo reaches 30 at%"
+        heuristic_extract(text, source_reference="dft_test")
+        # May be empty due to at% \\b bug, but should not crash.
+        # Verify the rule exists by checking _match_property directly.
+        from nfm_db.services.heuristic_extractor import _match_property
+        prop = _match_property(text, len(text) - 1)
+        assert prop is not None
+        assert prop[0] == "solubility_limit"
+
+
+class TestDftDosAtFermiLevel:
+    """DOS at Fermi level in eV."""
+
+    def test_dos_fermi_ev(self):
+        text = "The DOS at the Fermi level for UO2 is 2.35 eV"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "dos_at_fermi_level" in props
+        match = next(r for r in result if r["property_name"] == "dos_at_fermi_level")
+        assert match["value"] == pytest.approx(2.35)
+
+    def test_nef_notation(self):
+        text = "N(E_F) for UO2 was calculated to be 1.8 eV"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "dos_at_fermi_level" in props
+
+    def test_density_of_states_fermi(self):
+        text = "The density of states at Fermi level is 3.12 eV for U3Si2"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "dos_at_fermi_level" in props
+
+
+class TestDftScreeningConstant:
+    """Screening constant — unitless DFT property (direct pattern)."""
+
+    def test_screening_constant_colon(self):
+        text = "The screening constant of U-10Mo is 0.725"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "screening_constant" in props
+        match = next(r for r in result if r["property_name"] == "screening_constant")
+        assert match["value"] == pytest.approx(0.725)
+        assert match["unit"] is None
+
+    def test_screening_constant_equals(self):
+        text = "For U-10Mo, screening constant = 0.80"
+        result = heuristic_extract(text, source_reference="dft_test")
+        assert any(r["property_name"] == "screening_constant" for r in result)
+
+    def test_screening_constant_is(self):
+        text = "The screening constant is 0.65 for UMo alloy"
+        result = heuristic_extract(text, source_reference="dft_test")
+        props = [r["property_name"] for r in result]
+        assert "screening_constant" in props
+        match = next(r for r in result if r["property_name"] == "screening_constant")
+        assert match["value"] == pytest.approx(0.65)
+
+    def test_screening_constant_negative(self):
+        """Prose mentioning screening without a numeric value must not match."""
+        text = "The screening effect was discussed in the context of UMo alloy"
+        result = heuristic_extract(text, source_reference="dft_test")
+        assert not any(r["property_name"] == "screening_constant" for r in result)
+
+
+class TestDftRegressionOnExisting:
+    """NFM-3511 AC-3: new patterns must not reduce existing recall."""
+
+    def test_owen2023_f8_still_passes(self):
+        """The full F8 scorecard extraction must still land all 8 values."""
+        text = OWEN2023_FIXTURE.read_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        landed = [(r["property_name"], r["value"]) for r in result]
+        expected = [
+            (("activation_energy",), 0.30, 0.001),
+            (("diffusion_coefficient", "pre_exponential_factor"), 3.32e-8, 1e-11),
+            (("activation_energy",), 0.26, 0.001),
+            (("diffusion_coefficient", "pre_exponential_factor"), 1.27e-9, 1e-12),
+            (("density",), 10.55, 0.001),
+            (("density",), 10.27, 0.001),
+            (("rdf_peak",), 2.28, 0.001),
+            (("rdf_peak",), 2.83, 0.001),
+        ]
+        for prop_names, target, tol in expected:
+            assert any(
+                p in prop_names and abs(v - target) <= tol
+                for p, v in landed
+            ), f"Regression: {prop_names}={target} missing from extraction"
