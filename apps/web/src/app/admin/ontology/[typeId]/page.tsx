@@ -1,58 +1,55 @@
 /**
  * Ontology Detail Page — /admin/ontology/[typeId]
  *
- * Per NFM-3550 §3.2 — four vertical lanes:
- * Identity, Version, Relations, Audit.
+ * Displays a single version's metadata, entity types, and relation types.
+ * Uses TanStack Query hooks.
  */
 'use client'
 
 import { use } from 'react'
 import Link from 'next/link'
 import { useOntologyDetail } from '@/features/ontology/hooks/use-ontology-detail'
-import { VersionLane } from '@/features/ontology/components/version-lane'
-import { SkeletonTable } from '@/features/ontology/components/skeleton-table'
+import { StatusChip } from '@/features/ontology/components/status-chip'
 import { ErrorPanel } from '@/features/ontology/components/error-panel'
 import { RoleGate } from '@/features/ontology/components/role-gate'
+import { useOntologyMutations } from '@/features/ontology/hooks/use-ontology-mutations'
+import { useState, useCallback } from 'react'
 
-const LANE_LABELS = ['Identity', 'Version', 'Relations', 'Audit'] as const
-
-
-const TH_STYLE: React.CSSProperties = {
-  padding: 'var(--onto-space-2) var(--onto-space-3)',
-  color: 'var(--onto-ink-muted)',
-  fontSize: 'var(--onto-fs-xs)',
-  fontWeight: 500,
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-  textAlign: 'left' as const,
-}
-
-const TD_STYLE: React.CSSProperties = {
-  padding: 'var(--onto-space-2) var(--onto-space-3)',
-  color: 'var(--onto-ink-default)',
-  fontSize: 'var(--onto-fs-sm)',
-  verticalAlign: 'top' as const,
-}
-
-interface DetailPageProps {
-  params: Promise<{ typeId: string }>
-}
-
-export default function OntologyDetailPage({ params }: DetailPageProps) {
-  const { typeId } = use(params)
-    const { version, entityTypes, relationTypes, loading, error, refetch } =
+export function OntologyDetailContent({ typeId }: { typeId: string }) {
+  const { version, entityTypes, relationTypes, loading, error, refetch } =
     useOntologyDetail(typeId)
+  const { publishVersion, deprecateVersion, saving, error: mutError } = useOntologyMutations()
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
+
+  const handlePromote = useCallback(async () => {
+    try {
+      await publishVersion({ versionId: typeId, changelog: '' })
+      setActionMsg('Published successfully')
+      void refetch()
+    } catch {
+      // surfaced via mutError
+    }
+  }, [typeId, publishVersion, refetch])
+
+  const handleDeprecate = useCallback(async () => {
+    try {
+      await deprecateVersion({ versionId: typeId, changelog: '' })
+      setActionMsg('Deprecated successfully')
+      void refetch()
+    } catch {
+      // surfaced via mutError
+    }
+  }, [typeId, deprecateVersion, refetch])
 
   if (loading) {
     return (
-      <div style={{ maxWidth: 'var(--onto-container-wide)', margin: '0 auto', padding: 'var(--onto-space-5) var(--onto-space-6)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 'var(--onto-space-4)' }}>
-          {LANE_LABELS.map((label) => (
-            <div key={label} style={{ gridColumn: '1 / -1' }}>
-              <div style={{ height: 12, width: 80, backgroundColor: 'var(--onto-surface-inset)', borderRadius: 'var(--onto-radius-xs)', marginBottom: 'var(--onto-space-3)' }} />
-              <SkeletonTable rows={3} />
-            </div>
-          ))}
+      <div className="min-h-screen bg-gray-900">
+        <div className="max-w-3xl mx-auto px-6 py-8">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 w-64 bg-gray-700 rounded" />
+            <div className="h-px bg-gray-700" />
+            <div className="h-32 bg-gray-700 rounded" />
+          </div>
         </div>
       </div>
     )
@@ -60,132 +57,160 @@ export default function OntologyDetailPage({ params }: DetailPageProps) {
 
   if (error || !version) {
     return (
-      <div style={{ maxWidth: 'var(--onto-container-wide)', margin: '0 auto', padding: 'var(--onto-space-5) var(--onto-space-6)' }}>
-        <ErrorPanel variant="detail" message={error ?? 'Version ' + typeId + ' not found'} onRetry={refetch} />
-        <Link href="/admin/ontology" style={{ color: 'var(--onto-accent)', fontSize: 'var(--onto-fs-sm)' }}>
-          {'←'} Back to ontology list
-        </Link>
+      <div className="min-h-screen bg-gray-900">
+        <div className="max-w-3xl mx-auto px-6 py-8">
+          <ErrorPanel variant="detail" message={error ?? 'Version not found'} onRetry={refetch} />
+        </div>
       </div>
     )
   }
 
+  const canEdit = version.status === 'draft'
+  const canPublish = version.status === 'review'
+  const canDeprecate = version.status === 'published'
+
   return (
-    <div className="onto-animate" style={{ maxWidth: 'var(--onto-container-wide)', margin: '0 auto', padding: 'var(--onto-space-5) var(--onto-space-6)', backgroundColor: 'var(--onto-surface-0)', minHeight: '100vh' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--onto-space-4)' }}>
-        <Link href="/admin/ontology" style={{ color: 'var(--onto-ink-muted)', textDecoration: 'none', fontSize: 'var(--onto-fs-body)' }}>
-          {'‹'} Ontology management
-        </Link>
-        <div style={{ display: 'flex', gap: 'var(--onto-space-3)' }}>
-          <RoleGate allow={['curator', 'admin']} mode="disable">
-            <Link href={'/admin/ontology/' + typeId + '/edit'} style={{ padding: 'var(--onto-space-2) var(--onto-space-4)', borderRadius: 'var(--onto-radius-sm)', border: '1px solid var(--onto-border-strong)', backgroundColor: 'var(--onto-surface-2)', color: 'var(--onto-ink-default)', fontSize: 'var(--onto-fs-sm)', textDecoration: 'none', fontFamily: 'inherit' }}>
-              Edit
-            </Link>
-          </RoleGate>
+    <div className="min-h-screen bg-gray-900 text-gray-100">
+      <div className="max-w-3xl mx-auto px-6 py-8">
+        <header className="mb-6">
+          <Link href="/admin/ontology" className="text-gray-400 hover:text-gray-200 text-sm no-underline">
+            ‹ Back to list
+          </Link>
+        </header>
+
+        <div className="flex items-start justify-between mb-2">
+          <h1 className="text-2xl font-bold">
+            Version {version.version}
+          </h1>
+          <StatusChip status={version.status} />
         </div>
-      </header>
 
-      <div style={{ marginBottom: 'var(--onto-space-6)' }}>
-        <h1 style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h1)', color: 'var(--onto-ink-strong)', margin: 0 }}>
-          Ontology Version v{version.version}
-        </h1>
-        <p style={{ color: 'var(--onto-ink-muted)', fontSize: 'var(--onto-fs-sm)', margin: 'var(--onto-space-1) 0 0' }}>
-          Status: {version.status} · {new Date(version.created_at).toLocaleDateString('zh-CN')}
-          {version.created_by ? ' · Curator: ' + version.created_by : ''}
-        </p>
-      </div>
+        {version.description && (
+          <p className="text-gray-400 text-sm mb-4">{version.description}</p>
+        )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 'var(--onto-space-5)' }}>
-        <nav style={{ position: 'sticky' as const, top: 'var(--onto-space-5)', alignSelf: 'start' }} aria-label="Section navigation">
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, position: 'relative' }}>
-            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, backgroundColor: 'var(--onto-border-soft)' }} aria-hidden="true" />
-            {LANE_LABELS.map((label, idx) => (
-              <li key={label}>
-                <a href={'#lane-' + label.toLowerCase()} style={{ display: 'block', padding: 'var(--onto-space-2) var(--onto-space-3)', paddingLeft: 'var(--onto-space-4)', color: idx === 0 ? 'var(--onto-accent)' : 'var(--onto-ink-muted)', fontSize: 'var(--onto-fs-sm)', textDecoration: 'none', borderLeft: idx === 0 ? '2px solid var(--onto-accent)' : '2px solid transparent', marginLeft: -2 }}>
-                  {label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        <div className="h-px bg-gray-700 mb-6" />
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--onto-space-6)' }}>
-          <section id="lane-identity" aria-labelledby="lane-identity-heading">
-            <h2 id="lane-identity-heading" style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h2)', color: 'var(--onto-ink-strong)', marginBottom: 'var(--onto-space-4)' }}>Identity</h2>
-            <div style={{ backgroundColor: 'var(--onto-surface-1)', borderRadius: 'var(--onto-radius-md)', padding: 'var(--onto-space-4)' }}>
-              {entityTypes.length === 0 ? (
-                <p style={{ color: 'var(--onto-ink-muted)', fontSize: 'var(--onto-fs-sm)', margin: 0 }}>No entity types in this version.</p>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ borderBottom: '1px solid var(--onto-border-soft)' }}>
-                    <th scope="col" style={TH_STYLE}>Type ID</th>
-                    <th scope="col" style={TH_STYLE}>Display Name</th>
-                    <th scope="col" style={TH_STYLE}>Domain</th>
-                    <th scope="col" style={TH_STYLE}>Description</th>
-                  </tr></thead>
-                  <tbody>{entityTypes.map((et) => (
-                    <tr key={et.name} style={{ borderBottom: '1px solid var(--onto-border-soft)' }}>
-                      <td style={{ ...TD_STYLE, fontFamily: 'var(--onto-font-mono)', fontFeatureSettings: '"tnum" 1', fontSize: 'var(--onto-fs-xs)' }}>{et.name}</td>
-                      <td style={TD_STYLE}>{et.display_name ?? et.chinese_name ?? et.english_name ?? et.name}</td>
-                      <td style={TD_STYLE}>{et.domain ?? '—'}</td>
-                      <td style={{ ...TD_STYLE, maxWidth: 300 }}><span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{et.description ?? '—'}</span></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              )}
-            </div>
-          </section>
-
-          <section id="lane-version" aria-labelledby="lane-version-heading">
-            <h2 id="lane-version-heading" style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h2)', color: 'var(--onto-ink-strong)', marginBottom: 'var(--onto-space-4)' }}>Versions</h2>
-            <VersionLane versions={[{ id: version.id, version: version.version, status: version.status, changelog: version.changelog, created_by: version.created_by, created_at: version.created_at, updated_at: version.updated_at }]} selectedId={version.id} />
-          </section>
-
-          <section id="lane-relations" aria-labelledby="lane-relations-heading">
-            <h2 id="lane-relations-heading" style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h2)', color: 'var(--onto-ink-strong)', marginBottom: 'var(--onto-space-4)' }}>Relations</h2>
-            <div style={{ backgroundColor: 'var(--onto-surface-1)', borderRadius: 'var(--onto-radius-md)', padding: 'var(--onto-space-4)' }}>
-              {relationTypes.length === 0 ? (
-                <p style={{ color: 'var(--onto-ink-muted)', fontSize: 'var(--onto-fs-sm)', margin: 0 }}>No relation types in this version.</p>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ borderBottom: '1px solid var(--onto-border-soft)' }}>
-                    <th scope="col" style={TH_STYLE}>Relation</th>
-                    <th scope="col" style={TH_STYLE}>Source</th>
-                    <th scope="col" style={TH_STYLE}>Target</th>
-                    <th scope="col" style={TH_STYLE}>Description</th>
-                  </tr></thead>
-                  <tbody>{relationTypes.map((rt) => (
-                    <tr key={rt.name} style={{ borderBottom: '1px solid var(--onto-border-soft)' }}>
-                      <td style={{ ...TD_STYLE, fontFamily: 'var(--onto-font-mono)', fontSize: 'var(--onto-fs-xs)' }}>{rt.name}</td>
-                      <td style={{ ...TD_STYLE, fontSize: 'var(--onto-fs-xs)' }}>{(rt.source_types ?? []).join(', ') || '—'}</td>
-                      <td style={{ ...TD_STYLE, fontSize: 'var(--onto-fs-xs)' }}>{(rt.target_types ?? []).join(', ') || '—'}</td>
-                      <td style={{ ...TD_STYLE, maxWidth: 300 }}><span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{rt.description ?? '—'}</span></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              )}
-              <Link href={'/ontology?node=' + typeId} style={{ display: 'inline-block', marginTop: 'var(--onto-space-3)', color: 'var(--onto-accent-info)', fontSize: 'var(--onto-fs-sm)', textDecoration: 'none' }}>Open in viewer {'→'}</Link>
-            </div>
-          </section>
-
-          <section id="lane-audit" aria-labelledby="lane-audit-heading">
-            <h2 id="lane-audit-heading" style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h2)', color: 'var(--onto-ink-strong)', marginBottom: 'var(--onto-space-4)' }}>Audit</h2>
-            <div style={{ backgroundColor: 'var(--onto-surface-1)', borderRadius: 'var(--onto-radius-md)', padding: 'var(--onto-space-4)' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>
-                <tr style={{ borderBottom: '1px solid var(--onto-border-soft)' }}>
-                  <td style={{ ...TD_STYLE, fontFeatureSettings: '"tnum" 1', fontSize: 'var(--onto-fs-xs)', width: 180, color: 'var(--onto-ink-muted)' }}>{new Date(version.created_at).toLocaleString('zh-CN')}</td>
-                  <td style={TD_STYLE}>{version.created_by ?? 'System'}</td>
-                  <td style={{ ...TD_STYLE, color: 'var(--onto-ink-muted)' }}>created v{version.version}</td>
-                </tr>
-                <tr>
-                  <td style={{ ...TD_STYLE, fontFeatureSettings: '"tnum" 1', fontSize: 'var(--onto-fs-xs)', width: 180, color: 'var(--onto-ink-muted)' }}>{new Date(version.updated_at).toLocaleString('zh-CN')}</td>
-                  <td style={TD_STYLE}>{version.created_by ?? 'System'}</td>
-                  <td style={{ ...TD_STYLE, color: 'var(--onto-ink-muted)' }}>last updated</td>
-                </tr>
-              </tbody></table>
-            </div>
-          </section>
+        {/* Metadata grid */}
+        <div className="grid grid-cols-3 gap-4 mb-8 text-sm">
+          <div>
+            <span className="block text-gray-500 text-xs uppercase tracking-wide">Created</span>
+            <span className="text-gray-200">{version.created_at ? new Date(version.created_at).toLocaleDateString() : '—'}</span>
+          </div>
+          <div>
+            <span className="block text-gray-500 text-xs uppercase tracking-wide">Updated</span>
+            <span className="text-gray-200">{version.updated_at ? new Date(version.updated_at).toLocaleDateString() : '—'}</span>
+          </div>
+          <div>
+            <span className="block text-gray-500 text-xs uppercase tracking-wide">Changelog</span>
+            <span className="text-gray-200">{version.changelog ?? '—'}</span>
+          </div>
         </div>
+
+        {/* Action message */}
+        {actionMsg && (
+          <p className="text-emerald-400 text-sm mb-6">{actionMsg}</p>
+        )}
+        {mutError && (
+          <p className="text-red-400 text-sm mb-6" role="alert">{mutError.message}</p>
+        )}
+
+        {/* Entity Types */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold mb-3">
+            Entity Types ({entityTypes.length})
+          </h2>
+          {entityTypes.length === 0 ? (
+            <p className="text-gray-500 text-sm">No entity types defined.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-700">
+                    <th className="pb-2 pr-4 font-medium">Type ID</th>
+                    <th className="pb-2 pr-4 font-medium">Chinese</th>
+                    <th className="pb-2 pr-4 font-medium">English</th>
+                    <th className="pb-2 font-medium">Domain</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {entityTypes.map((et) => (
+                    <tr key={et.name}>
+                      <td className="py-2 pr-4 font-mono text-blue-300">{et.name}</td>
+                      <td className="py-2 pr-4">{et.chinese_name ?? '—'}</td>
+                      <td className="py-2 pr-4">{et.english_name ?? '—'}</td>
+                      <td className="py-2">{et.domain ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* Relation Types */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold mb-3">
+            Relation Types ({relationTypes.length})
+          </h2>
+          {relationTypes.length === 0 ? (
+            <p className="text-gray-500 text-sm">No relation types defined.</p>
+          ) : (
+            <div className="space-y-3">
+              {relationTypes.map((rt) => (
+                <div key={rt.name} className="p-3 bg-gray-800 rounded border border-gray-700">
+                  <div className="font-mono text-sm text-blue-300 mb-1">{rt.name}</div>
+                  {rt.description && (
+                    <p className="text-gray-400 text-xs mb-2">{rt.description}</p>
+                  )}
+                  <div className="flex gap-4 text-xs text-gray-400">
+                    <span>Source: {(rt.source_types ?? []).join(', ') || '—'}</span>
+                    <span>Target: {(rt.target_types ?? []).join(', ') || '—'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Actions */}
+        <div className="h-px bg-gray-700 mb-6" />
+        <RoleGate>
+          <div className="flex gap-3">
+            {canEdit && (
+              <Link
+                href={'/admin/ontology/' + typeId + '/edit'}
+                className="px-4 py-2 rounded border border-gray-500 bg-gray-700 text-gray-200 text-sm font-medium no-underline hover:bg-gray-600 transition-colors"
+              >
+                Edit draft
+              </Link>
+            )}
+            {canPublish && (
+              <button
+                onClick={() => void handlePromote()}
+                disabled={saving}
+                className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium border-none cursor-pointer hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? 'Publishing...' : 'Promote & publish'}
+              </button>
+            )}
+            {canDeprecate && (
+              <button
+                onClick={() => void handleDeprecate()}
+                disabled={saving}
+                className="px-4 py-2 rounded border border-red-700 bg-red-900/30 text-red-300 text-sm font-medium cursor-pointer hover:bg-red-900/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? 'Deprecating...' : 'Deprecate'}
+              </button>
+            )}
+          </div>
+        </RoleGate>
       </div>
     </div>
   )
+}
+
+export default function OntologyDetailPage({ params }: { params: Promise<{ typeId: string }> }) {
+  const { typeId } = use(params)
+  return <OntologyDetailContent typeId={typeId} />
 }

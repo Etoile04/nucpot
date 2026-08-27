@@ -1,58 +1,50 @@
 /**
  * RoleGate: conditionally renders children based on user role.
  *
+ * Maps backend BlogRole values to ontology write permission.
+ * Backend uses `domain_expert` for ontology write operations.
+ * `admin` also has write access.
+ *
  * Modes:
  * - hide:   removes children from DOM for unauthorized roles
  * - disable: renders children disabled with tooltip
- * - confirm: wraps with a typed-confirmation step
- *
- * Consumed from AuthProvider (blog_role field).
- * Per NFM-3550 §5 — single source of truth for curator-only controls.
  */
-'use client'
-
 import { useAuth } from '@/components/AuthProvider'
-import type { Role } from '../types'
+import type { OntologyWriteRole } from '../types'
 
 interface RoleGateProps {
-  readonly allow: readonly Role[]
-  readonly mode?: 'hide' | 'disable' | 'confirm'
+  readonly allow: readonly OntologyWriteRole[]
+  readonly mode?: 'hide' | 'disable'
   readonly children: React.ReactNode
 }
 
-const ROLE_MAP: Record<string, Role> = {
+/** Map backend BlogRole → ontology write permission. */
+const ROLE_MAP: Record<string, OntologyWriteRole | null> = {
   admin: 'admin',
-  editor: 'curator',
-  curator: 'curator',
+  domain_expert: 'domain_expert',
+  editor: null,
+  reviewer: null,
 }
 
-function resolveRole(blogRole: string | null): Role {
-  if (!blogRole) return 'reader'
-  return ROLE_MAP[blogRole.toLowerCase()] ?? 'reader'
+function resolveOntologyRole(blogRole: string | null): OntologyWriteRole | null {
+  if (!blogRole) return null
+  return ROLE_MAP[blogRole.toLowerCase()] ?? null
 }
 
 export function RoleGate({ allow, mode = 'disable', children }: RoleGateProps) {
   const { user } = useAuth()
-  const role = resolveRole(user?.blog_role ?? null)
-  const authorized = allow.includes(role)
+  const role = resolveOntologyRole(user?.blog_role ?? null)
+  const authorized = role !== null && allow.includes(role)
 
   if (mode === 'hide' && !authorized) {
-    return null
-  }
-
-  if (mode === 'confirm' && !authorized) {
     return null
   }
 
   if (!authorized) {
     return (
       <span
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 'var(--onto-space-2)',
-        }}
-        title="Requires curator role"
+        className="inline-flex items-center gap-2"
+        title="Requires domain_expert role"
         aria-disabled="true"
         tabIndex={-1}
       >

@@ -1,10 +1,7 @@
 /**
- * ErrorPanel: surface-1 panel with retry and copy-request-id.
- *
- * Per NFM-3550 §4 — domain-aware copy, bilingual.
+ * ErrorPanel: surface panel with retry and optional request-id copy.
+ * Uses Tailwind classes — no inline styles.
  */
-'use client'
-
 import { useCallback, useState } from 'react'
 
 interface ErrorPanelProps {
@@ -16,18 +13,9 @@ interface ErrorPanelProps {
 }
 
 const COPY: Record<string, { zh: string; en: string }> = {
-  list: {
-    zh: '无法加载本体列表',
-    en: "Couldn't load the ontology list",
-  },
-  detail: {
-    zh: '加载失败',
-    en: 'Failed to load',
-  },
-  edit: {
-    zh: '保存失败',
-    en: 'Failed to save',
-  },
+  list: { zh: '无法加载本体列表', en: "Couldn't load the ontology list" },
+  detail: { zh: '加载失败', en: 'Failed to load' },
+  edit: { zh: '保存失败', en: 'Failed to save' },
 }
 
 export function ErrorPanel({
@@ -38,7 +26,7 @@ export function ErrorPanel({
   variant = 'list',
 }: ErrorPanelProps) {
   const [copied, setCopied] = useState(false)
-  const labels = (COPY[variant] ?? COPY["list"])!
+  const labels = (COPY[variant] ?? COPY['list'])!
   const statusSuffix = httpStatus ? ` (${httpStatus})` : ''
   const detail = message ?? `${labels.en}${statusSuffix}.`
 
@@ -54,15 +42,7 @@ export function ErrorPanel({
     <div
       role="alert"
       aria-live="assertive"
-      style={{
-        padding: 'var(--onto-space-5) var(--onto-space-6)',
-        backgroundColor: 'var(--onto-surface-1)',
-        borderRadius: 'var(--onto-radius-md)',
-        border: '1px solid var(--onto-accent-danger)',
-        textAlign: 'center',
-        maxWidth: 'var(--onto-container-narrow)',
-        margin: 'var(--onto-space-6) auto',
-      }}
+      className="p-10 bg-gray-800 rounded-lg border border-red-500/60 text-center max-w-lg mx-auto"
     >
       <svg
         width={48}
@@ -70,29 +50,18 @@ export function ErrorPanel({
         viewBox="0 0 48 48"
         fill="none"
         aria-hidden="true"
-        style={{ marginBottom: 'var(--onto-space-3)' }}
+        className="mb-3 text-red-400 mx-auto block"
       >
-        <rect x="4" y="4" width="40" height="40" rx="4" stroke="var(--onto-accent-danger)" strokeWidth="2" />
-        <path d="M16 20h16M16 28h10" stroke="var(--onto-accent-danger)" strokeWidth="2" strokeLinecap="round" />
-        <path d="M24 4v8" stroke="var(--onto-accent-danger)" strokeWidth="2" strokeLinecap="round" />
+        <rect x="4" y="4" width="40" height="40" rx="4" stroke="currentColor" strokeWidth={2} />
+        <path d="M16 20h16M16 28h10" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+        <path d="M24 4v8" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
       </svg>
-      <p style={{ color: 'var(--onto-ink-default)', fontSize: 'var(--onto-fs-body)', margin: 0 }}>
-        {detail}
-      </p>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--onto-space-3)', marginTop: 'var(--onto-space-4)' }}>
+      <p className="text-gray-200 text-base m-0">{detail}</p>
+      <div className="flex justify-center gap-3 mt-4">
         {onRetry && (
           <button
             onClick={onRetry}
-            style={{
-              padding: 'var(--onto-space-2) var(--onto-space-4)',
-              borderRadius: 'var(--onto-radius-sm)',
-              border: '1px solid var(--onto-border-strong)',
-              backgroundColor: 'var(--onto-surface-2)',
-              color: 'var(--onto-ink-default)',
-              cursor: 'pointer',
-              fontSize: 'var(--onto-fs-sm)',
-              fontFamily: 'inherit',
-            }}
+            className="px-4 py-2 rounded border border-gray-500 bg-gray-700 text-gray-200 cursor-pointer text-sm hover:bg-gray-600 transition-colors"
           >
             Retry
           </button>
@@ -100,16 +69,7 @@ export function ErrorPanel({
         {requestId && (
           <button
             onClick={copyId}
-            style={{
-              padding: 'var(--onto-space-2) var(--onto-space-4)',
-              borderRadius: 'var(--onto-radius-sm)',
-              border: '1px solid var(--onto-border-soft)',
-              background: 'none',
-              color: 'var(--onto-ink-muted)',
-              cursor: 'pointer',
-              fontSize: 'var(--onto-fs-sm)',
-              fontFamily: 'inherit',
-            }}
+            className="px-4 py-2 rounded border border-gray-600 bg-transparent text-gray-400 cursor-pointer text-sm hover:text-gray-200 transition-colors"
           >
             {copied ? 'Copied' : 'Copy request ID'}
           </button>

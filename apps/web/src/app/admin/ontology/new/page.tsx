@@ -1,12 +1,12 @@
 /**
  * Ontology New Page — /admin/ontology/new
  *
- * Reuses OntologyEditForm with no versionId.
+ * Renders OntologyEditForm with versionId=null (not a truthy sentinel).
  */
 'use client'
 
 import EditPage from '../[typeId]/edit/page'
 
 export default function NewOntologyPage() {
-  return <EditPage params={Promise.resolve({ typeId: '__new__' })} />
+  return <EditPage params={Promise.resolve({ typeId: '' })} />
 }

@@ -56,7 +56,12 @@ export interface OntologyData {
 
 // ── Frontend-only shapes ───────────────────────────────────────────
 
-export type Role = 'curator' | 'admin' | 'reader'
+/**
+ * Roles that can write ontology data.
+ * Maps backend BlogRole values to frontend permission checks.
+ * Backend uses `domain_expert` for ontology write operations.
+ */
+export type OntologyWriteRole = 'admin' | 'domain_expert'
 
 export type FilterStatus = OntologyVersionStatus | 'all'
 
@@ -89,3 +94,12 @@ export const STATUS_LABELS_ZH: Record<OntologyVersionStatus, string> = {
   published: '已发布',
   deprecated: '已废弃',
 }
+
+// ── TanStack Query keys ──────────────────────────────────────────
+
+export const ONTOLOGY_KEYS = {
+  versions: (status?: OntologyVersionStatus | 'all', page?: number) =>
+    ['ontology-versions', status ?? 'all', page ?? 1] as const,
+  version: (id: string) =>
+    ['ontology-version', id] as const,
+} as const

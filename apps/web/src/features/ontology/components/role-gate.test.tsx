@@ -19,31 +19,46 @@ describe('RoleGate', () => {
     expect(screen.getByText('Secret')).toBeInTheDocument()
   })
 
-  it('renders children when user has editor role mapped to curator', () => {
-    mockUseAuth.mockReturnValue({ user: { blog_role: 'editor' } })
-    render(<RoleGate allow={['curator']}><span>Secret</span></RoleGate>)
+  it('renders children when user has domain_expert role', () => {
+    mockUseAuth.mockReturnValue({ user: { blog_role: 'domain_expert' } })
+    render(<RoleGate allow={['domain_expert']}><span>Secret</span></RoleGate>)
     expect(screen.getByText('Secret')).toBeInTheDocument()
   })
 
-  it('hides children in hide mode for unauthorized', () => {
-    mockUseAuth.mockReturnValue({ user: { blog_role: null } })
+  it('hides children in hide mode for unauthorized (editor)', () => {
+    mockUseAuth.mockReturnValue({ user: { blog_role: 'editor' } })
     const { container } = render(
-      <RoleGate allow={['curator']} mode='hide'><span>Secret</span></RoleGate>
+      <RoleGate allow={['admin', 'domain_expert']} mode='hide'><span>Secret</span></RoleGate>
+    )
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('hides children in hide mode for unauthorized (reviewer)', () => {
+    mockUseAuth.mockReturnValue({ user: { blog_role: 'reviewer' } })
+    const { container } = render(
+      <RoleGate allow={['admin', 'domain_expert']} mode='hide'><span>Secret</span></RoleGate>
+    )
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('hides children in hide mode when user is null (not logged in)', () => {
+    mockUseAuth.mockReturnValue({ user: null })
+    const { container } = render(
+      <RoleGate allow={['admin', 'domain_expert']} mode='hide'><span>Secret</span></RoleGate>
     )
     expect(container.innerHTML).toBe('')
   })
 
   it('disables children in disable mode for unauthorized', () => {
-    mockUseAuth.mockReturnValue({ user: { blog_role: null } })
-    render(<RoleGate allow={['curator']} mode='disable'><span>Secret</span></RoleGate>)
+    mockUseAuth.mockReturnValue({ user: { blog_role: 'editor' } })
+    render(<RoleGate allow={['admin', 'domain_expert']} mode='disable'><span>Secret</span></RoleGate>)
     expect(screen.getByText('Secret').parentElement).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('falls back to reader for unknown roles', () => {
-    mockUseAuth.mockReturnValue({ user: { blog_role: 'viewer' } })
-    const { container } = render(
-      <RoleGate allow={['curator']} mode='hide'><span>Secret</span></RoleGate>
-    )
-    expect(container.innerHTML).toBe('')
+  it('renders children directly (no wrapper) when authorized', () => {
+    mockUseAuth.mockReturnValue({ user: { blog_role: 'admin' } })
+    const { container } = render(<RoleGate allow={['admin']}><span>Content</span></RoleGate>)
+    // Authorized renders fragment — no wrapping span with aria-disabled
+    expect(container.querySelector('span[aria-disabled]')).toBeNull()
   })
 })

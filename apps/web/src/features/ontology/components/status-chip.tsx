@@ -1,19 +1,13 @@
 /**
- * StatusChip: pill-shaped status badge bound to ontology status tokens.
- * Per NFM-3550 §2 — never hand-pick colors, always use --onto-status-*.
+ * StatusChip: pill-shaped status badge for ontology version statuses.
+ * Uses Tailwind classes — no inline styles.
  */
-'use client'
-
 import type { OntologyVersionStatus } from '../types'
 
-interface StatusChipProps {
-  readonly status: OntologyVersionStatus
-}
-
-const STATUS_TOKENS: Record<OntologyVersionStatus, string> = {
-  draft: 'var(--onto-status-draft)',
-  published: 'var(--onto-status-published)',
-  deprecated: 'var(--onto-status-deprecated)',
+const STATUS_CLASSES: Record<OntologyVersionStatus, string> = {
+  draft: 'bg-amber-900/40 text-amber-300',
+  published: 'bg-emerald-900/40 text-emerald-300',
+  deprecated: 'bg-gray-700/40 text-gray-400',
 }
 
 const LABELS: Record<OntologyVersionStatus, string> = {
@@ -22,23 +16,16 @@ const LABELS: Record<OntologyVersionStatus, string> = {
   deprecated: 'Deprecated',
 }
 
+interface StatusChipProps {
+  readonly status: OntologyVersionStatus
+}
+
 export function StatusChip({ status }: StatusChipProps) {
   return (
     <span
       role="status"
       aria-label={`Status: ${LABELS[status]}`}
-      style={{
-        display: 'inline-block',
-        padding: '2px var(--onto-space-2)',
-        borderRadius: 'var(--onto-radius-pill)',
-        backgroundColor: STATUS_TOKENS[status],
-        color: 'var(--onto-ink-strong)',
-        fontSize: 'var(--onto-fs-xs)',
-        fontWeight: 500,
-        lineHeight: '1.4',
-        whiteSpace: 'nowrap',
-        letterSpacing: '0.01em',
-      }}
+      className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium leading-tight whitespace-nowrap tracking-wide ${STATUS_CLASSES[status]}`}
     >
       {LABELS[status]}
     </span>

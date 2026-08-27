@@ -23,6 +23,18 @@ describe('EmptyState', () => {
 
   it('omits description when not provided', () => {
     const { container } = render(<EmptyState title='Empty' />)
-    expect(container.querySelector('[class] p')).toBeNull()
+    const paragraphs = container.querySelectorAll('p')
+    expect(paragraphs).toHaveLength(1)
+  })
+
+  it('omits action when not provided', () => {
+    render(<EmptyState title='Empty' />)
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('has role=status and aria-live=polite', () => {
+    render(<EmptyState title='Empty' />)
+    const el = screen.getByRole('status')
+    expect(el).toHaveAttribute('aria-live', 'polite')
   })
 })

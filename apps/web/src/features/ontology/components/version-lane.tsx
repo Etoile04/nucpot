@@ -1,11 +1,7 @@
 /**
  * VersionLane: vertical timeline with dot markers for ontology versions.
- *
- * Per NFM-3550 §2 and §3.2 — each node = version snapshot.
- * Selected version gets paper-warm halo.
+ * Uses Tailwind classes — no inline styles.
  */
-'use client'
-
 import type { OntologyVersion, OntologyVersionStatus } from '../types'
 import { STATUS_LABELS } from '../types'
 
@@ -15,41 +11,22 @@ interface VersionLaneProps {
   readonly onSelect?: (id: string) => void
 }
 
-const STATUS_COLORS: Record<OntologyVersionStatus, string> = {
-  draft: 'var(--onto-status-draft)',
-  published: 'var(--onto-status-published)',
-  deprecated: 'var(--onto-status-deprecated)',
+const STATUS_DOT_CLASSES: Record<OntologyVersionStatus, string> = {
+  draft: 'border-amber-500',
+  published: 'border-emerald-500',
+  deprecated: 'border-gray-500',
 }
 
 export function VersionLane({ versions, selectedId, onSelect }: VersionLaneProps) {
   if (versions.length === 0) {
-    return (
-      <p style={{ color: 'var(--onto-ink-muted)', fontSize: 'var(--onto-fs-sm)' }}>
-        No versions recorded.
-      </p>
-    )
+    return <p className="text-gray-400 text-sm">No versions recorded.</p>
   }
 
   return (
-    <ol
-      style={{
-        listStyle: 'none',
-        margin: 0,
-        padding: 0,
-        position: 'relative',
-      }}
-      aria-label="Version history"
-    >
+    <ol className="list-none m-0 p-0 relative" aria-label="Version history">
       {/* Vertical line */}
       <div
-        style={{
-          position: 'absolute',
-          left: 7,
-          top: 12,
-          bottom: 12,
-          width: 2,
-          backgroundColor: 'var(--onto-border-soft)',
-        }}
+        className="absolute left-[7px] top-3 bottom-3 w-0.5 bg-gray-700"
         aria-hidden="true"
       />
       {versions.map((v) => {
@@ -63,16 +40,7 @@ export function VersionLane({ versions, selectedId, onSelect }: VersionLaneProps
           <li
             key={v.id}
             aria-current={isSelected ? 'true' : undefined}
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 'var(--onto-space-3)',
-              padding: 'var(--onto-space-2) 0',
-              cursor: onSelect ? 'pointer' : 'default',
-              opacity: v.status === 'deprecated' ? 0.6 : 1,
-              borderRadius: 'var(--onto-radius-sm)',
-              transition: `background var(--onto-dur-fast) var(--onto-ease-out)`,
-            }}
+            className={`flex items-start gap-3 py-2 rounded transition-colors ${onSelect && !isSelected ? 'cursor-pointer hover:bg-gray-800' : ''} ${v.status === 'deprecated' ? 'opacity-60' : ''}`}
             onClick={isSelected || !onSelect ? undefined : () => onSelect(v.id)}
             onKeyDown={(e) => {
               if ((e.key === 'Enter' || e.key === ' ') && onSelect && !isSelected) {
@@ -85,67 +53,23 @@ export function VersionLane({ versions, selectedId, onSelect }: VersionLaneProps
           >
             {/* Dot marker */}
             <div
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: '50%',
-                border: `2px solid ${STATUS_COLORS[v.status] ?? 'var(--onto-border-strong)'}`,
-                backgroundColor: isSelected ? 'var(--onto-accent)' : 'var(--onto-surface-0)',
-                flexShrink: 0,
-                marginTop: 2,
-                boxShadow: isSelected ? '0 0 0 4px rgba(217, 162, 95, 0.25)' : 'none',
-                transition: `all var(--onto-dur-base) var(--onto-ease-out)`,
-                position: 'relative',
-                zIndex: 1,
-              }}
+              className={`w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 relative z-[1] transition-all ${STATUS_DOT_CLASSES[v.status] ?? 'border-gray-500'} ${isSelected ? 'bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.25)]' : 'bg-gray-900'}`}
               aria-hidden="true"
             />
-            {/* Content */}
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--onto-space-2)' }}>
-                <span
-                  style={{
-                    fontFeatureSettings: '"tnum" 1',
-                    fontFamily: 'var(--onto-font-mono)',
-                    fontSize: 'var(--onto-fs-sm)',
-                    color: isSelected ? 'var(--onto-accent)' : 'var(--onto-ink-default)',
-                    fontWeight: isSelected ? 600 : 400,
-                  }}
-                >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className={`tabular-nums font-mono text-sm ${isSelected ? 'text-blue-400' : 'text-gray-200'} ${isSelected ? 'font-semibold' : ''}`}>
                   v{v.version}
                 </span>
-                <span
-                  style={{
-                    fontSize: 'var(--onto-fs-xs)',
-                    color: STATUS_COLORS[v.status] ?? 'var(--onto-ink-muted)',
-                    backgroundColor: 'var(--onto-surface-2)',
-                    padding: '1px var(--onto-space-2)',
-                    borderRadius: 'var(--onto-radius-pill)',
-                  }}
-                >
+                <span className="text-xs text-gray-400 bg-gray-800 px-2 rounded-full">
                   {STATUS_LABELS[v.status]}
                 </span>
               </div>
-              <div
-                style={{
-                  fontSize: 'var(--onto-fs-xs)',
-                  color: 'var(--onto-ink-muted)',
-                  marginTop: 2,
-                  fontFeatureSettings: '"tnum" 1',
-                }}
-              >
-                {dateStr}
-                {v.created_by ? ` · ${v.created_by}` : ''}
+              <div className="text-xs text-gray-500 mt-0.5 tabular-nums">
+                {dateStr}{v.created_by ? ` · ${v.created_by}` : ''}
               </div>
               {v.changelog && (
-                <p
-                  style={{
-                    fontSize: 'var(--onto-fs-xs)',
-                    color: 'var(--onto-ink-muted)',
-                    margin: 'var(--onto-space-1) 0 0',
-                    lineHeight: 'var(--lh-tight)',
-                  }}
-                >
+                <p className="text-xs text-gray-500 mt-1 leading-tight m-0">
                   {v.changelog}
                 </p>
               )}

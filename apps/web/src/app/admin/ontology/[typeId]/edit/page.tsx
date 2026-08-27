@@ -1,9 +1,8 @@
 /**
  * Ontology Edit Page — /admin/ontology/[typeId]/edit
- * Ontology New Page — /admin/ontology/new
  *
- * Per NFM-3550 §3.3 — form with identity, definition, relations,
- * and promote workflow.
+ * Per NFM-3550 S.3.3 — edit entity_types and relation_types arrays.
+ * When versionId is empty string, operates in "new" mode (F3 fix).
  */
 'use client'
 
@@ -13,86 +12,157 @@ import { useRouter } from 'next/navigation'
 import { useOntologyDetail } from '@/features/ontology/hooks/use-ontology-detail'
 import { useOntologyMutations } from '@/features/ontology/hooks/use-ontology-mutations'
 import { ErrorPanel } from '@/features/ontology/components/error-panel'
+import type { EntityType, RelationType } from '@/features/ontology/types'
 
 interface EditPageProps {
   params: Promise<{ typeId: string }>
 }
 
-function OntologyEditForm({ versionId }: { versionId: string | null }) {
+interface EntityFormRow {
+  name: string
+  chinese_name: string
+  english_name: string
+  domain: string
+  description: string
+}
+
+interface RelationFormRow {
+  name: string
+  source_types: string
+  target_types: string
+  description: string
+}
+
+function entityToRow(et: EntityType): EntityFormRow {
+  return {
+    name: et.name,
+    chinese_name: et.chinese_name ?? '',
+    english_name: et.english_name ?? '',
+    domain: et.domain ?? '',
+    description: et.description ?? '',
+  }
+}
+
+function relationToRow(rt: RelationType): RelationFormRow {
+  return {
+    name: rt.name,
+    source_types: (rt.source_types ?? []).join(', '),
+    target_types: (rt.target_types ?? []).join(', '),
+    description: rt.description ?? '',
+  }
+}
+
+function rowToEntity(r: EntityFormRow): EntityType {
+  return {
+    name: r.name,
+    chinese_name: r.chinese_name || null,
+    english_name: r.english_name || null,
+    domain: r.domain || null,
+    description: r.description || null,
+    label_template: null,
+    required_properties: null,
+  }
+}
+
+function rowToRelation(r: RelationFormRow): RelationType {
+  return {
+    name: r.name,
+    source_types: r.source_types ? r.source_types.split(',').map(s => s.trim()).filter(Boolean) : null,
+    target_types: r.target_types ? r.target_types.split(',').map(s => s.trim()).filter(Boolean) : null,
+    description: r.description || null,
+    display_name: null,
+    properties_schema: null,
+  }
+}
+
+const EMPTY_ENTITY: EntityFormRow = { name: '', chinese_name: '', english_name: '', domain: '', description: '' }
+const EMPTY_RELATION: RelationFormRow = { name: '', source_types: '', target_types: '', description: '' }
+
+export function OntologyEditForm({ versionId }: { versionId: string }) {
   const router = useRouter()
-  const { version, entityTypes, loading: detailLoading, error: detailError, refetch } =
-    versionId ? useOntologyDetail(versionId) : { version: null, entityTypes: [], loading: false, error: null, refetch: async () => {} }
+  const isNew = versionId === ''
+
+  const { version, entityTypes, relationTypes, loading: detailLoading, error: detailError, refetch } =
+    useOntologyDetail(isNew ? null : versionId)
   const { saving, error: mutationError, createDraft, updateDraft, publishVersion } = useOntologyMutations()
 
-  const [name, setName] = useState('')
-  const [chineseName, setChineseName] = useState('')
-  const [englishName, setEnglishName] = useState('')
-  const [domain, setDomain] = useState('')
-  const [definition, setDefinition] = useState('')
-  const [changelog] = useState('')
+  const [entities, setEntities] = useState<EntityFormRow[]>(
+    isNew ? [{ ...EMPTY_ENTITY }] : [],
+  )
+  const [relations, setRelations] = useState<RelationFormRow[]>([])
+  const [changelog, setChangelog] = useState('')
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  // Populate form from existing version
   useEffect(() => {
-    if (version && entityTypes.length > 0) {
-      const first = entityTypes[0]!
-      setName(first.name)
-      setChineseName(first.chinese_name ?? '')
-      setEnglishName(first.english_name ?? '')
-      setDomain(first.domain ?? '')
-      setDefinition(first.description ?? '')
+    if (!isNew && version && entityTypes.length > 0) {
+      setEntities(entityTypes.map(entityToRow))
+      setRelations(relationTypes.map(relationToRow))
     }
-  }, [version, entityTypes])
+  }, [isNew, version, entityTypes, relationTypes])
 
-  const isNew = !versionId
+  const handleAddEntity = useCallback(() => {
+    setEntities(prev => [...prev, { ...EMPTY_ENTITY }])
+  }, [])
+
+  const handleRemoveEntity = useCallback((idx: number) => {
+    setEntities(prev => prev.filter((_, i) => i !== idx))
+  }, [])
+
+  const handleEntityChange = useCallback((idx: number, field: keyof EntityFormRow, value: string) => {
+    setEntities(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r))
+  }, [])
+
+  const handleAddRelation = useCallback(() => {
+    setRelations(prev => [...prev, { ...EMPTY_RELATION }])
+  }, [])
+
+  const handleRemoveRelation = useCallback((idx: number) => {
+    setRelations(prev => prev.filter((_, i) => i !== idx))
+  }, [])
+
+  const handleRelationChange = useCallback((idx: number, field: keyof RelationFormRow, value: string) => {
+    setRelations(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r))
+  }, [])
 
   const handleSaveDraft = useCallback(async () => {
     try {
       const ontologyData = {
-        entity_types: [{
-          name: name || 'untyped',
-          chinese_name: chineseName || null,
-          english_name: englishName || null,
-          domain: domain || null,
-          description: definition || null,
-          label_template: null,
-          required_properties: null,
-        }],
-        relation_types: [],
+        entity_types: entities.map(rowToEntity),
+        relation_types: relations.map(rowToRelation),
       }
       if (isNew) {
-        const created = await createDraft(changelog, ontologyData)
-        setSuccessMsg('Draft saved · ' + new Date().toLocaleTimeString())
+        const created = await createDraft.mutateAsync({ changelog, ontologyData })
+        setSuccessMsg('Draft saved')
         router.push('/admin/ontology/' + created.id)
-      } else if (versionId) {
-        await updateDraft(versionId, { ontology_data: ontologyData, changelog })
-        setSuccessMsg('Draft saved · ' + new Date().toLocaleTimeString())
+      } else {
+        await updateDraft.mutateAsync({ versionId, patch: { ontology_data: ontologyData, changelog } })
+        setSuccessMsg('Draft saved')
       }
     } catch {
-      // error is set in the hook
+      // error surfaced via mutationError
     }
-  }, [isNew, versionId, name, chineseName, englishName, domain, definition, changelog, createDraft, updateDraft, router])
+  }, [isNew, versionId, entities, relations, changelog, createDraft, updateDraft, router])
 
   const handlePromote = useCallback(async () => {
     if (!versionId) return
     try {
-      await publishVersion(versionId, changelog)
-      setSuccessMsg('Published · redirecting to detail...')
+      await publishVersion.mutateAsync({ versionId, changelog })
+      setSuccessMsg('Published')
       setTimeout(() => router.push('/admin/ontology/' + versionId), 2000)
     } catch {
-      // error is set in the hook
+      // error surfaced via mutationError
     }
   }, [versionId, changelog, publishVersion, router])
 
-  const isValid = name.length > 0 && /^[a-z][a-z0-9_.]{1,63}$/.test(name)
-
   if (detailLoading) {
-    return <div style={{ maxWidth: 'var(--onto-container-narrow)', margin: '0 auto', padding: 'var(--onto-space-6)' }}>Loading...</div>
+    return (
+      <div className="max-w-2xl mx-auto p-6">Loading...</div>
+    )
   }
 
   if (detailError && !isNew) {
     return (
-      <div style={{ maxWidth: 'var(--onto-container-narrow)', margin: '0 auto', padding: 'var(--onto-space-6)' }}>
+      <div className="max-w-2xl mx-auto p-6">
         <ErrorPanel variant="edit" message={detailError} onRetry={refetch} />
       </div>
     )
@@ -100,10 +170,10 @@ function OntologyEditForm({ versionId }: { versionId: string | null }) {
 
   if (successMsg) {
     return (
-      <div style={{ maxWidth: 'var(--onto-container-narrow)', margin: '0 auto', padding: 'var(--onto-space-6)', textAlign: 'center' }}>
-        <p style={{ color: 'var(--onto-accent-success)', fontSize: 'var(--onto-fs-body)' }}>{successMsg}</p>
+      <div className="max-w-2xl mx-auto p-6 text-center">
+        <p className="text-emerald-400 text-sm">{successMsg}</p>
         {!isNew && (
-          <Link href={'/admin/ontology/' + versionId} style={{ color: 'var(--onto-accent)', fontSize: 'var(--onto-fs-sm)', marginTop: 'var(--onto-space-3)', display: 'inline-block' }}>
+          <Link href={'/admin/ontology/' + versionId} className="text-blue-400 text-sm mt-3 inline-block">
             Go to detail
           </Link>
         )}
@@ -111,113 +181,213 @@ function OntologyEditForm({ versionId }: { versionId: string | null }) {
     )
   }
 
+  const backHref = isNew ? '/admin/ontology' : '/admin/ontology/' + versionId
+
+  const inputCls = 'w-full px-3 py-2 rounded border border-gray-600 bg-gray-900 text-gray-200 text-sm outline-none focus:border-blue-500'
+
   return (
-    <div className="onto-animate" style={{ maxWidth: 'var(--onto-container-narrow)', margin: '0 auto', padding: 'var(--onto-space-5) var(--onto-space-6)', backgroundColor: 'var(--onto-surface-0)', minHeight: '100vh' }}>
-      <header style={{ marginBottom: 'var(--onto-space-4)' }}>
-        <Link href={isNew ? '/admin/ontology' : '/admin/ontology/' + versionId} style={{ color: 'var(--onto-ink-muted)', textDecoration: 'none', fontSize: 'var(--onto-fs-sm)' }}>
-          {'‹'} Back to detail
-        </Link>
-      </header>
+    <div className="min-h-screen bg-gray-900">
+      <div className="max-w-3xl mx-auto px-6 py-8">
+        <header className="mb-6">
+          <Link href={backHref} className="text-gray-400 hover:text-gray-200 text-sm no-underline">
+            {"< "} Back to list
+          </Link>
+        </header>
 
-      <h1 style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h1)', color: 'var(--onto-ink-strong)', margin: '0 0 var(--onto-space-2)' }}>
-        {isNew ? 'New ontology type' : 'Edit v' + (version?.version ?? '')}
-      </h1>
-      <div style={{ height: 1, backgroundColor: 'var(--onto-border-soft)', marginBottom: 'var(--onto-space-5)' }} />
+        <h1 className="text-2xl font-bold text-gray-100 mb-2">
+          {isNew ? 'New ontology version' : `Edit v${version?.version ?? ''}`}
+        </h1>
+        <div className="h-px bg-gray-700 mb-8" />
 
-      <form onSubmit={(e) => { e.preventDefault(); void handleSaveDraft() }}>
-        {/* Identity section */}
-        <fieldset style={{ border: 'none', padding: 0, marginBottom: 'var(--onto-space-5)' }}>
-          <legend style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h2)', color: 'var(--onto-ink-strong)', marginBottom: 'var(--onto-space-3)' }}>Identity</legend>
+        <form onSubmit={(e) => { e.preventDefault(); void handleSaveDraft() }}>
+          <fieldset className="border-none p-0 mb-8">
+            <legend className="text-lg font-semibold text-gray-100 mb-4 block">Entity Types</legend>
+            <div className="space-y-4">
+              {entities.map((entity, idx) => (
+                <div key={idx} className="p-4 bg-gray-800 rounded-lg border border-gray-700">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-mono text-sm text-gray-300">Entity #{idx + 1}</span>
+                    {entities.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveEntity(idx)}
+                        className="text-red-400 text-sm hover:text-red-300 bg-transparent border-none cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <label className="block">
+                      <span className="block text-gray-300 text-sm mb-1">Type ID *</span>
+                      <input
+                        value={entity.name}
+                        onChange={(e) => handleEntityChange(idx, 'name', e.target.value)}
+                        disabled={!isNew}
+                        required
+                        aria-required="true"
+                        placeholder="e.g. mat.zr_alloy_phase"
+                        className={inputCls}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-gray-300 text-sm mb-1">Domain</span>
+                      <input
+                        value={entity.domain}
+                        onChange={(e) => handleEntityChange(idx, 'domain', e.target.value)}
+                        placeholder="e.g. Nuclear cladding"
+                        className={inputCls}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-gray-300 text-sm mb-1">Chinese label</span>
+                      <input
+                        value={entity.chinese_name}
+                        onChange={(e) => handleEntityChange(idx, 'chinese_name', e.target.value)}
+                        className={inputCls}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-gray-300 text-sm mb-1">English label</span>
+                      <input
+                        value={entity.english_name}
+                        onChange={(e) => handleEntityChange(idx, 'english_name', e.target.value)}
+                        className={inputCls}
+                      />
+                    </label>
+                  </div>
+                  <label className="block">
+                    <span className="block text-gray-300 text-sm mb-1">Description</span>
+                    <textarea
+                      value={entity.description}
+                      onChange={(e) => handleEntityChange(idx, 'description', e.target.value)}
+                      rows={3}
+                      className={inputCls + ' font-mono resize-y min-h-[80px]'}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={handleAddEntity}
+              className="mt-4 px-4 py-2 rounded border border-dashed border-gray-600 text-gray-300 text-sm hover:bg-gray-800 hover:border-gray-500 transition-colors"
+            >
+              + Add entity type
+            </button>
+          </fieldset>
 
-          <div style={{ marginBottom: 'var(--onto-space-4)' }}>
-            <label htmlFor="type-id" style={labelStyle}>Type ID <span aria-hidden="true">*</span></label>
-            <input id="type-id" value={name} onChange={(e) => setName(e.target.value)} disabled={!isNew} required aria-required="true" style={inputStyle} placeholder="e.g. mat.zr_alloy_phase" />
-            {!isValid && name.length > 0 && (
-              <p id="type-id-error" style={errorTextStyle} role="alert">Type ID: lowercase letters, digits, dots, underscores (1-64 chars)</p>
+          <fieldset className="border-none p-0 mb-8">
+            <legend className="text-lg font-semibold text-gray-100 mb-4 block">Relation Types</legend>
+            {relations.length === 0 ? (
+              <p className="text-gray-500 text-sm">No relation types defined.</p>
+            ) : (
+              <div className="space-y-4">
+                {relations.map((rel, idx) => (
+                  <div key={idx} className="p-4 bg-gray-800 rounded-lg border border-gray-700">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="font-mono text-sm text-gray-300">Relation #{idx + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRelation(idx)}
+                        className="text-red-400 text-sm hover:text-red-300 bg-transparent border-none cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <label className="block">
+                        <span className="block text-gray-300 text-sm mb-1">Relation name *</span>
+                        <input
+                          value={rel.name}
+                          onChange={(e) => handleRelationChange(idx, 'name', e.target.value)}
+                          placeholder="e.g. has_composition"
+                          className={inputCls}
+                        />
+                      </label>
+                      <div />
+                      <label className="block col-span-2">
+                        <span className="block text-gray-300 text-sm mb-1">Source types (comma-separated)</span>
+                        <input
+                          value={rel.source_types}
+                          onChange={(e) => handleRelationChange(idx, 'source_types', e.target.value)}
+                          placeholder="e.g. mat.zr_alloy_phase, mat.zr_alloy_component"
+                          className={inputCls}
+                        />
+                      </label>
+                      <label className="block col-span-2">
+                        <span className="block text-gray-300 text-sm mb-1">Target types (comma-separated)</span>
+                        <input
+                          value={rel.target_types}
+                          onChange={(e) => handleRelationChange(idx, 'target_types', e.target.value)}
+                          placeholder="e.g. mat.property"
+                          className={inputCls}
+                        />
+                      </label>
+                      <label className="block col-span-2">
+                        <span className="block text-gray-300 text-sm mb-1">Description</span>
+                        <textarea
+                          value={rel.description}
+                          onChange={(e) => handleRelationChange(idx, 'description', e.target.value)}
+                          rows={2}
+                          className={inputCls + ' resize-y min-h-[60px]'}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleAddRelation}
+              className="mt-4 px-4 py-2 rounded border border-dashed border-gray-600 text-gray-300 text-sm hover:bg-gray-800 hover:border-gray-500 transition-colors"
+            >
+              + Add relation type
+            </button>
+          </fieldset>
+
+          <fieldset className="border-none p-0 mb-8">
+            <legend className="text-lg font-semibold text-gray-100 mb-4 block">Changelog</legend>
+            <textarea
+              value={changelog}
+              onChange={(e) => setChangelog(e.target.value)}
+              rows={3}
+              aria-label="Changelog"
+              className={inputCls + ' font-mono resize-y min-h-[80px]'}
+            />
+          </fieldset>
+
+          {mutationError ? (
+            <div role="alert" aria-live="polite" className="text-red-400 text-sm mb-6">
+              {mutationError}
+            </div>
+          ) : null}
+
+          <div className="sticky bottom-0 bg-gray-800 border-t border-gray-700 py-3 flex justify-end gap-3">
+            <button
+              type="submit"
+              disabled={saving}
+              aria-disabled={saving}
+              className="px-5 py-2 rounded border border-gray-500 bg-gray-700 text-gray-200 text-sm font-medium cursor-pointer hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {saving ? 'Saving...' : 'Save draft'}
+            </button>
+            {!isNew && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void handlePromote()}
+                className="px-5 py-2 rounded bg-blue-600 border border-blue-600 text-white text-sm font-medium cursor-pointer hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? 'Publishing...' : 'Promote and publish'}
+              </button>
             )}
           </div>
-
-          <div style={{ marginBottom: 'var(--onto-space-4)' }}>
-            <label htmlFor="chinese-name" style={labelStyle}>Chinese label <span aria-hidden="true">*</span></label>
-            <input id="chinese-name" value={chineseName} onChange={(e) => setChineseName(e.target.value)} required aria-required="true" style={inputStyle} />
-          </div>
-
-          <div style={{ marginBottom: 'var(--onto-space-4)' }}>
-            <label htmlFor="english-name" style={labelStyle}>English label <span aria-hidden="true">*</span></label>
-            <input id="english-name" value={englishName} onChange={(e) => setEnglishName(e.target.value)} required aria-required="true" style={inputStyle} />
-          </div>
-
-          <div style={{ marginBottom: 'var(--onto-space-4)' }}>
-            <label htmlFor="domain" style={labelStyle}>Domain</label>
-            <input id="domain" value={domain} onChange={(e) => setDomain(e.target.value)} style={inputStyle} placeholder="e.g. Nuclear cladding" />
-          </div>
-        </fieldset>
-
-        {/* Definition section */}
-        <fieldset style={{ border: 'none', padding: 0, marginBottom: 'var(--onto-space-5)' }}>
-          <legend style={{ fontFamily: 'var(--onto-font-display)', fontSize: 'var(--onto-fs-h2)', color: 'var(--onto-ink-strong)', marginBottom: 'var(--onto-space-3)' }}>Definition</legend>
-          <textarea id="definition" value={definition} onChange={(e) => setDefinition(e.target.value)} rows={6} aria-label="Definition" style={{ ...inputStyle, fontFamily: 'var(--onto-font-mono)', resize: 'vertical', minHeight: 120 }} />
-        </fieldset>
-
-        {/* Error display */}
-        {mutationError && (
-          <div role="alert" aria-live="polite" style={{ color: 'var(--onto-accent-danger)', fontSize: 'var(--onto-fs-sm)', marginBottom: 'var(--onto-space-3)' }}>
-            {mutationError}
-          </div>
-        )}
-
-        {/* Sticky bottom action bar */}
-        <div style={{ position: 'sticky' as const, bottom: 0, backgroundColor: 'var(--onto-surface-1)', borderTop: '1px solid var(--onto-border-soft)', padding: 'var(--onto-space-3) 0', display: 'flex', justifyContent: 'flex-end', gap: 'var(--onto-space-3)', marginTop: 'var(--onto-space-5)' }}>
-          <button type="submit" disabled={saving || !isValid} aria-disabled={!isValid} style={{ ...btnStyle, backgroundColor: 'var(--onto-surface-2)', borderColor: 'var(--onto-border-strong)' }}>
-            {saving ? 'Saving...' : 'Save draft'}
-          </button>
-          {!isNew && versionId && (
-            <button type="button" disabled={saving} onClick={() => void handlePromote()} style={{ ...btnStyle, backgroundColor: 'var(--onto-accent)', borderColor: 'var(--onto-accent)', color: 'var(--onto-ink-inverse)' }}>
-              {saving ? 'Publishing...' : 'Promote & publish'}
-            </button>
-          )}
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   )
-}
-
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  color: 'var(--onto-ink-default)',
-  fontSize: 'var(--onto-fs-sm)',
-  marginBottom: 'var(--onto-space-1)',
-  fontWeight: 500,
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: 'var(--onto-space-2) var(--onto-space-3)',
-  borderRadius: 'var(--onto-radius-sm)',
-  border: '1px solid var(--onto-border-soft)',
-  backgroundColor: 'var(--onto-surface-1)',
-  color: 'var(--onto-ink-default)',
-  fontSize: 'var(--onto-fs-sm)',
-  fontFamily: 'inherit',
-  outline: 'none',
-  boxSizing: 'border-box',
-}
-
-const errorTextStyle: React.CSSProperties = {
-  color: 'var(--onto-accent-danger)',
-  fontSize: 'var(--onto-fs-xs)',
-  marginTop: 'var(--onto-space-1)',
-  marginBottom: 0,
-}
-
-const btnStyle: React.CSSProperties = {
-  padding: 'var(--onto-space-2) var(--onto-space-5)',
-  borderRadius: 'var(--onto-radius-sm)',
-  border: '1px solid',
-  fontSize: 'var(--onto-fs-sm)',
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-  fontWeight: 500,
 }
 
 export function EditPage({ params }: EditPageProps) {

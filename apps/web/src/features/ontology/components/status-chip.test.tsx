@@ -22,4 +22,22 @@ describe('StatusChip', () => {
     render(<StatusChip status='deprecated' />)
     expect(screen.getByRole('status')).toHaveTextContent('Deprecated')
   })
+
+  it('applies amber class for draft', () => {
+    const { container } = render(<StatusChip status='draft' />)
+    const el = container.firstElementChild as HTMLElement
+    expect(el.className).toContain('text-amber')
+  })
+
+  it('applies emerald class for published', () => {
+    const { container } = render(<StatusChip status='published' />)
+    const el = container.firstElementChild as HTMLElement
+    expect(el.className).toContain('text-emerald')
+  })
+
+  it('applies gray class for deprecated', () => {
+    const { container } = render(<StatusChip status='deprecated' />)
+    const el = container.firstElementChild as HTMLElement
+    expect(el.className).toContain('text-gray')
+  })
 })
