@@ -28,12 +28,12 @@ export function useOntologyDetail(versionId: string | null): UseOntologyDetailRe
     setLoading(true)
     setError(null)
     try {
-      const ver = await request<{
+      const res = await request<{
         success: boolean
         data: OntologyVersion & { ontology_data?: OntologyData }
       }>(`/api/v1/ontology/versions/${versionId}`)
-      setVersion(ver)
-      const data = ver.ontology_data
+      setVersion(res.data)
+      const data = res.data.ontology_data
       setEntityTypes(data?.entity_types ?? [])
       setRelationTypes(data?.relation_types ?? [])
     } catch (err) {

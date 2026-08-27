@@ -38,7 +38,7 @@ export function ErrorPanel({
   variant = 'list',
 }: ErrorPanelProps) {
   const [copied, setCopied] = useState(false)
-  const labels = COPY[variant] ?? COPY.list
+  const labels = (COPY[variant] ?? COPY["list"])!
   const statusSuffix = httpStatus ? ` (${httpStatus})` : ''
   const detail = message ?? `${labels.en}${statusSuffix}.`
 

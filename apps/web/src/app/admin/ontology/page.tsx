@@ -17,9 +17,7 @@ import { ErrorPanel } from '@/features/ontology/components/error-panel'
 import { EmptyState } from '@/features/ontology/components/empty-state'
 import { RoleGate } from '@/features/ontology/components/role-gate'
 import type { OntologyVersionStatus } from '@/features/ontology/types'
-import { STATUS_LABELS } from '@/features/ontology/types'
 
-const PER_PAGE = 50
 
 function OntologyListInner() {
   const router = useRouter()
@@ -80,7 +78,7 @@ function OntologyListInner() {
         Skip to main content
       </a>
 
-      {/* Page header */
+      {/* Page header */}
       <header
         style={{
           display: 'flex',
@@ -134,10 +132,10 @@ function OntologyListInner() {
         </RoleGate>
       </header>
 
-      {/* Filter bar */
+      {/* Filter bar */}
       <FilterBar statusCounts={statusCounts} />
 
-      {/* Main content */
+      {/* Main content */}
       <main id="main">
         {loading && <SkeletonTable rows={8} />}
 
@@ -147,8 +145,9 @@ function OntologyListInner() {
 
         {!loading && !error && filteredVersions.length === 0 && (
           <EmptyState
-            variant={query ? 'filtered' : 'no-data'}
-            onClear={query ? () => router.push('/admin/ontology') : undefined}
+            title={query ? 'No matching versions' : 'No ontology versions yet'}
+            description={query ? 'Try adjusting your search or filter criteria.' : 'Create a draft to get started.'}
+            action={query ? <a href='/admin/ontology' style={{ color: 'var(--onto-accent)', fontSize: 'var(--onto-fs-sm)' }}>Clear search</a> : undefined}
           />
         )}
 
@@ -290,7 +289,7 @@ function OntologyListInner() {
               </tbody>
             </table>
 
-            {/* Pagination */
+            {/* Pagination */}
             {pages > 1 && (
               <nav
                 style={{

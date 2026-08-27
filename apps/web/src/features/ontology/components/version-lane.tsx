@@ -7,7 +7,7 @@
 'use client'
 
 import type { OntologyVersion, OntologyVersionStatus } from '../types'
-import { STATUS_LABELS, STATUS_LABELS_ZH } from '../types'
+import { STATUS_LABELS } from '../types'
 
 interface VersionLaneProps {
   readonly versions: readonly OntologyVersion[]
@@ -52,7 +52,7 @@ export function VersionLane({ versions, selectedId, onSelect }: VersionLaneProps
         }}
         aria-hidden="true"
       />
-      {versions.map((v, idx) => {
+      {versions.map((v) => {
         const isSelected = v.id === selectedId
         const dateStr = new Date(v.created_at).toLocaleDateString('zh-CN', {
           year: 'numeric',

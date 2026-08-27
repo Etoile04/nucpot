@@ -5,8 +5,8 @@
  */
 'use client'
 
-import { OntologyEditForm } from './[typeId]/edit/page'
+import EditPage from '../[typeId]/edit/page'
 
 export default function NewOntologyPage() {
-  return <OntologyEditForm versionId={null} />
+  return <EditPage params={Promise.resolve({ typeId: '__new__' })} />
 }

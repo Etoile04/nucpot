@@ -7,7 +7,7 @@
  */
 'use client'
 
-import { useState, useCallback, use } from 'react'
+import { useState, useEffect, useCallback, use } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useOntologyDetail } from '@/features/ontology/hooks/use-ontology-detail'
@@ -18,14 +18,10 @@ interface EditPageProps {
   params: Promise<{ typeId: string }>
 }
 
-interface NewPageProps {
-  params: Promise<Record<string, string>>
-}
-
 function OntologyEditForm({ versionId }: { versionId: string | null }) {
   const router = useRouter()
-  const { version, entityTypes, relationTypes, loading: detailLoading, error: detailError, refetch } =
-    versionId ? useOntologyDetail(versionId) : { version: null, entityTypes: [], relationTypes: [], loading: false, error: null, refetch: async () => {} }
+  const { version, entityTypes, loading: detailLoading, error: detailError, refetch } =
+    versionId ? useOntologyDetail(versionId) : { version: null, entityTypes: [], loading: false, error: null, refetch: async () => {} }
   const { saving, error: mutationError, createDraft, updateDraft, publishVersion } = useOntologyMutations()
 
   const [name, setName] = useState('')
@@ -33,20 +29,20 @@ function OntologyEditForm({ versionId }: { versionId: string | null }) {
   const [englishName, setEnglishName] = useState('')
   const [domain, setDomain] = useState('')
   const [definition, setDefinition] = useState('')
-  const [changelog, setChangelog] = useState('')
+  const [changelog] = useState('')
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   // Populate form from existing version
-  useState(() => {
+  useEffect(() => {
     if (version && entityTypes.length > 0) {
-      const first = entityTypes[0]
+      const first = entityTypes[0]!
       setName(first.name)
       setChineseName(first.chinese_name ?? '')
       setEnglishName(first.english_name ?? '')
       setDomain(first.domain ?? '')
       setDefinition(first.description ?? '')
     }
-  })
+  }, [version, entityTypes])
 
   const isNew = !versionId
 
@@ -137,7 +133,7 @@ function OntologyEditForm({ versionId }: { versionId: string | null }) {
             <label htmlFor="type-id" style={labelStyle}>Type ID <span aria-hidden="true">*</span></label>
             <input id="type-id" value={name} onChange={(e) => setName(e.target.value)} disabled={!isNew} required aria-required="true" style={inputStyle} placeholder="e.g. mat.zr_alloy_phase" />
             {!isValid && name.length > 0 && (
-              <p id="type-id-error" style={errorTextStyle} role="alert">Type ID must match /^[a-z][a-z0-9_.]{1,63}$/</p>
+              <p id="type-id-error" style={errorTextStyle} role="alert">Type ID: lowercase letters, digits, dots, underscores (1-64 chars)</p>
             )}
           </div>
 

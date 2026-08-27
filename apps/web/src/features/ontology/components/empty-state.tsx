@@ -8,10 +8,9 @@ interface EmptyStateProps {
   readonly title: string
   readonly description?: string
   readonly action?: React.ReactNode
-  readonly actionLabel?: string
-}
+  }
 
-export function EmptyState({ title, description, action, actionLabel }: EmptyStateProps) {
+export function EmptyState({ title, description, action }: EmptyStateProps) {
   return (
     <div
       role="status"

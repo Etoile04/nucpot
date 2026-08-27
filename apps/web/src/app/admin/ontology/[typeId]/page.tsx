@@ -8,7 +8,6 @@
 
 import { use } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useOntologyDetail } from '@/features/ontology/hooks/use-ontology-detail'
 import { VersionLane } from '@/features/ontology/components/version-lane'
 import { SkeletonTable } from '@/features/ontology/components/skeleton-table'
@@ -17,7 +16,6 @@ import { RoleGate } from '@/features/ontology/components/role-gate'
 
 const LANE_LABELS = ['Identity', 'Version', 'Relations', 'Audit'] as const
 
-type Lane = (typeof LANE_LABELS)[number]
 
 const TH_STYLE: React.CSSProperties = {
   padding: 'var(--onto-space-2) var(--onto-space-3)',
@@ -42,8 +40,7 @@ interface DetailPageProps {
 
 export default function OntologyDetailPage({ params }: DetailPageProps) {
   const { typeId } = use(params)
-  const router = useRouter()
-  const { version, entityTypes, relationTypes, loading, error, refetch } =
+    const { version, entityTypes, relationTypes, loading, error, refetch } =
     useOntologyDetail(typeId)
 
   if (loading) {
