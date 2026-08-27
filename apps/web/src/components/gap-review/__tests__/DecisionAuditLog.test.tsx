@@ -56,9 +56,10 @@ const ALL_ENTRIES: ReadonlyArray<AuditEntry> = [ENTRY_1, ENTRY_2, ENTRY_3]
 
 const FIXTURE_DATA: AuditLogResponse = {
   items: ALL_ENTRIES,
-  total: 3,
-  page: 1,
-  limit: 50,
+  next_cursor: null,
+  prev_cursor: null,
+  has_next: false,
+  has_prev: false,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -97,10 +98,13 @@ describe('DecisionAuditLog', () => {
     expect(dashes.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders total count', () => {
-    render(<DecisionAuditLog initialData={FIXTURE_DATA} />)
-    // The count format from the component
-    expect(screen.getAllByText('共 3 条')[0]).toBeDefined()
+  it('renders item count in pagination bar', () => {
+    const paginatedData: AuditLogResponse = {
+      ...FIXTURE_DATA,
+      has_next: true,
+    }
+    render(<DecisionAuditLog initialData={paginatedData} />)
+    expect(screen.getAllByText('3 条')[0]).toBeDefined()
   })
 
   it('is read-only: no edit/delete/action buttons', () => {
@@ -110,7 +114,7 @@ describe('DecisionAuditLog', () => {
   })
 
   it('shows empty state when no entries', () => {
-    const emptyData: AuditLogResponse = { items: [], total: 0, page: 1, limit: 50 }
+    const emptyData: AuditLogResponse = { items: [], next_cursor: null, prev_cursor: null, has_next: false, has_prev: false }
     render(<DecisionAuditLog initialData={emptyData} />)
     // Should show some empty state text (check for table existing but empty)
     expect(screen.getByRole('table')).toBeDefined()
@@ -127,5 +131,23 @@ describe('DecisionAuditLog', () => {
     // Labels for date range are always present
     expect(screen.getAllByText('开始日期')[0]).toBeDefined()
     expect(screen.getAllByText('结束日期')[0]).toBeDefined()
+  })
+
+  it('shows cursor pagination when has_next or has_prev', () => {
+    const paginatedData: AuditLogResponse = {
+      items: ALL_ENTRIES,
+      next_cursor: 'eyJpZCI6ImF1ZGl0LTMifQ==',
+      prev_cursor: null,
+      has_next: true,
+      has_prev: false,
+    }
+    render(<DecisionAuditLog initialData={paginatedData} />)
+    expect(screen.getByText('下一页 ›')).toBeDefined()
+  })
+
+  it('hides pagination when neither has_next nor has_prev', () => {
+    render(<DecisionAuditLog initialData={FIXTURE_DATA} />)
+    expect(screen.queryByText('下一页 ›')).toBeNull()
+    expect(screen.queryByText('‹ 上一页')).toBeNull()
   })
 })

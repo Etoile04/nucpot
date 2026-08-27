@@ -1,9 +1,11 @@
 /**
- * useAuditLogFilters — URL-synced filter state for the decision audit log.
+ * useAuditLogFilters — URL-synced filter + cursor state for the decision audit log.
  *
- * Reads/writes filter params to the URL so filters survive navigation
- * and are shareable. All state is derived from searchParams — no
- * independent useState that could drift.
+ * Reads/writes filter params and cursor position to the URL so state
+ * survives navigation and is shareable. All state is derived from
+ * searchParams — no independent useState that could drift.
+ *
+ * NFM-3759: cursor-based pagination replaces offset/page.
  */
 
 import { useCallback, useMemo } from 'react'
@@ -17,15 +19,6 @@ const DECISION_OPTIONS: ReadonlyArray<{ value: DecisionKind; label: string }> = 
   { value: 'rejected', label: '已拒绝' },
   { value: 'deferred', label: '已延期' },
 ]
-
-/**
- * Parse a page number from search params, clamped to >= 1.
- */
-export function parsePage(params: URLSearchParams): number {
-  const raw = params.get('page')
-  const n = Number(raw)
-  return Number.isFinite(n) && n >= 1 ? n : 1
-}
 
 /**
  * Extract typed filters from URL search params.
@@ -44,12 +37,28 @@ export function parseFilters(params: URLSearchParams): AuditLogFilters {
 }
 
 /**
- * Build a new URLSearchParams with the given filters applied.
+ * Parse cursor direction from URL search params.
+ * Returns `{ after }` for forward, `{ before }` for backward, or `{}` for first page.
+ */
+export function parseCursor(params: URLSearchParams): {
+  readonly after?: string
+  readonly before?: string
+} {
+  const after = params.get('after_cursor') ?? undefined
+  const before = params.get('before_cursor') ?? undefined
+  return { after, before }
+}
+
+/**
+ * Build a new URLSearchParams with the given filters and cursor applied.
  */
 export function buildParams(
   prev: URLSearchParams,
   filters: AuditLogFilters,
-  page: number,
+  cursor: {
+    readonly after?: string
+    readonly before?: string
+  },
 ): URLSearchParams {
   const next = new URLSearchParams(prev)
 
@@ -80,63 +89,81 @@ export function buildParams(
     next.delete('entity_name')
   }
 
-  // Page
-  if (page > 1) {
-    next.set('page', String(page))
+  // Cursor params
+  if (cursor.after) {
+    next.set('after_cursor', cursor.after)
+    next.delete('before_cursor')
+  } else if (cursor.before) {
+    next.set('before_cursor', cursor.before)
+    next.delete('after_cursor')
   } else {
-    next.delete('page')
+    next.delete('after_cursor')
+    next.delete('before_cursor')
   }
+
+  // Remove legacy page param
+  next.delete('page')
 
   return next
 }
 
 export interface UseAuditLogFiltersReturn {
   readonly filters: AuditLogFilters
-  readonly page: number
+  readonly cursor: {
+    readonly after?: string
+    readonly before?: string
+  }
   readonly pageSize: number
   readonly decisionOptions: ReadonlyArray<{ value: DecisionKind; label: string }>
-  readonly setPage: (page: number) => void
+  readonly setCursor: (cursor: { readonly after?: string; readonly before?: string }) => void
   readonly setFilters: (update: Partial<AuditLogFilters>) => void
   readonly resetFilters: () => void
 }
 
 /**
- * Hook: URL-synced audit log filters.
+ * Hook: URL-synced audit log filters with cursor-based pagination.
  *
- * Returns immutable filter state and updater callbacks.
- * Every mutation replaces searchParams via router.
+ * Returns immutable filter/cursor state and updater callbacks.
+ * Every mutation replaces searchParams via history API.
  */
 export function useAuditLogFilters(): UseAuditLogFiltersReturn {
   const searchParams = useSearchParams()
 
   const filters = useMemo(() => parseFilters(searchParams), [searchParams])
-  const page = useMemo(() => parsePage(searchParams), [searchParams])
+  const cursor = useMemo(() => parseCursor(searchParams), [searchParams])
 
-  const setPage = useCallback((p: number) => {
-    const next = buildParams(searchParams, filters, p)
-    window.history.replaceState(null, '', `?${next.toString()}`)
-    window.dispatchEvent(new PopStateEvent('popstate'))
-  }, [searchParams, filters])
+  const setCursor = useCallback(
+    (c: { readonly after?: string; readonly before?: string }) => {
+      const next = buildParams(searchParams, filters, c)
+      window.history.replaceState(null, '', `?${next.toString()}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    },
+    [searchParams, filters],
+  )
 
-  const setFilters = useCallback((update: Partial<AuditLogFilters>) => {
-    const merged: AuditLogFilters = { ...filters, ...update }
-    const next = buildParams(searchParams, merged, 1) // reset to page 1 on filter change
-    window.history.replaceState(null, '', `?${next.toString()}`)
-    window.dispatchEvent(new PopStateEvent('popstate'))
-  }, [searchParams, filters])
+  const setFilters = useCallback(
+    (update: Partial<AuditLogFilters>) => {
+      const merged: AuditLogFilters = { ...filters, ...update }
+      // Reset cursor (go to first page) on filter change
+      const next = buildParams(searchParams, merged, {})
+      window.history.replaceState(null, '', `?${next.toString()}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    },
+    [searchParams, filters],
+  )
 
   const resetFilters = useCallback(() => {
-    const next = buildParams(searchParams, {}, 1)
+    const next = buildParams(searchParams, {}, {})
     window.history.replaceState(null, '', `?${next.toString()}`)
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, [searchParams])
 
   return {
     filters,
-    page,
+    cursor,
     pageSize: PAGE_SIZE,
     decisionOptions: DECISION_OPTIONS,
-    setPage,
+    setCursor,
     setFilters,
     resetFilters,
   }

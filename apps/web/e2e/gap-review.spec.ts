@@ -74,9 +74,10 @@ function makeAuditLog(decisions: Array<{ id: string; decision: string }>) {
         reviewer_id: "test-reviewer",
         decided_at: "2026-08-25T12:00:00Z",
       })),
-      total: decisions.length,
-      page: 1,
-      limit: 50,
+      next_cursor: null,
+      prev_cursor: null,
+      has_next: false,
+      has_prev: false,
     },
   }
 }
@@ -209,5 +210,75 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
     await expect(page.getByText("rejected")).toBeVisible()
     await expect(page.getByText("UO2")).toBeVisible()
     await expect(page.getByText("Zr-4")).toBeVisible()
+  })
+
+  test("NFM-3759: cursor navigation in audit log", async ({ page }) => {
+    // Page 1 with next cursor available
+    let callCount = 0
+    await page.route("**/api/gap/audit-log**", (route) => {
+      callCount++
+      if (callCount === 1) {
+        json(route, {
+          success: true,
+          data: {
+            items: [
+              {
+                id: "audit-1",
+                candidate_id: "gap-001",
+                entity_name: "UO2",
+                decision: "accepted",
+                reviewer_id: "test",
+                decided_at: "2026-08-25T12:00:00Z",
+              },
+            ],
+            next_cursor: "eyJpZCI6ImF1ZGl0LTMifQ==",
+            prev_cursor: null,
+            has_next: true,
+            has_prev: false,
+          },
+        })
+      } else {
+        json(route, {
+          success: true,
+          data: {
+            items: [
+              {
+                id: "audit-2",
+                candidate_id: "gap-002",
+                entity_name: "Zr-4",
+                decision: "rejected",
+                reviewer_id: "test",
+                decided_at: "2026-08-24T10:00:00Z",
+              },
+            ],
+            next_cursor: null,
+            prev_cursor: "eyJpZCI6ImF1ZGl0LTIifQ==",
+            has_next: false,
+            has_prev: true,
+          },
+        })
+      }
+    })
+
+    await page.goto("/gap-review/audit", { waitUntil: "domcontentloaded" })
+    await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
+
+    // Next button should be enabled, prev disabled
+    const nextBtn = page.getByRole("button", { name: /下一页/i })
+    const prevBtn = page.getByRole("button", { name: /上一页/i })
+    await expect(nextBtn).toBeEnabled()
+    await expect(prevBtn).toBeDisabled()
+
+    // Navigate forward
+    await nextBtn.click()
+    await expect(page.getByText("Zr-4")).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText("UO2")).not.toBeVisible()
+
+    // After navigation: prev enabled, next disabled
+    await expect(prevBtn).toBeEnabled()
+    await expect(nextBtn).toBeDisabled()
+
+    // URL should contain after_cursor param
+    expect(page.url()).toContain("after_cursor=")
   })
 })

@@ -115,16 +115,24 @@ export async function postDecision(
 // ── Audit Log API (NFM-3708) ────────────────────────
 
 /**
- * Fetch the decision audit log with optional filters and pagination.
+ * Fetch the decision audit log with optional filters and cursor-based pagination.
+ *
+ * Pass `afterCursor` to fetch the page after that cursor (forward).
+ * Pass `beforeCursor` to fetch the page before that cursor (backward).
+ * Omit both to fetch the first page.
  */
 export async function getAuditLog(
-  page = 1,
+  cursor: {
+    readonly after?: string
+    readonly before?: string
+  } = {},
   limit = 50,
   filters: AuditLogFilters = {},
 ): Promise<AuditLogResponse> {
   const params = new URLSearchParams()
-  params.set('page', String(page))
   params.set('limit', String(limit))
+  if (cursor.after) params.set('after_cursor', cursor.after)
+  if (cursor.before) params.set('before_cursor', cursor.before)
   if (filters.reviewer_id) params.set('reviewer_id', filters.reviewer_id)
   if (filters.date_from) params.set('date_from', filters.date_from)
   if (filters.date_to) params.set('date_to', filters.date_to)
