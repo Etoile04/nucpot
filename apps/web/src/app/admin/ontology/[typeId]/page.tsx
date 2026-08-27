@@ -23,7 +23,7 @@ export function OntologyDetailContent({ typeId }: { typeId: string }) {
 
   const handlePromote = useCallback(async () => {
     try {
-      await publishVersion({ versionId: typeId, changelog: '' })
+      await publishVersion.mutateAsync({ versionId: typeId, changelog: '' })
       setActionMsg('Published successfully')
       void refetch()
     } catch {
@@ -33,7 +33,7 @@ export function OntologyDetailContent({ typeId }: { typeId: string }) {
 
   const handleDeprecate = useCallback(async () => {
     try {
-      await deprecateVersion({ versionId: typeId, changelog: '' })
+      await deprecateVersion.mutateAsync({ versionId: typeId })
       setActionMsg('Deprecated successfully')
       void refetch()
     } catch {
@@ -66,7 +66,7 @@ export function OntologyDetailContent({ typeId }: { typeId: string }) {
   }
 
   const canEdit = version.status === 'draft'
-  const canPublish = version.status === 'review'
+  const canPublish = version.status === 'draft'
   const canDeprecate = version.status === 'published'
 
   return (
@@ -85,8 +85,8 @@ export function OntologyDetailContent({ typeId }: { typeId: string }) {
           <StatusChip status={version.status} />
         </div>
 
-        {version.description && (
-          <p className="text-gray-400 text-sm mb-4">{version.description}</p>
+        {version.changelog && (
+          <p className="text-gray-400 text-sm mb-4">{version.changelog}</p>
         )}
 
         <div className="h-px bg-gray-700 mb-6" />
@@ -112,7 +112,7 @@ export function OntologyDetailContent({ typeId }: { typeId: string }) {
           <p className="text-emerald-400 text-sm mb-6">{actionMsg}</p>
         )}
         {mutError && (
-          <p className="text-red-400 text-sm mb-6" role="alert">{mutError.message}</p>
+          <p className="text-red-400 text-sm mb-6" role="alert">{mutError}</p>
         )}
 
         {/* Entity Types */}
@@ -175,7 +175,7 @@ export function OntologyDetailContent({ typeId }: { typeId: string }) {
 
         {/* Actions */}
         <div className="h-px bg-gray-700 mb-6" />
-        <RoleGate>
+        <RoleGate allow={['admin', 'domain_expert'] as const}>
           <div className="flex gap-3">
             {canEdit && (
               <Link

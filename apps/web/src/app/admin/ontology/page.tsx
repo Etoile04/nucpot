@@ -31,7 +31,7 @@ export default function OntologyListPage() {
       <div className="max-w-4xl mx-auto px-6 py-8">
         <header className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Ontology Versions</h1>
-          <RoleGate>
+          <RoleGate allow={["admin", "domain_expert"] as const}>
             <Link
               href="/admin/ontology/new"
               className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium no-underline hover:bg-blue-500 transition-colors"

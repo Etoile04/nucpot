@@ -73,7 +73,7 @@ describe('useOntologyVersions', () => {
     const { result } = renderHook(() => useOntologyVersions('all', 1), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.versions).toHaveLength(1)
-    expect(result.current.versions[0].id).toBe('v1')
+    expect(result.current.versions[0]!.id).toBe('v1')
     expect(result.current.total).toBe(1)
   })
 
@@ -98,7 +98,7 @@ describe('useOntologyVersions', () => {
   it('does not pass status param when status is all', async () => {
     renderHook(() => useOntologyVersions('all', 1), { wrapper: createWrapper() })
     await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1))
-    const calledUrl = mockRequest.mock.calls[0][0] as string
+    const calledUrl = mockRequest.mock.calls[0]![0] as string
     expect(calledUrl).not.toContain('status=')
   })
 })
@@ -112,9 +112,9 @@ describe('useOntologyDetail', () => {
     expect(result.current.version).not.toBeNull()
     expect(result.current.version!.id).toBe('v1')
     expect(result.current.entityTypes).toHaveLength(1)
-    expect(result.current.entityTypes[0].name).toBe('mat.alloy')
+    expect(result.current.entityTypes[0]!.name).toBe('mat.alloy')
     expect(result.current.relationTypes).toHaveLength(1)
-    expect(result.current.relationTypes[0].name).toBe('has_composition')
+    expect(result.current.relationTypes[0]!.name).toBe('has_composition')
   })
 
   it('does not fetch when versionId is null', async () => {

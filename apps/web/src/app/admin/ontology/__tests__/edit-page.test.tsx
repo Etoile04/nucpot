@@ -3,7 +3,7 @@
  * Tests the form directly (not the EditPage wrapper that uses React.use()).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 
@@ -21,7 +21,7 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/admin/ontology/new',
 }))
 
-vi.mock('next/link', () => ({ default: ({ children, href, ...rest }: { children: React.ReactNode; href: string; [key: string]: unknown }) => (
+vi.mock('next/link', () => ({ default: ({ children, href }: { children: React.ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href}>{children}</a>
 ),
 }))
