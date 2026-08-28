@@ -1,4 +1,4 @@
-'use client'
+"use client"
 
 /** Client component for the Fill History admin page (NFM-3750).
 
@@ -7,25 +7,25 @@ server component and wrap us in <Suspense> — required by Next.js 16
 prerender for any client component that calls useSearchParams.
 */
 
-import { useCallback, useMemo, useState } from 'react'
-import { Card, Space, Alert, message, Button } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
-import { FillHistoryTable } from '@/components/admin/reference-data/fill-history-table'
+import { useCallback, useMemo, useState } from "react"
+import { Card, Space, Alert, message, Button } from "antd"
+import { ReloadOutlined } from "@ant-design/icons"
+import { FillHistoryTable } from "@/components/admin/reference-data/fill-history-table"
 import {
   getStagingHistoryCursor,
   type CursorStagingParams,
-} from '@/lib/admin/reference-data-api'
-import { useCursorPagination } from '@/lib/cursor-pagination/use-cursor-pagination'
+} from "@/lib/admin/reference-data-api"
+import { useCursorPagination } from "@/lib/cursor-pagination/use-cursor-pagination"
 import type {
   StagingRecord,
   PendingReviewQuery,
-} from '@/lib/admin/reference-data-types'
+} from "@/lib/admin/reference-data-types"
 
 const PAGE_SIZE = 20
 
 export function FillHistoryPageContent() {
   const [filters, setFilters] = useState<Partial<PendingReviewQuery>>({
-    status: 'all',
+    status: "all",
   })
   const [, contextHolder] = message.useMessage()
 
@@ -41,7 +41,7 @@ export function FillHistoryPageContent() {
 
   const { items: records, next, prev, reset, hasPrev, hasNext, isLoading, error, refetch } =
     useCursorPagination<StagingRecord>({
-      queryKey: ['staging-history-cursor'],
+      queryKey: ["staging-history-cursor"],
       queryFn: async (params) => {
         const apiParams: CursorStagingParams = {
           limit: params.limit,
@@ -60,11 +60,11 @@ export function FillHistoryPageContent() {
   }, [reset])
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: "24px" }}>
       {contextHolder}
-      <Space direction='vertical' size='large' style={{ width: '100%' }}>
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
         <Card
-          title='填充历史'
+          title="填充历史"
           extra={
             <Button
               icon={<ReloadOutlined />}
@@ -75,21 +75,21 @@ export function FillHistoryPageContent() {
             </Button>
           }
         >
-          <p style={{ marginBottom: '16px', color: '#666' }}>
+          <p style={{ marginBottom: "16px", color: "#666" }}>
             查看所有参考数据填充记录的历史记录。按创建时间倒序排列，支持按状态筛选。
           </p>
         </Card>
 
         {error && (
           <Alert
-            type='error'
-            message='加载失败'
+            type="error"
+            message="加载失败"
             description={(error as Error).message}
             showIcon
             action={
               <Button
-                size='small'
-                type='link'
+                size="small"
+                type="link"
                 onClick={() => refetch()}
               >
                 重试

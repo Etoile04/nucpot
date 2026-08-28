@@ -14,11 +14,11 @@ that uses useSearchParams via useCursorPagination); the page itself is a
 server component that wraps it in Suspense so prerender succeeds.
 */
 
-import { Suspense } from react
-import { Skeleton } from antd
-import { FillHistoryPageContent } from ./fill-history-page-content
+import { Suspense } from "react"
+import { Skeleton } from "antd"
+import { FillHistoryPageContent } from "./fill-history-page-content"
 
-export const dynamic = force-dynamic
+export const dynamic = "force-dynamic"
 
 export default function FillHistoryPage() {
   return (
