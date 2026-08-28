@@ -85,7 +85,7 @@ export default function Nav() {
   return (
     <nav className="border-b border-gray-700">
       <div className="flex items-center justify-between px-6 py-4">
-        <Link href="/" className="text-xl font-bold tracking-tight">
+        <Link href="/" className="text-xl font-bold tracking-tight focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">
           NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
         </Link>
 
