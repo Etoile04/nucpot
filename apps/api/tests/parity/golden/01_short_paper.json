@@ -1,0 +1,31 @@
+{
+  "_description": "Short single-paper scenario: minimal ontology with one nuclear fuel entity and one relation. Tests that V1 (11 fixed categories) and V2 (ontology-driven) prompts both render without errors on the simplest case.",
+  "_scenario": "short",
+  "_scenario_notes": "Single paper, 1 entity type, 1 relation, 2 required properties. Shortest possible meaningful prompt path input.",
+  "version": "0.2.0",
+  "property_categories": [
+    {
+      "name": "密度",
+      "standard_properties": ["密度", "理论密度", "相对密度"]
+    },
+    {
+      "name": "热导率",
+      "standard_properties": ["热导率", "热扩散率"]
+    }
+  ],
+  "entity_types": [
+    {
+      "name": "NuclearFuel",
+      "description": "Base class for nuclear fuels (UO2, MOX, etc.)",
+      "required_properties": ["density", "thermal_conductivity"]
+    }
+  ],
+  "relation_types": [
+    {
+      "name": "contains",
+      "source_types": ["NuclearFuel"],
+      "target_types": ["Element"],
+      "description": "Composition relationship"
+    }
+  ]
+}
