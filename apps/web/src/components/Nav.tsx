@@ -10,7 +10,6 @@ import { SessionIndicator, SessionTimerBadge, useExpiringSoonToast } from '@/com
 const NAV_LINKS = [
   { href: '/browse', label: '浏览' },
   { href: '/materials', label: '材料库' },
-  { href: '/ontology', label: '本体' },
   { href: '/literature', label: '文献管理' },
   { href: '/search', label: '势函数检索' },
   { href: '/compare', label: '对比' },
@@ -24,6 +23,11 @@ const KG_LINKS = [
   { href: '/kg/search', label: 'KG 搜索' },
 ]
 
+
+const ONTOLOGY_LINKS = [
+  { href: '/ontology', label: '语料库浏览器' },
+  { href: '/ontology/versions', label: '版本管理' },
+]
 function isKgActive(pathname: string): boolean {
   return pathname.startsWith('/kg')
 }
@@ -32,6 +36,8 @@ function isKgLinkActive(pathname: string, href: string): boolean {
   return pathname === href
 }
 
+function isOntologyActive(pn: string) { return pn.startsWith('/ontology') }
+function isOntologyLinkActive(pn: string, href: string) { return pn === href }
 export default function Nav() {
   const pathname = usePathname()
   const router = useRouter()
@@ -41,9 +47,12 @@ export default function Nav() {
   const [kgMobileOpen, setKgMobileOpen] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [kgDropdownOpen, setKgDropdownOpen] = useState(false)
+  const [ontologyDropdownOpen, setOntologyDropdownOpen] = useState(false)
+  const [ontologyMobileOpen, setOntologyMobileOpen] = useState(false)
 
   const dropdownRef = useRef<HTMLDivElement>(null)
   const kgDropdownRef = useRef<HTMLDivElement>(null)
+  const ontologyDropdownRef = useRef<HTMLDivElement>(null)
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -53,6 +62,9 @@ export default function Nav() {
       }
       if (kgDropdownRef.current && !kgDropdownRef.current.contains(e.target as Node)) {
         setKgDropdownOpen(false)
+      }
+      if (ontologyDropdownRef.current && !ontologyDropdownRef.current.contains(e.target as Node)) {
+        setOntologyDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -103,6 +115,40 @@ export default function Nav() {
               {link.label}
             </Link>
           ))}
+
+          {/* Ontology dropdown */}
+          <div className="relative" ref={ontologyDropdownRef}>
+            <button
+              onClick={() => setOntologyDropdownOpen(prev => !prev)}
+              className={`flex items-center gap-1 transition ${isOntologyActive(pathname) ? 'text-blue-400' : 'hover:text-blue-400'}`}
+              aria-expanded={ontologyDropdownOpen}
+              aria-haspopup="true"
+            >
+              本体
+              <svg
+                className={`w-3.5 h-3.5 transition-transform ${ontologyDropdownOpen ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {ontologyDropdownOpen && (
+              <div className="absolute left-0 mt-2 w-36 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 py-1 text-sm">
+                {ONTOLOGY_LINKS.map(link => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setOntologyDropdownOpen(false)}
+                    aria-current={isOntologyLinkActive(pathname, link.href) ? 'page' : undefined}
+                    className={`block px-4 py-2 hover:bg-gray-700/60 transition ${isOntologyLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-200 hover:text-white'}`}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* KG dropdown */}
           <div className="relative" ref={kgDropdownRef}>
@@ -267,7 +313,7 @@ export default function Nav() {
         {/* Mobile hamburger — visible below the lg (1024px) breakpoint. */}
         <button
           className="lg:hidden text-white"
-          onClick={() => setMobileOpen(prev => !prev)}
+          onClick={() => { setMobileOpen(prev => !prev); setOntologyMobileOpen(false) }}
           aria-label="打开导航菜单"
           aria-expanded={mobileOpen}
         >
@@ -290,6 +336,36 @@ export default function Nav() {
               {link.label}
             </Link>
           ))}
+
+          {/* Mobile ontology sub-menu */}
+          <button
+            onClick={() => setOntologyMobileOpen(prev => !prev)}
+            className={`flex items-center gap-1 text-left transition ${isOntologyActive(pathname) ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400'}`}
+            aria-expanded={ontologyMobileOpen}
+            aria-haspopup="true"
+          >
+            本体
+            <svg
+              className={`w-3.5 h-3.5 transition-transform ${ontologyMobileOpen ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {ontologyMobileOpen && (
+            <div className="ml-4 flex flex-col gap-2">
+              {ONTOLOGY_LINKS.map(link => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => { setMobileOpen(false); setOntologyMobileOpen(false) }}
+                  className={isOntologyLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400 transition'}
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          )}
 
           {/* Mobile KG sub-menu */}
           <button

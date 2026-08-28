@@ -1,0 +1,124 @@
+/**
+ * Design tokens for the Ontology Management section.
+ * Design Spec §1 — Scientific Ledger aesthetic.
+ * Dark mode is the default; light mode overrides are scoped
+ * under :root[data-theme=\"light\"] or @media (prefers-color-scheme: light).
+ *
+ * Import at the top of each ontology page/layout:
+ *   import '@/features/ontology/tokens.css';
+ */
+
+/* §1.1 Colors (Dark Mode — Default) */
+
+:root {
+  --ontology-bg-primary: oklch(15% 0.01 260);
+  --ontology-bg-surface: oklch(20% 0.01 260);
+  --ontology-bg-elevated: oklch(25% 0.01 260);
+  --ontology-bg-input: oklch(18% 0.01 260);
+
+  --ontology-border: oklch(30% 0.01 260);
+  --ontology-border-subtle: oklch(25% 0.005 260);
+
+  --ontology-text-primary: oklch(92% 0.005 80);
+  --ontology-text-secondary: oklch(70% 0.01 80);
+  --ontology-text-muted: oklch(50% 0.01 260);
+
+  --ontology-accent: oklch(75% 0.15 75);
+  --ontology-accent-hover: oklch(80% 0.16 75);
+  --ontology-accent-muted: oklch(75% 0.05 75);
+
+  --ontology-status-draft: oklch(70% 0.12 250);
+  --ontology-status-published: oklch(70% 0.15 145);
+  --ontology-status-deprecated: oklch(55% 0.08 30);
+
+  --ontology-danger: oklch(65% 0.18 25);
+  --ontology-danger-bg: oklch(25% 0.06 25);
+}
+
+/* §1.2 Colors (Light Mode) */
+
+:root[data-theme="light"] {
+  --ontology-bg-primary: oklch(97% 0.005 80);
+  --ontology-bg-surface: oklch(100% 0 0);
+  --ontology-bg-elevated: oklch(94% 0.008 80);
+  --ontology-bg-input: oklch(98% 0.003 80);
+
+  --ontology-border: oklch(85% 0.01 80);
+  --ontology-border-subtle: oklch(90% 0.005 80);
+
+  --ontology-text-primary: oklch(18% 0.01 260);
+  --ontology-text-secondary: oklch(40% 0.01 260);
+  --ontology-text-muted: oklch(60% 0.01 260);
+
+  --ontology-accent: oklch(55% 0.15 75);
+  --ontology-accent-hover: oklch(50% 0.16 75);
+
+  --ontology-danger-bg: oklch(95% 0.03 25);
+}
+
+/* §1.3 Typography */
+
+:root {
+  --ontology-font-display: var(--font-sans, system-ui, sans-serif);
+  --ontology-font-body: var(--font-sans, system-ui, sans-serif);
+  --ontology-font-mono: var(--font-mono, ui-monospace, monospace);
+
+  --ontology-text-sm: 0.8125rem;
+  --ontology-text-sm-leading: 1.25rem;
+  --ontology-text-base: 0.875rem;
+  --ontology-text-base-leading: 1.5rem;
+  --ontology-text-lg: 1rem;
+  --ontology-text-lg-leading: 1.625rem;
+  --ontology-text-xl: 1.25rem;
+  --ontology-text-xl-leading: 1.75rem;
+  --ontology-text-2xl: 1.5rem;
+  --ontology-text-2xl-leading: 2rem;
+
+  --ontology-weight-normal: 400;
+  --ontology-weight-medium: 500;
+  --ontology-weight-semibold: 600;
+  --ontology-weight-bold: 700;
+}
+
+/* §1.4 Spacing */
+
+:root {
+  --ontology-space-1: 0.25rem;
+  --ontology-space-2: 0.5rem;
+  --ontology-space-3: 0.75rem;
+  --ontology-space-4: 1rem;
+  --ontology-space-6: 1.5rem;
+  --ontology-space-8: 2rem;
+  --ontology-space-10: 2.5rem;
+  --ontology-space-12: 3rem;
+}
+
+/* §1.5 Motion */
+
+:root {
+  --ontology-duration-fast: 150ms;
+  --ontology-duration-normal: 250ms;
+  --ontology-duration-slow: 400ms;
+  --ontology-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ontology-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ontology-duration-fast: 0ms;
+    --ontology-duration-normal: 0ms;
+    --ontology-duration-slow: 0ms;
+  }
+}
+
+/* §1.6 Radii & Shadows */
+
+:root {
+  --ontology-radius-sm: 4px;
+  --ontology-radius-md: 8px;
+  --ontology-radius-lg: 12px;
+
+  --ontology-shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.3);
+  --ontology-shadow-md: 0 4px 12px oklch(0% 0 0 / 0.4);
+  --ontology-shadow-lg: 0 8px 32px oklch(0% 0 0 / 0.5);
+}
