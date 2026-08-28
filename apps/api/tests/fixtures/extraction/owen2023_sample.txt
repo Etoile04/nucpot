@@ -1,0 +1,15 @@
+Oxygen diffusion in undoped and Cr-doped amorphous UO2 was studied
+using molecular dynamics simulations. The amorphous UO2 sample had a
+density of 10.55 g/cm3 at room temperature. For the Cr-doped samples,
+10 at% Cr-doped UO2 showed a density of 10.27 g/cm3.
+
+Activation energy for oxygen diffusion in undoped UO2 was found to be
+0.30 eV with an uncertainty of 0.05 eV. The diffusion coefficient D0
+for undoped UO2 was 3.32e-8 cm2/s. For 50 at% Cr-doped UO2 samples,
+the activation energy decreased to 0.26 eV with uncertainty 0.08 eV
+and D0 dropped to 1.27e-9 cm2/s.
+
+The radial distribution function (RDF) of amorphous UO2 shows two
+prominent peaks at 2.28 angstrom and 2.83 angstrom, corresponding to
+U-O and U-U nearest-neighbor distances. In the Cr-doped samples, the
+Cr-O bond length was 2.04 angstrom (range 2.02 to 2.05 angstrom).

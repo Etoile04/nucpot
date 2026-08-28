@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "Imported Ontology",
-    "version": "1.10.5.1",
+    "version": "0.4.0",
     "namespace": "http://example.com/ontology",
     "created": "2026-02-13T12:35:57.963082Z",
     "modified": "2026-03-23T16:15:27.059415",
@@ -1912,6 +1912,188 @@
       "parent": "Entity",
       "type": "owl:Class",
       "uri": "http://example.org/materials/ontology#Irradiation"
+    },
+    "MaterialProperty": {
+      "uri": "http://example.org/materials/ontology#MaterialProperty",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Material Property",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A measurable or computable property of a nuclear material, including interaction parameters, thermophysical quantities, and irradiation response metrics",
+      "parent": "Property",
+      "comment": "A measurable or computable property of a nuclear material, including interaction parameters, thermophysical quantities, and irradiation response metrics"
+    },
+    "Defect": {
+      "uri": "http://example.org/materials/ontology#Defect",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Defect",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "Crystallographic defect in a material lattice, including point defects (vacancies, interstitials), line defects (dislocations), planar defects (grain boundaries), and volume defects (voids, pores)",
+      "parent": "Entity",
+      "comment": "Crystallographic defect in a material lattice, including point defects (vacancies, interstitials), line defects (dislocations), planar defects (grain boundaries), and volume defects (voids, pores)"
+    },
+    "PhaseTransformation": {
+      "uri": "http://example.org/materials/ontology#PhaseTransformation",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Phase Transformation",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A structural or compositional change from one crystalline phase to another, driven by thermal, mechanical, or irradiation conditions",
+      "parent": "Phenomenon",
+      "comment": "A structural or compositional change from one crystalline phase to another, driven by thermal, mechanical, or irradiation conditions"
+    },
+    "CrystallinePhase": {
+      "uri": "http://example.org/materials/ontology#CrystallinePhase",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Crystalline Phase",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A physically distinct crystalline structure characterized by a specific lattice arrangement and symmetry",
+      "parent": "Phase",
+      "comment": "A physically distinct crystalline structure characterized by a specific lattice arrangement and symmetry"
+    },
+    "MaterialComposition": {
+      "uri": "http://example.org/materials/ontology#MaterialComposition",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Material Composition",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "The chemical makeup of a material, specifying constituent elements or compounds and their proportions",
+      "parent": "Entity",
+      "comment": "The chemical makeup of a material, specifying constituent elements or compounds and their proportions"
+    },
+    "ThermalProperties": {
+      "uri": "http://example.org/materials/ontology#ThermalProperties",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Thermal Properties",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "Aggregate thermal property data for a material, typically comprising thermal conductivity, thermal diffusivity, heat capacity, and thermal expansion measurements",
+      "parent": "PhysicalProperty → ThermalProperty",
+      "comment": "Aggregate thermal property data for a material, typically comprising thermal conductivity, thermal diffusivity, heat capacity, and thermal expansion measurements"
+    },
+    "ApplicationContext": {
+      "uri": "http://example.org/materials/ontology#ApplicationContext",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Application Context",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "The operational or experimental context in which a nuclear material is deployed or studied",
+      "parent": "Application",
+      "comment": "The operational or experimental context in which a nuclear material is deployed or studied"
+    },
+    "IrradiationSimulation": {
+      "uri": "http://example.org/materials/ontology#IrradiationSimulation",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Irradiation Simulation",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "Computational simulation of material behavior under irradiation, including molecular dynamics, phase field, and rate theory methods",
+      "parent": "SimulationMethod",
+      "comment": "Computational simulation of material behavior under irradiation, including molecular dynamics, phase field, and rate theory methods"
+    },
+    "TemperatureCondition": {
+      "uri": "http://example.org/materials/ontology#TemperatureCondition",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Temperature Condition",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A specified temperature range or regime under which material behavior is observed or tested",
+      "parent": "Entity",
+      "comment": "A specified temperature range or regime under which material behavior is observed or tested"
+    },
+    "IrradiationCondition": {
+      "uri": "http://example.org/materials/ontology#IrradiationCondition",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Irradiation Condition",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "The set of irradiation parameters (dose, dose rate, temperature, spectrum) characterizing an irradiation experiment or environment",
+      "parent": "Irradiation",
+      "comment": "The set of irradiation parameters (dose, dose rate, temperature, spectrum) characterizing an irradiation experiment or environment"
+    },
+    "AlloySystem": {
+      "uri": "http://example.org/materials/ontology#AlloySystem",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Alloy System",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A named alloy system defined by its constituent elements, used as a reference for material datasets and diffusion studies",
+      "parent": "Alloy",
+      "comment": "A named alloy system defined by its constituent elements, used as a reference for material datasets and diffusion studies"
+    },
+    "UraniumMolybdenumAlloy": {
+      "uri": "http://example.org/materials/ontology#UraniumMolybdenumAlloy",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Uranium-Molybdenum Alloy",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A uranium-based alloy containing molybdenum as the primary alloying element, used as high-density research reactor fuel (e.g., U-7Mo, U-10Mo)",
+      "parent": "Alloy",
+      "comment": "A uranium-based alloy containing molybdenum as the primary alloying element, used as high-density research reactor fuel (e.g., U-7Mo, U-10Mo)"
+    },
+    "DiffusionProcess": {
+      "uri": "http://example.org/materials/ontology#DiffusionProcess",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Diffusion Process",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A specific diffusion mechanism or phenomenon by which atoms migrate through a material lattice under thermal or irradiation driving forces",
+      "parent": "Diffusion",
+      "comment": "A specific diffusion mechanism or phenomenon by which atoms migrate through a material lattice under thermal or irradiation driving forces"
+    },
+    "SwellingModel": {
+      "uri": "http://example.org/materials/ontology#SwellingModel",
+      "type": "owl:Class",
+      "rdfs:label": [
+        {
+          "value": "Swelling Model",
+          "lang": ""
+        }
+      ],
+      "rdfs:comment": "A computational or empirical model predicting volumetric swelling of nuclear fuel under irradiation, informed by lower-length-scale simulations or experimental data",
+      "parent": "RateTheoryModel",
+      "comment": "A computational or empirical model predicting volumetric swelling of nuclear fuel under irradiation, informed by lower-length-scale simulations or experimental data"
     }
   },
   "objectProperties": {

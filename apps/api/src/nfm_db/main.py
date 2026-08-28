@@ -11,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from nfm_db.api import admin as admin_api
+from nfm_db.api.routes.ontology import ontology_router as register_router
 from nfm_db.api.v1 import (
     blog,
     composition,
@@ -23,6 +24,7 @@ from nfm_db.api.v1 import (
     extraction_gaps,
     feedback,
     health,
+    jobs,
     kg,
     kg_graph,
     lightrag,
@@ -304,6 +306,9 @@ app.include_router(extraction_gaps.router, prefix="/api/v1", tags=["提取缺口
 app.include_router(viz.router, prefix="/api/v1", tags=["可视化"])
 app.include_router(ontology.router, prefix="/api/v1", tags=["本体管理"])
 app.include_router(ontology_version.router, prefix="/api/v1", tags=["本体版本管理"])
+# NFM-3591 — register-version endpoint with SHA-256 source validation.
+# Mounted at /api (no /v1 prefix) per the issue's API spec.
+app.include_router(register_router, prefix="/api", tags=["本体版本注册"])
 app.include_router(data_collection.router, prefix="/api/v1", tags=["数据采集管理"])
 app.include_router(re_extraction.router, prefix="/api/v1", tags=["重新提取管理"])
 app.include_router(verification.router, prefix="/api/v1/verification", tags=["领域专家审核"])
@@ -334,6 +339,7 @@ app.include_router(upload.router, prefix="/api/v1", tags=["断点续传"])
 app.include_router(composition.router, prefix="/api/v1", tags=["成分设计"])
 app.include_router(dedup.router, prefix="/api/v1", tags=["实体去重"])
 app.include_router(dft.router, prefix="/api/v1", tags=["DFT 计算"])
+app.include_router(jobs.router, prefix="/api/v1", tags=["任务步骤管理"])
 app.include_router(
     hub_nodes_router, prefix="/api/v1", tags=["Hub 节点管理"]
 )

@@ -11,8 +11,10 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
 
 from nfm_db.models import Base, CompatJSONB, TimestampMixin
 
@@ -43,6 +45,25 @@ class ExtractionStep(TimestampMixin, Base):
     """
 
     __tablename__ = "extraction_steps"
+
+    # NFM-3595 / NFM-3543-A: stable per-step identity for rerun idempotency.
+    # Server-side gen_random_uuid() default keeps Postgres the source of
+    # truth; the client-side default mirrors it so SQLite-backed tests
+    # (which lack gen_random_uuid) still see a non-null UUID on insert.
+    track_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+        comment=(
+            "Stable per-step identity (NFM-3595). Server-side "
+            "gen_random_uuid() default."
+        ),
+    )
+
+    __table_args__ = (
+        Index("ix_extraction_steps_track_id", "track_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,

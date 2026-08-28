@@ -67,16 +67,16 @@ def _render_markdown(metrics: dict[str, object], fixture_path: Path) -> str:
     lines.append(f"- Missing: **{metrics['missing_count']}**")
     lines.append(f"- Coverage: **{metrics['pct']:.1f}%**")
     lines.append("")
-    lines.append(
-        "Coverage gate: **FAIL** — NFM-3531-C must populate "
-        "`property_categories[].standard_properties` (and "
-        "`entity_types[].required_properties`) until every alias below is "
-        "covered."
-    )
-    lines.append("")
 
     missing = metrics["missing"]
     if isinstance(missing, list) and missing:
+        lines.append(
+            "Coverage gate: **FAIL** — NFM-3531-C must populate "
+            "`property_categories[].standard_properties` (and "
+            "`entity_types[].required_properties`) until every alias below "
+            "is covered."
+        )
+        lines.append("")
         lines.append("## Missing keys")
         lines.append("")
         lines.append("Every entry below MUST appear in the canonical ontology:")
@@ -85,12 +85,13 @@ def _render_markdown(metrics: dict[str, object], fixture_path: Path) -> str:
             lines.append(f"- `{name}`")
         lines.append("")
     else:
+        lines.append("Coverage gate: **PASS**")
+        lines.append("")
         lines.append("## All keys covered")
         lines.append("")
         lines.append(
             "Every alias in `STANDARD_PROPERTIES` resolves through the "
-            "canonical ontology. NFM-3531-C may proceed with the prompt "
-            "rewrite."
+            "canonical ontology."
         )
         lines.append("")
 
