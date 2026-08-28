@@ -79,7 +79,7 @@ def test_identical_key_sets_exit_zero(env_pair):
 def test_key_missing_from_docker_exits_one_and_names_key(env_pair):
     root, docker = env_pair(
         "DATABASE_URL=postgres://root\nMINERU_API_KEY=secret-value-abc123\n",
-        "DATABASE_URL=postgres://docker\n",
+        "DATABASE_URL=postgres://docker\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 1
@@ -90,7 +90,7 @@ def test_key_missing_from_docker_exits_one_and_names_key(env_pair):
 def test_multiple_missing_keys_all_reported(env_pair):
     root, docker = env_pair(
         "A_KEY=1\nB_KEY=2\nC_KEY=3\n",
-        "A_KEY=1\n",
+        "A_KEY=1\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     assert result.returncode == 1
@@ -149,7 +149,7 @@ def test_single_character_key_is_not_silently_skipped(env_pair):
     characters and would drop a key like `X` from the comparison entirely —
     reintroducing the silent-drift bug the script exists to prevent.
     """
-    root, docker = env_pair("X=1\nREAL_KEY=z\n", "REAL_KEY=z\n")
+    root, docker = env_pair("X=1\nREAL_KEY=z\n", "REAL_KEY=z\nPAPERCLIP_BOARD_API_KEY=dummy\n")
     result = run_script(str(root), str(docker))
     assert result.returncode == 1, "single-char key X was silently ignored"
     assert "X" in result.stderr
@@ -190,7 +190,7 @@ def test_both_files_empty_exits_zero(env_pair):
 
 
 def test_empty_docker_file_with_populated_root_exits_one(env_pair):
-    root, docker = env_pair("MINERU_API_KEY=abc\n", "")
+    root, docker = env_pair("MINERU_API_KEY=abc\n", "PAPERCLIP_BOARD_API_KEY=dummy\n")
     result = run_script(str(root), str(docker))
     assert result.returncode == 1
     assert "MINERU_API_KEY" in result.stderr
@@ -215,7 +215,7 @@ def test_defaults_to_project_root_paths(tmp_path: Path, env_pair):
 
 
 def test_defaults_detect_drift_from_project_root(tmp_path: Path, env_pair):
-    env_pair("DATABASE_URL=x\nMINERU_API_KEY=abc\n", "DATABASE_URL=y\n")
+    env_pair("DATABASE_URL=x\nMINERU_API_KEY=abc\n", "DATABASE_URL=y\nPAPERCLIP_BOARD_API_KEY=dummy\n")
     result = run_script(cwd=tmp_path)
     assert result.returncode == 1
     assert "MINERU_API_KEY" in result.stderr
@@ -230,7 +230,7 @@ def test_secret_values_never_appear_in_output(env_pair):
     secret = "sk-super-secret-do-not-log"
     root, docker = env_pair(
         f"MINERU_API_KEY={secret}\nDATABASE_URL=postgres://user:hunter2@host/db\n",
-        "DATABASE_URL=postgres://other\n",
+        "DATABASE_URL=postgres://other\nPAPERCLIP_BOARD_API_KEY=dummy\n",
     )
     result = run_script(str(root), str(docker))
     combined = result.stdout + result.stderr
