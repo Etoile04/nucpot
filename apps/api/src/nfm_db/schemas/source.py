@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 _ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{4}$")
@@ -82,7 +82,13 @@ class DataSourceUpdate(BaseModel):
 
 
 class DataSourceResponse(BaseModel):
-    """Schema for data source response (list endpoint, no authors)."""
+    """Schema for data source response (list endpoint, no authors).
+
+    ontology_version (NFM-3478 s3) is the version of the ontology that
+    was stamped onto this source at extraction. ``None`` for sources
+    extracted before s2-lit-ov shipped (no metadata_.extraction_ontology_version
+    key) — the field is additive; consumers must tolerate None.
+    """
 
     id: UUID
     doi: str | None = None
@@ -94,10 +100,39 @@ class DataSourceResponse(BaseModel):
     source_type: str
     abstract: str | None = None
     external_url: str | None = None
+    ontology_version: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_ontology_version(cls, data: object) -> object:
+        """Lift DataSource.metadata_.extraction_ontology_version into the top-level field.
+
+        Handles both ORM (data has attributes) and dict (FastAPI response
+        serialization) input shapes. Old sources without the stamp pass
+        through unchanged (ontology_version stays None).
+        """
+        if isinstance(data, dict):
+            metadata = data.get("metadata_")
+            if isinstance(metadata, dict):
+                ov = metadata.get("extraction_ontology_version")
+                if ov is not None and "ontology_version" not in data:
+                    return {**data, "ontology_version": ov}
+            return data
+        # ORM / arbitrary attribute path
+        metadata = getattr(data, "metadata_", None)
+        if isinstance(metadata, dict):
+            ov = metadata.get("extraction_ontology_version")
+            # Use object.__setattr__ so we don't go through any property
+            # setter the model might declare. Skip silently if the ORM
+            # disallows it — the field will just stay None and the
+            # response will omit ontology_version rather than 500.
+            if ov is not None and not hasattr(data, "ontology_version"):
+                object.__setattr__(data, "ontology_version", ov)
+        return data
 
 
 class AuthorCreate(BaseModel):

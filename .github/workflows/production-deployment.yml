@@ -754,6 +754,16 @@ jobs:
             # The snapshot directory lives on the host because the deploy-prod
             # job runs on the Mac Studio self-hosted runner (loopback SSH) and
             # /tmp survives both phases inside the same heredoc.
+            #
+            # NFM-3777: `docker compose run ... < /dev/null` in prod_migrate.sh
+            # above can leave the SSH heredoc's stdin in a state that swallows
+            # every subsequent command (observed 2026-08-28 on run 33139959669:
+            # build + alembic succeed, cutover segment completely silent, prod
+            # stays on the old image, job still green). Reset stdin to a known
+            # terminal-less FD here and emit a HEREDOC-START anchor so future
+            # silent-exit incidents are diagnosable from logs alone.
+            exec 0</dev/null
+            echo "==> HEREDOC CUTOVER START (anchor for NFM-3777 diagnosis)"
             export NFM_CUTOVER_SNAPSHOT_DIR="/tmp/nfm-cutover-${PROD_IMAGE_TAG}"
             rm -rf "${NFM_CUTOVER_SNAPSHOT_DIR}"
             echo "==> Capturing BEFORE snapshot of nucpot-prod-* containers..."
@@ -849,6 +859,7 @@ jobs:
               bash tools/prod-tag-retention/prune.sh --repo "$REPO" --keep 3
             done
             echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
+            echo "==> HEREDOC CUTOVER END (anchor for NFM-3777 diagnosis)"
           ENDSSH
 
       - name: External smoke tests

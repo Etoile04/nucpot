@@ -245,3 +245,84 @@ async def test_create_source_minimal(async_client) -> None:
     response = await async_client.post("/api/v1/sources", json=payload)
     assert response.status_code == 201
     assert response.json()["data"]["source_type"] == "other"
+
+
+# ---------------------------------------------------------------------------
+# NFM-3478 s3 — ontology_version filter + per-source provenance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ontology_version_none_for_unstamped_source(
+    async_client, db_session
+) -> None:
+    """Sources without metadata_.extraction_ontology_version serialize ontology_version=null."""
+    await _seed_source(db_session, title="Pre-s2 source")
+
+    response = await async_client.get("/api/v1/sources")
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["ontology_version"] is None
+
+
+@pytest.mark.asyncio
+async def test_ontology_version_lifted_from_metadata(
+    async_client, db_session
+) -> None:
+    """Stamped sources return their ontology version in the top-level field."""
+    await _seed_source(
+        db_session,
+        title="s2-stamped",
+        metadata_={
+            "extraction_ontology_version": "0.4.0",
+            "extraction_ontology_version_id": "cbc5fc8d-e5c7-48c7-911b-a365e3b725f6",
+            "corpus_id": "ontofuel",
+        },
+    )
+
+    response = await async_client.get("/api/v1/sources")
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    stamped = [i for i in items if i["title"] == "s2-stamped"]
+    assert len(stamped) == 1
+    assert stamped[0]["ontology_version"] == "0.4.0"
+
+
+@pytest.mark.asyncio
+async def test_list_sources_ontology_version_filter(async_client, db_session) -> None:
+    """?ontology_version=0.4.0 returns only sources stamped with 0.4.0."""
+    await _seed_source(
+        db_session,
+        title="stamped-0.4.0",
+        metadata_={"extraction_ontology_version": "0.4.0"},
+    )
+    await _seed_source(
+        db_session,
+        title="stamped-0.3.1",
+        metadata_={"extraction_ontology_version": "0.3.1"},
+    )
+    await _seed_source(db_session, title="unstamped")
+
+    response = await async_client.get("/api/v1/sources?ontology_version=0.4.0")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] == 1
+    assert data["items"][0]["title"] == "stamped-0.4.0"
+    assert data["items"][0]["ontology_version"] == "0.4.0"
+
+
+@pytest.mark.asyncio
+async def test_list_sources_unknown_ontology_version_returns_empty(
+    async_client, db_session
+) -> None:
+    """A version no source has ever been stamped with returns total=0 (not 500)."""
+    await _seed_source(
+        db_session,
+        title="stamped-0.4.0",
+        metadata_={"extraction_ontology_version": "0.4.0"},
+    )
+
+    response = await async_client.get("/api/v1/sources?ontology_version=99.99.99")
+    assert response.status_code == 200
+    assert response.json()["data"]["total"] == 0
