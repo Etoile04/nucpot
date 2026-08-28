@@ -24,7 +24,7 @@ const useChromeChannel = !isCI && process.env.USE_CHROME === "1"
  * re-exercise the spec under live E2E on every merge to main.
  */
 const NFMD_SPEC_PATTERN =
-  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search)\.spec\.ts$/
+/(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review)\.spec\.ts$/
 
 const baseURL =
   process.env.BASE_URL ||
