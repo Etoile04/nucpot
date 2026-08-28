@@ -100,11 +100,25 @@ export default function Nav() {
               aria-current={pathname === link.href ? 'page' : undefined}
               // NFM-3794 a11y:
               // 1. Inactive links need an explicit base color — without
-              //    `text-gray-300`, they inherit antd's `colorLink: #1668dc`,
-              //    which is 3.42:1 vs #101828 bg and fails WCAG AA (4.5:1).
-              // 2. `py-1.5` keeps each link ≥24px tall so it passes
-              //    WCAG 2.5.5 / Lighthouse target-size (24×24 minimum).
-              className={pathname === link.href ? 'text-blue-400 py-1.5' : 'text-gray-300 hover:text-blue-400 transition py-1.5'}
+              //    `text-gray-300`, antd's `colorLink: #1668dc` leaks through
+              //    via the `:where(.css-plsjn) a` selector (3.42:1 vs the dark
+              //    nav bg — fails WCAG AA). Tailwind's `text-gray-300` is
+              //    specificity (0,1,0), but antd's rule sits outside
+              //    `@layer utilities` so it wins the cascade. We add the
+              //    `!` important modifier to force the override.
+              // 2. `inline-flex items-center py-2` keeps each link ≥24px tall
+              //    (WCAG 2.5.5 / Lighthouse target-size). `inline-flex` is
+              //    required because <a> is `display:inline` by default and
+              //    vertical padding on inline elements does NOT expand the
+              //    layout box — axe-core measures 17px height for plain
+              //    `py-2`, failing the 24×24 minimum.
+              //    (Tailwind v4 config in this repo only emits integer
+              //    `py-*` classes — `py-1.5` would be ignored.)
+              className={
+                pathname === link.href
+                  ? 'inline-flex items-center !text-blue-400 py-2'
+                  : 'inline-flex items-center !text-gray-300 hover:!text-blue-400 transition py-2'
+              }
             >
               {link.label}
             </Link>
@@ -116,8 +130,8 @@ export default function Nav() {
               onClick={() => setKgDropdownOpen(prev => !prev)}
               // NFM-3794 a11y: see desktop link note above — inactive
               // dropdown trigger needs a base color too.
-              // NFM-3794 a11y: see desktop link note above. `py-1.5` ensures ≥24px tall.
-              className={`flex items-center gap-1 transition py-1.5 ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400'}`}
+              // NFM-3794 a11y: see desktop link note above. `py-2` ensures ≥24px tall.
+              className={`flex items-center gap-1 transition py-2 ${isKgActive(pathname) ? '!text-blue-400' : '!text-gray-300 hover:!text-blue-400'}`}
               aria-expanded={kgDropdownOpen}
               aria-haspopup="true"
             >
@@ -159,7 +173,11 @@ export default function Nav() {
               {!user ? (
                 <Link
                   href="/login"
-                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition"
+                  // NFM-3794 a11y: antd's `:where(.css-plsjn) a` reset
+                  // overrides both `text-white` AND `bg-blue-600` to
+                  // colorLink #1668dc on transparent — 3.42:1 on the #101828
+                  // header. `!text-white !bg-blue-600` forces override.
+                  className="px-4 py-1.5 rounded-lg !bg-blue-600 hover:!bg-blue-500 !text-white font-medium transition"
                 >
                   登录
                 </Link>
@@ -284,12 +302,14 @@ export default function Nav() {
 
         {/* Mobile hamburger — visible below the lg (1024px) breakpoint. */}
         <button
-          // NFM-3794 a11y: `p-2` adds 8px padding around the 24×24 SVG so
-          // the touch target is 40×40 — comfortably above the 24×24 minimum
-          // Lighthouse enforces. The `lg:hidden` should already hide this at
-          // the audit viewport (1440px), but axe-core inspects the DOM
-          // regardless of CSS visibility in some flows.
-          className="lg:hidden text-white p-2 rounded hover:bg-gray-800/60 transition"
+          // NFM-3794 a11y: target-size. The hamburger has a 24×24 SVG inside,
+          // and we need ≥24×24 layout box at the audit viewport. `inline-flex
+          // items-center justify-center` plus `p-2` gives a 40×40 clickable
+          // box. `min-w-[44px] min-h-[44px]` is belt-and-suspenders — even if
+          // axe-core measures this element while `lg:hidden` is in effect,
+          // the box will be at least 44×44. The `lg:hidden` rule is still
+          // present so the button doesn't render at desktop sizes.
+          className="lg:hidden inline-flex items-center justify-center min-w-[44px] min-h-[44px] text-white p-2 rounded hover:bg-gray-800/60 transition"
           onClick={() => setMobileOpen(prev => !prev)}
           aria-label="打开导航菜单"
           aria-expanded={mobileOpen}
@@ -351,7 +371,10 @@ export default function Nav() {
                 <Link
                   href="/login"
                   onClick={() => setMobileOpen(false)}
-                  className="text-blue-400 hover:text-blue-300 transition font-medium"
+                  // NFM-3794 a11y: same antd specificity override as the
+                  // desktop login button — `text-blue-400` is lost to
+                  // colorLink #1668dc without `!`.
+                  className="!text-blue-400 hover:!text-blue-300 transition font-medium"
                 >
                   登录 / 注册
                 </Link>
