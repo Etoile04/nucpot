@@ -17,9 +17,13 @@ const useChromeChannel = !isCI && process.env.USE_CHROME === "1"
  * NFMD-only E2E specs — excluded from CI live E2E job (NFM-2396).
  * These specs test NFMD-domain features not present on the live blog site.
  * Local runs (no E2E_TARGET) still discover all specs.
+ *
+ * gap-review.spec.ts is intentionally NOT excluded (NFM-3797): after the
+ * explicit waitForResponse fixes the timing race, the spec is deterministic
+ * under CI load and must stay in CI to catch regressions.
  */
 const NFMD_SPEC_PATTERN =
-  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review)\.spec\.ts$/
+  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search)\.spec\.ts$/
 
 const baseURL =
   process.env.BASE_URL ||
