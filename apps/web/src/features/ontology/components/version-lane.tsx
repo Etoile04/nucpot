@@ -83,6 +83,12 @@ export function VersionLane({ versions, selectedId, onSelect }: VersionLaneProps
         const rowClass = v.status === 'deprecated' ? 'opacity-60' : ''
 
         return (
+          // `aria-current` lives on the <li> (the list-item role) rather than
+          // the inner focusable <button>. ARIA `aria-current` is allowed on any
+          // role including `listitem`, and screen readers announce the
+          // inherited value when the descendant <button> receives focus.
+          // This matches the WAI-ARIA Authoring Practices pattern for
+          // "list of selectable items, one current".
           <li
             key={v.id}
             aria-current={isSelected ? 'true' : undefined}
@@ -97,9 +103,7 @@ export function VersionLane({ versions, selectedId, onSelect }: VersionLaneProps
                 <RowContents version={v} isSelected={false} dateStr={dateStr} />
               </button>
             ) : (
-              <div
-                className={`flex items-start gap-3 w-full ${isSelected ? 'bg-gray-800' : ''}`}
-              >
+              <div className="flex items-start gap-3 w-full">
                 <RowContents version={v} isSelected={isSelected} dateStr={dateStr} />
               </div>
             )}

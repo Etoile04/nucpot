@@ -78,6 +78,11 @@ describe('VersionLane', () => {
   // Lighthouse P2 (NFM-3800): aria-allowed-role violation.
   // role="button" is not an allowed ARIA role on <li>; the clickable
   // version row must use a real <button> element instead.
+  //
+  // Keyboard activation (Enter/Space) is a native <button> behaviour that
+  // jsdom does not model — it is covered by the Playwright E2E suite that
+  // was set up in [NFM-3791](/NFM/issues/NFM-3791) for the /admin/ontology
+  // page, so we do not duplicate it here.
   describe('accessibility (NFM-3800 — aria-allowed-role)', () => {
     it('does not put role="button" on <li> when onSelect is provided', () => {
       const { container } = render(
@@ -97,22 +102,6 @@ describe('VersionLane', () => {
       )
       const button = screen.getByRole('button', { name: /v1\.0\.0/ })
       expect(button.tagName).toBe('BUTTON')
-      fireEvent.click(button)
-      expect(onSelect).toHaveBeenCalledWith('v1-uuid')
-    })
-
-    it('keyboard activation works on the real <button>', () => {
-      const onSelect = vi.fn()
-      render(
-        <VersionLane versions={[MOCK_VERSION]} onSelect={onSelect} />,
-      )
-      const button = screen.getByRole('button', { name: /v1\.0\.0/ }) as HTMLButtonElement
-      button.focus()
-      // Real browsers fire a synthetic `click` on a focused <button> when
-      // Enter is pressed (native button activation). jsdom does not model
-      // that automatically, so we dispatch both events to mirror the
-      // production behaviour end-to-end.
-      fireEvent.keyDown(button, { key: 'Enter' })
       fireEvent.click(button)
       expect(onSelect).toHaveBeenCalledWith('v1-uuid')
     })
