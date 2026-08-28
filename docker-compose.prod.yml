@@ -120,6 +120,13 @@ services:
       # NFM-MINERU-1: MinerU PDF parsing (literature pipeline primary parser)
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
       MINERU_API_KEY: ${MINERU_API_KEY:-}
+      # NFM-3727: ADR-009 §4.3-b wake credentials.
+      # PAPERCLIP_BOARD_API_KEY is the board-actor key (name=lobster-coo)
+      # required for cross-agent wakeup. Falls back to PAPERCLIP_API_KEY
+      # (agent-self JWT) which only works for same-agent calls.
+      PAPERCLIP_BOARD_API_KEY: ${PAPERCLIP_BOARD_API_KEY:-}
+      PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:-}
+      PAPERCLIP_API_URL: ${PAPERCLIP_API_URL:-}
     volumes:
       # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
       # from the same path.  Distinct from the potentials / LightRAG volumes.

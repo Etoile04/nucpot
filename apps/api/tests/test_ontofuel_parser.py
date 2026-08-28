@@ -72,7 +72,7 @@ class TestParseMaterialOntology:
     def test_metadata_parsed(self, material_doc: MaterialOntologyDocument):
         meta = material_doc.metadata
         assert meta.name == "Imported Ontology"
-        assert meta.version == "0.3.1"
+        assert meta.version == "0.4.0"
         assert meta.source != ""
 
     def test_class_count(self, material_doc: MaterialOntologyDocument):
