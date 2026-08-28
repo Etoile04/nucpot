@@ -664,6 +664,44 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             len(raw_properties),
         )
 
+        # --- Step 3c: record ontology provenance -----------------------
+        # NFM-3478 Step 2 (s2-lit-ov): ontofuel_extract resolves the
+        # ontology version internally (latest published) but the chosen
+        # version never reached the DataSource row, so a literature
+        # extraction cannot be reproduced against the ontology that
+        # produced it. Query the same latest-published version and stamp
+        # it into the flexible metadata bag (dataset rows have no
+        # metadata column; DataSource.metadata_ is the established bag —
+        # see the KG→staging corpus_id read below). Failure is non-fatal
+        # and leaves prior metadata untouched: provenance is best-effort,
+        # not a pipeline gate.
+        try:
+            from nfm_db.services.extraction_pipeline import (
+                _get_latest_published_ontology,
+            )
+
+            ov = await _get_latest_published_ontology(db)
+            if ov is not None:
+                meta = dict(ds.metadata_ or {})
+                meta["extraction_ontology_version_id"] = str(ov.id)
+                meta["extraction_ontology_version"] = ov.version
+                ds.metadata_ = meta
+                await db.flush()
+                logger.info(
+                    "process_literature: datasource_id=%s stamped ontology "
+                    "provenance version=%s (id=%s)",
+                    ds.id,
+                    ov.version,
+                    ov.id,
+                )
+        except Exception:
+            logger.warning(
+                "process_literature: datasource_id=%s — failed to stamp "
+                "ontology provenance (non-fatal)",
+                ds.id,
+                exc_info=True,
+            )
+
         # --- Step 4: persist via extraction_to_db_mapper ---------------
         # ``build_result`` carries the pre-commit LightRAG ingest payload
         # (NFM-2871). It MUST be dispatched via dispatch_build_result()

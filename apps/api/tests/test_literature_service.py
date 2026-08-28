@@ -155,6 +155,144 @@ class TestHappyPathPreSet:
 
 
 # ---------------------------------------------------------------------------
+# 1b. Ontology provenance stamping (NFM-3478 Step 2 / s2-lit-ov)
+# ---------------------------------------------------------------------------
+
+
+class TestOntologyProvenanceStamping:
+    """Step 3c records the ontology version used by the extraction onto
+    ``DataSource.metadata_`` so literature extractions are reproducible
+    against the ontology that produced them."""
+
+    async def test_stamps_latest_published_ontology_version(
+        self, db_session: AsyncSession, admin_user
+    ) -> None:
+        from nfm_db.models.ontology_version import OntologyVersion
+
+        ov = OntologyVersion(
+            version="9.9.9",
+            status="published",
+            created_by=admin_user.id,
+            ontology_data={"entity_types": {}},
+        )
+        db_session.add(ov)
+        await db_session.flush()
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Title\n\nUO2 lattice 5.47 Å",
+            file_path=None,
+        )
+
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        await db_session.refresh(ds)
+        assert ds.metadata_ is not None
+        assert ds.metadata_["extraction_ontology_version"] == "9.9.9"
+        assert ds.metadata_["extraction_ontology_version_id"] == str(ov.id)
+
+    async def test_no_published_ontology_leaves_metadata_untouched(
+        self, db_session: AsyncSession
+    ) -> None:
+        """No published version → step is a no-op, metadata stays None."""
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Title\n\nbody",
+            file_path=None,
+        )
+
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        await db_session.refresh(ds)
+        assert ds.metadata_ is None
+
+    async def test_preserves_existing_metadata_bag(
+        self, db_session: AsyncSession, admin_user
+    ) -> None:
+        """Prior metadata keys (e.g. corpus_id) survive the stamping."""
+        from nfm_db.models.ontology_version import OntologyVersion
+
+        ov = OntologyVersion(
+            version="9.9.9",
+            status="published",
+            created_by=admin_user.id,
+            ontology_data={"entity_types": {}},
+        )
+        db_session.add(ov)
+        await db_session.flush()
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Title\n\nbody",
+            file_path=None,
+        )
+        ds.metadata_ = {"corpus_id": "existing-corpus"}
+        await db_session.commit()
+
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            await lit_svc.process_literature(db_session, ds.id)
+
+        await db_session.refresh(ds)
+        assert ds.metadata_["corpus_id"] == "existing-corpus"
+        assert ds.metadata_["extraction_ontology_version"] == "9.9.9"
+
+
+# ---------------------------------------------------------------------------
 # 2. Happy path — PDF parse then extract
 # ---------------------------------------------------------------------------
 
