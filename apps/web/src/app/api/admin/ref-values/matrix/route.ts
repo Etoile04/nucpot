@@ -29,25 +29,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error }, { status })
     }
 
+  // NFM-3780: use actual column names (element, property_name).
+  // The reference_values table on Supabase has no status/confidence columns.
   const { data, error: err } = await supabaseAdmin!
       .from('reference_values')
-      .select('material, value_type, value, unit, confidence, status, source')
-      .eq('status', 'active')
-      .order('material')
-      .order('value_type')
+      .select('element, crystal_structure, property_name, value, unit, source, notes')
+      .order('element')
+      .order('property_name')
 
   if (err) {
     console.error('[ref-values matrix]', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
     }
 
-  // Group by material → value_type → value
+  // Group by element → property_name → value
   const matrix: Record<string, Record<string, any>> = {}
   for (const row of (data || [])) {
-    const mat = row.material || 'unknown'
-    const vt = row.value_type || 'unknown'
+    const mat = row.element || 'unknown'
+    const prop = row.property_name || 'unknown'
     if (!matrix[mat]) matrix[mat] = {}
-    matrix[mat][vt] = row
+    matrix[mat][prop] = row
     }
 
   return NextResponse.json({ matrix })
