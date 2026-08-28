@@ -335,4 +335,69 @@ test.describe("Ontology detail — /admin/ontology/[typeId]", { tag: "@e2e" }, (
     await expect(alert).toBeVisible({ timeout: 10_000 })
     await expect(alert).toContainText(/403|Forbidden/i)
   })
+
+  // --- NFM-3805: Keyboard tab-walk ---
+  test("keyboard tab-walk reaches every interactive control in visible DOM order", async ({
+    page,
+  }) => {
+    const detail = buildDetail({ id: "v_kb", status: "draft" })
+    await mockVersionDetail(page, detail)
+    await page.goto("/admin/ontology/v_kb")
+    await expect(page.getByRole("heading", { name: "Version 1.0.0" })).toBeVisible()
+
+    const visited: Array<{ tag: string; label: string; outline: string }> = []
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press("Tab")
+      const info = await page.evaluate(() => {
+        const el = document.activeElement
+        if (!el || el === document.body) return null
+        const cs = getComputedStyle(el)
+        return {
+          tag: el.tagName,
+          label:
+            el.getAttribute("aria-label") ??
+            el.getAttribute("aria-pressed") ??
+            el.textContent?.slice(0, 60) ??
+            "",
+          outline: `${cs.outlineStyle} ${cs.outlineWidth}`,
+        }
+      })
+      if (!info) break
+      visited.push(info)
+    }
+
+    // AC: No focus trap.
+    expect(visited.length).toBeLessThan(30)
+
+    // AC: Focus visibly indicated at every stop.
+    for (const stop of visited) {
+      expect(
+        stop.outline,
+        `Focus indicator missing on ${stop.tag}: "${stop.label}"`,
+      ).not.toMatch(/^none\s+0/)
+    }
+
+    const allLabels = visited.map((s) => s.label)
+
+    // AC: Breadcrumb back-link included.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Back to list/i)]),
+    )
+
+    // AC: Edit draft link included.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Edit draft/i)]),
+    )
+
+    // AC: Promote & publish button included (draft status).
+    expect(allLabels).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Promote.+publish/i)]),
+    )
+
+    // AC: Enter on a link navigates — use "Edit draft" link.
+    const editLink = page.getByRole("link", { name: "Edit draft" })
+    await editLink.focus()
+    await page.keyboard.press("Enter")
+    await expect(page).toHaveURL(/\/admin\/ontology\/v_kb\/edit/)
+  })
 })

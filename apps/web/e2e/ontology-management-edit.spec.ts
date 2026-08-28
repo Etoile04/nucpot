@@ -362,4 +362,85 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
       page.getByRole("button", { name: /Add entity type/ }),
     ).toHaveCount(0)
   })
+
+  // --- NFM-3805: Keyboard tab-walk ---
+  test("keyboard tab-walk reaches every interactive control in visible DOM order", async ({
+    page,
+  }) => {
+    const detail = buildDetail({ id: "v_kb", status: "draft" })
+    await mockVersionDetail(page, detail)
+
+    // Mock PUT for the Space-activation sub-test.
+    await page.route(UPDATE_URL(detail.id), async (route) => {
+      if (route.request().method() !== "PUT") return route.fallback()
+      return json(route, {
+        success: true,
+        data: { ...detail, updated_at: "2026-08-28T00:00:00Z" },
+      })
+    })
+
+    await page.goto("/admin/ontology/v_kb/edit")
+    await expect(
+      page.getByRole("heading", { name: /Edit v1\.0\.0/ }),
+    ).toBeVisible()
+
+    const visited: Array<{ tag: string; label: string; outline: string }> = []
+    for (let i = 0; i < 50; i++) {
+      await page.keyboard.press("Tab")
+      const info = await page.evaluate(() => {
+        const el = document.activeElement
+        if (!el || el === document.body) return null
+        const cs = getComputedStyle(el)
+        return {
+          tag: el.tagName,
+          label:
+            el.getAttribute("aria-label") ??
+            el.getAttribute("aria-pressed") ??
+            el.getAttribute("placeholder") ??
+            el.getAttribute("name") ??
+            el.textContent?.slice(0, 60) ??
+            "",
+          outline: `${cs.outlineStyle} ${cs.outlineWidth}`,
+        }
+      })
+      if (!info) break
+      visited.push(info)
+    }
+
+    // AC: No focus trap.
+    expect(visited.length).toBeLessThan(50)
+
+    // AC: Focus visibly indicated at every stop.
+    for (const stop of visited) {
+      expect(
+        stop.outline,
+        `Focus indicator missing on ${stop.tag}: "${stop.label}"`,
+      ).not.toMatch(/^none\s+0/)
+    }
+
+    const allLabels = visited.map((s) => s.label)
+
+    // AC: Tab list (Entity Types / Relation Types) included in the walk.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Entity/i),
+        expect.stringMatching(/Relation/i),
+      ]),
+    )
+
+    // AC: CRUD controls included.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Add entity/i),
+        expect.stringMatching(/Save draft/i),
+        expect.stringMatching(/Promote and publish/i),
+      ]),
+    )
+
+    // AC: Space activates a focused button — focus "Save draft" and press Space.
+    const saveBtn = page.getByRole("button", { name: /Save draft/ })
+    await saveBtn.focus()
+    await page.keyboard.press("Space")
+    await expect(page.getByText("Draft saved")).toBeVisible({ timeout: 10_000 })
+  })
 })

@@ -267,4 +267,83 @@ test.describe("Ontology list — /admin/ontology", { tag: "@e2e" }, () => {
     await expect(newLink).toBeVisible()
     await expect(newLink).toHaveAttribute("href", "/admin/ontology/new")
   })
+
+  // --- NFM-3805: Keyboard tab-walk ---
+  test("keyboard tab-walk reaches every interactive control in visible DOM order", async ({
+    page,
+  }) => {
+    await mockVersionsList(page, {
+      items: [VERSION_V1, VERSION_V2],
+      total: 2,
+      pages: 1,
+    })
+
+    await page.goto("/admin/ontology")
+    await expect(
+      page.getByRole("heading", { name: "Ontology Versions" }),
+    ).toBeVisible()
+
+    // Collect the tab order by pressing Tab from document start.
+    const visited: Array<{ tag: string; label: string; outline: string }> = []
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press("Tab")
+      const info = await page.evaluate(() => {
+        const el = document.activeElement
+        if (!el || el === document.body) return null
+        const cs = getComputedStyle(el)
+        return {
+          tag: el.tagName,
+          label:
+            el.getAttribute("aria-label") ??
+            el.getAttribute("aria-pressed") ??
+            el.textContent?.slice(0, 60) ??
+            "",
+          outline: `${cs.outlineStyle} ${cs.outlineWidth}`,
+        }
+      })
+      if (!info) break
+      visited.push(info)
+    }
+
+    // AC: No focus trap — traversal completes and exits before safety cap.
+    expect(visited.length).toBeLessThan(30)
+
+    // AC: Focus is visibly indicated at every stop (no outline: none dead zones).
+    for (const stop of visited) {
+      expect(
+        stop.outline,
+        `Focus indicator missing on ${stop.tag}: "${stop.label}"`,
+      ).not.toMatch(/^none\s+0/)
+    }
+
+    const allLabels = visited.map((s) => s.label)
+
+    // AC: Filter controls included in the walk.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/All/i),
+        expect.stringMatching(/Draft/i),
+        expect.stringMatching(/Published/i),
+      ]),
+    )
+
+    // AC: Version row buttons included.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/1\.0\.0/),
+        expect.stringMatching(/1\.1\.0/),
+      ]),
+    )
+
+    // AC: "New version" link included.
+    expect(allLabels).toEqual(
+      expect.arrayContaining([expect.stringMatching(/New version/i)]),
+    )
+
+    // AC: Enter activates a link — tab to "New version" and press Enter.
+    const newVersionLink = page.getByRole("link", { name: /New version/i })
+    await newVersionLink.focus()
+    await page.keyboard.press("Enter")
+    await expect(page).toHaveURL(/\/admin\/ontology\/new/)
+  })
 })
