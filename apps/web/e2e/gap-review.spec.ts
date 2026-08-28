@@ -226,6 +226,32 @@ async function gotoAuditAndWait(page: Page): Promise<void> {
   )
 }
 
+// Wait for a single-decision POST to land in the route handler at :150.
+// The mocked route handler pushes the decision into `auditedDecisions`
+// synchronously when `route.fulfill` runs, but `await locator.click()` and
+// `await keyboard.press(...)` resolve at the dispatch layer — *before*
+// the POST hits the route handler. Reading `auditedDecisions.length`
+// without this wait is the same race class NFM-3798 was opened to
+// eliminate. We use `Promise.all` so the click and the waitForResponse
+// start concurrently — the wait resolves only after the response (and
+// thus the route handler) has finished. CTO preference for determinism
+// in CI under load.
+async function clickAndAwaitDecisionPost(
+  page: Page,
+  locator: { click(): Promise<void> },
+): Promise<void> {
+  await Promise.all([
+    page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/v1/gap/decisions") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 200,
+      { timeout: 15_000 },
+    ),
+    locator.click(),
+  ])
+}
+
 // ─── Tests ──────────────────────────────────────────────────
 
 test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
@@ -257,7 +283,10 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
     // deterministic than name regex. NFM-3798.
     const acceptBtn = page.locator(".ant-drawer-footer button.ant-btn-primary")
     await expect(acceptBtn).toBeVisible({ timeout: 5_000 })
-    await acceptBtn.click()
+    // Click 2: accept. Promise.all awaits the POST landing before we
+    // read the in-memory `auditedDecisions` array — otherwise we race
+    // the route handler. NFM-3798 F2.
+    await clickAndAwaitDecisionPost(page, acceptBtn)
 
     expect(auditedDecisions).toHaveLength(1)
     expect(auditedDecisions[0].decision).toBe("accepted")
@@ -268,7 +297,12 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
     await page.getByText("UO2").click()
-    await page.locator(".ant-drawer-footer button.ant-btn-primary").click()
+    const acceptBtn = page.locator(".ant-drawer-footer button.ant-btn-primary")
+    await expect(acceptBtn).toBeVisible({ timeout: 5_000 })
+    // Await the POST so `auditedDecisions` is populated before the audit
+    // page mounts and the audit-log route handler snapshots it.
+    // NFM-3798 F2.
+    await clickAndAwaitDecisionPost(page, acceptBtn)
 
     await gotoAuditAndWait(page)
     // Audit table renders the decision as a Chinese badge label
@@ -312,7 +346,26 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
     // the keypress fires, and the handler returns early at the
     // !isDrawerOpen guard. Keyboard handler is attached to document, so
     // pressing 'a' directly (no body click) still fires it. NFM-3798.
-    await page.keyboard.press("a")
+    //
+    // Await the decision POST landing before reading the in-memory array
+    // — same race class as AC-1/AC-5. NFM-3798 F2.
+    //
+    // The keyboard handler in useGapKeyboardShortcuts.tsx:125 wires
+    // `onAccept(selectedArr)` → handleKbAccept → submitBulkDecisions →
+    // POST /api/gap/decisions/bulk (NOT the single-decision endpoint at
+    // /api/v1/gap/decisions used by the drawer buttons in AC-1/AC-2/AC-5).
+    // The bulk route handler at :136-144 also pushes into
+    // `auditedDecisions`, so awaiting this POST is sufficient.
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/gap/decisions/bulk") &&
+          resp.request().method() === "POST" &&
+          resp.status() === 200,
+        { timeout: 15_000 },
+      ),
+      page.keyboard.press("a"),
+    ])
 
     expect(auditedDecisions.length).toBeGreaterThanOrEqual(1)
     const accepted = auditedDecisions.filter((d) => d.decision === "accepted")
@@ -323,13 +376,17 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
     await gotoQueueAndWait(page)
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
-    // Accept UO2 via drawer
+    // Accept UO2 via drawer — await POST before reading the in-memory array.
     await page.getByText("UO2").click()
-    await page.locator(".ant-drawer-footer button.ant-btn-primary").click()
+    const acceptBtn = page.locator(".ant-drawer-footer button.ant-btn-primary")
+    await expect(acceptBtn).toBeVisible({ timeout: 5_000 })
+    await clickAndAwaitDecisionPost(page, acceptBtn)
 
-    // Reject Zr-4 via drawer
+    // Reject Zr-4 via drawer — same fix.
     await page.getByText("Zr-4").click()
-    await page.locator(".ant-drawer-footer button.ant-btn-dangerous").click()
+    const rejectBtn = page.locator(".ant-drawer-footer button.ant-btn-dangerous")
+    await expect(rejectBtn).toBeVisible({ timeout: 5_000 })
+    await clickAndAwaitDecisionPost(page, rejectBtn)
 
     expect(auditedDecisions).toHaveLength(2)
     expect(auditedDecisions.find((d) => d.id === "gap-001")?.decision).toBe("accepted")
