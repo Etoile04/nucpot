@@ -245,3 +245,94 @@ body {
   background-color: #111827;
 }
 
+
+/* ── Ontology Management: Scientific Ledger tokens (NFM-3550 / NFM-3551) ── */
+:root {
+  /* Surface ladder */
+  --onto-surface-0: #0c1117;
+  --onto-surface-1: #131a23;
+  --onto-surface-2: #1a2330;
+  --onto-surface-3: #232f3e;
+  --onto-surface-inset: #0a0f15;
+  --onto-surface-overlay: rgba(8, 12, 18, 0.72);
+
+  /* Ink ladder */
+  --onto-ink-strong: #f4ead5;
+  --onto-ink-default: #d8d1c0;
+  --onto-ink-muted: #8e8675;
+  --onto-ink-disabled: #5a5448;
+  --onto-ink-inverse: #0c1117;
+
+  /* Accents */
+  --onto-accent: #d9a25f;
+  --onto-accent-hover: #e6b375;
+  --onto-accent-active: #c08c4a;
+  --onto-accent-info: #6cb6c8;
+  --onto-accent-success: #6fb88b;
+  --onto-accent-warning: #d9a25f;
+  --onto-accent-danger: #c97070;
+
+  /* Borders */
+  --onto-border-soft: #2a3340;
+  --onto-border-strong: #3d4a5c;
+  --onto-border-focus: #d9a25f;
+
+  /* Status palette */
+  --onto-status-draft: #8e8675;
+  --onto-status-review: #6cb6c8;
+  --onto-status-published: #6fb88b;
+  --onto-status-deprecated: #a07070;
+
+  /* Typography */
+  --onto-font-display: "IBM Plex Serif", "Source Han Serif SC", "Songti SC", serif;
+  --onto-font-body: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --onto-font-mono: "JetBrains Mono", "SF Mono", "Cascadia Mono", monospace;
+  --onto-fs-display: 1.875rem;
+  --onto-fs-h1: 1.5rem;
+  --onto-fs-h2: 1.25rem;
+  --onto-fs-h3: 1.0625rem;
+  --onto-fs-body: 0.9375rem;
+  --onto-fs-sm: 0.8125rem;
+  --onto-fs-xs: 0.6875rem;
+
+  /* Spacing */
+  --onto-space-1: 0.25rem;
+  --onto-space-2: 0.5rem;
+  --onto-space-3: 0.75rem;
+  --onto-space-4: 1rem;
+  --onto-space-5: 1.5rem;
+  --onto-space-6: 2rem;
+  --onto-space-7: 3rem;
+  --onto-space-8: 4rem;
+  --onto-container-narrow: 880px;
+  --onto-container-wide: 1280px;
+
+  /* Radius */
+  --onto-radius-xs: 2px;
+  --onto-radius-sm: 4px;
+  --onto-radius-md: 8px;
+  --onto-radius-lg: 12px;
+  --onto-radius-pill: 999px;
+
+  /* Shadows */
+  --onto-shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+  --onto-shadow-2: 0 4px 12px rgba(0,0,0,0.45), 0 0 0 1px var(--onto-border-soft);
+  --onto-shadow-3: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px var(--onto-border-strong);
+
+  /* Motion */
+  --onto-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --onto-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --onto-dur-fast: 120ms;
+  --onto-dur-base: 220ms;
+  --onto-dur-slow: 360ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onto-animate *,
+  .onto-animate *::before,
+  .onto-animate *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
