@@ -173,7 +173,11 @@ export default function Nav() {
               {!user ? (
                 <Link
                   href="/login"
-                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition"
+                  // NFM-3794 a11y: antd's `:where(.css-plsjn) a` reset
+                  // overrides both `text-white` AND `bg-blue-600` to
+                  // colorLink #1668dc on transparent — 3.42:1 on the #101828
+                  // header. `!text-white !bg-blue-600` forces override.
+                  className="px-4 py-1.5 rounded-lg !bg-blue-600 hover:!bg-blue-500 !text-white font-medium transition"
                 >
                   登录
                 </Link>
@@ -367,7 +371,10 @@ export default function Nav() {
                 <Link
                   href="/login"
                   onClick={() => setMobileOpen(false)}
-                  className="text-blue-400 hover:text-blue-300 transition font-medium"
+                  // NFM-3794 a11y: same antd specificity override as the
+                  // desktop login button — `text-blue-400` is lost to
+                  // colorLink #1668dc without `!`.
+                  className="!text-blue-400 hover:!text-blue-300 transition font-medium"
                 >
                   登录 / 注册
                 </Link>
