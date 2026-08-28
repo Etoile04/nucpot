@@ -19,7 +19,7 @@ architecture decisions are captured in
 | Phase | Issue | Status | Date completed |
 |-------|-------|--------|----------------|
 | Pre-flight | [NFM-2943](/NFM/issues/NFM-2943), [NFM-2922](/NFM/issues/NFM-2922), [NFM-2923](/NFM/issues/NFM-2923) | **DONE** | 2026-08-14 |
-| Staging green streak | [NFM-2924](/NFM/issues/NFM-2924) | **DONE** | 2026-08-15 (Day 1 recorded, flag removed before Day 7) |
+| Staging green streak | [NFM-2924](/NFM/issues/NFM-2924) | **IN PROGRESS** (re-validation 1/7) | 2026-08-15 (original partial) -> 2026-08-25 (window restarted) |
 | Production shadow | NFM-2916 scope item 5 | **SKIPPED** | Flag removed entirely — no shadow period needed |
 | Phase 4 — flag flip | [NFM-3487](/NFM/issues/NFM-3487) | **DONE** | 2026-08-22 (NFM-3008 already removed the flag) |
 
@@ -50,17 +50,36 @@ All pre-flight items completed successfully.
 
 ## Staging green streak
 
-Recorded streak data from the observational parity runs. Only Day 1
-was recorded before the flag was removed in NFM-3008.
+### Historical record (2026-08-15)
+
+Recorded streak data from the original observational parity runs. Only
+Day 1 was recorded before the flag was removed in NFM-3008.
 
 | Date (UTC) | Parity fixtures run | V1 fail count | V2 fail count | Parity delta | Outcome | Operator initials |
 |------------|---------------------|---------------|---------------|--------------|---------|-------------------|
 | 2026-08-15 | 4/4 (mox-thermal, thoria-mixed-oxide, uo2-fcc, zircaloy) | 0 | 0 | 0% | **PASS** | CTO-auto |
 
-> **Streak: 1/7 (partial).** The 7-day gate was not completed because
-> the `extraction_v2_enabled` flag was removed in NFM-3008, making the
-> gate moot — V2 became the only path. The single recorded day shows
-> 0% divergence, well within the ADR-0007 ±5% tolerance.
+> **Historical streak: 1/7 (partial).** The original 7-day gate was not
+> completed because the `extraction_v2_enabled` flag was removed in
+> NFM-3008, making the gate moot — V2 became the only path. The single
+> recorded day shows 0% divergence, within the ADR-0007 ±5% tolerance.
+
+### Re-validation window (started 2026-08-25)
+
+The 7-day staging gate (ADR-0007 §4) was re-opened by board direction on
+2026-08-25. Each row corresponds to one calendar day of the scheduled
+parity cron (`extraction-parity.yml`, `cron: "0 6 * * *"`) running GREEN
+against the staging fixture set. Rows are sourced from the scheduled
+run's `parity-report` artifact, never from local re-runs. Day 7 of this
+window triggers [NFM-2925](/NFM/issues/NFM-2925) (24h production shadow).
+
+| Date (UTC) | Parity fixtures run | V1 fail count | V2 fail count | Parity delta | Outcome | Operator initials |
+|------------|---------------------|---------------|---------------|--------------|---------|-------------------|
+| 2026-08-25 | 4/4 (mox-thermal, thoria-mixed-oxide, uo2-fcc, zircaloy) | 0 | 0 | 0% | **PASS** | OE-auto |
+
+> **Streak: 1/7 days.** Restarted 2026-08-25 (was 0/7). Source: scheduled
+> run [32818024701](https://github.com/Etoile04/nucpot/actions/runs/32818024701)
+> (2026-08-25T06:40:45Z, conclusion=success, parity 4/4 passed).
 
 **Parity fixtures** (4 canonical): mox-thermal-conductivity,
 thoria-mixed-oxide, uo2-fcc-lattice, zircaloy-cladding-modulus.
