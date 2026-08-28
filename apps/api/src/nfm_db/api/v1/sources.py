@@ -39,6 +39,15 @@ async def list_sources_endpoint(
     pagination: PaginationParams = Depends(PaginationParams),
     year: int | None = Query(None, description="Filter by publication year"),
     source_type: str | None = Query(None, description="Filter by source type"),
+    ontology_version: str | None = Query(
+        None,
+        description=(
+            "Filter by the ontology version stamped onto the source at "
+            "extraction time (NFM-3478 s3). Example: '0.4.0'. Sources "
+            "extracted before s2-lit-ov shipped return null and are only "
+            "included when this parameter is omitted."
+        ),
+    ),
     sort: str = Query("created_at", pattern="^(created_at|updated_at|title|year)$"),
     order: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
@@ -51,6 +60,7 @@ async def list_sources_endpoint(
         db,
         year=year,
         source_type=source_type,
+        ontology_version=ontology_version,
         page=pagination.page,
         per_page=pagination.per_page,
         sort=sort,

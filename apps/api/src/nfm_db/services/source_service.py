@@ -8,7 +8,7 @@ import logging
 import uuid
 from typing import Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -30,12 +30,21 @@ async def list_sources(
     *,
     year: int | None = None,
     source_type: str | None = None,
+    ontology_version: str | None = None,
     page: int = 1,
     per_page: int = 20,
     sort: str = "created_at",
     order: Literal["asc", "desc"] = "desc",
 ) -> PaginatedResponse[DataSourceResponse]:
-    """Return a paginated, filtered list of data sources."""
+    """Return a paginated, filtered list of data sources.
+
+    ontology_version (NFM-3478 s3) matches against the JSONB
+    DataSource.metadata_.extraction_ontology_version key set by
+    process_literature (s2-lit-ov, #1009). On Postgres uses JSONB
+    containment (`@>`, indexable). On other dialects (sqlite tests) we
+    fetch the candidate rows without the JSONB predicate and post-filter
+    in Python — only the production deployment hits the JSONB path.
+    """
 
     stmt = select(DataSource)
 
@@ -44,6 +53,19 @@ async def list_sources(
 
     if source_type is not None:
         stmt = stmt.where(DataSource.source_type == source_type)
+
+    sqlite_post_filter: bool = False
+    if ontology_version is not None:
+        bind_value = f'{{"extraction_ontology_version": "{ontology_version}"}}'
+        if db.bind and db.bind.dialect.name == "postgresql":
+            stmt = stmt.where(
+                text("metadata_ @> CAST(:ov_json AS jsonb)").bindparams(
+                    bindparam(ov_json=bind_value)
+                )
+            )
+        else:
+            # sqlite test fallback — note we will Python-post-filter below
+            sqlite_post_filter = True
 
     sort_column = {
         "created_at": DataSource.created_at,
@@ -63,6 +85,17 @@ async def list_sources(
     offset = (page - 1) * per_page
     stmt = stmt.offset(offset).limit(per_page)
     rows = (await db.execute(stmt)).scalars().all()
+
+    # sqlite test path — only relevant when ontology_version filter was set
+    # and we're not on Postgres. Production hits the JSONB predicate above
+    # and never enters this branch.
+    if sqlite_post_filter and ontology_version is not None:
+        rows = [
+            r for r in rows
+            if isinstance(r.metadata_, dict)
+            and r.metadata_.get("extraction_ontology_version") == ontology_version
+        ]
+        total = len(rows)
 
     items = [DataSourceResponse.model_validate(r) for r in rows]
     pages = max(1, -(-total // per_page)) if total > 0 else 0  # ceil
