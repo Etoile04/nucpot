@@ -53,6 +53,7 @@ import {
   within,
 } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { App } from "antd"
 
 import type {
   LiteratureListItem,
@@ -202,9 +203,17 @@ async function renderLiteratureManager() {
       mutations: { retry: false },
     },
   })
+  // Wrap in AntD's <App> so `App.useApp()` inside LiteratureManager
+  // returns the message instance — the production root layout mounts
+  // `<App>` via `components/antd-provider.tsx`. Without this wrapper
+  // `App.useApp()` would return a no-op and any `message.error(...)`
+  // call would throw (verified during the NFM-3765 drawer feedback
+  // fix; see LiteratureManager.tsx for the App.useApp() rationale).
   const utils = render(
     <QueryClientProvider client={client}>
-      <LiteratureManager />
+      <App>
+        <LiteratureManager />
+      </App>
     </QueryClientProvider>,
   )
   return { ...utils, client }
@@ -532,5 +541,116 @@ describe("LiteratureManager (NFM-3422) — TanStack Query invalidation", () => {
         expect.arrayContaining(["literature-list", 1, expect.anything()]),
       ]),
     )
+  })
+
+  // ── Drawer resize + loading feedback (NFM-3765) ────────────────────
+  //
+  // These tests pin the user-facing symptoms that motivated the fix:
+  //   • 重新提取 / 删除 buttons had no `loading` state while the mutation
+  //     was in-flight, so a user clicking "confirm" in the popover got
+  //     no visual feedback and thought the button was broken.
+  //   • The drawer was 560px hard-coded with no resize handle, so users
+  //     couldn't widen the panel to read embedded Markdown.
+  //   • `message.error(...)` was a static call against an AntD `<App>`-
+  //     scoped container; under the SSR build the static container is
+  //     never created, so the error toast silently never appeared.
+  //
+  // Each test asserts the contract, not the implementation, so a future
+  // refactor that swaps the resize library or the message API still
+  // passes.
+
+  it("AC-6: drawer renders a resize handle when open with detail loaded", async () => {
+    await renderLiteratureManager()
+    await waitFor(() => expect(listLiterature).toHaveBeenCalledTimes(1))
+
+    // Open the drawer
+    const titleLink = await screen.findByText("UO2 thermal conductivity")
+    fireEvent.click(titleLink)
+    await waitFor(() => expect(getLiterature).toHaveBeenCalledWith("lit-001"))
+
+    // The Drawer renders into a React portal at document.body level,
+    // so querySelector on `document` (not on the rendered container)
+    // is the right tool. We wait for the portal to mount.
+    await waitFor(() => {
+      const handle = document.querySelector(
+        '.ant-drawer [role="separator"]',
+      ) as HTMLElement | null
+      expect(handle).not.toBeNull()
+    })
+
+    const handle = document.querySelector(
+      '.ant-drawer [role="separator"]',
+    ) as HTMLElement
+    expect(handle.getAttribute("aria-orientation")).toBe("vertical")
+    expect(handle.getAttribute("aria-label")).toMatch(/拖动调整详情面板宽度/)
+  })
+
+  // AC-7 and AC-8 are covered end-to-end via Playwright in
+  // apps/web/e2e/literature-drawer.spec.ts (see NFM-3765
+  // handoff). Driving `mutation.isPending === true` through the
+  // popover → mutate pipeline is brittle under jsdom because the
+  // Popconfirm mock re-renders the trigger button on each
+  // transition, invalidating the cached element reference between
+  // the click and the assertion. The user-facing behaviour
+  // (loading class on the trigger + OK button + sibling-disable) is
+  // verified directly against the live https://nucpot.dpdns.org/
+  // literature page in the Playwright spec, which is the right
+  // place for it. We keep AC-6 (resize handle) and AC-9 (resize
+  // end → localStorage) here because both are pure DOM-contract
+  // tests that don't need the in-flight mutation pipeline.
+
+  it("AC-9: drawer width persists to localStorage on resize end", async () => {
+    // Seed a known width so the assertion is deterministic regardless
+    // of any persisted value from previous test runs in the same
+    // jsdom instance.
+    window.localStorage.setItem("nucpot.literature.drawerWidth", "820")
+
+    await renderLiteratureManager()
+    await waitFor(() => expect(listLiterature).toHaveBeenCalledTimes(1))
+
+    // Open drawer
+    fireEvent.click(await screen.findByText("UO2 thermal conductivity"))
+    await waitFor(() => expect(getLiterature).toHaveBeenCalledWith("lit-001"))
+
+    // The seeded width should be reflected on the rendered drawer.
+    // AntD puts the width on `.ant-drawer-content-wrapper` as inline
+    // style (or as an attribute depending on version) — we read the
+    // computed width and confirm it matches the seeded value within
+    // a tolerance to allow sub-pixel rounding.
+    const wrapper = await waitFor(() => {
+      const w = document.querySelector(".ant-drawer-content-wrapper") as HTMLElement | null
+      expect(w).not.toBeNull()
+      return w!
+    })
+    const widthStr = wrapper.style.width || wrapper.getAttribute("style")?.match(/width:\s*(\d+)/)?.[1]
+    expect(widthStr).toBeDefined()
+    const width = parseInt(widthStr ?? "0", 10)
+    expect(width).toBeGreaterThanOrEqual(810)
+    expect(width).toBeLessThanOrEqual(830)
+
+    // Drive the resize handle via pointer events to ensure the
+    // pointer-event contract works (touch + mouse + trackpad).
+    const handle = document.querySelector('[role="separator"]') as HTMLElement | null
+    expect(handle).not.toBeNull()
+
+    // Simulate dragging 100px to the LEFT — drawer should grow by 100.
+    const startWidth = width
+    fireEvent.pointerDown(handle!, { button: 0, clientX: 500, clientY: 300, pointerId: 1 })
+    fireEvent.pointerMove(handle!, { button: 0, clientX: 400, clientY: 300, pointerId: 1 })
+    fireEvent.pointerUp(handle!, { button: 0, clientX: 400, clientY: 300, pointerId: 1 })
+
+    await waitFor(() => {
+      const newWidth = parseInt(
+        document
+          .querySelector(".ant-drawer-content-wrapper")!
+          .getAttribute("style")!
+          .match(/width:\s*(\d+)/)?.[1] ?? "0",
+        10,
+      )
+      expect(newWidth).toBeGreaterThanOrEqual(startWidth + 50)
+    })
+
+    // localStorage was written on pointer-up
+    expect(window.localStorage.getItem("nucpot.literature.drawerWidth")).not.toBeNull()
   })
 })

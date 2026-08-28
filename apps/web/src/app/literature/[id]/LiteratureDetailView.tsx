@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   Alert,
+  App,
   Button,
   Card,
   Collapse,
@@ -26,7 +27,6 @@ import {
   Space,
   Tag,
   Typography,
-  message,
 } from "antd"
 import {
   ArrowLeftOutlined,
@@ -76,10 +76,23 @@ interface LiteratureDetailViewProps {
 export default function LiteratureDetailView({
   literatureId,
 }: LiteratureDetailViewProps) {
+  // Pull message from the App context so error toasts render into the
+  // same container ConfigProvider set at the root layout. The static
+  // `message` import only works when the static container exists —
+  // under the SSR build the container is never created and the call
+  // silently no-ops, which is the same root-cause the
+  // LiteratureManager drawer had before this fix.
+  const { message } = App.useApp()
   const router = useRouter()
   const [detail, setDetail] = useState<LiteratureDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Per-mutation pending state — bound to the trigger buttons and
+  // popover OK buttons so the user gets feedback the request is in
+  // flight. Without this, a click on the confirm button looked like
+  // a no-op (the request ran but the UI sat there silently).
+  const [reextractPending, setReextractPending] = useState(false)
+  const [deletePending, setDeletePending] = useState(false)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -104,6 +117,7 @@ export default function LiteratureDetailView({
   }, [fetchDetail])
 
   const handleReextract = useCallback(async () => {
+    setReextractPending(true)
     try {
       await literatureApi.reextract(literatureId)
       message.success("已触发重新提取，请稍候刷新")
@@ -111,10 +125,13 @@ export default function LiteratureDetailView({
     } catch (err) {
       const msg = err instanceof Error ? err.message : "重新提取失败"
       message.error(msg, 8)
+    } finally {
+      setReextractPending(false)
     }
-  }, [literatureId, fetchDetail])
+  }, [literatureId, fetchDetail, message])
 
   const handleDelete = useCallback(async () => {
+    setDeletePending(true)
     try {
       await literatureApi.delete(literatureId)
       message.success("已删除，返回文献列表")
@@ -122,8 +139,9 @@ export default function LiteratureDetailView({
     } catch (err) {
       const msg = err instanceof Error ? err.message : "删除失败"
       message.error(msg, 8)
+      setDeletePending(false)
     }
-  }, [literatureId, router])
+  }, [literatureId, router, message])
 
   if (loading) {
     return (
@@ -189,16 +207,41 @@ export default function LiteratureDetailView({
             title="确认重新提取？"
             description="将重置 parse_status 并重新调度 Celery 任务。"
             onConfirm={() => void handleReextract()}
+            // Bind loading to both the popover OK button (to disable
+            // double-click) and the trigger (so the user sees a spinner
+            // while the request is in flight — without this the button
+            // looks unresponsive).
+            okButtonProps={{
+              loading: reextractPending,
+              disabled: reextractPending,
+            }}
+            cancelButtonProps={{ disabled: reextractPending }}
           >
-            <Button icon={<ThunderboltOutlined />}>重新提取</Button>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={reextractPending}
+              disabled={deletePending}
+            >
+              重新提取
+            </Button>
           </Popconfirm>
           <Popconfirm
             title="确认删除？"
             description="将删除文献及其关联的提取数据，不可恢复。"
-            okButtonProps={{ danger: true }}
+            okButtonProps={{
+              danger: true,
+              loading: deletePending,
+              disabled: deletePending,
+            }}
+            cancelButtonProps={{ disabled: deletePending }}
             onConfirm={() => void handleDelete()}
           >
-            <Button danger icon={<DeleteOutlined />}>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              loading={deletePending}
+              disabled={reextractPending}
+            >
               删除
             </Button>
           </Popconfirm>
