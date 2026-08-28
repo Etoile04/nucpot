@@ -229,6 +229,44 @@ _PROPERTY_RULES: list[tuple[re.Pattern[str], str, str]] = [
         "bond_length",
         "length",
     ),
+    # ------------------------------------------------------------------
+    # NFM-3511: DFT / theoretical calculation property patterns
+    # ------------------------------------------------------------------
+    # Elastic constants (C11, C12, C44) \u2014 pressure family (GPa)
+    (
+        re.compile(r"\bC(?:11|12|22|13|23|33|44|55|66)\b", re.I),
+        "elastic_constant",
+        "pressure",
+    ),
+    # Heat of formation (variant wording of formation_energy)
+    (
+        re.compile(r"heat\s+of\s+formation", re.I),
+        "formation_energy",
+        "energy",
+    ),
+    # Ordering / disordering temperature \u2014 temperature family (K)
+    (
+        re.compile(r"(?:order|disorder)(?:ing)?\s+temperature", re.I),
+        "ordering_temperature",
+        "temperature",
+    ),
+    # Solubility limit \u2014 dimensionless family (at%, wt%)
+    (
+        re.compile(r"solubility\s+limit", re.I),
+        "solubility_limit",
+        "dimensionless",
+    ),
+    # DOS at Fermi level / N(E_F) \u2014 energy family (eV)
+    (
+        re.compile(
+            r"(?:DOS|density\s+of\s+states?)"
+            r"(?:\s+at\s+(?:the\s+)?)?(?:E_F|E[_Ff]|Fermi\s+level)"
+            r"|N\s*\(\s*E_F\s*\)",
+            re.I,
+        ),
+        "dos_at_fermi_level",
+        "energy",
+    ),
 ]
 
 
@@ -296,6 +334,30 @@ def _units_compatible(unit: str, family: str) -> bool:
     if family not in _UNIT_FAMILIES:
         return True
     return unit in _UNIT_FAMILIES[family]
+
+
+# ----------------------------------------------------------------------
+# NFM-3511: DFT unitless property patterns (no standard unit token)
+# ----------------------------------------------------------------------
+# These match property name + bare value in a single regex for
+# dimensionless DFT quantities that the main value+unit loop misses.
+
+_DFT_DIRECT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"screening\s+constant\s*[=:~]\s*(?P<val>-?\d+\.?\d*(?:[eE][-+]?\d+)?)",
+            re.I,
+        ),
+        "screening_constant",
+    ),
+    (
+        re.compile(
+            r"screening\s+constant\s+(?:of\s+\S+\s+)?(?:is|was|equals?)\s+(?P<val>-?\d+\.?\d*(?:[eE][-+]?\d+)?)",
+            re.I,
+        ),
+        "screening_constant",
+    ),
+]
 
 
 # ----------------------------------------------------------------------
@@ -408,6 +470,43 @@ def heuristic_extract(
                 "cache_level": "L2",
             }
         )
+
+    # ------ NFM-3511: second pass for unitless DFT properties ------
+    for pattern, name in _DFT_DIRECT_PATTERNS:
+        for m in pattern.finditer(normalized):
+            value = _normalize_number(m.group("val"))
+            if value is None:
+                continue
+            material = _nearest_material(materials, m.start())
+            if material is None:
+                continue
+            if element_systems:
+                match = any(
+                    re.search(re.escape(es), material, re.IGNORECASE)
+                    for es in element_systems
+                )
+                if not match:
+                    continue
+            key = (material, name, f"{value:g}")
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            found.append(
+                {
+                    "element_system": material,
+                    "phase": "Unknown",
+                    "property_name": name,
+                    "value": value,
+                    "unit": None,
+                    "method": "heuristic_regex",
+                    "source": source_reference,
+                    "source_doi": None,
+                    "confidence": "medium",
+                    "uncertainty": max(abs(value) * 0.05, 0.01),
+                    "temperature": None,
+                    "cache_level": "L2",
+                }
+            )
 
     return found
 
