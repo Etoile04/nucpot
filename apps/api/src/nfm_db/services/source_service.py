@@ -60,7 +60,7 @@ async def list_sources(
         if db.bind and db.bind.dialect.name == "postgresql":
             stmt = stmt.where(
                 text("metadata_ @> CAST(:ov_json AS jsonb)").bindparams(
-                    bindparam(ov_json=bind_value)
+                    bindparam("ov_json", bind_value)
                 )
             )
         else:

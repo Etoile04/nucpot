@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 _ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{4}$")
@@ -106,39 +106,32 @@ class DataSourceResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    @field_validator("ontology_version", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _extract_ontology_version(cls, v, info):
-        """Map DataSource.metadata_.extraction_ontology_version → top-level field.
+    def _lift_ontology_version(cls, data: object) -> object:
+        """Lift DataSource.metadata_.extraction_ontology_version into the top-level field.
 
-        Keeps the flexible metadata bag intact (no migration) while
-        letting consumers read a stable field. Old sources without the
-        stamp pass through as None.
+        Handles both ORM (data has attributes) and dict (FastAPI response
+        serialization) input shapes. Old sources without the stamp pass
+        through unchanged (ontology_version stays None).
         """
-        # Direct value (already extracted or attribute-style access)
-        if v is not None and not isinstance(v, dict):
-            return v
-        return None
-
-    @classmethod
-    def model_validate(cls, obj, *args, **kwargs):  # type: ignore[override]
-        """Override model_validate to lift ontology_version out of metadata_."""
-        if isinstance(obj, dict):
-            # FastAPI / response-serialize path — obj is already a dict.
-            # Lift the version key into the dict so the field validator sees it.
-            metadata = obj.get("metadata_")
+        if isinstance(data, dict):
+            metadata = data.get("metadata_")
             if isinstance(metadata, dict):
                 ov = metadata.get("extraction_ontology_version")
-                if ov is not None and "ontology_version" not in obj:
-                    obj = {**obj, "ontology_version": ov}
-        else:
-            # ORM path — obj has attributes.
-            metadata = getattr(obj, "metadata_", None)
-            if isinstance(metadata, dict):
-                ov = metadata.get("extraction_ontology_version")
-                if ov is not None:
-                    object.__setattr__(obj, "ontology_version", ov)
-        return super().model_validate(obj, *args, **kwargs)
+                if ov is not None and "ontology_version" not in data:
+                    return {**data, "ontology_version": ov}
+            return data
+        # ORM / arbitrary attribute path
+        metadata = getattr(data, "metadata_", None)
+        if isinstance(metadata, dict):
+            ov = metadata.get("extraction_ontology_version")
+            if ov is not None and not hasattr(data, "ontology_version"):
+                try:
+                    object.__setattr__(data, "ontology_version", ov)
+                except (AttributeError, TypeError):
+                    pass
+        return data
 
 
 class AuthorCreate(BaseModel):
