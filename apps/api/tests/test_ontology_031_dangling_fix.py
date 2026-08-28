@@ -155,7 +155,7 @@ class TestMetadata:
         return _load_json(_ENHANCED_JSON)
 
     def test_version_is_031(self, data):
-        assert data["metadata"]["version"] == "0.3.1"
+        assert data["metadata"]["version"] == "0.4.0"
 
 
 class TestNewClassesSchema:
@@ -203,4 +203,7 @@ class TestImportLayerBuilds:
 
     def test_individual_count_unchanged(self, layer):
         stats = layer["enhanced_ontology_source"]["counts"]
-        assert stats["individuals_not_imported"] == 755
+        # 0.4.0 now imports individuals (was: individuals_not_imported == 755)
+        assert stats["individuals_total"] == 755
+        assert stats["individuals_imported"] == 699
+        assert stats["individuals_empty_dropped"] == 56

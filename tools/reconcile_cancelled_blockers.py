@@ -28,8 +28,17 @@ Usage::
 
     # explicit env vars override any shell defaults
     PAPERCLIP_API_URL=http://localhost:3101 \\
-    PAPERCLIP_API_KEY=$PAPERCLIP_RUN_JWT \\
+    PAPERCLIP_BOARD_API_KEY=<board-actor-key> \\
         python tools/reconcile_cancelled_blockers.py --dry-run
+
+Credentials:
+
+* ``PAPERCLIP_BOARD_API_KEY`` (preferred) -- a board-actor Paperclip API
+  key that authorizes ``POST /api/agents/{id}/wakeup`` for any
+  assignee. Required for section 4.3-b wake to actually fire.
+* ``PAPERCLIP_API_KEY`` (fallback) -- the per-run Hermes JWT.
+  Will NOT work for wake (403) because it's agent-self scoped;
+  still valid for the read-only reconcile scan itself.
 
 References:
 

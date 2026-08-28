@@ -20,7 +20,7 @@
  * helper redirects to /admin/login when 401 is returned.
  */
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import {
   useMutation,
   useQuery,
@@ -28,6 +28,7 @@ import {
 } from "@tanstack/react-query"
 import {
   Alert,
+  App,
   Button,
   Card,
   Collapse,
@@ -48,7 +49,6 @@ import {
   Tag,
   Typography,
   Upload,
-  message,
 } from "antd"
 import {
   CloudUploadOutlined,
@@ -84,6 +84,16 @@ const { Dragger } = Upload
 // ── Constants ──────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 10
+
+// ── Drawer resize constants ────────────────────────────────────────────
+// The detail panel renders Markdown with embedded images, JSON snippets,
+// and prose tables. The default 560px is too narrow for those, so we let
+// the user drag the left edge and persist the chosen width across reloads.
+const DRAWER_MIN_WIDTH = 480
+const DRAWER_MAX_WIDTH_PCT = 0.85 // cap at 85% of viewport so the list
+                                  // pane always stays visible
+const DRAWER_DEFAULT_WIDTH = 720
+const DRAWER_WIDTH_STORAGE_KEY = "nucpot.literature.drawerWidth"
 
 /** Status colors for the Ant Design <Tag> component. */
 const STATUS_COLORS: Record<LiteratureStatus, string> = {
@@ -188,6 +198,19 @@ function mapDoiError(err: unknown): string {
 // ── Component ──────────────────────────────────────────────────────────
 
 export default function LiteratureManager() {
+  // Pull message / notification / modal from the Ant Design <App>
+  // context so the static container at `document.body` is the one
+  // ConfigProvider bound at the root (see `components/antd-provider.tsx`).
+  //
+  // We can't use the `message` static API directly here: in production
+  // the build emits a tree where the static container is never created,
+  // so `message.error(...)` silently no-ops (verified end-to-end via
+  // Playwright: `document.querySelector('.ant-message')` returns null
+  // even after a forced 401 from re-extract). Routing through
+  // `App.useApp()` returns the App-scoped instance, whose container
+  // is created inside `<App>` and therefore exists at runtime.
+  const { message } = App.useApp()
+
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS)
   const [searchInput, setSearchInput] = useState("")
   const [page, setPage] = useState(1)
@@ -195,6 +218,17 @@ export default function LiteratureManager() {
   const [detail, setDetail] = useState<LiteratureDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // Drawer resize state — initial value comes from localStorage so the
+  // user's preferred width survives reloads. The resize hook (below)
+  // writes back on drag end.
+  const [drawerWidth, setDrawerWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return DRAWER_DEFAULT_WIDTH
+    const raw = window.localStorage.getItem(DRAWER_WIDTH_STORAGE_KEY)
+    const parsed = raw ? Number.parseInt(raw, 10) : NaN
+    if (Number.isFinite(parsed) && parsed >= DRAWER_MIN_WIDTH) return parsed
+    return DRAWER_DEFAULT_WIDTH
+  })
 
   const queryClient = useQueryClient()
 
@@ -230,7 +264,7 @@ export default function LiteratureManager() {
     } finally {
       setDetailLoading(false)
     }
-  }, [])
+  }, [message])
 
   // ── Mutations ────────────────────────────────────────────────────────
   // Each mutation invalidates the literature-list query so React Query
@@ -651,12 +685,17 @@ export default function LiteratureManager() {
             "文献详情"
           )
         }
-        width={560}
+        width={drawerWidth}
         open={drawerOpen}
         onClose={() => {
           setDrawerOpen(false)
           setDetail(null)
         }}
+        // The <DrawerResizeHandle/> is rendered inside the drawer body
+        // (see below) — it overlays the left edge of the drawer content
+        // and reports drag deltas back via the onResize / onResizeEnd
+        // callbacks in <DrawerResizeHandle/>'s props. We update
+        // drawerWidth on every move and persist on drag end.
         extra={
           detail && (
             <Space>
@@ -664,16 +703,45 @@ export default function LiteratureManager() {
                 title="确认重新提取？"
                 description="将重置 parse_status 并重新调度 Celery 任务。"
                 onConfirm={() => void handleReextract(detail.id)}
+                // Loading state must disable both the trigger AND the OK
+                // button inside the popover — otherwise a double-click
+                // before the request resolves fires the mutation twice
+                // and the user sees the "no feedback" symptom.
+                okButtonProps={{
+                  loading: reextractMutation.isPending,
+                  disabled: reextractMutation.isPending,
+                }}
+                cancelButtonProps={{
+                  disabled: reextractMutation.isPending,
+                }}
               >
-                <Button icon={<ThunderboltOutlined />}>重新提取</Button>
+                <Button
+                  icon={<ThunderboltOutlined />}
+                  loading={reextractMutation.isPending}
+                  disabled={deleteMutation.isPending}
+                >
+                  重新提取
+                </Button>
               </Popconfirm>
               <Popconfirm
                 title="确认删除？"
                 description="将删除文献及其关联的提取数据，不可恢复。"
-                okButtonProps={{ danger: true }}
+                okButtonProps={{
+                  danger: true,
+                  loading: deleteMutation.isPending,
+                  disabled: deleteMutation.isPending,
+                }}
+                cancelButtonProps={{
+                  disabled: deleteMutation.isPending,
+                }}
                 onConfirm={() => void handleDelete(detail.id)}
               >
-                <Button danger icon={<DeleteOutlined />}>
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  loading={deleteMutation.isPending}
+                  disabled={reextractMutation.isPending}
+                >
                   删除
                 </Button>
               </Popconfirm>
@@ -690,8 +758,165 @@ export default function LiteratureManager() {
         ) : (
           <Empty description="无法加载详情" />
         )}
+        {/* Resize handle — only render when drawer is open and the
+            detail payload is present. Mounting it inside the Drawer
+            keeps it inside the same stacking context, so the cursor
+            change / grab cursor survives drawer body overflow. */}
+        {drawerOpen && detail && (
+          <DrawerResizeHandle
+            currentWidth={drawerWidth}
+            minWidth={DRAWER_MIN_WIDTH}
+            maxWidth={
+              typeof window !== "undefined"
+                ? Math.max(
+                    DRAWER_MIN_WIDTH + 80,
+                    window.innerWidth * DRAWER_MAX_WIDTH_PCT,
+                  )
+                : DRAWER_MAX_WIDTH_PCT * 1920
+            }
+            onResize={(nextWidth: number) => {
+              setDrawerWidth(nextWidth)
+            }}
+            onResizeEnd={(nextWidth: number) => {
+              setDrawerWidth(nextWidth)
+              try {
+                window.localStorage.setItem(
+                  DRAWER_WIDTH_STORAGE_KEY,
+                  String(nextWidth),
+                )
+              } catch {
+                // localStorage may be unavailable (private mode, quota);
+                // the in-memory width still applies for this session.
+              }
+            }}
+          />
+        )}
       </Drawer>
     </div>
+  )
+}
+
+// ── Drawer resize handle ───────────────────────────────────────────────
+//
+// Ant Design's Drawer ships without a resize handle — width is fixed at
+// open-time. The literature detail panel renders Markdown with embedded
+// images and prose tables, and 560px (the default we used to hard-code)
+// is too narrow to read those at a glance. This component overlays the
+// drawer's left edge with a draggable strip; mouse-down + drag updates
+// `currentWidth`, mouse-up persists to localStorage on the parent.
+//
+// Render contract:
+//   • Absolute-positioned over the drawer's left edge — the parent
+//     mounts it as a child of <Drawer>, where it sits inside
+//     .ant-drawer-body without colliding with the body padding (the
+//     handle is 6px wide and the body has 24px left padding).
+//   • Cursor flips to col-resize on hover and grabbing during drag, so
+//     users discover the affordance without a tooltip.
+//   • Honours the min/max bounds passed by the parent. We clamp on
+//     every move rather than only on drag-end so the drawer never
+//     briefly exceeds the bound during a fast drag.
+//   • Uses pointer events (not mouse events) so trackpads and touch
+//     devices work the same as a mouse.
+
+interface DrawerResizeHandleProps {
+  readonly currentWidth: number
+  readonly minWidth: number
+  readonly maxWidth: number
+  readonly onResize: (nextWidth: number) => void
+  readonly onResizeEnd: (nextWidth: number) => void
+}
+
+function DrawerResizeHandle({
+  currentWidth,
+  minWidth,
+  maxWidth,
+  onResize,
+  onResizeEnd,
+}: DrawerResizeHandleProps) {
+  const dragRef = useRef<{
+    startX: number
+    startWidth: number
+  } | null>(null)
+
+  const clamp = useCallback(
+    (n: number) => Math.min(maxWidth, Math.max(minWidth, n)),
+    [maxWidth, minWidth],
+  )
+
+  const handlePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      // Only the primary button initiates a drag — middle / right-click
+      // shouldn't hijack the resize.
+      if (e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      dragRef.current = { startX: e.clientX, startWidth: currentWidth }
+      const target = e.currentTarget
+      try {
+        // setPointerCapture is missing in some environments (jsdom used
+        // by the unit tests); swallow the failure so a manual drag
+        // still works — pointer move / up events will keep flowing
+        // on the handle even without capture.
+        target.setPointerCapture(e.pointerId)
+      } catch {
+        // no-op
+      }
+    },
+    [currentWidth],
+  )
+
+  const handlePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current
+      if (!drag) return
+      // Drawer slides in from the right, so dragging LEFT grows the
+      // drawer (positive delta = wider). clientX decreases when the
+      // pointer moves left → deltaX < 0 → wider.
+      const deltaX = drag.startX - e.clientX
+      const nextWidth = clamp(drag.startWidth + deltaX)
+      onResize(nextWidth)
+    },
+    [clamp, onResize],
+  )
+
+  const endDrag = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current
+      if (!drag) return
+      dragRef.current = null
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        // releasePointerCapture throws if the pointer was already
+        // released (e.g. browser GC during navigation); the drag is
+        // already over so just continue.
+      }
+      // Re-read the latest width from the DOM rather than recomputing —
+      // easier to reason about, and any clamping that happened in
+      // onResize is reflected here.
+      onResizeEnd(currentWidth)
+    },
+    [currentWidth, onResizeEnd],
+  )
+
+  return (
+    <div
+      role="separator"
+      aria-label="拖动调整详情面板宽度"
+      aria-orientation="vertical"
+      // The handle sits at the drawer's left edge. AntD drawer body
+      // padding-left is 24px so 6px wide handle never covers content.
+      // left/right half-overlap the body for a comfortable grab area.
+      className="absolute top-0 bottom-0 left-[-3px] z-10 w-[6px] cursor-col-resize
+                 bg-transparent hover:bg-blue-500/30 active:bg-blue-500/50
+                 transition-colors touch-none select-none"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      // Suppress text selection / native drag while dragging.
+      onDragStart={(e) => e.preventDefault()}
+    />
   )
 }
 

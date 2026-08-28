@@ -23,6 +23,16 @@ Operational contract:
 * **Multi-tenant safe.** The wake target is the dependent's agent
   UUID; the routine never cross-wakes between companies because
   :class:`WakeIntent` is scoped to a single dependent row.
+* **Board-actor credential required for wake.** The
+  ``POST /api/agents/{id}/wakeup`` endpoint requires agent-self
+  or board-actor authorization. Because the cron driver (Hermes)
+  injects a per-run agent-self JWT (``PAPERCLIP_API_KEY``),
+  which only authorizes actions on Hermes's own issues, a separate
+  ``PAPERCLIP_BOARD_API_KEY`` env var (board-actor) must be
+  provisioned for wake calls to succeed. Without it, every wake
+  returns 403 and the assignee is never woken (the audit row
+  and auto-transition remain committed; the daily cron retries
+  on the next run via the deterministic idempotency key).
 
 Why a dedicated module instead of inlining the HTTP call in the
 reconcile routine? Keeping the wake service separate lets the
@@ -109,13 +119,19 @@ def _resolve_paperclip_base_url() -> str:
 
 
 def _resolve_paperclip_api_key() -> str | None:
-    """Return the Paperclip API key for outbound calls.
+    """Return the Paperclip API key for outbound wake calls.
 
-    The Paperclip runtime injects ``PAPERCLIP_API_KEY`` automatically;
-    we surface it via ``os.environ`` so nucpot workers see the same
-    env var the agent runtime provides.
+    Prefers ``PAPERCLIP_BOARD_API_KEY`` (a board-actor key that
+    authorizes cross-agent wakeup) over ``PAPERCLIP_API_KEY``
+    (the per-run agent-self JWT injected by Hermes, which only
+    authorizes actions on the agent's own issues).
+
+    Credential shape (board-actor):
+    - Must be a Paperclip API key with board-level actor permissions.
+    - NOT the per-run ``PAPERCLIP_RUN_JWT`` (agent-self only).
+    - Typically provisioned via Paperclip admin settings or company API keys.
     """
-    raw = os.environ.get("PAPERCLIP_API_KEY")
+    raw = os.environ.get("PAPERCLIP_BOARD_API_KEY") or os.environ.get("PAPERCLIP_API_KEY")
     if not raw:
         return None
     return raw.strip() or None
@@ -141,7 +157,7 @@ def fire_wake_intent(intent: WakeIntent, *, timeout: float = 5.0) -> bool:
     api_key = _resolve_paperclip_api_key()
     if api_key is None:
         logger.warning(
-            "adr009 wake skipped: PAPERCLIP_API_KEY not set "
+            "adr009 wake skipped: PAPERCLIP_BOARD_API_KEY and PAPERCLIP_API_KEY both unset "
             "(dependent=%s, idempotencyKey=%s)",
             intent.dependent_identifier,
             intent.idempotency_key,

@@ -63,10 +63,10 @@ from nfm_db.services.ontology_import import (  # noqa: E402
 )
 
 DEFAULT_CHANGELOG = (
-    "ontology 0.3.x: import enhanced material ontology (139+ classes, "
+    "ontology 0.3.x→0.4.0: import enhanced material ontology (139+ classes, "
     "162 objectProperties, 279 datatypeProperties) as additive classes "
-    "layer; extraction keys unchanged (NFM-3478 前置治理 Step 1). "
-    "Individuals intentionally not imported (instance data, not schema)."
+    "layer; normalize and import 665+ individuals (NFM-3716); "
+    "extraction keys unchanged (NFM-3478 前置治理 Step 1)."
 )
 
 
@@ -114,16 +114,34 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
             )
             return 1
 
-        base = (
+        # --- Base: latest published CATALOG-only version ------------------
+        # Not simply "latest published": once an enhanced layer (e.g. 0.3.1)
+        # is itself published, merging onto it would trip the re-import guard
+        # in merge_ontology_data (enhanced keys already present) — and merging
+        # onto a payload that already carries classes would be wrong anyway.
+        # The enhanced JSON is the single source of truth for the layer, so
+        # the base is always the newest published version whose payload is
+        # still catalog-only.
+        _enhanced_keys = ("classes", "enhanced_ontology_source", "individuals")
+        published_rows = (
             await session.execute(
                 select(OntologyVersion)
                 .where(OntologyVersion.status == "published")
                 .order_by(OntologyVersion.created_at.desc())
-                .limit(1)
+                .limit(10)
             )
-        ).scalar_one_or_none()
+        ).scalars().all()
+        base = next(
+            (
+                row
+                for row in published_rows
+                if row.ontology_data is not None
+                and not any(k in row.ontology_data for k in _enhanced_keys)
+            ),
+            None,
+        )
         if base is None:
-            print("ERROR: no published ontology version found to merge onto.")
+            print("ERROR: no published catalog-only ontology version found to merge onto.")
             return 2
         if base.ontology_data is None:
             print(f"ERROR: base version {base.version} has empty ontology_data.")
@@ -151,8 +169,10 @@ async def _main(dry_run: bool, created_by: uuid.UUID | None) -> int:
         print(
             f"Layer: {counts['classes']} classes, "
             f"{counts['object_properties']} objectProperties, "
-            f"{counts['datatype_properties']} datatypeProperties "
-            f"({counts['individuals_not_imported']} individuals not imported)"
+            f"{counts['datatype_properties']} datatypeProperties, "
+            f"{counts['individuals_imported']} individuals "
+            f"({counts['individuals_empty_dropped']} empty dropped, "
+            f"{counts['individuals_with_values']} with values)"
         )
         print(f"Merged payload: {len(json.dumps(merged))} bytes, keys={list(merged.keys())}")
 

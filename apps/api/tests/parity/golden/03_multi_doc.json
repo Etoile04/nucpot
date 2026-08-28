@@ -1,0 +1,54 @@
+{
+  "_description": "Multi-document scenario: two distinct materials in one ontology. Tests that both paths produce stable prompts when multiple papers (and corresponding entities) are processed in a single run.",
+  "_scenario": "multi_doc",
+  "_scenario_notes": "Two fuel systems side-by-side: PWR UO2/Zry-4 and HTGR UCO/TRISO. Different entity types per paper, shared relation vocabulary.",
+  "version": "0.2.0",
+  "property_categories": [
+    {
+      "name": "密度",
+      "standard_properties": ["密度"]
+    },
+    {
+      "name": "热导率",
+      "standard_properties": ["热导率"]
+    },
+    {
+      "name": "腐蚀",
+      "standard_properties": ["腐蚀速率", "氧化膜厚度"]
+    },
+    {
+      "name": "辐照肿胀",
+      "standard_properties": ["体积膨胀率"]
+    },
+    {
+      "name": "弹塑性模型",
+      "standard_properties": ["杨氏模量", "屈服强度"]
+    }
+  ],
+  "entity_types": [
+    {
+      "name": "PWR_FuelRod",
+      "description": "PWR fuel rod assembly: UO2 pellets in Zry-4 cladding.",
+      "required_properties": ["density", "thermal_conductivity"]
+    },
+    {
+      "name": "PWR_Cladding",
+      "description": "Zircaloy-4 cladding for PWR.",
+      "required_properties": ["corrosion_rate", "oxide_thickness", "yield_strength"]
+    },
+    {
+      "name": "HTGR_TRISO",
+      "description": "TRISO fuel particle for HTGR: UCO kernel in SiC/PyC layers.",
+      "required_properties": ["density", "young_modulus"]
+    },
+    {
+      "name": "HTGR_Compact",
+      "description": "HTGR fuel compact: TRISO particles in graphite matrix.",
+      "required_properties": ["thermal_conductivity", "swelling"]
+    }
+  ],
+  "relation_types": [
+    {"name": "claddedBy", "source_types": ["PWR_FuelRod"], "target_types": ["PWR_Cladding"], "description": "PWR cladding relationship"},
+    {"name": "embeddedIn", "source_types": ["HTGR_TRISO"], "target_types": ["HTGR_Compact"], "description": "TRISO embedded in compact"}
+  ]
+}
