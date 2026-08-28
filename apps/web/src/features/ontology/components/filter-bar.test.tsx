@@ -30,8 +30,12 @@ describe("FilterBar", () => {
     expect(onChange).toHaveBeenCalledWith("draft")
   })
 
-  it("has aria-label on the nav", () => {
+  it("has aria-label on the navigation landmark", () => {
     render(<FilterBar current="all" onChange={onChange} />)
-    expect(screen.getByRole("group")).toHaveAttribute("aria-label", "Status filter")
+    // NFM-3794 a11y fix: the outer container is a <nav> landmark, not a
+    // group. `role="group"` on a <nav> is rejected by `aria-allowed-role`
+    // (group is only allowed on a small set of inline elements per ARIA).
+    const nav = screen.getByRole("navigation", { name: "Status filter" })
+    expect(nav).toBeInTheDocument()
   })
 })

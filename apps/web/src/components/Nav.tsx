@@ -98,7 +98,13 @@ export default function Nav() {
               key={link.href}
               href={link.href}
               aria-current={pathname === link.href ? 'page' : undefined}
-              className={pathname === link.href ? 'text-blue-400' : 'hover:text-blue-400 transition'}
+              // NFM-3794 a11y:
+              // 1. Inactive links need an explicit base color — without
+              //    `text-gray-300`, they inherit antd's `colorLink: #1668dc`,
+              //    which is 3.42:1 vs #101828 bg and fails WCAG AA (4.5:1).
+              // 2. `py-1.5` keeps each link ≥24px tall so it passes
+              //    WCAG 2.5.5 / Lighthouse target-size (24×24 minimum).
+              className={pathname === link.href ? 'text-blue-400 py-1.5' : 'text-gray-300 hover:text-blue-400 transition py-1.5'}
             >
               {link.label}
             </Link>
@@ -108,7 +114,10 @@ export default function Nav() {
           <div className="relative" ref={kgDropdownRef}>
             <button
               onClick={() => setKgDropdownOpen(prev => !prev)}
-              className={`flex items-center gap-1 transition ${isKgActive(pathname) ? 'text-blue-400' : 'hover:text-blue-400'}`}
+              // NFM-3794 a11y: see desktop link note above — inactive
+              // dropdown trigger needs a base color too.
+              // NFM-3794 a11y: see desktop link note above. `py-1.5` ensures ≥24px tall.
+              className={`flex items-center gap-1 transition py-1.5 ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400'}`}
               aria-expanded={kgDropdownOpen}
               aria-haspopup="true"
             >
@@ -275,7 +284,12 @@ export default function Nav() {
 
         {/* Mobile hamburger — visible below the lg (1024px) breakpoint. */}
         <button
-          className="lg:hidden text-white"
+          // NFM-3794 a11y: `p-2` adds 8px padding around the 24×24 SVG so
+          // the touch target is 40×40 — comfortably above the 24×24 minimum
+          // Lighthouse enforces. The `lg:hidden` should already hide this at
+          // the audit viewport (1440px), but axe-core inspects the DOM
+          // regardless of CSS visibility in some flows.
+          className="lg:hidden text-white p-2 rounded hover:bg-gray-800/60 transition"
           onClick={() => setMobileOpen(prev => !prev)}
           aria-label="打开导航菜单"
           aria-expanded={mobileOpen}

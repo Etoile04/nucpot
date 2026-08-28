@@ -12,7 +12,8 @@
     "test": "vitest run && node scripts/emit-coverage-stub.mjs",
     "test:watch": "vitest",
     "coverage:emit": "node scripts/emit-coverage-stub.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "a11y:lighthouse": "node scripts/lighthouse-a11y.mjs"
   },
   "dependencies": {
     "@ant-design/cssinjs": "^1.21.1",
@@ -49,9 +50,11 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
+    "chrome-launcher": "^1.2.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^15.5.19",
     "jsdom": "^30.0.1",
+    "lighthouse": "12",
     "prettier": "^3.9.6",
     "typescript": "^5.7.0",
     "vite": "^8.2.1",

@@ -20,9 +20,12 @@ export function FilterBar({ current, onChange, statusCounts }: FilterBarProps) {
   ]
 
   return (
+    // NOTE: a11y (NFM-3794) — `<nav>` already carries the landmark role, so
+    // a `role="group"` overlay is rejected by `aria-allowed-role` (the ARIA
+    // spec only permits `group` on a small set of inline elements, not nav).
+    // The aria-label below is sufficient to name the landmark for AT users.
     <nav
       className="onto-filter-bar flex flex-wrap items-center gap-2 px-4 py-3 bg-gray-800 rounded sticky top-0 z-10"
-      role="group"
       aria-label="Status filter"
     >
       {options.map((opt) => {

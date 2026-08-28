@@ -59,3 +59,6 @@ docker/.deploy-events.jsonl.quarantine/
 
 # pytest-benchmark artefacts
 .benchmarks/
+
+# NFM-3794: Lighthouse a11y raw reports (regenerate via pnpm a11y:lighthouse)
+apps/web/qa-artifacts/lighthouse/
