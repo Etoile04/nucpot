@@ -29,15 +29,23 @@ def run_script(*args: str, cwd: Path | None = None) -> subprocess.CompletedProce
 
 @pytest.fixture
 def env_pair(tmp_path: Path):
-    """Build a root/docker .env.prod pair and return (root_path, docker_path)."""
+    """Build a root/docker .env.prod pair and return (root_path, docker_path).
+
+    Every generated pair includes the script's REQUIRED_KEYS (NFM-3727:
+    PAPERCLIP_BOARD_API_KEY must exist in the docker env — a key absent from
+    *both* files would otherwise pass the plain drift check). The key-set
+    drift tests below are about *relative* drift, so they all need the
+    required key present on both sides; the required-key semantics itself
+    has dedicated tests at the bottom of this file.
+    """
 
     def _make(root_content: str, docker_content: str) -> tuple[Path, Path]:
         root_env = tmp_path / ".env.prod"
         docker_dir = tmp_path / "docker"
         docker_dir.mkdir(exist_ok=True)
         docker_env = docker_dir / ".env.prod"
-        root_env.write_text(root_content)
-        docker_env.write_text(docker_content)
+        root_env.write_text("PAPERCLIP_BOARD_API_KEY=required\n" + root_content)
+        docker_env.write_text("PAPERCLIP_BOARD_API_KEY=required\n" + docker_content)
         return root_env, docker_env
 
     return _make
@@ -315,3 +323,51 @@ def test_env_check_runs_on_the_host_holding_the_env_files(prod_workflow):
         "the env check belongs in the pre-deploy-assert job (self-hosted, production)"
     )
     assert "runs-on: [self-hosted, production]" in job
+
+
+# ---------------------------------------------------------------------------
+# REQUIRED_KEYS semantics (NFM-3727)
+# ---------------------------------------------------------------------------
+
+
+def test_required_key_absent_from_both_files_exits_one(env_pair):
+    """A key in REQUIRED_KEYS but absent from *both* files must fail.
+
+    This is the whole point of the required-key check (NFM-3727): the plain
+    drift comparison only catches *relative* drift — a key missing from both
+    sides looks 'in sync' while the container silently runs without it.
+    """
+    root, docker = env_pair(
+        "DATABASE_URL=postgres://root\n",
+        "DATABASE_URL=postgres://docker\n",
+    )
+    # env_pair stamps PAPERCLIP_BOARD_API_KEY into both files; strip it from
+    # both to simulate the key being absent everywhere.
+    for path in (root, docker):
+        lines = [
+            ln
+            for ln in path.read_text().splitlines()
+            if not ln.startswith("PAPERCLIP_BOARD_API_KEY=")
+        ]
+        path.write_text("\n".join(lines) + "\n")
+    result = run_script(str(root), str(docker))
+    assert result.returncode == 1
+    assert "MISSING REQUIRED KEY: PAPERCLIP_BOARD_API_KEY" in result.stderr
+
+
+def test_required_key_missing_only_from_docker_reports_required_first(env_pair):
+    """Required-key failure fires even when the key is also counted as drift."""
+    root, docker = env_pair(
+        "DATABASE_URL=postgres://root\n",
+        "DATABASE_URL=postgres://docker\n",
+    )
+    # Remove the required key from the docker side only.
+    lines = [
+        ln
+        for ln in docker.read_text().splitlines()
+        if not ln.startswith("PAPERCLIP_BOARD_API_KEY=")
+    ]
+    docker.write_text("\n".join(lines) + "\n")
+    result = run_script(str(root), str(docker))
+    assert result.returncode == 1
+    assert "MISSING REQUIRED KEY: PAPERCLIP_BOARD_API_KEY" in result.stderr

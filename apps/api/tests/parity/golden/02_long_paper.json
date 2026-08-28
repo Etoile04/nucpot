@@ -1,0 +1,66 @@
+{
+  "_description": "Long single-paper scenario: ontology exceeding the 8000-char context budget. Tests that V1 (which has no budget cap on hardcoded content) and V2 (with truncation warning) both produce deterministic, valid prompts.",
+  "_scenario": "long",
+  "_scenario_notes": "Many entity types + verbose descriptions to exceed ONTOLOGY_CONTEXT_BUDGET_CHARS=8000. Verifies V2 truncation path while V1 just embeds everything.",
+  "version": "0.2.0",
+  "property_categories": [
+    {
+      "name": "密度",
+      "standard_properties": ["密度", "理论密度", "相对密度"]
+    },
+    {
+      "name": "比热容",
+      "standard_properties": ["比热容", "定压比热容"]
+    },
+    {
+      "name": "热导率",
+      "standard_properties": ["热导率", "热扩散率", "热阻"]
+    },
+    {
+      "name": "弹塑性模型",
+      "standard_properties": ["杨氏模量", "屈服强度", "抗拉强度"]
+    },
+    {
+      "name": "热膨胀",
+      "standard_properties": ["平均线膨胀系数", "瞬时线膨胀系数"]
+    },
+    {
+      "name": "辐照蠕变",
+      "standard_properties": ["稳态蠕变速率", "应力指数"]
+    },
+    {
+      "name": "辐照肿胀",
+      "standard_properties": ["体积膨胀率", "平均空洞尺寸"]
+    },
+    {
+      "name": "腐蚀",
+      "standard_properties": ["腐蚀速率", "氧化膜厚度", "吸氢率"]
+    },
+    {
+      "name": "硬化性能",
+      "standard_properties": ["硬度", "辐照硬化量"]
+    },
+    {
+      "name": "材料规格/组织信息",
+      "standard_properties": ["样品外径", "晶粒尺寸"]
+    }
+  ],
+  "entity_types": [
+    {"name": "UO2Fuel", "description": "Standard uranium dioxide fuel used in LWR. Detailed microstructure evolution under irradiation. Thermal conductivity degrades with burnup due to point defect accumulation and fission product precipitation.", "required_properties": ["density", "thermal_conductivity", "specific_heat", "thermal_expansion"]},
+    {"name": "MOXFuel", "description": "Mixed oxide fuel (UO2+PuO2). Higher heavy metal loading, distinct fission gas behavior.", "required_properties": ["density", "thermal_conductivity", "melting_point"]},
+    {"name": "ZrAlloyCladding", "description": "Zircaloy-4 and related alloys for fuel cladding. Critical for corrosion resistance and creep behavior under irradiation.", "required_properties": ["corrosion_rate", "creep_rate", "hydrogen_pickup"]},
+    {"name": "SiCComposite", "description": "Silicon carbide fiber-reinforced SiC matrix composite for advanced reactor cladding.", "required_properties": ["thermal_conductivity", "elastic_modulus", "thermal_expansion"]},
+    {"name": "FerriticSteel", "description": "Ferritic/martensitic steels (HT9, T91) for fast reactor cladding and wrapper.", "required_properties": ["yield_strength", "creep_rate", "swelling"]},
+    {"name": "AusteniticSteel", "description": "Type 316 and 304 stainless steels. Historically used for fast reactor cladding.", "required_properties": ["yield_strength", "creep_rate", "swelling"]},
+    {"name": "Graphite", "description": "Nuclear grade graphite for moderator and reflector in HTGR.", "required_properties": ["thermal_conductivity", "density", "young_modulus"]},
+    {"name": "MoltenSalt", "description": "FLiBe and similar fluoride salts for molten salt reactors.", "required_properties": ["density", "viscosity", "melting_point"]},
+    {"name": "Beryllium", "description": "Beryllium reflector and moderator material.", "required_properties": ["density", "thermal_conductivity", "young_modulus"]},
+    {"name": "LeadBismuth", "description": "Lead-bismuth eutectic coolant for fast reactors.", "required_properties": ["density", "viscosity", "corrosion_rate"]}
+  ],
+  "relation_types": [
+    {"name": "containsElement", "source_types": ["UO2Fuel", "MOXFuel"], "target_types": ["Element"], "description": "Composition relationship"},
+    {"name": "claddedBy", "source_types": ["UO2Fuel", "MOXFuel"], "target_types": ["ZrAlloyCladding", "SiCComposite"], "description": "Fuel cladding relationship"},
+    {"name": "cooledBy", "source_types": ["FerriticSteel", "AusteniticSteel"], "target_types": ["LeadBismuth", "MoltenSalt"], "description": "Coolant system"},
+    {"name": "moderatedBy", "source_types": ["UO2Fuel", "MOXFuel"], "target_types": ["Graphite", "Beryllium"], "description": "Moderator material"}
+  ]
+}
