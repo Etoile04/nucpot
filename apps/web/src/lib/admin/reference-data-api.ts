@@ -101,6 +101,56 @@ export async function getStagingHistory(
 }
 
 /**
+ * Cursor-paginated staging history.
+ *
+ * Returns cursor-paginated data for stable navigation over large datasets.
+ * Cursor values are opaque — pass them back as after_cursor/before_cursor.
+ */
+export interface CursorStagingParams {
+  after_cursor?: string
+  before_cursor?: string
+  limit?: number
+  element_system?: string
+  phase?: string
+  property_name?: string
+  confidence?: string
+  status?: string
+}
+
+export interface CursorStagingResponse {
+  items: import('./reference-data-types').StagingRecord[]
+  next_cursor: string | null
+  prev_cursor: string | null
+  has_next: boolean
+  has_prev: boolean
+}
+
+export async function getStagingHistoryCursor(
+  params: CursorStagingParams,
+): Promise<{ success: boolean; data: CursorStagingResponse }> {
+  const queryString = buildQueryString({
+    after_cursor: params.after_cursor,
+    before_cursor: params.before_cursor,
+    limit: params.limit ?? 20,
+    element_system: params.element_system,
+    phase: params.phase,
+    property_name: params.property_name,
+    confidence: params.confidence,
+    status: params.status ?? 'all',
+  })
+
+  const response = await adminFetch(
+    `/api/v1/reference-values/pending-review-cursor${queryString}`,
+  )
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch staging history: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+/**
  * Approve a staging record.
  */
 export async function approveRecord(
