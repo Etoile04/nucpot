@@ -30,6 +30,12 @@ const MOCK_CANDIDATES = {
         confidence: 0.92,
         decision_status: "pending",
         extracted_at: "2026-08-25T10:00:00Z",
+        // `matched_spans` MUST be present (even if empty). The drawer feeds it
+        // straight into EntityMatchHighlight.buildSegments, which dereferences
+        // `spans.length` without a nullish guard — undefined → TypeError →
+        // Next.js error boundary → "This page couldn't load". NFM-3798.
+        matched_spans: [],
+        created_at: "2026-08-25T10:00:00Z",
       },
       {
         id: "gap-002",
@@ -42,6 +48,8 @@ const MOCK_CANDIDATES = {
         confidence: 0.78,
         decision_status: "pending",
         extracted_at: "2026-08-25T10:00:00Z",
+        matched_spans: [],
+        created_at: "2026-08-25T10:00:00Z",
       },
       {
         id: "gap-003",
@@ -54,6 +62,8 @@ const MOCK_CANDIDATES = {
         confidence: 0.65,
         decision_status: "pending",
         extracted_at: "2026-08-25T09:30:00Z",
+        matched_spans: [],
+        created_at: "2026-08-25T09:30:00Z",
       },
     ],
     total: 3,
@@ -72,7 +82,12 @@ function makeAuditLog(decisions: Array<{ id: string; decision: string }>) {
         entity_name: d.id === "gap-001" ? "UO2" : d.id === "gap-002" ? "Zr-4" : "NaK",
         decision: d.decision,
         reviewer_id: "test-reviewer",
+        reviewer_name: "Test Reviewer",
         decided_at: "2026-08-25T12:00:00Z",
+        // ConfidenceBadge calls `value.toFixed(2)` — undefined throws and
+        // crashes the audit page. The mock MUST include a numeric score.
+        confidence: d.id === "gap-001" ? 0.92 : d.id === "gap-002" ? 0.78 : 0.65,
+        source_document: "doc-001",
       })),
       next_cursor: null,
       prev_cursor: null,
@@ -128,9 +143,87 @@ async function setupGapReviewMocks(page: Page): Promise<void> {
     json(route, makeBulkResponse(body?.decisions ?? []))
   })
 
+  // Single-decision endpoint used by GapCandidateDrawer (postDecision in
+  // apps/web/src/lib/reference-gaps/api.ts:91). The drawer fires one POST
+  // per Accept/Reject/Defer click; without this mock the request 404s and
+  // the drawer's optimistic UI rolls back to "操作失败，请重试".
+  await page.route("**/api/v1/gap/decisions", (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON()
+      if (body?.candidate_id && body?.decision) {
+        auditedDecisions.push({
+          id: body.candidate_id,
+          decision: body.decision,
+        })
+      }
+      json(route, {
+        success: true,
+        data: {
+          candidate_id: body?.candidate_id,
+          decision: body?.decision,
+          decided_at: "2026-08-25T12:00:00Z",
+        },
+      })
+    } else {
+      route.continue()
+    }
+  })
+
+  // Drawer's PriorDecisions sub-component fetches per-candidate history.
+  // Returning an empty list keeps the drawer clean without crashing the
+  // page (PriorDecisions has its own error UI for !response.ok).
+  await page.route("**/api/v1/gap/candidates/*/history", (route) => {
+    json(route, { success: true, data: { decisions: [] } })
+  })
+
   await page.route("**/api/gap/audit-log**", (route) => {
     json(route, makeAuditLog(auditedDecisions))
   })
+
+  // /gap-review/audit is wrapped by <AuthGuard>, which validates the
+  // session via GET /api/v1/auth/me on mount. A real 404 from the running
+  // dev server would flip AuthGuard to "unauthenticated" and redirect to
+  // /admin/login — so we stub a synthetic authenticated user.
+  await page.route("**/api/v1/auth/me", (route) => {
+    json(route, {
+      success: true,
+      data: {
+        user: {
+          id: "test-reviewer",
+          email: "reviewer@test.local",
+          name: "Test Reviewer",
+          roles: ["reviewer"],
+        },
+      },
+    })
+  })
+}
+
+// ─── Navigation helpers ──────────────────────────────────────
+//
+// The queue/audit pages render their data via TanStack Query after
+// `page.goto` resolves. `waitUntil: "domcontentloaded"` returns before
+// the mocked fetch resolves, so subsequent `getByText` assertions on
+// hydrated table rows race the React re-render. Wait explicitly for the
+// mocked response (CTO preference over `networkidle` for determinism
+// under CI load — see NFM-3798 architectural note).
+
+async function gotoQueueAndWait(page: Page): Promise<void> {
+  await page.goto("/admin/gap-review/queue", { waitUntil: "load" })
+  await page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/gap/candidates") && resp.status() === 200,
+    { timeout: 15_000 },
+  )
+}
+
+async function gotoAuditAndWait(page: Page): Promise<void> {
+  await page.goto("/gap-review/audit", { waitUntil: "load" })
+  await page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/gap/audit-log") && resp.status() === 200,
+    { timeout: 15_000 },
+  )
 }
 
 // ─── Tests ──────────────────────────────────────────────────
@@ -141,22 +234,28 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
   })
 
   test("loads queue page and displays candidates", async ({ page }) => {
-    await page.goto("/admin/gap-review/queue", { waitUntil: "domcontentloaded" })
+    await gotoQueueAndWait(page)
 
-    await expect(page.locator("h1, h2").first()).toBeVisible({ timeout: 10_000 })
+    // Page header is rendered inside an Ant Design Card title (not h1/h2).
+    await expect(
+      page.getByText("Gap Review Queue").first(),
+    ).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText("Zr-4")).toBeVisible()
   })
 
   test("AC-1: accept decision in 3 clicks via drawer", async ({ page }) => {
-    await page.goto("/admin/gap-review/queue", { waitUntil: "domcontentloaded" })
+    await gotoQueueAndWait(page)
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
     // Click 1: open drawer
     await page.getByText("UO2").click()
 
-    // Click 2: accept button in drawer
-    const acceptBtn = page.getByRole("button", { name: /采纳|Accept/i })
+    // Click 2: accept button in drawer. Ant Design applies CSS
+    // letter-spacing on drawer footer buttons, so the accessible name
+    // comes through as "采 纳" (with space) — matching by class is more
+    // deterministic than name regex. NFM-3798.
+    const acceptBtn = page.locator(".ant-drawer-footer button.ant-btn-primary")
     await expect(acceptBtn).toBeVisible({ timeout: 5_000 })
     await acceptBtn.click()
 
@@ -165,22 +264,54 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
   })
 
   test("AC-2: decision visible in audit log", async ({ page }) => {
-    await page.goto("/admin/gap-review/queue", { waitUntil: "domcontentloaded" })
+    await gotoQueueAndWait(page)
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
     await page.getByText("UO2").click()
-    await page.getByRole("button", { name: /采纳|Accept/i }).click()
+    await page.locator(".ant-drawer-footer button.ant-btn-primary").click()
 
-    await page.goto("/gap-review/audit", { waitUntil: "domcontentloaded" })
-    await expect(page.getByText("accepted")).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText("UO2")).toBeVisible()
+    await gotoAuditAndWait(page)
+    // Audit table renders the decision as a Chinese badge label
+    // ("已接受"), not the raw API value. The page also has a hidden
+    // <option value="accepted">已接受</option> in the filter <select>
+    // and a duplicate badge in the mobile-card layout. Scope to the
+    // desktop <table> to avoid strict-mode violations. See
+    // DecisionAuditLog.tsx:22-26 + 86-98 + 154 + 202.
+    const auditTable = page.locator(
+      'section[aria-label="决策审核日志"] table',
+    )
+    await expect(auditTable.getByText("已接受")).toBeVisible({
+      timeout: 10_000,
+    })
+    await expect(auditTable.getByText("UO2")).toBeVisible()
   })
 
-  test("AC-4: keyboard shortcut 'a' accepts high-confidence candidate", async ({ page }) => {
-    await page.goto("/admin/gap-review/queue", { waitUntil: "domcontentloaded" })
+  test("AC-4: keyboard shortcut 'a' accepts selected high-confidence candidate", async ({ page }) => {
+    await gotoQueueAndWait(page)
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
-    await page.locator("body").click()
+    // The 'a' shortcut operates on selectedRowKeys (selected items) AND
+    // requires the drawer to be open — useGapKeyboardShortcuts.tsx:111
+    // returns early when isDrawerOpen is false. We must:
+    //   (1) select the UO2 row via its checkbox, then
+    //   (2) click the entity-name cell (td:nth-child(2) — index 0 is the
+    //       selection-checkbox cell whose click stops propagation).
+    // NFM-3798.
+    const uo2Row = page.getByRole("row").filter({ hasText: "UO2" })
+    await uo2Row.getByRole("checkbox").click()
+    await uo2Row.locator("td").nth(1).click()
+
+    // Sanity: the drawer should now be open and the Accept button visible.
+    await expect(
+      page.locator(".ant-drawer-footer button.ant-btn-primary"),
+    ).toBeVisible({ timeout: 5_000 })
+
+    // Press 'a' WITHOUT clicking the body first. Ant Design's drawer mask
+    // is `position: fixed; inset: 0` and closes the drawer on click — so
+    // a body click at the top-left would dismiss the drawer just before
+    // the keypress fires, and the handler returns early at the
+    // !isDrawerOpen guard. Keyboard handler is attached to document, so
+    // pressing 'a' directly (no body click) still fires it. NFM-3798.
     await page.keyboard.press("a")
 
     expect(auditedDecisions.length).toBeGreaterThanOrEqual(1)
@@ -189,27 +320,35 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
   })
 
   test("AC-5: full flow accept + reject + verify audit", async ({ page }) => {
-    await page.goto("/admin/gap-review/queue", { waitUntil: "domcontentloaded" })
+    await gotoQueueAndWait(page)
     await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
     // Accept UO2 via drawer
     await page.getByText("UO2").click()
-    await page.getByRole("button", { name: /采纳|Accept/i }).click()
+    await page.locator(".ant-drawer-footer button.ant-btn-primary").click()
 
     // Reject Zr-4 via drawer
     await page.getByText("Zr-4").click()
-    await page.getByRole("button", { name: /拒绝|Reject/i }).click()
+    await page.locator(".ant-drawer-footer button.ant-btn-dangerous").click()
 
     expect(auditedDecisions).toHaveLength(2)
     expect(auditedDecisions.find((d) => d.id === "gap-001")?.decision).toBe("accepted")
     expect(auditedDecisions.find((d) => d.id === "gap-002")?.decision).toBe("rejected")
 
     // Verify in audit log
-    await page.goto("/gap-review/audit", { waitUntil: "domcontentloaded" })
-    await expect(page.getByText("accepted")).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText("rejected")).toBeVisible()
-    await expect(page.getByText("UO2")).toBeVisible()
-    await expect(page.getByText("Zr-4")).toBeVisible()
+    await gotoAuditAndWait(page)
+    // DecisionAuditLog renders decision status as Chinese badge labels
+    // ("已接受" / "已拒绝") inside the desktop <table>. The filter <select>
+    // also has hidden <option value="accepted">已接受</option>, and the
+    // mobile-card layout duplicates the badge. Scope to the desktop
+    // <table> to avoid strict-mode violations.
+    const auditTable = page.locator(
+      'section[aria-label="决策审核日志"] table',
+    )
+    await expect(auditTable.getByText("已接受")).toBeVisible({ timeout: 10_000 })
+    await expect(auditTable.getByText("已拒绝")).toBeVisible()
+    await expect(auditTable.getByText("UO2")).toBeVisible()
+    await expect(auditTable.getByText("Zr-4")).toBeVisible()
   })
 
   test("NFM-3759: cursor navigation in audit log", async ({ page }) => {
@@ -228,6 +367,9 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
                 entity_name: "UO2",
                 decision: "accepted",
                 reviewer_id: "test",
+                reviewer_name: "Test Reviewer",
+                confidence: 0.92,
+                source_document: "doc-001",
                 decided_at: "2026-08-25T12:00:00Z",
               },
             ],
@@ -248,6 +390,9 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
                 entity_name: "Zr-4",
                 decision: "rejected",
                 reviewer_id: "test",
+                reviewer_name: "Test Reviewer",
+                confidence: 0.78,
+                source_document: "doc-001",
                 decided_at: "2026-08-24T10:00:00Z",
               },
             ],
@@ -260,8 +405,13 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
       }
     })
 
-    await page.goto("/gap-review/audit", { waitUntil: "domcontentloaded" })
-    await expect(page.getByText("UO2")).toBeVisible({ timeout: 10_000 })
+    await gotoAuditAndWait(page)
+    // DecisionAuditLog renders BOTH the table layout (hidden md:block)
+    // and the mobile card layout (md:hidden) in the same DOM — both
+    // contain entity_name. Scope to the desktop <table> to disambiguate.
+    // See DecisionAuditLog.tsx:154 + 202.
+    const auditTable = page.locator('section[aria-label="决策审核日志"] table')
+    await expect(auditTable.getByText("UO2")).toBeVisible({ timeout: 10_000 })
 
     // Next button should be enabled, prev disabled
     const nextBtn = page.getByRole("button", { name: /下一页/i })
@@ -271,8 +421,8 @@ test.describe("Gap Review Queue", { tag: "@smoke" }, () => {
 
     // Navigate forward
     await nextBtn.click()
-    await expect(page.getByText("Zr-4")).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText("UO2")).not.toBeVisible()
+    await expect(auditTable.getByText("Zr-4")).toBeVisible({ timeout: 10_000 })
+    await expect(auditTable.getByText("UO2")).toHaveCount(0)
 
     // After navigation: prev enabled, next disabled
     await expect(prevBtn).toBeEnabled()
