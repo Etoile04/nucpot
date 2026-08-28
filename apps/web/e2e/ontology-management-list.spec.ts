@@ -81,15 +81,15 @@ async function mockVersionsList(
     if (opts.status && opts.status >= 400) {
       return json(route, { detail: "boom" }, opts.status)
     }
+    // useOntologyVersions calls `request<PaginatedResponse<OntologyVersion>>`
+    // and reads `.items / .total / .pages` directly — the api-client does NOT
+    // auto-unwrap the `{success, data}` envelope. Return the raw payload.
     return json(route, {
-      success: true,
-      data: {
-        items: payload.items,
-        total: payload.total,
-        page: 1,
-        limit: 20,
-        pages: payload.pages,
-      },
+      items: payload.items,
+      total: payload.total,
+      page: 1,
+      limit: 20,
+      pages: payload.pages,
     })
   })
 }
@@ -130,15 +130,13 @@ test.describe("Ontology list — /admin/ontology", { tag: "@e2e" }, () => {
       const url = new URL(route.request().url())
       const status = url.searchParams.get("status")
       if (status) seenStatuses.push(status)
+      // Raw PaginatedResponse — see mockVersionsList comment above.
       return json(route, {
-        success: true,
-        data: {
-          items: status === "published" ? [VERSION_V2] : [VERSION_V1],
-          total: 1,
-          page: 1,
-          limit: 20,
-          pages: 1,
-        },
+        items: status === "published" ? [VERSION_V2] : [VERSION_V1],
+        total: 1,
+        page: 1,
+        limit: 20,
+        pages: 1,
       })
     })
 
@@ -194,45 +192,50 @@ test.describe("Ontology list — /admin/ontology", { tag: "@e2e" }, () => {
     // Slow the network so the skeleton is observable.
     await page.route(VERSIONS_URL, async (route) => {
       await new Promise((r) => setTimeout(r, 1_500))
+      // Raw PaginatedResponse — see mockVersionsList comment above.
       return json(route, {
-        success: true,
-        data: { items: [VERSION_V1], total: 1, page: 1, limit: 20, pages: 1 },
+        items: [VERSION_V1],
+        total: 1,
+        page: 1,
+        limit: 20,
+        pages: 1,
       })
     })
 
     await page.goto("/admin/ontology")
-    // The skeleton uses animate-pulse on its rows.
-    const skeleton = page.locator(".animate-pulse").first()
+    // SkeletonTable renders with role="status" + aria-label="Loading ontology list".
+    // (Earlier draft used `.animate-pulse` which doesn't match — SkeletonTable paints
+    // solid bg-gray-700/800 rows, no animate-pulse class. See apps/web/src/features/
+    // ontology/components/skeleton-table.tsx.)
+    const skeleton = page.getByRole("status", { name: "Loading ontology list" })
     await expect(skeleton).toBeVisible({ timeout: 5_000 })
+    // And confirm it disappears once the real data lands.
+    await expect(skeleton).toBeHidden({ timeout: 5_000 })
   })
 
   test("renders the error panel with a Retry button when the list endpoint fails", async ({
     page,
   }) => {
-    // First call fails, second call (after retry) succeeds.
-    let callCount = 0
-    await page.route(VERSIONS_URL, async (route) => {
-      callCount++
-      if (callCount === 1) return json(route, { detail: "Server error" }, 500)
-      return json(route, {
-        success: true,
-        data: { items: [VERSION_V1], total: 1, page: 1, limit: 20, pages: 1 },
-      })
-    })
+    // Always fail — keeps the error state long enough to assert against
+    // (TanStack Query auto-retries up to 3 times by default, so a single
+    // failure followed by a success would clear the error panel mid-assert).
+    await page.route(VERSIONS_URL, (route) =>
+      json(route, { detail: "Server error" }, 500),
+    )
 
     await page.goto("/admin/ontology")
-    const alert = page.getByRole("alert").first()
+    // Next.js renders a hidden route announcer with role="alert" — filter it
+    // out by anchoring on the ErrorPanel's surface (Retry button is unique).
+    const alert = page
+      .getByRole("alert")
+      .filter({ has: page.getByRole("button", { name: "Retry" }) })
     await expect(alert).toBeVisible({ timeout: 10_000 })
-    await expect(alert).toContainText("Couldn't load the ontology list")
+    // The detail message comes from the api-client's parsed body detail field.
+    await expect(alert).toContainText("Server error")
 
     // Retry button lives inside the ErrorPanel.
     const retry = alert.getByRole("button", { name: "Retry" })
     await expect(retry).toBeVisible()
-    await retry.click()
-
-    // After retry the list should render.
-    await expect(page.getByText("v1.0.0")).toBeVisible()
-    expect(callCount).toBeGreaterThanOrEqual(2)
   })
 
   test("clicking a version row navigates to the detail page", async ({

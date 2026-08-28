@@ -143,14 +143,19 @@ test.describe("Ontology detail — /admin/ontology/[typeId]", { tag: "@e2e" }, (
     await page.goto("/admin/ontology/v42")
 
     await expect(page.getByRole("heading", { name: "Version 2.3.4" })).toBeVisible()
-    await expect(page.getByText("mat.alloy")).toBeVisible()
+    // `mat.alloy` appears in two places on the page: the entity-type <td>
+    // and the relation Source span. Scope to the cell to disambiguate.
+    await expect(page.getByRole("cell", { name: "mat.alloy" })).toBeVisible()
     await expect(page.getByText("合金")).toBeVisible()
     await expect(page.getByText("has_comp")).toBeVisible()
     await expect(page.getByText(/Source: mat\.alloy/)).toBeVisible()
     await expect(page.getByText(/Target: mat\.element/)).toBeVisible()
 
-    // Changelog surfaces in metadata grid.
-    await expect(page.getByText("Initial draft ontology")).toBeVisible()
+    // Changelog surfaces in the description paragraph. The same string also
+    // appears in the metadata-grid <span>, so scope to the paragraph role.
+    await expect(
+      page.getByRole("paragraph").filter({ hasText: "Initial draft ontology" }),
+    ).toBeVisible()
   })
 
   test("breadcrumb back-link navigates to the list page", async ({ page }) => {
@@ -201,9 +206,15 @@ test.describe("Ontology detail — /admin/ontology/[typeId]", { tag: "@e2e" }, (
 
     await page.goto("/admin/ontology/v_err")
 
-    const alert = page.getByRole("alert").first()
+    // Next.js renders a hidden route announcer with role="alert" — filter it
+    // out by anchoring on the ErrorPanel's surface (Retry button is unique).
+    const alert = page
+      .getByRole("alert")
+      .filter({ has: page.getByRole("button", { name: "Retry" }) })
     await expect(alert).toBeVisible({ timeout: 10_000 })
-    await expect(alert).toContainText("Failed to load")
+    // ErrorPanel renders `message ?? defaultCopy`; the api-client parses
+    // the failure body's `detail` field as the message.
+    await expect(alert).toContainText("boom")
     await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible()
   })
 
@@ -219,7 +230,7 @@ test.describe("Ontology detail — /admin/ontology/[typeId]", { tag: "@e2e" }, (
     ).toBeVisible()
   })
 
-  test("draft version shows Edit + Promote & publish; deprecated shows Deprecate", async ({
+  test("draft version shows Edit + Promote & publish; deprecated shows no action buttons", async ({
     page,
   }) => {
     // Draft → Edit + Promote & publish should be available.
@@ -233,18 +244,20 @@ test.describe("Ontology detail — /admin/ontology/[typeId]", { tag: "@e2e" }, (
     // Deprecate must NOT be shown for drafts.
     await expect(page.getByRole("button", { name: /Deprecate/i })).toHaveCount(0)
 
-    // Deprecated → only Deprecate should appear; no Edit / Publish.
+    // Deprecated → the page renders NONE of the action buttons.
+    // (Page logic: canEdit=canPublish=draft, canDeprecate=published; nothing
+    // for `deprecated`.)
     await mockVersionDetail(
       page,
       buildDetail({ id: "v_dep", status: "deprecated" }),
     )
     await page.goto("/admin/ontology/v_dep")
     await expect(page.getByRole("heading", { name: "Version 1.0.0" })).toBeVisible()
-    await expect(page.getByRole("button", { name: /Deprecate/i })).toBeVisible()
     await expect(page.getByRole("link", { name: "Edit draft" })).toHaveCount(0)
     await expect(
       page.getByRole("button", { name: /Promote.+publish/i }),
     ).toHaveCount(0)
+    await expect(page.getByRole("button", { name: /Deprecate/i })).toHaveCount(0)
   })
 
   test("Promote & publish fires POST /publish and surfaces the success message", async ({
@@ -313,7 +326,12 @@ test.describe("Ontology detail — /admin/ontology/[typeId]", { tag: "@e2e" }, (
 
     await page.getByRole("button", { name: /Promote.+publish/i }).click()
 
-    const alert = page.getByRole("alert").first()
+    // The mutation error surfaces as a <p role="alert"> with the api-client's
+    // composed message (e.g. "Forbidden (403)"). Use text-content matching to
+    // skip Next.js's hidden route announcer (which also has role="alert").
+    const alert = page
+      .getByRole("alert")
+      .filter({ hasText: /403|Forbidden/i })
     await expect(alert).toBeVisible({ timeout: 10_000 })
     await expect(alert).toContainText(/403|Forbidden/i)
   })

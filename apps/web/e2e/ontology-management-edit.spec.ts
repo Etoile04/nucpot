@@ -149,7 +149,7 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
       page.getByRole("heading", { name: /Edit v1\.0\.0/ }),
     ).toBeVisible()
     // Existing entity row pre-filled with seed name.
-    await expect(page.getByPlaceholder("e.g. mat.zr_alloy_phase")).toHaveValue(
+    await expect(page.getByRole("textbox", { name: "Type ID *" })).toHaveValue(
       "mat.alloy",
     )
     await expect(page.getByText("Entity #1")).toBeVisible()
@@ -163,17 +163,31 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
   test("adds an entity row via the '+ Add entity type' button", async ({
     page,
   }) => {
+    // Seed with one existing entity so the form renders a baseline row.
+    // (When the source ontology has zero entity_types, the form also
+    // renders zero rows — that's a different code path not exercised here.)
     await mockVersionDetail(
       page,
       buildDetail({
         id: "v_add",
         status: "draft",
-        ontology_data: { entity_types: [], relation_types: [] },
+        ontology_data: {
+          entity_types: [
+            {
+              name: "mat.existing",
+              chinese_name: null,
+              english_name: null,
+              domain: null,
+              description: null,
+            },
+          ],
+          relation_types: [],
+        },
       }),
     )
     await page.goto("/admin/ontology/v_add/edit")
 
-    // Initially one (empty) row is rendered by default.
+    // Baseline row pre-filled from fixture.
     await expect(page.getByText("Entity #1")).toBeVisible()
 
     await page.getByRole("button", { name: /Add entity type/ }).click()
@@ -207,8 +221,11 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
     let putCalled = false
     let capturedBody: unknown = null
     await page.route(UPDATE_URL(detail.id), async (route) => {
+      // UPDATE_URL and VERSION_DETAIL_URL share the same pattern — only
+      // intercept PUT, fall through to the previously-registered detail
+      // handler for GET.
       if (route.request().method() !== "PUT") {
-        return json(route, { detail: "method not allowed" }, 405)
+        return route.fallback()
       }
       putCalled = true
       capturedBody = JSON.parse(route.request().postData() ?? "{}")
@@ -219,7 +236,7 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
     })
 
     await page.goto(`/admin/ontology/${detail.id}/edit`)
-    await expect(page.getByPlaceholder("e.g. mat.zr_alloy_phase")).toHaveValue(
+    await expect(page.getByRole("textbox", { name: "Type ID *" })).toHaveValue(
       "mat.alloy",
     )
 
@@ -282,9 +299,13 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
 
     await page.goto(`/admin/ontology/${detail.id}/edit`)
 
-    const alert = page.getByRole("alert").first()
+    // Anchor on the Retry button (unique to the ErrorPanel) to skip
+    // Next.js's hidden route announcer that also uses role="alert".
+    const alert = page
+      .getByRole("alert")
+      .filter({ has: page.getByRole("button", { name: "Retry" }) })
     await expect(alert).toBeVisible({ timeout: 10_000 })
-    await expect(alert).toContainText(/load|error|failed/i)
+    await expect(alert).toContainText(/Forbidden/i)
     await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible()
   })
 
@@ -293,18 +314,26 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
   }) => {
     const detail = buildDetail({ id: "v_save_err", status: "draft" })
     await mockVersionDetail(page, detail)
-    await page.route(UPDATE_URL(detail.id), (route) =>
-      json(route, { detail: "Validation failed" }, 422),
-    )
+    await page.route(UPDATE_URL(detail.id), (route) => {
+      // Same pattern as detail URL — only intercept PUT, let GET through
+      // to the earlier-registered detail handler.
+      if (route.request().method() !== "PUT") return route.fallback()
+      return json(route, { detail: "Validation failed" }, 422)
+    })
 
     await page.goto(`/admin/ontology/${detail.id}/edit`)
-    await expect(page.getByPlaceholder("e.g. mat.zr_alloy_phase")).toHaveValue(
+    await expect(page.getByRole("textbox", { name: "Type ID *" })).toHaveValue(
       "mat.alloy",
     )
 
     await page.getByRole("button", { name: /Save draft/ }).click()
 
-    const alert = page.getByRole("alert").first()
+    // The mutation error is a <p role="alert"> with the body text. Use
+    // text-content matching to skip Next.js's hidden route announcer
+    // (which also has role="alert" but no text).
+    const alert = page
+      .getByRole("alert")
+      .filter({ hasText: /Validation/i })
     await expect(alert).toBeVisible({ timeout: 10_000 })
     await expect(alert).toContainText(/422|Validation/i)
   })
@@ -320,7 +349,11 @@ test.describe("Ontology edit — /admin/ontology/[typeId]/edit", { tag: "@e2e" }
 
     await page.goto(`/admin/ontology/${detail.id}/edit`)
 
-    const alert = page.getByRole("alert").first()
+    // Backend 403 lands in the ErrorPanel; anchor on Retry to skip the
+    // Next.js route announcer that also uses role="alert".
+    const alert = page
+      .getByRole("alert")
+      .filter({ has: page.getByRole("button", { name: "Retry" }) })
     await expect(alert).toBeVisible({ timeout: 10_000 })
     await expect(alert).toContainText(/403|Forbidden/i)
     // No form should be rendered when the request is denied.
