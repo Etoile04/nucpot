@@ -18,9 +18,15 @@ export default function Footer() {
     <footer className="border-t border-gray-700 py-8 text-center text-gray-400 text-sm">
       <p>
         反馈与建议：
+        {/* NFM-3803: text-blue-400 (#60a5fa) renders 6.8:1 in isolation, but
+            Ant Design v5's CSS-in-JS reset injects `a { color: var(--ant-color-link); }`
+            at runtime (resolving to #1668dc on the dark theme), which collapsed
+            the on-screen contrast to 3.42:1 in the Lighthouse a11y audit. The
+            bang prefix (`!text-`) is Tailwind v4's syntax for `!important`,
+            which guarantees the local color wins the cascade. */}
         <a
           href="mailto:feedback@nucpot.org"
-          className="text-blue-400 hover:text-blue-300"
+          className="!text-blue-300 hover:!text-blue-200"
         >
           feedback@nucpot.org
         </a>
