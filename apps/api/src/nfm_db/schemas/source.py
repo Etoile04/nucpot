@@ -126,11 +126,12 @@ class DataSourceResponse(BaseModel):
         metadata = getattr(data, "metadata_", None)
         if isinstance(metadata, dict):
             ov = metadata.get("extraction_ontology_version")
+            # Use object.__setattr__ so we don't go through any property
+            # setter the model might declare. Skip silently if the ORM
+            # disallows it — the field will just stay None and the
+            # response will omit ontology_version rather than 500.
             if ov is not None and not hasattr(data, "ontology_version"):
-                try:
-                    object.__setattr__(data, "ontology_version", ov)
-                except (AttributeError, TypeError):
-                    pass
+                object.__setattr__(data, "ontology_version", ov)
         return data
 
 
