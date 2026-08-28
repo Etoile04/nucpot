@@ -1,0 +1,139 @@
+name: Lighthouse a11y (ontology management)
+
+# NFM-3794 — Lighthouse accessibility audit on the 3 ontology management
+# pages. Runs on PRs touching ontology code; surfaces a regression before
+# merge. The same script (`pnpm a11y:lighthouse`) can be run locally.
+#
+# The job:
+#   1. Instits pnpm + node 22 + chromium for Lighthouse.
+#   2. `pnpm install` and `pnpm --filter web build` so the standalone
+#      server has a real production bundle.
+#   3. Syncs the compiled Tailwind v4 stylesheet into
+#      `.next/standalone/apps/web/.next/static/chunks/` — Next 16 copies
+#      the chunks at build time, but the standalone bundle's
+#      `.next/static/chunks/` ends up empty in this repo's pipeline.
+#      Without the copy, the audit server ships stale CSS.
+#   4. Boots the standalone server on :3401 in the background.
+#   5. Runs `node scripts/lighthouse-a11y.mjs`, which:
+#      - audits /admin/ontology, /admin/ontology/[typeId], /edit
+#      - writes JSON + HTML per route under
+#        `apps/web/qa-artifacts/lighthouse/<iso>/`
+#      - exits 1 if any route falls below MIN_SCORE (default 90).
+#   6. Uploads the report dir as a workflow artifact (always, even on
+#      pass — keeps the score traceable).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/src/app/admin/ontology/**"
+      - "apps/web/src/components/Nav.tsx"
+      - "apps/web/src/components/Footer.tsx"
+      - "apps/web/scripts/lighthouse-a11y.mjs"
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/src/app/admin/ontology/**"
+      - "apps/web/src/components/Nav.tsx"
+      - "apps/web/src/components/Footer.tsx"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse-a11y:
+    name: Lighthouse a11y ≥ 90 on /admin/ontology[/...] routes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      BASE_URL: http://localhost:3401
+      MIN_SCORE: "90"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Lighthouse Chrome
+        # Lighthouse spins up its own headless Chrome per route. On
+        # ubuntu-latest the bundled Chromium is missing the libs the
+        # bundled `chrome-launcher` expects; we install Playwright's
+        # chromium instead and point Lighthouse at it via CHROME_PATH.
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build standalone web bundle
+        run: pnpm --filter web build
+
+      - name: Sync CSS into standalone bundle
+        # Standalone server serves CSS from
+        # `.next/standalone/apps/web/.next/static/chunks/` but the build
+        # only writes to `.next/static/chunks/`. Copy the compiled
+        # Tailwind v4 output across so the standalone server picks up
+        # the latest utility classes (see NFM-3794 / commit 3d1eaf3a).
+        run: |
+          set -euo pipefail
+          mkdir -p .next/standalone/apps/web/.next/static/chunks
+          if compgen -G ".next/static/chunks/*.css" > /dev/null; then
+            cp -f .next/static/chunks/*.css .next/standalone/apps/web/.next/static/chunks/
+          fi
+          ls -la .next/standalone/apps/web/.next/static/chunks/ | head
+
+      - name: Boot standalone server on :3401
+        run: |
+          set -euo pipefail
+          cd .next/standalone/apps/web
+          HOSTNAME=127.0.0.1 PORT=3401 nohup node server.js > /tmp/lh-server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3401/admin/ontology > /dev/null 2>&1; then
+              echo "Server up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Standalone server failed to start within 30s"
+          tail -50 /tmp/lh-server.log
+          exit 1
+
+      - name: Run Lighthouse a11y audit
+        id: audit
+        # Continue-on-error so the artifact upload step still runs when
+        # a route regresses — the failure is what the workflow surfaces.
+        continue-on-error: true
+        run: pnpm exec node scripts/lighthouse-a11y.mjs
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-a11y-report
+          path: apps/web/qa-artifacts/lighthouse/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Surface score in run summary
+        if: always()
+        run: |
+          set -euo pipefail
+          latest=$(ls -1dt apps/web/qa-artifacts/lighthouse/*/ | head -1)
+          if [ -z "${latest}" ] || [ ! -f "${latest}summary.md" ]; then
+            echo "::warning::No lighthouse summary found"
+            exit 0
+          fi
+          echo "## Lighthouse a11y — /admin/ontology routes" >> "$GITHUB_STEP_SUMMARY"
+          cat "${latest}summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail the job on score regression
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "::error::Lighthouse a11y score fell below MIN_SCORE (${MIN_SCORE}) on at least one ontology route. See the audit-report artifact for the failing audits."
+          exit 1
