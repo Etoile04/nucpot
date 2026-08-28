@@ -1,0 +1,45 @@
+{
+  "_description": "Special-character scenario: ontology with CJK names, math symbols, Greek letters, and unusual unicode. Tests that both prompt paths preserve and properly emit non-ASCII content.",
+  "_scenario": "special_chars",
+  "_scenario_notes": "Property names include 密度、α相、β相、γ辐照、Ω/cm²、×10⁻⁶/K. Entity description has CJK + math + Greek. Verifies unicode normalization is consistent.",
+  "version": "0.2.0",
+  "property_categories": [
+    {
+      "name": "密度",
+      "standard_properties": ["密度", "理论密度"]
+    },
+    {
+      "name": "热膨胀",
+      "standard_properties": ["平均线膨胀系数（×10⁻⁶/K）"]
+    },
+    {
+      "name": "腐蚀",
+      "standard_properties": ["腐蚀速率（mg/dm²·day）"]
+    }
+  ],
+  "entity_types": [
+    {
+      "name": "α相Zr合金",
+      "description": "α-phase zirconium alloy (Zr-2.5Nb) — hexagonal close-packed (hcp) lattice, α→β transition at ~863°C",
+      "required_properties": ["密度 (g/cm³)", "α→β转变温度", "杨氏模量", "ΔV/V（肿胀）"]
+    },
+    {
+      "name": "γ辐照硬化层",
+      "description": "γ-ray irradiation hardening zone (Ω·cm⁻¹ resistivity shift)",
+      "required_properties": ["电阻率", "硬度增量 (ΔHV)", "位错环密度 (m⁻²)"]
+    },
+    {
+      "name": "β-SiC",
+      "description": "β-phase silicon carbide — face-centered cubic (fcc) zinc-blende structure",
+      "required_properties": ["密度", "杨氏模量", "热膨胀系数（×10⁻⁶/K）", "热导率（W/m·K）"]
+    }
+  ],
+  "relation_types": [
+    {
+      "name": "包含（contains）",
+      "source_types": ["α相Zr合金", "β-SiC"],
+      "target_types": ["γ辐照硬化层"],
+      "description": "Composite relationship with α/β/γ phase markers"
+    }
+  ]
+}
