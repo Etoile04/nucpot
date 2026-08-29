@@ -85,7 +85,7 @@ export default function Nav() {
   return (
     <nav className="border-b border-gray-700">
       <div className="flex items-center justify-between px-6 py-4">
-        <Link href="/" className="text-xl font-bold tracking-tight">
+        <Link href="/" className="text-xl font-bold tracking-tight focus-visible:!outline focus-visible:!outline-2 focus-visible:!outline-blue-500 focus-visible:!outline-offset-2">
           NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
         </Link>
 
@@ -100,9 +100,9 @@ export default function Nav() {
               aria-current={pathname === link.href ? 'page' : undefined}
               // NFM-3794 a11y:
               // 1. Inactive links need an explicit base color — without
-              //    `text-gray-300`, antd's `colorLink: #1668dc` leaks through
+              //    `text-gray-200`, antd's `colorLink: #1668dc` leaks through
               //    via the `:where(.css-plsjn) a` selector (3.42:1 vs the dark
-              //    nav bg — fails WCAG AA). Tailwind's `text-gray-300` is
+              //    nav bg — fails WCAG AA). Tailwind's `text-gray-200` is
               //    specificity (0,1,0), but antd's rule sits outside
               //    `@layer utilities` so it wins the cascade. We add the
               //    `!` important modifier to force the override.
@@ -117,7 +117,7 @@ export default function Nav() {
               className={
                 pathname === link.href
                   ? 'inline-flex items-center !text-blue-400 py-2'
-                  : 'inline-flex items-center !text-gray-300 hover:!text-blue-400 transition py-2'
+                  : 'inline-flex items-center !text-gray-200 hover:!text-blue-400 transition py-2'
               }
             >
               {link.label}
@@ -131,7 +131,7 @@ export default function Nav() {
               // NFM-3794 a11y: see desktop link note above — inactive
               // dropdown trigger needs a base color too.
               // NFM-3794 a11y: see desktop link note above. `py-2` ensures ≥24px tall.
-              className={`flex items-center gap-1 transition py-2 ${isKgActive(pathname) ? '!text-blue-400' : '!text-gray-300 hover:!text-blue-400'}`}
+              className={`flex items-center gap-1 transition py-2 ${isKgActive(pathname) ? '!text-blue-400' : '!text-gray-200 hover:!text-blue-400'}`}
               aria-expanded={kgDropdownOpen}
               aria-haspopup="true"
             >
@@ -185,7 +185,7 @@ export default function Nav() {
                 <div className="relative" ref={dropdownRef}>
                   <button
                     onClick={() => setDropdownOpen(prev => !prev)}
-                    className="flex items-center gap-2 text-gray-300 hover:text-white transition"
+                    className="flex items-center gap-2 text-gray-200 hover:text-white transition"
                   >
                     {/* Avatar circle */}
                     <span className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold uppercase select-none">
@@ -328,7 +328,7 @@ export default function Nav() {
               key={link.href}
               href={link.href}
               onClick={() => setMobileOpen(false)}
-              className={pathname === link.href ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400 transition'}
+              className={pathname === link.href ? 'text-blue-400' : 'text-gray-200 hover:text-blue-400 transition'}
             >
               {link.label}
             </Link>
@@ -337,7 +337,7 @@ export default function Nav() {
           {/* Mobile KG sub-menu */}
           <button
             onClick={() => setKgMobileOpen(prev => !prev)}
-            className={`flex items-center gap-1 text-left transition ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-300 hover:text-blue-400'}`}
+            className={`flex items-center gap-1 text-left transition ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-200 hover:text-blue-400'}`}
             aria-expanded={kgMobileOpen}
             aria-haspopup="true"
           >
@@ -387,28 +387,28 @@ export default function Nav() {
                   <Link
                     href="/profile"
                     onClick={() => setMobileOpen(false)}
-                    className="text-gray-300 hover:text-blue-400 transition"
+                    className="text-gray-200 hover:text-blue-400 transition"
                   >
                     个人主页
                   </Link>
                   <Link
                     href="/upload"
                     onClick={() => setMobileOpen(false)}
-                    className="text-gray-300 hover:text-blue-400 transition"
+                    className="text-gray-200 hover:text-blue-400 transition"
                   >
                     上传势函数
                   </Link>
                   <Link
                     href="/review/kg"
                     onClick={() => setMobileOpen(false)}
-                    className="text-gray-300 hover:text-blue-400 transition"
+                    className="text-gray-200 hover:text-blue-400 transition"
                   >
                     审核队列
                   </Link>
                   <Link
                     href="/review/conflicts"
                     onClick={() => setMobileOpen(false)}
-                    className="text-gray-300 hover:text-blue-400 transition"
+                    className="text-gray-200 hover:text-blue-400 transition"
                   >
                     冲突审核
                   </Link>
