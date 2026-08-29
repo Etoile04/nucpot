@@ -329,6 +329,12 @@ services:
       # ingest documents, browse the KG, and run queries from within
       # the NFM site without exposing port 9621 publicly.
       LIGHTRAG_WEBUI_URL: "http://nucpot-prod-lightrag:9621"
+      # NFM-3802: server-side Supabase admin client. apps/web/src/lib/supabase.ts
+      # creates supabaseAdmin from SUPABASE_SERVICE_ROLE_KEY; when unset it is
+      # null and every admin BFF route (/api/admin/ref-values/*) crashes with
+      # "Cannot read properties of null (reading 'auth')" → HTTP 500.
+      # Value lives in docker/.env.prod (gitignored), never in this file.
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
     depends_on:
       api: { condition: service_healthy }
     healthcheck:
