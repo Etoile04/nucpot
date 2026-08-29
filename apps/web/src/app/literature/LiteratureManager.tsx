@@ -758,11 +758,14 @@ export default function LiteratureManager() {
         ) : (
           <Empty description="无法加载详情" />
         )}
-        {/* Resize handle — only render when drawer is open and the
-            detail payload is present. Mounting it inside the Drawer
-            keeps it inside the same stacking context, so the cursor
-            change / grab cursor survives drawer body overflow. */}
-        {drawerOpen && detail && (
+        {/* Resize handle — gated on drawerOpen ONLY (not on `detail`).
+            NFM-3765 follow-up: gating on `detail` made the handle
+            un-grabbable for the 1-1.5s the detail fetch takes (and
+            forever on fetch failure), which users perceived as "the
+            drawer can't be resized". The drawer width is independent
+            of the detail payload, so the handle mounts as soon as the
+            drawer itself is open. */}
+        {drawerOpen && (
           <DrawerResizeHandle
             currentWidth={drawerWidth}
             minWidth={DRAWER_MIN_WIDTH}

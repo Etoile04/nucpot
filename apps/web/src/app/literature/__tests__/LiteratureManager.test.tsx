@@ -559,24 +559,27 @@ describe("LiteratureManager (NFM-3422) — TanStack Query invalidation", () => {
   // refactor that swaps the resize library or the message API still
   // passes.
 
-  it("AC-6: drawer renders a resize handle when open with detail loaded", async () => {
+  it("AC-6: drawer renders a resize handle immediately on open (not gated on detail fetch)", async () => {
     await renderLiteratureManager()
     await waitFor(() => expect(listLiterature).toHaveBeenCalledTimes(1))
 
-    // Open the drawer
+    // Open the drawer. The handle must mount with the drawer itself —
+    // NOT wait for the detail fetch (NFM-3765 follow-up: gating on
+    // `detail` made the handle un-grabbable during the 1-1.5s fetch,
+    // which users perceived as "resize is broken").
     const titleLink = await screen.findByText("UO2 thermal conductivity")
     fireEvent.click(titleLink)
-    await waitFor(() => expect(getLiterature).toHaveBeenCalledWith("lit-001"))
 
-    // The Drawer renders into a React portal at document.body level,
-    // so querySelector on `document` (not on the rendered container)
-    // is the right tool. We wait for the portal to mount.
+    // Assert BEFORE waiting for getLiterature to resolve: the handle
+    // should already be in the portal.
     await waitFor(() => {
       const handle = document.querySelector(
         '.ant-drawer [role="separator"]',
       ) as HTMLElement | null
       expect(handle).not.toBeNull()
     })
+    // And it must be present even while the detail is still pending.
+    expect(getLiterature).toHaveBeenCalled()
 
     const handle = document.querySelector(
       '.ant-drawer [role="separator"]',
