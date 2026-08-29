@@ -2,8 +2,9 @@
 
 import { useState, useCallback } from "react"
 import { Typography } from "antd"
-import { ragApi } from "@/lib/rag-api"
+import { ragApi, isAuthExpiredError, RAG_AUTH_EXPIRED_MESSAGE } from "@/lib/rag-api"
 import type { RagCitation } from "@/lib/rag-api"
+import Link from "next/link"
 import { SemanticSearchResults } from "./SemanticSearchResults"
 
 const { Text } = Typography
@@ -62,8 +63,11 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
         hasSearched: true,
       })
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "语义检索失败，请重试"
+      const message = isAuthExpiredError(err)
+        ? RAG_AUTH_EXPIRED_MESSAGE
+        : err instanceof Error
+          ? err.message
+          : "语义检索失败，请重试"
       setState((prev) => ({
         ...prev,
         loading: false,
@@ -113,13 +117,25 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
         </Text>
       </div>
 
-      {/* Results */}
-      <SemanticSearchResults
-        answer={state.answer}
-        citations={state.citations}
-        loading={state.loading}
-        error={state.error}
-      />
+      {/* Auth-expired: show login link instead of generic error */}
+      {state.error === RAG_AUTH_EXPIRED_MESSAGE ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 p-5">
+          <p className="text-amber-200 text-sm">{state.error}</p>
+          <Link
+            href="/login"
+            className="inline-block mt-3 text-blue-400 hover:text-blue-300 text-sm transition-colors underline underline-offset-2"
+          >
+            前往登录
+          </Link>
+        </div>
+      ) : (
+        <SemanticSearchResults
+          answer={state.answer}
+          citations={state.citations}
+          loading={state.loading}
+          error={state.error}
+        />
+      )}
     </div>
   )
 }
