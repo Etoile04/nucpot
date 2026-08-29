@@ -7,6 +7,11 @@ vi.mock('@/lib/rag-api', () => ({
   ragApi: {
     query: vi.fn(),
   },
+  RAG_AUTH_EXPIRED_MESSAGE: '登录已过期，请重新登录后再试。',
+  isAuthExpiredError: (err: unknown) =>
+    typeof err === 'object' && err !== null &&
+    typeof (err as { message?: unknown }).message === 'string' &&
+    (err as { message: string }).message.includes('认证已过期'),
 }))
 
 // Import the mocked module after vi.mock
@@ -216,6 +221,26 @@ describe('RagSearchView', () => {
     })
 
     expect(mockedQuery).not.toHaveBeenCalled()
+  })
+
+  it('shows login link when session expired (401)', async () => {
+    mockedQuery.mockRejectedValueOnce(new Error('认证已过期，请重新登录后重试'))
+
+    render(<RagSearchView />)
+
+    const input = screen.getByPlaceholderText('描述您想了解的核材料属性或关系...')
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '铀' } })
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('语义检索'))
+    })
+
+    expect(screen.getByText('登录已过期，请重新登录后再试。')).toBeInTheDocument()
+    expect(screen.getByText('前往登录')).toBeInTheDocument()
+    // Should NOT show the generic unavailable message
+    expect(screen.queryByText('语义检索暂时不可用')).not.toBeInTheDocument()
   })
 
   it('accepts initialQuery prop', () => {

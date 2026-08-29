@@ -101,6 +101,23 @@ export const RAG_TIMEOUT_MESSAGE =
 export const RAG_UNAVAILABLE_MESSAGE =
   "语义检索暂时不可用，请稍后重试，或请尝试使用关键词搜索。"
 
+/** Shown when the session expired and token refresh failed. */
+export const RAG_AUTH_EXPIRED_MESSAGE =
+  "登录已过期，请重新登录后再试。"
+
+/**
+ * Check whether an unknown error value is an auth-expired error.
+ *
+ * `api-client.ts` throws `new Error("认证已过期，请重新登录后重试")`
+ * when the 401 refresh interceptor fails. This predicate lets callers
+ * distinguish auth errors from other failures without inspecting raw text.
+ */
+export function isAuthExpiredError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false
+  const msg = (err as { message?: unknown }).message
+  return typeof msg === "string" && msg.includes("认证已过期")
+}
+
 /**
  * Resolve the abort budget from `NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS`.
  *
@@ -176,9 +193,11 @@ async function fetchQueryEnvelope(
       },
     )
   } catch (err: unknown) {
-    throw new Error(
-      isAbortError(err) ? RAG_TIMEOUT_MESSAGE : RAG_UNAVAILABLE_MESSAGE,
-    )
+    if (isAbortError(err)) throw new Error(RAG_TIMEOUT_MESSAGE)
+    // Auth-expired errors already carry user-safe copy from the refresh
+    // interceptor — preserve them so the UI can show a login link.
+    if (isAuthExpiredError(err)) throw err
+    throw new Error(RAG_UNAVAILABLE_MESSAGE)
   }
 }
 
