@@ -88,10 +88,15 @@ function mapReferenceToCitation(ref: BackendReference, idx: number): RagCitation
  * Fallback query budget in milliseconds.
  *
  * The backend fast-fails well inside this window, so a query still
- * outstanding at 14s is stalled rather than merely slow. The previous 60s
- * budget left users watching a spinner for a full minute before any feedback.
+ * outstanding at 45s is stalled rather than merely slow. The previous 14s
+ * budget (NFM-3426) predates the 2026-08-30 LightRAG latency fix: with
+ * reasoning_effort=none a cold mix/hybrid query over the local Ollama
+ * (qwen3.5:4b-nvfp4) takes ~25-35s end-to-end, so 14s aborted every cold
+ * query and forced users into the timeout copy; only cache hits (<0.2s)
+ * made it under the wire. 45s covers the cold path with margin while the
+ * LLM-cache still serves repeat queries near-instantly.
  */
-export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 14_000
+export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 45_000
 
 /** Shown when the client-side AbortController fires. */
 export const RAG_TIMEOUT_MESSAGE =
