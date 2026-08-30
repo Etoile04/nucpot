@@ -307,7 +307,25 @@ async def get_kg_graph(
     type: str | None = Query(
         None, description="Optional filter by node_type (Material, Property, etc.)"
     ),
+    source_id: UUID | None = Query(
+        None,
+        description=(
+            "Optional filter by originating data source (FK to data_sources.id). "
+            "Without this filter the endpoint returns the global pool — "
+            "for per-source validation (e.g. NFM-3424 AC-2) callers must "
+            "always pass source_id."
+        ),
+    ),
     limit: int = Query(200, ge=1, le=500, description="Max nodes to return"),
+    offset: int = Query(
+        0,
+        ge=0,
+        description=(
+            "Skip this many matching rows before returning up to ``limit`` nodes. "
+            "Always paired with the same ``source_id`` / ``type`` filter to "
+            "walk the deterministic label-sorted stream."
+        ),
+    ),
     edge_limit: int = Query(500, ge=1, le=2000, description="Max edges to return"),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KGGraphResponse]:
@@ -317,6 +335,10 @@ async def get_kg_graph(
     and edges suitable for rendering in the interactive /kg/explore page.
     Paginates both nodes and edges independently to stay within
     bundle-size limits.
+
+    NFM-3825: ``source_id`` is honoured (was silently dropped, causing
+    per-source validation routines to receive global nodes), and ``offset``
+    walks the filtered stream.
     """
     # Validate type filter
     if type is not None and type not in VALID_NODE_TYPES:
@@ -328,17 +350,26 @@ async def get_kg_graph(
             ),
         )
 
-    # Build node query
+    # Build node query — source_id participates in WHERE so total_nodes
+    # and the page both reflect the filtered slice (NFM-3825 fix).
     node_filter = [KGNode.status == "active"]
     if type is not None:
         node_filter.append(KGNode.node_type == type)
+    if source_id is not None:
+        node_filter.append(KGNode.source_id == source_id)
 
-    # Count nodes
+    # Count nodes (uses the same filter, so the count matches the page set)
     node_count_stmt = select(func.count()).select_from(KGNode).where(*node_filter)
     total_nodes: int = (await session.execute(node_count_stmt)).scalar_one()
 
-    # Fetch nodes
-    node_stmt = select(KGNode).where(*node_filter).order_by(KGNode.label.asc()).limit(limit)
+    # Fetch nodes — apply offset for pagination (NFM-3825 fix).
+    node_stmt = (
+        select(KGNode)
+        .where(*node_filter)
+        .order_by(KGNode.label.asc())
+        .offset(offset)
+        .limit(limit)
+    )
     node_rows = (await session.execute(node_stmt)).scalars().all()
 
     node_ids = [n.id for n in node_rows]
