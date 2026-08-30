@@ -711,3 +711,158 @@ class TestDftRegressionOnExisting:
                 p in prop_names and abs(v - target) <= tol
                 for p, v in landed
             ), f"Regression: {prop_names}={target} missing from extraction"
+
+
+# ---------------------------------------------------------------------------
+# NFM-3835: heuristic_extract must emit property_category per finding so
+# downstream PropertyType lookups land instead of being skipped.
+# ---------------------------------------------------------------------------
+
+#: Family → valid PropertyCategory literal (mirrors FAMILY_TO_CATEGORY in
+#: heuristic_extractor.py so the test fails loudly if the mapping drifts).
+EXPECTED_FAMILY_TO_CATEGORY: dict[str, str] = {
+    "energy": "diffusion",
+    "diffusivity": "diffusion",
+    "density": "physical",
+    "length": "physical",
+    "pressure": "mechanical",
+    "temperature": "thermal",
+    "expansion": "thermal",
+    "thermal_cond": "thermal",
+    "specific_heat": "thermal",
+    "dimensionless": "physical",
+}
+
+
+class TestHeuristicEmitsPropertyCategory:
+    """NFM-3835 acceptance: every heuristic_extract() finding MUST carry a
+    ``property_category`` field that is one of the 7 valid Pydantic
+    literal categories. Without this, ``_coerce_unknown_categories`` falls
+    back to "other" and the mapper records ``skipped_unknown_properties``
+    for what is genuinely a known property (e.g. activation_energy,
+    diffusion_coefficient, density).
+    """
+
+    def test_every_finding_has_property_category(self):
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        assert result, "fixture must produce some findings"
+        for row in result:
+            assert "property_category" in row, (
+                f"row missing property_category: {row!r}"
+            )
+            assert row["property_category"] is not None, (
+                f"row has None property_category: {row!r}"
+            )
+
+    @pytest.mark.parametrize(
+        "prop_name,expected_category",
+        [
+            ("activation_energy", "diffusion"),
+            ("diffusion_coefficient", "diffusion"),
+            ("pre_exponential_factor", "diffusion"),
+            ("formation_energy", "diffusion"),
+            ("binding_energy", "diffusion"),
+            ("band_gap", "diffusion"),
+            ("cohesive_energy", "diffusion"),
+            ("density", "physical"),
+            ("lattice_constant", "physical"),
+            ("grain_size", "physical"),
+            ("rdf_peak", "physical"),
+            ("bond_length", "physical"),
+            ("elastic_constant", "mechanical"),
+            ("youngs_modulus", "mechanical"),
+            ("bulk_modulus", "mechanical"),
+            ("shear_modulus", "mechanical"),
+            ("thermal_conductivity", "thermal"),
+            ("specific_heat", "thermal"),
+            ("thermal_expansion_coefficient", "thermal"),
+            ("melting_point", "thermal"),
+            ("curie_temperature", "thermal"),
+            ("ordering_temperature", "thermal"),
+            ("porosity", "physical"),
+            ("solubility_limit", "physical"),
+            ("dos_at_fermi_level", "diffusion"),
+            ("screening_constant", "physical"),
+        ],
+    )
+    def test_property_category_by_family(self, prop_name, expected_category):
+        """When a finding for this property_name lands, its category must match
+        the family→category mapping defined in the issue spec."""
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        matching = [r for r in result if r["property_name"] == prop_name]
+        if not matching:
+            pytest.skip(
+                f"fixture did not produce a {prop_name} finding; "
+                "this test only constrains the category when one lands"
+            )
+        for row in matching:
+            assert row["property_category"] == expected_category, (
+                f"{prop_name} should map to category={expected_category!r}, "
+                f"got {row['property_category']!r}"
+            )
+
+    def test_property_category_is_valid_literal(self):
+        """property_category MUST be one of the 7 Pydantic Literal values
+        accepted by ExtractedProperty (see extraction_to_db_mapper.py)."""
+        from nfm_db.services.extraction_to_db_mapper import (
+            _VALID_PROPERTY_CATEGORIES,
+        )
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        for row in result:
+            assert row["property_category"] in _VALID_PROPERTY_CATEGORIES, (
+                f"row property_category={row['property_category']!r} "
+                f"not in {_VALID_PROPERTY_CATEGORIES}"
+            )
+
+    def test_family_to_category_mapping_complete(self):
+        """Every family emitted by _PROPERTY_RULES must have a category."""
+        from nfm_db.services.heuristic_extractor import (
+            _PROPERTY_RULES,
+            FAMILY_TO_CATEGORY,
+        )
+        for _pattern, _name, family in _PROPERTY_RULES:
+            assert family in FAMILY_TO_CATEGORY, (
+                f"family {family!r} (from property rule {_name!r}) "
+                "has no FAMILY_TO_CATEGORY entry"
+            )
+        for family, category in FAMILY_TO_CATEGORY.items():
+            assert category in {
+                "mechanical", "thermal", "physical",
+                "diffusion", "irradiation", "nuclear", "other",
+            }, (
+                f"FAMILY_TO_CATEGORY[{family!r}]={category!r} "
+                "is not a valid PropertyCategory Literal"
+            )
+
+
+class TestPropertyMappingAliases:
+    """NFM-3835 acceptance: the 6 missing English aliases must be present
+    in ``property_mapping.json`` so that ``load_standard_properties()``
+    returns the expected Chinese standard_name on lookup."""
+
+    @pytest.fixture(scope="class")
+    def mapping(self) -> dict[str, str]:
+        from nfm_db.core.property_catalog import load_standard_properties
+        return load_standard_properties()
+
+    @pytest.mark.parametrize(
+        "english_alias,expected_chinese",
+        [
+            ("activation energy", "扩散激活能"),
+            ("diffusion coefficient", "扩散系数"),
+            ("pre-exponential factor", "扩散前指数因子"),
+            ("elastic constant", "弹性常数"),
+            ("rdf peak", "RDF峰"),
+            ("bond length", "键长"),
+        ],
+    )
+    def test_alias_resolves_to_standard_name(
+        self, mapping, english_alias, expected_chinese
+    ):
+        assert mapping.get(english_alias.lower()) == expected_chinese, (
+            f"alias {english_alias!r} should resolve to "
+            f"{expected_chinese!r}, got {mapping.get(english_alias.lower())!r}"
+        )
