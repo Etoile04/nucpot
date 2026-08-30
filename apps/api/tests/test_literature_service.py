@@ -1378,3 +1378,161 @@ class TestBibliographicMetadataExtraction:
         assert ds.year == 2024
         assert ds.journal == "Journal of Materials"
         assert ds.abstract == "The abstract text."
+
+
+# ---------------------------------------------------------------------------
+# NFM-3835: heuristic items must survive into map_and_persist with a valid
+# property_category so they land as KG nodes instead of being counted in
+# skipped_unknown_properties.
+# ---------------------------------------------------------------------------
+
+
+def _make_demo_heuristic_item(
+    *,
+    element_system: str = "UO2",
+    property_name: str = "activation_energy",
+    value: float = 0.30,
+    unit: str = "eV",
+    property_category: str | None = None,
+) -> dict[str, Any]:
+    """Construct a single heuristic_extract() payload in canonical shape."""
+    item: dict[str, Any] = {
+        "element_system": element_system,
+        "phase": "Unknown",
+        "property_name": property_name,
+        "value": value,
+        "unit": unit,
+        "method": "heuristic_regex",
+        "source": "test-source",
+        "source_doi": None,
+        "confidence": "medium",
+        "uncertainty": 0.01,
+        "temperature": None,
+        "cache_level": "L2",
+    }
+    if property_category is not None:
+        item["property_category"] = property_category
+    return item
+
+
+class TestHeuristicItemsPersisted:
+    """NFM-3835 acceptance: heuristic items appended to raw_properties in
+    ``process_literature`` must reach ``map_and_persist`` carrying a valid
+    ``property_category``. Regression: prior to NFM-3835 the heuristic
+    path bypassed ``_post_process_extracted``, so the items landed with
+    ``property_category`` either missing or set to a Chinese standard
+    name — both paths tripped ``_coerce_unknown_categories`` or the
+    mapper's PropertyType lookup, inflating
+    ``skipped_unknown_properties``.
+
+    These tests use the REAL ``heuristic_extract`` against the Owen2023
+    fixture (with ``ontofuel_extract`` mocked to empty so the heuristic
+    path is the only source) so they actually exercise the production
+    regression — mocked ``heuristic_extract`` would mask the bug.
+    """
+
+    async def test_real_heuristic_extract_emits_property_category(
+        self, db_session: AsyncSession
+    ) -> None:
+        """End-to-end: real heuristic_extract on Owen2023 fixture produces
+        items with a valid property_category field, and they reach
+        map_and_persist carrying that field unchanged.
+        """
+        from pathlib import Path
+
+        fixture_path = (
+            Path(__file__).parent / "fixtures" / "extraction" / "owen2023_sample.txt"
+        )
+        owen2023_text = fixture_path.read_text(encoding="utf-8")
+
+        ds = await _add_datasource(
+            db_session,
+            content_md=owen2023_text,
+            file_path=None,
+        )
+
+        # LLM path is empty — heuristic is the only source so we can
+        # assert deterministically on the heuristic items alone.
+        empty_llm: list[dict[str, Any]] = []
+
+        empty_build_result = _make_empty_build_result()
+
+        captured_payload: list[list[dict[str, Any]]] = []
+
+        async def _capture_map(
+            db: AsyncSession, items: list[dict[str, Any]], **_kwargs: Any
+        ) -> MagicMock:
+            captured_payload.append(items)
+            return MagicMock()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=empty_llm),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(side_effect=_capture_map),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed", result
+        assert captured_payload, "map_and_persist was never invoked"
+        merged = captured_payload[0]
+
+        heuristic_items = [
+            item for item in merged if item.get("method") == "heuristic_regex"
+        ]
+        assert heuristic_items, (
+            f"no heuristic items reached mapper on Owen2023 fixture: {merged!r}"
+        )
+
+        valid_categories = {
+            "mechanical", "thermal", "physical",
+            "diffusion", "irradiation", "nuclear", "other",
+        }
+        for item in heuristic_items:
+            assert "property_category" in item, (
+                f"heuristic item missing property_category: {item!r}"
+            )
+            assert item["property_category"] in valid_categories, (
+                f"heuristic item property_category={item['property_category']!r} "
+                f"not in {valid_categories}"
+            )
+
+        # Specific assertion: activation_energy findings (family=energy) must
+        # land with category="diffusion" so they don't trip the
+        # skipped_unknown_properties counter at map_and_persist.
+        ea_items = [
+            item for item in heuristic_items
+            if item.get("property_name") == "activation_energy"
+        ]
+        assert ea_items, (
+            f"activation_energy not produced by heuristic on Owen2023 fixture: "
+            f"{heuristic_items!r}"
+        )
+        for item in ea_items:
+            assert item["property_category"] == "diffusion", (
+                f"activation_energy category should be 'diffusion', "
+                f"got {item['property_category']!r}"
+            )
+
+        # Density findings (family=density) must map to category="physical"
+        density_items = [
+            item for item in heuristic_items
+            if item.get("property_name") == "density"
+        ]
+        assert density_items, (
+            f"density not produced by heuristic on Owen2023 fixture: "
+            f"{heuristic_items!r}"
+        )
+        for item in density_items:
+            assert item["property_category"] == "physical", (
+                f"density category should be 'physical', "
+                f"got {item['property_category']!r}"
+            )
