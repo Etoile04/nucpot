@@ -652,6 +652,31 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         new_count,
                         len(raw_properties),
                     )
+
+                    # NFM-3835: route the merged LLM + heuristic batch
+                    # through ``_post_process_extracted`` so heuristic
+                    # items get the same phase normalization /
+                    # ``source_file`` / confidence defaults as the LLM
+                    # path. The ``property_category`` field set by
+                    # ``heuristic_extract`` is preserved because
+                    # ``_post_process_extracted`` only assigns when the
+                    # field is missing.
+                    try:
+                        from nfm_db.services.extraction_pipeline import (
+                            _post_process_extracted,
+                        )
+
+                        raw_properties = _post_process_extracted(
+                            raw_properties,
+                            source_reference=str(ds.id),
+                        )
+                    except Exception:  # pragma: no cover — defensive
+                        logger.exception(
+                            "process_literature: datasource_id=%s "
+                            "_post_process_extracted failed on the "
+                            "merged batch; leaving items unchanged",
+                            ds.id,
+                        )
             except Exception:  # pragma: no cover — defensive
                 logger.exception(
                     "Heuristic extractor failed for %s; keeping LLM results",
