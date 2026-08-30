@@ -25,38 +25,37 @@ concurrency:
 
 jobs:
   # =============================================================================
-  # Fast-fail egress probe (NFM-3842)
+  # Fast-fail egress probe (NFM-3842, F1 fixed)
   # ----------------------------------------------------------------------
   # Surfaces a dead-egress state in ≤ 2 min instead of waiting 20 min for
-  # the alembic-on-main job to time out its checkout. Primary egress path
-  # is now SSH via ssh.github.com:443 (see other jobs' "Configure SSH
-  # egress" steps), so this probe also serves as a regression canary: if
-  # the SSH alias is broken we want a loud, fast failure rather than a
-  # 20-min checkout timeout that buries the root cause.
+  # the alembic-on-main job to time out its checkout. The downstream
+  # self-hosted jobs (migration-on-main-assert, pre-deploy-assert-smoke,
+  # and via `needs` the rest) use SSH egress via ssh.github.com:443 —
+  # see their "Configure SSH egress" steps — so this probe targets the
+  # SAME path. Probing HTTPS-direct would dead-code the SSH fix in the
+  # very failure mode it targets (HTTPS blocked, SSH works): pre-flight
+  # would fail and gate the four downstream jobs via `needs: [...,
+  # pre-flight, ...]`, making the SSH path unreachable.
   #
-  # The probe is intentionally minimal — no git operations, no proxy
-  # gymnastics. Just `curl github.com:443` with `--max-time 10`. On
-  # healthy egress this returns in <1 s; on dead egress it returns in
-  # 10 s + the step's own boot overhead.
+  # `ssh-keyscan` exercises the same SSH handshake the downstream
+  # `actions/checkout` will use, over port 443, and reads the host key
+  # as a side effect (priming known_hosts for the downstream jobs).
+  # On healthy egress this returns in <1 s; on dead egress it returns in
+  # 5 s (the `-T` ConnectTimeout).
   # =============================================================================
   pre-flight:
     name: Egress fast-fail probe (NFM-3842)
     runs-on: [self-hosted, production]
     timeout-minutes: 2
     steps:
-      - name: Probe github.com:443
-        # NB: probe HTTPS direct. The SSH egress alias is tested
-        # implicitly by the downstream jobs that depend on us; if this
-        # probe fails, the SSH path is unlikely to be the cause (it
-        # uses a different port/transport) but the workflow fix in the
-        # downstream jobs will surface that detail.
+      - name: Probe ssh.github.com:443 (NFM-3842 F1 fix)
         run: |
-          if curl -sf --max-time 10 -o /dev/null https://github.com; then
-            echo "github.com:443 reachable (HTTPS direct)"
+          if ssh-keyscan -p 443 -T 5 ssh.github.com >/dev/null 2>&1; then
+            echo "ssh.github.com:443 reachable (SSH egress OK)"
             exit 0
           fi
-          echo "::error::github.com:443 unreachable after 10 s."
-          echo "::error::Either the SSH egress alias ssh.github.com:443 regressed or the runner's network state changed."
+          echo "::error::ssh.github.com:443 unreachable after 5 s."
+          echo "::error::The SSH egress alias regressed or the runner's network state changed."
           echo "::error::See NFM-3837 (root cause) and NFM-3842 (workflow fix)."
           exit 1
 
