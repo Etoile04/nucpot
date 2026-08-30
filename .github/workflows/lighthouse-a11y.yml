@@ -136,7 +136,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          latest=$(ls -1dt apps/web/qa-artifacts/lighthouse/*/ | head -1)
+          latest=$(ls -1dt qa-artifacts/lighthouse/*/ | head -1)
           if [ -z "${latest}" ] || [ ! -f "${latest}summary.md" ]; then
             echo "::warning::No lighthouse summary found"
             exit 0
