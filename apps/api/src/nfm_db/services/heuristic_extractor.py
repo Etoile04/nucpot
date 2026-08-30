@@ -336,6 +336,27 @@ def _units_compatible(unit: str, family: str) -> bool:
     return unit in _UNIT_FAMILIES[family]
 
 
+# NFM-3835: property family → Pydantic Literal PropertyCategory.
+# Maps each ``_PROPERTY_RULES`` family to one of the 7 valid
+# ``ExtractedProperty.property_category`` literals consumed by
+# ``extraction_to_db_mapper.map_and_persist``. Without this, the
+# mapper either coerces to "other" (skipping known properties) or
+# drops items entirely — both inflate ``skipped_unknown_properties``
+# on the F8 scorecard (see NFM-3824 / NFM-3396 phantom-pass).
+FAMILY_TO_CATEGORY: dict[str, str] = {
+    "energy": "diffusion",       # activation_energy, formation_energy, band_gap, …
+    "diffusivity": "diffusion",   # diffusion_coefficient, pre_exponential_factor
+    "density": "physical",
+    "length": "physical",         # lattice_constant, rdf_peak, bond_length, …
+    "pressure": "mechanical",     # youngs_modulus, elastic_constant, …
+    "temperature": "thermal",
+    "expansion": "thermal",
+    "thermal_cond": "thermal",
+    "specific_heat": "thermal",
+    "dimensionless": "physical",  # porosity, solubility_limit
+}
+
+
 # ----------------------------------------------------------------------
 # NFM-3511: DFT unitless property patterns (no standard unit token)
 # ----------------------------------------------------------------------
@@ -454,6 +475,9 @@ def heuristic_extract(
 
         # Heuristic findings are conservative — treat as ``medium`` so
         # Phase 2's review queue surfaces them for human eyes.
+        # NFM-3835: emit ``property_category`` so the mapper's
+        # ``_coerce_unknown_categories`` does not coerce valid items
+        # to "other" (which inflates ``skipped_unknown_properties``).
         found.append(
             {
                 "element_system": material,
@@ -468,6 +492,7 @@ def heuristic_extract(
                 "uncertainty": max(abs(value) * 0.05, 0.01),
                 "temperature": None,
                 "cache_level": "L2",
+                "property_category": FAMILY_TO_CATEGORY.get(family),
             }
         )
 
@@ -491,6 +516,9 @@ def heuristic_extract(
             if key in seen_keys:
                 continue
             seen_keys.add(key)
+            # DFT-direct patterns don't have a unit family — pick the
+            # category from the canonical screening_constant default
+            # ("physical") so the item still carries a valid Literal.
             found.append(
                 {
                     "element_system": material,
@@ -505,6 +533,7 @@ def heuristic_extract(
                     "uncertainty": max(abs(value) * 0.05, 0.01),
                     "temperature": None,
                     "cache_level": "L2",
+                    "property_category": FAMILY_TO_CATEGORY.get("dimensionless"),
                 }
             )
 
