@@ -303,7 +303,7 @@ A: 可能是登录过期或 CF Tunnel 间歇性问题（HTTP 502）。重新登�
 
 ## 技术支持
 
-- 邮箱：feedback@nucpot.org
+- 邮箱：nucpot@agentmail.to
 - API 文档：https://nucpot.dpdns.org/blog/api-reference-overview
 
 ---
