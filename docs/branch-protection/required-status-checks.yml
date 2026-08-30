@@ -1,0 +1,134 @@
+# GitHub Branch-Protection Spec — required_status_checks
+# -------------------------------------------------------
+# Owner: Lead Engineer (NFM-3861) → Release Engineer / SRE Monitor for application.
+# Source-of-truth: design doc NFM-3853#document-precompletion-merge-hook
+#                  (revision bdb101c8-4a37-4d60-b466-40fbd6a071d9).
+#
+# This file is a DECLARATIVE spec — it is NOT auto-applied. The Release
+# Engineer or SRE Monitor applies these rules via the GitHub REST API
+# (`PUT /repos/{owner}/{repo}/branches/{branch}/protection`) or the
+# `gh api` CLI. The shape below mirrors the GitHub API payload so the
+# apply step is a 1:1 lift.
+#
+# Generation contract:
+#   - `contexts` MUST contain exactly one new entry whose value equals
+#     the job name of the `precompletion-merge-gate` workflow once that
+#     workflow lands (NFM-3855 / NFM-3857 follow-ups). Until the workflow
+#     lands, the entry is a forward reference — GitHub will simply report
+#     the check as `pending` and the merge button stays disabled, which
+#     is the desired "fail closed" posture.
+#   - `strict: true` is REQUIRED. Without it, a PR whose head is behind
+#     `main` will pass with stale context — the exact failure mode the
+#     phantom-pass cluster exhibited (NFM-3691).
+#
+# Pipeline signature (the "API hook's pipeline signature" from NFM-3861):
+#   The PreCompletionMerge hook is implemented in two layers:
+#     1. Paperclip API middleware (NFM-3857, in_progress) — `422 merge_kind_unmerged_branch`
+#        on PATCH /api/issues/{id} status=done when branch is not an ancestor of origin/main.
+#     2. GitHub-side replica — `precompletion-merge-gate.yml` (defined below).
+#        Job name `precompletion-merge-gate` is the canonical required-status-check
+#        context string GitHub uses in `required_status_checks.contexts`.
+#
+# Q4 (force-push guard) resolution:
+#   The `signed_linear_history` block (allow_force_pushes=false + required_linear_history=true
+#   + required_signatures=true) is the structural answer. It does not rely on agent discipline.
+#   See docs/branch-protection/README.md §"Q4 — Force-push guard" for the full rationale.
+
+branches:
+  # ─── primary branch ────────────────────────────────────────────────────────
+  - name: main
+    protection:
+      # GitHub branch-protection API payload (apply via `gh api`):
+      #   PUT /repos/Etoile04/nucpot/branches/main/protection
+      required_status_checks:
+        strict: true               # require HEAD to be up-to-date with main
+        contexts:
+          # Existing required check (do not remove — already enforced)
+          - API Tests with Coverage
+          # Existing required check (NFM-2081 / NFM-2191)
+          - Validate every non-merge commit subject in PR range
+          # NEW — landed with NFM-3855/NFM-3857/NFM-3861 + follow-up workflow PR.
+          # Forward-references the job name of `.github/workflows/precompletion-merge-gate.yml`.
+          - precompletion-merge-gate
+
+      enforce_admins: true         # protect repo admins too — NFM-3164 evidence: phantom-pass
+                                    # originated from admin-token misuse; admins must not bypass.
+
+      required_pull_request_reviews:
+        dismiss_stale_reviews: true
+        require_code_owner_reviews: false   # keep current owner model; revisit per ADR-010 §4
+        required_approving_review_count: 1
+        require_last_push_approval: true    # NFM-3164: block "push-and-self-approve" loophole
+
+      restrictions: null            # no push restriction list — agents push via PR + review.
+
+      # Q4 — signed-linear-history force-push guard
+      signed_linear_history:
+        required_signatures: true           # all commits on main must be GPG/SSH signed
+        required_linear_history: true        # no merge commits; history must be a straight line
+        allow_force_pushes: false            # principal control — agents CANNOT collapse ancestry
+        allow_deletions: false               # prevent `git push origin :main` deletion
+
+      required_conversation_resolution: true  # surface unresolved review threads before merge
+
+  # ─── agent-pushable branches (defense-in-depth) ────────────────────────────
+  # These branches are owned by Lead Engineer / Release Engineer worktrees and
+  # are force-pushed during rebase cycles. The linear-history + force-push
+  # prohibition would block legitimate rebases, so for THOSE branches we keep
+  # the rule narrow: deny force-push + require signed commits, but DO NOT
+  # require linear history (squash/rebase are intentional workflow artifacts).
+  - name_pattern: "NFM-*"          # all NFM-XXXX-* worktree branches
+    protection:
+      enforce_admins: false        # admins rebase freely
+      required_status_checks:
+        strict: false              # agent branches live < 7 days; "must be up-to-date" too strict
+        contexts: []               # no required checks; PR review happens on the merge-into-main PR
+      restrictions: null
+      signed_linear_history:
+        required_signatures: true  # provenance for any commit that survives a merge
+        required_linear_history: false
+        allow_force_pushes: false  # PR §1: deny force-push by default — rebases use --force-with-lease
+                                   # and are reviewed via the squash-merge into main.
+        allow_deletions: true      # branch deletion is fine after merge to main
+
+  - name_pattern: "fix/*"
+    protection:
+      enforce_admins: false
+      required_status_checks:
+        strict: false
+        contexts: []
+      restrictions: null
+      signed_linear_history:
+        required_signatures: true
+        required_linear_history: false
+        allow_force_pushes: false
+        allow_deletions: true
+
+  - name_pattern: "hotfix/*"
+    protection:
+      enforce_admins: false
+      required_status_checks:
+        strict: true               # hotfix branches merge to main fast — keep checks honest
+        contexts:
+          - API Tests with Coverage
+          - Validate every non-merge commit subject in PR range
+      restrictions: null
+      signed_linear_history:
+        required_signatures: true
+        required_linear_history: true
+        allow_force_pushes: false
+        allow_deletions: false      # hotfix branches are audit trail — never delete
+
+# ─── apply checklist (for Release Engineer / SRE Monitor) ──────────────────
+# 1. Confirm the PreCompletionMerge hook is in production (NFM-3855 + NFM-3857).
+# 2. Land `.github/workflows/precompletion-merge-gate.yml` (companion to NFM-3857).
+#    Job name MUST be `precompletion-merge-gate` — that string is the contract
+#    between this spec and the workflow file.
+# 3. `gh api repos/Etoile04/nucpot/branches/main/protection/required_status_checks`
+#    → confirm `contexts` includes all three names above.
+# 4. `gh api repos/Etoile04/nucpot/branches/main/protection` → confirm
+#    `required_signatures.enabled=true`, `required_linear_history.enabled=true`,
+#    `allow_force_pushes.enabled=false`, `enforce_admins=true`.
+# 5. Open a smoke-test PR that closes (no-merge) — verify the
+#    "PreCompletion Merge Gate" check appears as required.
+# 6. Comment on NFM-3861 with: "branch-protection applied; SHA-of-applied-config <sha>."
