@@ -1745,3 +1745,263 @@ class TestPerStageLogCounters:
             assert any(marker in r.getMessage() for r in plog_records), (
                 f"{stage} marker {marker!r} not found in:\n{text}"
             )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3901: heuristic dedup must survive non-numeric ``value`` fields on the
+# LLM side. Prior to this fix, ``f"{r.get("value", 0):g}"`` raised
+# ``ValueError: Unknown format code 'g' for object of type 'str'`` whenever
+# any LLM-extracted item had a string ``value``, and the outer
+# ``except Exception`` at the end of the heuristic block silently dropped
+# the entire heuristic batch — never reaching merge (Stage 2) or
+# post-process (Stage 3).
+# ---------------------------------------------------------------------------
+
+
+def _make_string_value_extraction() -> list[dict[str, Any]]:
+    """LLM payload where one item has a string ``value`` (the regression
+    trigger from NFM-3893 / source 9320cb50)."""
+    return [
+        {
+            "element_system": "UO2",
+            "phase": "FCC",
+            "property_name": "lattice_constant",
+            "value": "not-a-number",  # NFM-3901: triggers the original ValueError
+            "unit": "angstrom",
+            "method": "LLM",
+            "source": "test-upload.pdf",
+            "source_doi": None,
+            "confidence": "high",
+            "uncertainty": 0.01,
+            "temperature": 300.0,
+            "cache_level": "L1",
+            "material_name": "UO2",
+            "composition": "UO2",
+            "property": "lattice_constant",
+        },
+        {
+            "element_system": "PuO2",
+            "phase": "FCC",
+            "property_name": "lattice_constant",
+            "value": 5.40,  # numeric — also exercised to keep the test honest
+            "unit": "angstrom",
+            "method": "LLM",
+            "source": "test-upload.pdf",
+            "source_doi": None,
+            "confidence": "high",
+            "uncertainty": 0.01,
+            "temperature": 300.0,
+            "cache_level": "L1",
+            "material_name": "PuO2",
+            "composition": "PuO2",
+            "property": "lattice_constant",
+        },
+    ]
+
+
+class TestHeuristicDedupWithStringValues:
+    """NFM-3901: heuristic items must reach the final mapper batch even when
+    the LLM payload contains items with non-numeric ``value`` fields.
+
+    Regression: prior to the fix, the merge-block
+    ``existing_keys`` comprehension at literature_service.py:644 raised
+    ``ValueError: Unknown format code 'g' for object of type 'str'`` and
+    the outer ``except Exception`` swallowed the entire heuristic batch
+    (line 1 fired, lines 2 and 3 never fired). Source 9320cb50 exhibited
+    exactly this silent-zero in prod (NFM-3887 / NFM-3893).
+
+    These tests use the same mocking shape as
+    :class:`TestPerStageLogCounters` so the per-stage counter logs are the
+    authoritative witness that the merge and post-process stages ran.
+    """
+
+    async def test_heuristic_items_reach_mapper_when_llm_value_is_string(
+        self,
+        db_session: AsyncSession,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+        ds.metadata_ = {"corpus_id": "test-corpus"}
+        await db_session.flush()
+
+        # Heuristic items: one numeric (must append), one matching the
+        # string-valued LLM item by (system, property) so we can also
+        # observe that dedup still works for the numeric side.
+        heuristic_items = [
+            _make_demo_heuristic_item(
+                element_system="UO2",
+                property_name="lattice_constant",
+                value=5.47,  # distinct numeric — should append
+                unit="angstrom",
+            ),
+            _make_demo_heuristic_item(
+                element_system="ThO2",
+                property_name="lattice_constant",
+                value=5.60,  # distinct numeric — should append
+                unit="angstrom",
+            ),
+        ]
+
+        # BuildResult / MappingResult mocks so the Stage 4-6 logs render.
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+        mock_node.label = "UO2"
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 0
+        mock_build_result.edges_created = 0
+        mock_build_result.review_queue_items = 0
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        mock_mapping = MagicMock()
+        mock_mapping.created_sources = 0
+        mock_mapping.created_materials = 0
+        mock_mapping.created_datasets = 0
+        mock_mapping.created_measurements = 0
+        mock_mapping.reused_entities = 0
+        mock_mapping.skipped_duplicate_measurements = 0
+        mock_mapping.skipped_unknown_properties = 0
+        mock_mapping.validation_errors = 0
+
+        captured_payload: list[list[dict[str, Any]]] = []
+
+        async def _capture_map(
+            db: AsyncSession, items: list[dict[str, Any]], **_kwargs: Any
+        ) -> MagicMock:
+            captured_payload.append(items)
+            return mock_mapping
+
+        with (
+            caplog.at_level(logging.INFO, logger="nfm_db.services.literature_service"),
+            patch.object(lit_svc, "_parse_pdf_to_markdown"),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                # NFM-3901: include a string-value item — the regression trigger.
+                new=AsyncMock(return_value=_make_string_value_extraction()),
+            ),
+            patch(
+                "nfm_db.services.heuristic_extractor.heuristic_extract",
+                new=MagicMock(return_value=heuristic_items),
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline._post_process_extracted",
+                new=MagicMock(side_effect=lambda items, **_kw: items),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(side_effect=_capture_map),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=mock_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge._slugify",
+                new=MagicMock(return_value="corpus-slug"),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        # Filter to process_literature's own log records.
+        plog_records = [
+            r for r in caplog.records
+            if r.name == "nfm_db.services.literature_service"
+            and "process_literature:" in r.getMessage()
+            and f"datasource_id={ds.id}" in r.getMessage()
+        ]
+        text = "\n".join(r.getMessage() for r in plog_records)
+
+        # --- Acceptance gate 1: the heuristic block did not raise ----
+        # Pre-fix this log fired (and everything inside the try block was
+        # dropped). Post-fix it must NOT fire.
+        assert "Heuristic extractor failed" not in text, (
+            f"NFM-3901 regression: heuristic block raised and was "
+            f"swallowed; process_literature log:\n{text}"
+        )
+
+        # --- Acceptance gate 2: Stage 2 (merge) fired -----------------
+        # Before the fix, the comprehension at the old line 644 raised
+        # before reaching the ``raw_properties after merge`` logger, so
+        # Stage 2 was silently absent.
+        merge_line = next(
+            (r.getMessage() for r in plog_records
+             if "raw_properties after merge:" in r.getMessage()),
+            None,
+        )
+        assert merge_line is not None, (
+            f"NFM-3901 regression: Stage 2 'raw_properties after merge' "
+            f"log never fired (the heuristic block raised before it):\n{text}"
+        )
+        assert "heuristic added 2" in merge_line, (
+            f"Stage 2 must report 'heuristic added 2' (both ThO2 and UO2 "
+            f"heuristic items are new vs. the LLM payload); got: {merge_line!r}"
+        )
+
+        # --- Acceptance gate 3: Stage 3 (post-process) fired ----------
+        post_line = next(
+            (r.getMessage() for r in plog_records
+             if "raw_properties after _post_process_extracted:" in r.getMessage()),
+            None,
+        )
+        assert post_line is not None, (
+            f"NFM-3901 regression: Stage 3 'raw_properties after "
+            f"_post_process_extracted' log never fired (the heuristic "
+            f"block raised before it):\n{text}"
+        )
+        assert "delta=0" in post_line, (
+            f"Stage 3 must report delta=0 (post-process mocked as identity); "
+            f"got: {post_line!r}"
+        )
+
+        # --- Acceptance gate 4: heuristic items reach the mapper ------
+        # map_and_persist sees the final batch; both heuristic items
+        # must survive the merge so they land as KG nodes / measurements.
+        assert result["status"] == "completed", result
+        assert captured_payload, "map_and_persist was never invoked"
+        final_batch = captured_payload[0]
+
+        heuristic_in_final = [
+            item for item in final_batch
+            if item.get("method") == "heuristic_regex"
+        ]
+        assert len(heuristic_in_final) == len(heuristic_items), (
+            f"NFM-3901: expected all {len(heuristic_items)} heuristic "
+            f"items in the final batch, got {len(heuristic_in_final)}: "
+            f"{heuristic_in_final!r}"
+        )
+        seen_systems = {item["element_system"] for item in heuristic_in_final}
+        assert {"UO2", "ThO2"} <= seen_systems, (
+            f"both UO2 and ThO2 heuristic items must reach the mapper; "
+            f"got systems={seen_systems!r}"
+        )
+
+    async def test_safe_g_helper_handles_non_numeric_values(self) -> None:
+        """Unit test for the NFM-3901 ``_safe_g`` helper: numeric values
+        keep the existing ``:g`` rendering so dedup matches
+        ``heuristic_extractor``; non-numeric values fall back to ``repr``
+        so the key remains hashable and never raises.
+        """
+        # Numeric inputs — match ``heuristic_extractor``'s key format.
+        assert lit_svc._safe_g(5.47) == "5.47"
+        assert lit_svc._safe_g(1.0) == "1"
+        assert lit_svc._safe_g(0) == "0"
+
+        # Non-numeric inputs — must NOT raise; must return a stable
+        # string so two equal string-valued items dedupe.
+        assert lit_svc._safe_g("not-a-number") == repr("not-a-number")
+        assert lit_svc._safe_g(None) == repr(None)
+        # ``True``/``False`` are numeric-coercible, exercise that path.
+        assert lit_svc._safe_g(True) == "1"
+        # Equality on strings — two items with the same string value
+        # must dedupe to the same key.
+        assert lit_svc._safe_g("foo") == lit_svc._safe_g("foo")
+        assert lit_svc._safe_g("foo") != lit_svc._safe_g("bar")
