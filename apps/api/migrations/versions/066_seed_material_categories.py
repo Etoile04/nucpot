@@ -1,6 +1,6 @@
 """Seed material_categories with the canonical NFMD taxonomy.
 
-Revision ID: 065_seed_material_categories
+Revision ID: 066_seed_material_categories
 Revises: 064_widen_property_measurements_numeric
 Create Date: 2026-08-31
 
@@ -65,8 +65,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "065_seed_material_categories"
-down_revision: str | Sequence[str] | None = "064_widen_property_measurements_numeric"
+revision: str = "066_seed_material_categories"
+down_revision: str | Sequence[str] | None = "065_widen_property_measurements_numeric"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

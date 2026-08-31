@@ -7,8 +7,8 @@ diagnosed.
 
 This test verifies, offline, that:
 
-* [AC-1] Migration ``065_seed_material_categories`` exists and
-  chains from ``064_widen_property_measurements_numeric`` (the
+* [AC-1] Migration ``066_seed_material_categories`` exists and
+  chains from ``065_widen_property_measurements_numeric`` (the
   current Alembic head before this ticket).
 * [AC-2] The migration is idempotent — re-running it must not
   raise (uses ``INSERT ... ON CONFLICT (slug) DO NOTHING`` keyed
@@ -29,8 +29,8 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-REVISION = "065_seed_material_categories"
-DOWN_REVISION = "064_widen_property_measurements_numeric"
+REVISION = "066_seed_material_categories"
+DOWN_REVISION = "065_widen_property_measurements_numeric"
 MIGRATION_PATH = f"migrations/versions/{REVISION}.py"
 
 
@@ -78,14 +78,14 @@ def migration_source() -> str:
 
 
 class TestMigrationChain:
-    """065_seed_material_categories is discoverable and depends on 064."""
+    """066_seed_material_categories is discoverable and depends on 065_widen."""
 
     def test_revision_loadable(self, script_directory: ScriptDirectory) -> None:
         rev = script_directory.get_revision(REVISION)
         assert rev is not None, f"Migration {REVISION!r} not registered"
         assert rev.revision == REVISION
 
-    def test_down_revision_is_064(self, script_directory: ScriptDirectory) -> None:
+    def test_down_revision_is_065_widen(self, script_directory: ScriptDirectory) -> None:
         rev = script_directory.get_revision(REVISION)
         assert rev is not None
         assert rev.down_revision == DOWN_REVISION, (
@@ -93,7 +93,7 @@ class TestMigrationChain:
             f"got {rev.down_revision!r}"
         )
 
-    def test_head_is_at_or_past_065(self, script_directory: ScriptDirectory) -> None:
+    def test_head_is_at_or_past_066(self, script_directory: ScriptDirectory) -> None:
         """After this migration is applied, the chain head moves forward."""
         revisions = {r.revision for r in script_directory.walk_revisions()}
         assert REVISION in revisions, (

@@ -2,7 +2,7 @@
 """Backfill ``materials.category_id`` from formula / crystal_structure heuristics.
 
 NFM-3916 (Tier 1C) — companion to migration
-``065_seed_material_categories``.  The seed migration inserts the
+``066_seed_material_categories``.  The seed migration inserts the
 canonical 8-row taxonomy; this script assigns each material row to one
 of those taxonomy rows using deterministic, formula-driven rules.
 
@@ -418,7 +418,7 @@ async def run_backfill(
     if not slug_to_id:
         raise RuntimeError(
             "No material_categories rows found — has migration "
-            "065_seed_material_categories been applied? Aborting "
+            "066_seed_material_categories been applied? Aborting "
             "to avoid orphaned category_id writes."
         )
     logger.info("loaded %d taxonomy rows from material_categories", len(slug_to_id))
