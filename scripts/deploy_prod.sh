@@ -24,6 +24,11 @@
 # ============================================================================
 set -euo pipefail
 
+# ssh host "cmd" runs a NON-LOGIN zsh: only /etc/zshenv + ~/.zshenv are
+# sourced, so /usr/local/bin (docker) is missing from PATH. The old heredoc
+# transport accidentally worked because a login shell sources .zprofile.
+export PATH="/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:$PATH"
+
 # --- Input validation (empty variable = loud failure, never a mangled cmd) --
 : "${DEPLOY_SHA:?DEPLOY_SHA (github.sha) not provided — refusing to deploy}"
 : "${PROXY_PORT:=7897}"
