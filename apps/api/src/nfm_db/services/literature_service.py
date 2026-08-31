@@ -61,6 +61,28 @@ PARSE_STATUS_FAILED = "failed"
 #: Cap for parse_error strings so a runaway stack trace doesn't blow the row.
 MAX_ERROR_LEN = 1000
 
+
+def _safe_g(value: Any) -> str:
+    """Render ``value`` as the dedup-key segment used by the heuristic merge.
+
+    NFM-3901: the LLM path can produce items whose ``value`` field is a
+    string (e.g. a categorical label, a unit-bearing phrase, or an
+    empty span). The previous ``f"{r.get("value", 0):g}"`` raised
+    ``ValueError: Unknown format code 'g' for object of type 'str'`` and
+    the outer ``except Exception`` at the end of the heuristic block
+    swallowed the entire heuristic batch — explaining the NFM-3887
+    silent-zero.
+
+    We coerce safely: numeric inputs use the same ``:g`` formatting as
+    ``heuristic_extractor`` (so dedup matches the extractor); non-numeric
+    inputs fall back to ``repr()`` so the key is still hashable and two
+    string-valued items can dedupe on exact string equality.
+    """
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return repr(value)
+
 # ---------------------------------------------------------------------------
 # Storage accessor (lazy so tests can patch the module-level reference)
 # ---------------------------------------------------------------------------
@@ -640,8 +662,16 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
                 if heuristic_props:
                     # Dedup key matches heuristic_extractor's own dedup.
+                    # NFM-3901: use ``_safe_g`` so a non-numeric ``value``
+                    # (string, None, etc.) on any LLM item does not raise
+                    # ``ValueError: Unknown format code 'g' for object of
+                    # type 'str'`` and drop the entire heuristic batch.
                     existing_keys = {
-                        (r.get("element_system"), r.get("property_name"), f"{r.get("value", 0):g}")
+                        (
+                            r.get("element_system"),
+                            r.get("property_name"),
+                            _safe_g(r.get("value")),
+                        )
                         for r in raw_properties
                     }
                     new_count = 0
@@ -649,7 +679,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         key = (
                             item.get("element_system"),
                             item.get("property_name"),
-                            f"{item.get("value", 0):g}",
+                            _safe_g(item.get("value")),
                         )
                         if key not in existing_keys:
                             raw_properties.append(item)
