@@ -27,9 +27,12 @@ The worker that picks up the task is started with
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any
 from uuid import UUID
 
+import httpx
 from celery.exceptions import CeleryError
 
 from nfm_db.services.celery_app import celery_app
@@ -141,6 +144,115 @@ def schedule_literature_processing(datasource_id: UUID | str) -> str:
 # can exercise the dispatcher without standing up the full service layer.
 
 
+def _resolve_ollama_prewarm_target() -> tuple[str, str, str] | None:
+    """Return (base_url, model, api_key) for an Ollama-served pre-warm call.
+
+    Reads the same env vars that the production worker uses
+    (NFM-1489 §C: LLM_PROVIDER / LLM_BASE_URL / LLM_MODEL).  Returns
+    ``None`` when the LLM provider is anything other than Ollama — a
+    remote OpenAI/Deepseek endpoint is already warm and needs no pre-load.
+    """
+    provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if provider != "ollama":
+        return None
+    base_url = (os.getenv("LLM_BASE_URL") or "").strip()
+    model = (os.getenv("LLM_MODEL") or "").strip()
+    if not base_url or not model:
+        logger.warning(
+            "LLM_PROVIDER=ollama but LLM_BASE_URL or LLM_MODEL is empty; "
+            "skipping pre-warm"
+        )
+        return None
+    # LLM_BASE_URL is the OpenAI-compatible root (…/v1). The chat-completions
+    # endpoint sits underneath it.
+    api_key = os.getenv("LLM_API_KEY") or "ollama"
+    return base_url.rstrip("/"), model, api_key
+
+
+def prewarm_ollama_model(*, timeout_s: float = 300.0) -> dict[str, Any]:
+    """Force-load the configured Ollama model into the server's memory.
+
+    NFM-3902: Ollama's default ``keep_alive`` is 5 minutes. After any idle
+    gap longer than that, the next inference request cold-loads the
+    weights from disk — 57 s for a 27B MLX model on the prod host. With
+    the Celery task time limit pinned at ~7 minutes by older deploys,
+    that cold-load alone exceeds the budget and the first dispatch after
+    idle gets SIGTERM-killed before it can even begin real extraction.
+
+    The cheapest reliable cure is to fire a one-token inference request
+    *before* the real extraction starts. This both loads the model into
+    Ollama's resident set and (because the request completes successfully
+    on a warm model in <1 s) keeps the wall-clock cost near zero on warm
+    restarts. Failure is non-fatal: a hard-down Ollama would also fail
+    the real extraction, so we only log and continue.
+    """
+    target = _resolve_ollama_prewarm_target()
+    if target is None:
+        return {"status": "skipped", "reason": "non-ollama-provider"}
+
+    base_url, model, api_key = target
+    url = f"{base_url}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+        "temperature": 0.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    started = time.monotonic()
+    try:
+        with httpx.Client(timeout=timeout_s) as client:
+            response = client.post(url, headers=headers, json=payload)
+        elapsed_s = time.monotonic() - started
+    except httpx.HTTPError as exc:
+        elapsed_s = time.monotonic() - started
+        logger.warning(
+            "process_literature: Ollama pre-warm failed (transport) "
+            "model=%s elapsed_s=%.2f error=%s — continuing without pre-warm",
+            model,
+            elapsed_s,
+            exc.__class__.__name__,
+        )
+        return {
+            "status": "transport_error",
+            "model": model,
+            "elapsed_s": round(elapsed_s, 2),
+            "error": str(exc)[:200],
+        }
+
+    if response.status_code >= 400:
+        logger.warning(
+            "process_literature: Ollama pre-warm returned HTTP %d "
+            "model=%s elapsed_s=%.2f body=%s — continuing without pre-warm",
+            response.status_code,
+            model,
+            elapsed_s,
+            response.text[:200],
+        )
+        return {
+            "status": "http_error",
+            "model": model,
+            "elapsed_s": round(elapsed_s, 2),
+            "status_code": response.status_code,
+        }
+
+    logger.info(
+        "process_literature: Ollama pre-warm ok model=%s elapsed_s=%.2f",
+        model,
+        elapsed_s,
+    )
+    return {
+        "status": "ok",
+        "model": model,
+        "elapsed_s": round(elapsed_s, 2),
+        "status_code": response.status_code,
+    }
+
+
 @celery_app.task(  # type: ignore[untyped-decorator]
     bind=True,
     name=LITERATURE_TASK_NAME,
@@ -158,6 +270,11 @@ def process_literature_task(self: Any, datasource_id: str) -> dict[str, Any]:
     Delegates to :func:`nfm_db.services.literature_service.process_literature`
     (NFM-1485-2 / NFM-1487).  We import lazily so a partial deploy that has
     the dispatcher but not yet the service still imports cleanly.
+
+    NFM-3902: cold-load guard — see :func:`prewarm_ollama_model`. Pre-warm
+    runs before the first ``process_literature:`` log line so the
+    instrumentation in NFM-3892 does not start its timer against an
+    already-cold LLM.
     """
     from nfm_db.monitoring.worker_health import worker_health
     from nfm_db.services.literature_service import process_literature_sync
@@ -167,9 +284,19 @@ def process_literature_task(self: Any, datasource_id: str) -> dict[str, Any]:
         datasource_id,
         self.request.id,
     )
+    prewarm_result = prewarm_ollama_model()
+    if prewarm_result.get("status") != "ok":
+        logger.info(
+            "process_literature: prewarm_skipped status=%s model=%s elapsed_s=%s",
+            prewarm_result.get("status"),
+            prewarm_result.get("model"),
+            prewarm_result.get("elapsed_s"),
+        )
     try:
         result = process_literature_sync(datasource_id)
         worker_health.record_success()
+        if isinstance(result, dict):
+            result = {**result, "llm_prewarm": prewarm_result}
         return result
     except Exception as exc:
         worker_health.record_failure(str(exc)[:500])
