@@ -478,9 +478,16 @@ def heuristic_extract(
         # NFM-3835: emit ``property_category`` so the mapper's
         # ``_coerce_unknown_categories`` does not coerce valid items
         # to "other" (which inflates ``skipped_unknown_properties``).
+        # NFM-3919: also emit ``material_name`` and ``composition`` so the
+        # mapper's `_find_material_by_formula` can dedup across runs instead
+        # of falling back to "Unknown Material" and creating a new row every
+        # run. ``element_system`` is kept for backward compatibility with
+        # existing consumers.
         found.append(
             {
                 "element_system": material,
+                "material_name": material,
+                "composition": material,
                 "phase": "Unknown",
                 "property_name": name,
                 "value": value,
@@ -519,9 +526,14 @@ def heuristic_extract(
             # DFT-direct patterns don't have a unit family — pick the
             # category from the canonical screening_constant default
             # ("physical") so the item still carries a valid Literal.
+            # NFM-3919: also emit ``material_name`` and ``composition`` so the
+            # mapper's `_find_material_by_formula` can dedup across runs
+            # instead of creating a fresh "Unknown Material" row per run.
             found.append(
                 {
                     "element_system": material,
+                    "material_name": material,
+                    "composition": material,
                     "phase": "Unknown",
                     "property_name": name,
                     "value": value,

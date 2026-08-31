@@ -156,6 +156,10 @@ class TestMapAndPersistValidation:
         """
         bad_input = [
             {
+                "material_name": "UO2",  # NFM-3919 — present so the item reaches
+                "composition": "UO2",   # the PropertyType lookup, not the
+                                        # material guard, which is what this
+                                        # test is asserting on.
                 "property": "Thermal Conductivity",
                 "value": 8.5,  # float → coerced to "8.5"
                 "unit": "W/(m·K)",
@@ -1476,6 +1480,8 @@ class TestMapAndPersistHeuristicPayload:
 
         heuristic_item: dict[str, Any] = {
             "element_system": "UO2",
+            "material_name": "UO2",  # NFM-3919
+            "composition": "UO2",    # NFM-3919
             "phase": "Unknown",
             "property_name": "activation_energy",
             "value": 0.3,
@@ -1514,6 +1520,8 @@ class TestMapAndPersistHeuristicPayload:
 
         items: list[dict[str, Any]] = [
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",    # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.3,
                 "unit": "eV",
@@ -1522,6 +1530,8 @@ class TestMapAndPersistHeuristicPayload:
                 "property_category": "thermal",
             },
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",    # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.5,
                 "unit": "eV",
@@ -1531,6 +1541,8 @@ class TestMapAndPersistHeuristicPayload:
                 "conditions": {"temperature": 1000},
             },
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",    # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.7,
                 "unit": "eV",
@@ -1540,6 +1552,8 @@ class TestMapAndPersistHeuristicPayload:
                 "conditions": {"temperature": 1200},
             },
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",    # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.9,
                 "unit": "eV",
@@ -1584,6 +1598,8 @@ class TestMapAndPersistHeuristicPayload:
             unit="W/(m·K)",
         )
         heuristic_item: dict[str, Any] = {
+            "material_name": "UO2",  # NFM-3919
+            "composition": "UO2",    # NFM-3919
             "property_name": "thermal_conductivity",
             "value": 9.2,  # float — heuristic shape
             "unit": "W/(m·K)",
@@ -1808,3 +1824,130 @@ class TestNFM3405ProvenanceThreading:
         m = measurements[0]
         assert m.unit_id is not None
         assert m.review_status == "approved"  # high → approved
+
+
+# ---------------------------------------------------------------------------
+# NFM-3919: block new "Unknown Material" rows at the mapper bottom line
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestNFM3919UnknownMaterialGuard:
+    """NFM-3919 [Tier 1B / P0]: double-None material items must NOT spawn new
+    Material(name='Unknown Material') rows; they must be counted as skipped
+    and logged. Cross-run reuse of an existing Material via formula must
+    also be restored so the unique measurement index can fire.
+    """
+
+    async def test_double_none_item_is_rejected_and_counted(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """An item where BOTH material_name and composition are None must
+        not create a Material row, and must bump skipped_unknown_materials.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        bad_item = _make_extracted_property(
+            material_name=None,
+            composition=None,
+            source_doi="10.1000/nfm-3919-reject",
+        )
+
+        result = await map_and_persist(db_session, [bad_item])
+
+        # No Material row was created — the DB stays clean of "Unknown Material".
+        materials = (
+            (await db_session.execute(select(Material))).scalars().all()
+        )
+        assert materials == [], (
+            "Mapper must NOT create a Material when both material_name and "
+            "composition are None — was: "
+            f"{[(m.name, m.formula) for m in materials]}"
+        )
+        # Counter is incremented.
+        assert result.skipped_unknown_materials == 1
+        # And NO downstream measurement was persisted either.
+        assert result.created_measurements == 0
+
+    async def test_second_call_reuses_material_not_create_new(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """Two consecutive map_and_persist calls with the same input must
+        reuse the existing Material row — second call's reused_entities
+        increases and no second Material is created.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        item = _make_extracted_property(
+            material_name="UO2",
+            composition="UO2",
+            source_doi="10.1000/nfm-3919-reuse",
+        )
+
+        first = await map_and_persist(db_session, [item])
+        assert first.created_materials == 1
+        assert first.reused_entities == 0
+
+        # Second pass with identical input.
+        item2 = _make_extracted_property(
+            material_name="UO2",
+            composition="UO2",
+            source_doi="10.1000/nfm-3919-reuse",
+        )
+        second = await map_and_persist(db_session, [item2])
+
+        # No new Material row.
+        assert second.created_materials == 0, (
+            "Second call must reuse the existing Material, not create a new one. "
+            "Bug: heuristic_extractor used to omit material_name+composition, "
+            "so _find_material_by_formula returned None each run."
+        )
+        # And reuse counter was bumped.
+        assert second.reused_entities >= 1, (
+            "Second call must observe the existing Material via formula lookup "
+            "and bump reused_entities."
+        )
+
+        # Total Material rows in DB is still 1.
+        materials = (
+            (await db_session.execute(select(Material))).scalars().all()
+        )
+        assert len(materials) == 1
+
+    async def test_find_material_by_formula_handles_duplicates(
+        self, db_session: AsyncSession,
+    ) -> None:
+        """NFM-3919: two Material rows with the same formula must not raise
+        MultipleResultsFound when _find_material_by_formula is queried —
+        it must return one of them via .limit(1).scalars().first().
+        """
+        from nfm_db.services.extraction_to_db_mapper import (
+            _find_material_by_formula,
+        )
+
+        # Seed two Material rows with the same formula — represents the
+        # legacy "Unknown Material" pollution that may exist in production.
+        db_session.add(
+            Material(name="UO2", formula="UO2", is_active=True)
+        )
+        db_session.add(
+            Material(name="UO2", formula="UO2", is_active=True)
+        )
+        await db_session.commit()
+
+        # Must NOT raise — must return one row.
+        result = await _find_material_by_formula(db_session, "UO2")
+        assert result is not None
+        assert result.formula == "UO2"
+
+        # And empty/None formula must still short-circuit to None.
+        assert await _find_material_by_formula(db_session, None) is None
+        assert await _find_material_by_formula(db_session, "") is None

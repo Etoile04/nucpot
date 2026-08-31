@@ -179,6 +179,13 @@ class MappingResult:
     reused_entities: int = 0
     skipped_duplicate_measurements: int = 0
     skipped_unknown_properties: int = 0
+    # NFM-3919: items where BOTH material_name and composition are None
+    # (e.g. an extractor that omits both fields) are rejected at the mapper
+    # bottom line so the database is never polluted with fresh
+    # ``name='Unknown Material'`` rows. Counted separately from
+    # ``skipped_unknown_properties`` so operators can alert on the specific
+    # "extractor schema-drift" signal.
+    skipped_unknown_materials: int = 0
     validation_errors: int = 0
 
     @property
@@ -197,6 +204,7 @@ class MappingResult:
             self.reused_entities
             + self.skipped_duplicate_measurements
             + self.skipped_unknown_properties
+            + self.skipped_unknown_materials
         )
 
 
@@ -559,11 +567,30 @@ async def map_and_persist(
     reused_entities = 0
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
+    skipped_unknown_materials = 0  # NFM-3919
 
     for item in validated:
         s_key = _source_key(item)
         m_key = _material_key(item)
         d_key = _dataset_key(s_key, m_key)
+
+        # --- NFM-3919 bottom-line guard: reject double-None material items ---
+        # Heuristic (and any future) extractor that omits BOTH material_name
+        # AND composition would otherwise fall back to ``"Unknown Material"``
+        # and create a fresh row every run, polluting the ``materials`` table.
+        # Even when ``heuristic_extractor`` is fixed at the source (NFM-3919
+        # Fix 1), this guard makes the mapper safe against any other extractor
+        # that may forget these fields in the future.
+        if not (item.material_name and item.composition):
+            logger.warning(
+                "Skipping extraction item with no material identity: "
+                "material_name=%r composition=%r "
+                "(NFM-3919 — extractor schema-drift guard)",
+                item.material_name,
+                item.composition,
+            )
+            skipped_unknown_materials += 1
+            continue
 
         # --- DataSource (find or create) ---
         if s_key not in source_map:
@@ -606,9 +633,13 @@ async def map_and_persist(
         source = source_map[s_key]
 
         # --- Material (find or create) ---
+        # NFM-3919: the top-of-loop guard ensures both ``item.material_name``
+        # and ``item.composition`` are truthy here, so we no longer fall back
+        # to ``"Unknown Material"`` — that fallback was the root cause of the
+        # pollution where every heuristic run inserted a fresh row.
         if m_key not in material_map:
-            material_name = item.material_name or "Unknown Material"
-            formula = item.composition or item.material_name
+            material_name = item.material_name
+            formula = item.composition
 
             existing_mat = await _find_material_by_formula(db, formula)
             if existing_mat:
@@ -764,6 +795,7 @@ async def map_and_persist(
         reused_entities=reused_entities,
         skipped_duplicate_measurements=skipped_duplicate_measurements,
         skipped_unknown_properties=skipped_unknown_properties,
+        skipped_unknown_materials=skipped_unknown_materials,
         validation_errors=validation_error_count,
     )
 
@@ -786,11 +818,19 @@ async def _find_material_by_formula(
     db: AsyncSession,
     formula: str | None,
 ) -> Material | None:
-    """Find existing Material by formula."""
+    """Find existing Material by formula.
+
+    NFM-3919: tolerates duplicate ``formula`` rows that exist in the
+    database from prior batches. ``scalar_one_or_none()`` would raise
+    ``MultipleResultsFound`` and fail the entire ingest batch the moment
+    a second row with the same formula was inserted (e.g. legacy
+    ``Unknown Material`` pollution). We instead use ``.limit(1)`` plus
+    ``scalars().first()`` so the lookup returns one row deterministically.
+    """
     if not formula:
         return None
-    stmt = select(Material).where(Material.formula == formula)
-    return (await db.execute(stmt)).scalar_one_or_none()
+    stmt = select(Material).where(Material.formula == formula).limit(1)
+    return (await db.execute(stmt)).scalars().first()
 
 
 def _parse_float(value: str) -> float | None:
