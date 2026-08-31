@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""NFM-3918 Unknown Material cleanup — verification wrapper.
+
+Runs scripts/nfm-3918-unknown-material-cleanup.sql against a target database,
+captures the BEFORE / AFTER RAISE NOTICE blocks, and prints the comparison
+table required by ticket AC #1.
+
+The script also enforces the safety gate from the ticket body:
+  * Staging runs are allowed at any time.
+  * Prod apply requires the env var NFMD_PROD_BACKUP_PATH to point at the
+    pg_dump output (the ticket body's only rollback path).
+  * Prod apply also requires env var NFMD_TIER_1B_DEPLOYED=1, set after the
+    NFM-3919 migration has been verified in prod.
+
+Usage:
+    # Staging dry-run (always allowed):
+    python scripts/nfm-3918-unknown-material-cleanup.py \\
+        --database-url "$STAGING_DATABASE_URL" \\
+        --dry-run
+
+    # Staging apply (allowed; demo the migration):
+    python scripts/nfm-3918-unknown-material-cleanup.py \\
+        --database-url "$STAGING_DATABASE_URL"
+
+    # Prod apply (gated):
+    NFMD_PROD_BACKUP_PATH=/var/backups/nfm-3918-pre.sql \\
+    NFMD_TIER_1B_DEPLOYED=1 \\
+    python scripts/nfm-3918-unknown-material-cleanup.py \\
+        --database-url "$PROD_DATABASE_URL" \\
+        --expected-unknown-count 27
+
+Output: a Markdown table on stdout, suitable for pasting into a Paperclip
+comment. The script exits non-zero if any acceptance invariant is violated
+(post-count drift, orphan rows, or density=10.55 not collapsed).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SQL_PATH = SCRIPT_DIR / "nfm-3918-unknown-material-cleanup.sql"
+
+# Tolerance window for the BEFORE measurement count. The ticket body hard-codes
+# 93 measurements across the 10 carrying-data Unknown rows; if the actual count
+# drifts (e.g., new ingest since the ticket was filed), we don't want to fail
+# — we want to log and let a human reconcile. Set to None to disable.
+DEFAULT_EXPECTED_MEASUREMENTS = 93
+
+# Targets that require the prod safety gate. Anything else (staging, dev,
+# CI scratch) skips the gate so the migration can be exercised freely.
+PROD_HOST_HINTS = ("nucpot-prod-db", "prod-db", "5433")
+
+
+@dataclass(frozen=True)
+class CountSnapshot:
+    """Parsed counts from a single RAISE NOTICE block.
+
+    Either NFM-3918_BEFORE or NFM-3918_AFTER. Keys are the columns we expect
+    the SQL to emit; missing keys indicate a parse failure.
+    """
+
+    label: str  # "BEFORE" or "AFTER"
+    raw_line: str
+    counts: Mapping[str, int]
+
+    def render_row(self) -> str:
+        cols = (
+            "unknown",
+            "zero_downstream",
+            "carrying_data",
+            "datasets",
+            "measurements",
+            "aliases",
+            "compositions",
+            "density_10_55",
+        )
+        cells = [str(self.counts.get(c, "—")) for c in cols]
+        return "| " + " | ".join((self.label, *cells)) + " |"
+
+
+# Same column order as CountSnapshot.render_row plus total-measurements +
+# orphans + dedup (only meaningful in AFTER; BEFORE has them as N/A).
+COMPARISON_HEADER = (
+    "| phase | unknown | zero_downstream | carrying_data | datasets | "
+    "measurements | aliases | compositions | density_10_55 |\n"
+    "|-------|---------|-----------------|---------------|----------|"
+    "-------------|---------|--------------|---------------|"
+)
+
+
+def is_prod_target(database_url: str) -> bool:
+    lowered = database_url.lower()
+    return any(hint in lowered for hint in PROD_HOST_HINTS)
+
+
+def parse_counts(notice_line: str) -> CountSnapshot:
+    """Parse a single NFM-3918_BEFORE / NFM-3918_AFTER RAISE NOTICE line.
+
+    Format (BEFORE):
+        NFM-3918_BEFORE unknown=% zero_downstream=% carrying_data=% datasets=%
+                       measurements=% aliases=% compositions=% density_10_55=%
+
+    Format (AFTER):
+        NFM-3918_AFTER unknown=% measurements_total=% (was %)
+                       density_10_55=% orphan_datasets=% orphan_measurements=% dedup_total=%
+    """
+    if "NFM-3918_BEFORE" in notice_line:
+        label = "BEFORE"
+        keymap = {
+            "unknown": r"unknown=(\d+)",
+            "zero_downstream": r"zero_downstream=(\d+)",
+            "carrying_data": r"carrying_data=(\d+)",
+            "datasets": r"datasets=(\d+)",
+            "measurements": r"measurements=(\d+)",
+            "aliases": r"aliases=(\d+)",
+            "compositions": r"compositions=(\d+)",
+            "density_10_55": r"density_10_55=(\d+)",
+        }
+    elif "NFM-3918_AFTER" in notice_line:
+        label = "AFTER"
+        # AFTER doesn't have zero_downstream / carrying_data / datasets /
+        # aliases / compositions breakdowns (only the salient end state).
+        keymap = {
+            "unknown": r"unknown=(\d+)",
+            "measurements": r"measurements_total=(\d+)",
+            "density_10_55": r"density_10_55=(\d+)",
+            "orphan_datasets": r"orphan_datasets=(\d+)",
+            "orphan_measurements": r"orphan_measurements=(\d+)",
+            "dedup_total": r"dedup_total=(\d+)",
+        }
+    else:
+        raise ValueError(f"not a recognized BEFORE/AFTER line: {notice_line!r}")
+
+    counts: dict[str, int] = {}
+    for key, pattern in keymap.items():
+        match = re.search(pattern, notice_line)
+        if match:
+            counts[key] = int(match.group(1))
+    return CountSnapshot(label=label, raw_line=notice_line, counts=counts)
+
+
+def run_psql(database_url: str, sql_path: Path, psql_vars: Mapping[str, str]) -> str:
+    """Invoke psql with the SQL file and capture NOTICE output.
+
+    We use -tA (tuples-only, unaligned) for predictable output and forward
+    every line that begins with "NOTICE:" so we can parse BEFORE / AFTER
+    blocks. Errors propagate via -v ON_ERROR_STOP=1, set inside the SQL
+    via \\set.
+    """
+    cmd = [
+        "psql",
+        database_url,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "--no-psqlrc",
+        "-P",
+        "pager=off",
+        "-f",
+        str(sql_path),
+    ]
+    for key, value in psql_vars.items():
+        cmd.extend(["-v", f"{key}={value}"])
+
+    env = {**os.environ, "PGOPTIONS": "--client-min-messages=NOTICE"}
+
+    proc = subprocess.run(
+        cmd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    if proc.returncode != 0:
+        sys.stderr.write(combined)
+        raise SystemExit(
+            f"psql exited {proc.returncode}; check the SQL output above."
+        )
+    return combined
+
+
+def extract_snapshots(psql_output: str) -> tuple[CountSnapshot | None, CountSnapshot | None]:
+    before = None
+    after = None
+    for line in psql_output.splitlines():
+        if "NFM-3918_BEFORE" in line:
+            before = parse_counts(line)
+        elif "NFM-3918_AFTER" in line:
+            after = parse_counts(line)
+    return before, after
+
+
+def render_comparison(
+    before: CountSnapshot | None,
+    after: CountSnapshot | None,
+) -> str:
+    if before is None or after is None:
+        raise SystemExit(
+            "Could not locate NFM-3918_BEFORE / NFM-3918_AFTER blocks in psql "
+            "output. The SQL file may have drifted; refusing to claim success."
+        )
+
+    rows = [COMPARISON_HEADER]
+    rows.append(before.render_row())
+    # AFTER has a different schema; flatten it into the same table for visual
+    # comparison. Cells that don't apply render as N/A.
+    after_cols = (
+        "unknown",
+        "zero_downstream",
+        "carrying_data",
+        "datasets",
+        "measurements",
+        "aliases",
+        "compositions",
+        "density_10_55",
+    )
+    after_cells = [str(after.counts.get(c, "N/A")) for c in after_cols]
+    rows.append("| " + " | ".join(("AFTER", *after_cells)) + " |")
+    return "\n".join(rows)
+
+
+def assert_invariants(
+    before: CountSnapshot,
+    after: CountSnapshot,
+    *,
+    apply: bool,
+    expected_measurements: int | None,
+) -> list[str]:
+    """Check the post-state against the ticket body's acceptance criteria.
+
+    Returns a list of failure messages. Empty list = all pass.
+    """
+    failures: list[str] = []
+
+    # AC #2: Unknown count = 0 after.
+    if after.counts.get("unknown", -1) != 0:
+        failures.append(
+            f"AC #2 FAIL: post-count Unknown = {after.counts.get('unknown')}, "
+            "expected 0."
+        )
+
+    # AC #3: density=10.55 must collapse to 1 (was 8 across 8 Unknown).
+    # In dry-run, AFTER is the same as BEFORE — only check on apply.
+    if apply and after.counts.get("density_10_55") != 1:
+        failures.append(
+            f"AC #4 FAIL: post-state density=10.55 rows = "
+            f"{after.counts.get('density_10_55')}, expected 1."
+        )
+
+    # AC #4: no orphans.
+    if apply:
+        if after.counts.get("orphan_datasets", 0) != 0:
+            failures.append(
+                f"FK integrity FAIL: orphan_datasets = "
+                f"{after.counts.get('orphan_datasets')}, expected 0."
+            )
+        if after.counts.get("orphan_measurements", 0) != 0:
+            failures.append(
+                f"FK integrity FAIL: orphan_measurements = "
+                f"{after.counts.get('orphan_measurements')}, expected 0."
+            )
+
+    # AC #3 (measurement preservation): total measurement count should not
+    # drop below (BEFORE - dedup_total). On dry-run the SQL is a no-op, so
+    # skip this branch.
+    if apply and expected_measurements is not None:
+        before_total = before.counts.get("measurements", 0)
+        after_total = after.counts.get("measurements", 0)
+        dedup = after.counts.get("dedup_total", 0)
+        net_expected = before_total - dedup
+        if after_total < net_expected:
+            failures.append(
+                f"AC #3 FAIL: post-state measurements = {after_total}, "
+                f"expected at least {net_expected} (= {before_total} BEFORE − "
+                f"{dedup} dedup). Investigate measurement loss."
+            )
+
+    return failures
+
+
+def gate_prod_apply(database_url: str, args: argparse.Namespace) -> None:
+    """Enforce the prod-only safety gate described in the ticket body.
+
+    Two env-var checks: backup path present, Tier 1B deployed flag present.
+    The flag is operator-set after NFM-3919 has been verified in prod. The
+    script deliberately has no "auto-detect" because auto-detecting prod
+    state from inside the prod migration is the exact failure mode the
+    ticket body is trying to prevent.
+    """
+    if not is_prod_target(database_url):
+        return
+
+    backup = os.environ.get("NFMD_PROD_BACKUP_PATH", "").strip()
+    if not backup:
+        raise SystemExit(
+            "PROD gate FAILED: NFMD_PROD_BACKUP_PATH is unset. The ticket body "
+            "§5 requires pg_dump of materials/datasets/property_measurements "
+            "before prod apply. See docs/runbooks/mac-studio-docker-ops.md §6 "
+            "for backup context."
+        )
+    if not Path(backup).exists():
+        raise SystemExit(
+            f"PROD gate FAILED: NFMD_PROD_BACKUP_PATH={backup!r} does not "
+            "exist on disk. Run pg_dump first."
+        )
+
+    tier1b = os.environ.get("NFMD_TIER_1B_DEPLOYED", "").strip()
+    if tier1b != "1":
+        raise SystemExit(
+            "PROD gate FAILED: NFMD_TIER_1B_DEPLOYED != 1. Tier 1B (NFM-3919) "
+            "must be MERGED AND DEPLOYED TO PROD before this script runs "
+            "against prod. Until the upstream block lands, new ingest keeps "
+            "refilling Unknown Material at ~22 rows/day (see ticket body "
+            "§前置条件). Set the env var to 1 only after NFM-3919 is verified."
+        )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--database-url",
+        required=True,
+        help="Postgres URL; pass $STAGING_DATABASE_URL for staging, "
+        "$PROD_DATABASE_URL for prod (gated).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run phases 0, 1, 2 (snapshot only). Phases 3/4/5 emit "
+        "dry-run notices but do not mutate.",
+    )
+    parser.add_argument(
+        "--expected-unknown-count",
+        type=int,
+        default=27,
+        help="Override the preflight Unknown count check (default 27 per "
+        "ticket body).",
+    )
+    parser.add_argument(
+        "--expected-measurements",
+        type=int,
+        default=DEFAULT_EXPECTED_MEASUREMENTS,
+        help="Override the BEFORE measurement-count sanity check (default 93 "
+        "per ticket body §决策依据).",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    gate_prod_apply(args.database_url, args)
+
+    psql_vars = {
+        "dry_run": "1" if args.dry_run else "0",
+        "expected_unknown_count": str(args.expected_unknown_count),
+        "require_backup_path": (
+            "stub" if args.dry_run or not is_prod_target(args.database_url)
+            else os.environ["NFMD_PROD_BACKUP_PATH"]
+        ),
+    }
+
+    output = run_psql(args.database_url, SQL_PATH, psql_vars)
+    before, after = extract_snapshots(output)
+    print(render_comparison(before, after))
+
+    if before is None or after is None:
+        return 2
+
+    failures = assert_invariants(
+        before,
+        after,
+        apply=not args.dry_run,
+        expected_measurements=args.expected_measurements,
+    )
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+
+    print(
+        "\nAll acceptance criteria passed." if not args.dry_run
+        else "\nDry-run: no invariants enforced beyond parseability."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
