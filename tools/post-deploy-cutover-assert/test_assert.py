@@ -137,6 +137,25 @@ if [[ "$1" == "images" ]]; then
   exit 0
 fi
 
+if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+  # `docker image inspect --format '{{.Id}}' repo:tag` — full sha256:<64hex>,
+  # the format assert.sh resolves declared image IDs with (must match the
+  # {{.Image}} format written into snapshots).
+  for arg in "$@"; do
+    case "$arg" in
+      nucpot-prod-*:{EXPECTED_SHA})
+        case "$arg" in
+          nucpot-prod-api*) echo "sha256:{NEW_API_IMAGE}" ;;
+          nucpot-prod-lightrag*) echo "sha256:{NEW_LR_IMAGE}" ;;
+          nucpot-prod-web*) echo "sha256:{NEW_WEB_IMAGE}" ;;
+          *) echo "" ;;
+        esac
+        exit 0 ;;
+    esac
+  done
+  exit 0
+fi
+
 if [[ "$1" == "inspect" ]]; then
   if [[ "$*" != *"--format"* ]]; then
     if {missing_check}; then
