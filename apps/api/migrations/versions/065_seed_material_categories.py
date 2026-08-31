@@ -58,7 +58,7 @@ real 131-row production dataset (per the NFM-3916 ticket):
 
 The ``other`` row is seeded for symmetry but the backfill script
 does NOT auto-assign it (per ticket: "匹配不上的行保持
-``category_id=NULL``（不硬塞进 ``other``，避免制造假分类）").
+``category_id=NULL`` (不硬塞进 ``other``, 避免制造假分类)").
 """
 from collections.abc import Sequence
 

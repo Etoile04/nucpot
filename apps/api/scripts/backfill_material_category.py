@@ -24,8 +24,8 @@ Running this script twice against the same dataset produces the same
 * Rows whose ``category_id`` already equals the computed target are
   left untouched (``UPDATE ... WHERE category_id IS DISTINCT FROM``).
 * Rows that match no rule are kept at ``category_id = NULL`` — per
-  ticket NFM-3916 ("匹配不上的行保持 ``category_id=NULL``（不硬塞进
-  ``other``，避免制造假分类）").  This makes the script deterministic
+  ticket NFM-3916 ("匹配不上的行保持 ``category_id=NULL`` (不硬塞进
+  ``other``, 避免制造假分类)").  This makes the script deterministic
   by construction: no rule touches a NULL input.
 
 Rule precedence
@@ -101,7 +101,6 @@ import asyncio
 import logging
 import re
 import sys
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -330,7 +329,7 @@ class CoverageReport:
 
     @property
     def coverage_pct(self) -> float:
-        """Matched rows as a percentage of total, 0.0–100.0."""
+        """Matched rows as a percentage of total, 0.0-100.0."""
         if self.total_rows == 0:
             return 0.0
         return round(100.0 * self.matched_rows / self.total_rows, 2)
