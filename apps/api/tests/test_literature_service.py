@@ -19,6 +19,7 @@ on the in-memory SQLite ``db_session`` fixture from ``conftest.py``.
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1535,4 +1536,212 @@ class TestHeuristicItemsPersisted:
             assert item["property_category"] == "physical", (
                 f"density category should be 'physical', "
                 f"got {item['property_category']!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3888 / NFM-3892 — per-stage log counter instrumentation
+# ---------------------------------------------------------------------------
+#
+# NFM-3887 root-cause analysis could not determine WHY the post-patch
+# re-extraction of source 9320cb50 produced 0 new kg_nodes / 0 new
+# property_measurements / 0 new _ref_gap_fill_staging rows. The CTO spec
+# in NFM-3888 requires six structured log lines so the next re-extraction
+# reveals which stage silently dropped the items.
+#
+# These tests pin the format strings, field-name order, and field bindings
+# to the spec exactly. If any line is renamed or its field set drifts,
+# the spec's downstream grep / Prometheus scraping breaks — so fail loud.
+
+
+class TestPerStageLogCounters:
+    """NFM-3888 / NFM-3892: assert all six per-stage log counters fire
+    with the exact field names from the CTO spec.
+
+    AC-1 (spec table) is verified by ``caplog.records``; the format
+    strings in :mod:`literature_service` are the source of truth for
+    grep / Prometheus scraping, so we assert on the rendered message
+    rather than the placeholder order.
+    """
+
+    async def test_all_six_stage_logs_emit_with_spec_field_names(
+        self,
+        db_session: AsyncSession,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+        # Stage 6 (bridge) only fires as ``bridged %d rows`` when
+        # corpus_id resolves from metadata_ or doi. Seed metadata_ so
+        # the ``bridged`` log path is exercised, not the
+        # ``no corpus_id, KG→staging bridge skipped`` fallback.
+        ds.metadata_ = {"corpus_id": "test-corpus"}
+        await db_session.flush()
+
+        # --- Mocks -------------------------------------------------
+        # BuildResult shape (see kg_re.BuildResult) so the
+        # ``nodes_created=`` / ``nodes_matched=`` / ``edges_created=`` /
+        # ``review_queue=`` counter log renders cleanly.
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+        mock_node.label = "UO2"
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 2
+        mock_build_result.edges_created = 3
+        mock_build_result.review_queue_items = 4
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        # MappingResult shape (see extraction_to_db_mapper.MappingResult)
+        # so the eight-field ``mapped`` log renders with the new
+        # ``skipped_unknown=`` and ``validation_errors=`` fields.
+        mock_mapping = MagicMock()
+        mock_mapping.created_sources = 1
+        mock_mapping.created_materials = 2
+        mock_mapping.created_datasets = 3
+        mock_mapping.created_measurements = 4
+        mock_mapping.reused_entities = 5
+        mock_mapping.skipped_duplicate_measurements = 6
+        mock_mapping.skipped_unknown_properties = 7
+        mock_mapping.validation_errors = 8
+
+        with (
+            caplog.at_level(logging.INFO, logger="nfm_db.services.literature_service"),
+            patch.object(lit_svc, "_parse_pdf_to_markdown"),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.heuristic_extractor.heuristic_extract",
+                # Return one item so the dedup-merge + post_process
+                # branches execute and emit Stage 2 + Stage 3.
+                new=MagicMock(return_value=[_make_demo_extraction()[0]]),
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline._post_process_extracted",
+                new=MagicMock(side_effect=lambda items, **_kw: items),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=mock_mapping),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=mock_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=9),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge._slugify",
+                new=MagicMock(return_value="corpus-slug"),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed", (
+            f"process_literature failed early; caplog:\n{caplog.text}"
+        )
+
+        # Filter to records produced by process_literature so unrelated
+        # INFO records (e.g. health-event emitter) do not skew the
+        # field-name assertions.
+        plog_records = [
+            r for r in caplog.records
+            if r.name == "nfm_db.services.literature_service"
+            and "process_literature:" in r.getMessage()
+            and f"datasource_id={ds.id}" in r.getMessage()
+        ]
+        text = "\n".join(r.getMessage() for r in plog_records)
+
+        # ---- Stage 1: heuristic_extract -----------------------------
+        assert "heuristic_extract returned 1 items" in text, (
+            f"Stage 1 log missing or wrong count:\n{text}"
+        )
+
+        # ---- Stage 2: raw_properties after merge --------------------
+        assert "raw_properties after merge:" in text, (
+            f"Stage 2 log missing:\n{text}"
+        )
+        assert "heuristic added 1" in text, (
+            f"Stage 2 missing 'heuristic added' field:\n{text}"
+        )
+
+        # ---- Stage 3: raw_properties after _post_process_extracted --
+        assert "raw_properties after _post_process_extracted:" in text, (
+            f"Stage 3 log missing:\n{text}"
+        )
+        assert "delta=0" in text, (
+            f"Stage 3 missing 'delta=0' field (post-process is a no-op "
+            f"identity in the mock):\n{text}"
+        )
+
+        # ---- Stage 4: mapped (8-field format) ------------------------
+        mapping_line = next(
+            (r.getMessage() for r in plog_records if " mapped " in r.getMessage()),
+            None,
+        )
+        assert mapping_line is not None, f"Stage 4 mapping log missing:\n{text}"
+        for field in (
+            "sources=1",
+            "materials=2",
+            "datasets=3",
+            "measurements=4",
+            "reused=5",
+            "dedup_meas=6",
+            "skipped_unknown=7",
+            "validation_errors=8",
+        ):
+            assert field in mapping_line, (
+                f"Stage 4 missing {field!r} field:\n{mapping_line}"
+            )
+
+        # ---- Stage 5: graph built (4-field format) -------------------
+        graph_line = next(
+            (r.getMessage() for r in plog_records if " graph built: " in r.getMessage()),
+            None,
+        )
+        assert graph_line is not None, f"Stage 5 graph log missing:\n{text}"
+        for field in (
+            "nodes_created=1",
+            "nodes_matched=2",
+            "edges_created=3",
+            "review_queue=4",
+        ):
+            assert field in graph_line, (
+                f"Stage 5 missing {field!r} field:\n{graph_line}"
+            )
+
+        # ---- Stage 6: bridge (3-field format) ------------------------
+        bridge_line = next(
+            (r.getMessage() for r in plog_records if " bridged " in r.getMessage()),
+            None,
+        )
+        assert bridge_line is not None, f"Stage 6 bridge log missing:\n{text}"
+        assert "9 rows to _ref_gap_fill_staging" in bridge_line, (
+            f"Stage 6 missing 'rows to _ref_gap_fill_staging' phrase:\n{bridge_line}"
+        )
+        # corpus_id came from ``metadata_.corpus_id`` (seeded above);
+        # the spec only pins the field name ``corpus=%s``, not the value.
+        assert "corpus=" in bridge_line, (
+            f"Stage 6 missing 'corpus=' field:\n{bridge_line}"
+        )
+
+        # ---- AC-1 sanity: every spec marker is present at least once
+        for stage, marker in [
+            ("Stage 1", "heuristic_extract returned"),
+            ("Stage 2", "raw_properties after merge:"),
+            ("Stage 3", "raw_properties after _post_process_extracted:"),
+            ("Stage 4", " mapped "),
+            ("Stage 5", " graph built: "),
+            ("Stage 6", " bridged "),
+        ]:
+            assert any(marker in r.getMessage() for r in plog_records), (
+                f"{stage} marker {marker!r} not found in:\n{text}"
             )
