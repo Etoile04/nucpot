@@ -195,22 +195,22 @@ class PropertyMeasurement(TimestampMixin, Base):
         index=True,
     )
     value_scalar: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 10),
         nullable=True,
     )
     value_min: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 10),
         nullable=True,
     )
     value_max: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 10),
         nullable=True,
     )
     value_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     value_list: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 10),
         nullable=True,
     )
     unit_id: Mapped[uuid.UUID | None] = mapped_column(
