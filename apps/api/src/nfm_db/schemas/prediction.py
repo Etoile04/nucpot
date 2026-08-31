@@ -3,9 +3,19 @@
 Input: 8 physical features computed from composition.
 Output: Phase classification, temperature prediction, or energy prediction
 with confidence scoring.
+
+NFM-3956 honesty contract (energy endpoint only):
+    ``EnergyPredictResponse.confidence`` may be ``None`` when the underlying
+    metric is not yet trustworthy (legacy pre-grouped-CV artifacts). The
+    ``confidence_source`` field exposes the provenance so UIs can render
+    source-aware disclaimers without parsing warning text. See
+    ``nfm_db.ml.prediction_service._compute_energy_confidence`` for the
+    full rule (NFM-3953 grouped-CV LOW bucket disclosure).
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -127,8 +137,7 @@ class CompositionPredictRequest(BaseModel):
     composition: dict[str, float] = Field(
         ...,
         description=(
-            "Element name to atomic fraction mapping. "
-            'Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
+            'Element name to atomic fraction mapping. Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
         ),
     )
 
@@ -262,17 +271,51 @@ class EnergyPredictRequest(PredictionFeatures):
 
 
 class EnergyPredictResponse(BaseModel):
-    """Response body for formation energy prediction."""
+    """Response body for formation energy prediction.
+
+    NFM-3956 honesty contract:
+        - ``confidence`` is the protocol-correct generalization estimate.
+          For an [EXPLORATORY] EnergyPredictor v3.0 artifact (NFM-3953
+          grouped-CV LOW bucket), this is the grouped-CV mean R^2 (not the
+          inflated random-split headline).
+        - ``confidence`` is ``None`` when the artifact predates NFM-3953
+          and has no grouped-CV re-evaluation. The raw random-split R^2 is
+          surfaced in the ``warnings`` array (code
+          ``energy_model_pre_grouped_cv``) so UIs can render the at-risk
+          figure with a clear disclaimer instead of as a primary claim.
+        - ``confidence_source`` exposes the provenance so downstream UIs
+          can render source-aware disclaimers without parsing warning
+          text. Values:
+              * ``"grouped_cv_r2_mean"`` — NFM-3953 honest figure
+              * ``"random_split_r2"`` — pre-NFM-3953 figure (legacy)
+              * ``"v10_or_v11_unevaluated"`` — v1.0/v1.1 paths that
+                haven't been re-evaluated under grouped-CV (out of
+                NFM-3956 scope)
+    """
 
     predicted_energy: float = Field(
         ...,
         description="Predicted formation energy (eV/atom)",
     )
-    confidence: float = Field(
-        ...,
+    confidence: float | None = Field(
+        default=None,
         ge=0,
         le=1,
-        description="Prediction confidence score",
+        description=(
+            "Prediction confidence score in [0, 1]. Null when the underlying "
+            "metric is not yet trustworthy (legacy pre-grouped-CV artifacts); "
+            "see warnings + confidence_source. NFM-3956."
+        ),
+    )
+    confidence_source: Literal[
+        "grouped_cv_r2_mean", "random_split_r2", "v10_or_v11_unevaluated"
+    ] = Field(
+        ...,
+        description=(
+            "Provenance of the confidence figure. Lets UIs render "
+            "source-aware disclaimers without parsing warning text. "
+            "NFM-3956."
+        ),
     )
     warnings: list[PredictionWarningItem] = Field(
         default_factory=list,

@@ -4,16 +4,40 @@ Provides lazy-loaded model instances and inference functions for:
 - Phase classification (RF+XGB VotingClassifier) with confidence scoring
 - Temperature prediction (GPR+SVR ensemble) with confidence scoring
 - Energy prediction (formation energy) with confidence scoring
-- EnergyPredictor: v3.0 (default, R²=0.9858), v1.1, v1.0.
+- EnergyPredictor: v3.0 (default — see confidence disclosure below), v1.1, v1.0.
   predict_energy() dispatches by ``model_version`` so legacy callers
   don't regress (backward compat).
+
+Confidence disclosure for EnergyPredictor v3.0 (NFM-3956 — LE handoff from
+NFM-3953 grouped-CV confirmatory run):
+  EnergyPredictor v3.0 is labeled **[EXPLORATORY]** on this branch. The
+  random 80/20 hold-out headline (``metrics.r2``) and the random
+  ``KFold(shuffle=True)`` CV figure (``metrics.cv_r2``) were both
+  materially optimistic because element-system near-neighbour compositions
+  leak across splits. The GroupKFold(n_splits=5)-by-element-system
+  re-evaluation (NFM-3953, locked protocol = same as PhaseClassifier v2.0)
+  produced R^2 = 0.3111 +/- 0.4777 (LOW bucket). Per-fold spread includes
+  a negative-R^2 fold (fold 3: R^2 = -0.5652).
+
+  When the artifact (or sidecar JSON) carries ``rd2_label == "[EXPLORATORY]"``
+  and ``grouped_cv_summary.r2_mean``, this module reports the **grouped-CV
+  mean** as ``confidence`` and emits a ``energy_model_exploratory``
+  warning. When those fields are absent (legacy artifact), the module
+  falls back to the random-split ``r2`` field — caller must interpret
+  such artifacts as pre-NFM-3953 and therefore at risk of the same
+  optimism.
+
+  See ``models/energy_predictor_v3.0_metrics.json`` for the full
+  grouped-CV summary and per-fold breakdown.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -241,12 +265,18 @@ def predict_phase(features: dict[str, float]) -> dict | None:
     ``model.classes_`` at inference time to build the correct probability
     mapping rather than assuming a fixed number of cluster types.
 
+    Per NFM-3954 (NDE ruling): every prediction response must carry the
+    per-class recall the model was validated against, alongside the headline
+    probability. Hiding per-class recall is what allowed the original
+    accuracy-based KR-ML-1 acceptance bar to drift in the first place.
+
     Args:
         features: Dictionary of 8 physical feature values.
 
     Returns:
         Dictionary with keys: predicted_phase, predicted_phase_label,
-        probabilities, confidence, warnings, model_version.
+        probabilities, confidence, warnings, model_version,
+        per_class_recall, acceptance_criterion.
         Returns None if model unavailable.
     """
     model = _load_phase_classifier()
@@ -291,19 +321,110 @@ def predict_phase(features: dict[str, float]) -> dict | None:
         proba_values = [float(proba[i]) for i in range(n_classes)]
         confidence = confidence_from_probability(proba_values)
 
+        per_class_recall = _phase_per_class_recall()
+        acceptance_criterion = _phase_acceptance_criterion()
+
         return {
             "predicted_phase": predicted_label,
-            "predicted_phase_label": phase_labels.get(
-                predicted_label, predicted_label
-            ),
+            "predicted_phase_label": phase_labels.get(predicted_label, predicted_label),
             "probabilities": probabilities,
             "confidence": confidence.score,
             "warnings": warnings_to_dicts(confidence.warnings),
             "model_version": PHASE_CLASSIFIER_VERSION,
+            "per_class_recall": per_class_recall,
+            "acceptance_criterion": acceptance_criterion,
         }
     except Exception:
         logger.exception("Phase prediction failed")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Phase-classifier model card surface (NFM-3954)
+# ---------------------------------------------------------------------------
+
+_PHASE_METRICS_CACHE: dict | None = None
+
+
+def _phase_metrics_path() -> Path:
+    """Locate the v2.0 metrics JSON sibling to the phase classifier joblib."""
+    model_path = os.environ.get("PHASE_CLASSIFIER_PATH", str(PHASE_MODEL_PATH))
+    return Path(model_path).with_name("phase_classifier_v2.0_metrics.json")
+
+
+def _load_phase_metrics() -> dict | None:
+    """Read the v2.0 metrics JSON once per process; return None if missing."""
+    global _PHASE_METRICS_CACHE
+    if _PHASE_METRICS_CACHE is not None:
+        return _PHASE_METRICS_CACHE
+    metrics_path = _phase_metrics_path()
+    if not metrics_path.is_file():
+        logger.warning(
+            "Phase classifier metrics JSON not found at %s; "
+            "per_class_recall will be omitted from predictions",
+            metrics_path,
+        )
+        _PHASE_METRICS_CACHE = {}
+        return None
+    try:
+        with metrics_path.open("r", encoding="utf-8") as source:
+            _PHASE_METRICS_CACHE = json.load(source)
+    except (OSError, ValueError):
+        logger.exception("Failed to read phase classifier metrics at %s", metrics_path)
+        _PHASE_METRICS_CACHE = {}
+        return None
+    return _PHASE_METRICS_CACHE
+
+
+def _phase_per_class_recall() -> dict[str, float] | None:
+    """Per-class recall (H, M) from the model card; None if unavailable.
+
+    Returned alongside every prediction per NFM-3954 NDE ruling.
+    """
+    metrics = _load_phase_metrics()
+    if not metrics:
+        return None
+    recall = metrics.get("per_class_recall_overall")
+    if not isinstance(recall, dict):
+        return None
+    out: dict[str, float] = {}
+    for label in ("H", "M"):
+        value = recall.get(label)
+        if isinstance(value, (int, float)):
+            out[label] = float(value)
+    return out or None
+
+
+def _phase_acceptance_criterion() -> dict[str, Any] | None:
+    """Trimmed acceptance-criterion metadata for the active Sprint bar.
+
+    The model card carries the full table; only the active Sprint row plus
+    primary/secondary metric names is exposed on every prediction to keep the
+    response envelope small.
+    """
+    metrics = _load_phase_metrics()
+    if not metrics:
+        return None
+    criteria = metrics.get("acceptance_criteria")
+    if not isinstance(criteria, dict):
+        return None
+    active: dict[str, Any] | None = None
+    for bar in criteria.get("sprint_bars", []):
+        if isinstance(bar, dict) and bar.get("sprint", "").startswith("Sprint 4"):
+            active = bar
+            break
+    if active is None:
+        return None
+    return {
+        "primary_metric": criteria.get("primary_metric"),
+        "secondary_metric": criteria.get("secondary_metric"),
+        "sprint": active.get("sprint"),
+        "macro_f1_min": active.get("macro_f1_min"),
+        "M_recall_min": active.get("M_recall_min"),
+        "model_macro_f1": active.get("model_macro_f1"),
+        "model_M_recall": active.get("model_M_recall"),
+        "verdict": active.get("verdict"),
+    }
 
 
 def predict_temperature(features: dict[str, float]) -> dict | None:
@@ -483,6 +604,12 @@ def _predict_energy_v11(features: dict[str, float]) -> dict | None:
         return {
             "predicted_energy": round(predicted, 6),
             "confidence": round(confidence, 4),
+            # v1.1 has not been re-evaluated under grouped-CV; it is out of
+            # NFM-3956 scope. The honest provenance label is
+            # ``v10_or_v11_unevaluated`` so UIs know to render the v1.1
+            # figure with a "not grouped-CV validated" disclaimer rather
+            # than treating it as the NFM-3953 LOW bucket figure.
+            "confidence_source": "v10_or_v11_unevaluated",
             "model_version": raw.get("version", "v1.1") if isinstance(raw, dict) else "v1.1",
             "warnings": [],
         }
@@ -501,7 +628,9 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
     Expected artifact: ``models/energy_predictor_v10.joblib`` (joblib dict
     with keys ``model``, ``version``, ``metrics``, ``feature_names``).
     """
-    v10_path = Path(os.environ.get("ENERGY_PREDICTOR_V10_PATH", str(MODELS_DIR / ENERGY_MODEL_V10_FILENAME)))
+    v10_path = Path(
+        os.environ.get("ENERGY_PREDICTOR_V10_PATH", str(MODELS_DIR / ENERGY_MODEL_V10_FILENAME))
+    )
     if not v10_path.exists():
         logger.warning(
             "v1.0 energy model not found at %s; v1.0 callers must deploy v1.0 artifact or accept None",
@@ -534,6 +663,9 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         return {
             "predicted_energy": round(predicted, 6),
             "confidence": round(confidence, 4),
+            # v1.0 has not been re-evaluated under grouped-CV; it is out of
+            # NFM-3956 scope. See v1.1 comment for the rationale.
+            "confidence_source": "v10_or_v11_unevaluated",
             "model_version": raw.get("version", "v1.0") if isinstance(raw, dict) else "v1.0",
             "warnings": [],
         }
@@ -542,12 +674,103 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         return None
 
 
+def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[dict]]:
+    """Compute the honest confidence score for an EnergyPredictor artifact.
+
+    Implements the NFM-3956 LE handoff from NFM-3953 grouped-CV LOW bucket:
+    when an artifact is labeled ``[EXPLORATORY]`` and carries a
+    ``grouped_cv_summary`` block, the reported confidence is the
+    grouped-CV mean R^2 (the protocol-correct generalization estimate),
+    not the random-split ``metrics.r2`` headline. A warning is emitted so
+    callers and downstream UIs can surface the disclaimer instead of
+    advertising the inflated random-split number.
+
+    NFM-3956 E2E QA update (round 2):
+        The legacy fallback path (pre-NFM-3953 artifact) now returns
+        ``confidence=None`` rather than the random-split figure. The raw
+        R^2 is surfaced in the warning message so UIs can render the
+        at-risk figure with a clear disclaimer instead of as a primary
+        claim in the response ``confidence`` field. The schema
+        ``EnergyPredictResponse.confidence`` accepts ``None`` for this
+        reason.
+
+    Args:
+        metrics: ``metrics`` dict from the model artifact. May contain:
+            - ``r2``: random 80/20 hold-out R^2 (legacy headline)
+            - ``cv_r2``: random ``KFold(shuffle=True)`` CV R^2
+            - ``rd2_label``: ``"[EXPLORATORY]"`` once NFM-3953 is applied
+            - ``grouped_cv_summary``: dict with ``r2_mean``, ``r2_std``,
+              ``decision_bucket`` (LOW/MID/HIGH)
+
+    Returns:
+        Tuple of:
+            - ``confidence``: clamped to [0, 1]; ``None`` for legacy
+              artifacts (no trustworthy figure available until retraining)
+            - ``confidence_source``: ``"grouped_cv_r2_mean"`` (preferred)
+              or ``"random_split_r2"`` (legacy fallback)
+            - ``warnings``: list of ``{code, message}`` dicts; empty when
+              the artifact is post-NFM-3953 with no [EXPLORATORY] label
+    """
+    r2_random = float(metrics.get("r2", 0.0) or 0.0)
+    grouped_cv = metrics.get("grouped_cv_summary") or {}
+    is_exploratory = metrics.get("rd2_label") == "[EXPLORATORY]"
+
+    if is_exploratory and "r2_mean" in grouped_cv:
+        r2_mean_raw = float(grouped_cv["r2_mean"])
+        r2_std = float(grouped_cv.get("r2_std", 0.0) or 0.0)
+        bucket = grouped_cv.get("decision_bucket", "low")
+        confidence = max(0.0, min(r2_mean_raw, 1.0))
+        warning_msg = (
+            f"EnergyPredictor v3.0 is labeled [EXPLORATORY] per NFM-3953. "
+            f"Grouped-CV R^2 = {r2_mean_raw:.4f} +/- {r2_std:.4f} "
+            f"(bucket: {bucket}). The random-split headline R^2 = "
+            f"{r2_random:.4f} was materially optimistic; reported "
+            f"confidence is from the grouped-CV figure. See "
+            f"energy_predictor_v3.0_groupedcv_metrics.json for per-fold "
+            f"breakdown."
+        )
+        warnings: list[dict] = [
+            {
+                "code": "energy_model_exploratory",
+                "message": warning_msg,
+            }
+        ]
+        return round(confidence, 4), "grouped_cv_r2_mean", warnings
+
+    # Legacy artifact: no grouped-CV summary, no [EXPLORATORY] label.
+    # Return ``confidence=None`` so the response does NOT advertise the
+    # random-split headline as the user-facing confidence score. The raw
+    # R^2 figure is surfaced in the warning message so UIs can render it
+    # with a clear "at-risk" disclaimer instead of as a primary claim.
+    # NFM-3956 round 2: this is the fix for E2E QA Finding #2 (AC text
+    # "user-facing surfaces must not advertise R^2 = 0.9858").
+    warnings = [
+        {
+            "code": "energy_model_pre_grouped_cv",
+            "message": (
+                "EnergyPredictor artifact predates the NFM-3953 grouped-CV "
+                "re-evaluation; the random-split R^2 = "
+                f"{r2_random:.4f} may be materially optimistic. "
+                "Confidence is reported as null until the artifact is "
+                "re-trained to embed grouped_cv_summary and rd2_label."
+            ),
+        }
+    ]
+    return None, "random_split_r2", warnings
+
+
 def _predict_energy_v30(features: dict[str, float]) -> dict | None:
     """Run the v3.0 EnergyPredictor trained on 2,909 PBE DFT compositions.
 
     Returns None when the v3.0 artifact is unavailable. Uses the same 20D
     feature schema as v1.1 (ENERGY_V11_FEATURE_NAMES); the improvement comes
     from the larger training set, not from feature engineering changes.
+
+    Confidence reporting follows the NFM-3956 disclosure contract: when the
+    artifact is labeled ``[EXPLORATORY]`` (NFM-3953 LOW bucket), the
+    response carries the grouped-CV mean R^2 as ``confidence`` and a
+    ``energy_model_exploratory`` warning. See module docstring + the
+    ``_compute_energy_confidence`` helper for the full rule.
 
     Expected artifact: ``models/energy_predictor_v30.joblib`` (joblib dict
     with keys ``model``, ``version``, ``metrics``, ``feature_names``).
@@ -576,13 +799,13 @@ def _predict_energy_v30(features: dict[str, float]) -> dict | None:
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         predicted = float(model.predict(X)[0])
         metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
-        r2 = metrics.get("r2", 0.0)
-        confidence = max(0.0, min(float(r2), 1.0))
+        confidence, confidence_source, warnings = _compute_energy_confidence(metrics)
         return {
             "predicted_energy": round(predicted, 6),
-            "confidence": round(confidence, 4),
+            "confidence": confidence,
+            "confidence_source": confidence_source,
             "model_version": raw.get("version", "v3.0") if isinstance(raw, dict) else "v3.0",
-            "warnings": [],
+            "warnings": warnings,
         }
     except Exception:
         logger.exception("v3.0 energy prediction failed")
@@ -603,8 +826,11 @@ def predict_energy(
             ``'v1.0'`` uses the original 8D Miedema baseline.
 
     Returns:
-        Dict with ``predicted_energy``, ``confidence``, ``model_version``,
-        ``warnings``. ``None`` if the requested artifact is unavailable.
+        Dict with ``predicted_energy``, ``confidence`` (may be ``None``
+        for legacy pre-NFM-3953 v3.0 artifacts), ``confidence_source``
+        (``"grouped_cv_r2_mean"`` | ``"random_split_r2"`` |
+        ``"v10_or_v11_unevaluated"``), ``model_version``, ``warnings``.
+        ``None`` if the requested artifact is unavailable.
     """
     effective = model_version or ENERGY_PREDICTOR_VERSION
     if effective == "v3.0":
@@ -629,11 +855,13 @@ def predict_energy_from_composition(
     effective = model_version or ENERGY_PREDICTOR_VERSION
     if effective == "v10" or effective == "v1.0":
         from nfm_db.ml.feature_engineering import compute_ml_features
+
         v10_features = compute_ml_features(composition)
         return predict_energy(v10_features, model_version="v1.0")
     # v3.0 (default) and v1.1 share the 20D feature computation.
     # Compute features once, then dispatch through predict_energy()
     # which routes to the correct model artifact.
     from nfm_db.ml.energy_features_v11 import compute_energy_features_v11
+
     features = compute_energy_features_v11(composition)
     return predict_energy(features, model_version=effective)

@@ -23,7 +23,19 @@ TEMP_PREDICTOR_VERSION: str = "v1.0"
 
 # EnergyPredictor (NFM-2201): v3.0 — same 20D features, 2,909 unique PBE
 # compositions from NFM-1540 PathB (vs. v1.1's 855 unique).
-# AC: R² ≥ 0.90 on 80/20 hold-out. Achieved R²=0.9858.
+#
+# NFM-3956 (LE handoff from NFM-3953 grouped-CV confirmatory run):
+#   v3.0 is labeled [EXPLORATORY]. The random 80/20 hold-out R^2 = 0.9858
+#   and the random KFold CV R^2 = 0.9678 were both materially optimistic
+#   because element-system near-neighbour compositions leak across splits.
+#   The protocol-correct GroupKFold(n_splits=5) re-evaluation (same as
+#   PhaseClassifier v2.0) produced R^2 = 0.3111 +/- 0.4777 (LOW bucket).
+#   The prediction endpoint must NOT advertise R^2 = 0.9858. When the
+#   artifact embeds ``rd2_label == "[EXPLORATORY]"`` and a
+#   ``grouped_cv_summary`` block, prediction_service._compute_energy_confidence
+#   reports the grouped-CV mean and emits ``energy_model_exploratory``.
+#   See apps/api/models/energy_predictor_v3.0_groupedcv_metrics.json for the
+#   full per-fold breakdown.
 ENERGY_PREDICTOR_VERSION: str = "v3.0"
 
 
