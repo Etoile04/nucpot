@@ -134,5 +134,20 @@
     "seed": 42,
     "delta_vs_incumbent_random_kfold_cv_r2": -0.6567,
     "preregistration": "NFM-3953 PREREG-APPROVED 2026-08-31T22:13Z"
+  },
+  "rd3_verdict": {
+    "decided_by": "NDE (fe09f6ec-1998-46a0-96af-f0b26e79abdf)",
+    "decision_at": "2026-09-01T00:00:00Z",
+    "verdict": "salvage",
+    "rationale": "Root cause is a generalization gap (inter-element-system extrapolation at R^2=0.3111+/-0.4777 vs in-distribution R^2=0.9858), not leakage or training-bug. Top two pairwise features (dg_en_radius_distance 0.3635, max_pair_en_diff 0.1798) carry 54% of impurity gain and act as element-system fingerprints that do not transfer to held-out element systems. Pairwise features are non-degenerate across all 2,909 samples (U is in the lookups), so the binary-degeneracy hypothesis is ruled out.",
+    "chosen_path": "Option D + Option A (in parallel)",
+    "immediate_action": "Option D: surrogate /api/v1/predict/energy response confidence with grouped R^2 (0.31) and surface an EXPLORATORY warning instead of the in-distribution 0.9858.",
+    "follow_up": "Option A: open NFM-3957 child for energy_predictor_v3.1 aggregates-only retrain (12D, drop pairwise stratum); only ship when its confirmatory grouped-CV R^2 >= 0.80.",
+    "rejected_options": [
+      "Option B (per-element-system specialist models): rejected for v3.x cycle; complicates cold-start story for novel element systems; revisit only if Option A tops out below 0.85 grouped R^2.",
+      "Option C (full revert to v1.1): held; v3.1 retrain is cheap enough that it should be evaluated before we revert the version constant."
+    ],
+    "artifact": "docs/analysis/2026-09-01-nfm3955-rd3-energypredictor-groupedcv-rootcause.md",
+    "next_ticket": "NFM-3957"
   }
 }
