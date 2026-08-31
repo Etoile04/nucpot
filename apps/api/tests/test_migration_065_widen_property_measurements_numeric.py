@@ -17,22 +17,24 @@ What we test on SQLite
 ----------------------
 * ``TestRevisionMetadata`` — static checks on revision id, down_revision,
   and the migration's exported ``_TARGET_*`` constants.
-* ``TestDowngradeGuard`` — exercises the regex-based precision-loss
-  helper against a SQLite baseline that emulates the ``value_scalar::text
-  ~ '\\.[0-9]{11}'`` PG pattern via ``LIKE`` on the casted text.
+* ``TestDowngradeGuard`` — exercises the production predicate of
+  migration 065's downgrade guard, the SQL-portable LIKE form
+  ``CAST(col AS TEXT) LIKE '%.___________%'`` (CTO directive,
+  **NFM-3926**).  The LIKE form IS the production predicate — it runs
+  on PostgreSQL via ``sa.text()`` and is semantically equivalent to the
+  historical PG-regex form ``<col>::text ~ '\\.[0-9]{11}'`` for every
+  value ``NUMERIC(20, 15)`` storage can produce (15 fractional digits
+  rendered as a literal dot followed by 15 decimal digits).
 
 Cross-dialect note
 ------------------
-The 065 downgrade guard uses PG's ``::text ~ '\\\\.[0-9]{11}'`` regex
-form (per ADR-011 D4-065).  SQLite has no ``~`` operator, but its
-``LIKE`` does support the ``.[0-9][0-9]…`` pattern via the SQLite regex
-extension or via ``substr``/``instr``.  We re-implement the check in a
-SQL-portable way that runs on both backends: ``CAST(col AS TEXT) GLOB
-'*.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*'`` matches
-any text representation with at least 11 fractional digits.  On PG the
-production migration uses the equivalent regex ``~ '\\.[0-9]{11}'`` form
-which is portable through Alembic's ``sa.text()`` preparer.  Both forms
-flag the same rows.
+Because the production predicate is the LIKE form, it runs unchanged
+on both PostgreSQL (production) and SQLite (this regression suite) —
+no dialect branching, no separate PG-only test.  The SQLite baseline
+below exercises the same predicate expression against a value SQLite
+renders with 15 fractional digits in fixed-point form; the PG case for
+``1.27e-9 → 0.000000001270000`` is verified in CI against a disposable
+Postgres database (see ``TestDowngradeGuard`` parity log).
 """
 
 from __future__ import annotations
@@ -169,17 +171,21 @@ class TestRevisionMetadata:
 class TestDowngradeGuard:
     """The 065 downgrade guard must refuse to truncate to NUMERIC(20, 10)
     if any row has ≥11 fractional digits (e.g. ``1.27e-9`` rendered as
-    ``1.270000000000000``).
+    ``0.000000001270000`` at scale 15).
 
-    Per ADR-011 D4-065 the production form is::
+    Per ADR-011 D4-065 (CTO directive, **NFM-3926**) the production
+    predicate IS the SQL-portable LIKE form::
 
-        value_scalar::text ~ '\\.[0-9]{11}'
+        CAST(value_scalar AS TEXT) LIKE '%.___________%'
 
-    which is portable across PG versions and runs inside Alembic's
-    ``sa.text()`` preparer (no dots in the identifier portion to break).
-    The SQLite-emulated form below uses the same predicate via
-    ``CAST(value_scalar AS TEXT) LIKE '%.__________%'`` so we can run
-    the regression suite locally without a PG container.
+    which runs on PostgreSQL via Alembic's ``sa.text()`` preparer and
+    is equivalent to the historical PG-regex form
+    ``value_scalar::text ~ '\\.[0-9]{11}'`` for every value
+    ``NUMERIC(20, 15)`` storage can produce.  Because the production
+    predicate is the LIKE form, this regression suite exercises the
+    SAME predicate against a SQLite baseline (no separate PG-only
+    expression required) — the historical "SQLite emulates the PG
+    regex" framing is superseded.
     """
 
     def test_returns_zero_on_empty_table(

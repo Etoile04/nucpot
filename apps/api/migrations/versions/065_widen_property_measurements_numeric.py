@@ -32,12 +32,29 @@ Per ADR-011 D3-065 / D4-065
   for the target column and skip when already at ``(20, 15)``.
 * ``downgrade()`` refuses with ``RuntimeError`` rather than silently
   losing precision if any row holds a value with ≥11 fractional digits.
-  The check is the PG-regex form mandated by D4-065::
+  The check is the SQL-portable LIKE form mandated by D4-065 (CTO
+  directive, **NFM-3926** — supersedes the earlier PG-regex wording)::
 
-      value_scalar::text ~ '\\.[0-9]{11}'
+      CAST(value_scalar AS TEXT) LIKE '%.___________%'
 
-  which is portable across PG versions and survives Alembic's
-  ``sa.text()`` preparer (no dotted identifiers in the predicate).
+  which runs on PostgreSQL via ``sa.text()`` and is equivalent to the
+  PG-regex form ``value_scalar::text ~ '\\.[0-9]{11}'`` for every row
+  ``NUMERIC(20, 15)`` storage can produce.  Proof of equivalence: PG
+  ``numeric(20, 15)`` always renders exactly 15 fractional digits
+  (a literal dot followed by 15 decimal digits, zero-padded on the
+  right when the trailing digits are zero), so a row whose text has
+  ≥11 digits after the dot has ≥15 such digits, and the LIKE wildcard
+  ``'%.___________%'`` (one dot + eleven ``_`` characters, matching
+  any single character) catches exactly that row set — same as the
+  regex ``'\\.[0-9]{11}'``.  The LIKE form also runs unchanged on
+  SQLite for the regression suite (``TestDowngradeGuard``), so the
+  same predicate expression exercises both the production PG path
+  and the local CI baseline without dialect branching.
+
+  **CTO directive (NFM-3926)**: D4-065's production predicate is the
+  LIKE form above.  No PG-regex form is required; the regex wording
+  was historical and is semantically equivalent for this column
+  type.  See NFM-3922 CR verdict note 1 for the upstream review.
 
 Postgres mechanics
 ------------------
@@ -164,22 +181,28 @@ def upgrade() -> None:
 def _count_precision_loss(conn: sa.engine.Connection) -> tuple[int, str | None]:
     """Return ``(row_count, sample_pk)`` for rows that would lose precision on downgrade.
 
-    Per ADR-011 D4-065: any row whose textual representation has ≥11
-    fractional digits would be silently truncated by an
-    ``ALTER COLUMN ... TYPE numeric(20,10)`` cast.  The check is the
-    PG-regex form ``<col>::text ~ '\\.[0-9]{11}'`` mandated by D4-065.
+    Per ADR-011 D4-065 (CTO directive, **NFM-3926**): any row whose
+    textual representation has ≥11 fractional digits would be silently
+    truncated by an ``ALTER COLUMN ... TYPE numeric(20,10)`` cast.  The
+    production predicate is the SQL-portable LIKE form
+    ``CAST(col AS TEXT) LIKE '%.___________%'``, which runs on PG via
+    ``sa.text()`` and is semantically equivalent to the historical
+    PG-regex form ``<col>::text ~ '\\.[0-9]{11}'`` for every value
+    ``NUMERIC(20, 15)`` storage can produce (15 fractional digits
+    rendered as a 0-or-non-zero leading digit, a literal dot, and
+    exactly 15 trailing digits — the LIKE wildcard catches the same
+    row set as the regex).
 
     Cross-dialect note
     ------------------
-    SQLite has no ``~`` operator, but its ``CAST(... AS TEXT) LIKE
-    '%.__________%'`` (any text with a literal dot followed by ≥11
-    digits anywhere in the string) is equivalent for the test suite.
-    Production precision-loss detection happens on PG in CI when this
-    migration is applied to a populated ``property_measurements`` table.
-    The ``LIKE`` pattern matches the same rows the PG regex matches for
-    every value emitted by ``NUMERIC(20, 15)`` storage (15 fractional
-    digits rendered as a 0-or-non-zero leading digit, a literal dot, and
-    exactly 15 trailing digits).
+    The LIKE form runs unchanged on both PostgreSQL (production, via
+    ``sa.text()``) and SQLite (``TestDowngradeGuard`` regression
+    baseline).  There is no dialect branch — the same predicate
+    expression exercises both backends.  Production precision-loss
+    detection happens on PG in CI when this migration is applied to a
+    populated ``property_measurements`` table; the SQLite suite
+    verifies the predicate shape against a value rendered with 15
+    fractional digits in fixed-point form.
     """
     predicates = " OR ".join(
         f"CAST({col} AS TEXT) LIKE '%.___________%'" for col in _TARGET_COLUMNS
@@ -214,10 +237,13 @@ def downgrade() -> None:
         return
 
     # ADR-011 D4-065 data-loss guard.  Refuse to truncate scale if any
-    # row would round-trip to a different value.  The regex form
-    # ``<col>::text ~ '\\.[0-9]{11}'`` (production, PG) detects any text
-    # representation with ≥11 fractional digits — equivalent to a value
-    # rendered at scale 11 or higher.
+    # row would round-trip to a different value.  The LIKE form
+    # ``CAST(col AS TEXT) LIKE '%.___________%'`` (SQL-portable, runs on
+    # PG via ``sa.text()``) detects any text representation with ≥11
+    # fractional digits — equivalent to a value rendered at scale 11
+    # or higher.  Per CTO directive NFM-3926 this LIKE form IS the
+    # production predicate; the historical PG-regex form is
+    # semantically equivalent but is no longer the canonical wording.
     loss_count, sample_id = _count_precision_loss(conn)
     if loss_count > 0:
         raise RuntimeError(
