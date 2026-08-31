@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
 from nfm_db.models.ref_gap_fill import Confidence, RefGapFillStaging, StagingStatus
+from nfm_db.models.reference_value import ReferenceValue
 from nfm_db.schemas.ontology import CONTRACT_SCHEMA_VERSION
 
 BASE = "/api/v1/ontology"
@@ -24,7 +26,13 @@ async def _seed_staging_rows(
     corpus_id: str = "test-corpus",
     rows: list[dict] | None = None,
 ) -> list[RefGapFillStaging]:
-    """Seed RefGapFillStaging rows for ontology tests."""
+    """Seed RefGapFillStaging rows for ontology tests.
+
+    Per NFM-3872 (C-S1 read-path switch): ``derive_ontology_graph`` reads
+    from the formal ``reference_values`` table, not staging. This helper
+    mirrors each staging row into ``reference_values`` so integration
+    tests on the ``/graph`` endpoint keep working.
+    """
     defaults = [
         {
             "element_system": "UO2",
@@ -62,6 +70,32 @@ async def _seed_staging_rows(
     await db_session.flush()
     for row in staging_rows:
         await db_session.refresh(row)
+
+    # Mirror each staging row into the formal table so the read path
+    # (post-NFM-3872) sees them. Same pattern as ontology_seed.seed_corpus.
+    now = datetime.now(UTC)
+    for row in staging_rows:
+        db_session.add(
+            ReferenceValue(
+                staging_id=row.id,
+                element=row.element_system,
+                crystal_structure=row.phase,
+                property_name=row.property_name,
+                value=row.value,
+                unit=row.unit,
+                method=row.method,
+                source=row.source,
+                source_doi=row.source_doi,
+                uncertainty=row.uncertainty,
+                temperature=row.temperature,
+                notes="seeded for ontology integration test",
+                etl_issue="NFM-3872",
+                etl_manifest_ref="tests/api/v1/test_ontology.py",
+                etl_ok_reason="prescreen_pass",
+                promoted_at=now,
+            )
+        )
+    await db_session.flush()
     return staging_rows
 
 
