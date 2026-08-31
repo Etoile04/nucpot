@@ -287,7 +287,14 @@ class TestV30Integration:
         assert np.isfinite(predicted)
 
     def test_v30_prediction_service_returns_v30_version(self, v30_artifact: dict) -> None:
-        """predict_energy() returns model_version='v3.0' when using real artifact."""
+        """predict_energy() returns model_version='v3.0' when using real artifact.
+
+        NFM-3956 round 2: the on-disk v3.0 artifact predates the NFM-3953
+        grouped-CV re-evaluation, so ``confidence`` is ``None`` (legacy
+        fallback path) and ``confidence_source='random_split_r2'``. The
+        helper emits an ``energy_model_pre_grouped_cv`` warning carrying
+        the raw R^2 figure so UIs can render the at-risk disclaimer.
+        """
         from nfm_db.ml.prediction_service import _predict_energy_v30
 
         features = {name: 0.0 for name in v30_artifact["feature_names"]}
@@ -296,7 +303,12 @@ class TestV30Integration:
         assert result is not None
         assert result["model_version"] == "v3.0"
         assert "predicted_energy" in result
-        assert 0.0 <= result["confidence"] <= 1.0
+        # Legacy fallback returns None so the inflated headline is not
+        # advertised; the warning carries the raw figure.
+        assert result["confidence"] is None
+        assert result["confidence_source"] == "random_split_r2"
+        codes = [w["code"] for w in result["warnings"]]
+        assert "energy_model_pre_grouped_cv" in codes
 
     def test_v30_composition_prediction(self, v30_artifact: dict) -> None:
         """predict_energy_from_composition() routes through v3.0 model."""

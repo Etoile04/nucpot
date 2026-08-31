@@ -165,15 +165,24 @@ class TestComputeEnergyConfidenceExploratory:
 
 class TestComputeEnergyConfidenceLegacy:
     """When the artifact predates NFM-3953 (no grouped-CV summary, no
-    [EXPLORATORY] label), the helper must fall back to the random-split
-    figure AND emit a soft warning so callers know the figure is at risk.
+    [EXPLORATORY] label), the helper must NOT advertise the inflated
+    random-split headline as ``confidence``; it must return ``None`` and
+    emit a soft warning so callers know the figure is at risk.
+
+    NFM-3956 round 2: the previous design returned ``confidence=0.9858``
+    with a soft warning. E2E QA flagged this as advertising the headline
+    number, violating the AC text "user-facing surfaces must not advertise
+    R^2 = 0.9858". The fix: return ``confidence=None``; the raw R^2 is
+    surfaced only in the warning message.
     """
 
-    def test_legacy_falls_back_to_random_split(self, legacy_metrics: dict) -> None:
+    def test_legacy_returns_none_not_random_split(self, legacy_metrics: dict) -> None:
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         confidence, source, _warnings = _compute_energy_confidence(legacy_metrics)
-        assert confidence == pytest.approx(FORBIDDEN_HEADLINE_R2, abs=1e-4)
+        # NFM-3956 round 2 fix: confidence is None for legacy fallback so
+        # the response never advertises 0.9858 as the primary confidence.
+        assert confidence is None
         assert source == "random_split_r2"
 
     def test_legacy_emits_soft_warning(self, legacy_metrics: dict) -> None:
@@ -182,6 +191,21 @@ class TestComputeEnergyConfidenceLegacy:
         _confidence, _source, warnings = _compute_energy_confidence(legacy_metrics)
         codes = [w["code"] for w in warnings]
         assert "energy_model_pre_grouped_cv" in codes
+
+    def test_legacy_warning_message_carries_r2_random(self, legacy_metrics: dict) -> None:
+        """The raw R^2 figure must remain in the warning message so UIs
+        can render it with a clear "at-risk" disclaimer. This preserves
+        the information without advertising it as the response's primary
+        ``confidence`` value."""
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        _confidence, _source, warnings = _compute_energy_confidence(legacy_metrics)
+        assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
+        msg = next(w["message"] for w in warnings if w["code"] == "energy_model_pre_grouped_cv")
+        # The raw R^2 figure must appear in the warning so it isn't lost.
+        assert f"{FORBIDDEN_HEADLINE_R2:.4f}" in msg
+        # And the warning must frame it as at-risk, not as a headline claim.
+        assert "materially optimistic" in msg.lower() or "may be" in msg.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -192,20 +216,23 @@ class TestComputeEnergyConfidenceLegacy:
 class TestComputeEnergyConfidenceEdgeCases:
     """Boundary handling: missing fields, NaN, partial grouped-CV summary."""
 
-    def test_missing_r2_returns_zero_confidence(self) -> None:
+    def test_missing_r2_returns_none_confidence(self) -> None:
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         confidence, source, warnings = _compute_energy_confidence({})
-        assert confidence == 0.0
+        # NFM-3956 round 2 fix: legacy fallback returns None, not 0.0.
+        assert confidence is None
         assert source == "random_split_r2"
         # The helper still emits the legacy warning so callers know the
         # figure is unreliable.
         assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
 
-    def test_grouped_cv_summary_without_r2_mean_falls_back(self) -> None:
+    def test_grouped_cv_summary_without_r2_mean_falls_back_to_none(self) -> None:
         """An [EXPLORATORY] artifact whose grouped_cv_summary is missing
-        ``r2_mean`` must fall back to the random-split path (and warn),
-        rather than crashing."""
+        ``r2_mean`` must fall back to the legacy path (and warn), rather
+        than crashing. NFM-3956 round 2: legacy fallback returns
+        ``confidence=None`` so the inflated random-split headline is
+        never advertised."""
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         metrics = {
@@ -214,7 +241,7 @@ class TestComputeEnergyConfidenceEdgeCases:
             "grouped_cv_summary": {"splitter": "GroupKFold(n_splits=5)"},
         }
         confidence, source, warnings = _compute_energy_confidence(metrics)
-        assert confidence == pytest.approx(FORBIDDEN_HEADLINE_R2, abs=1e-4)
+        assert confidence is None
         assert source == "random_split_r2"
         assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
 
@@ -436,6 +463,7 @@ class TestLegacyVersionsUnaffectedByHonestyContract:
             mock_v11.return_value = {
                 "predicted_energy": -0.08,
                 "confidence": 0.83,
+                "confidence_source": "v10_or_v11_unevaluated",
                 "model_version": "v1.1",
                 "warnings": [],
             }
@@ -451,9 +479,163 @@ class TestLegacyVersionsUnaffectedByHonestyContract:
             mock_v10.return_value = {
                 "predicted_energy": -0.03,
                 "confidence": 0.82,
+                "confidence_source": "v10_or_v11_unevaluated",
                 "model_version": "v1.0",
                 "warnings": [],
             }
             result = predict_energy(features, model_version="v1.0")
             mock_v10.assert_called_once()
             assert result["model_version"] == "v1.0"
+
+
+# ---------------------------------------------------------------------------
+# 8. Endpoint propagation — confidence_source reaches the API boundary
+# ---------------------------------------------------------------------------
+
+
+class TestEndpointPropagatesConfidenceSource:
+    """NFM-3956 round 2 (E2E QA FAIL fix): the ``confidence_source`` field
+    must propagate from the helper through ``predict_energy_endpoint`` into
+    the JSON response body. The previous code path silently dropped it
+    because the Pydantic schema didn't define the field.
+
+    These tests stub the prediction service to avoid the ASGI lifespan
+    dependency on the v3.0 model artifact, then construct the response
+    object directly via ``EnergyPredictResponse`` and assert the schema
+    is what the wire format will serialize.
+    """
+
+    def test_exploratory_response_includes_confidence_source(self) -> None:
+        """An [EXPLORATORY] v3.0 response must include
+        ``confidence_source='grouped_cv_r2_mean'`` so UIs can render
+        source-aware disclaimers."""
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        response = EnergyPredictResponse(
+            predicted_energy=-0.123456,
+            confidence=0.3111,
+            confidence_source="grouped_cv_r2_mean",
+            warnings=[{"code": "energy_model_exploratory", "message": "..."}],
+            model_version="v3.0",
+        )
+        # Serialise through Pydantic to verify the wire format.
+        wire = response.model_dump()
+        assert wire["confidence"] == pytest.approx(0.3111, abs=1e-4)
+        assert wire["confidence_source"] == "grouped_cv_r2_mean"
+        assert wire["model_version"] == "v3.0"
+        assert wire["predicted_energy"] == pytest.approx(-0.123456, abs=1e-6)
+        assert len(wire["warnings"]) == 1
+        assert wire["warnings"][0]["code"] == "energy_model_exploratory"
+
+    def test_legacy_response_includes_none_confidence_and_warning(self) -> None:
+        """A pre-NFM-3953 (legacy) v3.0 response must include
+        ``confidence=None`` and a warning with the raw R^2 figure framed
+        as at-risk. The response must NOT advertise ``confidence=0.9858``
+        as the primary score (NFM-3956 AC text)."""
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        response = EnergyPredictResponse(
+            predicted_energy=-0.087654,
+            confidence=None,
+            confidence_source="random_split_r2",
+            warnings=[
+                {
+                    "code": "energy_model_pre_grouped_cv",
+                    "message": (
+                        "EnergyPredictor artifact predates the NFM-3953 "
+                        "grouped-CV re-evaluation; the random-split R^2 = "
+                        "0.9858 may be materially optimistic."
+                    ),
+                }
+            ],
+            model_version="v3.0",
+        )
+        wire = response.model_dump()
+        assert wire["confidence"] is None
+        assert wire["confidence_source"] == "random_split_r2"
+        # The raw R^2 figure may appear ONLY in the warning message,
+        # never as the response's primary ``confidence`` value.
+        assert wire["confidence"] != pytest.approx(FORBIDDEN_HEADLINE_R2, abs=1e-4)
+        # The warning surfaces the at-risk figure with the disclaimer.
+        assert "0.9858" in wire["warnings"][0]["message"]
+        assert "optimistic" in wire["warnings"][0]["message"].lower()
+
+    def test_v10_v11_response_uses_unevaluated_source_label(self) -> None:
+        """v1.0 / v1.1 responses carry ``confidence_source =
+        'v10_or_v11_unevaluated'`` so UIs know those figures haven't
+        been re-evaluated under grouped-CV (NFM-3956 scope boundary)."""
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        for version in ("v1.0", "v1.1"):
+            response = EnergyPredictResponse(
+                predicted_energy=-0.08,
+                confidence=0.83,
+                confidence_source="v10_or_v11_unevaluated",
+                warnings=[],
+                model_version=version,
+            )
+            wire = response.model_dump()
+            assert wire["confidence_source"] == "v10_or_v11_unevaluated"
+            assert wire["model_version"] == version
+
+    def test_schema_rejects_unknown_confidence_source(self) -> None:
+        """``confidence_source`` is a Literal in the schema; an unknown
+        value must be rejected at the API boundary so a typo in the
+        service layer fails loud rather than silently."""
+        from pydantic import ValidationError
+
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        with pytest.raises(ValidationError):
+            EnergyPredictResponse(
+                predicted_energy=-0.1,
+                confidence=0.5,
+                confidence_source="not_a_real_source",  # type: ignore[arg-type]
+                warnings=[],
+                model_version="v3.0",
+            )
+
+    def test_helper_to_response_full_schema_round_trip(self) -> None:
+        """Round-trip: helper output -> dict -> EnergyPredictResponse ->
+        wire dict. This is the contract the LE handoff promises for UIs."""
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        # Simulate the helper output that _predict_energy_v30 would build.
+        helper_output_exploratory = {
+            "predicted_energy": -0.123456,
+            "confidence": 0.3111,
+            "confidence_source": "grouped_cv_r2_mean",
+            "model_version": "v3.0",
+            "warnings": [
+                {
+                    "code": "energy_model_exploratory",
+                    "message": "...",
+                }
+            ],
+        }
+        response = EnergyPredictResponse(**helper_output_exploratory)
+        wire = response.model_dump()
+        assert set(wire.keys()) == {
+            "predicted_energy",
+            "confidence",
+            "confidence_source",
+            "warnings",
+            "model_version",
+        }
+
+        helper_output_legacy = {
+            "predicted_energy": -0.087654,
+            "confidence": None,
+            "confidence_source": "random_split_r2",
+            "model_version": "v3.0",
+            "warnings": [
+                {
+                    "code": "energy_model_pre_grouped_cv",
+                    "message": "...",
+                }
+            ],
+        }
+        response_legacy = EnergyPredictResponse(**helper_output_legacy)
+        wire_legacy = response_legacy.model_dump()
+        assert wire_legacy["confidence"] is None
+        assert wire_legacy["confidence_source"] == "random_split_r2"

@@ -604,6 +604,12 @@ def _predict_energy_v11(features: dict[str, float]) -> dict | None:
         return {
             "predicted_energy": round(predicted, 6),
             "confidence": round(confidence, 4),
+            # v1.1 has not been re-evaluated under grouped-CV; it is out of
+            # NFM-3956 scope. The honest provenance label is
+            # ``v10_or_v11_unevaluated`` so UIs know to render the v1.1
+            # figure with a "not grouped-CV validated" disclaimer rather
+            # than treating it as the NFM-3953 LOW bucket figure.
+            "confidence_source": "v10_or_v11_unevaluated",
             "model_version": raw.get("version", "v1.1") if isinstance(raw, dict) else "v1.1",
             "warnings": [],
         }
@@ -657,6 +663,9 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         return {
             "predicted_energy": round(predicted, 6),
             "confidence": round(confidence, 4),
+            # v1.0 has not been re-evaluated under grouped-CV; it is out of
+            # NFM-3956 scope. See v1.1 comment for the rationale.
+            "confidence_source": "v10_or_v11_unevaluated",
             "model_version": raw.get("version", "v1.0") if isinstance(raw, dict) else "v1.0",
             "warnings": [],
         }
@@ -665,7 +674,7 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         return None
 
 
-def _compute_energy_confidence(metrics: dict) -> tuple[float, str, list[dict]]:
+def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[dict]]:
     """Compute the honest confidence score for an EnergyPredictor artifact.
 
     Implements the NFM-3956 LE handoff from NFM-3953 grouped-CV LOW bucket:
@@ -675,6 +684,15 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float, str, list[dict]]:
     not the random-split ``metrics.r2`` headline. A warning is emitted so
     callers and downstream UIs can surface the disclaimer instead of
     advertising the inflated random-split number.
+
+    NFM-3956 E2E QA update (round 2):
+        The legacy fallback path (pre-NFM-3953 artifact) now returns
+        ``confidence=None`` rather than the random-split figure. The raw
+        R^2 is surfaced in the warning message so UIs can render the
+        at-risk figure with a clear disclaimer instead of as a primary
+        claim in the response ``confidence`` field. The schema
+        ``EnergyPredictResponse.confidence`` accepts ``None`` for this
+        reason.
 
     Args:
         metrics: ``metrics`` dict from the model artifact. May contain:
@@ -686,8 +704,8 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float, str, list[dict]]:
 
     Returns:
         Tuple of:
-            - ``confidence``: clamped to [0, 1]; the value the response
-              advertises
+            - ``confidence``: clamped to [0, 1]; ``None`` for legacy
+              artifacts (no trustworthy figure available until retraining)
             - ``confidence_source``: ``"grouped_cv_r2_mean"`` (preferred)
               or ``"random_split_r2"`` (legacy fallback)
             - ``warnings``: list of ``{code, message}`` dicts; empty when
@@ -720,9 +738,12 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float, str, list[dict]]:
         return round(confidence, 4), "grouped_cv_r2_mean", warnings
 
     # Legacy artifact: no grouped-CV summary, no [EXPLORATORY] label.
-    # Fall back to the random-split figure; emit a soft warning so the
-    # caller knows the figure is pre-NFM-3953 and at risk of optimism.
-    confidence = max(0.0, min(r2_random, 1.0))
+    # Return ``confidence=None`` so the response does NOT advertise the
+    # random-split headline as the user-facing confidence score. The raw
+    # R^2 figure is surfaced in the warning message so UIs can render it
+    # with a clear "at-risk" disclaimer instead of as a primary claim.
+    # NFM-3956 round 2: this is the fix for E2E QA Finding #2 (AC text
+    # "user-facing surfaces must not advertise R^2 = 0.9858").
     warnings = [
         {
             "code": "energy_model_pre_grouped_cv",
@@ -730,11 +751,12 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float, str, list[dict]]:
                 "EnergyPredictor artifact predates the NFM-3953 grouped-CV "
                 "re-evaluation; the random-split R^2 = "
                 f"{r2_random:.4f} may be materially optimistic. "
-                "Re-train to embed grouped_cv_summary and rd2_label."
+                "Confidence is reported as null until the artifact is "
+                "re-trained to embed grouped_cv_summary and rd2_label."
             ),
         }
     ]
-    return round(confidence, 4), "random_split_r2", warnings
+    return None, "random_split_r2", warnings
 
 
 def _predict_energy_v30(features: dict[str, float]) -> dict | None:
@@ -804,8 +826,11 @@ def predict_energy(
             ``'v1.0'`` uses the original 8D Miedema baseline.
 
     Returns:
-        Dict with ``predicted_energy``, ``confidence``, ``model_version``,
-        ``warnings``. ``None`` if the requested artifact is unavailable.
+        Dict with ``predicted_energy``, ``confidence`` (may be ``None``
+        for legacy pre-NFM-3953 v3.0 artifacts), ``confidence_source``
+        (``"grouped_cv_r2_mean"`` | ``"random_split_r2"`` |
+        ``"v10_or_v11_unevaluated"``), ``model_version``, ``warnings``.
+        ``None`` if the requested artifact is unavailable.
     """
     effective = model_version or ENERGY_PREDICTOR_VERSION
     if effective == "v3.0":
