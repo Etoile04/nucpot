@@ -18,13 +18,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
+from nfm_db.models.ref_gap_fill import Confidence, RefGapFillStaging, StagingStatus
 from nfm_db.services.kg_to_staging_bridge import (
     _PROPERTY_SLUGS,
     _canonical_element_system,
     _parse_numeric,
     _slugify,
     bridge_kg_to_staging,
+    confidence_from_property_measurement,
 )
 
 # --- pure helpers ----------------------------------------------------------
@@ -219,9 +220,10 @@ class _StubScalars:
         return list(self._items)
 
 
-def _dispatch_execute(db_session, nodes, edges):
+def _dispatch_execute(db_session, nodes, edges, pm_stubs=None):
     """Return an execute() shim: KG queries → stubs, others → real DB."""
     real_execute = db_session.execute
+    pm_items = list(pm_stubs) if pm_stubs is not None else None
 
     async def _execute(stmt, *a, **kw):
         sql = str(stmt).lower()
@@ -229,6 +231,8 @@ def _dispatch_execute(db_session, nodes, edges):
             return _StubResult(nodes)
         if "kg_edges" in sql:
             return _StubResult(edges)
+        if pm_items is not None and "property_measurements" in sql:
+            return _StubResult(pm_items)
         return await real_execute(stmt, *a, **kw)
 
     return _execute, real_execute
@@ -335,3 +339,370 @@ async def test_bridge_regenerates_rows_on_rerun(db_session, monkeypatch):
         )
     ).scalar_one()
     assert count == 4  # exactly one generation of rows, no accumulation
+
+
+# --- ADR-010 UNION tests: KG + PropertyMeasurement ------------------------
+# ADR-010 D1-D6 require the bridge to read BOTH kg_nodes and
+# property_measurements for the same source_uuid and collapse the two
+# surfaces on the (element_system, property_name, value, unit, method)
+# 5-tuple. Verification V1-V3 are unit-tested below.
+
+
+import logging  # noqa: E402
+import uuid as _uuid  # noqa: E402
+
+from nfm_db.models.material import Material  # noqa: E402
+from nfm_db.models.property import (  # noqa: E402
+    Dataset,
+    PropertyCategory,
+    PropertyType,
+)
+from nfm_db.models.source import DataSource  # noqa: E402
+from nfm_db.models.unit import Unit  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("review_status", "expected"),
+    [
+        ("approved", Confidence.HIGH),
+        ("pending", Confidence.MEDIUM),
+        ("rejected", Confidence.LOW),
+        ("", Confidence.MEDIUM),
+        ("unknown_status", Confidence.MEDIUM),
+        (None, Confidence.MEDIUM),
+    ],
+)
+def test_confidence_from_property_measurement(review_status, expected):
+    """ADR-010 D4: review_status → confidence mapping."""
+    assert confidence_from_property_measurement(review_status) == expected
+
+
+async def _seed_pm_environment(db_session, *, source_id, material_formula="U-Mo"):
+    """Seed Material/PropertyType/Unit/DataSource/Dataset needed by PM path.
+
+    Returns the (source, material, property_type, unit) tuple for tests that
+    want to reference the live ORM rows. These are inserted into the real
+    SQLite session via the test fixture's engine — SQLite DOES support PG's
+    uuid columns when stored as VARCHAR(36) via SQLAlchemy's PG dialect
+    coercion. Using the real DB keeps the SQL join path exercised (unlike
+    kg_nodes, which is mocked) so the property_measurements loop can be
+    tested against actual Dataset → PropertyMeasurement → Material joins.
+    """
+    # DataSource -- needs source_id == the source_uuid the bridge is asked to
+    # bridge.  Use string UUID because PG dialect enforces typing.
+    source_id_uuid = _uuid.UUID(source_id) if isinstance(source_id, str) else source_id
+    source = DataSource(id=source_id_uuid, title="ADR-010 fixture source", source_type="journal")
+    db_session.add(source)
+    await db_session.flush()
+
+    material = Material(
+        id=_uuid.uuid4(), name="U-Mo alloy", formula=material_formula, is_active=True
+    )
+    db_session.add(material)
+    await db_session.flush()
+
+    category = PropertyCategory(
+        id=_uuid.uuid4(),
+        name="mechanical",
+        slug="mechanical",
+        description=None,
+    )
+    db_session.add(category)
+    await db_session.flush()
+
+    property_type = PropertyType(
+        id=_uuid.uuid4(),
+        category_id=category.id,
+        name="bulk_modulus",
+        slug="bulk_modulus",
+        value_type="scalar",
+        description=None,
+    )
+    db_session.add(property_type)
+    await db_session.flush()
+
+    unit = Unit(
+        id=_uuid.uuid4(),
+        name="gigapascal",
+        symbol="GPa",
+        dimension="pressure",
+    )
+    db_session.add(unit)
+    await db_session.flush()
+
+    dataset = Dataset(
+        id=_uuid.uuid4(),
+        material_id=material.id,
+        source_id=source.id,
+        title="ADR-010 fixture dataset",
+        is_verified=False,
+    )
+    db_session.add(dataset)
+    await db_session.flush()
+
+    return source, material, property_type, unit, dataset
+
+
+def _pm_stub(
+    *,
+    pm_uuid=None,
+    dataset=None,
+    property_type=None,
+    unit=None,
+    value_scalar=None,
+    value_expression=None,
+    value_text=None,
+    method="",
+    review_status="pending",
+):
+    """Build a SimpleNamespace that mimics a PropertyMeasurement row with
+    loaded relationships (the bridge reads pm.dataset.material /
+    pm.property_type.name / pm.unit.symbol).
+    """
+    pm_uuid = pm_uuid or _uuid.uuid4()
+    # Provide either real ORM relationships (preferred) or stub attrs that
+    # carry the fields the bridge actually reads.  ``material`` is read off
+    # ``dataset.material``; the bridge canonicalizes its label via
+    # ``_canonical_element_system(_material_label(material))``.
+    material_obj = getattr(dataset, "material", None) if dataset is not None else None
+    pt_obj = (
+        type("PT", (), {"name": property_type.name, "id": property_type.id})()
+        if property_type is not None
+        else None
+    )
+    unit_obj = (
+        type("UnitNS", (), {"symbol": unit.symbol, "id": unit.id})() if unit is not None else None
+    )
+    dataset_obj = (
+        type("DS", (), {"material": material_obj, "id": dataset.id})()
+        if dataset is not None
+        else None
+    )
+    return SimpleNamespace(
+        id=pm_uuid,
+        dataset_id=dataset.id if dataset is not None else _uuid.uuid4(),
+        dataset=dataset_obj,
+        property_type_id=(property_type.id if property_type is not None else _uuid.uuid4()),
+        property_type=pt_obj,
+        unit_id=unit.id if unit is not None else _uuid.uuid4(),
+        unit=unit_obj,
+        value_scalar=value_scalar,
+        value_expression=value_expression,
+        value_text=value_text,
+        value_min=None,
+        value_max=None,
+        value_list=None,
+        uncertainty=None,
+        notes=None,
+        conditions=None,
+        conditions_hash=None,
+        method=method,
+        review_status=review_status,
+    )
+
+
+@pytest.mark.asyncio
+async def test_v1_kg_and_pm_collapse_on_5tuple_higher_confidence_wins(
+    db_session, monkeypatch, caplog
+):
+    """ADR-010 V1: same 5-tuple from kg_nodes AND property_measurements →
+    exactly one staging row; higher-confidence value wins; one structured
+    ``bridge.dedup.collapse`` log entry per collapse.
+    """
+    source_id = "00000000-0000-0000-0000-00000000000a"
+    source, material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+
+    # Property node carrying the same measurement at HIGH confidence (via
+    # KG confidence = 0.9 → _confidence_from_kg returns HIGH).  Also give
+    # the KG surface a `simulation_method` condition so the winner-overwrites
+    # semantic is observable: if kg_nodes wins, its method ("DFT") is the
+    # method on the staging row.
+    p_v1 = SimpleNamespace(
+        id="p_v1",
+        node_type="Property",
+        label="bulk_modulus",
+        properties={"unit": "GPa", "value": "100"},
+        confidence=0.9,
+    )
+    mat_v1 = SimpleNamespace(
+        id="mat_v1", node_type="Material", label="U-Mo", properties={}, confidence=0.9
+    )
+    c_method_v1 = SimpleNamespace(
+        id="c_method_v1",
+        node_type="Condition",
+        label="simulation_method=DFT",
+        properties={
+            "condition_key": "simulation_method",
+            "condition_value": "DFT",
+        },
+        confidence=0.7,
+    )
+    edges_v1 = [
+        SimpleNamespace(
+            source_node_id=mat_v1.id, target_node_id=p_v1.id, relation_type="hasProperty"
+        ),
+        SimpleNamespace(
+            source_node_id=p_v1.id,
+            target_node_id=c_method_v1.id,
+            relation_type="hasCondition",
+        ),
+    ]
+    pm = _pm_stub(
+        dataset=dataset,
+        property_type=property_type,
+        unit=unit,
+        value_scalar=100.0,
+        method="ADP",
+        review_status="pending",
+    )
+
+    execute, real_execute = _dispatch_execute(
+        db_session,
+        [mat_v1, p_v1, c_method_v1],
+        edges_v1,
+        pm_stubs=[pm],
+    )
+    monkeypatch.setattr(db_session, "execute", execute)
+
+    caplog.set_level(logging.INFO, logger="nfm_db.services.kg_to_staging_bridge")
+    written = await bridge_kg_to_staging(
+        db_session, source_id=source_id, corpus_id="ADR010V1", source_doi="10.0000/v1"
+    )
+    await db_session.flush()
+
+    from sqlalchemy import select as _select
+
+    rows = (
+        (
+            await real_execute(
+                _select(RefGapFillStaging).where(RefGapFillStaging.source == "ADR010V1")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert written == 1, f"expected exactly 1 staging row, got {written}"
+    assert len(rows) == 1
+    row = rows[0]
+    # Same 5-tuple key, kg surface had confidence 0.9 (HIGH), pm surface
+    # had pending (MEDIUM).  Higher wins → HIGH survives.
+    assert row.confidence == Confidence.HIGH
+    assert row.value == pytest.approx(100.0)
+    assert row.unit == "GPa"
+    assert row.property_name == "bulk_modulus"
+    assert row.element_system == "U-Mo"
+    assert row.method == "DFT"  # kg_nodes (HIGH) won → its method survives
+
+    # Structured collapse log entry per ADR-010 D4.  The bridge uses
+    # ``logger.info("event-name", extra={...})`` so each extra becomes a
+    # direct attribute on the LogRecord (not a ``payload`` dict).
+    collapse_logs = [rec for rec in caplog.records if rec.message == "bridge.dedup.collapse"]
+    assert len(collapse_logs) == 1, f"expected 1 collapse log entry, got {len(collapse_logs)}"
+    rec = collapse_logs[0]
+    assert rec.confidence_winner == "kg_nodes"
+    assert rec.confidence_value == "high"
+    assert rec.property_measurement_uuid == str(pm.id)
+    assert rec.element_system == "U-Mo"
+    assert rec.property_name == "bulk_modulus"
+
+
+@pytest.mark.asyncio
+async def test_v2_pm_only_numeric_row_uses_review_status_confidence(db_session, monkeypatch):
+    """ADR-010 V2: property_measurements-only row with ``value_scalar``
+    IS NOT NULL → one staging row whose confidence comes from the
+    ``review_status`` mapping (pending → MEDIUM).
+    """
+    source_id = "00000000-0000-0000-0000-00000000000b"
+    _source, _material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+    pm = _pm_stub(
+        dataset=dataset,
+        property_type=property_type,
+        unit=unit,
+        value_scalar=97.0,
+        method="tensile",
+        review_status="pending",
+    )
+    execute, real_execute = _dispatch_execute(db_session, [], [], pm_stubs=[pm])
+    monkeypatch.setattr(db_session, "execute", execute)
+
+    written = await bridge_kg_to_staging(
+        db_session, source_id=source_id, corpus_id="ADR010V2", source_doi="10.0000/v2"
+    )
+    await db_session.flush()
+
+    from sqlalchemy import select as _select
+
+    rows = (
+        (
+            await real_execute(
+                _select(RefGapFillStaging).where(RefGapFillStaging.source == "ADR010V2")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert written == 1
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.value == pytest.approx(97.0)
+    assert row.unit == "GPa"
+    assert row.method == "tensile"
+    # pending → MEDIUM (D4 mapping)
+    assert row.confidence == Confidence.MEDIUM
+    assert row.element_system == "U-Mo"
+    assert row.property_name == "bulk_modulus"
+
+
+@pytest.mark.asyncio
+async def test_v3_pm_value_expression_only_no_numeric_row(db_session, monkeypatch, caplog):
+    """ADR-010 V3: PropertyMeasurement with only ``value_expression`` /
+    ``value_text`` (no ``value_scalar``) → no numeric staging row is
+    written; the expression text is appended to a context-only entry.
+
+    Same source is also queried for kg_nodes, which produces an unrelated
+    numeric row; the PM-only text path must NOT produce a second row.
+    """
+    source_id = "00000000-0000-0000-0000-00000000000c"
+    _source, _material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+    pm = _pm_stub(
+        dataset=dataset,
+        property_type=property_type,
+        unit=unit,
+        value_scalar=None,
+        value_expression="exp(-Ea/kT)",
+        value_text=None,
+        method="empirical fit",
+        review_status="approved",
+    )
+    execute, real_execute = _dispatch_execute(db_session, [], [], pm_stubs=[pm])
+    monkeypatch.setattr(db_session, "execute", execute)
+
+    caplog.set_level(logging.INFO, logger="nfm_db.services.kg_to_staging_bridge")
+    written = await bridge_kg_to_staging(
+        db_session, source_id=source_id, corpus_id="ADR010V3", source_doi="10.0000/v3"
+    )
+    await db_session.flush()
+
+    from sqlalchemy import select as _select
+
+    rows = (
+        (
+            await real_execute(
+                _select(RefGapFillStaging).where(RefGapFillStaging.source == "ADR010V3")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # No numeric row from PM (KG side is empty in this test).
+    assert written == 0, f"expected no numeric staging row, wrote {written}"
+    assert len(rows) == 0, "no numeric staging row should exist for value_expression-only PM"
+    # PM row still surfaces as context for downstream visibility.
+    pm_logs = [rec for rec in caplog.records if rec.message == "bridge.pm.expression_only"]
+    assert len(pm_logs) == 1, "expected 1 expression-only log entry to carry the text into context"
