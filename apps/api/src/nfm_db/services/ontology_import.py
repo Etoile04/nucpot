@@ -30,6 +30,7 @@ Public API:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ __all__ = [
     "build_enhanced_layer",
     "build_individuals_layer",
     "load_enhanced_document",
+    "materialize_entity_type_properties",
     "merge_ontology_data",
 ]
 
@@ -431,4 +433,95 @@ def merge_ontology_data(base: dict[str, Any], layer: dict[str, Any]) -> dict[str
         )
     merged = dict(base)
     merged.update(layer)
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# BUG-22 Path B — entity_types[].properties materialization (NFM-3874 / C-S3)
+# ---------------------------------------------------------------------------
+#
+# Path A (in gap_scanner.extract_expected_pairs) is the runtime stop-gap:
+# when entity_types[].properties is empty the scanner falls back to
+# enumerating ontology_data['datatype_properties'] keys. Path B is the
+# schema-aware proper fix: at upload time, populate
+# entity_types[].properties from datatype_properties so future scans work
+# via the canonical path without runtime fallbacks.
+#
+# Per C-D2 (NFM-3833) the B-line work runs *parallel* to the A-line fix
+# and is gated by ``force=True`` (or the
+# ``NFM_ONTOLOGY_MATERIALIZE_ENTITY_TYPE_PROPERTIES`` env var) so existing
+# imports stay byte-identical until operators opt in.
+_MATERIALIZE_ENV = "NFM_ONTOLOGY_MATERIALIZE_ENTITY_TYPE_PROPERTIES"
+
+
+def _materialize_enabled(force: bool) -> bool:
+    """Return True when the materialization opt-in is active.
+
+    Either ``force=True`` (explicit per-call) or the env var set to a
+    truthy value (``1``, ``true``, ``yes``) counts as opt-in. Default is
+    off: existing imports must remain byte-identical until the A-line
+    rollout is complete and operators flip the switch.
+    """
+    if force:
+        return True
+    raw = os.environ.get(_MATERIALIZE_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def materialize_entity_type_properties(
+    merged: dict[str, Any],
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Path B: populate ``entity_types[].properties`` from
+    ``datatype_properties`` keys (NFM-3874 / C-S3).
+
+    Behaviour:
+
+    * Default-off (gated by ``force=True`` or env var) so existing
+      imports stay byte-identical until operators opt in.
+    * Mutates ``merged`` in place AND returns it (chainable).  Callers
+      that need an immutable copy must ``copy.deepcopy(merged)`` first.
+    * For each entity_type whose ``properties`` key is missing/empty,
+      populate it with the sorted list of ``datatype_properties`` keys.
+      Entity_types that already declare properties are left untouched.
+    * If ``datatype_properties`` is missing/empty, the function is a
+      no-op (returns ``merged`` unchanged).
+
+    Why "first entity_type"?  v0.4.0's entity_types list has 4 entries
+    (Material, Property, Condition, Experiment) and the enhanced layer
+    does not carry per-property domain metadata (all ``domain=None``),
+    so we cannot reliably distribute each ``datatype_property`` to its
+    declared domain.  Distributing to *every* entity_type would inflate
+    ``total_expected`` 4x and create phantom gaps.  The "first with
+    declared properties" heuristic — or, here, the first entity_type
+    when none declare — preserves the existing "Material is the primary
+    target" expectation while making the count non-vacuous.
+    """
+    if not _materialize_enabled(force):
+        return merged
+
+    entity_types = merged.get("entity_types")
+    if not isinstance(entity_types, list) or not entity_types:
+        return merged
+
+    dtp = merged.get("datatype_properties")
+    if not isinstance(dtp, dict) or not dtp:
+        return merged
+
+    property_names = sorted(
+        name.strip() for name in dtp
+        if isinstance(name, str) and name.strip()
+    )
+    if not property_names:
+        return merged
+
+    for entity_type_dict in entity_types:
+        if not isinstance(entity_type_dict, dict):
+            continue
+        existing = entity_type_dict.get("properties")
+        if existing:  # truthy list/dict → declared, leave alone
+            continue
+        entity_type_dict["properties"] = list(property_names)
+
     return merged

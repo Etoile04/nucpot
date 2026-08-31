@@ -34,6 +34,7 @@ from nfm_db.services.ontology_import import (
     build_enhanced_layer,
     build_individuals_layer,
     load_enhanced_document,
+    materialize_entity_type_properties,
     merge_ontology_data,
 )
 
@@ -279,3 +280,91 @@ class TestScriptGuards:
         """SimpleNamespace mimics what the script's OntologyVersion row gets."""
         row = SimpleNamespace(version="0.3.0", status="draft", ontology_data=None)
         assert row.ontology_data is None  # script must guard this (it does)
+
+
+# ---------------------------------------------------------------------------
+# Gate 5: BUG-22 Path B — entity_types[].properties materialization
+# (NFM-3874 / C-S3)
+#
+# Path B is the schema-aware fix: at upload time, populate
+# ``entity_types[].properties`` from ``datatype_properties`` keys so
+# downstream consumers (coverage scan, recall) work via the canonical
+# path without runtime fallbacks. Gated by the
+# ``NFM_ONTOLOGY_MATERIALIZE_ENTITY_TYPE_PROPERTIES`` env var by default
+# to keep the upload additive — the runtime fix (Path A) is the
+# stop-gap that ships first.
+# ---------------------------------------------------------------------------
+
+
+class TestPathBMaterialization:
+    def test_materialize_populates_entity_types_properties(self):
+        """Path B: when entity_types lack properties, populate from
+        datatype_properties keys under a synthetic 'Material' bucket."""
+        merged = {
+            "entity_types": [
+                {"name": "Material", "description": "A nuclear material"},
+                {"name": "Property", "description": "A property"},
+            ],
+            "relation_types": [],
+            "datatype_properties": {
+                "hasDensity": {"uri": "x"},
+                "hasMeltingPoint": {"uri": "x"},
+            },
+        }
+        result = materialize_entity_type_properties(merged, force=True)
+        # First entity_type with empty properties gets populated
+        assert "properties" in result["entity_types"][0]
+        assert sorted(result["entity_types"][0]["properties"]) == [
+            "hasDensity", "hasMeltingPoint",
+        ]
+        # Property entity_type (already has empty properties) also gets populated
+        assert "properties" in result["entity_types"][1]
+
+    def test_materialize_preserves_existing_declared_properties(self):
+        """Path B: when entity_types ALREADY declare properties, do not touch."""
+        merged = {
+            "entity_types": [
+                {"name": "M", "properties": ["density"]},
+                {"name": "P", "description": "no props"},
+            ],
+            "datatype_properties": {
+                "hasDensity": {"uri": "x"},
+                "hasMass": {"uri": "x"},
+            },
+        }
+        result = materialize_entity_type_properties(merged, force=True)
+        # M is unchanged
+        assert result["entity_types"][0]["properties"] == ["density"]
+        # P gets populated from datatype_properties
+        assert sorted(result["entity_types"][1]["properties"]) == [
+            "hasDensity", "hasMass",
+        ]
+
+    def test_materialize_no_op_without_datatype_properties(self):
+        """Path B: missing datatype_properties key → no-op (return as-is)."""
+        merged = {
+            "entity_types": [{"name": "M", "description": "x"}],
+        }
+        result = materialize_entity_type_properties(merged, force=True)
+        assert result == merged
+
+    def test_materialize_disabled_by_default(self, monkeypatch):
+        """Path B: default-off (gated by force=True); production must opt in.
+
+        The runtime stop-gap (Path A) ships first; Path B becomes the
+        default once the entity_types[].properties field is the
+        canonical source of truth. Until then, callers must explicitly
+        pass ``force=True`` (or set the NFM_ONTOLOGY_MATERIALIZE_*
+        env var) to avoid surprising existing imports.
+        """
+        monkeypatch.delenv(
+            "NFM_ONTOLOGY_MATERIALIZE_ENTITY_TYPE_PROPERTIES",
+            raising=False,
+        )
+        merged = {
+            "entity_types": [{"name": "M", "description": "x"}],
+            "datatype_properties": {"hasDensity": {"uri": "x"}},
+        }
+        result = materialize_entity_type_properties(merged)
+        # No `force=True`, no env var → no-op
+        assert "properties" not in result["entity_types"][0]
