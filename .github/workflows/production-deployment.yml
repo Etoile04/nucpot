@@ -758,6 +758,13 @@ jobs:
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
+            # NFM-3777/#1050: stale-marker poisoning (seen 2026-08-18 and in
+            # NFM-3845 UPDATE 4) — a leftover /tmp/nfmd_prod_health_passed from
+            # a PRIOR deploy made the emit fragment report
+            # "health-gate-first-poll-passed true" for a deploy that never cut
+            # over. Scrub it at the top of every deploy so the marker can only
+            # ever attest to THIS run's health gate.
+            rm -f /tmp/nfmd_prod_health_passed
             # NFM-3328: DOCKER_CONFIG redirects the CLI-plugin search path, so
             # an otherwise-empty config dir SILENTLY REMOVES `docker compose`
             # (verified empirically: `docker compose version` → "unknown
@@ -947,6 +954,45 @@ jobs:
             echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
             echo "==> HEREDOC CUTOVER END (anchor for NFM-3777 diagnosis)"
           ENDSSH
+
+      # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
+      # the deploy heredoc, so the same silent-skip that ate `docker compose
+      # up -d` also ate the defenses. This assertion runs in the JOB context,
+      # after the heredoc returns — it cannot be skipped by whatever eats the
+      # heredoc's tail. If the containers are not running THIS run's SHA-tagged
+      # image, the deploy is a phantom success and we fail loudly here.
+      - name: Assert prod containers run this SHA (outside-heredoc cutover guard, NFM-3777/#1050)
+        id: cutover-assert
+        run: |
+          set -euo pipefail
+          # Non-interactive SSH shell (zsh) lacks /usr/local/bin where docker
+          # lives on this host — same PATH fix the deploy heredoc applies.
+          SSH_DOCKER='export PATH="/usr/local/bin:/usr/local/sbin:$PATH"; docker'
+          EXPECTED="nucpot-prod-api:${{ github.sha }}"
+          echo "Expected api image: ${EXPECTED}"
+          ACTUAL=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "${SSH_DOCKER} inspect nucpot-prod-api --format '{{.Config.Image}}'")
+          echo "Actual api image:   ${ACTUAL}"
+          if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+            echo "::error::PHANTOM CUTOVER DETECTED (NFM-3777 pattern, issue #1050)."
+            echo "::error::nucpot-prod-api is running ${ACTUAL} but this deploy built ${EXPECTED}."
+            echo "::error::The deploy heredoc silently skipped its cutover segment; prod is on a stale image."
+            echo "::error::Manual recovery: PROD_IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d"
+            exit 71
+          fi
+          # Same check for the other three nucpot-prod services (web/worker/lightrag)
+          for SVC in nucpot-prod-web:web nucpot-prod-worker:api nucpot-prod-lightrag:lightrag; do
+            CONTAINER="${SVC%%:*}"; REPO="nucpot-prod-${SVC##*:}"
+            ACTUAL_SVC=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+              "${SSH_DOCKER} inspect ${CONTAINER} --format '{{.Config.Image}}'")
+            EXPECTED_SVC="${REPO}:${{ github.sha }}"
+            echo "${CONTAINER}: expected ${EXPECTED_SVC}, actual ${ACTUAL_SVC}"
+            if [ "${ACTUAL_SVC}" != "${EXPECTED_SVC}" ]; then
+              echo "::error::PHANTOM CUTOVER: ${CONTAINER} on ${ACTUAL_SVC}, expected ${EXPECTED_SVC} (NFM-3777/#1050)"
+              exit 72
+            fi
+          done
+          echo "CUTOVER_ASSERT_OK: all 4 nucpot-prod containers on ${{ github.sha }}"
 
       - name: External smoke tests
         id: external-smoke-tests
