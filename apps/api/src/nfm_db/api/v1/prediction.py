@@ -64,12 +64,10 @@ async def predict_phase_endpoint(
         raise HTTPException(
             status_code=503,
             detail="Phase classifier model is not available. "
-                   "Ensure the model artifact is deployed at models/phase_classifier_v01.joblib.",
+            "Ensure the model artifact is deployed at models/phase_classifier_v01.joblib.",
         )
 
-    feature_importance = (
-        result.get("feature_importance") if importance else None
-    )
+    feature_importance = result.get("feature_importance") if importance else None
 
     return ApiResponse(
         success=True,
@@ -120,12 +118,10 @@ async def predict_temperature_endpoint(
         raise HTTPException(
             status_code=503,
             detail="Temperature predictor model is not available. "
-                   "Ensure the model artifact is deployed at models/temp_predictor_v01.joblib.",
+            "Ensure the model artifact is deployed at models/temp_predictor_v01.joblib.",
         )
 
-    feature_importance = (
-        result.get("feature_importance") if importance else None
-    )
+    feature_importance = result.get("feature_importance") if importance else None
 
     return ApiResponse(
         success=True,
@@ -170,7 +166,7 @@ async def predict_energy_endpoint(
         raise HTTPException(
             status_code=503,
             detail="Energy predictor model is not available. "
-                   "Ensure the model artifact is deployed at models/energy_predictor_v11.joblib (v1.1) or energy_predictor_v01.joblib (v1.0).",
+            "Ensure the model artifact is deployed at models/energy_predictor_v11.joblib (v1.1) or energy_predictor_v01.joblib (v1.0).",
         )
 
     return ApiResponse(
@@ -178,6 +174,7 @@ async def predict_energy_endpoint(
         data=EnergyPredictResponse(
             predicted_energy=result["predicted_energy"],
             confidence=result["confidence"],
+            confidence_source=result["confidence_source"],
             warnings=[
                 PredictionWarningItem(code=w["code"], message=w["message"])
                 for w in result.get("warnings", [])
@@ -222,9 +219,7 @@ async def predict_phase_from_composition_endpoint(
             ),
         )
 
-    feature_importance = (
-        result.get("feature_importance") if importance else None
-    )
+    feature_importance = result.get("feature_importance") if importance else None
 
     return ApiResponse(
         success=True,

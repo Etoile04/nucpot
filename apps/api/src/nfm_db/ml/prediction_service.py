@@ -599,13 +599,13 @@ def _predict_energy_v11(features: dict[str, float]) -> dict | None:
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         predicted = float(model.predict(X)[0])
         metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
-        r2 = metrics.get("r2", 0.0)
-        confidence = max(0.0, min(float(r2), 1.0))
+        confidence, confidence_source, warnings = _compute_energy_confidence(metrics)
         return {
             "predicted_energy": round(predicted, 6),
-            "confidence": round(confidence, 4),
+            "confidence": confidence,
+            "confidence_source": confidence_source,
             "model_version": raw.get("version", "v1.1") if isinstance(raw, dict) else "v1.1",
-            "warnings": [],
+            "warnings": warnings,
         }
     except Exception:
         logger.exception("v1.1 energy prediction failed")
@@ -652,13 +652,13 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         predicted = float(model.predict(X)[0])
         metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
-        r2 = metrics.get("r2", 0.0)
-        confidence = max(0.0, min(float(r2), 1.0))
+        confidence, confidence_source, warnings = _compute_energy_confidence(metrics)
         return {
             "predicted_energy": round(predicted, 6),
-            "confidence": round(confidence, 4),
+            "confidence": confidence,
+            "confidence_source": confidence_source,
             "model_version": raw.get("version", "v1.0") if isinstance(raw, dict) else "v1.0",
-            "warnings": [],
+            "warnings": warnings,
         }
     except Exception:
         logger.exception("v1.0 energy prediction failed")
@@ -804,8 +804,15 @@ def predict_energy(
             ``'v1.0'`` uses the original 8D Miedema baseline.
 
     Returns:
-        Dict with ``predicted_energy``, ``confidence``, ``model_version``,
-        ``warnings``. ``None`` if the requested artifact is unavailable.
+        Dict with ``predicted_energy``, ``confidence``, ``confidence_source``,
+        ``model_version``, ``warnings``. ``None`` if the requested artifact is
+        unavailable. The ``confidence_source`` field (NFM-3956 honesty
+        contract) is one of ``"grouped_cv_r2_mean"`` (protocol-correct
+        generalization estimate, surfaced for [EXPLORATORY] artifacts) or
+        ``"random_split_r2"`` (legacy fallback for artifacts predating
+        NFM-3953, may be materially optimistic — see warnings). The endpoint
+        must surface this value verbatim so downstream UIs can render
+        source-aware disclaimers.
     """
     effective = model_version or ENERGY_PREDICTOR_VERSION
     if effective == "v3.0":

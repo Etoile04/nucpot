@@ -457,3 +457,109 @@ class TestLegacyVersionsUnaffectedByHonestyContract:
             result = predict_energy(features, model_version="v1.0")
             mock_v10.assert_called_once()
             assert result["model_version"] == "v1.0"
+
+
+# ---------------------------------------------------------------------------
+# 8. v1.1 / v1.0 helpers now also surface confidence_source
+#    (NFM-3956 E2E-QA finding: every energy prediction response must
+#    carry confidence_source, not just v3.0)
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyVersionsSurfaceConfidenceSource:
+    """NFM-3956 honesty contract applied to all three model versions.
+
+    The Pydantic schema ``EnergyPredictResponse.confidence_source`` is a
+    required field, so every helper that returns a result dict must
+    populate it. v1.1 and v1.0 artifacts predate NFM-3953, so the helper
+    returns ``"random_split_r2"`` with the soft legacy warning — but
+    the field must still be on the dict.
+    """
+
+    def test_v11_helper_includes_confidence_source_for_legacy_artifact(
+        self,
+    ) -> None:
+        """A v1.1 artifact (no grouped_cv_summary) must surface
+        ``confidence_source="random_split_r2"`` plus the soft legacy
+        warning — never silently drop the field."""
+        import tempfile
+        from pathlib import Path
+
+        import joblib
+
+        from nfm_db.ml import prediction_service
+
+        original_models_dir = prediction_service.MODELS_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_dir = Path(tmp)
+                v11_path = tmp_dir / "energy_predictor_v11.joblib"
+                joblib.dump(
+                    {
+                        "model": _StubRegressor(),
+                        "version": "v1.1",
+                        "metrics": {"r2": 0.8333, "cv_r2": 0.80},
+                        "feature_names": ["mo_equivalent"],
+                    },
+                    v11_path,
+                )
+                prediction_service.MODELS_DIR = tmp_dir
+                result = prediction_service._predict_energy_v11({"mo_equivalent": 0.5})
+        finally:
+            prediction_service.MODELS_DIR = original_models_dir
+
+        assert result is not None
+        assert "confidence_source" in result
+        assert result["confidence_source"] == "random_split_r2"
+        # Legacy artifact: warning is the soft pre-grouped-CV one.
+        codes = [w["code"] for w in result["warnings"]]
+        assert "energy_model_pre_grouped_cv" in codes
+
+    def test_v10_helper_includes_confidence_source(self) -> None:
+        """A v1.0 artifact must also surface ``confidence_source``."""
+        import tempfile
+        from pathlib import Path
+
+        import joblib
+
+        from nfm_db.ml import prediction_service
+
+        original_models_dir = prediction_service.MODELS_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_dir = Path(tmp)
+                v10_path = tmp_dir / "energy_predictor_v10.joblib"
+                joblib.dump(
+                    {
+                        "model": _StubRegressor(),
+                        "version": "v1.0",
+                        "metrics": {"r2": 0.82},
+                        "feature_names": ["mo_equivalent"],
+                    },
+                    v10_path,
+                )
+                prediction_service.MODELS_DIR = tmp_dir
+                with patch.dict(
+                    "os.environ",
+                    {"ENERGY_PREDICTOR_V10_PATH": str(v10_path)},
+                ):
+                    result = prediction_service._predict_energy_v10({"mo_equivalent": 0.5})
+        finally:
+            prediction_service.MODELS_DIR = original_models_dir
+
+        assert result is not None
+        assert "confidence_source" in result
+        assert result["confidence_source"] == "random_split_r2"
+
+
+class _StubRegressor:
+    """Minimal stand-in for an sklearn regressor for unit tests.
+
+    Returns a constant prediction; ``predict`` is the only method the
+    helpers exercise.
+    """
+
+    def predict(self, X):  # sklearn API — keep lowercase name
+        import numpy as np
+
+        return np.zeros(len(X))

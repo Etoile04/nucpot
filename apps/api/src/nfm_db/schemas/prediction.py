@@ -127,8 +127,7 @@ class CompositionPredictRequest(BaseModel):
     composition: dict[str, float] = Field(
         ...,
         description=(
-            "Element name to atomic fraction mapping. "
-            'Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
+            'Element name to atomic fraction mapping. Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
         ),
     )
 
@@ -262,7 +261,25 @@ class EnergyPredictRequest(PredictionFeatures):
 
 
 class EnergyPredictResponse(BaseModel):
-    """Response body for formation energy prediction."""
+    """Response body for formation energy prediction.
+
+    The ``confidence_source`` field (NFM-3956 honesty contract) tells the
+    caller what figure the ``confidence`` score is anchored to. Two values
+    are legal:
+
+    * ``"grouped_cv_r2_mean"`` — the grouped-CV mean R^2 (the
+      protocol-correct generalization estimate per NFM-3953). Surfaces
+      for any artifact labeled ``[EXPLORATORY]`` with a
+      ``grouped_cv_summary`` block. Downstream UIs should render a
+      source-aware disclaimer (e.g. "based on grouped-CV") rather than
+      treating the number as a one-shot accuracy.
+    * ``"random_split_r2"`` — the legacy random 80/20 hold-out R^2.
+      Surfaces for artifacts that predate NFM-3953 (no
+      ``grouped_cv_summary`` block, no ``[EXPLORATORY]`` label) or for
+      v1.0/v1.1 legacy callers that have not been re-evaluated. The
+      companion warning (``energy_model_pre_grouped_cv`` or absent)
+      tells the caller whether the figure is at risk of optimism.
+    """
 
     predicted_energy: float = Field(
         ...,
@@ -272,11 +289,22 @@ class EnergyPredictResponse(BaseModel):
         ...,
         ge=0,
         le=1,
-        description="Prediction confidence score",
+        description="Prediction confidence score (see confidence_source for the figure this is anchored to)",
+    )
+    confidence_source: str = Field(
+        ...,
+        description=(
+            "Origin of the confidence score: 'grouped_cv_r2_mean' "
+            "(protocol-correct generalization estimate for [EXPLORATORY] "
+            "artifacts per NFM-3953) or 'random_split_r2' (legacy random "
+            "80/20 hold-out figure, may be materially optimistic — see "
+            "warnings). Downstream UIs should render source-aware "
+            "disclaimers instead of just the numeric confidence."
+        ),
     )
     warnings: list[PredictionWarningItem] = Field(
         default_factory=list,
-        description="Warnings generated during prediction (e.g. low confidence)",
+        description="Warnings generated during prediction (e.g. low confidence, [EXPLORATORY] model)",
     )
     model_version: str = Field(
         ...,
