@@ -41,13 +41,27 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SQL_PATH = SCRIPT_DIR / "nfm-3918-unknown-material-cleanup.sql"
+
+# Each psql_vars entry is a PL/pgSQL GUC read inside the SQL via
+# `current_setting('<name>', true)`. psql's `-v name=value` only sets
+# a client-side *substitution variable* (accessible via `:name` in SQL
+# text), NOT a server-side setting reachable by `current_setting()`.
+# The driver therefore rewrites the SQL body to literal values before
+# invoking psql. The mapping knows how to emit a typed literal for each
+# GUC name so PL/pgSQL's DECLARE blocks still parse.
+_GUC_SUBSTITUTIONS: dict[str, Callable[[str], str]] = {
+    "expected_unknown_count": lambda v: f"{int(v)}::int",
+    "dry_run": lambda v: f"{'true' if str(v) in ('1', 'true', 't') else 'false'}::boolean",
+    "require_backup_path": lambda v: "'" + v.replace("'", "''") + "'::text",
+}
 
 # Tolerance window for the BEFORE measurement count. The ticket body hard-codes
 # 93 measurements across the 10 carrying-data Unknown rows; if the actual count
@@ -148,44 +162,84 @@ def parse_counts(notice_line: str) -> CountSnapshot:
     return CountSnapshot(label=label, raw_line=notice_line, counts=counts)
 
 
+def _rewrite_sql_with_literals(sql_text: str, psql_vars: Mapping[str, str]) -> str:
+    """Substitute `current_setting('<name>', true)::TYPE` with typed literals.
+
+    ``psql_vars`` carries values the SQL expects to read via
+    ``current_setting()`` — but psql's ``-v name=value`` flag only sets
+    client-side *substitution* variables, not server-side GUCs. We rewrite
+    the SQL body so each ``current_setting('name', true)`` call is replaced
+    with the corresponding literal cast to the type the PL/pgSQL DECLARE
+    block expects. This keeps the entire SQL file postgresql-portable
+    (no custom GUC registration needed) while letting the wrapper pass
+    values through the same CLI it advertises.
+    """
+    rewritten = sql_text
+    for key, value in psql_vars.items():
+        if key not in _GUC_SUBSTITUTIONS:
+            raise SystemExit(
+                f"Unknown GUC {key!r}; add a typed-literal mapping to "
+                f"_GUC_SUBSTITUTIONS in scripts/nfm-3918-unknown-material-cleanup.py."
+            )
+        literal = _GUC_SUBSTITUTIONS[key](value)
+        # Match `current_setting('name', true)` with optional `::type` cast
+        # following, and capture/preserve the cast so the rewritten literal
+        # remains a typed expression.
+        pattern = re.compile(
+            r"current_setting\(\s*'" + re.escape(key) + r"'\s*,\s*true\s*\)"
+            r"(\s*::\s*\w+)?"
+        )
+        rewritten, _n = pattern.subn(literal, rewritten)
+    return rewritten
+
+
 def run_psql(database_url: str, sql_path: Path, psql_vars: Mapping[str, str]) -> str:
     """Invoke psql with the SQL file and capture NOTICE output.
 
-    We use -tA (tuples-only, unaligned) for predictable output and forward
-    every line that begins with "NOTICE:" so we can parse BEFORE / AFTER
-    blocks. Errors propagate via -v ON_ERROR_STOP=1, set inside the SQL
-    via \\set.
+    Wraps a temp-file rewrite so ``current_setting('<name>', true)`` reads
+    in the SQL actually see the values passed via ``psql_vars``. psql's
+    ``-v name=value`` flag only populates substitution variables, not GUCs.
+    Errors propagate via ``\\set ON_ERROR_STOP on`` inside the SQL file.
     """
-    cmd = [
-        "psql",
-        database_url,
-        "-v",
-        "ON_ERROR_STOP=1",
-        "--no-psqlrc",
-        "-P",
-        "pager=off",
-        "-f",
-        str(sql_path),
-    ]
-    for key, value in psql_vars.items():
-        cmd.extend(["-v", f"{key}={value}"])
+    sql_text = sql_path.read_text(encoding="utf-8")
+    rewritten_sql = _rewrite_sql_with_literals(sql_text, psql_vars)
 
-    env = {**os.environ, "PGOPTIONS": "--client-min-messages=NOTICE"}
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="nfm-3918-", suffix=".sql", text=True)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
+            tmp.write(rewritten_sql)
 
-    proc = subprocess.run(
-        cmd,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    if proc.returncode != 0:
-        sys.stderr.write(combined)
-        raise SystemExit(
-            f"psql exited {proc.returncode}; check the SQL output above."
+        cmd = [
+            "psql",
+            database_url,
+            "--no-psqlrc",
+            "-P",
+            "pager=off",
+            "-f",
+            tmp_path,
+        ]
+
+        env = {**os.environ, "PGOPTIONS": "--client-min-messages=NOTICE"}
+
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
         )
-    return combined
+        combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        if proc.returncode != 0:
+            sys.stderr.write(combined)
+            raise SystemExit(
+                f"psql exited {proc.returncode}; check the SQL output above."
+            )
+        return combined
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def extract_snapshots(psql_output: str) -> tuple[CountSnapshot | None, CountSnapshot | None]:
