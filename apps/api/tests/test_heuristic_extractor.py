@@ -246,6 +246,49 @@ class TestHeuristicExtract:
             for r in result
         )
 
+    def test_emits_material_name_and_composition_nfm_3919(self):
+        """NFM-3919: heuristic items must carry non-empty material_name and
+        composition so the mapper's dedup can reuse the existing Material
+        row instead of creating a new "Unknown Material" every run.
+        """
+        text = "UO2 has a density of 10.97 g/cm3."
+        result = heuristic_extract(text, source_reference="ref-nfm-3919")
+        assert len(result) >= 1
+        item = result[0]
+        # Both fields must be populated and non-empty.
+        assert item.get("material_name"), (
+            "heuristic_extractor must set material_name so the mapper does not "
+            "fall back to 'Unknown Material' (NFM-3919)."
+        )
+        assert item.get("composition"), (
+            "heuristic_extractor must set composition so _find_material_by_formula "
+            "can dedup across runs (NFM-3919)."
+        )
+        assert item["material_name"] == "UO2"
+        assert item["composition"] == "UO2"
+        # Backward compatibility: element_system remains for existing consumers.
+        assert item["element_system"] == "UO2"
+
+    def test_dft_pass_also_emits_material_name_and_composition_nfm_3919(self):
+        """NFM-3919: the DFT-direct second pass must also populate the
+        material_name/composition fields, not just element_system.
+        """
+        # Use a dimensionless screening_constant DFT result via _DFT_DIRECT_PATTERNS.
+        # Pull a representative text that triggers the dimensionless family.
+        text = (
+            "The Thomas-Fermi screening constant of UO2 is 1.8 "
+            "in atomic units."
+        )
+        result = heuristic_extract(text, source_reference="ref-dft-nfm-3919")
+        assert len(result) >= 1, "DFT-direct pass should produce an item"
+        for item in result:
+            assert item.get("material_name"), (
+                "DFT-direct pass must set material_name (NFM-3919)"
+            )
+            assert item.get("composition"), (
+                "DFT-direct pass must set composition (NFM-3919)"
+            )
+
     def test_deduplication(self):
         text = "UO2 density 10.97 g/cm3. UO2 density 10.97 g/cm3."
         result = heuristic_extract(text, source_reference="ref3")
