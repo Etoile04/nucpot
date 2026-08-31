@@ -293,9 +293,7 @@ def _enrich_nodes(
         doi = next((r.source_doi for r in prows if r.source_doi), None)
         if doi:
             node.uri = _doi_to_uri(doi)
-        node.record_ref = build_record_ref(
-            corpus_id, prows[0].element, property_name=prop_name
-        )
+        node.record_ref = build_record_ref(corpus_id, prows[0].element, property_name=prop_name)
 
     # Material nodes: summary comment listing each measured property value.
     for mat_name, mrows in mat_rows.items():

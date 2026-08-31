@@ -509,10 +509,7 @@ def materialize_entity_type_properties(
     if not isinstance(dtp, dict) or not dtp:
         return merged
 
-    property_names = sorted(
-        name.strip() for name in dtp
-        if isinstance(name, str) and name.strip()
-    )
+    property_names = sorted(name.strip() for name in dtp if isinstance(name, str) and name.strip())
     if not property_names:
         return merged
 

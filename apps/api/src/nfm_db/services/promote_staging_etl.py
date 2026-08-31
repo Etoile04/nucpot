@@ -361,25 +361,30 @@ async def promote_admitted_rows(
     if formal_payload:
         bind = session.get_bind()
         if bind.dialect.name == "postgresql":
-            stmt = pg_insert(ReferenceValue).values(formal_payload)
-            upsert = stmt.on_conflict_do_update(
+            # NOTE: ``stmt`` at line 332 is a Select for reading staging rows;
+            # this branch needs an Insert bound to a fresh name so mypy
+            # doesn't union the two statement types (which would erase
+            # Insert-only attributes like ``on_conflict_do_update`` /
+            # ``excluded``).
+            upsert_stmt = pg_insert(ReferenceValue).values(formal_payload)
+            upsert = upsert_stmt.on_conflict_do_update(
                 index_elements=[ReferenceValue.staging_id],
                 set_={
-                    "element": stmt.excluded.element,
-                    "crystal_structure": stmt.excluded.crystal_structure,
-                    "property_name": stmt.excluded.property_name,
-                    "value": stmt.excluded.value,
-                    "unit": stmt.excluded.unit,
-                    "method": stmt.excluded.method,
-                    "source": stmt.excluded.source,
-                    "source_doi": stmt.excluded.source_doi,
-                    "uncertainty": stmt.excluded.uncertainty,
-                    "temperature": stmt.excluded.temperature,
-                    "notes": stmt.excluded.notes,
-                    "etl_issue": stmt.excluded.etl_issue,
-                    "etl_manifest_ref": stmt.excluded.etl_manifest_ref,
-                    "etl_ok_reason": stmt.excluded.etl_ok_reason,
-                    "promoted_at": stmt.excluded.promoted_at,
+                    "element": upsert_stmt.excluded.element,
+                    "crystal_structure": upsert_stmt.excluded.crystal_structure,
+                    "property_name": upsert_stmt.excluded.property_name,
+                    "value": upsert_stmt.excluded.value,
+                    "unit": upsert_stmt.excluded.unit,
+                    "method": upsert_stmt.excluded.method,
+                    "source": upsert_stmt.excluded.source,
+                    "source_doi": upsert_stmt.excluded.source_doi,
+                    "uncertainty": upsert_stmt.excluded.uncertainty,
+                    "temperature": upsert_stmt.excluded.temperature,
+                    "notes": upsert_stmt.excluded.notes,
+                    "etl_issue": upsert_stmt.excluded.etl_issue,
+                    "etl_manifest_ref": upsert_stmt.excluded.etl_manifest_ref,
+                    "etl_ok_reason": upsert_stmt.excluded.etl_ok_reason,
+                    "promoted_at": upsert_stmt.excluded.promoted_at,
                 },
             )
             await session.execute(upsert)
