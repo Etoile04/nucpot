@@ -449,7 +449,8 @@ async def _lookup_property_type(
     category_slug = _normalize_category_slug(category_name)
     if category_slug is None:
         logger.debug(
-            "Unknown OntoFuel category literal: %r", category_name,
+            "Unknown OntoFuel category literal: %r",
+            category_name,
         )
         return None
 
@@ -574,14 +575,18 @@ async def map_and_persist(
         m_key = _material_key(item)
         d_key = _dataset_key(s_key, m_key)
 
-        # --- NFM-3919 bottom-line guard: reject double-None material items ---
-        # Heuristic (and any future) extractor that omits BOTH material_name
-        # AND composition would otherwise fall back to ``"Unknown Material"``
-        # and create a fresh row every run, polluting the ``materials`` table.
-        # Even when ``heuristic_extractor`` is fixed at the source (NFM-3919
-        # Fix 1), this guard makes the mapper safe against any other extractor
-        # that may forget these fields in the future.
-        if not (item.material_name and item.composition):
+        # --- NFM-3919 bottom-line guard: reject ONLY when both material
+        # identity fields are absent. Rejecting on EITHER-missing was the
+        # CR-1 bug (E2E QA 2026-09-01): LLM extraction_prompt.py:305-306
+        # explicitly permits ``composition=None`` for materials where the
+        # name itself carries the chemistry (e.g. SS316, Zr-2.5Nb, Inconel
+        # 718). 78/131 prod ``materials`` rows currently have
+        # ``name = formula`` from the legacy ``or material_name`` fallback
+        # — the same pattern. The previous ``not (A and B)`` check
+        # (= ``not A or not B``) would have silently dropped all of them.
+        # Now restricted to both-None, with explicit ``is None`` so empty
+        # strings are still accepted (extractor schema-drift guard).
+        if item.material_name is None and item.composition is None:
             logger.warning(
                 "Skipping extraction item with no material identity: "
                 "material_name=%r composition=%r "
@@ -662,13 +667,17 @@ async def map_and_persist(
         if d_key not in dataset_map:
             dataset_title = f"{material.name} - {source.title}"
             existing_dataset = (
-                await db.execute(
-                    select(Dataset).where(
-                        Dataset.material_id == material.id,
-                        Dataset.source_id == source.id,
+                (
+                    await db.execute(
+                        select(Dataset).where(
+                            Dataset.material_id == material.id,
+                            Dataset.source_id == source.id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if existing_dataset is not None:
                 # Cross-request hit: same source+material already has a
                 # dataset.  Reuse it so the 5-tuple dedup keys line up.
