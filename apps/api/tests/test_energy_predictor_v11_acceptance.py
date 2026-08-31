@@ -1,4 +1,4 @@
-"""Acceptance tests for EnergyPredictor v3.0 (NFM-2201).
+"""Acceptance tests for EnergyPredictor v3.0 (NFM-2201, NFM-3956).
 
 Covers the AC items from the v1.1 remediation list (NFM-1802), now updated
 for the v3.0 data-scale-up:
@@ -6,7 +6,15 @@ for the v3.0 data-scale-up:
   callers must not raise. Missing v1.0 artifact returns ``None`` gracefully.
 - AC #4 model version constant: ``ENERGY_PREDICTOR_VERSION == "v3.0"``.
 - AC #5 metrics threshold: hold-out R^2 on the 80/20 split meets the AC
-  (>= 0.90). Achieved R²=0.9858 on 2,909 PBE compositions.
+  (>= 0.90). The random 80/20 headline was R^2 = 0.9858 on 2,909 PBE
+  compositions, but per NFM-3953 that figure is **materially optimistic**
+  (element-system near-neighbour compositions leak across random splits).
+  The protocol-correct GroupKFold(n_splits=5)-by-element-system
+  re-evaluation returned R^2 = 0.3111 +/- 0.4777 (LOW bucket), and the
+  artifact is now labeled [EXPLORATORY]. This module asserts the
+  prediction endpoint reports the honest grouped-CV figure plus the
+  ``energy_model_exploratory`` warning rather than advertising the
+  inflated random-split headline (NFM-3956 LE handoff).
 
 Tests are written to run under ``pytest --noconftest --no-cov`` per repo
 memory (the conftest.py in ``apps/api/tests/`` has a pre-existing import
@@ -86,8 +94,7 @@ class TestV11BackfillFromLegacy:
             result = predict_energy(LEGACY_V10_FEATURES)
         except (KeyError, ValueError, TypeError) as exc:
             pytest.fail(
-                f"predict_energy() raised on legacy v1.0 8D features: "
-                f"{type(exc).__name__}: {exc}"
+                f"predict_energy() raised on legacy v1.0 8D features: {type(exc).__name__}: {exc}"
             )
 
         # Result is either a v3.0 dict or None (artifact unavailable).
@@ -143,8 +150,7 @@ class TestV10FallbackGraceful:
                 )
             except (KeyError, ValueError, TypeError, AttributeError) as exc:
                 pytest.fail(
-                    f"predict_energy_from_composition('v10') raised: "
-                    f"{type(exc).__name__}: {exc}"
+                    f"predict_energy_from_composition('v10') raised: {type(exc).__name__}: {exc}"
                 )
 
         assert result is None
@@ -219,8 +225,7 @@ class TestV11AcceptanceMetrics:
         """Hold-out test fraction matches the AC's 80/20 split."""
         ratio = metrics["n_test"] / metrics["n_samples"]
         assert 0.18 <= ratio <= 0.22, (
-            f"Test fraction {ratio:.4f} not in [0.18, 0.22]; "
-            "AC requires 80/20 split."
+            f"Test fraction {ratio:.4f} not in [0.18, 0.22]; AC requires 80/20 split."
         )
 
     def test_random_state_documented(self, metrics: dict) -> None:
@@ -273,9 +278,7 @@ class TestEnergyEndpointRegistered:
                 )
 
         # Endpoint reachable and routed -- accept 503 (model missing) or 200.
-        assert resp.status_code in (200, 503), (
-            f"Unexpected status {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 503), f"Unexpected status {resp.status_code}: {resp.text}"
         if resp.status_code == 503:
             body = resp.json()
             detail_blob = json.dumps(body)
