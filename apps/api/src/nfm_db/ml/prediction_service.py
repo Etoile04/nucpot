@@ -11,9 +11,11 @@ Provides lazy-loaded model instances and inference functions for:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -241,12 +243,18 @@ def predict_phase(features: dict[str, float]) -> dict | None:
     ``model.classes_`` at inference time to build the correct probability
     mapping rather than assuming a fixed number of cluster types.
 
+    Per NFM-3954 (NDE ruling): every prediction response must carry the
+    per-class recall the model was validated against, alongside the headline
+    probability. Hiding per-class recall is what allowed the original
+    accuracy-based KR-ML-1 acceptance bar to drift in the first place.
+
     Args:
         features: Dictionary of 8 physical feature values.
 
     Returns:
         Dictionary with keys: predicted_phase, predicted_phase_label,
-        probabilities, confidence, warnings, model_version.
+        probabilities, confidence, warnings, model_version,
+        per_class_recall, acceptance_criterion.
         Returns None if model unavailable.
     """
     model = _load_phase_classifier()
@@ -291,6 +299,9 @@ def predict_phase(features: dict[str, float]) -> dict | None:
         proba_values = [float(proba[i]) for i in range(n_classes)]
         confidence = confidence_from_probability(proba_values)
 
+        per_class_recall = _phase_per_class_recall()
+        acceptance_criterion = _phase_acceptance_criterion()
+
         return {
             "predicted_phase": predicted_label,
             "predicted_phase_label": phase_labels.get(
@@ -300,10 +311,100 @@ def predict_phase(features: dict[str, float]) -> dict | None:
             "confidence": confidence.score,
             "warnings": warnings_to_dicts(confidence.warnings),
             "model_version": PHASE_CLASSIFIER_VERSION,
+            "per_class_recall": per_class_recall,
+            "acceptance_criterion": acceptance_criterion,
         }
     except Exception:
         logger.exception("Phase prediction failed")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Phase-classifier model card surface (NFM-3954)
+# ---------------------------------------------------------------------------
+
+_PHASE_METRICS_CACHE: dict | None = None
+
+
+def _phase_metrics_path() -> Path:
+    """Locate the v2.0 metrics JSON sibling to the phase classifier joblib."""
+    model_path = os.environ.get("PHASE_CLASSIFIER_PATH", str(PHASE_MODEL_PATH))
+    return Path(model_path).with_name("phase_classifier_v2.0_metrics.json")
+
+
+def _load_phase_metrics() -> dict | None:
+    """Read the v2.0 metrics JSON once per process; return None if missing."""
+    global _PHASE_METRICS_CACHE
+    if _PHASE_METRICS_CACHE is not None:
+        return _PHASE_METRICS_CACHE
+    metrics_path = _phase_metrics_path()
+    if not metrics_path.is_file():
+        logger.warning(
+            "Phase classifier metrics JSON not found at %s; "
+            "per_class_recall will be omitted from predictions",
+            metrics_path,
+        )
+        _PHASE_METRICS_CACHE = {}
+        return None
+    try:
+        with metrics_path.open("r", encoding="utf-8") as source:
+            _PHASE_METRICS_CACHE = json.load(source)
+    except (OSError, ValueError):
+        logger.exception("Failed to read phase classifier metrics at %s", metrics_path)
+        _PHASE_METRICS_CACHE = {}
+        return None
+    return _PHASE_METRICS_CACHE
+
+
+def _phase_per_class_recall() -> dict[str, float] | None:
+    """Per-class recall (H, M) from the model card; None if unavailable.
+
+    Returned alongside every prediction per NFM-3954 NDE ruling.
+    """
+    metrics = _load_phase_metrics()
+    if not metrics:
+        return None
+    recall = metrics.get("per_class_recall_overall")
+    if not isinstance(recall, dict):
+        return None
+    out: dict[str, float] = {}
+    for label in ("H", "M"):
+        value = recall.get(label)
+        if isinstance(value, (int, float)):
+            out[label] = float(value)
+    return out or None
+
+
+def _phase_acceptance_criterion() -> dict[str, Any] | None:
+    """Trimmed acceptance-criterion metadata for the active Sprint bar.
+
+    The model card carries the full table; only the active Sprint row plus
+    primary/secondary metric names is exposed on every prediction to keep the
+    response envelope small.
+    """
+    metrics = _load_phase_metrics()
+    if not metrics:
+        return None
+    criteria = metrics.get("acceptance_criteria")
+    if not isinstance(criteria, dict):
+        return None
+    active: dict[str, Any] | None = None
+    for bar in criteria.get("sprint_bars", []):
+        if isinstance(bar, dict) and bar.get("sprint", "").startswith("Sprint 4"):
+            active = bar
+            break
+    if active is None:
+        return None
+    return {
+        "primary_metric": criteria.get("primary_metric"),
+        "secondary_metric": criteria.get("secondary_metric"),
+        "sprint": active.get("sprint"),
+        "macro_f1_min": active.get("macro_f1_min"),
+        "M_recall_min": active.get("M_recall_min"),
+        "model_macro_f1": active.get("model_macro_f1"),
+        "model_M_recall": active.get("model_M_recall"),
+        "verdict": active.get("verdict"),
+    }
 
 
 def predict_temperature(features: dict[str, float]) -> dict | None:
