@@ -1,9 +1,14 @@
-"""Unit tests for EnergyPredictor v3.0 model loading and backward compat (NFM-2201).
+"""Unit tests for EnergyPredictor v3.0 model loading and backward compat (NFM-2201, NFM-3956).
 
 Tests cover:
 - AC-3: v3.0 model artifact loads and contains correct metadata
 - AC-4: predict_energy() defaults to v3.0 (backward compat with v1.1/v1.0)
 - AC-5: v3.0 model produces predictions matching the v1.1 API contract
+- AC-NFM-3956: prediction endpoint surfaces the [EXPLORATORY] grouped-CV
+  LOW-bucket confidence (0.3111 +/- 0.4777) and the
+  ``energy_model_exploratory`` warning, and does NOT advertise the
+  inflated random-split headline (R^2 = 0.9858) anywhere on the
+  user-facing path.
 
 Importers: pytest runner only (no production code imports this file).
 Affected API: None — tests only validate model_version.py and prediction_service.py.
@@ -14,6 +19,11 @@ User instruction (NFM-2201 task #4):
    existing v1.1 callers continue to work. Unit tests cover the augmented
    dataset loader; integration test verifies the v3.0 model loads and
    predicts against the v1.1 contract."
+
+User instruction (NFM-3956 LE handoff):
+  "Prediction endpoint user-facing surfaces must not advertise
+  R^2 = 0.9858. The grouped-CV re-evaluation (NFM-3953, LOW bucket)
+  is the protocol-correct generalization estimate."
 """
 
 from __future__ import annotations
@@ -76,9 +86,7 @@ class TestV30Artifact:
     def test_metrics_has_r2_above_090(self, v30_artifact: dict) -> None:
         """R² >= 0.90 on hold-out (AC-2 honest metrics)."""
         metrics = v30_artifact["metrics"]
-        assert metrics["r2"] >= 0.90, (
-            f"v3.0 R²={metrics['r2']} is below AC-2 target of 0.90"
-        )
+        assert metrics["r2"] >= 0.90, f"v3.0 R²={metrics['r2']} is below AC-2 target of 0.90"
 
     def test_metrics_has_rmse_and_mae(self, v30_artifact: dict) -> None:
         """Metrics contain RMSE and MAE."""
@@ -146,12 +154,23 @@ class TestV30Prediction:
         from nfm_db.ml.prediction_service import predict_energy
 
         features = {"mo_equivalent": 0.5}
+        # NFM-3956: mock must reflect the [EXPLORATORY] grouped-CV LOW bucket,
+        # NOT the inflated random-split R^2 = 0.9858.
         with patch("nfm_db.ml.prediction_service._predict_energy_v30") as mock:
             mock.return_value = {
                 "predicted_energy": -0.12,
-                "confidence": 0.9858,
+                "confidence": 0.3111,
+                "confidence_source": "grouped_cv_r2_mean",
                 "model_version": "v3.0",
-                "warnings": [],
+                "warnings": [
+                    {
+                        "code": "energy_model_exploratory",
+                        "message": (
+                            "EnergyPredictor v3.0 is labeled [EXPLORATORY] "
+                            "per NFM-3953. Grouped-CV R^2 = 0.3111 +/- 0.4777."
+                        ),
+                    }
+                ],
             }
             result = predict_energy(features)
 
