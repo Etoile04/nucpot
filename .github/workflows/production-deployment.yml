@@ -965,10 +965,13 @@ jobs:
         id: cutover-assert
         run: |
           set -euo pipefail
+          # Non-interactive SSH shell (zsh) lacks /usr/local/bin where docker
+          # lives on this host — same PATH fix the deploy heredoc applies.
+          SSH_DOCKER='export PATH="/usr/local/bin:/usr/local/sbin:$PATH"; docker'
           EXPECTED="nucpot-prod-api:${{ github.sha }}"
           echo "Expected api image: ${EXPECTED}"
           ACTUAL=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "docker inspect nucpot-prod-api --format '{{.Config.Image}}'")
+            "${SSH_DOCKER} inspect nucpot-prod-api --format '{{.Config.Image}}'")
           echo "Actual api image:   ${ACTUAL}"
           if [ "${ACTUAL}" != "${EXPECTED}" ]; then
             echo "::error::PHANTOM CUTOVER DETECTED (NFM-3777 pattern, issue #1050)."
@@ -981,7 +984,7 @@ jobs:
           for SVC in nucpot-prod-web:web nucpot-prod-worker:api nucpot-prod-lightrag:lightrag; do
             CONTAINER="${SVC%%:*}"; REPO="nucpot-prod-${SVC##*:}"
             ACTUAL_SVC=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-              "docker inspect ${CONTAINER} --format '{{.Config.Image}}'")
+              "${SSH_DOCKER} inspect ${CONTAINER} --format '{{.Config.Image}}'")
             EXPECTED_SVC="${REPO}:${{ github.sha }}"
             echo "${CONTAINER}: expected ${EXPECTED_SVC}, actual ${ACTUAL_SVC}"
             if [ "${ACTUAL_SVC}" != "${EXPECTED_SVC}" ]; then
