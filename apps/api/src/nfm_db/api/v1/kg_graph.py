@@ -115,6 +115,19 @@ async def _resolve_node_id(
     The second step is what unblocks the per-material graph page: the
     frontend has ``materials.id`` but ``kg_nodes`` uses an independent
     UUID space, so a plain UUID lookup against ``kg_nodes`` never matched.
+
+    NFM-4093 — coverage note
+    ------------------------
+    The bridge relies on ``kg_nodes.label = materials.name`` (exact
+    match).  Migration ``071_material_kg_bridge_coverage`` closes the
+    57/112 baseline gap (2026-09-02 baseline: 55 of 112 materials had a
+    working bridge).  The migration is **additive only** — it does not
+    alter the resolution logic.  Same-name duplicate groups (e.g. 8×
+    ``Cr-doped UO2``, 5× ``U-Mo``) are intentionally not given per-material
+    kg_nodes; consolidation is tracked separately under
+    NFM-4093-DUP-CONSOLIDATE.  Property-slice rows are inserted with
+    ``properties.dataset_slice = true`` so the NFM-4093-DATA-CLEANUP
+    follow-up can collapse them against their parent material.
     """
     focal = await resolve_focal_node(session, raw_node_id, status_filter)
     if focal is not None:
