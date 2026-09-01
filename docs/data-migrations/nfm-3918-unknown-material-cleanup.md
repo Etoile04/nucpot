@@ -73,8 +73,14 @@ guarding them.
 
 ### Phase 4 — merge (10 rows)
 
-For each carrying-data Unknown row, resolve the target material with the
-following rule:
+Phase 4 selects its merge strategy via the `merge_strategy` psql
+variable (`-v merge_strategy=<value>` on the CLI / `--strategy <value>`
+on the wrapper). Two strategies are supported:
+
+#### `source_id_walk` (default)
+
+For each carrying-data Unknown row, resolve the target material with
+the following rule:
 
 ```sql
 target(m) = material m' with m'.source_id = m.source_id
@@ -105,7 +111,49 @@ distributed triples into collision. The dedup-skip list is required by
 AC #3 ("若有去重,逐条列出被去重的行与理由").
 
 After migration: drop the now-empty source datasets and the Unknown
-material itself.
+material itself. The wrapper's `assert_invariants()` enforces the strict
+AC #4 contract: `density=10.55` rows must collapse from 8 to 1
+(since the 8 Unknowns each carried their own density=10.55 row).
+
+#### `new_canonical`
+
+**When to use:** the staging shard pattern NFM-3918 actually exhibits —
+the carrying-data Unknowns have `source_id` values with no non-Unknown
+sibling, so `source_id_walk` resolves 0/N targets and leaves N Unknowns
+stranded. Confirmed by NFM-3903 dry-run 2026-09-01 against the staging
+shard (11 carrying-data Unknowns, 0 source_id_walk targets).
+
+Strategy:
+
+  1. Insert one row `materials(name='Unknown Material (canonical)')`
+     with `id = gen_random_uuid()`. Capture `canonical_id`.
+  2. For each carrying-data Unknown row, walk its datasets and:
+     * `UPDATE datasets SET material_id = canonical_id WHERE
+       material_id = unknown_id` (re-point every dataset; FK cascade
+       from `property_measurements.dataset_id` is unaffected).
+     * `INSERT INTO nfm_3918_merge_log(unknown_material_id,
+       target_material_id, migrated_measurements, dedup_skipped,
+       dedup_skip_details)` with `dedup_skipped=0,
+       dedup_skip_details='[]'::jsonb`.
+     * `DELETE FROM materials WHERE id = unknown_id`.
+  3. End-of-phase `RAISE NOTICE` reports `canonical=<uuid>
+     deleted_unknowns=<n> re_pointed_datasets=<n>
+     measurements_preserved=<n>`.
+
+Invariants enforced by the wrapper (relaxed AC #4):
+
+  * AC #1 — `Unknown = 0` after (canonical row is **not** counted as
+    `name='Unknown Material'`).
+  * AC #2 — measurement preservation: `after >= before` (no loss;
+    `new_canonical` does not touch `property_measurements`, so the count
+    is exact).
+  * AC #3 — `density=10.55` rows must **not grow** (guardrail: the
+    migration never adds density rows). The strict 8→1 collapse is
+    relaxed because the 8 density rows legitimately live on the 8
+    separate Unknowns being merged and now co-exist on the canonical.
+  * FK integrity — `orphan_datasets = 0`, `orphan_measurements = 0`.
+  * `nfm_3918_merge_log` must record ≥ 1 row per deleted Unknown (the
+    `target_material_id` for every entry is the same canonical).
 
 ### Phase 5 — AFTER snapshot
 
@@ -134,11 +182,26 @@ python scripts/nfm-3918-unknown-material-cleanup.py \
 Output: the BEFORE / AFTER comparison table. Phases 3 / 4 emit "would do"
 notices; the database is unmodified.
 
+For shards where `source_id_walk` resolves 0/N targets (the staging
+shard pattern as of NFM-3903 dry-run 2026-09-01), pass
+`--strategy new_canonical` to use Phase 4 strategy B:
+
+```bash
+python scripts/nfm-3918-unknown-material-cleanup.py \
+    --database-url "$STAGING_DATABASE_URL" \
+    --dry-run \
+    --strategy new_canonical
+```
+
 ### Staging apply
 
 ```bash
 python scripts/nfm-3918-unknown-material-cleanup.py \
     --database-url "$STAGING_DATABASE_URL"
+# or for the staging-shard pattern:
+python scripts/nfm-3918-unknown-material-cleanup.py \
+    --database-url "$STAGING_DATABASE_URL" \
+    --strategy new_canonical
 ```
 
 Demonstrates the migration end-to-end on staging. The staging DB should
