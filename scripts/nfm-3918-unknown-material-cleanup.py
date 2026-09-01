@@ -321,7 +321,14 @@ def assert_invariants(
     # actually re-points onto a NON-Unknown target. For new_canonical the
     # density=10.55 distribution collapses from 8 across 8 Unknown rows to
     # 8 across 1 canonical row — the row count is unchanged by design.
-    if apply and strategy == "source_id_walk" and after.counts.get("density_10_55") != 1:
+    #
+    # Both `.get(..., 0)` calls use a default because `Counts.counts` is
+    # typed `Mapping[str, int]` — a missing key means parse_counts never saw
+    # the token (e.g., Phase 5 psql output was truncated). Without the
+    # default, the LHS would be `int | None` and any `>` / `!=` comparison
+    # raises TypeError at runtime, masking the AC failure as a traceback.
+    after_density = after.counts.get("density_10_55", 0)
+    if apply and strategy == "source_id_walk" and after_density != 1:
         failures.append(
             f"AC #4 FAIL (source_id_walk): post-state density=10.55 rows = "
             f"{after.counts.get('density_10_55')}, expected 1."
@@ -331,7 +338,7 @@ def assert_invariants(
     # (we never gain rows). The "8 on 1 material" invariant is verified by
     # a separate SQL check (see Phase 5 of the migration SQL — not in this
     # wrapper because the wrapper only sees aggregate counts).
-    if apply and strategy == "new_canonical" and after.counts.get("density_10_55") > before.counts.get("density_10_55", 0):
+    if apply and strategy == "new_canonical" and after_density > before.counts.get("density_10_55", 0):
         failures.append(
             f"AC #4 FAIL (new_canonical): post-state density=10.55 rows = "
             f"{after.counts.get('density_10_55')} GREATER than before "
