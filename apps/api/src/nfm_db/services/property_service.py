@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, Literal
 
 from sqlalchemy import func, select
@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from nfm_db.models import (
+    Author,
     Dataset,
+    DataSource,
+    DataSourceAuthor,
     Material,
     PropertyCategory,
     PropertyMeasurement,
@@ -30,6 +33,7 @@ from nfm_db.schemas.property import (
     PropertyMeasurementResponse,
     PropertyMeasurementUpdate,
     PropertyStatsResponse,
+    SourceRef,
 )
 
 logger = logging.getLogger(__name__)
@@ -275,6 +279,83 @@ def _resolve_unit_symbol(measurement: PropertyMeasurement) -> str | None:
     return None
 
 
+# NFM-4086 — D1 来源可读化 helpers. ``_format_authors`` collapses the
+# ordered authors list into the "X, Y, Z et al." shape the frontend
+# citation column needs; ``_resolve_source_url`` picks the canonical
+# click target (DOI resolver first, then external_url).
+_AUTHOR_ET_AL_THRESHOLD = 3
+
+
+def _format_authors(data_source_authors: Iterable[DataSourceAuthor] | None) -> list[str]:
+    """Render an author's display name from the joined DataSourceAuthor rows.
+
+    Sorted by ``author_order`` (1-based; ties fall back to ``id`` so the
+    output is deterministic). Returns at most ``_AUTHOR_ET_AL_THRESHOLD``
+    names — if the source has more, the third slot is replaced with
+    ``"et al."``. The list is empty when ``data_source_authors`` is None.
+
+    Example:
+        4 authors  → ["Smith, J.", "Owen, L.", "Patel, R.", "et al."]
+        3 authors  → ["Smith, J.", "Owen, L.", "Patel, R."]
+        1 author   → ["Smith, J."]
+        0 authors  → []
+    """
+    if not data_source_authors:
+        return []
+
+    sorted_authors = sorted(
+        data_source_authors,
+        key=lambda dsa: (dsa.author_order, str(dsa.author_id)),
+    )
+    names = [_author_display_name(dsa.author) for dsa in sorted_authors]
+
+    if len(names) > _AUTHOR_ET_AL_THRESHOLD:
+        return [*names[: _AUTHOR_ET_AL_THRESHOLD], "et al."]
+    return names
+
+
+def _author_display_name(author: Author) -> str:
+    """Render an Author as ``"Last, F."`` (initial-only first name).
+
+    Falls back to ``full_name`` when ``first_name`` is missing so the
+    column always shows a value the UI can use.
+    """
+    if author.first_name:
+        initial = author.first_name.strip()[0].upper()
+        return f"{author.last_name}, {initial}."
+    return author.full_name
+
+
+def _resolve_source_url(source: DataSource) -> str | None:
+    """Pick the canonical click target for a citation.
+
+    Preference order: DOI URL (``https://doi.org/{doi}``) > external_url >
+    None. This matches the spec's "DOI URL > external_url" requirement and
+    keeps the citation column clickable for any source that has *some*
+    resolvable identifier.
+    """
+    if source.doi:
+        return f"https://doi.org/{source.doi}"
+    return source.external_url
+
+
+def _build_source_ref(source: DataSource) -> SourceRef:
+    """Construct a SourceRef from a fully-eager-loaded DataSource.
+
+    Expects ``source.data_source_authors`` to be selectinloaded; an
+    empty relation is fine (renders as ``authors: []``).
+    """
+    return SourceRef(
+        id=source.id,
+        title=source.title,
+        doi=source.doi,
+        journal=source.journal,
+        year=source.year,
+        authors=_format_authors(source.data_source_authors),
+        url=_resolve_source_url(source),
+    )
+
+
 async def list_material_properties(
     db: AsyncSession,
     material_id: uuid.UUID,
@@ -305,7 +386,13 @@ async def list_material_properties(
         return None
 
     # 2. Base query. Eager-load related rows needed to render the table
-    #    without N+1 queries.
+    #    without N+1 queries. NFM-4086 extends the chain with the
+    #    DataSource → DataSourceAuthor → Author hop so the response can
+    #    serialize an enriched citation (doi + author list) without
+    #    triggering a lazy load per row. NFM-4087 extends the chain with
+    #    PropertyMeasurement.conditions so the frontend expander can
+    #    render temperature / pressure / environment without a lazy load
+    #    per row.
     stmt = (
         select(PropertyMeasurement)
         .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
@@ -314,7 +401,11 @@ async def list_material_properties(
                 PropertyType.default_unit
             ),
             selectinload(PropertyMeasurement.unit),
-            selectinload(PropertyMeasurement.dataset).selectinload(Dataset.source),
+            selectinload(PropertyMeasurement.conditions),
+            selectinload(PropertyMeasurement.dataset)
+            .selectinload(Dataset.source)
+            .selectinload(DataSource.data_source_authors)
+            .selectinload(DataSourceAuthor.author),
         )
         .where(Dataset.material_id == material_id)
     )
@@ -349,14 +440,35 @@ async def list_material_properties(
     #    response is a deterministic list — no further re-ordering.
     items: list[MaterialPropertyItem] = []
     for r in rows:
+        # NFM-4086: source is now a structured SourceRef (or None when the
+        # dataset has no attached citation). The frontend renders
+        # "Authors (Year). Journal." with a DOI link, or "Unsourced" when
+        # the row has no source at all.
+        source_ref = (
+            _build_source_ref(r.dataset.source)
+            if r.dataset is not None and r.dataset.source is not None
+            else None
+        )
+        # NFM-4087: serialise the per-measurement conditions so the
+        # frontend "+N conditions" expander can list temperature /
+        # pressure / environment / irradiation_dose / notes without
+        # triggering a lazy load per row. ``r.conditions`` is populated
+        # by ``selectinload(PropertyMeasurement.conditions)`` above.
+        # Order by ``MeasurementCondition.id`` (UUIDv4 lex order) for a
+        # stable render across pagination windows.
+        conditions = [
+            MeasurementConditionResponse.model_validate(c)
+            for c in sorted(r.conditions, key=lambda c: c.id)
+        ]
         items.append(
             MaterialPropertyItem(
                 id=r.id,
                 name=r.property_type.name if r.property_type is not None else "",
                 value=_format_measurement_value(r),
                 unit=_resolve_unit_symbol(r),
-                source=r.dataset.source.title if r.dataset and r.dataset.source else "",
+                source=source_ref,
                 confidence=_derive_confidence(r),
+                conditions=conditions,
             )
         )
 

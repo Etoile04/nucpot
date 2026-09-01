@@ -355,3 +355,18 @@ body {
   z-index: 2;
   background-color: var(--color-surface-elevated, #374151);
 }
+
+/* ---------------------------------------------------------------------------
+ * NFM-4087 — D2 重复行处置 (folded row highlight)
+ *
+ * `.material-property-row--grouped` tints rows whose underlying
+ * measurement count exceeds 1. Saturation is intentionally below 10% so
+ * the highlight reads as a label, not a brand element; the count badge
+ * (×N) and the disclosure triangle carry the actual signal.
+ * ------------------------------------------------------------------------- */
+.material-property-row--grouped > td {
+  background-color: rgb(59 130 246 / 0.05);
+}
+.material-property-row--grouped:hover > td {
+  background-color: rgb(59 130 246 / 0.09);
+}
