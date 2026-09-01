@@ -1,7 +1,7 @@
 """Material KG bridge coverage — eliminate 57/112 materials→kg_nodes gap.
 
-Revision ID: 071_material_kg_bridge_coverage
-Revises: 070_d2_dedup_bad_data_sources
+Revision ID: 072_material_kg_bridge_coverage
+Revises: 071_f4_uuid_titled_source_guard
 Create Date: 2026-09-02
 
 NFM-4095 — NFM-4093 backend child
@@ -75,8 +75,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "071_material_kg_bridge_coverage"
-down_revision: str | Sequence[str] | None = "070_d2_dedup_bad_data_sources"
+revision: str = "072_material_kg_bridge_coverage"
+down_revision: str | Sequence[str] | None = "071_f4_uuid_titled_source_guard"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
