@@ -44,6 +44,116 @@ def test_canonical_element_system(label, expected):
     assert _canonical_element_system(label) == expected
 
 
+# NFM-4037: morphology adjectives + Cr-bearing UO2 labels that the
+# Owen2023 corpus (source 9320cb50) emits on Material KGNode rows.
+# The F8 scorecard (``audit/f8_scorecard_v050.sql``) only accepts
+# ``element_system IN ('UO2', 'UO2+Cr', 'U-Cr-O')`` so every label in
+# this table must collapse onto one of those three.  Regression tests
+# for the pre-existing subscript path (``U₂Mo`` → ``U-Mo``) live above.
+_OWEN2023_LABELS: list[tuple[str, str]] = [
+    # Undoped UO2 — the strip-loop must remove the adjective but leave
+    # a label the F8 ``element_system = 'UO2'`` predicate matches.
+    ("UO2", "UO2"),
+    ("amorphous UO2", "UO2"),
+    ("crystalline UO2", "UO2"),
+    ("polycrystalline UO2", "UO2"),
+    # Cr-bearing UO2 — every label collapses onto 'UO2+Cr' (the F8
+    # scorecard accepts BOTH 'UO2+Cr' and 'U-Cr-O'; the Owen2023 corpus
+    # is matrix+dopant so the matrix+dopant form is the unambiguous pick).
+    ("UO2-10at.%Cr", "UO2+Cr"),
+    ("UO2-20at.%Cr", "UO2+Cr"),
+    ("UO2-30at.%Cr", "UO2+Cr"),
+    ("UO2-50at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-10at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-30at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-50at.%Cr", "UO2+Cr"),
+    ("Cr-doped UO2", "UO2+Cr"),
+    ("Cr-doped amorphous UO2", "UO2+Cr"),
+    ("undoped and Cr-doped amorphous UO2", "UO2+Cr"),
+    # Parenthetical variants: the strip-loop doesn't reach inside the
+    # parens, but the Cr/UO2 substring check on the full label still
+    # resolves to 'UO2+Cr'.
+    ("amorphous UO2 (undoped and Cr-doped)", "UO2+Cr"),
+    # Pass-through guards: bare Cr without UO2 must NOT be coerced into
+    # 'UO2+Cr' (it would land on a label that doesn't describe its
+    # chemistry).  Pre-NFM-4037 pass-through behaviour is preserved.
+    ("Cr", "Cr"),
+    ("Cr2O3", "Cr2O3"),
+    # Non-UO2 alloys: still pass through so the existing U-10Mo /
+    # polycrystalline paths keep working.
+    ("U-10Mo", "U-10Mo"),
+    ("polycrystalline U-10Mo", "U-10Mo"),
+    ("nano-Cr", "Cr"),  # bare Cr after prefix strip; pass-through.
+]
+
+
+@pytest.mark.parametrize(("label", "expected"), _OWEN2023_LABELS)
+def test_canonical_element_system_owen2023(label, expected):
+    """NFM-4037 AC-1: every Owen2023 (source 9320cb50) Material label
+    must collapse onto an F8-scorecard-recognised element_system."""
+    assert _canonical_element_system(label) == expected
+
+
+def test_canonical_element_system_covers_every_owen2023_label():
+    """NFM-4037 AC-1 (audit pin): if the KG corpus emits a new label,
+    this test fails until the mapping is added.  Update both this list
+    AND the F8 scorecard predicate when extending the corpus."""
+    # Lock the set so an accidental edit forces a reviewer to look.
+    expected_pairs = sorted(set(_OWEN2023_LABELS))
+    actual_pairs = sorted(
+        (label, _canonical_element_system(label)) for label, _ in _OWEN2023_LABELS
+    )
+    assert actual_pairs == expected_pairs
+
+
+def test_canonical_element_system_preserves_subscript_path():
+    """Regression guard for the original NFM-3478 alloy path."""
+    assert _canonical_element_system("U₂Mo") == "U-Mo"
+    # Subscript plus adjective: subscript path wins (we never strip
+    # adjectives on subscript-bearing labels — the alloy branch
+    # returns first).
+    assert _canonical_element_system("amorphous U₂Mo") == "U-Mo"
+
+
+# NFM-4037 AC-3: pin the pre-existing pass-through contract for every
+# label the change does NOT touch.  If a non-Owen2023 source's row gets
+# renormalised, the staging surface for that source silently shifts and
+# the dedup hash changes — this list is the regression guard.
+_REGRESSION_LABELS: list[tuple[str, str]] = [
+    # Subscript-bearing alloy notation — pre-NFM-4037 alloy path.
+    ("U₂Mo", "U-Mo"),
+    ("U₃Si₂", "U-Si"),
+    # Plain formulas — pre-NFM-4037 pass-through.
+    ("U", "U"),
+    ("Mo", "Mo"),
+    ("Cr", "Cr"),
+    ("U3Si2", "U3Si2"),
+    ("Cr2O3", "Cr2O3"),
+    ("Al2O3", "Al2O3"),
+    # Alloy formulas with separator — pre-NFM-4037 pass-through.
+    ("U-10Mo", "U-10Mo"),
+    ("Zr-4", "Zr-4"),
+    # Adjective-prefixed labels whose chemistry is NOT UO2 — strip the
+    # adjective but keep the chemistry.  These were previously
+    # pass-through (the old code returned ``plain`` for ASCII labels);
+    # the strip-loop now collapses them onto the bare chemistry too.
+    # Pin the new behaviour so a future edit cannot silently regress
+    # this into "polycrystalline U-10Mo" leaking back onto the staging
+    # surface.
+    ("polycrystalline U-10Mo", "U-10Mo"),
+    ("crystalline Al2O3", "Al2O3"),
+]
+
+
+@pytest.mark.parametrize(("label", "expected"), _REGRESSION_LABELS)
+def test_canonical_element_system_non_owen2023_pass_through(label, expected):
+    """NFM-4037 AC-3: non-Owen2023 sources must not see their staging
+    surface silently shift.  Every label the change does NOT touch must
+    canonicalise to its pre-NFM-4037 value (or, for adjective-bearing
+    non-UO2 labels, the bare chemistry)."""
+    assert _canonical_element_system(label) == expected
+
+
 def test_property_slug_map_covers_starikov2023_labels():
     """NFM-3478 B2'+ mapping table must cover every Property label the
     Starikov & Smirnova 2023 extraction produced (2026-08-23 rerun), so no
