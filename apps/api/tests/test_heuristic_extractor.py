@@ -395,6 +395,241 @@ class TestF8CrDopedActivationEnergy:
         )
 
 
+class TestF8UncertaintyExclusionNFM4080:
+    """NFM-4080 [NFM-4058-FOLLOWUP]: F2 fix — uncertainty bounds must not
+    be emitted as standalone ``activation_energy`` findings on Owen2023.
+
+    The Owen2023 fixture contains two primary+uncertainty pairs:
+
+        "0.30 eV with an uncertainty of 0.05 eV"
+        "0.26 eV with uncertainty 0.08 eV"
+
+    Before this fix, the first-pass matcher emitted **4**
+    ``activation_energy`` rows (0.30, 0.05, 0.26, 0.08) instead of 2 —
+    silently persisting uncertainty bounds as primary measurements once
+    migration ``069_add_v050_f8_property_types`` seeds
+    ``activation_energy`` into ``kg_nodes`` (CTO §3.5 verification
+    comment ``e9290ce6``, finding F2).
+
+    After the fix, only 0.30 and 0.26 land under
+    ``property_name="activation_energy"``; 0.05 and 0.08 are filtered by
+    the same direction-aware ``_F8_UNCERTAINTY_RE`` guard already
+    applied to the third pass (line 615 of heuristic_extractor.py).
+    """
+
+    def test_exactly_two_activation_energy_findings_on_owen2023(self):
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        eV_rows = [
+            r for r in result if r["property_name"] == "activation_energy"
+        ]
+        eV_values = sorted(r["value"] for r in eV_rows)
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"Owen2023 must yield exactly 2 activation_energy findings "
+            f"(0.30 and 0.26); got {eV_values}"
+        )
+
+    def test_uncertainty_bounds_not_in_activation_energy_findings(self):
+        """The 0.05 eV and 0.08 eV bounds from ``X±Y`` prose must not
+        surface as standalone activation_energy rows — they are the
+        uncertainty of 0.30 and 0.26 respectively."""
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        eV_values = [
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        ]
+        for bound in (0.05, 0.08):
+            assert not any(
+                v == pytest.approx(bound, abs=1e-9) for v in eV_values
+            ), (
+                f"uncertainty bound {bound} must not appear as a "
+                f"standalone activation_energy finding; got {eV_values}"
+            )
+
+    def test_uncertainty_guard_is_direction_aware(self):
+        """Primary measurement ``0.30 eV`` followed by ``with an
+        uncertainty of 0.05 eV`` must keep 0.30 (no uncertainty
+        qualifier immediately before) and drop 0.05 (qualifier
+        present). Same for ``0.26 eV with uncertainty 0.08 eV``.
+
+        The guard checks text BEFORE the value — not after — so that
+        "0.26 eV with uncertainty 0.08 eV" leaves 0.26 alone and
+        suppresses 0.08.
+        """
+        text = (
+            "The activation energy for undoped UO2 was found to be 0.30 eV "
+            "with an uncertainty of 0.05 eV. For Cr-doped UO2, the "
+            "activation energy decreased to 0.26 eV with uncertainty "
+            "0.08 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-dirtest")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"direction-aware guard must keep primaries and drop bounds; "
+            f"got {eV_values}"
+        )
+
+    def test_pm_prefix_form_is_also_filtered(self):
+        """The ± Unicode form (``0.30 eV ± 0.05 eV``) is the same defect
+        surface as the prose form; verify the guard handles it. Both
+        ±-prefixed bounds must be filtered while 0.30 must land.
+
+        Both the primary and the bound carry the unit ``eV`` so the
+        value+unit regex matches all four candidates — that isolates the
+        guard behaviour from the regex's own reach.
+        """
+        text = (
+            "The activation energy is 0.30 eV ± 0.05 eV. For Cr-doped "
+            "UO2 the activation energy is 0.26 eV ± 0.08 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-pmtest")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"±-prefixed bounds must be filtered; got {eV_values}"
+        )
+
+    def test_primary_following_a_bound_is_not_suppressed(self):
+        """NFM-4080 F2b (CTO verification): a legitimate primary value
+        that merely FOLLOWS an uncertainty bound inside the 30-char
+        lookback window must still be emitted.
+
+        With an unanchored guard regex, ``search()`` over the fixed
+        window matched the ``±`` belonging to the PREVIOUS pair, so the
+        compact abstract/table form below silently dropped the real
+        Cr-doped Ea (0.26) — trading pollution for equally-silent recall
+        loss. The right-anchored, pair-aware guard keeps both primaries.
+        """
+        text = (
+            "The activation energy of UO2 is 0.30 eV ± 0.05 eV, 0.26 eV "
+            "for Cr-doped UO2."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-f2b")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"a primary value following a bound must survive the guard; "
+            f"got {eV_values}"
+        )
+
+    @pytest.mark.parametrize(
+        "qualifier",
+        ["± ", "+/- ", "+- ", "with uncertainty ", "with uncert. ",
+         "with uncert ", "with an uncertainty of ", "(± "],
+    )
+    def test_all_bound_spellings_are_suppressed(self, qualifier: str):
+        """Every spelling of the bound qualifier suppresses the value it
+        immediately precedes — including the ASCII ``+/-`` / ``+-`` forms
+        that appear when ``±`` fails to round-trip out of a PDF, and the
+        ``uncert.`` abbreviation whose trailing period previously broke
+        the word-boundary anchor.
+        """
+        text = (
+            f"The activation energy of UO2 is 0.30 eV {qualifier}0.05 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-spell")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.30]), (
+            f"qualifier {qualifier!r} must suppress the 0.05 bound; "
+            f"got {eV_values}"
+        )
+
+
+class TestF8UncertaintySweepOtherFamiliesNFM4080:
+    """NFM-4080 sweep: the same X±Y defect surface exists beyond
+    ``activation_energy`` (CTO §3.5 verification finding F2 also called
+    this out: density, bond_length, lattice_constant, diffusion_coefficient
+    all use the same first-pass matcher and are vulnerable to the same
+    asymmetry). Lock in coverage for those families so a future refactor
+    of :data:`_F8_UNCERTAINTY_RE` cannot silently regress them.
+
+    Each test asserts a single primary measurement lands under the
+    expected property_name while the uncertainty bound does NOT.
+    """
+
+    @pytest.mark.parametrize(
+        "property_name,text,expected_value",
+        [
+            (
+                "density",
+                "The density of UO2 is 10.97 g/cm3 with an uncertainty of 0.02 g/cm3.",
+                10.97,
+            ),
+            (
+                "density",
+                "The density of UO2 is 10.97 g/cm3 ± 0.02 g/cm3.",
+                10.97,
+            ),
+            (
+                "lattice_constant",
+                "The lattice constant of UO2 is 5.47 angstrom with an uncertainty of 0.01 angstrom.",
+                5.47,
+            ),
+            (
+                "lattice_constant",
+                "The lattice constant of UO2 is 5.47 angstrom ± 0.01 angstrom.",
+                5.47,
+            ),
+            (
+                "bond_length",
+                "The UO2 bond length is 2.04 angstrom with an uncertainty of 0.01 angstrom.",
+                2.04,
+            ),
+            (
+                "bond_length",
+                "The UO2 bond length is 2.04 angstrom ± 0.01 angstrom.",
+                2.04,
+            ),
+            (
+                "diffusion_coefficient",
+                "The diffusion coefficient of UO2 is 3.32e-8 cm2/s with an uncertainty of 1e-9 cm2/s.",
+                3.32e-8,
+            ),
+            (
+                "diffusion_coefficient",
+                "The diffusion coefficient of UO2 is 3.32e-8 cm2/s ± 1e-9 cm2/s.",
+                3.32e-8,
+            ),
+        ],
+    )
+    def test_x_plus_minus_y_filtered_across_families(
+        self, property_name: str, text: str, expected_value: float,
+    ):
+        """For every X±Y family, only the primary value lands — the
+        bound is excluded by the same direction-aware guard as the
+        activation_energy regression test above.
+
+        Each ``text`` triggers a single primary value and one bound
+        value; if the guard regresses, two rows land under
+        ``property_name`` and the test fails.
+        """
+        result = heuristic_extract(text, source_reference=f"sweep-{property_name}")
+        matching = [r for r in result if r["property_name"] == property_name]
+        assert len(matching) == 1, (
+            f"{property_name}: expected exactly 1 row from X±Y prose; "
+            f"got {len(matching)} → {[(r['value'], r['method']) for r in matching]}"
+        )
+        assert matching[0]["value"] == pytest.approx(expected_value, abs=1e-9), (
+            f"{property_name}: expected primary {expected_value}, got {matching[0]['value']}"
+        )
+
+
 class TestF8CrDopedDiffusivity:
     """AC-A1 class #2: Cr-doped D0 (target ~1.27e-9 cm²/s at 50 at% Cr)."""
 

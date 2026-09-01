@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,6 +66,27 @@ def _is_dedup_conflict(exc: IntegrityError) -> bool:
     """True if the IntegrityError came from a 5-tuple unique violation."""
     msg = str(exc.orig).lower() if exc.orig else str(exc).lower()
     return any(frag.lower() in msg for frag in _DEDUP_CONFLICT_FRAGMENTS)
+
+
+#: NFM-4088 — guard against UUID-pattern ``title`` (root cause: prior
+#: source's primary-key string was being copied into the new row's
+#: ``title`` when extraction emitted a UUID instead of a reference).
+#: Canonical 36-char UUID, case-insensitive, anchored on both ends.
+_UUID_TITLE_PATTERN: re.Pattern[str] = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+#: NFM-4088 — placeholder titles that the DOI-empty branch emits when
+#: neither ``reference`` nor ``source_file`` is supplied.  These were
+#: reused across distinct literature sources in production; the
+#: dedup migration 070 collapses them.  The mapper still allows new
+#: INSERTs under these titles (re-run compatibility) but prefers a
+#: dedup hit on file_hash or content_md first.
+_BORING_PLACEHOLDER_TITLES: frozenset[str] = frozenset(
+    {"Unknown Source", "Unattributed source (no DOI)"}
+)
 
 
 #: Pydantic Literal allowed values for ExtractedProperty.property_category.
@@ -707,14 +729,48 @@ async def map_and_persist(
                     source_map[s_key] = source
                     created_sources += 1
             else:
-                source = DataSource(
-                    title=title,
-                    source_type="other",
-                )
-                db.add(source)
-                await db.flush()
-                source_map[s_key] = source
-                created_sources += 1
+                # NFM-4088 — write-path guard for the DOI-empty branch.
+                #
+                # Root cause: prior runs copied a previous source's
+                # primary-key UUID into the new row's ``title`` field
+                # when extraction emitted no real reference.  This block:
+                #
+                #   1. Refuses INSERT when ``title`` matches the canonical
+                #      36-char UUID pattern (defence-in-depth: the regex
+                #      guards against re-introducing the regression that
+                #      migration 070 just cleaned up).
+                #   2. Dedups by exact ``title`` (handles the placeholder
+                #      reuse case: ``"Unattributed source (no DOI)"``
+                #      resolves to a single canonical row across reruns).
+                #   3. Falls back to ``file_hash`` / ``content_md`` matching
+                #      when the title-based lookup misses, matching the
+                #      NFM-1486 PDF upload pipeline's identity model.
+                #   4. Inserts a fresh row only when all 3 lookups miss.
+                #
+                # Behaviour on UUID title (AC-4): raise ``ValueError`` so
+                # the caller's transaction aborts and the upstream batch
+                # is dropped — the alternative (silent substitute) would
+                # paper over a logic bug in the extraction pipeline.
+                _reject_uuid_title(title)
+
+                existing = await _find_source_by_title(db, title)
+                if existing is None:
+                    existing = await _find_source_by_content_md_prefix(
+                        db, item.source_file
+                    )
+
+                if existing:
+                    source_map[s_key] = existing
+                    reused_entities += 1
+                else:
+                    source = DataSource(
+                        title=title,
+                        source_type="other",
+                    )
+                    db.add(source)
+                    await db.flush()
+                    source_map[s_key] = source
+                    created_sources += 1
 
         source = source_map[s_key]
 
@@ -919,6 +975,78 @@ async def _find_source_by_doi(
     """Find existing DataSource by DOI."""
     stmt = select(DataSource).where(DataSource.doi == doi)
     return (await db.execute(stmt)).scalar_one_or_none()
+
+
+def _reject_uuid_title(title: str) -> None:
+    """Raise ``ValueError`` when ``title`` is a 36-char UUID string.
+
+    NFM-4088 AC-4 (write-path guard).
+
+    The pre-fix DOI-empty branch (lines 709-717) silently inserted a
+    row whose ``title`` was the primary-key UUID of another source.
+    Migration 070 cleans the existing rows; this guard prevents the
+    regression from re-emerging.  We refuse the INSERT rather than
+    silently substitute because the only way the title can be a UUID
+    is a logic bug in the upstream extraction chain — substituting
+    a different label would mask that bug.
+    """
+    if _UUID_TITLE_PATTERN.match(title):
+        raise ValueError(
+            f"Refusing to create DataSource with UUID-pattern title={title!r}. "
+            "The upstream extraction chain supplied a UUID instead of a "
+            "literature reference; investigate the extractor before retrying."
+        )
+
+
+async def _find_source_by_title(
+    db: AsyncSession,
+    title: str,
+) -> DataSource | None:
+    """Find an existing DataSource by exact ``title`` equality.
+
+    NFM-4088 AC-3 (write-path guard fallback 1).
+
+    Returns at most one row; the existing ``data_sources`` table has
+    no UNIQUE constraint on ``title`` (only ``doi``) so two rows may
+    legitimately share a title in legacy states.  We use ``.first()``
+    rather than ``scalar_one_or_none()`` to avoid raising
+    ``MultipleResultsFound`` (mirrors the NFM-3919 dedup-by-formula
+    pattern).
+    """
+    if not title:
+        return None
+    stmt = select(DataSource).where(DataSource.title == title).limit(1)
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _find_source_by_content_md_prefix(
+    db: AsyncSession,
+    source_file: str | None,
+) -> DataSource | None:
+    """Find an existing DataSource by ``source_file`` substring match.
+
+    NFM-4088 AC-3 (write-path guard fallback 2).
+
+    When ``source_file`` is a Markdown path the NFM-1486 PDF pipeline
+    uploaded, the corresponding ``content_md`` column holds the parsed
+    text and was uploaded under the same file.  We match by
+    ``LIKE '%<basename>%'`` — exact equality is unreliable across
+    absolute-vs-relative paths.
+
+    Returns ``None`` when ``source_file`` is absent or no row matches.
+    """
+    if not source_file:
+        return None
+    basename = source_file.rstrip("/").split("/")[-1]
+    if not basename or len(basename) < 4:
+        return None
+    stmt = (
+        select(DataSource)
+        .where(DataSource.content_md.is_not(None))
+        .where(DataSource.content_md.like(f"%{basename}%"))
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
 
 
 async def _find_material_by_formula(
