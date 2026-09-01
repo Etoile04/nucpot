@@ -41,17 +41,25 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/materials",
 }));
 
-// Mock antd message so we can assert the toast payload without rendering
-// a real notification (which would require App context + a portal root).
+// NFM-4085 (C-side UXDesigner REJECT feedback, fix follow-up): the
+// component routes through `App.useApp()` (not the static `message`
+// import — that no-ops in the browser because antd v5 + React 19 refuse
+// to attach a portal to the static container). To assert "the toast was
+// attempted with '第 N 页'" we mock `App.useApp` directly and capture the
+// returned `message.info` spy. The Playwright E2E
+// (apps/web/e2e/materials-list-swipe.spec.ts) covers the *real*
+// `.ant-message-notice-content` DOM assertion that this jsdom mock would
+// otherwise hide.
 const mockMessageInfo = vi.fn();
+const mockAppUseApp = vi.fn(() => ({ message: { info: mockMessageInfo } }));
 
 vi.mock("antd", async (importOriginal) => {
   const mod = await importOriginal<typeof import("antd")>();
   return {
     ...mod,
-    message: {
-      ...mod.message,
-      info: (...args: unknown[]) => mockMessageInfo(...args),
+    App: {
+      ...mod.App,
+      useApp: () => mockAppUseApp(),
     },
   };
 });
@@ -176,6 +184,11 @@ describe("MaterialsListView touch swipe pagination (NFM-4085 C)", () => {
     vi.clearAllMocks();
     mockQueryString = "";
     mockMessageInfo.mockClear();
+    mockAppUseApp.mockClear();
+    // Default mockAppUseApp returns the captured info spy; tests that
+    // need to assert it was *called* rely on this default. The hook is
+    // re-armed to a fresh closure before each test.
+    mockAppUseApp.mockImplementation(() => ({ message: { info: mockMessageInfo } }));
   });
 
   it("renders a swipe-area data-testid on the list container", async () => {

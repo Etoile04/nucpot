@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Alert,
+  App,
   Empty,
   Input,
   Pagination,
@@ -14,7 +15,6 @@ import {
   Table,
   Tag,
   Typography,
-  message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { request } from "@/lib/api-client";
@@ -185,6 +185,17 @@ function buildColumns(searchQuery: string): ColumnsType<MaterialItem> {
 
 export function MaterialsListView() {
   const searchParams = useSearchParams();
+
+  // NFM-4085 (C-side UXDesigner REJECT feedback): the static `message`
+  // import from antd v5 + React 19 emits a "Static function can not
+  // consume context like dynamic theme" warning and the toast silently
+  // no-ops in the browser (verified by MutationObserver on document.body:
+  // zero `.ant-message` notice nodes ever appear). Routing through
+  // `App.useApp()` returns the App-scoped message instance, whose
+  // container is the one mounted by `<App>` in `components/antd-provider.tsx`
+  // — so the toast actually renders. Mirrors the existing pattern in
+  // `LiteratureManager.tsx` (NFM-3765 follow-up).
+  const { message } = App.useApp();
 
   // URL state — category_id is shareable; page is the in-URL pagination.
   //
@@ -357,8 +368,9 @@ export function MaterialsListView() {
     if (direction === "right" && page > 1) nextPage = page - 1;
     if (nextPage == null) return; // boundary: silent no-op
     setPage(nextPage);
-    // antd `message.info` is the same toast used elsewhere in the app;
-    // it surfaces the new page index without taking focus from the table.
+    // App-scoped `message.info` (via `App.useApp()` above) is the same
+    // toast used elsewhere in the app; it surfaces the new page index
+    // without taking focus from the table.
     message.info(`第 ${nextPage} 页`);
   };
 
