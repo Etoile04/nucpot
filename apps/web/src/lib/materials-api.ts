@@ -17,13 +17,65 @@ import type {
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+/**
+ * Structured citation for a property measurement's data source.
+ *
+ * NFM-4086 — D1 来源可读化. The backend (apps/api/src/nfm_db/schemas/
+ * property.py::SourceRef) returns this shape so the citation column can
+ * render an interactive "Authors (Year). Journal." cell with a DOI link
+ * instead of the legacy bare-title string.
+ *
+ *   - `authors`  Collapsed to ≤3 names + "et al." (see backend
+ *                `_format_authors`).
+ *   - `url`      Resolved by the backend: DOI resolver first, then the
+ *                source's external_url. May still be null when neither
+ *                identifier exists.
+ */
+export interface SourceRef {
+  readonly id: string;
+  readonly title: string;
+  readonly doi: string | null;
+  readonly journal: string | null;
+  readonly year: number | null;
+  readonly authors: ReadonlyArray<string>;
+  readonly url: string | null;
+}
+
+/**
+ * Experimental conditions captured alongside a single measurement.
+ *
+ * NFM-4087 — D2 duplicate-row disposition. Mirrors the backend
+ * `MeasurementConditionResponse` schema (apps/api/src/nfm_db/schemas/
+ * property.py). Every numeric field is nullable because the upstream
+ * extraction chain does not always supply every dimension; the
+ * MaterialPropertyTable "+N conditions" expander renders the supplied
+ * dimensions and leaves the rest blank.
+ */
+export interface MeasurementCondition {
+  readonly id: string;
+  readonly measurement_id: string;
+  readonly temperature: number | null;
+  readonly pressure: number | null;
+  readonly environment: string | null;
+  readonly irradiation_dose: number | null;
+  readonly notes: string | null;
+}
+
 export interface MaterialProperty {
   readonly id: string;
   readonly name: string;
   readonly value: string;
   readonly unit: string | null;
-  readonly source: string;
+  readonly source: SourceRef | null;
   readonly confidence: number;
+  /**
+   * NFM-4087 — conditions captured alongside this measurement. The
+   * MaterialPropertyTable groups rows by (name, value, source.id); when
+   * more than one measurement folds into a single display row the
+   * frontend exposes each underlying ``conditions`` list via the
+   * "+N conditions" expander.
+   */
+  readonly conditions: ReadonlyArray<MeasurementCondition>;
 }
 
 export interface MaterialPropertyMeta {

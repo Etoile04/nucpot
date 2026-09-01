@@ -69,6 +69,7 @@ Cross-references
   is closed-form on the current schema)
 * NFM-4087 — visual fast-fix (independent, not blocking)
 * NFM-4091 — F4 ingest-path monitoring (independent follow-up)
+* NFM-4099 — asyncpg ``DO`` bind-param crash (this revision)
 """
 
 from collections.abc import Sequence
@@ -104,46 +105,107 @@ _PLACEHOLDER_TITLES: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Forward (upgrade)
+# DO-block SQL builder (NFM-4099)
+# ---------------------------------------------------------------------------
+#
+# asyncpg uses server-side prepared statements and PostgreSQL ``DO``
+# blocks accept **0** bind parameters.  Earlier revisions of this
+# migration passed the regex + placeholder list as named bind params
+# (``:uuid_re``, ``:placeholder_titles``); psycopg2 interpolated them
+# client-side so the migration succeeded, but asyncpg raises::
+#
+#     InterfaceError: the server expects 0 arguments for this query,
+#                      N were passed
+#
+# which crash-loops ``nucpot-staging-api`` on every ``alembic upgrade
+# head`` (CMD line: ``python check_staging_revision.py && alembic
+# upgrade head && exec uvicorn ...``).  The fix is to inline the values
+# as SQL string / array literals — they originate from this module's
+# own constants (``_UUID_TITLE_RE`` / ``_PLACEHOLDER_TITLES``) so the
+# inlining surface is safe (no user input).  The substitution MUST run
+# on the SQL string BEFORE it reaches ``sa.text()`` — ``TextClause``
+# has no ``.replace``, and ``sa.text()`` parses ``:name`` bind tokens
+# at construction time, so a substitution meant to remove bind params
+# has to precede it.
+
+
+# Sentinel tokens that mark the bind-param positions in the SQL
+# template.  Picked to be strings that cannot appear in normal SQL so a
+# naive ``str.replace`` cannot accidentally hit a real token.
+_UUID_TOKEN = "__NFM_4099_UUID_RE_LITERAL__"
+_PLACEHOLDER_TOKEN = "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__"
+
+
+def _sql_quote_literal(value: str) -> str:
+    """Wrap ``value`` as a PostgreSQL string literal.
+
+    Escapes embedded single quotes by doubling them — the canonical
+    PostgreSQL quoting rule (``'foo''bar'`` represents ``foo'bar``).
+    Used to inline the regex + placeholder titles into the ``DO`` block
+    as literal text instead of bind parameters.
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _build_placeholder_array_sql(titles: Sequence[str]) -> str:
+    """Render ``titles`` as a PostgreSQL ``TEXT[]`` literal.
+
+    Example::
+
+        >>> _build_placeholder_array_sql(("Unknown Source",
+        ...                                "Unattributed source (no DOI)"))
+        "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
+    """
+    parts = [_sql_quote_literal(t) for t in titles]
+    return "ARRAY[" + ", ".join(parts) + "]::TEXT[]"
+
+
+def _build_do_block_sql(uuid_re: str, placeholder_titles: Sequence[str]) -> str:
+    """Render the forward-dedup ``DO $$`` block with the regex +
+    placeholder list inlined as SQL literals.
+
+    NFM-4099 — asyncpg refuses bind parameters on ``DO`` blocks (the
+    PostgreSQL protocol treats ``DO`` as a 0-arg statement and asyncpg
+    uses server-side prepared statements).  The values originate from
+    this module's own constants — no user input — so literal inlining
+    is safe.
+    """
+    sql_literal_regex = _sql_quote_literal(uuid_re)
+    sql_literal_array = _build_placeholder_array_sql(placeholder_titles)
+    return _DO_BLOCK_SQL_TEMPLATE.replace(_UUID_TOKEN, sql_literal_regex).replace(
+        _PLACEHOLDER_TOKEN, sql_literal_array
+    )
+
+
+# ---------------------------------------------------------------------------
+# Forward dedup SQL — single plpgsql block.
+#
+# The ``:uuid_re`` / ``:placeholder_titles`` placeholders that lived in
+# this string prior to NFM-4099 have been replaced by sentinel tokens
+# (``_UUID_TOKEN`` and ``_PLACEHOLDER_TOKEN``) that ``_build_do_block_sql``
+# substitutes with properly-escaped SQL literals before execution.
+# This keeps the SQL readable while ensuring the final statement carries
+# no bind parameters — the format asyncpg requires for ``DO`` blocks.
 # ---------------------------------------------------------------------------
 
 
-def upgrade() -> None:
-    """D2 dedup migration — collapse bad ``data_sources`` rows to canonical."""
-    bind = op.get_bind()
-
-    # ------------------------------------------------------------------
-    # 0. Recreate backup tables so a rollback has a fresh snapshot.
-    # ------------------------------------------------------------------
-    bind.execute(sa.text("DROP TABLE IF EXISTS data_sources_backup_070"))
-    bind.execute(sa.text("DROP TABLE IF EXISTS datasets_backup_070"))
-    bind.execute(sa.text("DROP TABLE IF EXISTS property_measurements_backup_070"))
-    bind.execute(sa.text("CREATE TABLE data_sources_backup_070 AS SELECT * FROM data_sources"))
-    bind.execute(sa.text("CREATE TABLE datasets_backup_070 AS SELECT * FROM datasets"))
-    bind.execute(sa.text("CREATE TABLE property_measurements_backup_070 AS SELECT * FROM property_measurements"))
-
-    # ------------------------------------------------------------------
-    # 1-5. Forward dedup — single plpgsql block.
-    # ------------------------------------------------------------------
-    bind.execute(
-        sa.text(
-            """
-            DO $$
-            DECLARE
-                bad_count         INTEGER;
-                matched_count     INTEGER;
-                migrated_pm_count INTEGER;
-                deleted_ds_count  INTEGER;
-                unmatched_count   INTEGER;
-            BEGIN
-                -- ------------------------------------------------------------
-                -- 1. Identify bad ``data_sources`` rows.
-                -- ------------------------------------------------------------
-                CREATE TEMP TABLE _bad_sources ON COMMIT DROP AS
-                SELECT id
-                FROM data_sources
-                WHERE title ~ :uuid_re
-                   OR title = ANY(CAST(:placeholder_titles AS TEXT[]));
+_DO_BLOCK_SQL_TEMPLATE = """
+    DO $$
+    DECLARE
+        bad_count         INTEGER;
+        matched_count     INTEGER;
+        migrated_pm_count INTEGER;
+        deleted_ds_count  INTEGER;
+        unmatched_count   INTEGER;
+    BEGIN
+        -- ------------------------------------------------------------
+        -- 1. Identify bad ``data_sources`` rows.
+        -- ------------------------------------------------------------
+        CREATE TEMP TABLE _bad_sources ON COMMIT DROP AS
+        SELECT id
+        FROM data_sources
+        WHERE title ~ __NFM_4099_UUID_RE_LITERAL__
+           OR title = ANY(CAST(__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__ AS TEXT[]));
 
                 CREATE INDEX ON _bad_sources(id);
 
@@ -400,13 +462,48 @@ def upgrade() -> None:
                 DROP TABLE _canonical_map;
                 DROP TABLE _dataset_redirect;
             END $$;
-            """
-        ),
-        {
-            "uuid_re": _UUID_TITLE_RE,
-            "placeholder_titles": list(_PLACEHOLDER_TITLES),
-        },
-    )
+"""
+
+
+# ---------------------------------------------------------------------------
+# Forward (upgrade)
+# ---------------------------------------------------------------------------
+
+
+def upgrade() -> None:
+    """D2 dedup migration — collapse bad ``data_sources`` rows to canonical."""
+    bind = op.get_bind()
+
+    # ------------------------------------------------------------------
+    # 0. Recreate backup tables so a rollback has a fresh snapshot.
+    # ------------------------------------------------------------------
+    bind.execute(sa.text("DROP TABLE IF EXISTS data_sources_backup_070"))
+    bind.execute(sa.text("DROP TABLE IF EXISTS datasets_backup_070"))
+    bind.execute(sa.text("DROP TABLE IF EXISTS property_measurements_backup_070"))
+    bind.execute(sa.text("CREATE TABLE data_sources_backup_070 AS SELECT * FROM data_sources"))
+    bind.execute(sa.text("CREATE TABLE datasets_backup_070 AS SELECT * FROM datasets"))
+    bind.execute(sa.text("CREATE TABLE property_measurements_backup_070 AS SELECT * FROM property_measurements"))
+
+    # ------------------------------------------------------------------
+    # 1-5. Forward dedup — single plpgsql block.
+    # ------------------------------------------------------------------
+    # NFM-4099 — asyncpg uses server-side prepared statements;
+    # PostgreSQL ``DO`` blocks accept 0 bind parameters and asyncpg
+    # refuses any attempt to pass them
+    # (``InterfaceError: the server expects 0 arguments for this
+    # query, 2 were passed``).  Earlier revisions of this migration
+    # bound ``:uuid_re`` and ``:placeholder_titles`` here, which
+    # worked under psycopg2 (client-side interpolation) but broke the
+    # staging ``alembic upgrade head`` health-gate under asyncpg.
+    # The fix inlines the regex + placeholder list as SQL string
+    # literals via ``_build_do_block_sql``; the values originate from
+    # this module's own constants — no user input — so literal
+    # inlining is safe.  Crucially, the substitution runs on the SQL
+    # string BEFORE ``sa.text()`` — ``TextClause`` has no
+    # ``.replace``, and ``sa.text()`` parses ``:name`` bind tokens
+    # at construction time, so a substitution meant to remove bind
+    # params has to precede it.
+    bind.execute(sa.text(_build_do_block_sql(_UUID_TITLE_RE, _PLACEHOLDER_TITLES)))
 
 
 # ---------------------------------------------------------------------------

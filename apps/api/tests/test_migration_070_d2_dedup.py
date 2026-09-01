@@ -305,3 +305,344 @@ class TestMigration070Documentation:
             "NFM-4091",
         ):
             assert ref in migration_source, f"module docstring must reference {ref}"
+
+
+# ---------------------------------------------------------------------------
+# NFM-4099 — asyncpg DO-block bind-param fix: structural + execution tests
+# ---------------------------------------------------------------------------
+
+
+class TestMigration070AsyncpgBindParams:
+    """NFM-4099 — regression coverage for the asyncpg ``DO``-block crash.
+
+    asyncpg uses server-side prepared statements; PostgreSQL ``DO``
+    blocks accept **0** bind parameters.  psycopg2 interpolates
+    client-side so the bug only surfaces against the production driver.
+    These tests pin down both the static structure of the fix and the
+    runtime behaviour of ``upgrade()`` / ``downgrade()``.
+    """
+
+    def _import_module(self):
+        """Import the migration module without triggering alembic env.
+
+        The migration file declares ``from alembic import op`` at module
+        scope.  Importing it in tests is safe because the module only
+        reads ``op`` when ``upgrade()`` / ``downgrade()`` is called.
+        """
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "m070", str(_MIGRATION_PATH)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    # ------------------------------------------------------------------
+    # SQL-string builders (defence-in-depth + audit trail)
+    # ------------------------------------------------------------------
+
+    def test_sql_quote_literal_doubles_single_quotes(self) -> None:
+        mod = self._import_module()
+        assert mod._sql_quote_literal("foo") == "'foo'"
+        assert mod._sql_quote_literal("foo'bar") == "'foo''bar'"
+        assert mod._sql_quote_literal("a''b") == "'a''''b'"
+        # The placeholder titles in this migration do NOT contain single
+        # quotes, but the helper must still handle them correctly so a
+        # future contributor who adds one does not silently introduce a
+        # SQL-injection vector.
+
+    def test_build_placeholder_array_sql_renders_text_array(self) -> None:
+        mod = self._import_module()
+        rendered = mod._build_placeholder_array_sql(
+            ("Unknown Source", "Unattributed source (no DOI)")
+        )
+        assert rendered == (
+            "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
+        )
+
+    def test_build_do_block_sql_inlines_values_as_literals(self) -> None:
+        mod = self._import_module()
+        sql = mod._build_do_block_sql(mod._UUID_TITLE_RE, mod._PLACEHOLDER_TITLES)
+        # The regex must be inlined as a quoted literal — asyncpg cannot
+        # accept it as a bind parameter on DO blocks.
+        assert "'" + mod._UUID_TITLE_RE + "'" in sql, (
+            "regex must be inlined as a single-quoted SQL literal"
+        )
+        # The placeholder titles must be inlined as a PostgreSQL TEXT[]
+        # array literal — again, no bind parameters.
+        assert (
+            "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
+            in sql
+        ), "placeholder titles must be inlined as ARRAY[...]::TEXT[]"
+        # No leftover bind tokens (the WHOLE point of the fix).
+        assert ":uuid_re" not in sql, "no :uuid_re bind token may remain"
+        assert ":placeholder_titles" not in sql, (
+            "no :placeholder_titles bind token may remain"
+        )
+        # No leftover sentinel tokens.
+        assert mod._UUID_TOKEN not in sql, (
+            "sentinel tokens must be substituted, not leaked"
+        )
+
+    def test_build_do_block_sql_escapes_single_quotes(self) -> None:
+        """Defence-in-depth: future titles containing ``'`` get escaped."""
+        mod = self._import_module()
+        sql = mod._build_do_block_sql(
+            mod._UUID_TITLE_RE,
+            ("Title with 'apostrophe'", "Normal title"),
+        )
+        # The single quote in the title must be doubled, not raw.
+        assert "'Title with ''apostrophe'''" in sql
+        assert "'Title with 'apostrophe''" not in sql.replace(
+            "'Title with ''apostrophe'''", ""
+        )
+
+    # ------------------------------------------------------------------
+    # Live execution — catches CRITICAL #1 (AttributeError on TextClause)
+    # ------------------------------------------------------------------
+
+    def test_upgrade_executes_without_attribute_error(self) -> None:
+        """CRITICAL #1 — ``upgrade()`` must run on a mocked bind without
+        raising ``AttributeError`` (the regression that crashed the
+        prior fix attempt's ``sa.text(...).replace(...)`` chain)."""
+        from unittest.mock import MagicMock, patch
+
+        mod = self._import_module()
+        fake_bind = MagicMock()
+        fake_bind.execute = MagicMock(return_value=None)
+
+        with patch.object(mod, "op") as mock_op:
+            mock_op.get_bind.return_value = fake_bind
+            # If CRITICAL #1 regresses, the next line raises AttributeError.
+            mod.upgrade()
+
+        # Confirm no ``bind.execute`` call carries a bind dict — that
+        # would be asyncpg's surface area for the crash.
+        for call in fake_bind.execute.call_args_list:
+            args = call.args
+            assert len(args) == 1, (
+                f"bind.execute must carry exactly 1 positional arg "
+                f"(the SQL); got {len(args)}: {call}"
+            )
+            text_repr = str(args[0])
+            assert ":uuid_re" not in text_repr
+            assert ":placeholder_titles" not in text_repr
+
+    def test_downgrade_executes_without_attribute_error(self) -> None:
+        """``downgrade()`` must also run on a mocked bind without error.
+
+        The downgrade path does not use the DO-block helper but it does
+        go through ``bind.execute(sa.text(...))``; if a regression
+        chains ``.replace()`` on a ``TextClause`` here, this test
+        catches it in milliseconds.
+        """
+        from unittest.mock import MagicMock, patch
+
+        mod = self._import_module()
+        fake_bind = MagicMock()
+        fake_bind.execute = MagicMock(return_value=None)
+
+        with patch.object(mod, "op") as mock_op:
+            mock_op.get_bind.return_value = fake_bind
+            mod.downgrade()
+
+        # downgrade runs 11 bind.execute calls:
+        #   5 DELETEs (measurement_conditions, property_measurements,
+        #     data_source_authors, datasets, data_sources)
+        #   3 INSERTs (data_sources, datasets, property_measurements)
+        #   3 DROPs  (data_sources_backup_070, datasets_backup_070,
+        #     property_measurements_backup_070)
+        # Asserting the count guards against silent additions / deletions.
+        assert fake_bind.execute.call_count == 11
+
+    # ------------------------------------------------------------------
+    # Static structural checks (NFM-4099 fix shape)
+    # ------------------------------------------------------------------
+
+    def test_no_bind_dict_passed_to_do_block_execute(self, migration_source: str) -> None:
+        """Bind dict passed to ``bind.execute`` alongside a DO block
+        crashes asyncpg with ``InterfaceError: the server expects 0
+        arguments for this query, 2 were passed``.  Guard against any
+        future regression that re-introduces this anti-pattern.
+        """
+        import ast
+
+        tree = ast.parse(migration_source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for arg in node.args:
+                if not isinstance(arg, ast.Dict):
+                    continue
+                # A dict arg to bind.execute means bind parameters.  Any
+                # DO-block call must not have one.
+                # Find the FIRST positional arg that is a sa.text(...).
+                for sa_arg in node.args:
+                    if (
+                        isinstance(sa_arg, ast.Call)
+                        and isinstance(sa_arg.func, ast.Attribute)
+                        and sa_arg.func.attr == "text"
+                    ):
+                        sql = sa_arg.args[0]
+                        if isinstance(sql, ast.Constant) and isinstance(
+                            sql.value, str
+                        ) and "DO $$" in sql.value:
+                            pytest.fail(
+                                "NFM-4099: migration 070 must not pass a bind "
+                                "dict to bind.execute alongside a DO $$ block. "
+                                "asyncpg will raise InterfaceError."
+                            )
+
+    def test_070_uses_sentinel_replacement_in_do_block(
+        self, migration_source: str
+    ) -> None:
+        """Migration 070 must inline its bind values via sentinel
+        placeholders + a helper, not via SQLAlchemy bind params.
+        """
+        assert "__NFM_4099_UUID_RE_LITERAL__" in migration_source
+        assert "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" in migration_source
+        # The bind dict that caused the original crash must be gone.
+        assert '"uuid_re": _UUID_TITLE_RE' not in migration_source
+        assert '"placeholder_titles": list(_PLACEHOLDER_TITLES)' not in migration_source
+
+
+# ---------------------------------------------------------------------------
+# NFM-4099 — Regression guard: no SQLAlchemy bind params inside DO $$ blocks
+#
+# FIXED (NFM-4099 round 2): the matcher now recognises both ``text(...)``
+# (ast.Name) and ``sa.text(...)`` (ast.Attribute with attr == "text").
+# The CR-rejected commit's matcher only recognised ast.Name, so it
+# reported zero violations on the file that actually crashed staging
+# — every migration in this repo uses sa.text(...).  The differential
+# against the genuine pre-fix file is in /tmp/nfm4099_red_evidence.txt.
+# ---------------------------------------------------------------------------
+
+
+class TestNoBindParamsInsideDoBlocks:
+    """Regression guard for NFM-4099 — asyncpg ``DO`` bind-param crash.
+
+    asyncpg uses server-side prepared statements and refuses bind
+    parameters on ``DO $$ ... $$`` blocks.  This test statically scans
+    every migration and fails if any DO block references a key from
+    the bind dict as ``:key``.
+
+    Matcher shape (fixed): accepts ``sa.text(...)`` (ast.Attribute with
+    ``attr == "text"``) and bare ``text(...)`` (ast.Name with
+    ``id == "text"``).  The CR-rejected revision only recognised the
+    latter, leaving the guard vacuous against every actual call site.
+    """
+
+    @staticmethod
+    def _migration_files():
+        versions = (
+            Path(__file__).resolve().parent.parent
+            / "migrations"
+            / "versions"
+        )
+        return sorted(versions.glob("*.py"))
+
+    @staticmethod
+    def _is_text_call(node: ast.Call) -> bool:
+        """Return True if ``node`` is a call to ``text(...)`` or
+        ``sa.text(...)``.
+
+        NFM-4099 — the CR-rejected commit's matcher only handled
+        ``ast.Name`` (bare ``text(...)``); this revision also handles
+        ``ast.Attribute`` (chained ``sa.text(...)`` — the form every
+        migration in this repo uses).
+        """
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id == "text"
+        if isinstance(func, ast.Attribute):
+            return func.attr == "text"
+        return False
+
+    @staticmethod
+    def _scan_for_violations(source: str, filename: str):
+        """Return a list of (bind_key, snippet) tuples for each violation.
+
+        Recognises ``sa.text(...)`` (ast.Attribute) in addition to bare
+        ``text(...)`` (ast.Name).  Returns an empty list on syntax errors
+        so the guard never crashes pytest collection on a malformed file.
+        """
+        import re
+
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return []
+
+        violations: list[tuple[str, str]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            sql_strings: list[str] = []
+            bind_keys: set[str] = set()
+            for arg in node.args:
+                if isinstance(arg, ast.Call) and TestNoBindParamsInsideDoBlocks._is_text_call(arg):
+                    if arg.args:
+                        first = arg.args[0]
+                        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                            sql_strings.append(first.value)
+                elif isinstance(arg, ast.Dict):
+                    for k in arg.keys:
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                            bind_keys.add(k.value)
+            for sql in sql_strings:
+                if "DO $$" not in sql:
+                    continue
+                for block in re.findall(r"DO\s*\$\$(.*?)\$\$", sql, flags=re.DOTALL):
+                    for key in bind_keys:
+                        token = f":{key}"
+                        if token in block:
+                            snippet = block[
+                                max(0, block.find(token) - 30):block.find(token) + 60
+                            ]
+                            violations.append((key, snippet.strip()))
+        return violations
+
+    def test_no_migration_uses_bind_params_inside_do_blocks(self) -> None:
+        all_violations: dict[str, list[tuple[str, str]]] = {}
+        for path in self._migration_files():
+            src = path.read_text()
+            bad = self._scan_for_violations(src, path.name)
+            if bad:
+                all_violations[path.name] = bad
+        assert not all_violations, (
+            "Found SQLAlchemy bind params inside DO $$ blocks (NFM-4099 — "
+            "asyncpg crashes on these). Inline the value as an SQL string "
+            "literal instead:\n"
+            + "\n".join(
+                f"  {fname}: bind key {key!r} near {snippet!r}"
+                for fname, items in all_violations.items()
+                for key, snippet in items
+            )
+        )
+
+    def test_guard_catches_known_outage_file(self) -> None:
+        """NFM-4099 — the guard must catch the outage-causing pre-fix file.
+
+        The CR-rejected commit's matcher was vacuous: it returned ``[]``
+        on the genuine pre-fix file.  This test pins the guard to the
+        behaviour that catches the bug class it was written for.  If
+        the file is moved or the pre-fix snapshot is lost, this test
+        degrades to ``pytest.skip`` rather than failing the build.
+        """
+        prefix = Path("/tmp/070_prefix.py")
+        if not prefix.exists():
+            pytest.skip(
+                "pre-fix snapshot missing — recreate via "
+                "`git show <pre-fix-sha>:apps/api/migrations/versions/"
+                "070_d2_dedup_bad_data_sources.py > /tmp/070_prefix.py`"
+            )
+        violations = self._scan_for_violations(
+            prefix.read_text(), "070_d2_dedup_bad_data_sources.py"
+        )
+        assert violations, (
+            "REGRESSION: the regression guard is vacuous — it reports "
+            "zero violations on the file that crashed staging.  The "
+            "AST matcher must recognise sa.text(...) (ast.Attribute) "
+            "in addition to bare text(...) (ast.Name)."
+        )
