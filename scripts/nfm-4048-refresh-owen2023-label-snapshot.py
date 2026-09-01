@@ -107,8 +107,8 @@ async def _fetch_corpus_async(
     dsn: str,
     source_id: str,
     *,
-    pg: "asyncpg",
-) -> tuple[list[str], "object | None"]:
+    pg: asyncpg,
+) -> tuple[list[str], object | None]:
     """Return (labels, newest_node_created_at) from the live KG via asyncpg.
 
     Parameterised queries (``$1``) — never string-interpolate ``source_id``.
@@ -127,7 +127,7 @@ async def _fetch_corpus_async(
     return labels, newest
 
 
-def _fetch_corpus(dsn: str, source_id: str) -> tuple[list[str], "object | None"]:
+def _fetch_corpus(dsn: str, source_id: str) -> tuple[list[str], object | None]:
     """Sync wrapper around :func:`_fetch_corpus_async` that bridges to asyncpg.
 
     Raises ``ImportError`` if ``asyncpg`` is not installed (the operator

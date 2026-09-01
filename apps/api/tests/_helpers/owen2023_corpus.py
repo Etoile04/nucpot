@@ -156,9 +156,17 @@ def build_snapshot(
         "newest_node_created_at": newest_node_created_at,
         "label_count": len(unique),
         "labels": unique,
+        # Recorded as documentation of intent, not a literal to execute. The
+        # ``$1`` parameterised form matches the live queries the helper / script
+        # actually run; ``source_id`` appears as a SQL comment so the
+        # provenance test (which asserts ``OWEN2023_SOURCE_ID`` is named in
+        # this string) still finds it without the helper embedding arbitrary
+        # caller-supplied text inside SQL string quotes (NFM-4051 CR
+        # MEDIUM-2 finding).
         "query": (
-            f"SELECT DISTINCT label FROM kg_nodes "
-            f"WHERE source_id = '{source_id}' AND node_type = 'Material'"
+            "SELECT DISTINCT label FROM kg_nodes "
+            "WHERE source_id = $1 AND node_type = 'Material'\n"
+            f"-- source: {source_id}"
         ),
     }
 
