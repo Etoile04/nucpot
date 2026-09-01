@@ -182,6 +182,79 @@ describe("MaterialPropertyTable", () => {
     expect(container.querySelector(".ant-spin")).toBeTruthy()
   })
 
+  // ── NFM-4085 (B): sticky header + inner scroll when many rows ──────
+  //
+  // The acceptance criterion is "属性表 >20 行 mock 数据下表头 sticky、容器内滚".
+  // antd Table implements sticky headers + inner scroll via the `scroll.y`
+  // prop, which sets a `max-height` style on the `.ant-table-body` element.
+  // We assert this style so a regression that drops the scroll config (and
+  // regresses the inner-scroll behavior) is caught by the suite.
+
+  it("enables inner-scroll (scroll.y) when more than 20 rows are present", () => {
+    const manyRows: ReadonlyArray<MaterialProperty> = Array.from(
+      { length: 25 },
+      (_, i) =>
+        makeProperty({
+          id: `p-many-${i + 1}`,
+          name: `属性 ${i + 1}`,
+          value: String(i + 1),
+          unit: "g/cm³",
+          source: `文献${i + 1}`,
+          confidence: 0.5 + (i % 5) * 0.1,
+        }),
+    )
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={manyRows}
+        total={manyRows.length}
+        error={null}
+      />,
+    )
+
+    // antd exposes the scrollable body via `.ant-table-body` ONLY when
+    // `scroll.y` (or `scroll.x`) is set — without it, the body is laid
+    // out in `.ant-table-tbody` directly. The presence of `.ant-table-body`
+    // is therefore the strongest signal that the scroll container engaged.
+    // Read the inline `max-height` style (jsdom does not compute styles,
+    // but antd writes the prop as `style={{ maxHeight: ... }}`).
+    const scrollBody = container.querySelector(".ant-table-body")
+    expect(scrollBody).not.toBeNull()
+    const maxHeight = (scrollBody as HTMLElement).style.maxHeight
+    expect(maxHeight).toBeTruthy()
+    expect(maxHeight).not.toBe("none")
+  })
+
+  it("does NOT enable inner-scroll when 20 rows or fewer are present (threshold = 20)", () => {
+    const fewRows: ReadonlyArray<MaterialProperty> = Array.from(
+      { length: 7 },
+      (_, i) =>
+        makeProperty({
+          id: `p-few-${i + 1}`,
+          name: `属性 ${i + 1}`,
+          value: String(i + 1),
+          unit: "g/cm³",
+          source: `文献${i + 1}`,
+          confidence: 0.5,
+        }),
+    )
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={fewRows}
+        total={fewRows.length}
+        error={null}
+      />,
+    )
+
+    // Without scroll.y, antd renders the rows directly inside
+    // `.ant-table-tbody` and does NOT wrap them in `.ant-table-body`.
+    // The threshold (20) was chosen so the existing ≤7-row baseline is
+    // unaffected (matches the issue's "目前 ≤7 未触及痛点" note).
+    const scrollBody = container.querySelector(".ant-table-body")
+    expect(scrollBody).toBeNull()
+  })
+
   it("renders '—' for null unit", () => {
     render(<MaterialPropertyTable {...TABLE_PROPS} data={[NULL_UNIT_PROP]} total={1} error={null} />)
 
