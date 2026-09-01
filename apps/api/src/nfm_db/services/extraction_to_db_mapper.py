@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
@@ -170,7 +170,16 @@ def _coerce_heuristic_payload(raw: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class MappingResult:
-    """Immutable result counts from the mapping operation."""
+    """Immutable result counts from the mapping operation.
+
+    ``skipped_unknown_details`` is the structured capture list used by the
+    NFM-4013 measurement harness to enumerate the LLM-only 14 property
+    names that static gap analysis misses (heuristic_extractor vs
+    031_seed_property_types.py). Each entry preserves enough context
+    (``source_doi``, ``material_name``, ``sample_value``) for downstream
+    classification on NFM-4008. The list is built inside
+    :func:`map_and_persist` at the ``_lookup_property_type`` drop site.
+    """
 
     created_sources: int = 0
     created_materials: int = 0
@@ -187,6 +196,10 @@ class MappingResult:
     # "extractor schema-drift" signal.
     skipped_unknown_materials: int = 0
     validation_errors: int = 0
+    # NFM-4013 / Path (a): capture list populated at the unknown-property
+    # drop site. Each entry is a dict with the keys below — see
+    # ``scripts/nfm-4012-unknown-property-enumeration.py`` for the consumer.
+    skipped_unknown_details: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def total_created(self) -> int:
@@ -422,11 +435,14 @@ ONTOFUEL_CATEGORY_TO_SLUG: dict[str, str] = {
 }
 
 
-def _normalize_category_slug(category_name: str) -> str | None:
+def _normalize_category_slug(category_name: str | None) -> str | None:
     """Translate an OntoFuel category literal to a DB ``property_categories.slug``.
 
-    Returns ``None`` if the literal is not recognised.
+    Returns ``None`` if the literal is not recognised (including ``None``
+    input from upstream ``ExtractedProperty.property_category``).
     """
+    if category_name is None:
+        return None
     return ONTOFUEL_CATEGORY_TO_SLUG.get(category_name)
 
 
@@ -569,6 +585,10 @@ async def map_and_persist(
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
     skipped_unknown_materials = 0  # NFM-3919
+    # NFM-4013 / Path (a): accumulate structured unknown-property records so
+    # ``MappingResult.skipped_unknown_details`` enumerates the LLM-only
+    # names dropped by ``_lookup_property_type``.
+    skipped_unknown_details: list[dict[str, Any]] = []
 
     for item in validated:
         s_key = _source_key(item)
@@ -709,6 +729,22 @@ async def map_and_persist(
                 item.property_category,
                 item.property,
             )
+            # NFM-4013 / Path (a): record the drop with enough context for
+            # the harness to bucket by (category_slug, raw_category,
+            # property_name) and to fold sample values + source provenance
+            # into the NFM-4008 classification table.
+            category_slug = _normalize_category_slug(item.property_category)
+            skipped_unknown_details.append(
+                {
+                    "category_slug": category_slug,
+                    "raw_category": item.property_category,
+                    "property_name": item.property,
+                    "sample_value": item.value,
+                    "source_doi": item.source_doi,
+                    "source_file": item.source_file,
+                    "material_name": item.material_name,
+                }
+            )
             skipped_unknown_properties += 1
             continue
 
@@ -806,6 +842,7 @@ async def map_and_persist(
         skipped_unknown_properties=skipped_unknown_properties,
         skipped_unknown_materials=skipped_unknown_materials,
         validation_errors=validation_error_count,
+        skipped_unknown_details=skipped_unknown_details,
     )
 
 
