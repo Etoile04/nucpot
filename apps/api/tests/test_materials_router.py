@@ -474,3 +474,116 @@ class TestListMaterialCategoriesEndpoint:
         resp = await async_client.get("/api/v1/material-categories")
         assert resp.status_code == 200
         assert resp.json()["data"]["items"][0]["slug"] == "public-cat"
+
+
+# ============================================================
+# GET /material-categories/uncategorized-count (NFM-4030)
+# ============================================================
+
+
+async def _seed_uncategorized_material(
+    db: AsyncSession,
+    *,
+    name: str,
+    is_active: bool = True,
+) -> Material:
+    """Insert a Material with category_id explicitly NULL.
+
+    Bypasses ``_seed_material`` which auto-assigns a category. Used by
+    the NFM-4030 uncategorized-count tests.
+    """
+    global _router_counter
+    _router_counter += 1
+    mat = Material(
+        name=name,
+        formula=f"Formula{_router_counter}",
+        category_id=None,
+        is_active=is_active,
+    )
+    db.add(mat)
+    await db.commit()
+    await db.refresh(mat)
+    return mat
+
+
+class TestUncategorizedMaterialCountEndpoint:
+    """Tests for GET /material-categories/uncategorized-count (NFM-4030).
+
+    Exposes the count of materials with ``category_id IS NULL`` so the
+    /materials page can render a notice about uncategorized rows that
+    would otherwise be invisible under any category filter (NFM-3917
+    Tier 1D silent-gap follow-up).
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_all_materials_categorized(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        cat = await _seed_category(db_session, name="oxide", slug="oxide")
+        await _seed_material(db_session, name="UO2", category=cat)
+        await _seed_material(db_session, name="ZrO2", category=cat)
+
+        resp = await async_client.get(
+            "/api/v1/material-categories/uncategorized-count",
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_count_of_materials_with_null_category(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        cat = await _seed_category(db_session, name="oxide", slug="oxide")
+        # 3 categorized + 4 uncategorized
+        for i in range(3):
+            await _seed_material(db_session, name=f"Cat{i}", category=cat)
+        for i in range(4):
+            await _seed_uncategorized_material(db_session, name=f"Uncat{i}")
+
+        resp = await async_client.get(
+            "/api/v1/material-categories/uncategorized-count",
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_response_envelope_shape(
+        self,
+        async_client: AsyncClient,
+    ) -> None:
+        """Empty DB: standard ApiResponse envelope with data.count = 0."""
+        resp = await async_client.get(
+            "/api/v1/material-categories/uncategorized-count",
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert set(body.keys()) >= {"success", "data"}
+        assert set(body["data"].keys()) == {"count"}
+        assert isinstance(body["data"]["count"], int)
+        assert body["data"]["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_is_public_no_auth_required(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """No auth header — same as GET /material-categories."""
+        await _seed_uncategorized_material(db_session, name="Uncat")
+
+        resp = await async_client.get(
+            "/api/v1/material-categories/uncategorized-count",
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["count"] == 1

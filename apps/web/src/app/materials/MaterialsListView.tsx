@@ -1,9 +1,10 @@
-"use client"
+"use client";
 
-import { useEffect, useRef, useState } from "react"
-import Link from "next/link"
-import { useSearchParams } from "next/navigation"
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
+  Alert,
   Empty,
   Input,
   Pagination,
@@ -13,46 +14,47 @@ import {
   Table,
   Tag,
   Typography,
-} from "antd"
-import type { ColumnsType } from "antd/es/table"
-import { request } from "@/lib/api-client"
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { request } from "@/lib/api-client";
 import {
+  getUncategorizedMaterialCount,
   listMaterialCategories,
   type MaterialCategory,
-} from "@/lib/materials-api"
+} from "@/lib/materials-api";
 
-const { Title, Text } = Typography
+const { Title, Text } = Typography;
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface MaterialItem {
-  readonly id: string
-  readonly name: string
-  readonly formula: string | null
-  readonly crystal_structure: string | null
-  readonly description: string | null
-  readonly is_active: boolean
-  readonly created_at: string
-  readonly updated_at: string
+  readonly id: string;
+  readonly name: string;
+  readonly formula: string | null;
+  readonly crystal_structure: string | null;
+  readonly description: string | null;
+  readonly is_active: boolean;
+  readonly created_at: string;
+  readonly updated_at: string;
 }
 
 interface PaginatedData {
-  readonly items: ReadonlyArray<MaterialItem>
-  readonly total: number
-  readonly page: number
-  readonly per_page: number
+  readonly items: ReadonlyArray<MaterialItem>;
+  readonly total: number;
+  readonly page: number;
+  readonly per_page: number;
 }
 
 interface ApiResponse<T> {
-  readonly success: boolean
-  readonly data: T
+  readonly success: boolean;
+  readonly data: T;
 }
 
 interface ViewState {
-  readonly materials: ReadonlyArray<MaterialItem>
-  readonly total: number
-  readonly loading: boolean
-  readonly error: string | null
+  readonly materials: ReadonlyArray<MaterialItem>;
+  readonly total: number;
+  readonly loading: boolean;
+  readonly error: string | null;
 }
 
 const INITIAL_STATE: ViewState = {
@@ -60,9 +62,9 @@ const INITIAL_STATE: ViewState = {
   total: 0,
   loading: true,
   error: null,
-}
+};
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 20;
 
 // ── URL ↔ state helpers (NFM-3917 / Tier 1D) ──────────────────────────
 //
@@ -73,9 +75,9 @@ const PAGE_SIZE = 20
 // clearing it is a one-action thing users rarely need to share.
 
 function parseCategoryParam(raw: string | null): string | null {
-  if (!raw) return null
-  const trimmed = raw.trim()
-  if (!trimmed) return null
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
   // Defend against junk in the URL: a UUID-shaped string only.
   // Otherwise leave the dropdown cleared (better than silently
   // filtering everything to zero rows).
@@ -83,13 +85,13 @@ function parseCategoryParam(raw: string | null): string | null {
     trimmed,
   )
     ? trimmed
-    : null
+    : null;
 }
 
 function parsePageParam(raw: string | null): number {
-  if (!raw) return 1
-  const n = Number.parseInt(raw, 10)
-  return Number.isFinite(n) && n >= 1 ? n : 1
+  if (!raw) return 1;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
 // ── Table columns ──────────────────────────────────────────────────────
@@ -145,13 +147,13 @@ function buildColumns(searchQuery: string): ColumnsType<MaterialItem> {
         </Space>
       ),
     },
-  ]
+  ];
 }
 
 // ── Component ──────────────────────────────────────────────────────────
 
 export function MaterialsListView() {
-  const searchParams = useSearchParams()
+  const searchParams = useSearchParams();
 
   // URL state — category_id is shareable; page is the in-URL pagination.
   //
@@ -167,30 +169,42 @@ export function MaterialsListView() {
   // round-trip entirely.
   const [categoryId, setCategoryId] = useState<string | null>(() =>
     parseCategoryParam(searchParams.get("category_id")),
-  )
+  );
   const [page, setPage] = useState<number>(() =>
     parsePageParam(searchParams.get("page")),
-  )
+  );
 
   // Local UI state
-  const [state, setState] = useState<ViewState>(INITIAL_STATE)
-  const [searchQuery, setSearchQuery] = useState("")
+  const [state, setState] = useState<ViewState>(INITIAL_STATE);
+  const [searchQuery, setSearchQuery] = useState("");
   const [categories, setCategories] = useState<ReadonlyArray<MaterialCategory>>(
     [],
-  )
+  );
+  // NFM-4030 / Tier 1D follow-up: count of materials with NULL
+  // ``category_id``. Surfaced as a notice below the filter bar so users
+  // are not silently surprised by rows that no dropdown option can
+  // reach. Always fetched on mount; failure is non-critical (degrades
+  // to "no notice" rather than blocking the page).
+  const [uncategorizedCount, setUncategorizedCount] = useState<number>(0);
 
   // Load the taxonomy once. The endpoint is public and the page is
   // usually long-lived; a single fetch on mount is correct here.
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     void (async () => {
-      const cats = await listMaterialCategories()
-      if (!cancelled) setCategories(cats)
-    })()
+      const [cats, uncategorized] = await Promise.all([
+        listMaterialCategories(),
+        getUncategorizedMaterialCount(),
+      ]);
+      if (!cancelled) {
+        setCategories(cats);
+        setUncategorizedCount(uncategorized);
+      }
+    })();
     return () => {
-      cancelled = true
-    }
-  }, [])
+      cancelled = true;
+    };
+  }, []);
 
   // Sync state → URL (NFM-3917 / Tier 1D, AC-4 fix).
   //
@@ -205,81 +219,81 @@ export function MaterialsListView() {
   //
   // A ref tracks the last URL we wrote so we don't replaceState on every
   // re-render — only when state actually changed.
-  const lastUrlRef = useRef<string | null>(null)
+  const lastUrlRef = useRef<string | null>(null);
   useEffect(() => {
-    const sp = new URLSearchParams()
-    if (categoryId) sp.set("category_id", categoryId)
-    if (page > 1) sp.set("page", String(page))
-    const qs = sp.toString()
-    const target = qs ? `/materials?${qs}` : "/materials"
-    if (typeof window === "undefined") return
-    if (lastUrlRef.current === target) return
-    lastUrlRef.current = target
+    const sp = new URLSearchParams();
+    if (categoryId) sp.set("category_id", categoryId);
+    if (page > 1) sp.set("page", String(page));
+    const qs = sp.toString();
+    const target = qs ? `/materials?${qs}` : "/materials";
+    if (typeof window === "undefined") return;
+    if (lastUrlRef.current === target) return;
+    lastUrlRef.current = target;
     const currentSearch =
-      window.location.pathname + (window.location.search || "")
-    if (currentSearch === target) return
-    window.history.replaceState(null, "", target)
-  }, [categoryId, page])
+      window.location.pathname + (window.location.search || "");
+    if (currentSearch === target) return;
+    window.history.replaceState(null, "", target);
+  }, [categoryId, page]);
 
   const fetchMaterials = async (): Promise<void> => {
-    setState((prev) => ({ ...prev, loading: true, error: null }))
+    setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const params = new URLSearchParams()
-      params.set("page", String(page))
-      params.set("per_page", String(PAGE_SIZE))
-      if (categoryId) params.set("category_id", categoryId)
-      const trimmedQuery = searchQuery.trim()
-      let endpoint: string
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("per_page", String(PAGE_SIZE));
+      if (categoryId) params.set("category_id", categoryId);
+      const trimmedQuery = searchQuery.trim();
+      let endpoint: string;
       if (trimmedQuery) {
         // /materials/search composes with category_id — see NFM-3917 CPO
         // decision. Search and category filter are NOT mutually exclusive.
-        endpoint = `/api/v1/materials/search?q=${encodeURIComponent(trimmedQuery)}`
+        endpoint = `/api/v1/materials/search?q=${encodeURIComponent(trimmedQuery)}`;
       } else {
-        endpoint = `/api/v1/materials?sort=name&order=asc`
+        endpoint = `/api/v1/materials?sort=name&order=asc`;
       }
-      endpoint = `${endpoint}${endpoint.includes("?") ? "&" : "?"}${params.toString()}`
-      const resp = await request<ApiResponse<PaginatedData>>(endpoint)
+      endpoint = `${endpoint}${endpoint.includes("?") ? "&" : "?"}${params.toString()}`;
+      const resp = await request<ApiResponse<PaginatedData>>(endpoint);
       setState({
         materials: resp.data.items,
         total: resp.data.total,
         loading: false,
         error: null,
-      })
+      });
     } catch (err) {
       setState({
         materials: [],
         total: 0,
         loading: false,
         error: err instanceof Error ? err.message : "加载失败",
-      })
+      });
     }
-  }
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void fetchMaterials()
-    }, 300)
-    return () => clearTimeout(timer)
+      void fetchMaterials();
+    }, 300);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryId, page, searchQuery])
+  }, [categoryId, page, searchQuery]);
 
   // ── Handlers (NFM-3917 / Tier 1D) ─────────────────────────────────────
 
   const handleSearch = (value: string) => {
-    setSearchQuery(value)
-    setPage(1)
-  }
+    setSearchQuery(value);
+    setPage(1);
+  };
 
   const handleCategoryChange = (next: string | undefined) => {
     // Changing category resets to page 1 (CPO decision) so users do not
     // land on a page that no longer exists for the narrowed result set.
-    setCategoryId(next ?? null)
-    setPage(1)
-  }
+    setCategoryId(next ?? null);
+    setPage(1);
+  };
 
   const handlePageChange = (next: number) => {
-    setPage(next)
-  }
+    setPage(next);
+  };
 
   return (
     <div className="max-w-[1200px] mx-auto px-6 py-8">
@@ -321,6 +335,23 @@ export function MaterialsListView() {
         />
       </div>
 
+      {/*
+        NFM-4030 / Tier 1D follow-up: disclose the silent gap between
+        "all materials" (allowClear) and "any category filter". The
+        count comes from a real API query (``category_id IS NULL``) so
+        it tracks the data, not a hardcoded literal. Hidden entirely
+        when zero — the notice would be noise on a clean database.
+      */}
+      {uncategorizedCount > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          className="mb-4"
+          data-testid="materials-uncategorized-notice"
+          message={`${uncategorizedCount} 条材料尚未分类，不会出现在任何类别筛选结果中`}
+        />
+      )}
+
       {state.error && (
         <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300">
           {state.error}
@@ -354,5 +385,5 @@ export function MaterialsListView() {
         )}
       </Spin>
     </div>
-  )
+  );
 }
