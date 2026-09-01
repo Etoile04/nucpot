@@ -260,7 +260,7 @@ describe("MaterialPropertyTable", () => {
           name: `属性 ${i + 1}`,
           value: String(i + 1),
           unit: "g/cm³",
-          source: `文献${i + 1}`,
+          source: makeSource({ title: `文献${i + 1}` }),
           confidence: 0.5 + (i % 5) * 0.1,
         }),
     )
@@ -295,7 +295,7 @@ describe("MaterialPropertyTable", () => {
           name: `属性 ${i + 1}`,
           value: String(i + 1),
           unit: "g/cm³",
-          source: `文献${i + 1}`,
+          source: makeSource({ title: `文献${i + 1}` }),
           confidence: 0.5,
         }),
     )
