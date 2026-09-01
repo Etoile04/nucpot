@@ -17,12 +17,36 @@ import type {
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+/**
+ * Structured citation for a property measurement's data source.
+ *
+ * NFM-4086 — D1 来源可读化. The backend (apps/api/src/nfm_db/schemas/
+ * property.py::SourceRef) returns this shape so the citation column can
+ * render an interactive "Authors (Year). Journal." cell with a DOI link
+ * instead of the legacy bare-title string.
+ *
+ *   - `authors`  Collapsed to ≤3 names + "et al." (see backend
+ *                `_format_authors`).
+ *   - `url`      Resolved by the backend: DOI resolver first, then the
+ *                source's external_url. May still be null when neither
+ *                identifier exists.
+ */
+export interface SourceRef {
+  readonly id: string;
+  readonly title: string;
+  readonly doi: string | null;
+  readonly journal: string | null;
+  readonly year: number | null;
+  readonly authors: ReadonlyArray<string>;
+  readonly url: string | null;
+}
+
 export interface MaterialProperty {
   readonly id: string;
   readonly name: string;
   readonly value: string;
   readonly unit: string | null;
-  readonly source: string;
+  readonly source: SourceRef | null;
   readonly confidence: number;
 }
 

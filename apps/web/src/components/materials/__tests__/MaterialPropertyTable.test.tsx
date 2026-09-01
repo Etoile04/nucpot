@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
-import { MaterialPropertyTable } from "../MaterialPropertyTable"
-import type { MaterialProperty } from "@/lib/materials-api"
+import { MaterialPropertyTable, formatCitation, renderSourceCell } from "../MaterialPropertyTable"
+import type { MaterialProperty, SourceRef } from "@/lib/materials-api"
 
 // ── Mock ConfidenceBadge ───────────────────────────────────────────────
 // ConfidenceBadge uses dynamic Tailwind classes that don't resolve in jsdom.
@@ -15,22 +15,56 @@ vi.mock("@/components/shared/ConfidenceBadge", () => ({
 
 // ── Test data ──────────────────────────────────────────────────────────
 
+function makeSource(overrides: Partial<SourceRef> = {}): SourceRef {
+  return {
+    id: "00000000-0000-0000-0000-000000000001",
+    title: "Default title",
+    doi: null,
+    journal: null,
+    year: null,
+    authors: [],
+    url: null,
+    ...overrides,
+  }
+}
+
 function makeProperty(overrides: Partial<MaterialProperty> = {}): MaterialProperty {
   return {
     id: "prop-001",
     name: "密度",
     value: "10.5",
     unit: "g/cm³",
-    source: "文献A",
+    source: makeSource({ title: "文献A" }),
     confidence: 0.95,
     ...overrides,
   }
 }
 
 const SAMPLE_DATA: ReadonlyArray<MaterialProperty> = [
-  makeProperty({ id: "p1", name: "密度", value: "10.5", unit: "g/cm³", source: "文献A", confidence: 0.95 }),
-  makeProperty({ id: "p2", name: "熔点", value: "1850", unit: "K", source: "文献B", confidence: 0.80 }),
-  makeProperty({ id: "p3", name: "热导率", value: "3.0", unit: "W/(m·K)", source: "文献C", confidence: 0.65 }),
+  makeProperty({
+    id: "p1",
+    name: "密度",
+    value: "10.5",
+    unit: "g/cm³",
+    source: makeSource({ title: "文献A" }),
+    confidence: 0.95,
+  }),
+  makeProperty({
+    id: "p2",
+    name: "熔点",
+    value: "1850",
+    unit: "K",
+    source: makeSource({ title: "文献B" }),
+    confidence: 0.80,
+  }),
+  makeProperty({
+    id: "p3",
+    name: "热导率",
+    value: "3.0",
+    unit: "W/(m·K)",
+    source: makeSource({ title: "文献C" }),
+    confidence: 0.65,
+  }),
 ]
 
 const NULL_UNIT_PROP = makeProperty({
@@ -38,7 +72,7 @@ const NULL_UNIT_PROP = makeProperty({
   name: "备注",
   value: "实验测定",
   unit: null,
-  source: "实验",
+  source: makeSource({ title: "实验" }),
   confidence: 0.50,
 })
 
@@ -73,6 +107,9 @@ describe("MaterialPropertyTable", () => {
   it("renders source citations", () => {
     render(<MaterialPropertyTable {...TABLE_PROPS} data={SAMPLE_DATA} total={3} error={null} />)
 
+    // With no authors/year/journal, the citation falls back to the bare
+    // title — the same text the legacy code rendered, so existing
+    // curators see no visual change for un-enriched sources.
     expect(screen.getByText("文献A")).toBeInTheDocument()
     expect(screen.getByText("文献B")).toBeInTheDocument()
   })
@@ -130,8 +167,10 @@ describe("MaterialPropertyTable", () => {
   })
 
   it("renders only the parent-supplied (pre-filtered) rows for a source filter", () => {
-    // Parent has already filtered to rows whose source matches "文献C".
-    const filtered = SAMPLE_DATA.filter((p) => p.source.includes("文献C"))
+    // Parent has already filtered to rows whose source title contains
+    // "文献C". The `source` field is now an object, so the parent's
+    // pre-filter operates on `source.title`.
+    const filtered = SAMPLE_DATA.filter((p) => p.source?.title.includes("文献C"))
     render(
       <MaterialPropertyTable
         {...TABLE_PROPS}
@@ -305,5 +344,159 @@ describe("MaterialPropertyTable", () => {
     const searchInputAfter = screen.getByPlaceholderText("筛选属性...") as HTMLInputElement
     expect(searchInputAfter.value).toBe("")
     expect(screen.getByText("熔点")).toBeInTheDocument()
+  })
+})
+
+// ── NFM-4086 — D1 来源可读化: structured source rendering ───────────────
+
+describe("MaterialPropertyTable — NFM-4086 source enrichment", () => {
+  it("renders enriched source with DOI link", () => {
+    // Fully-populated SourceRef — author/year/journal/doi/url all set.
+    // The column should render the abbreviated citation "Owen, L.,
+    // Patel, R. (2023). J. Nucl. Mater." wrapped in an <a> that points
+    // at the DOI URL with the standard rel attrs.
+    const enriched: MaterialProperty = makeProperty({
+      id: "p-enriched",
+      name: "热导率",
+      value: "3.0",
+      unit: "W/(m·K)",
+      source: makeSource({
+        id: "11111111-1111-1111-1111-111111111111",
+        title: "Thermal conductivity of UO2 revisited",
+        doi: "10.1016/j.jnucmat.2023.123456",
+        journal: "J. Nucl. Mater.",
+        year: 2023,
+        authors: ["Owen, L.", "Patel, R."],
+        url: "https://doi.org/10.1016/j.jnucmat.2023.123456",
+      }),
+      confidence: 0.95,
+    })
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[enriched]}
+        total={1}
+        error={null}
+      />,
+    )
+
+    const link = screen.getByRole("link", { name: /Owen, L\., Patel, R\. \(2023\)\. J\. Nucl\. Mater\./ })
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute("href", "https://doi.org/10.1016/j.jnucmat.2023.123456")
+    expect(link).toHaveAttribute("target", "_blank")
+    expect(link).toHaveAttribute("rel", "noopener noreferrer")
+  })
+
+  it("renders 'Unsourced' when source=null", () => {
+    // When the backend returns a row whose source is null (no attached
+    // DataSource), the citation column falls back to the literal
+    // "Unsourced" — same copy as the legacy code, so existing UX stays
+    // intact for orphan datasets.
+    const orphan: MaterialProperty = makeProperty({
+      id: "p-orphan",
+      name: "密度",
+      value: "5.68",
+      unit: "g/cm³",
+      source: null,
+      confidence: 0.5,
+    })
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[orphan]}
+        total={1}
+        error={null}
+      />,
+    )
+
+    expect(screen.getByText("Unsourced")).toBeInTheDocument()
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+  })
+
+  it("escapes special characters in title (XSS-safe)", () => {
+    // Curators can paste titles containing HTML-significant characters.
+    // React's default text rendering escapes them at the DOM boundary
+    // so the page never injects raw HTML — we assert that no <script>
+    // or <img> elements are parsed from user-supplied strings, and the
+    // anchor's `href` is exactly the URL we passed (no HTML injection
+    // through the URL either).
+    const xss: MaterialProperty = makeProperty({
+      id: "p-xss",
+      name: "密度",
+      value: "5.68",
+      unit: "g/cm³",
+      source: makeSource({
+        id: "22222222-2222-2222-2222-222222222222",
+        title: "<script>alert('xss')</script>",
+        doi: "10.1/foo",
+        journal: "<img src=x onerror=alert(1)>",
+        year: 2023,
+        authors: ["Owen, L."],
+        url: "https://doi.org/10.1/foo",
+      }),
+      confidence: 0.5,
+    })
+
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[xss]}
+        total={1}
+        error={null}
+      />,
+    )
+
+    // No actual <script> tag and no <img onerror> tag were injected
+    // from user-supplied strings — query the rendered DOM directly so
+    // we catch any escape failure.
+    expect(container.querySelectorAll("script").length).toBe(0)
+    expect(container.querySelectorAll("img[onerror]").length).toBe(0)
+
+    // The visible citation text contains the dangerous payload — but
+    // it's text content, not parsed HTML. Browsers display the literal
+    // "<img …>" string; the DOM tree never contains an <img> child.
+    const anchor = screen.getByRole("link")
+    expect(anchor.textContent).toContain("Owen, L.")
+    expect(anchor.textContent).toContain("<img src=x onerror=alert(1)>")
+
+    // The link href is exactly what the backend sent — not whatever
+    // might have leaked from a malicious authors entry.
+    expect(anchor.getAttribute("href")).toBe("https://doi.org/10.1/foo")
+  })
+})
+
+// ── formatCitation unit tests ──────────────────────────────────────────
+
+describe("formatCitation", () => {
+  it("renders Authors (Year). Journal. when all fields are populated", () => {
+    const ref = makeSource({
+      authors: ["Owen, L.", "Patel, R."],
+      year: 2023,
+      journal: "J. Nucl. Mater.",
+      title: "ignored",
+    })
+    expect(formatCitation(ref)).toBe("Owen, L., Patel, R. (2023). J. Nucl. Mater.")
+  })
+
+  it("falls back to the bare title when nothing else is populated", () => {
+    expect(formatCitation(makeSource({ title: "Solo Paper" }))).toBe("Solo Paper")
+  })
+
+  it("renders partial forms when only some fields are present", () => {
+    expect(formatCitation(makeSource({ authors: ["Owen, L."], title: "t" }))).toBe(
+      "Owen, L.",
+    )
+    expect(formatCitation(makeSource({ year: 2020, title: "t" }))).toBe("(2020)")
+  })
+})
+
+// Suppress unused-import lint when `renderSourceCell` is only used in
+// downstream consumers; keep the export verified with a smoke test.
+describe("renderSourceCell", () => {
+  it("returns the Unsourced text node when source is null", () => {
+    const node = renderSourceCell(null)
+    expect(node).toBeTruthy()
   })
 })
