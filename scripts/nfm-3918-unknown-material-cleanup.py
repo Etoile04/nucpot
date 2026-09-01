@@ -61,6 +61,7 @@ _GUC_SUBSTITUTIONS: dict[str, Callable[[str], str]] = {
     "expected_unknown_count": lambda v: f"{int(v)}::int",
     "dry_run": lambda v: f"{'true' if str(v) in ('1', 'true', 't') else 'false'}::boolean",
     "require_backup_path": lambda v: "'" + v.replace("'", "''") + "'::text",
+    "merge_strategy": lambda v: "'" + str(v).replace("'", "''") + "'::text",
 }
 
 # Tolerance window for the BEFORE measurement count. The ticket body hard-codes
@@ -290,10 +291,22 @@ def assert_invariants(
     *,
     apply: bool,
     expected_measurements: int | None,
+    strategy: str = "source_id_walk",
 ) -> list[str]:
     """Check the post-state against the ticket body's acceptance criteria.
 
     Returns a list of failure messages. Empty list = all pass.
+
+    `strategy` controls AC #4 (density=10.55 collapse):
+      * 'source_id_walk' — density=10.55 must collapse to 1 row (the option
+        resolves onto a NON-Unknown material, where the dedup mechanism can
+        fire).
+      * 'new_canonical' — density=10.55 may stay at 8 (the option's contract
+        per NFM-3918 interaction c28a98a9, board-ratified): all 8 must now
+        live on the SINGLE "Unknown Material (canonical)" material row, not
+        split across 8 Unknown rows. The wrapper verifies this qualitatively
+        in the printed table — the density_10_55 cell collapses from
+        "split across N Unknowns" to "all on 1 canonical row".
     """
     failures: list[str] = []
 
@@ -304,15 +317,28 @@ def assert_invariants(
             "expected 0."
         )
 
-    # AC #3: density=10.55 must collapse to 1 (was 8 across 8 Unknown).
-    # In dry-run, AFTER is the same as BEFORE — only check on apply.
-    if apply and after.counts.get("density_10_55") != 1:
+    # AC #4: density=10.55 collapse — only meaningful when source_id_walk
+    # actually re-points onto a NON-Unknown target. For new_canonical the
+    # density=10.55 distribution collapses from 8 across 8 Unknown rows to
+    # 8 across 1 canonical row — the row count is unchanged by design.
+    if apply and strategy == "source_id_walk" and after.counts.get("density_10_55") != 1:
         failures.append(
-            f"AC #4 FAIL: post-state density=10.55 rows = "
+            f"AC #4 FAIL (source_id_walk): post-state density=10.55 rows = "
             f"{after.counts.get('density_10_55')}, expected 1."
         )
 
-    # AC #4: no orphans.
+    # AC #4 (new_canonical): density=10.55 must be ≤ the BEFORE count
+    # (we never gain rows). The "8 on 1 material" invariant is verified by
+    # a separate SQL check (see Phase 5 of the migration SQL — not in this
+    # wrapper because the wrapper only sees aggregate counts).
+    if apply and strategy == "new_canonical" and after.counts.get("density_10_55") > before.counts.get("density_10_55", 0):
+        failures.append(
+            f"AC #4 FAIL (new_canonical): post-state density=10.55 rows = "
+            f"{after.counts.get('density_10_55')} GREATER than before "
+            f"{before.counts.get('density_10_55')}; migration gained rows."
+        )
+
+    # AC #5: no orphans.
     if apply:
         if after.counts.get("orphan_datasets", 0) != 0:
             failures.append(
@@ -421,6 +447,19 @@ def parse_args() -> argparse.Namespace:
         help="Override the BEFORE measurement-count sanity check (default 93 "
         "per ticket body §决策依据).",
     )
+    parser.add_argument(
+        "--strategy",
+        choices=("source_id_walk", "new_canonical"),
+        default="source_id_walk",
+        help="Phase 4 merge strategy. "
+        "'source_id_walk' (default) tries to re-point each carrying Unknown "
+        "onto a NON-Unknown material reachable by source_id; the real shard "
+        "measures 0/11 resolvable, so it is a no-op fallback for this ticket. "
+        "'new_canonical' (Option B, board-ratified via NFM-3918 interaction "
+        "c28a98a9) creates ONE new 'Unknown Material (canonical)' row and "
+        "re-points every carrying Unknown's datasets onto it, preserving all "
+        "measurements with trivial reversibility.",
+    )
     return parser.parse_args()
 
 
@@ -436,6 +475,7 @@ def main() -> int:
             "stub" if args.dry_run or not is_prod_target(args.database_url)
             else os.environ["NFMD_PROD_BACKUP_PATH"]
         ),
+        "merge_strategy": args.strategy,
     }
 
     output = run_psql(args.database_url, SQL_PATH, psql_vars)
@@ -450,6 +490,7 @@ def main() -> int:
         after,
         apply=not args.dry_run,
         expected_measurements=args.expected_measurements,
+        strategy=args.strategy,
     )
     if failures:
         print("\n".join(failures), file=sys.stderr)

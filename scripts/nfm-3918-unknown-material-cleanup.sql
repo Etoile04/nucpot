@@ -57,13 +57,27 @@ DECLARE
     expected_count INTEGER := coalesce(current_setting('expected_unknown_count', true)::int, 27);
     backup_path TEXT := current_setting('require_backup_path', true);
     is_dry_run BOOLEAN := current_setting('dry_run', true)::boolean;
+    -- Phase 4 strategy:
+    --   'source_id_walk' (default) — original Option A/C walk that re-points
+    --     each carrying Unknown onto a NON-Unknown material reachable via the
+    --     paper source_id. Falls back to "leave for manual review" when no
+    --     target exists; measured on the real shard this resolves 0/11 rows.
+    --   'new_canonical' (Option B, board-ratified via interaction c28a98a9) —
+    --     creates ONE new "Unknown Material (canonical)" material and re-points
+    --     EVERY carrying Unknown's datasets onto it. Preserves all measurements,
+    --     trivial reversibility (re-point material_id back), and is the only
+    --     viable strategy on the real shard because source_id finds no neighbours.
+    merge_strategy TEXT := coalesce(
+        nullif(trim(current_setting('merge_strategy', true)), ''),
+        'source_id_walk'
+    );
 BEGIN
     SELECT count(*) INTO unknown_count
     FROM materials
     WHERE name = 'Unknown Material';
 
-    RAISE NOTICE '[NFM-3918 phase 0] Unknown Material count = %, expected = %',
-        unknown_count, expected_count;
+    RAISE NOTICE '[NFM-3918 phase 0] Unknown Material count = %, expected = %, merge_strategy = %',
+        unknown_count, expected_count, merge_strategy;
 
     IF unknown_count != expected_count THEN
         RAISE EXCEPTION 'NFM-3918 preflight FAILED: Unknown count drift (got %, expected %). '
@@ -79,7 +93,13 @@ BEGIN
             'spans deletions and cross-table moves that git revert cannot undo.';
     END IF;
 
-    RAISE NOTICE '[NFM-3918 phase 0] OK — proceeding (dry_run=%)', is_dry_run;
+    IF merge_strategy NOT IN ('source_id_walk', 'new_canonical') THEN
+        RAISE EXCEPTION 'NFM-3918 preflight FAILED: unknown merge_strategy "%". '
+            'Allowed values: source_id_walk, new_canonical.', merge_strategy;
+    END IF;
+
+    RAISE NOTICE '[NFM-3918 phase 0] OK — proceeding (dry_run=%, merge_strategy=%)',
+        is_dry_run, merge_strategy;
 END $$;
 
 
@@ -214,8 +234,14 @@ END $$;
 -- rows are created, so the hard delete below stays permanent.
 
 DO $outer$
+DECLARE
+    is_dry_run BOOLEAN := current_setting('dry_run', true)::boolean;
+    merge_strategy TEXT := coalesce(
+        nullif(trim(current_setting('merge_strategy', true)), ''),
+        'source_id_walk'
+    );
 BEGIN
-    IF current_setting('dry_run', true)::boolean THEN
+    IF is_dry_run THEN
         -- Phase 3 dry-run notice.
         DECLARE
             deleted_count INTEGER;
@@ -234,9 +260,69 @@ BEGIN
                 deleted_count;
         END;
 
-        -- Phase 4 dry-run notice (per-row outcomes only appear in the apply).
-        RAISE NOTICE '[NFM-3918 phase 4 dry-run] would attempt merge for each carrying-data Unknown. '
-            'Run without -v dry_run=1 to see per-row outcomes.';
+        -- Phase 4 dry-run notice — branches on merge_strategy.
+        IF merge_strategy = 'new_canonical' THEN
+            DECLARE
+                n_carrying INTEGER;
+                n_datasets_to_re_point INTEGER;
+                n_measurements_to_preserve INTEGER;
+            BEGIN
+                SELECT count(DISTINCT m.id) INTO n_carrying
+                FROM materials m
+                WHERE m.name = 'Unknown Material'
+                  AND EXISTS (
+                      SELECT 1 FROM datasets d
+                      JOIN property_measurements pm ON pm.dataset_id = d.id
+                      WHERE d.material_id = m.id
+                  );
+                SELECT count(*) INTO n_datasets_to_re_point
+                FROM datasets d
+                JOIN materials m ON m.id = d.material_id
+                WHERE m.name = 'Unknown Material';
+                SELECT count(*) INTO n_measurements_to_preserve
+                FROM property_measurements pm
+                JOIN datasets d ON d.id = pm.dataset_id
+                JOIN materials m ON m.id = d.material_id
+                WHERE m.name = 'Unknown Material';
+                RAISE NOTICE '[NFM-3918 phase 4 dry-run strategy=new_canonical] would create 1 new '
+                    '"Unknown Material (canonical)" row; re-point % datasets from % carrying Unknowns; '
+                    'preserve % measurements. No uq_pm_dedup collisions expected (datasets stay '
+                    'distinct — only material_id changes).',
+                    n_datasets_to_re_point, n_carrying, n_measurements_to_preserve;
+            END;
+        ELSE
+            -- source_id_walk (default): describe the per-row resolution attempt.
+            DECLARE
+                n_carrying INTEGER;
+                n_resolvable INTEGER;
+                n_unresolvable INTEGER;
+            BEGIN
+                SELECT count(DISTINCT m.id) INTO n_carrying
+                FROM materials m
+                WHERE m.name = 'Unknown Material'
+                  AND EXISTS (
+                      SELECT 1 FROM datasets d
+                      JOIN property_measurements pm ON pm.dataset_id = d.id
+                      WHERE d.material_id = m.id
+                  );
+                SELECT count(*) INTO n_resolvable
+                FROM (
+                    SELECT DISTINCT m.id
+                    FROM materials m
+                    JOIN datasets ud ON ud.material_id = m.id
+                    JOIN datasets td ON td.source_id = ud.source_id
+                    JOIN materials m2 ON m2.id = td.material_id
+                    WHERE m.name = 'Unknown Material'
+                      AND m2.name <> 'Unknown Material'
+                      AND m2.id <> m.id
+                ) s;
+                n_unresolvable := n_carrying - n_resolvable;
+                RAISE NOTICE '[NFM-3918 phase 4 dry-run strategy=source_id_walk] would attempt merge '
+                    'for % carrying Unknowns; % resolvable via source_id walk, % unresolvable (left '
+                    'for manual review). Run without -v dry_run=1 to see per-row outcomes.',
+                    n_carrying, n_resolvable, n_unresolvable;
+            END;
+        END IF;
         RETURN;
     END IF;
 
@@ -274,12 +360,103 @@ BEGIN
         END;
 
         -- ----- Phase 4 apply -----
-        DECLARE
-            merged_count INTEGER := 0;
-            skipped_count INTEGER := 0;
-            unresolved_count INTEGER := 0;
-            rec RECORD;
-        BEGIN
+        IF merge_strategy = 'new_canonical' THEN
+            -- =================================================================
+            -- Phase 4 strategy: new_canonical (Option B, board-ratified)
+            -- =================================================================
+            -- Creates ONE new "Unknown Material (canonical)" material row and
+            -- re-points EVERY carrying-data Unknown's datasets onto it. All
+            -- measurements are preserved because we change only material_id on
+            -- datasets; the datasets themselves stay distinct, so uq_pm_dedup
+            -- UNIQUE (dataset_id, ...) cannot fire. Reversibility is trivial:
+            -- to roll back, simply UPDATE datasets SET material_id = old WHERE
+            -- material_id = new_canonical for every entry logged here.
+            DECLARE
+                canonical_id UUID;
+                deleted_unknowns INTEGER := 0;
+                re_pointed_datasets INTEGER := 0;
+                total_meas_preserved INTEGER := 0;
+                uc_rec RECORD;
+            BEGIN
+                INSERT INTO materials (id, name, created_at, updated_at)
+                VALUES (
+                    gen_random_uuid(),
+                    'Unknown Material (canonical)',
+                    now(),
+                    now()
+                )
+                RETURNING id INTO canonical_id;
+
+                FOR uc_rec IN
+                    SELECT m.id AS unknown_id
+                    FROM materials m
+                    WHERE m.name = 'Unknown Material'
+                      AND EXISTS (
+                          SELECT 1 FROM datasets d
+                          JOIN property_measurements pm ON pm.dataset_id = d.id
+                          WHERE d.material_id = m.id
+                      )
+                LOOP
+                    DECLARE
+                        meas_count INTEGER := 0;
+                        ds_count INTEGER := 0;
+                    BEGIN
+                        -- Pre-count for audit (no row mutation yet).
+                        SELECT count(*) INTO meas_count
+                        FROM property_measurements pm
+                        JOIN datasets d ON d.id = pm.dataset_id
+                        WHERE d.material_id = uc_rec.unknown_id;
+                        SELECT count(*) INTO ds_count
+                        FROM datasets
+                        WHERE material_id = uc_rec.unknown_id;
+
+                        -- Re-point every dataset of this Unknown to the
+                        -- canonical row. datasets.material_id has ON DELETE
+                        -- CASCADE, but UPDATE doesn't trigger it; the FK
+                        -- just re-parents the rows.
+                        UPDATE datasets
+                        SET material_id = canonical_id
+                        WHERE material_id = uc_rec.unknown_id;
+
+                        re_pointed_datasets := re_pointed_datasets + ds_count;
+                        total_meas_preserved := total_meas_preserved + meas_count;
+
+                        -- Now safe to delete the Unknown row — every dataset
+                        -- it owned is re-parented, no FK references remain.
+                        DELETE FROM materials WHERE id = uc_rec.unknown_id;
+                        deleted_unknowns := deleted_unknowns + 1;
+
+                        INSERT INTO nfm_3918_merge_log
+                            (unknown_material_id, target_material_id,
+                             migrated_measurements, dedup_skipped,
+                             dedup_skip_details)
+                        VALUES
+                            (uc_rec.unknown_id, canonical_id,
+                             meas_count, 0, '[]'::jsonb);
+                    END;
+                END LOOP;
+
+                RAISE NOTICE '[NFM-3918 phase 4 applied strategy=new_canonical] '
+                    'canonical=% deleted_unknowns=% re_pointed_datasets=% '
+                    'measurements_preserved=%',
+                    canonical_id, deleted_unknowns,
+                    re_pointed_datasets, total_meas_preserved;
+            END;
+        ELSE
+            -- =================================================================
+            -- Phase 4 strategy: source_id_walk (Option A/C default)
+            -- =================================================================
+            -- Re-points each carrying-data Unknown onto a NON-Unknown material
+            -- reachable by the paper source_id. The real shard measures 0/11
+            -- resolvable here, leaving the rest for manual review — this branch
+            -- is preserved for tickets where source_id resolves and Option A is
+            -- the chosen path. New work should use strategy=new_canonical.
+            DECLARE
+                merged_count INTEGER := 0;
+                skipped_count INTEGER := 0;
+                unresolved_count INTEGER := 0;
+                rec RECORD;
+            BEGIN
             FOR rec IN
                 WITH carrying AS (
                     SELECT DISTINCT m.id AS unknown_id
@@ -414,9 +591,10 @@ BEGIN
                   WHERE d.material_id = m.id
               );
 
-            RAISE NOTICE '[NFM-3918 phase 4 applied] merged % Unknown rows; unresolved=%',
+            RAISE NOTICE '[NFM-3918 phase 4 applied strategy=source_id_walk] merged % Unknown rows; unresolved=%',
                 merged_count, unresolved_count;
         END;
+        END IF;
     EXCEPTION WHEN OTHERS THEN
         RAISE EXCEPTION 'NFM-3918 phases 3+4 failed and were rolled back: %', SQLERRM;
     END;

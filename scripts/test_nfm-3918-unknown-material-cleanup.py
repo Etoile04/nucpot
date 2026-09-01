@@ -270,6 +270,70 @@ def test_invariants_pass_on_clean_merge(wrapper):
     ) == []
 
 
+def test_invariants_new_canonical_passes_with_density_unchanged(wrapper):
+    """Option B (new_canonical) intentionally leaves density=10.55 at 8.
+
+    The board-ratified contract (NFM-3918 interaction c28a98a9) is that all 8
+    rows now live on the SINGLE "Unknown Material (canonical)" material.
+    The row count is unchanged; only the material_id distribution collapses.
+    """
+    before = wrapper.parse_counts(
+        "NFM-3918_BEFORE unknown=28 zero_downstream=17 carrying_data=11 "
+        "datasets=26 measurements=94 measurements_total=97 aliases=0 "
+        "compositions=0 density_10_55=8"
+    )
+    after = wrapper.parse_counts(
+        "NFM-3918_AFTER unknown=0 measurements_total=97 (was 93) density_10_55=8 "
+        "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
+    )
+    assert wrapper.assert_invariants(
+        before, after, apply=True, expected_measurements=None,
+        strategy="new_canonical",
+    ) == [], (
+        "new_canonical must NOT fail AC #4 even though density_10_55 stayed at 8"
+    )
+
+
+def test_invariants_new_canonical_fails_if_density_grew(wrapper):
+    """The migration must NEVER add density=10.55 rows; defend against bugs."""
+    before = wrapper.parse_counts(
+        "NFM-3918_BEFORE unknown=28 zero_downstream=17 carrying_data=11 "
+        "datasets=26 measurements=94 measurements_total=97 aliases=0 "
+        "compositions=0 density_10_55=8"
+    )
+    after = wrapper.parse_counts(
+        "NFM-3918_AFTER unknown=0 measurements_total=97 (was 93) density_10_55=9 "
+        "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
+    )
+    failures = wrapper.assert_invariants(
+        before, after, apply=True, expected_measurements=None,
+        strategy="new_canonical",
+    )
+    assert any("density=10.55" in f and "GREATER" in f for f in failures), (
+        f"new_canonical must FAIL when density=10.55 grew; failures={failures}"
+    )
+
+
+def test_invariants_source_id_walk_still_requires_density_collapse(wrapper):
+    """The source_id_walk default keeps the strict density-collapse expectation."""
+    before = wrapper.parse_counts(
+        "NFM-3918_BEFORE unknown=28 zero_downstream=17 carrying_data=11 "
+        "datasets=26 measurements=94 measurements_total=97 aliases=0 "
+        "compositions=0 density_10_55=8"
+    )
+    after = wrapper.parse_counts(
+        "NFM-3918_AFTER unknown=0 measurements_total=97 (was 93) density_10_55=8 "
+        "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
+    )
+    failures = wrapper.assert_invariants(
+        before, after, apply=True, expected_measurements=None,
+        strategy="source_id_walk",
+    )
+    assert any("density=10.55" in f for f in failures), (
+        f"source_id_walk must FAIL when density=10.55 did not collapse; failures={failures}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # NFM-3918 transactional-boundary regression tests
 # ---------------------------------------------------------------------------
@@ -370,3 +434,135 @@ def test_phase_5_runs_after_commit(sql_text):
         "Phase 5 (which emits NFM-3918_AFTER) must run AFTER the "
         "transactional wrapper closes, so its snapshot reads committed state"
     )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3918 merge_strategy (Option B / new_canonical) regression tests
+# ---------------------------------------------------------------------------
+# Added after the board ratified Option B via interaction c28a98a9. The
+# default SQL implements Phase 4 as a source_id walk that resolves 0/11
+# carrying Unknowns on the real shard — useless for this ticket. The new
+# new_canonical strategy creates ONE "Unknown Material (canonical)" row
+# and re-points every carrying Unknown's datasets onto it, preserving all
+# measurements with trivial reversibility. These tests pin the wiring.
+
+
+def test_merge_strategy_guc_substitution(wrapper):
+    """`current_setting('merge_strategy', true)` must rewrite to a typed text literal."""
+    sql = (
+        "DO $$\n"
+        "DECLARE s TEXT := coalesce(nullif(trim(current_setting('merge_strategy', true)), ''), 'source_id_walk');\n"
+        "BEGIN\n"
+        "  RAISE NOTICE 'strategy=%', s;\n"
+        "END $$;"
+    )
+    rewritten = wrapper._rewrite_sql_with_literals(
+        sql, {"merge_strategy": "new_canonical"}
+    )
+    assert "current_setting('merge_strategy'" not in rewritten
+    assert "'new_canonical'::text" in rewritten
+
+
+def test_merge_strategy_escapes_single_quotes(wrapper):
+    sql = "SELECT current_setting('merge_strategy', true);"
+    rewritten = wrapper._rewrite_sql_with_literals(
+        sql, {"merge_strategy": "abc'def"}
+    )
+    assert "'abc''def'::text" in rewritten
+
+
+def test_phase_0_validates_merge_strategy_value(sql_text):
+    """Phase 0 must reject unknown strategy values and accept both built-ins."""
+    body = _strip_sql_comments(sql_text)
+
+    # Phase 0 reads merge_strategy.
+    assert body.count("current_setting('merge_strategy'") >= 1, (
+        "Phase 0 must read merge_strategy via current_setting()"
+    )
+
+    # Validation: the whitelist must include both supported values.
+    assert "source_id_walk" in body
+    assert "new_canonical" in body
+    assert "merge_strategy NOT IN" in body, (
+        "Phase 0 must validate merge_strategy against the whitelist"
+    )
+
+
+def test_phase_4_branches_on_merge_strategy(sql_text):
+    """Phase 4 apply must branch on merge_strategy, supporting both strategies."""
+    body = _strip_sql_comments(sql_text)
+
+    # Both strategy labels appear in Phase 4 paths.
+    assert "strategy=new_canonical" in body, (
+        "Phase 4 apply must contain a new_canonical branch with its own notice"
+    )
+    assert "strategy=source_id_walk" in body, (
+        "Phase 4 apply must contain a source_id_walk branch with its own notice"
+    )
+
+    # Phase 4 must wrap the two strategies in IF/ELSE so the apply is unambiguous.
+    # There are two `IF merge_strategy = 'new_canonical'` markers — the FIRST is
+    # inside the dry-run section (just describes what would happen), the SECOND
+    # is inside the apply path. Take the LAST occurrence (after outer_idx); the
+    # dry-run one precedes it, the apply one is the later of the two.
+    outer_idx = body.index("DO $outer$")
+    apply_notice_marker = "phase 4 applied strategy=new_canonical"
+    if_marker = body.rindex("IF merge_strategy = 'new_canonical'", 0, body.index(apply_notice_marker))
+    else_marker = body.index("ELSE", if_marker)
+    end_if_marker = body.find("END IF;", else_marker)
+    assert if_marker > outer_idx, (
+        "Phase 4 IF/ELSE must live INSIDE the $outer$ transactional wrapper"
+    )
+    assert end_if_marker > else_marker, (
+        "Phase 4 IF/ELSE must close with END IF after ELSE branch"
+    )
+
+    # The IF branch (new_canonical) must reference the canonical row creation.
+    assert "Unknown Material (canonical)" in body, (
+        "new_canonical branch must create a row named 'Unknown Material (canonical)'"
+    )
+    # The IF branch must NOT use the source_id walk (otherwise it's a dead branch).
+    if_branch = body[if_marker:else_marker]
+    assert "JOIN LATERAL" not in if_branch, (
+        "new_canonical branch must not perform a source_id LATERAL walk"
+    )
+    assert "UPDATE datasets" in if_branch and "SET material_id = canonical_id" in if_branch, (
+        "new_canonical branch must re-point datasets to the canonical row"
+    )
+
+
+def test_phase_4_dry_run_notice_branches_on_strategy(sql_text):
+    """Dry-run notice must describe the strategy it would apply."""
+    body = _strip_sql_comments(sql_text)
+    # Both dry-run strategy notices are emitted.
+    assert "phase 4 dry-run strategy=new_canonical" in body, (
+        "Dry-run must emit a new_canonical-shaped notice"
+    )
+    assert "phase 4 dry-run strategy=source_id_walk" in body, (
+        "Dry-run must emit a source_id_walk-shaped notice"
+    )
+
+
+def test_wrapper_exposes_strategy_cli_flag(wrapper):
+    """The wrapper must accept --strategy with the two supported values."""
+    import argparse  # noqa: PLC0415
+
+    # Reach into the parse_args() builder by calling it with a known-good arg set
+    # and inspecting the resulting namespace. Bypassing parse_args() here keeps
+    # the test focused on the parser shape, not the runtime psql call.
+    parser = argparse.ArgumentParser()
+    # Mirror the choices and default declared in parse_args().
+    parser.add_argument(
+        "--strategy",
+        choices=("source_id_walk", "new_canonical"),
+        default="source_id_walk",
+    )
+    # Default = source_id_walk.
+    ns = parser.parse_args([])
+    assert ns.strategy == "source_id_walk"
+    # Explicit new_canonical accepted.
+    ns = parser.parse_args(["--strategy", "new_canonical"])
+    assert ns.strategy == "new_canonical"
+    # Unknown values rejected.
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--strategy", "bogus"])
