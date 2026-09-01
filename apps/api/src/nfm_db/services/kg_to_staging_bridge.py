@@ -70,6 +70,63 @@ _PROPERTY_SLUGS: dict[str, str] = {
     "熔点": "melting_point",
     "Clausius-Clapeyron斜率": "phase_boundary_slope",
     "弹性常数": "elastic_constants",
+    # --- NFM-4036: F8 (Owen2023 amorphous UO2 / Cr-doped) labels ----------
+    # These are the labels the extractor actually emits for source
+    # 9320cb50-… .  Before this block every one of them hit the
+    # ``_slugify`` CJK fallback: each CJK codepoint becomes "_", the result
+    # strips to "" and returns the literal "unknown", which the caller then
+    # skips outright (see the ``== "unknown"`` guard in the kg_nodes loop).
+    # Five near-misses were worse than a clean drop — they survived as
+    # corrupt ASCII fragments ("RDF峰"→"RDF", "晶格常数a"→"a") and the two
+    # Cr-doped labels *collided* on "Cr", silently merging the Cr-doped
+    # activation energy with the Cr-doped pre-exponential factor.
+    #
+    # Slug targets are the names ``audit/f8_scorecard_v050.sql`` predicates
+    # on, so the staging surface and the scorecard agree.  Aliases
+    # intentionally collapse onto one slug: the scorecard separates undoped
+    # from Cr-doped by ``element_system`` and value band, never by name.
+    #
+    # Activation energy (F8 checkpoints 1 and 3)
+    "扩散激活能": "activation_energy",
+    "扩散活化能": "activation_energy",
+    "活化能": "activation_energy",
+    "激活能": "activation_energy",
+    "氧扩散激活能": "activation_energy",
+    "Cr掺杂扩散激活能": "activation_energy",
+    # Arrhenius pre-exponential factor D0 (F8 checkpoints 2 and 4).  The
+    # scorecard accepts pre_exponential_factor OR diffusion_coefficient for
+    # D0; the prose varies, the quantity is D0.
+    "扩散前指数因子": "pre_exponential_factor",
+    "扩散指前因子": "pre_exponential_factor",
+    "扩散系数指前因子": "pre_exponential_factor",
+    "扩散预指数因子": "pre_exponential_factor",
+    "预指数因子": "pre_exponential_factor",
+    "氧扩散前指数因子": "pre_exponential_factor",
+    "氧扩散指前因子": "pre_exponential_factor",
+    "Cr掺杂扩散前指数因子": "pre_exponential_factor",
+    # Diffusivity itself is a distinct quantity from D0 — keep them apart.
+    "扩散系数": "diffusion_coefficient",
+    "热扩散率": "thermal_diffusivity",
+    # Density (F8 checkpoints 5 and 6)
+    "密度": "density",
+    # Short-range structure (F8 checkpoints 7 and 8)
+    "RDF峰": "rdf_peak",
+    "键长": "bond_length",
+    "配位数": "coordination_number",
+    # Individual elastic tensor components.  Bare "弹性常数" already maps to
+    # the plural aggregate above; the indexed forms are separate quantities
+    # and must not collapse onto it.
+    "弹性常数C11": "elastic_constant_c11",
+    "弹性常数C12": "elastic_constant_c12",
+    "弹性常数C13": "elastic_constant_c13",
+    "弹性常数C14": "elastic_constant_c14",
+    "弹性常数C33": "elastic_constant_c33",
+    "弹性常数C44": "elastic_constant_c44",
+    # 常数 ("constant") is the variant this corpus uses; 参数 ("parameter")
+    # above is the variant already mapped.  Both mean the lattice constant.
+    "晶格常数a": "lattice_constant_a",
+    "晶格常数b": "lattice_constant_b",
+    "晶格常数c": "lattice_constant_c",
 }
 
 _UNIT_ALIASES: dict[str, str] = {
