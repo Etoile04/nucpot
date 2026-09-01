@@ -135,6 +135,7 @@ def parse_counts(notice_line: str) -> CountSnapshot:
             "carrying_data": r"carrying_data=(\d+)",
             "datasets": r"datasets=(\d+)",
             "measurements": r"measurements=(\d+)",
+            "measurements_total": r"measurements_total=(\d+)",
             "aliases": r"aliases=(\d+)",
             "compositions": r"compositions=(\d+)",
             "density_10_55": r"density_10_55=(\d+)",
@@ -146,6 +147,7 @@ def parse_counts(notice_line: str) -> CountSnapshot:
         keymap = {
             "unknown": r"unknown=(\d+)",
             "measurements": r"measurements_total=(\d+)",
+            "measurements_total": r"measurements_total=(\d+)",
             "density_10_55": r"density_10_55=(\d+)",
             "orphan_datasets": r"orphan_datasets=(\d+)",
             "orphan_measurements": r"orphan_measurements=(\d+)",
@@ -323,20 +325,33 @@ def assert_invariants(
                 f"{after.counts.get('orphan_measurements')}, expected 0."
             )
 
-    # AC #3 (measurement preservation): total measurement count should not
-    # drop below (BEFORE - dedup_total). On dry-run the SQL is a no-op, so
-    # skip this branch.
-    if apply and expected_measurements is not None:
-        before_total = before.counts.get("measurements", 0)
-        after_total = after.counts.get("measurements", 0)
-        dedup = after.counts.get("dedup_total", 0)
-        net_expected = before_total - dedup
-        if after_total < net_expected:
+    # AC #3 (measurement preservation): the GLOBAL property_measurements count
+    # must not drop below (BEFORE_total - dedup_total).
+    #
+    # This deliberately compares measurements_total on both sides. An earlier
+    # version compared BEFORE's Unknown-scoped count (94) against AFTER's
+    # global count (97); because the global total is always >= the scoped one,
+    # that check could not fail even if every Unknown measurement were
+    # destroyed. Invariant #1 is a whole-table property — measure it as one.
+    if apply:
+        before_total = before.counts.get("measurements_total")
+        after_total = after.counts.get("measurements_total")
+        if before_total is None or after_total is None:
             failures.append(
-                f"AC #3 FAIL: post-state measurements = {after_total}, "
-                f"expected at least {net_expected} (= {before_total} BEFORE − "
-                f"{dedup} dedup). Investigate measurement loss."
+                "AC #3 FAIL: measurements_total missing from "
+                f"{'BEFORE' if before_total is None else 'AFTER'} snapshot — "
+                "cannot verify measurement preservation. Refusing to pass a "
+                "check we could not actually run."
             )
+        else:
+            dedup = after.counts.get("dedup_total", 0)
+            net_expected = before_total - dedup
+            if after_total < net_expected:
+                failures.append(
+                    f"AC #3 FAIL: post-state measurements = {after_total}, "
+                    f"expected at least {net_expected} (= {before_total} BEFORE − "
+                    f"{dedup} dedup). Investigate measurement loss."
+                )
 
     return failures
 

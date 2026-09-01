@@ -118,16 +118,26 @@ DECLARE
     n_carrying_data INTEGER;
     n_datasets_unknown INTEGER;
     n_measurements_unknown INTEGER;
+    n_measurements_total INTEGER;
     n_aliases_unknown INTEGER;
     n_compositions_unknown INTEGER;
     n_density_10_55 INTEGER;
 BEGIN
     SELECT count(*) INTO n_unknown FROM materials WHERE name = 'Unknown Material';
 
+    -- "Zero downstream" is defined by the ticket body as no measurement, no
+    -- alias, no composition — NOT by dataset existence. An Unknown row that
+    -- owns only an EMPTY dataset carries nothing and must be hard-deleted.
+    -- Measured on the real 28-row shard: dataset-keyed = 2, measurement-keyed
+    -- = 17 (the ticket's number).
     SELECT count(*) INTO n_zero_downstream
     FROM materials m
     WHERE m.name = 'Unknown Material'
-      AND NOT EXISTS (SELECT 1 FROM datasets d WHERE d.material_id = m.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM datasets d
+          JOIN property_measurements pm ON pm.dataset_id = d.id
+          WHERE d.material_id = m.id
+      )
       AND NOT EXISTS (SELECT 1 FROM material_aliases a WHERE a.material_id = m.id)
       AND NOT EXISTS (SELECT 1 FROM material_compositions c WHERE c.material_id = m.id);
 
@@ -142,6 +152,11 @@ BEGIN
         JOIN datasets d ON d.id = pm.dataset_id
         JOIN materials m ON m.id = d.material_id
     WHERE m.name = 'Unknown Material';
+
+    -- Global total, not Unknown-scoped. Invariant #1 ("no measurement loss")
+    -- is a whole-table property, so BEFORE and AFTER must both publish the
+    -- global count or the comparison comes out apples-to-oranges.
+    SELECT count(*) INTO n_measurements_total FROM property_measurements;
 
     SELECT count(*) INTO n_aliases_unknown
     FROM material_aliases a JOIN materials m ON m.id = a.material_id
@@ -161,242 +176,271 @@ BEGIN
       AND pm.value_scalar = 10.55;
 
     RAISE NOTICE 'NFM-3918_BEFORE unknown=% zero_downstream=% carrying_data=% datasets=% '
-                 'measurements=% aliases=% compositions=% density_10_55=%',
+                 'measurements=% measurements_total=% aliases=% compositions=% density_10_55=%',
         n_unknown, n_zero_downstream, n_carrying_data, n_datasets_unknown,
-        n_measurements_unknown, n_aliases_unknown, n_compositions_unknown,
-        n_density_10_55;
+        n_measurements_unknown, n_measurements_total, n_aliases_unknown,
+        n_compositions_unknown, n_density_10_55;
 END $$;
 
 
 -- -----------------------------------------------------------------------------
--- Phase 3 — Hard delete (17 zero-downstream Unknown)
+-- Phase 3 + Phase 4 — Transactional mutation wrapper
 -- -----------------------------------------------------------------------------
--- Only touches materials with ZERO downstream rows in datasets / aliases /
--- compositions. The FK on datasets.material_id has no ON DELETE clause
--- (`material_id` is nullable in the ORM, FK to materials.id), but zero-
--- downstream by definition means no FK rows exist pointing back.
+-- Both phases run inside a single `DO $outer$` block so a mid-run failure
+-- in Phase 4 cannot leave the database in a half-applied state. PL/pgSQL
+-- has NO implicit transaction across top-level DO blocks; an uncaught
+-- error inside an inner DO would leave Phase 3's 17 deletions committed
+-- while Phase 4's compensating merges never ran. The first faithful
+-- staging apply demonstrated this exact failure mode (Phase 3 committed,
+-- Phase 4 crashed on the `materials.source_id` typo, DB left at
+-- unknown=11 with no rollback path).
+--
+-- Inside $outer$ the apply path wraps Phase 3 and Phase 4 in an explicit
+-- BEGIN/EXCEPTION block so any error RAISEs the original message and
+-- rolls the whole apply back. Dry-run is a no-mutation path that emits
+-- notice-only counters and returns early.
+--
+-- Phase 3 (hard delete) only touches materials with ZERO downstream
+-- measurements / aliases / compositions. Such a material MAY still own
+-- datasets — empty ones. `datasets.material_id` is ON DELETE CASCADE
+-- (and `property_measurements.dataset_id` likewise), so deleting the
+-- material also removes those empty dataset rows, which is exactly what
+-- the ticket asks for ("硬删除 17 条零下游数据的 Unknown(含其空 dataset 行)").
+-- Because the predicate excludes anything reachable to a measurement, the
+-- cascade can never destroy a measurement.
 --
 -- Tier 1B (NFM-3919) closes the upstream by teaching the mapper to reject
 -- formula=NULL AND material_name=NULL items. Post-Tier-1B, no NEW Unknown
 -- rows are created, so the hard delete below stays permanent.
 
-DO $$
-DECLARE
-    deleted_count INTEGER;
-    is_dry_run BOOLEAN := current_setting('dry_run', true)::boolean;
+DO $outer$
 BEGIN
-    IF is_dry_run THEN
-        SELECT count(*) INTO deleted_count
-        FROM materials m
-        WHERE m.name = 'Unknown Material'
-          AND NOT EXISTS (SELECT 1 FROM datasets d WHERE d.material_id = m.id)
-          AND NOT EXISTS (SELECT 1 FROM material_aliases a WHERE a.material_id = m.id)
-          AND NOT EXISTS (SELECT 1 FROM material_compositions c WHERE c.material_id = m.id);
-        RAISE NOTICE '[NFM-3918 phase 3 dry-run] would hard-delete % zero-downstream Unknown rows',
-            deleted_count;
-        RETURN;
-    END IF;
+    IF current_setting('dry_run', true)::boolean THEN
+        -- Phase 3 dry-run notice.
+        DECLARE
+            deleted_count INTEGER;
+        BEGIN
+            SELECT count(*) INTO deleted_count
+            FROM materials m
+            WHERE m.name = 'Unknown Material'
+              AND NOT EXISTS (
+                  SELECT 1 FROM datasets d
+                  JOIN property_measurements pm ON pm.dataset_id = d.id
+                  WHERE d.material_id = m.id
+              )
+              AND NOT EXISTS (SELECT 1 FROM material_aliases a WHERE a.material_id = m.id)
+              AND NOT EXISTS (SELECT 1 FROM material_compositions c WHERE c.material_id = m.id);
+            RAISE NOTICE '[NFM-3918 phase 3 dry-run] would hard-delete % zero-downstream Unknown rows',
+                deleted_count;
+        END;
 
-    WITH zero_downstream AS (
-        SELECT m.id
-        FROM materials m
-        WHERE m.name = 'Unknown Material'
-          AND NOT EXISTS (SELECT 1 FROM datasets d WHERE d.material_id = m.id)
-          AND NOT EXISTS (SELECT 1 FROM material_aliases a WHERE a.material_id = m.id)
-          AND NOT EXISTS (SELECT 1 FROM material_compositions c WHERE c.material_id = m.id)
-    ),
-    deleted AS (
-        DELETE FROM materials m
-        USING zero_downstream z
-        WHERE m.id = z.id
-        RETURNING m.id
-    )
-    SELECT count(*) INTO deleted_count FROM deleted;
-
-    RAISE NOTICE '[NFM-3918 phase 3 applied] hard-deleted % zero-downstream Unknown rows',
-        deleted_count;
-END $$;
-
-
--- -----------------------------------------------------------------------------
--- Phase 4 — Merge carrying-data Unknown into correct target material
--- -----------------------------------------------------------------------------
--- Per the ticket body §"决策依据": the "correct target material" for an Unknown
--- row carrying data is the material that already exists for the SAME source
--- (same source_id). When the same paper has been ingested before with a
--- non-Unknown material identity, that identity is the target.
---
--- We resolve the target with this rule:
---     target(m) = material m' with m'.source_id = m.source_id
---                 AND m'.name <> 'Unknown Material'
---                 AND m'.id <> m.id
--- If no such material exists, the row is logged into nfm_3918_merge_log with
--- target_material_id = NULL and migrated_measurements = 0; the row stays in
--- place as a manual-review item. This is the conservative fallback — refusing
--- to guess is safer than fusing to a random material.
---
--- uq_pm_dedup is `UNIQUE (dataset_id, property_type_id, conditions_hash, method)`.
--- Merging concentrates rows onto the target's dataset. Where the source row's
--- (property_type_id, conditions_hash, method) already exists on the target's
--- dataset, we SKIP the insert (dedup) and log the skip in nfm_3918_merge_log.
--- This is the FIRST time the constraint will actually fire in production —
--- see ticket body §4.
---
--- Each row's choice is reported in the comment for that merge, not silently
--- dropped. The Python wrapper queries nfm_3918_merge_log to populate the
--- "dedup list" required by AC #3.
-
-DO $$
-DECLARE
-    is_dry_run BOOLEAN := current_setting('dry_run', true)::boolean;
-    merged_count INTEGER := 0;
-    skipped_count INTEGER := 0;
-    unresolved_count INTEGER := 0;
-    rec RECORD;
-BEGIN
-    IF is_dry_run THEN
+        -- Phase 4 dry-run notice (per-row outcomes only appear in the apply).
         RAISE NOTICE '[NFM-3918 phase 4 dry-run] would attempt merge for each carrying-data Unknown. '
             'Run without -v dry_run=1 to see per-row outcomes.';
         RETURN;
     END IF;
 
-    FOR rec IN
-        WITH carrying AS (
-            SELECT DISTINCT m.id AS unknown_id, m.source_id
-            FROM materials m
-            WHERE m.name = 'Unknown Material'
-              AND EXISTS (SELECT 1 FROM datasets d WHERE d.material_id = m.id)
-        ),
-        resolved AS (
-            SELECT c.unknown_id,
-                   c.source_id,
-                   tgt.id AS target_material_id
-            FROM carrying c
-            JOIN LATERAL (
-                SELECT m2.id
-                FROM materials m2
-                WHERE m2.source_id = c.source_id
-                  AND m2.name <> 'Unknown Material'
-                  AND m2.id <> c.unknown_id
-                ORDER BY m2.created_at ASC
-                LIMIT 1
-            ) tgt ON true
-        )
-        SELECT r.unknown_id, r.target_material_id
-        FROM resolved r
-        WHERE NOT EXISTS (
-            SELECT 1 FROM nfm_3918_merge_log l WHERE l.unknown_material_id = r.unknown_id
-        )
-    LOOP
-        -- Per-row merge: walk datasets of the Unknown, re-attach each
-        -- property_measurement to the target's dataset (handling dedup),
-        -- then drop the now-empty Unknown-side datasets and the material.
+    -- Apply: wrap phases 3 + 4 in a single transaction. Phase 5 is the
+    -- post-state readback and is always non-mutating, so it doesn't need
+    -- to be inside the txn; including it makes rollback semantics simpler
+    -- and Phase 5's RAISE NOTICE still surfaces after COMMIT.
+    BEGIN
+        -- ----- Phase 3 apply -----
         DECLARE
-            meas_moved INTEGER := 0;
-            meas_dedup INTEGER := 0;
-            dedup_details JSONB := '[]'::jsonb;
-            ds_rec RECORD;
-            pm_rec RECORD;
-            target_dataset_id UUID;
+            deleted_count INTEGER;
         BEGIN
-            -- Find (or create) the target dataset. Each Unknown dataset may
-            -- carry multiple property types; we co-locate them onto a single
-            -- dataset on the target material side, preferring an existing
-            -- dataset on the same source.
-            SELECT d.id INTO target_dataset_id
-            FROM datasets d
-            WHERE d.material_id = rec.target_material_id
-              AND d.source_id = (SELECT source_id FROM materials WHERE id = rec.unknown_id)
-            ORDER BY d.created_at ASC
-            LIMIT 1;
+            WITH zero_downstream AS (
+                SELECT m.id
+                FROM materials m
+                WHERE m.name = 'Unknown Material'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM datasets d
+                      JOIN property_measurements pm ON pm.dataset_id = d.id
+                      WHERE d.material_id = m.id
+                  )
+                  AND NOT EXISTS (SELECT 1 FROM material_aliases a WHERE a.material_id = m.id)
+                  AND NOT EXISTS (SELECT 1 FROM material_compositions c WHERE c.material_id = m.id)
+            ),
+            deleted AS (
+                DELETE FROM materials m
+                USING zero_downstream z
+                WHERE m.id = z.id
+                RETURNING m.id
+            )
+            SELECT count(*) INTO deleted_count FROM deleted;
 
-            IF target_dataset_id IS NULL THEN
-                INSERT INTO datasets (id, material_id, source_id, name, created_at, updated_at)
-                SELECT gen_random_uuid(), rec.target_material_id, m.source_id,
-                       'merged-from-unknown-' || m.id::text, now(), now()
-                FROM materials m WHERE m.id = rec.unknown_id
-                RETURNING id INTO target_dataset_id;
-            END IF;
+            RAISE NOTICE '[NFM-3918 phase 3 applied] hard-deleted % zero-downstream Unknown rows',
+                deleted_count;
+        END;
 
-            FOR ds_rec IN
-                SELECT id FROM datasets WHERE material_id = rec.unknown_id
+        -- ----- Phase 4 apply -----
+        DECLARE
+            merged_count INTEGER := 0;
+            skipped_count INTEGER := 0;
+            unresolved_count INTEGER := 0;
+            rec RECORD;
+        BEGIN
+            FOR rec IN
+                WITH carrying AS (
+                    SELECT DISTINCT m.id AS unknown_id
+                    FROM materials m
+                    WHERE m.name = 'Unknown Material'
+                      AND EXISTS (
+                          SELECT 1 FROM datasets d
+                          JOIN property_measurements pm ON pm.dataset_id = d.id
+                          WHERE d.material_id = m.id
+                      )
+                ),
+                resolved AS (
+                    -- The paper linkage lives on datasets.source_id; `materials` has
+                    -- no source_id column. Walk Unknown -> its datasets -> same
+                    -- source_id -> a dataset owned by a NON-Unknown material.
+                    SELECT c.unknown_id,
+                           tgt.target_material_id,
+                           tgt.source_id
+                    FROM carrying c
+                    JOIN LATERAL (
+                        SELECT m2.id AS target_material_id, ud.source_id
+                        FROM datasets ud
+                        JOIN datasets td ON td.source_id = ud.source_id
+                        JOIN materials m2 ON m2.id = td.material_id
+                        WHERE ud.material_id = c.unknown_id
+                          AND m2.name <> 'Unknown Material'
+                          AND m2.id <> c.unknown_id
+                        ORDER BY m2.created_at ASC
+                        LIMIT 1
+                    ) tgt ON true
+                )
+                SELECT r.unknown_id, r.target_material_id, r.source_id
+                FROM resolved r
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM nfm_3918_merge_log l WHERE l.unknown_material_id = r.unknown_id
+                )
             LOOP
-                FOR pm_rec IN
-                    SELECT pm.id, pm.property_type_id, pm.conditions_hash, pm.method,
-                           pm.value_scalar, pm.value_min, pm.value_max, pm.value_expression,
-                           pm.value_list, pm.value_text, pm.uncertainty, pm.unit_id, pm.notes,
-                           pm.review_status, pm.reviewer_note, pm.reviewed_at
-                    FROM property_measurements pm
-                    WHERE pm.dataset_id = ds_rec.id
-                LOOP
-                    -- uq_pm_dedup guard: if target already has this exact
-                    -- (property_type_id, conditions_hash, method) on this
-                    -- dataset, skip the insert and log the dedup.
-                    IF EXISTS (
-                        SELECT 1 FROM property_measurements t
-                        WHERE t.dataset_id = target_dataset_id
-                          AND t.property_type_id = pm_rec.property_type_id
-                          AND t.conditions_hash IS NOT DISTINCT FROM pm_rec.conditions_hash
-                          AND t.method IS NOT DISTINCT FROM pm_rec.method
-                    ) THEN
-                        meas_dedup := meas_dedup + 1;
-                        dedup_details := dedup_details || jsonb_build_object(
-                            'unknown_measurement_id', pm_rec.id,
-                            'property_type_id', pm_rec.property_type_id,
-                            'conditions_hash', pm_rec.conditions_hash,
-                            'method', pm_rec.method
-                        );
-                        -- Drop the source row to keep the count invariant.
-                        DELETE FROM property_measurements WHERE id = pm_rec.id;
-                    ELSE
-                        UPDATE property_measurements
-                        SET dataset_id = target_dataset_id
-                        WHERE id = pm_rec.id;
-                        meas_moved := meas_moved + 1;
-                    END IF;
-                END LOOP;
+                -- Per-row merge: walk datasets of the Unknown, re-attach each
+                -- property_measurement to the target's dataset (handling dedup),
+                -- then drop the now-empty Unknown-side datasets and the material.
+                DECLARE
+                    meas_moved INTEGER := 0;
+                    meas_dedup INTEGER := 0;
+                    dedup_details JSONB := '[]'::jsonb;
+                    ds_rec RECORD;
+                    pm_rec RECORD;
+                    target_dataset_id UUID;
+                BEGIN
+                    -- Find (or create) the target dataset. Each Unknown dataset may
+                    -- carry multiple property types; we co-locate them onto a single
+                    -- dataset on the target material side, preferring an existing
+                    -- dataset on the same source.
+                    SELECT d.id INTO target_dataset_id
+                    FROM datasets d
+                    WHERE d.material_id = rec.target_material_id
+                      AND d.source_id = rec.source_id
+                    ORDER BY d.created_at ASC
+                    LIMIT 1;
 
-                -- Drop the now-empty source dataset (FK ON DELETE CASCADE
-                -- handles any stragglers).
-                DELETE FROM datasets WHERE id = ds_rec.id;
+                    IF target_dataset_id IS NULL THEN
+                        INSERT INTO datasets (id, material_id, source_id, title, created_at, updated_at)
+                        VALUES (gen_random_uuid(), rec.target_material_id, rec.source_id,
+                                'merged-from-unknown-' || rec.unknown_id::text, now(), now())
+                        RETURNING id INTO target_dataset_id;
+                    END IF;
+
+                    FOR ds_rec IN
+                        SELECT id FROM datasets WHERE material_id = rec.unknown_id
+                    LOOP
+                        FOR pm_rec IN
+                            SELECT pm.id, pm.property_type_id, pm.conditions_hash, pm.method,
+                                   pm.value_scalar, pm.value_min, pm.value_max, pm.value_expression,
+                                   pm.value_list, pm.value_text, pm.uncertainty, pm.unit_id, pm.notes,
+                                   pm.review_status, pm.reviewer_note, pm.reviewed_at
+                            FROM property_measurements pm
+                            WHERE pm.dataset_id = ds_rec.id
+                        LOOP
+                            -- uq_pm_dedup guard: if target already has this exact
+                            -- (property_type_id, conditions_hash, method) on this
+                            -- dataset, skip the insert and log the dedup.
+                            IF EXISTS (
+                                SELECT 1 FROM property_measurements t
+                                WHERE t.dataset_id = target_dataset_id
+                                  AND t.property_type_id = pm_rec.property_type_id
+                                  AND t.conditions_hash IS NOT DISTINCT FROM pm_rec.conditions_hash
+                                  AND t.method IS NOT DISTINCT FROM pm_rec.method
+                            ) THEN
+                                meas_dedup := meas_dedup + 1;
+                                dedup_details := dedup_details || jsonb_build_object(
+                                    'unknown_measurement_id', pm_rec.id,
+                                    'property_type_id', pm_rec.property_type_id,
+                                    'conditions_hash', pm_rec.conditions_hash,
+                                    'method', pm_rec.method
+                                );
+                                -- Drop the source row to keep the count invariant.
+                                DELETE FROM property_measurements WHERE id = pm_rec.id;
+                            ELSE
+                                UPDATE property_measurements
+                                SET dataset_id = target_dataset_id
+                                WHERE id = pm_rec.id;
+                                meas_moved := meas_moved + 1;
+                            END IF;
+                        END LOOP;
+
+                        -- Drop the now-empty source dataset (FK ON DELETE CASCADE
+                        -- handles any stragglers).
+                        DELETE FROM datasets WHERE id = ds_rec.id;
+                    END LOOP;
+
+                    -- Drop the Unknown material itself.
+                    DELETE FROM materials WHERE id = rec.unknown_id;
+
+                    INSERT INTO nfm_3918_merge_log
+                        (unknown_material_id, target_material_id, migrated_measurements,
+                         dedup_skipped, dedup_skip_details)
+                    VALUES
+                        (rec.unknown_id, rec.target_material_id, meas_moved,
+                         meas_dedup, dedup_details);
+
+                    merged_count := merged_count + 1;
+                END;
             END LOOP;
 
-            -- Drop the Unknown material itself.
-            DELETE FROM materials WHERE id = rec.unknown_id;
+            -- Unresolved rows (Unknown still carrying measurements but with no
+            -- matching target material). These are left in place for manual review.
+            SELECT count(*) INTO unresolved_count
+            FROM materials m
+            WHERE m.name = 'Unknown Material'
+              AND EXISTS (
+                  SELECT 1 FROM datasets d
+                  JOIN property_measurements pm ON pm.dataset_id = d.id
+                  WHERE d.material_id = m.id
+              );
 
-            INSERT INTO nfm_3918_merge_log
-                (unknown_material_id, target_material_id, migrated_measurements,
-                 dedup_skipped, dedup_skip_details)
-            VALUES
-                (rec.unknown_id, rec.target_material_id, meas_moved,
-                 meas_dedup, dedup_details);
-
-            merged_count := merged_count + 1;
+            RAISE NOTICE '[NFM-3918 phase 4 applied] merged % Unknown rows; unresolved=%',
+                merged_count, unresolved_count;
         END;
-    END LOOP;
-
-    -- Unresolved rows (Unknown with data but no matching target material).
-    SELECT count(*) INTO unresolved_count
-    FROM materials m
-    WHERE m.name = 'Unknown Material'
-      AND EXISTS (SELECT 1 FROM datasets d WHERE d.material_id = m.id);
-
-    RAISE NOTICE '[NFM-3918 phase 4 applied] merged % Unknown rows; unresolved=%',
-        merged_count, unresolved_count;
-END $$;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'NFM-3918 phases 3+4 failed and were rolled back: %', SQLERRM;
+    END;
+END $outer$;
 
 
 -- -----------------------------------------------------------------------------
 -- Phase 5 — Post-flight verify
 -- -----------------------------------------------------------------------------
 -- Emits AFTER counts. The Python wrapper pairs these with the BEFORE block
--- to produce the table required by AC #1.
+-- to produce the table required by AC #1. Phase 5 is intentionally outside
+-- the $outer$ transaction: it reads post-state, never mutates, and its RAISE
+-- NOTICE has to fire after COMMIT so the BEFORE/AFTER pair is unambiguous.
 
 DO $$
 DECLARE
     n_unknown INTEGER;
     n_measurements_total INTEGER;
-    n_measurements_pre INTEGER := 93;  -- ticket body §决策依据
+    -- Reported for human context only. The machine-checked comparison is
+    -- BEFORE.measurements_total vs AFTER.measurements_total, done by the
+    -- Python wrapper — never against this literal, which goes stale the
+    -- moment ingest adds a row (it read 93 when the ticket was filed and
+    -- 97 by the first faithful staging dry-run).
+    n_measurements_pre INTEGER := 93;  -- ticket body §决策依据, informational
     n_density_10_55 INTEGER;
     n_orphans_datasets INTEGER;
     n_orphans_measurements INTEGER;
