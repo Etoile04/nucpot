@@ -685,9 +685,7 @@ class TestFailureStatusPersistsAcrossAbortedSession:
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
                 new=_fake_extract,
             ),
-            patch.object(
-                lit_svc, "async_session_factory", _sqlite_passthrough_factory
-            ),
+            patch.object(lit_svc, "async_session_factory", _sqlite_passthrough_factory),
         ):
             # The upstream LLM extract raises. The contract is simply
             # that *some* RuntimeError propagates so the Celery
@@ -812,6 +810,11 @@ class TestEdgeCases:
         mock_build.assert_not_called()
         assert result["status"] == "completed"
         assert result["extracted"] == 0
+        # NFM-4013 / Path (a): even when the mapping step is skipped, the
+        # return shape carries an empty capture list — the harness can
+        # iterate uniformly across datasources.
+        assert result["skipped_unknown_details"] == []
+        assert result["skipped_unknown_properties"] == 0
 
         await db_session.refresh(ds)
         assert ds.parse_status == "completed"
@@ -1128,9 +1131,7 @@ class TestLightRAGIngestAfterCommit:
         assert result["extracted"] == 1
 
     @pytest.mark.asyncio
-    async def test_literature_does_not_dispatch_on_failure(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_literature_does_not_dispatch_on_failure(self, db_session: AsyncSession) -> None:
         """If the pipeline raises BEFORE the final commit, the dispatch
         guard must NOT fire. This guarantees no ghost entities on rollback.
 
@@ -1150,9 +1151,7 @@ class TestLightRAGIngestAfterCommit:
             ),
             patch(
                 "nfm_db.services.extraction_to_db_mapper.map_and_persist",
-                new=AsyncMock(
-                    side_effect=RuntimeError("simulated mapping failure")
-                ),
+                new=AsyncMock(side_effect=RuntimeError("simulated mapping failure")),
             ),
             patch(
                 "nfm_db.services.kg_re.dispatch_build_result",
@@ -1202,9 +1201,7 @@ class TestLightRAGIngestAfterCommit:
                 "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
                 new=AsyncMock(return_value=empty_build_result),
             ),
-            patch(
-                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag"
-            ) as mock_fire,
+            patch("nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag") as mock_fire,
         ):
             await lit_svc.process_literature(db_session, ds.id)
 
@@ -1223,9 +1220,7 @@ class TestBibliographicMetadataExtraction:
     to the DataSource row (only filling currently-null fields)."""
 
     @pytest.mark.asyncio
-    async def test_metadata_extracted_from_content_md(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_metadata_extracted_from_content_md(self, db_session: AsyncSession) -> None:
         """content_md contains DOI/journal/year/abstract → fields populated."""
         content_md = (
             "# Owen et al. - 2023 - Diffusion in UO2\n\n"
@@ -1245,7 +1240,8 @@ class TestBibliographicMetadataExtraction:
         empty_build_result = _make_empty_build_result()
         with (
             patch.object(
-                lit_svc, "_parse_pdf_to_markdown",
+                lit_svc,
+                "_parse_pdf_to_markdown",
             ) as mock_parse,
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1325,9 +1321,7 @@ class TestBibliographicMetadataExtraction:
         assert ds.title == "Wrong Title"
 
     @pytest.mark.asyncio
-    async def test_metadata_extracted_after_pdf_parse(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_metadata_extracted_after_pdf_parse(self, db_session: AsyncSession) -> None:
         """Metadata is also extracted when content_md comes from PDF parsing."""
         parsed_md = (
             "# Parsed Paper Title\n\n"
@@ -1441,9 +1435,7 @@ class TestHeuristicItemsPersisted:
         """
         from pathlib import Path
 
-        fixture_path = (
-            Path(__file__).parent / "fixtures" / "extraction" / "owen2023_sample.txt"
-        )
+        fixture_path = Path(__file__).parent / "fixtures" / "extraction" / "owen2023_sample.txt"
         owen2023_text = fixture_path.read_text(encoding="utf-8")
 
         ds = await _add_datasource(
@@ -1486,16 +1478,17 @@ class TestHeuristicItemsPersisted:
         assert captured_payload, "map_and_persist was never invoked"
         merged = captured_payload[0]
 
-        heuristic_items = [
-            item for item in merged if item.get("method") == "heuristic_regex"
-        ]
-        assert heuristic_items, (
-            f"no heuristic items reached mapper on Owen2023 fixture: {merged!r}"
-        )
+        heuristic_items = [item for item in merged if item.get("method") == "heuristic_regex"]
+        assert heuristic_items, f"no heuristic items reached mapper on Owen2023 fixture: {merged!r}"
 
         valid_categories = {
-            "mechanical", "thermal", "physical",
-            "diffusion", "irradiation", "nuclear", "other",
+            "mechanical",
+            "thermal",
+            "physical",
+            "diffusion",
+            "irradiation",
+            "nuclear",
+            "other",
         }
         for item in heuristic_items:
             assert "property_category" in item, (
@@ -1510,12 +1503,10 @@ class TestHeuristicItemsPersisted:
         # land with category="diffusion" so they don't trip the
         # skipped_unknown_properties counter at map_and_persist.
         ea_items = [
-            item for item in heuristic_items
-            if item.get("property_name") == "activation_energy"
+            item for item in heuristic_items if item.get("property_name") == "activation_energy"
         ]
         assert ea_items, (
-            f"activation_energy not produced by heuristic on Owen2023 fixture: "
-            f"{heuristic_items!r}"
+            f"activation_energy not produced by heuristic on Owen2023 fixture: {heuristic_items!r}"
         )
         for item in ea_items:
             assert item["property_category"] == "diffusion", (
@@ -1524,18 +1515,13 @@ class TestHeuristicItemsPersisted:
             )
 
         # Density findings (family=density) must map to category="physical"
-        density_items = [
-            item for item in heuristic_items
-            if item.get("property_name") == "density"
-        ]
+        density_items = [item for item in heuristic_items if item.get("property_name") == "density"]
         assert density_items, (
-            f"density not produced by heuristic on Owen2023 fixture: "
-            f"{heuristic_items!r}"
+            f"density not produced by heuristic on Owen2023 fixture: {heuristic_items!r}"
         )
         for item in density_items:
             assert item["property_category"] == "physical", (
-                f"density category should be 'physical', "
-                f"got {item['property_category']!r}"
+                f"density category should be 'physical', got {item['property_category']!r}"
             )
 
 
@@ -1653,7 +1639,8 @@ class TestPerStageLogCounters:
         # INFO records (e.g. health-event emitter) do not skew the
         # field-name assertions.
         plog_records = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.name == "nfm_db.services.literature_service"
             and "process_literature:" in r.getMessage()
             and f"datasource_id={ds.id}" in r.getMessage()
@@ -1666,12 +1653,8 @@ class TestPerStageLogCounters:
         )
 
         # ---- Stage 2: raw_properties after merge --------------------
-        assert "raw_properties after merge:" in text, (
-            f"Stage 2 log missing:\n{text}"
-        )
-        assert "heuristic added 1" in text, (
-            f"Stage 2 missing 'heuristic added' field:\n{text}"
-        )
+        assert "raw_properties after merge:" in text, f"Stage 2 log missing:\n{text}"
+        assert "heuristic added 1" in text, f"Stage 2 missing 'heuristic added' field:\n{text}"
 
         # ---- Stage 3: raw_properties after _post_process_extracted --
         assert "raw_properties after _post_process_extracted:" in text, (
@@ -1698,9 +1681,7 @@ class TestPerStageLogCounters:
             "skipped_unknown=7",
             "validation_errors=8",
         ):
-            assert field in mapping_line, (
-                f"Stage 4 missing {field!r} field:\n{mapping_line}"
-            )
+            assert field in mapping_line, f"Stage 4 missing {field!r} field:\n{mapping_line}"
 
         # ---- Stage 5: graph built (4-field format) -------------------
         graph_line = next(
@@ -1714,9 +1695,7 @@ class TestPerStageLogCounters:
             "edges_created=3",
             "review_queue=4",
         ):
-            assert field in graph_line, (
-                f"Stage 5 missing {field!r} field:\n{graph_line}"
-            )
+            assert field in graph_line, f"Stage 5 missing {field!r} field:\n{graph_line}"
 
         # ---- Stage 6: bridge (3-field format) ------------------------
         bridge_line = next(
@@ -1729,9 +1708,7 @@ class TestPerStageLogCounters:
         )
         # corpus_id came from ``metadata_.corpus_id`` (seeded above);
         # the spec only pins the field name ``corpus=%s``, not the value.
-        assert "corpus=" in bridge_line, (
-            f"Stage 6 missing 'corpus=' field:\n{bridge_line}"
-        )
+        assert "corpus=" in bridge_line, f"Stage 6 missing 'corpus=' field:\n{bridge_line}"
 
         # ---- AC-1 sanity: every spec marker is present at least once
         for stage, marker in [
@@ -1913,7 +1890,8 @@ class TestHeuristicDedupWithStringValues:
 
         # Filter to process_literature's own log records.
         plog_records = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.name == "nfm_db.services.literature_service"
             and "process_literature:" in r.getMessage()
             and f"datasource_id={ds.id}" in r.getMessage()
@@ -1933,8 +1911,11 @@ class TestHeuristicDedupWithStringValues:
         # before reaching the ``raw_properties after merge`` logger, so
         # Stage 2 was silently absent.
         merge_line = next(
-            (r.getMessage() for r in plog_records
-             if "raw_properties after merge:" in r.getMessage()),
+            (
+                r.getMessage()
+                for r in plog_records
+                if "raw_properties after merge:" in r.getMessage()
+            ),
             None,
         )
         assert merge_line is not None, (
@@ -1948,8 +1929,11 @@ class TestHeuristicDedupWithStringValues:
 
         # --- Acceptance gate 3: Stage 3 (post-process) fired ----------
         post_line = next(
-            (r.getMessage() for r in plog_records
-             if "raw_properties after _post_process_extracted:" in r.getMessage()),
+            (
+                r.getMessage()
+                for r in plog_records
+                if "raw_properties after _post_process_extracted:" in r.getMessage()
+            ),
             None,
         )
         assert post_line is not None, (
@@ -1958,8 +1942,7 @@ class TestHeuristicDedupWithStringValues:
             f"block raised before it):\n{text}"
         )
         assert "delta=0" in post_line, (
-            f"Stage 3 must report delta=0 (post-process mocked as identity); "
-            f"got: {post_line!r}"
+            f"Stage 3 must report delta=0 (post-process mocked as identity); got: {post_line!r}"
         )
 
         # --- Acceptance gate 4: heuristic items reach the mapper ------
@@ -1970,8 +1953,7 @@ class TestHeuristicDedupWithStringValues:
         final_batch = captured_payload[0]
 
         heuristic_in_final = [
-            item for item in final_batch
-            if item.get("method") == "heuristic_regex"
+            item for item in final_batch if item.get("method") == "heuristic_regex"
         ]
         assert len(heuristic_in_final) == len(heuristic_items), (
             f"NFM-3901: expected all {len(heuristic_items)} heuristic "
@@ -1980,8 +1962,7 @@ class TestHeuristicDedupWithStringValues:
         )
         seen_systems = {item["element_system"] for item in heuristic_in_final}
         assert {"UO2", "ThO2"} <= seen_systems, (
-            f"both UO2 and ThO2 heuristic items must reach the mapper; "
-            f"got systems={seen_systems!r}"
+            f"both UO2 and ThO2 heuristic items must reach the mapper; got systems={seen_systems!r}"
         )
 
     async def test_safe_g_helper_handles_non_numeric_values(self) -> None:

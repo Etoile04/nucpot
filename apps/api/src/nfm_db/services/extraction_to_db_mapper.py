@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
@@ -170,7 +170,16 @@ def _coerce_heuristic_payload(raw: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class MappingResult:
-    """Immutable result counts from the mapping operation."""
+    """Immutable result counts from the mapping operation.
+
+    ``skipped_unknown_details`` is the structured capture list used by the
+    NFM-4013 measurement harness to enumerate the LLM-only 14 property
+    names that static gap analysis misses (heuristic_extractor vs
+    031_seed_property_types.py). Each entry preserves enough context
+    (``source_doi``, ``material_name``, ``sample_value``) for downstream
+    classification on NFM-4008. The list is built inside
+    :func:`map_and_persist` at the ``_lookup_property_type`` drop site.
+    """
 
     created_sources: int = 0
     created_materials: int = 0
@@ -187,6 +196,10 @@ class MappingResult:
     # "extractor schema-drift" signal.
     skipped_unknown_materials: int = 0
     validation_errors: int = 0
+    # NFM-4013 / Path (a): capture list populated at the unknown-property
+    # drop site. Each entry is a dict with the keys below — see
+    # ``scripts/nfm-4012-unknown-property-enumeration.py`` for the consumer.
+    skipped_unknown_details: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def total_created(self) -> int:
@@ -422,11 +435,14 @@ ONTOFUEL_CATEGORY_TO_SLUG: dict[str, str] = {
 }
 
 
-def _normalize_category_slug(category_name: str) -> str | None:
+def _normalize_category_slug(category_name: str | None) -> str | None:
     """Translate an OntoFuel category literal to a DB ``property_categories.slug``.
 
-    Returns ``None`` if the literal is not recognised.
+    Returns ``None`` if the literal is not recognised (including ``None``
+    input from upstream ``ExtractedProperty.property_category``).
     """
+    if category_name is None:
+        return None
     return ONTOFUEL_CATEGORY_TO_SLUG.get(category_name)
 
 
@@ -438,32 +454,93 @@ async def _lookup_property_type(
 ) -> PropertyType | None:
     """Find PropertyType by OntoFuel category literal + property name.
 
-    Normalises the OntoFuel category literal to a DB ``slug`` via
-    ``_normalize_category_slug`` before querying.
+    Two-stage lookup (NFM-4019):
+
+    1. **Strict lookup** — match ``(property_categories.slug, property_types.name)``
+       against the OntoFuel category literal (normalised via
+       :func:`_normalize_category_slug`). This is the canonical path and
+       handles every property whose LLM-extracted category literal matches
+       the seed.
+    2. **Name-only fallback** — when the strict lookup misses AND the
+       property name is unique across all categories, return that unique
+       match. This resolves the 4 LLM-side category-context mismatches
+       flagged by NFM-4019:
+       - ``bulk_modulus``, ``lattice_constant``, ``thermal_conductivity``:
+         LLM emits no category literal at all (stage 1 returns None
+         immediately).
+       - ``melting_point``: LLM emits ``category=thermal`` but the seed
+         places it under ``physical``; strict lookup misses on the slug,
+         and the fallback finds the single row under ``physical``.
+
+    The fallback only succeeds when ``property_types.name`` matches
+    **exactly one** row across all categories. Catalog gaps like
+    ``elastic_constant`` (singular, addressed by NFM-4008 / 032_seed) and
+    ``solubility_limit`` (addressed by NFM-4008 / 032_seed) remain absent
+    from ``property_types`` entirely, so the fallback also misses and the
+    mapper correctly drops them.
 
     Returns None if not found (caller should skip measurement).
     """
-    if not category_name:
+    if not property_name:
         return None
 
-    category_slug = _normalize_category_slug(category_name)
-    if category_slug is None:
+    # Stage 1: strict (slug, name) lookup.
+    if category_name:
+        category_slug = _normalize_category_slug(category_name)
+        if category_slug is None:
+            logger.debug(
+                "Unknown OntoFuel category literal: %r; trying name-only fallback",
+                category_name,
+            )
+        else:
+            stmt = (
+                select(PropertyType)
+                .join(PropertyCategory)
+                .where(
+                    PropertyCategory.slug == category_slug,
+                    PropertyType.name == property_name,
+                )
+            )
+            result = (await db.execute(stmt)).scalar_one_or_none()
+            if result is not None:
+                return result
+            logger.debug(
+                "Strict lookup miss: category_slug=%s name=%s; trying name-only fallback",
+                category_slug,
+                property_name,
+            )
+    else:
         logger.debug(
-            "Unknown OntoFuel category literal: %r",
+            "No category literal; trying name-only fallback for name=%s",
+            property_name,
+        )
+
+    # Stage 2: name-only fallback (NFM-4019).
+    # Only succeed when the property name is unique across all categories.
+    # This is safe because the seed canonicalises each (name, category)
+    # pair, and the AC-1 v0.5.0 ontology expansion (NFM-4008) keeps each
+    # canonical name under exactly one category.
+    fallback_stmt = select(PropertyType).where(PropertyType.name == property_name)
+    fallback_rows = (await db.execute(fallback_stmt)).scalars().all()
+    if len(fallback_rows) == 1:
+        resolved = fallback_rows[0]
+        logger.info(
+            "NFM-4019 fallback: resolved name=%s via name-only lookup to "
+            "category_id=%s (raw_category=%r)",
+            property_name,
+            resolved.category_id,
             category_name,
         )
-        return None
+        return resolved
 
-    stmt = (
-        select(PropertyType)
-        .join(PropertyCategory)
-        .where(
-            PropertyCategory.slug == category_slug,
-            PropertyType.name == property_name,
+    if len(fallback_rows) > 1:
+        logger.debug(
+            "NFM-4019 fallback ambiguous: name=%s matches %d property_types "
+            "rows; skipping (would need explicit category resolution)",
+            property_name,
+            len(fallback_rows),
         )
-    )
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    return result
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +646,10 @@ async def map_and_persist(
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
     skipped_unknown_materials = 0  # NFM-3919
+    # NFM-4013 / Path (a): accumulate structured unknown-property records so
+    # ``MappingResult.skipped_unknown_details`` enumerates the LLM-only
+    # names dropped by ``_lookup_property_type``.
+    skipped_unknown_details: list[dict[str, Any]] = []
 
     for item in validated:
         s_key = _source_key(item)
@@ -709,6 +790,22 @@ async def map_and_persist(
                 item.property_category,
                 item.property,
             )
+            # NFM-4013 / Path (a): record the drop with enough context for
+            # the harness to bucket by (category_slug, raw_category,
+            # property_name) and to fold sample values + source provenance
+            # into the NFM-4008 classification table.
+            category_slug = _normalize_category_slug(item.property_category)
+            skipped_unknown_details.append(
+                {
+                    "category_slug": category_slug,
+                    "raw_category": item.property_category,
+                    "property_name": item.property,
+                    "sample_value": item.value,
+                    "source_doi": item.source_doi,
+                    "source_file": item.source_file,
+                    "material_name": item.material_name,
+                }
+            )
             skipped_unknown_properties += 1
             continue
 
@@ -806,6 +903,7 @@ async def map_and_persist(
         skipped_unknown_properties=skipped_unknown_properties,
         skipped_unknown_materials=skipped_unknown_materials,
         validation_errors=validation_error_count,
+        skipped_unknown_details=skipped_unknown_details,
     )
 
 
