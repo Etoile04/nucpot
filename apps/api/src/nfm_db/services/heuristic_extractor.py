@@ -640,6 +640,9 @@ def _extract_f8_table_rows(
                 break
         if matched_property is None:
             continue
+        assert matched_family is not None, (
+            "matched_property and matched_family are set together in the rule loop"
+        )
 
         material = _nearest_material(materials, value_pos)
         if material is None:
