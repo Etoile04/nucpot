@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, waitFor, fireEvent } from "@testing-library/react"
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react"
 import { MaterialsListView } from "../MaterialsListView"
 
 // ── Mocks ──────────────────────────────────────────────────────────────
@@ -36,27 +36,37 @@ vi.mock("@/lib/api-client", () => ({
 // ── next/navigation mock (NFM-3917 / Tier 1D) ───────────────────────────
 //
 // MaterialsListView reads `?category_id=` via useSearchParams and writes
-// back via router.replace. Tests use an in-memory query string that we
-// can mutate per test; the assertion is whether `request()` was called
-// with the expected query (the URL state itself is implementation
-// detail). This is enough — the Playwright e2e spec exercises the
-// real router round-trip.
+// back via `window.history.replaceState` (not `router.replace` — see the
+// component comments for why). Tests use an in-memory query string that
+// we can mutate per test; the assertion is whether `request()` was
+// called with the expected query (the URL state itself is implementation
+// detail). This is enough — the Playwright e2e spec exercises the real
+// browser round-trip.
 
 let mockQueryString = ""
-const mockRouterReplace = vi.fn()
+const mockReplaceState = vi.fn()
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    replace: (url: string) => mockRouterReplace(url),
-    push: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  }),
   useSearchParams: () => new URLSearchParams(mockQueryString),
   usePathname: () => "/materials",
 }))
+
+// Stub history.replaceState so the URL-sync effect has a deterministic
+// target to assert against. `lastUrlRef` already short-circuits on
+// identical target strings, so we only inspect distinct replacements.
+const originalReplaceState = window.history.replaceState.bind(window.history)
+beforeEach(() => {
+  mockReplaceState.mockClear()
+  window.history.replaceState = ((...args: Parameters<typeof originalReplaceState>) => {
+    mockReplaceState(...args)
+    // Mirror the effect on the live `window.location` so subsequent
+    // currentSearch checks behave like a real browser.
+    originalReplaceState(...args)
+  }) as typeof window.history.replaceState
+})
+afterEach(() => {
+  window.history.replaceState = originalReplaceState
+})
 
 // ── Test fixtures ──────────────────────────────────────────────────────
 
@@ -120,7 +130,6 @@ describe("MaterialsListView", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockQueryString = ""
-    mockRouterReplace.mockClear()
     vi.useFakeTimers()
   })
 
@@ -269,11 +278,8 @@ describe("MaterialsListView", () => {
       // antd Select emits onChange(value) with undefined on clear
       // (we can't easily drive the popup in jsdom, so we test the wiring
       //  by calling the React onChange handler indirectly through a
-      //  userEvent-style clear — here we assert the initial render and
-      //  the URL mutation helper by inspecting router.replace history).
+      //  userEvent-style clear — here we assert the initial render).
       expect(select).toBeDefined()
-      // Confirm no router.replace fired yet (initial mount only)
-      expect(mockRouterReplace).not.toHaveBeenCalled()
     })
   })
 
@@ -288,5 +294,188 @@ describe("MaterialsListView", () => {
       const calls = mockRequest.mock.calls.map((c) => String(c[0]))
       expect(calls).toContain("/api/v1/material-categories")
     })
+  })
+
+  it("URL-sync effect: writes the canonical URL via history.replaceState on first mount when URL params are non-empty", async () => {
+    // AC-4 root-cause test: the fix is to drive the page from local
+    // state and write the URL via `window.history.replaceState` instead
+    // of `router.replace`. Verify the URL-sync effect itself by
+    // rendering with a non-empty mock URL and asserting that
+    // replaceState is called with the canonical target URL.
+    mockQueryString = `category_id=${FIRST_CATEGORY_ID}`
+    mockCategoryRequest()
+    renderComponent()
+
+    vi.advanceTimersByTime(500)
+    vi.useRealTimers()
+
+    // The effect should fire on first mount because target
+    // (`/materials?category_id=...`) differs from jsdom's default
+    // `window.location.pathname + search` (= "/" + "").
+    await waitFor(() => {
+      const urls = mockReplaceState.mock.calls.map((c) => String(c[2]))
+      expect(urls).toContain(
+        `/materials?category_id=${FIRST_CATEGORY_ID}`,
+      )
+    })
+  })
+
+  // ── AC-4 regression (NFM-3917 / Tier 1D bug fix) ────────────────────
+  //
+  // Before the fix, the page was driven by `useSearchParams()` on every
+  // render and called `router.replace()` to mutate the URL. When the
+  // page was loaded with a non-empty search string (e.g. a deep-linked
+  // `/materials?page=2`), Next.js 16's App Router did not reliably
+  // re-render with the updated search params after `router.replace`,
+  // so clicking a category visually updated the Select but the URL
+  // and the underlying data fetch never changed. Driving the page from
+  // local React state and writing the URL with `history.replaceState`
+  // decouples the data fetch from router re-render propagation.
+  //
+  // We can't reliably drive antd Select from jsdom, so we exercise the
+  // handler directly via a synthetic state mutation: the regression
+  // assertion is that *after* the URL-sync effect runs in response to
+  // a state change, both (a) a new materials request fires with the
+  // updated filter, and (b) the URL is rewritten to the canonical
+  // target — even when the page was loaded with a non-empty search
+  // string. (The original component was driven by URL; it could not
+  // even *see* the synthetic state change without a router re-render.)
+
+  it("AC-4 regression: category click fires a fresh /materials request with category_id (entry-with-URL-params scenario)", async () => {
+    // Simulate the broken entry scenario: page loaded with ?page=2,
+    // then user clicks category.  Before the fix, the new category
+    // never reached `request()` because `useSearchParams()` stayed
+    // stale in the component.
+    mockQueryString = "page=2"
+    mockCategoryRequest()
+    renderComponent()
+
+    // Flush the initial-mount 300ms debounce + the URL-sync effect.
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    vi.useRealTimers()
+
+    // Reset call history AFTER the initial-mount data fetch so we can
+    // assert only the *post-click* request below.
+    const callsBeforeClick = mockRequest.mock.calls.length
+
+    // Open the antd Select dropdown by clicking the selector, then
+    // click the first option (matches the E2E QA "Oxide Fuel" seed).
+    // rc-select uses mousedown for the trigger and renders the option
+    // list in document.body once open.
+    const select = await waitFor(() =>
+      screen.getByTestId("materials-category-select"),
+    )
+    const selector = select.querySelector(".ant-select-selector")!
+    await act(async () => {
+      fireEvent.mouseDown(selector)
+    })
+
+    // antd renders options in document.body via a portal — once the
+    // dropdown is open they show up as `.ant-select-item-option`.
+    const option = await waitFor(() =>
+      document.querySelector<HTMLElement>(".ant-select-item-option"),
+    )
+    expect(option).not.toBeNull()
+    await act(async () => {
+      fireEvent.click(option!)
+    })
+
+    // Flush the post-click 300ms debounce + URL-sync effect.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 350))
+    })
+
+    // Now confirm a follow-up /api/v1/materials request fires that
+    // carries category_id (this is the original symptom of the bug:
+    // no follow-up request fired at all).
+    const postClickCalls = mockRequest.mock.calls.slice(callsBeforeClick)
+    const listCalls = postClickCalls
+      .map((c) => String(c[0]))
+      .filter((e) => e.startsWith("/api/v1/materials?"))
+    expect(listCalls.length).toBeGreaterThanOrEqual(1)
+    const lastList = listCalls[listCalls.length - 1]
+    expect(lastList).toContain(`category_id=${FIRST_CATEGORY_ID}`)
+    // Page must reset to 1 on category change.
+    expect(lastList).toContain("page=1")
+
+    // URL must be updated to the canonical target — even though
+    // `router.replace` is bypassed, `history.replaceState` must
+    // have been called with the new URL.
+    const urls = mockReplaceState.mock.calls.map((c) => String(c[2]))
+    expect(urls).toContain(`/materials?category_id=${FIRST_CATEGORY_ID}`)
+  })
+
+  it("AC-4 regression: page-change while filtered still resets/preserves correctly", async () => {
+    // Direct-load scenario: page with ?category_id=<X>, then user clicks
+    // page-2 in the Pagination. Before the fix, page was derived from
+    // `useSearchParams()` — which stayed stale when initial params were
+    // non-empty — so the data fetch never paged forward.
+    //
+    // Mock the materials endpoint with 40 items so pagination renders
+    // a second page button — with 2 items at PAGE_SIZE=20 we only get
+    // one page and the bug can't be exercised end-to-end.
+    mockQueryString = `category_id=${FIRST_CATEGORY_ID}`
+    const bigMaterials = Array.from({ length: 40 }, (_, i) => ({
+      id: `mat-${String(i + 1).padStart(3, "0")}`,
+      name: `Mat ${String(i + 1).padStart(3, "0")}`,
+      formula: null,
+      crystal_structure: null,
+      description: null,
+      is_active: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }))
+    mockRequest.mockImplementation((endpoint: string) => {
+      if (endpoint === "/api/v1/material-categories") {
+        return Promise.resolve({
+          success: true,
+          data: { items: SAMPLE_CATEGORIES },
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        data: { items: bigMaterials, total: 40, page: 1, per_page: 20 },
+      })
+    })
+    renderComponent()
+
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    vi.useRealTimers()
+
+    const callsBeforePaginate = mockRequest.mock.calls.length
+
+    // Find the antd pagination "next page" button and click it.
+    const nextPage = await waitFor(() =>
+      document.querySelector<HTMLLIElement>(".ant-pagination-item-2"),
+    )
+    expect(nextPage).not.toBeNull()
+    await act(async () => {
+      fireEvent.click(nextPage!)
+    })
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 350))
+    })
+
+    // The post-pagination materials request must carry both
+    // category_id and page=2.
+    const postPaginateCalls = mockRequest.mock.calls.slice(callsBeforePaginate)
+    const listCalls = postPaginateCalls
+      .map((c) => String(c[0]))
+      .filter((e) => e.startsWith("/api/v1/materials?"))
+    expect(listCalls.length).toBeGreaterThanOrEqual(1)
+    const lastList = listCalls[listCalls.length - 1]
+    expect(lastList).toContain(`category_id=${FIRST_CATEGORY_ID}`)
+    expect(lastList).toContain("page=2")
+
+    // URL must reflect page=2 alongside the category.
+    const urls = mockReplaceState.mock.calls.map((c) => String(c[2]))
+    expect(urls).toContain(
+      `/materials?category_id=${FIRST_CATEGORY_ID}&page=2`,
+    )
   })
 })

@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import {
   Empty,
   Input,
@@ -151,17 +151,25 @@ function buildColumns(searchQuery: string): ColumnsType<MaterialItem> {
 // ── Component ──────────────────────────────────────────────────────────
 
 export function MaterialsListView() {
-  const router = useRouter()
   const searchParams = useSearchParams()
 
   // URL state — category_id is shareable; page is the in-URL pagination.
-  const categoryId = useMemo(
-    () => parseCategoryParam(searchParams.get("category_id")),
-    [searchParams],
+  //
+  // State is the source of truth for the data fetch; the URL is kept in
+  // sync as a side-effect (see the URL-sync effect below). Reading the
+  // URL only happens once via the lazy initial state — we do NOT derive
+  // `categoryId`/`page` from `useSearchParams()` on every render, because
+  // Next.js 16's App Router `router.replace` does not always propagate
+  // back to `useSearchParams` when the initial render already had
+  // non-empty search params (NFM-3917 AC-4 bug: clicking a category on a
+  // deep-linked `/materials?page=2` did not filter the table or update
+  // the URL). Driving the data fetch from local React state avoids that
+  // round-trip entirely.
+  const [categoryId, setCategoryId] = useState<string | null>(() =>
+    parseCategoryParam(searchParams.get("category_id")),
   )
-  const page = useMemo(
-    () => parsePageParam(searchParams.get("page")),
-    [searchParams],
+  const [page, setPage] = useState<number>(() =>
+    parsePageParam(searchParams.get("page")),
   )
 
   // Local UI state
@@ -184,7 +192,36 @@ export function MaterialsListView() {
     }
   }, [])
 
-  const fetchMaterials = useCallback(async (): Promise<void> => {
+  // Sync state → URL (NFM-3917 / Tier 1D, AC-4 fix).
+  //
+  // Build the canonical URL from current state and push it via
+  // `window.history.replaceState`. We deliberately bypass
+  // `router.replace` here because (a) it does not always propagate back
+  // to `useSearchParams` in Next.js 16, leaving downstream `useMemo`s
+  // stale, and (b) it triggers a server round-trip for App Router pages
+  // we know only need a client-side filter update. The browser back
+  // button will still walk the canonical URL stack since we only ever
+  // `replaceState` (no `pushState`).
+  //
+  // A ref tracks the last URL we wrote so we don't replaceState on every
+  // re-render — only when state actually changed.
+  const lastUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    const sp = new URLSearchParams()
+    if (categoryId) sp.set("category_id", categoryId)
+    if (page > 1) sp.set("page", String(page))
+    const qs = sp.toString()
+    const target = qs ? `/materials?${qs}` : "/materials"
+    if (typeof window === "undefined") return
+    if (lastUrlRef.current === target) return
+    lastUrlRef.current = target
+    const currentSearch =
+      window.location.pathname + (window.location.search || "")
+    if (currentSearch === target) return
+    window.history.replaceState(null, "", target)
+  }, [categoryId, page])
+
+  const fetchMaterials = async (): Promise<void> => {
     setState((prev) => ({ ...prev, loading: true, error: null }))
     try {
       const params = new URLSearchParams()
@@ -216,47 +253,32 @@ export function MaterialsListView() {
         error: err instanceof Error ? err.message : "加载失败",
       })
     }
-  }, [categoryId, page, searchQuery])
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void fetchMaterials()
     }, 300)
     return () => clearTimeout(timer)
-  }, [fetchMaterials])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId, page, searchQuery])
 
-  // ── URL mutation helpers (NFM-3917 / Tier 1D) ────────────────────────
-
-  const updateUrl = useCallback(
-    (next: { categoryId?: string | null; page?: number }) => {
-      const sp = new URLSearchParams(searchParams.toString())
-      if ("categoryId" in next) {
-        if (next.categoryId) sp.set("category_id", next.categoryId)
-        else sp.delete("category_id")
-      }
-      if ("page" in next) {
-        if (next.page && next.page > 1) sp.set("page", String(next.page))
-        else sp.delete("page")
-      }
-      const qs = sp.toString()
-      router.replace(qs ? `/materials?${qs}` : "/materials", { scroll: false })
-    },
-    [router, searchParams],
-  )
+  // ── Handlers (NFM-3917 / Tier 1D) ─────────────────────────────────────
 
   const handleSearch = (value: string) => {
     setSearchQuery(value)
-    updateUrl({ page: 1 })
+    setPage(1)
   }
 
   const handleCategoryChange = (next: string | undefined) => {
     // Changing category resets to page 1 (CPO decision) so users do not
     // land on a page that no longer exists for the narrowed result set.
-    updateUrl({ categoryId: next ?? null, page: 1 })
+    setCategoryId(next ?? null)
+    setPage(1)
   }
 
   const handlePageChange = (next: number) => {
-    updateUrl({ page: next })
+    setPage(next)
   }
 
   return (
