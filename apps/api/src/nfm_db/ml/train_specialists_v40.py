@@ -276,7 +276,7 @@ def within_system_kfold_cv(X: np.ndarray, y: np.ndarray) -> dict[str, list[float
     return fold_metrics
 
 
-def grouped_cv_sidecar(raw: pd.DataFrame, model_factory: Any) -> dict[str, float]:
+def grouped_cv_sidecar(raw: pd.DataFrame, model_factory: Any) -> dict[str, Any]:
     """Compute NFM-3959 Mandate-1 grouped-CV summary on the global frame.
 
     Used to populate ``metrics.grouped_cv_summary`` so the honesty
@@ -354,7 +354,7 @@ def train_one_specialist(
     system: str,
     raw: pd.DataFrame,
     output_dir: Path,
-    grouped_cv_summary: dict[str, float],
+    grouped_cv_summary: dict[str, Any],
 ) -> dict[str, Any]:
     """Train a single specialist and emit its v4.0 model card.
 
