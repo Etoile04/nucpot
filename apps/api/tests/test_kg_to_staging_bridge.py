@@ -71,6 +71,151 @@ def test_property_slug_map_covers_starikov2023_labels():
     assert _PROPERTY_SLUGS["相平衡线斜率"] == _PROPERTY_SLUGS["Clausius-Clapeyron斜率"]
 
 
+# --- F8 Owen2023 (NFM-4036) -------------------------------------------------
+#
+# Source ``9320cb50-…`` (Owen2023, DOI 10.1016/j.jnucmat.2023.154270) emits
+# 22 distinct Property labels.  Before NFM-4036, 17 of them fell to the
+# ``_slugify`` CJK fallback (which returns the literal ``"unknown"``) and
+# the bridge dropped them at the ``== "unknown"`` guard.  The other 5
+# survived as corrupt ASCII fragments; the two Cr-doped labels collided on
+# ``"Cr"``, silently merging the Cr-doped activation energy with the
+# Cr-doped pre-exponential factor on the staging surface.
+#
+# Acceptance for NFM-4036 / AC-1 / AC-2 is locked in by the scorecard
+# ``apps/api/src/nfm_db/audit/f8_scorecard_v050.sql`` whose PASS predicates
+# are on these five slugs: ``activation_energy``, ``pre_exponential_factor``
+# / ``diffusion_coefficient``, ``density``, ``rdf_peak``, ``bond_length``.
+# The scorecard separates undoped from Cr-doped by ``element_system`` and
+# value band, never by ``property_name``, so multiple Chinese synonyms may
+# legitimately collapse onto one slug — but the Cr-doped Ea and Cr-doped D0
+# must NOT collapse onto each other.
+
+
+# Slugs the F8 scorecard predicates on (PASS criterion only).
+_F8_PASS_SLUGS = {
+    "activation_energy",
+    "pre_exponential_factor",
+    "diffusion_coefficient",
+    "density",
+    "rdf_peak",
+    "bond_length",
+}
+
+
+# Every Chinese label the F8 scorecard diagnostic CTE classifies as one of
+# the F8 properties.  Pulled verbatim from
+# ``audit/f8_scorecard_v050.sql::kg_classified``.  The bridge slug map must
+# cover all of these so the kg_nodes loop emits the right ``property_name``.
+_F8_CHINESE_LABELS = [
+    # activation_energy (F8 checkpoints 1 and 3)
+    "扩散激活能",
+    "扩散活化能",
+    "活化能",
+    "激活能",
+    "氧扩散激活能",
+    "Cr掺杂扩散激活能",
+    # pre_exponential_factor (F8 checkpoints 2 and 4 — scorecard also
+    # accepts diffusion_coefficient as an alias for D0)
+    "扩散前指数因子",
+    "扩散指前因子",
+    "扩散系数指前因子",
+    "扩散预指数因子",
+    "预指数因子",
+    "氧扩散前指数因子",
+    "氧扩散指前因子",
+    "Cr掺杂扩散前指数因子",
+    # diffusion_coefficient (kept distinct from D0; same F8 IN-list)
+    "扩散系数",
+    # density (F8 checkpoints 5 and 6)
+    "密度",
+    # rdf_peak (F8 checkpoint 7)
+    "RDF峰",
+    # bond_length (F8 checkpoint 8)
+    "键长",
+]
+
+
+@pytest.mark.parametrize("label", _F8_CHINESE_LABELS)
+def test_f8_owen2023_label_resolves_to_pass_criterion_slug(label):
+    """AC-1: every F8 Owen2023 Chinese label must land on a slug the
+    scorecard predicates on (so the staging surface and the scorecard
+    agree on which rows count as PASS)."""
+    assert label in _PROPERTY_SLUGS, (
+        f"F8 label {label!r} missing from _PROPERTY_SLUGS — bridge will "
+        f"drop the row at the == 'unknown' guard"
+    )
+    slug = _PROPERTY_SLUGS[label]
+    assert slug in _F8_PASS_SLUGS, (
+        f"F8 label {label!r} maps to {slug!r} which is NOT an F8 PASS "
+        f"slug; scorecard will not count this row"
+    )
+
+
+def test_f8_owen2023_slug_distribution_lands_every_checkpoint():
+    """AC-1 (exhaustiveness): every F8 PASS slug has at least one
+    Chinese label mapped to it, so no checkpoint is unreachable."""
+    slugs_seen = {
+        _PROPERTY_SLUGS[label] for label in _F8_CHINESE_LABELS
+    }
+    missing = _F8_PASS_SLUGS - slugs_seen
+    assert not missing, (
+        f"No F8 Chinese label maps to these PASS slugs: {missing}. "
+        f"Corresponding scorecard checkpoints will stay 0/0."
+    )
+
+
+def test_f8_cr_doped_ea_and_d0_do_not_collide():
+    """AC-2 (no silent collision): the two Cr-doped labels previously
+    both ``_slugify``'d to ``"Cr"``, silently merging Cr-doped Ea and
+    Cr-doped D0 on the staging surface. The map must keep them apart so
+    the scorecard can tell them apart by value band."""
+    ea_label = "Cr掺杂扩散激活能"
+    d0_label = "Cr掺杂扩散前指数因子"
+    # First confirm the underlying _slugify collision actually exists
+    # (so this test is anchored in a real defect, not a hypothetical).
+    assert _slugify(ea_label) == "Cr"
+    assert _slugify(d0_label) == "Cr"
+    # Now confirm the map fixes it.
+    assert ea_label in _PROPERTY_SLUGS
+    assert d0_label in _PROPERTY_SLUGS
+    assert _PROPERTY_SLUGS[ea_label] != _PROPERTY_SLUGS[d0_label], (
+        f"Cr-doped Ea ({ea_label!r}) and Cr-doped D0 ({d0_label!r}) "
+        f"must map to distinct slugs — otherwise checkpoints 3 and 4 "
+        f"silently merge on the staging surface"
+    )
+    # And both must target F8 PASS slugs (otherwise the fix is no fix).
+    assert _PROPERTY_SLUGS[ea_label] in _F8_PASS_SLUGS
+    assert _PROPERTY_SLUGS[d0_label] in _F8_PASS_SLUGS
+
+
+def test_f8_diffusion_coefficient_kept_distinct_from_d0():
+    """AC-2 (semantic): ``扩散系数`` is the diffusivity (D), a
+    physically distinct quantity from the Arrhenius pre-exponential
+    factor (D0). The scorecard accepts both as PASS for checkpoints 2
+    and 4 (``property_name IN ('pre_exponential_factor',
+    'diffusion_coefficient')``), but the bridge must NOT silently
+    collapse ``扩散系数`` onto the pre-exponential_factor slug — that
+    would corrupt future queries that need to distinguish D from D0."""
+    assert _PROPERTY_SLUGS["扩散系数"] == "diffusion_coefficient"
+    assert (
+        _PROPERTY_SLUGS["扩散系数"]
+        != _PROPERTY_SLUGS["扩散前指数因子"]
+    )
+
+
+def test_f8_thermal_diffusivity_kept_apart_from_diffusion_coefficient():
+    """AC-2 (semantic): ``热扩散率`` is thermal diffusivity (cm²/s in a
+    thermal-conductivity/heat-capacity sense), which is *not* the same
+    quantity as either D (mass diffusivity) or D0 (Arrhenius prefactor).
+    It is NOT an F8 checkpoint target — the scorecard lists it as a
+    ``d0`` synonym in its diagnostic CTE, but no F8 PASS predicate
+    matches ``thermal_diffusivity``. Mapping it to ``thermal_diffusivity``
+    is therefore semantically correct (no false positives for D0) and
+    keeps the staging surface honest."""
+    assert _PROPERTY_SLUGS["热扩散率"] == "thermal_diffusivity"
+    assert _PROPERTY_SLUGS["热扩散率"] not in _F8_PASS_SLUGS
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
