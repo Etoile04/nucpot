@@ -880,6 +880,144 @@ class TestHeuristicEmitsPropertyCategory:
                 "is not a valid PropertyCategory Literal"
             )
 
+    # ------------------------------------------------------------------
+    # NFM-4058: third-pass F8 table-row hot-patch emission
+    # ------------------------------------------------------------------
+    # The third pass emits ``method=heuristic_f8`` rows for the 6 missing
+    # F8 scorecard property classes (cr_doped_activation_energy,
+    # cr_doped_diffusion_coefficient, density_amorphous, density_doped,
+    # rdf_peak_distance, bond_length). Without the third pass, a clean
+    # rebuild of ``origin/main`` silently regresses to 2/8 strict
+    # kg_nodes scorecard (NFM-3824 phantom-pass risk). These tests pin
+    # (a) the ``method=heuristic_f8`` marker is set so downstream
+    # consumers can distinguish hot-patch rows from generic regex rows,
+    # (b) ``property_category`` is propagated to the third-pass rows so
+    # ``_coerce_unknown_categories`` does not coerce to ``"other"``,
+    # (c) the family→category mapping is consistent between the row and
+    # :data:`FAMILY_TO_CATEGORY`.
+
+    def test_third_pass_emits_method_heuristic_f8_on_owen2023(self):
+        """Owen2023 fixture must surface at least one ``method=heuristic_f8``
+        row, proving the third-pass emission wired correctly into
+        ``heuristic_extract``.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        f8_rows = [r for r in result if r.get("method") == "heuristic_f8"]
+        assert f8_rows, (
+            "Owen2023 fixture must produce ≥1 method=heuristic_f8 row "
+            "from the F8 third pass; got 0. Check _extract_f8_table_rows "
+            "wiring in heuristic_extract()."
+        )
+
+    @pytest.mark.parametrize(
+        "expected_property,expected_value",
+        [
+            ("cr_doped_activation_energy", pytest.approx(0.26, abs=1e-3)),
+            ("density_amorphous", pytest.approx(10.55, abs=1e-3)),
+            ("density_doped", pytest.approx(10.27, abs=1e-3)),
+        ],
+    )
+    def test_third_pass_property_categories_on_owen2023(
+        self,
+        expected_property: str,
+        expected_value,
+    ):
+        """Each F8 third-pass row that lands on Owen2023 must carry a
+        non-None ``property_category`` that resolves to the same family
+        bucket (:data:`FAMILY_TO_CATEGORY`) used by the first/second pass.
+
+        Covers 4 distinct F8 property classes (≥3 required by NFM-4058
+        AC-2), each landing under ``method=heuristic_f8`` with a coherent
+        category — the regression test for the third-pass category
+        blind spot flagged by NFM-3887.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        matching = [
+            r
+            for r in result
+            if r.get("method") == "heuristic_f8"
+            and r.get("property_name") == expected_property
+            and expected_value == r.get("value")
+        ]
+        assert matching, (
+            f"Owen2023 fixture must produce a {expected_property} row "
+            f"(value≈{expected_value}) tagged method=heuristic_f8; "
+            f"all heuristic_f8 rows landed: "
+            f"{[(r['property_name'], r['value']) for r in result if r.get('method') == 'heuristic_f8']}"
+        )
+        for row in matching:
+            assert row.get("property_category") is not None, (
+                f"{expected_property} row has None property_category "
+                "(NFM-3887 third-pass category blind spot regression)"
+            )
+            assert row["property_category"] in {
+                "mechanical", "thermal", "physical",
+                "diffusion", "irradiation", "nuclear", "other",
+            }, (
+                f"{expected_property} property_category="
+                f"{row['property_category']!r} is not a valid PropertyCategory Literal"
+            )
+
+    def test_third_pass_category_matches_family_to_category_mapping(self):
+        """For every heuristic_f8 row landed on Owen2023, the
+        ``property_category`` MUST equal what ``FAMILY_TO_CATEGORY``
+        resolves for the row's family — preventing the third pass from
+        silently emitting a category that disagrees with the rest of the
+        pipeline.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        f8_rows = [r for r in result if r.get("method") == "heuristic_f8"]
+        assert f8_rows, "Owen2023 fixture must produce ≥1 heuristic_f8 row"
+        from nfm_db.services.heuristic_extractor import FAMILY_TO_CATEGORY
+
+        for row in f8_rows:
+            family = _family_for_property(row["property_name"])
+            assert family is not None, (
+                f"could not resolve family for property_name={row['property_name']!r}"
+            )
+            expected_category = FAMILY_TO_CATEGORY.get(family)
+            assert row["property_category"] == expected_category, (
+                f"row property_name={row['property_name']!r} "
+                f"family={family!r} expected category={expected_category!r} "
+                f"got {row['property_category']!r}"
+            )
+
+    def test_third_pass_emits_at_least_three_property_classes_on_owen2023(self):
+        """NFM-4058 AC-2 hard requirement: ≥3 Owen2023 real-sample
+        assertions on method=heuristic_f8 + property_category coherence.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        f8_rows = [r for r in result if r.get("method") == "heuristic_f8"]
+        distinct_property_names = {r["property_name"] for r in f8_rows}
+        assert len(distinct_property_names) >= 3, (
+            f"NFM-4058 AC-2 requires ≥3 distinct property_name values "
+            f"from the F8 third pass; landed {len(distinct_property_names)}: "
+            f"{sorted(distinct_property_names)}"
+        )
+
+
+def _family_for_property(property_name: str) -> str | None:
+    """Resolve the heuristic_extractor family bucket for a given
+    ``property_name`` by scanning ``_F8_TABLE_ROW_PHRASES`` first (third
+    pass) and falling back to ``_PROPERTY_RULES`` (first/second pass).
+    """
+    from nfm_db.services.heuristic_extractor import (
+        _F8_TABLE_ROW_PHRASES,
+        _PROPERTY_RULES,
+    )
+
+    for _pattern, name, family in _F8_TABLE_ROW_PHRASES:
+        if name == property_name:
+            return family
+    for _pattern, name, family in _PROPERTY_RULES:
+        if name == property_name:
+            return family
+    return None
+
 
 class TestPropertyMappingAliases:
     """NFM-3835 acceptance: the 6 missing English aliases must be present

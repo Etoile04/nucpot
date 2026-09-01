@@ -412,6 +412,210 @@ def _nearest_material(
 
 
 # ----------------------------------------------------------------------
+# NFM-4058 [NFM-3845-FORMALIZE] — F8 table-row extractor (third pass)
+# ----------------------------------------------------------------------
+# Hot-patch normalization: the 6 missing F8 nodes for source
+# ``9320cb50-eb65-4178-8d2e-c56aeb848b21`` (Owen2023 paper) were
+# originally produced by an ad-hoc worker process (task ``ad40677e``)
+# that emitted kg_nodes rows tagged ``method=heuristic_f8`` directly
+# into ``_ref_gap_fill_staging``. That hot-patch was never committed
+# to source control — a clean rebuild of ``origin/main`` silently
+# regresses to 2/8 strict-kg_nodes scorecard (the NFM-3824
+# phantom-pass risk). This module formalizes the hot-patch as a
+# third pass inside :func:`heuristic_extract` so the F8 rows are
+# reproducible from source.
+#
+# Scope
+# -----
+# * Six F8 scorecard property classes from the v0.5.0 taxonomy seeded
+#   by migration ``069_add_v050_f8_property_types``:
+#   ``cr_doped_activation_energy``, ``cr_doped_diffusion_coefficient``,
+#   ``density_amorphous``, ``density_doped``, ``rdf_peak_distance``,
+#   ``bond_length``.
+# * The third pass fires ONLY when the first/second pass cannot match
+#   an F8-specific property name (the first pass emits the generic
+#   label ``activation_energy`` / ``diffusion_coefficient`` /
+#   ``density`` / ``rdf_peak``; the third pass upgrades those to the
+#   F8 disambiguated label when doping/phase context is co-located).
+# * Emits ``method="heuristic_f8"`` so downstream consumers
+#   (``extraction_to_db_mapper``, ``kg_to_staging_bridge``) can
+#   distinguish F8 hot-patch rows from generic ``heuristic_regex``
+#   rows without changing existing call sites.
+
+_F8_TABLE_ROW_PHRASES: list[tuple[re.Pattern[str], str, str]] = [
+    # (phrase_regex, property_name, family)
+    # F8 #3 — Cr-doped activation energy (0.26 eV) — energy family.
+    # The regex matches a single SENTENCE containing a Cr-doped marker,
+    # the property keyword, and the value+unit. ``[^.!?]*`` between
+    # marker and keyword allows natural prose like "For 50 at% Cr-doped
+    # UO2 samples, the activation energy decreased to 0.26 eV". The
+    # negation deliberately excludes only sentence-terminating
+    # punctuation (``.!?``), not newlines — source prose wraps lines
+    # mid-sentence (the Owen2023 fixture wraps at ~70 chars/line) and
+    # ``\n`` is part of the SAME sentence.
+    (
+        re.compile(
+            r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
+            r"[^.!?]*"
+            r"\bactivation[\s_\-]*energy\b"
+            r"[^.!?]*?"
+            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+            r"\s*(?P<unit>eV|meV|kJ(?:[\s/]mol)?|kcal(?:[\s/]mol)?)",
+            re.IGNORECASE,
+        ),
+        "cr_doped_activation_energy",
+        "energy",
+    ),
+    # F8 #4 — Cr-doped diffusion coefficient (1.27e-9 cm²/s) —
+    # diffusivity family.
+    (
+        re.compile(
+            r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
+            r"[^.!?]*"
+            r"(?:diffusion[\s_\-]*(?:coefficient|coeff\.?|constant)"
+            r"|diffusivity)"
+            r"[^.!?]*?"
+            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+            r"\s*(?P<unit>cm(?:\^?2|²)?[\s/]s|cm[\s\-]?s[\-]?1|m2[\s/]s)",
+            re.IGNORECASE,
+        ),
+        "cr_doped_diffusion_coefficient",
+        "diffusivity",
+    ),
+    # F8 #5 — amorphous density (10.55 g/cm³ for amorphous UO2) —
+    # density family. The doping/phase marker (``amorphous``) is
+    # REQUIRED to be in the same sentence as the value+unit.
+    (
+        re.compile(
+            r"\bamorphous\b"
+            r"[^.!?]*"
+            r"\bdensity\b"
+            r"[^.!?]*?"
+            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+            r"\s*(?P<unit>g[\s/]cm(?:\^?3|³)?|kg[\s/]m(?:\^?3|³)?)",
+            re.IGNORECASE,
+        ),
+        "density_amorphous",
+        "density",
+    ),
+    # F8 #6 — Cr-doped density (10.27 g/cm³ for 10 at% Cr-doped UO2) —
+    # density family. Same constraint as F8 #5 — Cr-doping marker must
+    # be in the same sentence as the value+unit. The reverse form
+    # "density ... Cr-doped" is handled by the existing first-pass
+    # ``_match_property`` context upgrade.
+    (
+        re.compile(
+            r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
+            r"[^.!?]*"
+            r"\bdensity\b"
+            r"[^.!?]*?"
+            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+            r"\s*(?P<unit>g[\s/]cm(?:\^?3|³)?|kg[\s/]m(?:\^?3|³)?)",
+            re.IGNORECASE,
+        ),
+        "density_doped",
+        "density",
+    ),
+    # F8 #7 — RDF peak distance/position (2.28 Å, 2.83 Å for amorphous
+    # UO2) — length family. The first-pass ``rdf_peak`` rule still
+    # fires for the bare "RDF peak" / "radial distribution function
+    # peak" forms; this pattern targets the distance/position surface
+    # form the v0.5.0 taxonomy uses.
+    (
+        re.compile(
+            r"\brdf\b"
+            r"[^.!?]*"
+            r"\bpeak\b"
+            r"[^.!?]*?"
+            r"\b(?:distance|position)s?\b"
+            r"[^.!?]*?"
+            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+            r"\s*(?P<unit>Å|angstrom|angstroms|nm|pm)",
+            re.IGNORECASE,
+        ),
+        "rdf_peak_distance",
+        "length",
+    ),
+    # F8 #8 — Cr-O bond length (2.04 Å) — length family. The first-pass
+    # ``bond_length`` rule already matches "Cr-O bond length" /
+    # "bond length" forms; this pattern targets the co-located
+    # Cr-O + bond-length form the v0.5.0 taxonomy uses.
+    (
+        re.compile(
+            r"\bcr[\s\-]*o\b"
+            r"[^.!?]*"
+            r"\b(?:bond[\s\.]+)?(?:length|distance)\b"
+            r"[^.!?]*?"
+            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+            r"\s*(?P<unit>Å|angstrom|angstroms|nm|pm)",
+            re.IGNORECASE,
+        ),
+        "bond_length",
+        "length",
+    ),
+]
+
+
+def _extract_f8_table_rows(
+    text: str,
+    materials: list[tuple[int, int, str]],
+) -> list[dict[str, Any]]:
+    """Extract F8 scorecard rows from prose that LOOKS like a table row.
+
+    For each F8 sentence pattern, find the sentence containing both the
+    doping/phase marker AND the property keyword AND a numeric
+    value+unit. Attribute the row to the closest material.
+
+    Returns a list of dicts with the same shape as a heuristic_extract
+    output row except ``method`` is NOT set here — the caller decides
+    which method string to tag. ``property_category`` is set from
+    :data:`FAMILY_TO_CATEGORY` so the mapper does not coerce to
+    ``"other"`` (which would inflate ``skipped_unknown_properties``
+    on the F8 scorecard per NFM-3824).
+
+    The function is read-only: it does not mutate ``materials`` or
+    ``text``.
+    """
+    rows: list[dict[str, Any]] = []
+
+    for phrase_re, property_name, family in _F8_TABLE_ROW_PHRASES:
+        for m in phrase_re.finditer(text):
+            raw_value = m.group("value")
+            value = _normalize_number(raw_value)
+            if value is None:
+                continue
+            unit = m.group("unit")
+            if not _units_compatible(unit, family):
+                # Skip rows where the unit doesn't match the F8 family
+                # — keeps the third pass from emitting nonsense.
+                continue
+
+            # Attribute to the nearest material. Use the value START
+            # (not the phrase start) so the value-with-unit is the
+            # anchor point — this mirrors the first-pass behaviour
+            # where the value-with-unit is the iteration variable.
+            material = _nearest_material(materials, m.start("value"))
+            if material is None:
+                continue
+
+            rows.append(
+                {
+                    "element_system": material,
+                    "material_name": material,
+                    "composition": material,
+                    "phase": "Unknown",
+                    "property_name": property_name,
+                    "value": value,
+                    "unit": unit,
+                    "family": family,
+                    "property_category": FAMILY_TO_CATEGORY.get(family),
+                }
+            )
+
+    return rows
+
+
+# ----------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------
 
@@ -548,6 +752,63 @@ def heuristic_extract(
                     "property_category": FAMILY_TO_CATEGORY.get("dimensionless"),
                 }
             )
+
+    # ------ NFM-4058: third pass — F8 table-row hot-patch emission ------
+    # Emits kg_nodes rows for the 6 F8 scorecard property classes when
+    # the prose carries doping/phase context that the first-pass
+    # ``_match_property`` cannot disambiguate to the v0.5.0 labels.
+    # This pass is the FORMALIZED version of the runtime hot-patch that
+    # originally populated ``_ref_gap_fill_staging`` rows tagged
+    # ``method=heuristic_f8`` from worker task ``ad40677e`` (2026-09-01).
+    # Without this pass, clean rebuilds of ``origin/main`` silently
+    # regress to 2/8 strict-kg_nodes scorecard (NFM-3824 phantom-pass
+    # risk). See NFM-3845 Board/审计 directive step 2.
+    f8_rows = _extract_f8_table_rows(normalized, materials)
+    for row in f8_rows:
+        material = row["element_system"]
+        name = row["property_name"]
+
+        # Element filter (matches first/second-pass behaviour).
+        if element_systems:
+            match = any(
+                re.search(re.escape(es), material, re.IGNORECASE)
+                for es in element_systems
+            )
+            if not match:
+                continue
+
+        value_str = f"{row['value']:g}"
+        key = (material, name, value_str)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        # F8 rows are emitted with ``method=heuristic_f8`` so the
+        # mapper can distinguish hot-patch rows from generic regex
+        # rows. ``property_category`` is taken from the row's own
+        # family mapping (set by ``_extract_f8_table_rows``) so the
+        # mapper's ``_coerce_unknown_categories`` does not coerce to
+        # ``"other"`` (which would inflate ``skipped_unknown_properties``
+        # on the F8 scorecard).
+        found.append(
+            {
+                "element_system": material,
+                "material_name": material,
+                "composition": material,
+                "phase": "Unknown",
+                "property_name": name,
+                "value": row["value"],
+                "unit": row["unit"],
+                "method": "heuristic_f8",
+                "source": source_reference,
+                "source_doi": None,
+                "confidence": "medium",
+                "uncertainty": max(abs(row["value"]) * 0.05, 0.01),
+                "temperature": None,
+                "cache_level": "L2",
+                "property_category": row["property_category"],
+            }
+        )
 
     return found
 
