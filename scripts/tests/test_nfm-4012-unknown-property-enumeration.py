@@ -49,31 +49,27 @@ HARNESS = _load_harness()
 
 def test_normalize_property_name_lowercase_strip_collapse() -> None:
     """Strip whitespace, lower-case, collapse ``_<mult>space`` to ``_``."""
-    assert getattr(HARNESS, "_normalize_property_name")(" Cr-Doped_Diffusion_Ea  ") == (
-        "cr-doped_diffusion_ea"
-    )
-    assert getattr(HARNESS, "_normalize_property_name")("Activation Energy") == (
-        "activation_energy"
-    )
-    assert getattr(HARNESS, "_normalize_property_name")("already_clean") == "already_clean"
-    assert getattr(HARNESS, "_normalize_property_name")("multi   underscore___here") == (
+    assert HARNESS._normalize_property_name(" Cr-Doped_Diffusion_Ea  ") == ("cr-doped_diffusion_ea")
+    assert HARNESS._normalize_property_name("Activation Energy") == ("activation_energy")
+    assert HARNESS._normalize_property_name("already_clean") == "already_clean"
+    assert HARNESS._normalize_property_name("multi   underscore___here") == (
         "multi_underscore_here"
     )
 
 
 def test_normalize_property_name_none_returns_empty() -> None:
-    assert getattr(HARNESS, "_normalize_property_name")(None) == ""
-    assert getattr(HARNESS, "_normalize_property_name")("") == ""
+    assert HARNESS._normalize_property_name(None) == ""
+    assert HARNESS._normalize_property_name("") == ""
 
 
 def test_normalize_category_slug_lowercases() -> None:
-    assert getattr(HARNESS, "_normalize_category_slug")("THERMAL") == "thermal"
-    assert getattr(HARNESS, "_normalize_category_slug")("  Nuclear  ") == "nuclear"
+    assert HARNESS._normalize_category_slug("THERMAL") == "thermal"
+    assert HARNESS._normalize_category_slug("  Nuclear  ") == "nuclear"
 
 
 def test_normalize_category_slug_preserves_none() -> None:
-    assert getattr(HARNESS, "_normalize_category_slug")(None) is None
-    assert getattr(HARNESS, "_normalize_category_slug")("") is None
+    assert HARNESS._normalize_category_slug(None) is None
+    assert HARNESS._normalize_category_slug("") is None
 
 
 def test_aggregate_unique_tuples_with_frequency(tmp_path: Path) -> None:
@@ -101,7 +97,7 @@ def test_aggregate_unique_tuples_with_frequency(tmp_path: Path) -> None:
             "source_doi": "10.1000/a",
         },
     ]
-    rows = getattr(HARNESS, "_aggregate")(records)
+    rows = HARNESS._aggregate(records)
     assert len(rows) == 2
 
     by_name = {r.raw_property_name: r for r in rows}
@@ -129,7 +125,7 @@ def test_aggregate_handles_none_category_and_no_doi(tmp_path: Path) -> None:
             "material_name": "UO2",
         },
     ]
-    rows = getattr(HARNESS, "_aggregate")(records)
+    rows = HARNESS._aggregate(records)
     assert len(rows) == 1
     row = rows[0]
     assert row.category_slug is None
@@ -145,7 +141,7 @@ def test_aggregate_sorts_by_frequency_then_name() -> None:
         {"category_slug": "thermal", "raw_category": "thermal", "property_name": "ccc"},
         {"category_slug": "thermal", "raw_category": "thermal", "property_name": "aaa"},
     ]
-    rows = getattr(HARNESS, "_aggregate")(records)
+    rows = HARNESS._aggregate(records)
     assert [r.raw_property_name for r in rows] == ["aaa", "bbb", "ccc"]
     assert rows[0].frequency == 2
     assert rows[1].frequency == 1
@@ -171,13 +167,13 @@ def test_write_tsv_round_trip(tmp_path: Path) -> None:
             "source_file": "literature/baz.pdf",
         },
     ]
-    rows = getattr(HARNESS, "_aggregate")(records)
+    rows = HARNESS._aggregate(records)
     out = tmp_path / "out.tsv"
-    getattr(HARNESS, "_write_tsv")(rows, out)
+    HARNESS._write_tsv(rows, out)
     with out.open(newline="", encoding="utf-8") as fh:
         reader = csv.reader(fh, delimiter="\t")
         header = next(reader)
-        assert header == list(getattr(HARNESS, "TSV_COLUMNS"))
+        assert header == list(HARNESS.TSV_COLUMNS)
         data = list(reader)
     assert len(data) == 2
     assert [row[0] for row in data] == ["1", "2"]  # rank
@@ -189,17 +185,17 @@ def test_write_tsv_round_trip(tmp_path: Path) -> None:
 
 def test_aggregate_empty_input() -> None:
     """Empty input returns empty rows (AC-1 still passes when no drops)."""
-    assert getattr(HARNESS, "_aggregate")([]) == []
+    assert HARNESS._aggregate([]) == []
 
 
 def test_default_datasource_id_is_owen2023_9320cb50() -> None:
     """The default sample must include Owen2023 9320cb50 (NFM-4012 § 3)."""
-    assert "9320cb50-eb65-4178-8d2e-c56aeb848b21" in getattr(HARNESS, "DEFAULT_DATASOURCE_IDS")
+    assert "9320cb50-eb65-4178-8d2e-c56aeb848b21" in HARNESS.DEFAULT_DATASOURCE_IDS
 
 
 def test_tsv_columns_match_ac1_header() -> None:
     """TSV column order matches the AC-1 spec."""
-    assert getattr(HARNESS, "TSV_COLUMNS") == (
+    assert HARNESS.TSV_COLUMNS == (
         "rank",
         "raw_property_name",
         "normalized_property_name",

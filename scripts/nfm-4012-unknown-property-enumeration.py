@@ -270,7 +270,7 @@ def _drive_all(datasource_ids: list[str]) -> list[dict[str, Any]]:
                 loop.run_until_complete(engine.dispose())
             finally:
                 loop.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("engine.dispose() failed during cleanup", exc_info=True)
 
 
