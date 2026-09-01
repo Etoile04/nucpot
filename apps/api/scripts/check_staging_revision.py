@@ -43,8 +43,10 @@ Run inside the staging-api container before ``alembic upgrade head``::
 Env vars consumed
 -----------------
 ``NFM_DATABASE_URL``   Required. The same URL alembic would use.
-``ALEMBIC_MIGRATIONS_DIR``  Optional. Defaults to ``/migrations``. Set to
-    the alembic script location for non-container invocations (tests).
+``ALEMBIC_MIGRATIONS_DIR``  Optional. Defaults to ``/app/migrations`` —
+    matches the path the staging Dockerfile uses (``COPY apps/api/migrations/
+    ./migrations/`` under ``WORKDIR /app``). Set to the alembic script
+    location for non-container invocations (tests).
 
 Implementation notes
 --------------------
@@ -96,7 +98,14 @@ async def _fetch_db_revision(database_url: str) -> str | None:
     table, multi-row table, NULL column — surfaces as a real value so the
     guard can flag it.
     """
-    conn = await asyncpg.connect(database_url)
+    # asyncpg speaks libpq, not SQLAlchemy — strip any ``+driver`` suffix
+    # (``postgresql+asyncpg://``, ``postgresql+psycopg2://``, etc.) so the
+    # DSN parses cleanly. The staging app uses ``postgresql+asyncpg://``
+    # for SQLAlchemy; the guard needs the plain ``postgresql://`` form.
+    scheme, _, rest = database_url.partition("://")
+    scheme = scheme.split("+", 1)[0]
+    dsn = f"{scheme}://{rest}"
+    conn = await asyncpg.connect(dsn)
     try:
         # ``to_regclass`` is NULL when the table is absent — avoids needing
         # to introspect pg_catalog ourselves.
@@ -208,7 +217,7 @@ def main() -> int:
         )
         return 2
 
-    migrations_dir = Path(os.environ.get("ALEMBIC_MIGRATIONS_DIR", "/migrations"))
+    migrations_dir = Path(os.environ.get("ALEMBIC_MIGRATIONS_DIR", "/app/migrations"))
     return asyncio.run(_run(database_url, migrations_dir))
 
 
