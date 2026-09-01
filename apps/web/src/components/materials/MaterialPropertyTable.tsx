@@ -395,6 +395,15 @@ function ConditionsSubRow({
  * lists every underlying measurement's conditions; each row is anchored
  * to the original measurement id so React keys remain stable even when
  * two measurements have identical conditions.
+ *
+ * NFM-4118 (QA-FOLLOWUP W2 from NFM-4087) — the hand-written `<table>`
+ * nested inside Ant Table does NOT inherit the parent's
+ * `scroll={{x: 800}}`. On narrow viewports (~390px) the wider columns
+ * (来源 / 温度 / 压力 / 环境 / 辐照剂量 / 备注) clip off-screen. We
+ * wrap the inner table in an `overflow-x-auto` container and force a
+ * `min-w-[600px]` on the table itself so the six columns remain
+ * readable when the user scrolls horizontally. On wide viewports the
+ * container has no overflow, so the visual delta is zero.
  */
 function ExpandedConditionsTable({
   measurements,
@@ -406,23 +415,32 @@ function ExpandedConditionsTable({
       <Text className="text-gray-400 text-xs uppercase tracking-wide">
         底层 {measurements.length} 条 measurement 的 conditions
       </Text>
-      <table className="w-full mt-2 border-collapse">
-        <thead>
-          <tr className="text-left text-gray-400 text-xs">
-            <th className="py-1 pr-3 font-medium">来源</th>
-            <th className="py-1 pr-3 font-medium">温度</th>
-            <th className="py-1 pr-3 font-medium">压力</th>
-            <th className="py-1 pr-3 font-medium">环境</th>
-            <th className="py-1 pr-3 font-medium">辐照剂量</th>
-            <th className="py-1 pr-3 font-medium">备注</th>
-          </tr>
-        </thead>
-        <tbody>
-          {measurements.map((m) => (
-            <ConditionsSubRow key={m.id} measurement={m} />
-          ))}
-        </tbody>
-      </table>
+      {/* NFM-4118 — horizontally-scrollable wrapper. `overflow-x-auto` only
+          engages when the inner content exceeds the container width, so
+          wide-viewport renders stay visually identical to the pre-fix
+          behaviour. */}
+      <div
+        className="overflow-x-auto mt-2"
+        data-testid="conditions-sub-table-scroll"
+      >
+        <table className="w-full border-collapse min-w-[600px]">
+          <thead>
+            <tr className="text-left text-gray-400 text-xs">
+              <th className="py-1 pr-3 font-medium">来源</th>
+              <th className="py-1 pr-3 font-medium">温度</th>
+              <th className="py-1 pr-3 font-medium">压力</th>
+              <th className="py-1 pr-3 font-medium">环境</th>
+              <th className="py-1 pr-3 font-medium">辐照剂量</th>
+              <th className="py-1 pr-3 font-medium">备注</th>
+            </tr>
+          </thead>
+          <tbody>
+            {measurements.map((m) => (
+              <ConditionsSubRow key={m.id} measurement={m} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
