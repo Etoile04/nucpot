@@ -590,19 +590,26 @@ class TestOntofuelCategoryNormalization:
         assert result.skipped_unknown_properties == 0
 
     async def test_none_category_skips_unknown(self, db_session: AsyncSession):
-        """A None property_category is skipped (skipped_unknown_properties)."""
+        """A None property_category + unseeded property_name is dropped.
+
+        NFM-4019: the name-only fallback in ``_lookup_property_type`` only
+        resolves names that already exist in ``property_types`` (so the
+        canonical catalog gaps like ``elastic_constant`` / ``solubility_limit``
+        remain in ``skipped_unknown_details``). Property names that do NOT
+        exist in the catalog continue to drop on the unknown-property path.
+        """
         await _seed_property_type(
             db_session,
             category_name="Thermal properties",
             category_slug="thermal",
-            property_name="Thermal Conductivity",
+            property_name="thermal_conductivity",
             property_slug="thermal-conductivity",
         )
 
         extraction_output = [
             _make_extracted_property(
                 property_category=None,
-                property_name="Thermal Conductivity",
+                property_name="nonexistent_property_name",
                 value="8.5",
                 unit="W/(m·K)",
             ),
@@ -610,6 +617,7 @@ class TestOntofuelCategoryNormalization:
         result = await map_and_persist(db_session, extraction_output)
         assert result.created_measurements == 0
         assert result.skipped_unknown_properties == 1
+        assert result.skipped_unknown_details[0]["property_name"] == "nonexistent_property_name"
 
     async def test_other_literal_falls_back_to_thermal(self, db_session: AsyncSession):
         """OntoFuel 'other' has no DB category; falls back to 'thermal'."""
@@ -2171,3 +2179,295 @@ class TestNFM3919UnknownMaterialGuard:
         assert result.skipped_unknown_materials == 1
         materials = (await db_session.execute(select(Material))).scalars().all()
         assert materials == []
+
+
+# ---------------------------------------------------------------------------
+# NFM-4019: name-only fallback for LLM-side category-context mismatches
+# ---------------------------------------------------------------------------
+# The CPO-adjudicated NFM-4018 split identified 4 names that hit
+# ``_lookup_property_type``'s drop site for a different reason than a catalog
+# gap:
+#
+# - ``bulk_modulus``, ``lattice_constant``, ``thermal_conductivity`` — the LLM
+#   extractor emits no category literal at all (raw_category=None); the seed
+#   places each under ``mechanical`` / ``physical`` / ``thermal`` respectively.
+# - ``melting_point`` — the LLM emits ``category=thermal`` but the seed places
+#   ``melting_point`` under ``physical``. The strict ``(slug, name)`` lookup
+#   misses on the slug side, not the catalog side.
+#
+# NFM-4019 fixes these via a name-only fallback in ``_lookup_property_type``:
+# after the strict lookup misses, look up by ``property_name`` across all
+# categories and return the unique match. The fallback only succeeds when the
+# name is unique across ``property_types``, so the AC-1 v0.5.0 catalog gaps
+# (``elastic_constant``, ``solubility_limit`` — addressed by NFM-4008 /
+# 032_seed) remain absent and continue to drop correctly.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_nfm4019_canonical_catalog(
+    db: AsyncSession,
+) -> dict[str, PropertyType]:
+    """Seed the four canonical ``property_types`` rows the NFM-4019 fallback
+    must resolve, mirroring ``031_seed_property_types.py``.
+
+    Returns a name → PropertyType map so tests can assert resolution.
+    """
+    seed_rows: tuple[tuple[str, str, str, str, str], ...] = (
+        # (category_name, category_slug, property_name, property_slug, value_type)
+        ("Physical properties", "physical", "lattice_constant", "lattice-constant", "scalar"),
+        ("Physical properties", "physical", "melting_point", "melting-point", "scalar"),
+        ("Mechanical properties", "mechanical", "bulk_modulus", "bulk-modulus", "scalar"),
+        ("Thermal properties", "thermal", "thermal_conductivity", "thermal-conductivity", "scalar"),
+    )
+
+    category_cache: dict[str, PropertyCategory] = {}
+    property_map: dict[str, PropertyType] = {}
+    for category_name, category_slug, property_name, property_slug, value_type in seed_rows:
+        category = category_cache.get(category_slug)
+        if category is None:
+            category = PropertyCategory(
+                name=category_name,
+                slug=category_slug,
+                description=f"{category_name} (NFM-4019 canonical seed)",
+            )
+            db.add(category)
+            await db.flush()
+            category_cache[category_slug] = category
+        pt = PropertyType(
+            category_id=category.id,
+            name=property_name,
+            slug=property_slug,
+            value_type=value_type,
+        )
+        db.add(pt)
+        await db.flush()
+        property_map[property_name] = pt
+    await db.commit()
+    return property_map
+
+
+@pytest.mark.unit
+class TestNfm4019CategoryContextFallback:
+    """NFM-4019: name-only fallback for 4 LLM-side category-context mismatches.
+
+    Each test seeds the canonical catalog (mirroring
+    ``031_seed_property_types.py``) and asserts that the mapper resolves the
+    property end-to-end via the fallback path, without ever populating
+    ``skipped_unknown_details``.
+    """
+
+    async def test_no_category_literal_bulk_modulus(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``bulk_modulus`` with no category literal → fallback resolves under mechanical.
+
+        NFM-4019 row 1: the LLM emits ``raw_category=None`` for ``bulk_modulus``
+        even though the seed places it under ``mechanical``. The strict
+        ``(slug, name)`` lookup has no slug to use, so the fallback must
+        scan by name and find the unique ``bulk_modulus`` row.
+        """
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="bulk_modulus",
+                    value="207.5",
+                    unit="GPa",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_no_category_literal_lattice_constant(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``lattice_constant`` with no category literal → fallback resolves under physical."""
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="lattice_constant",
+                    value="5.47",
+                    unit="Angstrom",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_no_category_literal_thermal_conductivity(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``thermal_conductivity`` with no category literal → fallback resolves under thermal."""
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="thermal_conductivity",
+                    value="7.5",
+                    unit="W/(m·K)",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_wrong_slug_for_thermal_melting_point(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``melting_point`` with ``category=thermal`` → fallback resolves under physical.
+
+        NFM-4019 row 6: the LLM emits ``category=thermal`` for ``melting_point``
+        but the seed places it under ``physical``. The strict
+        ``(slug=thermal, name=melting_point)`` lookup misses because the
+        ``thermal`` category has no ``melting_point`` row. The fallback must
+        scan by name and find the unique ``melting_point`` row under
+        ``physical``.
+        """
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category="thermal",
+                    property_name="melting_point",
+                    value="2098",
+                    unit="K",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_catalog_gap_still_drops(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-4019 AC-NDE-2: catalog gaps remain in ``skipped_unknown_details``.
+
+        ``elastic_constant`` (singular, NFM-4008 / 032_seed) and
+        ``solubility_limit`` (NFM-4008 / 032_seed) are NOT seeded in
+        ``property_types``. The fallback must not invent a row — these
+        names must continue to drop and be captured in
+        ``skipped_unknown_details`` so the harness can still enumerate them
+        on the staging sample.
+
+        Seed only the four canonical NFM-4019 names; the two catalog-gap
+        names are intentionally absent.
+        """
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category="mechanical",
+                    property_name="elastic_constant",
+                    value="272.0",
+                    unit="GPa",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+                _make_extracted_property(
+                    property_category="physical",
+                    property_name="solubility_limit",
+                    value="7800.0",
+                    unit="ppm",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 0
+        assert result.skipped_unknown_properties == 2
+        assert len(result.skipped_unknown_details) == 2
+        names = {d["property_name"] for d in result.skipped_unknown_details}
+        assert names == {"elastic_constant", "solubility_limit"}
+
+    async def test_fallback_ambiguous_does_not_resolve(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Ambiguous names (same property_name in 2+ categories) skip the fallback.
+
+        If two ``property_types`` rows share the same ``name`` across
+        different categories, the fallback cannot pick one and the
+        measurement drops. This protects against silent mis-classification
+        after a future ontology expansion seeds duplicate names.
+        """
+        # Seed `density` under both `physical` and (hypothetically) `thermal`.
+        # This is not the seed canonical; it simulates a future ontology
+        # expansion that double-catalogues a name.
+        for category_slug, category_name in (
+            ("physical", "Physical properties"),
+            ("thermal", "Thermal properties"),
+        ):
+            category = PropertyCategory(
+                name=category_name,
+                slug=category_slug,
+                description=f"{category_name} (ambiguous seed)",
+            )
+            db_session.add(category)
+            await db_session.flush()
+            pt = PropertyType(
+                category_id=category.id,
+                name="density",
+                slug=f"density-{category_slug}",
+                value_type="scalar",
+            )
+            db_session.add(pt)
+            await db_session.flush()
+        await db_session.commit()
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="density",
+                    value="10.97",
+                    unit="g/cm3",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        # Strict lookup skipped (no category), fallback found 2 ambiguous
+        # rows, mapper drops the measurement.
+        assert result.created_measurements == 0
+        assert result.skipped_unknown_properties == 1
+        assert len(result.skipped_unknown_details) == 1
+        assert result.skipped_unknown_details[0]["property_name"] == "density"
