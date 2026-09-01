@@ -30,6 +30,19 @@ _SORT_COLUMNS = {
 }
 
 
+# NFM-4057 — Phase 4 strategy B canonical placeholder. The NFM-3918 / NFM-4052
+# cleanup consolidated N unknown-attributed rows into a single canonical row
+# that carries 96 measurements + 13 datasets. It cannot be deleted, but its
+# bad-word name leaks onto the public `/materials` list + search.
+#
+# Per CPO Option-2 decision (NFM-4055): hide it from list/search by exact
+# name filter, preserve direct UUID access and the per-material property
+# data path for curation. Filtering by *exact* name (not a prefix like
+# `Unknown%`) does not blind NFM-3919-style leakage gates — a producer that
+# re-creates a bare `Unknown Material` row still surfaces through the gate.
+PLACEHOLDER_CANONICAL_NAME = "Unknown Material (canonical)"
+
+
 async def list_materials(
     db: AsyncSession,
     *,
@@ -41,6 +54,11 @@ async def list_materials(
 ) -> PaginatedResponse[MaterialResponse]:
     """Return a paginated list of materials, optionally filtered by category."""
     stmt = select(Material)
+
+    # NFM-4057 — hide the Phase-4 strategy-B canonical placeholder from
+    # public list results. Direct UUID access and the data path remain
+    # open (see ``get_material`` and the per-material properties endpoint).
+    stmt = stmt.where(Material.name != PLACEHOLDER_CANONICAL_NAME)
 
     if category_id is not None:
         stmt = stmt.where(Material.category_id == category_id)
@@ -134,6 +152,11 @@ async def search_materials(
     filter mutually exclusive).
     """
     stmt = select(Material)
+
+    # NFM-4057 — same canonical-placeholder filter as ``list_materials``.
+    # Search-by-name with ``q=unknown`` would otherwise surface the
+    # canonical row, defeating the CPO Option-2 decision.
+    stmt = stmt.where(Material.name != PLACEHOLDER_CANONICAL_NAME)
 
     if query:
         pattern = f"%{query}%"
