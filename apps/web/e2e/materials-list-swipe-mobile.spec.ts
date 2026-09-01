@@ -67,7 +67,6 @@ const candidates = Array.from(
           return r.width > 0 && r.height > 0
         }) ?? candidates[0]
       if (!target) throw new Error("swipe area not found")
-      if (!target) throw new Error("swipe area not found")
       const mkTouch = (x: number, y: number): Touch => {
         // Touch constructor is available in Chromium; if absent (older
         // engines), fall back to a plain object that satisfies the
