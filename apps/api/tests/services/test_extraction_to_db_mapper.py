@@ -633,6 +633,114 @@ class TestOntofuelCategoryNormalization:
         assert result.created_measurements == 1
         assert result.skipped_unknown_properties == 0
 
+    async def test_skipped_unknown_details_captures_drop(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Unknown properties are recorded in ``skipped_unknown_details``.
+
+        NFM-4013 / Path (a): the drop site in ``_lookup_property_type``
+        must populate ``MappingResult.skipped_unknown_details`` so the
+        measurement harness can enumerate the LLM-only 14 names that
+        static gap analysis (heuristic_extractor vs 031_seed) misses.
+        """
+        # Only seed a single property type — anything else drops.
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",
+            category_slug="thermal",
+            property_name="thermal_conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="thermal_conductivity",  # known — persists
+                value="8.5",
+                unit="W/(m·K)",
+                source_doi="10.1000/known",
+            ),
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="mysterious_unknown_property",
+                value="3.14",
+                unit="unitless",
+                source_doi="10.1000/unknown",
+                material_name="Mystery alloy",
+            ),
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="another_oddity",
+                value="2.71",
+                unit="eV",
+                source_file="literature/unknown.pdf",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 2
+        assert len(result.skipped_unknown_details) == 2
+
+        names = {d["property_name"] for d in result.skipped_unknown_details}
+        assert names == {"mysterious_unknown_property", "another_oddity"}
+
+        # First drop entry preserves structured context.
+        first = next(
+            d
+            for d in result.skipped_unknown_details
+            if d["property_name"] == "mysterious_unknown_property"
+        )
+        assert first["category_slug"] == "thermal"
+        assert first["raw_category"] == "thermal"
+        assert first["sample_value"] == "3.14"
+        assert first["source_doi"] == "10.1000/unknown"
+        assert first["material_name"] == "Mystery alloy"
+
+        second = next(
+            d for d in result.skipped_unknown_details if d["property_name"] == "another_oddity"
+        )
+        assert second["category_slug"] == "thermal"
+        assert second["source_doi"] is None
+        assert second["source_file"] == "literature/unknown.pdf"
+
+    async def test_skipped_unknown_details_unknown_category_slug(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``property_category=None`` → ``category_slug is None``.
+
+        The drop site must preserve the ``None`` slug — downstream
+        aggregation relies on it to bucket names with no category.
+        (Non-Literal OntoFuel strings are coerced to ``"other"`` upstream
+        by :func:`_coerce_unknown_categories`, so they cannot exercise
+        this branch directly; ``None`` is the only real path to ``None``.)
+        """
+        extraction_output = [
+            _make_extracted_property(
+                property_category=None,
+                property_name="foo_bar",
+                value="1.0",
+                unit="u",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+
+        assert result.skipped_unknown_properties == 1
+        assert len(result.skipped_unknown_details) == 1
+        assert result.skipped_unknown_details[0]["category_slug"] is None
+        assert result.skipped_unknown_details[0]["raw_category"] is None
+        assert result.skipped_unknown_details[0]["property_name"] == "foo_bar"
+
+    def test_skipped_unknown_details_default_empty(self) -> None:
+        """``MappingResult`` defaults ``skipped_unknown_details`` to ``[]``."""
+        result = MappingResult()
+        assert result.skipped_unknown_details == []
+        # Mutable list should be per-instance, not shared.
+        result.skipped_unknown_details.append({"x": 1})
+        assert MappingResult().skipped_unknown_details == []
+
     def test_normalize_category_slug_direct_matches(self):
         """The four OntoFuel literals with direct DB slugs map 1:1."""
         assert _normalize_category_slug("thermal") == "thermal"
