@@ -74,9 +74,7 @@ def _record_execute_on(conn):
 
 def _load_migration_module():
     """Load the 067 migration module by file path (digit-prefixed name → spec_from_file_location)."""
-    spec = importlib.util.spec_from_file_location(
-        "_nfm4024_migration_under_test", _MIGRATION_PATH
-    )
+    spec = importlib.util.spec_from_file_location("_nfm4024_migration_under_test", _MIGRATION_PATH)
     assert spec is not None and spec.loader is not None, (
         f"Could not load migration module from {_MIGRATION_PATH}"
     )
@@ -138,7 +136,9 @@ def _func_uses_op_execute_with_params(func) -> bool:
         if len(node.args) < 2:
             continue
         second = node.args[1]
-        if isinstance(second, (__import__("ast").Dict, __import__("ast").List, __import__("ast").Tuple)):
+        if isinstance(
+            second, (__import__("ast").Dict, __import__("ast").List, __import__("ast").Tuple)
+        ):
             return True
         if isinstance(second, __import__("ast").Name) and (
             "param" in second.id.lower() or "dict" in second.id.lower()
@@ -196,8 +196,7 @@ class TestUpgradeRuntime:
 
         sql_str = str(sql_obj)
         assert "INSERT INTO property_types" in sql_str, (
-            f"execute() SQL was not the expected INSERT INTO property_types: "
-            f"{sql_str!r}"
+            f"execute() SQL was not the expected INSERT INTO property_types: {sql_str!r}"
         )
         assert "ON CONFLICT" in sql_str, (
             "Seed INSERT must use ON CONFLICT DO NOTHING for idempotency."
@@ -207,9 +206,7 @@ class TestUpgradeRuntime:
             f"Second positional arg must be a params dict, got {type(params_dict)}"
         )
         for key in ("name", "slug", "value_type", "description", "category_slug"):
-            assert key in params_dict, (
-                f"params dict missing {key!r}: {params_dict!r}"
-            )
+            assert key in params_dict, f"params dict missing {key!r}: {params_dict!r}"
 
     def test_upgrade_inserts_v050_seed_rows(self, mock_engine):
         """AC-3: seed must include both ``elastic_constant`` and ``solubility_limit``.
@@ -293,8 +290,7 @@ class TestDowngradeRuntime:
 
         sql_str = str(sql_obj)
         assert "DELETE FROM property_types" in sql_str, (
-            f"downgrade() SQL was not the expected DELETE FROM property_types: "
-            f"{sql_str!r}"
+            f"downgrade() SQL was not the expected DELETE FROM property_types: {sql_str!r}"
         )
         assert "WHERE slug = ANY" in sql_str, (
             "downgrade() should delete only the seeded rows by slug "
@@ -302,9 +298,7 @@ class TestDowngradeRuntime:
         )
 
         assert isinstance(params_dict, dict)
-        assert "slugs" in params_dict, (
-            f"downgrade() params dict missing 'slugs': {params_dict!r}"
-        )
+        assert "slugs" in params_dict, f"downgrade() params dict missing 'slugs': {params_dict!r}"
         assert sorted(params_dict["slugs"]) == sorted(EXPECTED_SEED_SLUGS), (
             f"downgrade() slugs must be exactly {EXPECTED_SEED_SLUGS!r}, "
             f"got {params_dict['slugs']!r}"
