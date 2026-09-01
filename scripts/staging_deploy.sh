@@ -126,6 +126,23 @@ record_good() {
 # The trap fires on every terminal path of cmd_deploy (record_good return 0,
 # rollback return 1, die). To keep the event-writer contract we never
 # propagate a write failure (deploy_event_emit already returns 0).
+#
+# NFM-4066: derive STAGING_IMAGE_TAG from `git rev-parse HEAD` so the tag
+# is always truthful. Pre-fix, the value was hand-pinned in
+# docker/.env.staging and stale SHAs from earlier deploys were reused after
+# a rebuild (NFM-4063 root cause). By overriding whatever the env file
+# declared at deploy time, we guarantee that the tag name == the commit
+# whose source tree the image was just built from. `cmd_rollback` is
+# deliberately untouched — there the user explicitly asks for a non-tip
+# tag (`:prev` or a named one).
+derive_staging_image_tag() {
+  local sha
+  if ! sha="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null)"; then
+    die "scripts/staging_deploy.sh must run from inside the nucpot git repo (NFM-4066: cannot derive image tag)"
+  fi
+  printf '%s' "$sha"
+}
+
 _emit_staging_deploy_event() {
   # Snapshot the deploy status before any trap bookkeeping changes `$?`.
   local rc=$?
@@ -228,7 +245,29 @@ cmd_deploy() {
   # naturally — long after the GH Action job has been torn down.
   trap '_DEPLOY_EVENT_SIGNALED=true; _emit_staging_deploy_event; trap - EXIT; exit 143' HUP INT TERM
 
-  log "Deploying NFM-DB staging stack (tag=${STAGING_IMAGE_TAG:-latest})..."
+  # NFM-4066: derive the image tag from the current commit so it can never
+  # drift from what we are about to build. A stale hand-pinned SHA in
+  # docker/.env.staging is what caused NFM-4063 (staging API crash-looped
+  # on `Can't locate revision` because the SHA-tagged image predated the
+  # alembic fork resolution). Override whatever the env file declared;
+  # log loudly if we are stomping a non-default value so operators notice.
+  local derived_tag
+  derived_tag="$(derive_staging_image_tag)"
+  case "${STAGING_IMAGE_TAG:-}" in
+    ""|"latest")
+      : # default placeholder — silently take the derived SHA
+      ;;
+    "$derived_tag")
+      : # already matches; nothing to override
+      ;;
+    *)
+      warn "NFM-4066: overriding pinned STAGING_IMAGE_TAG=${STAGING_IMAGE_TAG} with derived ${derived_tag} (env file value was stale)"
+      ;;
+  esac
+  STAGING_IMAGE_TAG="$derived_tag"
+  export STAGING_IMAGE_TAG
+
+  log "Deploying NFM-DB staging stack (tag=${STAGING_IMAGE_TAG})..."
 
   snapshot_rollback_target
 
