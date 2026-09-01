@@ -878,6 +878,11 @@ def _predict_energy_v30(features: dict[str, float]) -> dict | None:
         "confidence_source": confidence_source,
         "model_version": raw.get("version", "v3.0") if isinstance(raw, dict) else "v3.0",
         "warnings": warnings,
+        # NFM-4054 / AC-OC-4: surface the model's rd2 label pair so the
+        # /predict/energy response can render the EXPLORATORY pin status
+        # directly to downstream UIs without a follow-up model-card fetch.
+        "rd2_label": metrics.get("rd2_label"),
+        "rd2_label_status": metrics.get("rd2_label_status"),
     }
 
 

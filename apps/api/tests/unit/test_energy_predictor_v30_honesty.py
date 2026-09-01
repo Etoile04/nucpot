@@ -770,12 +770,18 @@ class TestEndpointPropagatesConfidenceSource:
         }
         response = EnergyPredictResponse(**helper_output_exploratory)
         wire = response.model_dump()
+        # NFM-4054 / AC-OC-4: rd2_label + rd2_label_status are now part of
+        # the EnergyPredictResponse wire shape (default None when the
+        # helper output dict omits them, which is what pre-NFM-4054
+        # callers and legacy fixtures look like).
         assert set(wire.keys()) == {
             "predicted_energy",
             "confidence",
             "confidence_source",
             "warnings",
             "model_version",
+            "rd2_label",
+            "rd2_label_status",
         }
 
         helper_output_legacy = {

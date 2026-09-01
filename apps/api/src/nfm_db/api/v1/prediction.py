@@ -188,6 +188,12 @@ async def predict_energy_endpoint(
                 for w in result.get("warnings", [])
             ],
             model_version=result["model_version"],
+            # NFM-4054 / AC-OC-4: surface the rd2 label pair read from
+            # the loaded model artifact so downstream consumers (RDEs,
+            # UIs, the F8 scorecard bridge) can render the EXPLORATORY
+            # pin status directly from the response.
+            rd2_label=result.get("rd2_label"),
+            rd2_label_status=result.get("rd2_label_status"),
         ),
     )
 
