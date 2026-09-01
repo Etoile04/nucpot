@@ -281,6 +281,28 @@ class PropertyStatsResponse(BaseModel):
     by_material: list[MaterialMeasurementCount] = Field(default_factory=list)
 
 
+class SourceRef(BaseModel):
+    """Structured citation for a property measurement's data source.
+
+    NFM-4086 — D1 来源可读化. Replaces the legacy ``source: str`` field
+    on ``MaterialPropertyItem`` with a structured object so the frontend
+    can render an interactive citation (author + year + journal + DOI link)
+    instead of a bare title string.
+
+    The ``authors`` list is collapsed to at most 3 names followed by
+    ``"et al."`` (see ``_format_authors`` in property_service) and the
+    ``url`` field prefers ``https://doi.org/{doi}`` over ``external_url``.
+    """
+
+    id: UUID
+    title: str
+    doi: str | None = None
+    journal: str | None = None
+    year: int | None = None
+    authors: list[str] = []
+    url: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # MaterialPropertyTable — frontend shape (NFM-1067)
 # ---------------------------------------------------------------------------
@@ -290,16 +312,21 @@ class MaterialPropertyItem(BaseModel):
     """One row in the material property table (frontend MaterialProperty).
 
     Returned in a flat, denormalized shape tailored for the React table.
-    Source title comes from the underlying Dataset→DataSource join;
-    unit symbol comes from the measurement's explicit Unit (or the
-    property type's default unit if the measurement has none).
+    Source is a structured ``SourceRef`` (id, title, doi, journal, year,
+    authors, url) joined from Dataset→DataSource; when the dataset has no
+    source attached, ``source`` is ``None`` and the frontend falls back to
+    ``"Unsourced"``.
+
+    NFM-4086 changed ``source`` from ``str`` to ``SourceRef | None`` —
+    this is a BREAKING change. Callers that still expect a string will
+    see a Pydantic validation error.
     """
 
     id: UUID
     name: str
     value: str
     unit: str | None
-    source: str
+    source: SourceRef | None = None
     confidence: float
 
 

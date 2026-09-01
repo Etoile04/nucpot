@@ -172,7 +172,13 @@ async def test_list_material_properties_404_for_unknown_material(async_client) -
 
 @pytest.mark.asyncio
 async def test_list_material_properties_response_shape(async_client, db_session) -> None:
-    """Returned rows must match the frontend MaterialProperty interface exactly."""
+    """Returned rows must match the frontend MaterialProperty interface exactly.
+
+    NFM-4086 changed ``source`` from a bare title string to a structured
+    ``SourceRef`` object. This test now verifies the structured shape
+    (id / title / doi / journal / year / authors / url) instead of the
+    legacy scalar comparison.
+    """
     mat = await _seed_material(db_session)
     src = await _seed_source(db_session, title="ASM Handbook Vol. 2")
     cat = await _seed_category(db_session)
@@ -193,7 +199,19 @@ async def test_list_material_properties_response_shape(async_client, db_session)
     assert row["name"] == "密度"
     assert row["value"] == "5.68"
     assert row["unit"] == "W/(m·K)"  # unit symbol
-    assert row["source"] == "ASM Handbook Vol. 2"
+    assert isinstance(row["source"], dict)
+    assert set(row["source"].keys()) == {
+        "id",
+        "title",
+        "doi",
+        "journal",
+        "year",
+        "authors",
+        "url",
+    }
+    assert row["source"]["title"] == "ASM Handbook Vol. 2"
+    assert row["source"]["authors"] == []
+    assert row["source"]["url"] is None  # no DOI or external_url on the seed
     assert isinstance(row["confidence"], (int, float))
     assert 0.0 <= row["confidence"] <= 1.0
 

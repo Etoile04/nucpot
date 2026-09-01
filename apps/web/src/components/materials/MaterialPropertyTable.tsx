@@ -9,14 +9,29 @@
  * Columns: name, value, unit, source citation, confidence (ConfidenceBadge).
  *
  * Spec: NFM-1066 §3
+ *
+ * NFM-4086 — D1 来源可读化. The "来源" column now consumes a structured
+ * `SourceRef` (title / doi / journal / year / authors / url) instead of
+ * a bare title string. Rendering rules:
+ *
+ *   - Authors (year). Journal. — abbreviated citation
+ *   - Hover tooltip shows the full title (so users can disambiguate when
+ *     two papers share a short "Owen et al. (2023). J. Nucl. Mater." prefix)
+ *   - When `url` is set, the citation wraps in an `<a target="_blank"
+ *     rel="noopener noreferrer">` so curators can jump to the paper.
+ *   - When `source` is null, the column falls back to "Unsourced" — same
+ *     copy as before so the empty state never degrades.
+ *   - User-supplied strings (title / journal / authors) flow through
+ *     React's text rendering (never `dangerouslySetInnerHTML`) so XSS is
+ *     impossible regardless of how the curator entered the data.
  */
 
 import { useCallback, useMemo } from "react"
-import { Table, Input, Empty, Spin, Typography } from "antd"
+import { Table, Input, Empty, Spin, Typography, Tooltip } from "antd"
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table"
 import type { SorterResult } from "antd/es/table/interface"
 import { ConfidenceBadge } from "@/components/shared/ConfidenceBadge"
-import type { MaterialProperty } from "@/lib/materials-api"
+import type { MaterialProperty, SourceRef } from "@/lib/materials-api"
 
 const { Search } = Input
 const { Text } = Typography
@@ -68,6 +83,76 @@ function extractSort(
     sortField: field as SortField,
     sortOrder: sorter.order === "ascend" ? "asc" : "desc",
   }
+}
+
+/**
+ * Build the abbreviated citation string from a `SourceRef`.
+ *
+ *   "Owen, L., Patel, R., Smith, J. (2023). J. Nucl. Mater."
+ *
+ * Trailing-period logic is intentional: the year anchor ("(2023).")
+ * carries the period only when a journal follows, and the journal
+ * itself isn't given a second period if it already ends in one (most
+ * journal abbreviations do, e.g. "J. Nucl. Mater."). When nothing
+ * displayable is present, the function falls back to the bare title.
+ */
+export function formatCitation(source: SourceRef): string {
+  const parts: string[] = []
+  if (source.authors.length > 0) {
+    parts.push(source.authors.join(", "))
+  }
+  const hasJournal = typeof source.journal === "string" && source.journal.length > 0
+  if (source.year !== null) {
+    parts.push(hasJournal ? `(${source.year}).` : `(${source.year})`)
+  }
+  if (hasJournal) {
+    const j = source.journal.trimEnd()
+    parts.push(j.endsWith(".") ? j : `${j}.`)
+  }
+  const out = parts.join(" ").trim()
+  return out || source.title
+}
+
+/**
+ * Render the source cell. Exported so the test suite can assert on the
+ * plain-text "Unsourced" fallback and on the abbreviated citation form.
+ *
+ * When `source.url` is set, wraps the citation in an anchor that opens in
+ * a new tab. Otherwise renders plain text. Either way, React's default
+ * text rendering applies, so XSS-vulnerable characters in `title` /
+ * `journal` / `authors` are escaped at the DOM boundary.
+ */
+export function renderSourceCell(source: SourceRef | null): React.ReactNode {
+  if (source === null) {
+    return (
+      <Text className="text-gray-400 text-sm">Unsourced</Text>
+    )
+  }
+  const citation = formatCitation(source)
+  const tooltipBody = `${source.title}${source.doi ? ` · DOI: ${source.doi}` : ""}`
+
+  if (source.url !== null) {
+    return (
+      <Tooltip title={tooltipBody} mouseEnterDelay={0.3}>
+        <a
+          href={source.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 text-sm"
+          title={tooltipBody}
+        >
+          {citation}
+        </a>
+      </Tooltip>
+    )
+  }
+  return (
+    <Tooltip title={tooltipBody} mouseEnterDelay={0.3}>
+      <Text className="text-gray-400 text-sm" title={tooltipBody}>
+        {citation}
+      </Text>
+    </Tooltip>
+  )
 }
 
 // ── Component ───────────────────────────────────────────────────────────
@@ -122,16 +207,9 @@ export function MaterialPropertyTable({
         title: "来源",
         dataIndex: "source",
         key: "source",
-        width: 200,
+        width: 240,
         ellipsis: true,
-        render: (text: string) => {
-          const display = text || "Unsourced"
-          return (
-            <Text className="text-gray-400 text-sm" title={display}>
-              {display}
-            </Text>
-          )
-        },
+        render: (source: SourceRef | null) => renderSourceCell(source),
       },
       {
         title: "置信度",
