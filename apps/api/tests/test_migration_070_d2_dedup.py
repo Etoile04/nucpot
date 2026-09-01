@@ -283,6 +283,139 @@ class TestMigration070Idempotency:
         assert "TEMP TABLE _dataset_redirect" in migration_source
 
 
+class TestMigration070AsyncpgBindParams:
+    """NFM-4099 — asyncpg refuses bind parameters on ``DO $$`` blocks.
+
+    asyncpg uses server-side prepared statements; PostgreSQL ``DO``
+    blocks are anonymous plpgsql that accept **0** arguments. Binding
+    parameters to a ``DO`` call raises::
+
+        asyncpg.exceptions._base.InterfaceError:
+            the server expects 0 arguments for this query, 2 were passed
+
+    Staging deploys hit this on every ``alembic upgrade head`` and the
+    container crash-loops before uvicorn can start. The fix is to inline
+    the regex + placeholder list as SQL literals (the values are
+    constants from this module's ``_UUID_TITLE_RE`` /
+    ``_PLACEHOLDER_TITLES`` — no user input involved).
+    """
+
+    def test_upgrade_does_not_pass_bind_params(self, migration_source: str) -> None:
+        # The whole ``upgrade()`` body must not contain a trailing dict
+        # argument on the ``bind.execute(...)`` call that wraps the DO
+        # block. Easiest structural check: no `bind.execute(sa.text(...), {`
+        # trailing positional argument anywhere in the upgrade body.
+        upgrade_body = migration_source.split("def upgrade()")[1].split(
+            "def downgrade()"
+        )[0]
+        # The old failing form was:
+        #     bind.execute(sa.text("..."), {"uuid_re": _UUID_TITLE_RE, ...})
+        # After the fix the call has no second positional argument; the
+        # SQL is built by ``_build_do_block_sql(_UUID_TITLE_RE, ...)``.
+        assert "_build_do_block_sql(" in upgrade_body, (
+            "upgrade() must build the DO-block SQL via _build_do_block_sql "
+            "so the values are inlined as SQL literals (not bind params)."
+        )
+        # No trailing positional dict on bind.execute(sa.text(...), {...
+        # pattern (any whitespace tolerated).
+        assert not re.search(
+            r"bind\.execute\(sa\.text\([^)]*\)\s*,\s*\{",
+            upgrade_body,
+        ), (
+            "upgrade() must not pass a positional dict to bind.execute on "
+            "a DO block — asyncpg refuses bind parameters."
+        )
+
+    def test_do_block_sql_has_no_colon_bind_params(self, migration_source: str) -> None:
+        # The ``_DO_BLOCK_SQL_TEMPLATE`` constant holds the SQL the
+        # migration ultimately executes (after ``_build_do_block_sql``
+        # substitutes the sentinel tokens). It must not contain
+        # ``:name`` bind-param references that asyncpg would try to bind.
+        template_match = re.search(
+            r"_DO_BLOCK_SQL_TEMPLATE\s*=\s*([\"\']{3})(?P<body>.*?)\1",
+            migration_source,
+            re.DOTALL,
+        )
+        assert template_match, "must define _DO_BLOCK_SQL_TEMPLATE"
+        template_body = template_match.group("body")
+        bind_refs = re.findall(r":uuid_re\b|:placeholder_titles\b", template_body)
+        assert bind_refs == [], (
+            f"_DO_BLOCK_SQL_TEMPLATE contains forbidden bind-param refs: "
+            f"{bind_refs}. asyncpg refuses bind parameters on DO blocks."
+        )
+
+    def test_do_block_sql_uses_literal_regex(self, migration_source: str) -> None:
+        # The regex must be inlined as a single-quoted SQL literal inside
+        # ``_DO_BLOCK_SQL_TEMPLATE`` (after sentinel substitution at
+        # runtime). We assert the SQL template contains the canonical
+        # UUID pattern as a literal — the substitute function will
+        # replace the sentinel token with the actual quoted literal.
+        template_match = re.search(
+            r"_DO_BLOCK_SQL_TEMPLATE\s*=\s*([\"\']{3})(?P<body>.*?)\1",
+            migration_source,
+            re.DOTALL,
+        )
+        assert template_match
+        template_body = template_match.group("body")
+        # Sentinel-token substitution: at runtime the SQL contains a
+        # single-quoted regex literal like '^[0-9a-fA-F]{8}-...{12}$'.
+        # We assert the template has the right *shape* by checking the
+        # regex anchor pattern + the `title ~` clause.
+        assert "title ~ __NFM_4099_UUID_RE_LITERAL__" in template_body
+        assert "title = ANY(CAST(__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" in template_body
+
+    def test_build_do_block_sql_inlines_values(self, migration_source: str) -> None:
+        # Functional check: invoke ``_build_do_block_sql`` (via the
+        # module's importable symbols) and assert the rendered SQL
+        # contains the literal regex, the literal ARRAY, and no bind
+        # references. This is the closest we can get to "what asyncpg
+        # would actually see" without standing up an asyncpg connection.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "_nfm_4099_migration_under_test", _MIGRATION_PATH
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        rendered_sql = module._build_do_block_sql(
+            module._UUID_TITLE_RE, module._PLACEHOLDER_TITLES
+        )
+        # 1. No bind-param refs survive into the rendered SQL.
+        assert ":uuid_re" not in rendered_sql
+        assert ":placeholder_titles" not in rendered_sql
+        # 2. The literal regex appears in the SQL (single-quoted).
+        assert "'" + module._UUID_TITLE_RE + "'" in rendered_sql
+        # 3. The literal placeholder ARRAY appears in the SQL.
+        assert "ARRAY['Unknown Source', 'Unattributed source (no DOI)']" in rendered_sql
+        # 4. Sentinel tokens must not survive into rendered SQL.
+        assert "__NFM_4099_UUID_RE_LITERAL__" not in rendered_sql
+        assert "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" not in rendered_sql
+
+    def test_build_do_block_sql_escapes_single_quotes(self, migration_source: str) -> None:
+        # Defence-in-depth: if a future change adds a title with a
+        # single quote (e.g. "O'Reilly"), the helper must escape it
+        # as `''` per PostgreSQL string-literal rules.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "_nfm_4099_migration_under_test_quotes", _MIGRATION_PATH
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        rendered_sql = module._build_do_block_sql(
+            module._UUID_TITLE_RE,
+            ("O'Reilly", "Has ''escaped'' quotes"),
+        )
+        # Single-quote in "O'Reilly" → SQL "''Reilly" inside single-quoted literal.
+        assert "'O''Reilly'" in rendered_sql
+        # Internal single-quotes in second title also escaped.
+        assert "'Has ''''escaped'''' quotes'" in rendered_sql
+
+
 # ---------------------------------------------------------------------------
 # Docstring AC mapping
 # ---------------------------------------------------------------------------
