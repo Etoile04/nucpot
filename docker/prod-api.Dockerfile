@@ -73,7 +73,7 @@ RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
 COPY apps/api/alembic.ini ./
 
 # ML model artifacts for prediction endpoints (phase classifier + temp predictor)
-# prediction_service.py resolves MODELS_DIR = /app/models (6 parent hops from src/nfm_db/ml/)
+# prediction_service.py resolves MODELS_DIR = parents[3] of /app/src/nfm_db/ml/ -> /app/models
 COPY apps/api/models/ ./models/
 
 # Set PYTHONPATH so uvicorn/celery can find nfm_db
