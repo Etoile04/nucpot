@@ -31,6 +31,7 @@ from nfm_db.schemas.material import (
     MaterialDetailResponse,
     MaterialResponse,
     MaterialUpdate,
+    UncategorizedCountResponse,
 )
 from nfm_db.schemas.property import MaterialPropertyListResponse
 from nfm_db.services.batch_import_service import (
@@ -39,6 +40,7 @@ from nfm_db.services.batch_import_service import (
     get_import_lock,
 )
 from nfm_db.services.material_service import (
+    count_uncategorized_materials,
     create_material,
     get_material,
     list_material_categories,
@@ -132,6 +134,24 @@ async def list_material_categories_endpoint(
     """
     result = await list_material_categories(db)
     return ApiResponse(success=True, data=result)
+
+
+@router.get(
+    "/materials/uncategorized-count",
+    response_model=ApiResponse[UncategorizedCountResponse],
+    summary="未分类材料数量 (NFM-4030)",
+    description="返回 category_id IS NULL 的材料数量,用于 /materials 页面静默数据缺口徽章。\n\nCount of materials with `category_id IS NULL`. Powers the silent-data-gap badge on `/materials` so users see that ~47/135 rows are unreachable under any category dropdown selection.",
+)
+async def count_uncategorized_materials_endpoint(
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[UncategorizedCountResponse]:
+    """Return the count of materials with no category (NFM-4030).
+
+    Public, read-only — no auth — same posture as the categories
+    dropdown so the badge renders for anonymous viewers.
+    """
+    count = await count_uncategorized_materials(db)
+    return ApiResponse(success=True, data=UncategorizedCountResponse(count=count))
 
 
 @router.get(

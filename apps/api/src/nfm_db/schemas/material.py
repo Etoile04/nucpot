@@ -237,3 +237,14 @@ class BatchImportResult(BaseModel):
     imported: int
     failed: int
     errors: list[BatchRowError] = Field(default_factory=list)
+
+
+class UncategorizedCountResponse(BaseModel):
+    """Number of materials with no category assigned (NFM-4030).
+
+    Powers the silent-data-gap badge on ``/materials``. The category
+    dropdown cannot surface these rows under any selection, so the
+    count has to be visible to the user independently.
+    """
+
+    count: int

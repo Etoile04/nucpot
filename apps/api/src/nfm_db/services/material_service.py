@@ -182,3 +182,15 @@ async def list_material_categories(db: AsyncSession) -> MaterialCategoryListResp
     return MaterialCategoryListResponse(
         items=[MaterialCategoryResponse.model_validate(r) for r in rows],
     )
+
+
+async def count_uncategorized_materials(db: AsyncSession) -> int:
+    """Count materials with ``category_id IS NULL``.
+
+    NFM-4030: powers the silent-data-gap badge on ``/materials``.
+    ``list_materials`` filters by category, but a ``NULL`` category_id
+    is the gap the dropdown cannot reach — surfacing the count is the
+    smallest honest fix.
+    """
+    stmt = select(func.count()).select_from(Material).where(Material.category_id.is_(None))
+    return int((await db.execute(stmt)).scalar_one())

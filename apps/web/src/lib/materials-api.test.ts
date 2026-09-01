@@ -236,3 +236,63 @@ describe("getMaterial envelope unwrap (NFM-1067)", () => {
     expect(result.formula).toBe("ZrO2")
   })
 })
+
+// ── NFM-4030: silent data gap badge ────────────────────────────────────
+//
+// The /materials category dropdown can never reach rows with
+// `category_id IS NULL`. The badge surfaces the count of such rows so
+// the user can see the gap instead of being silently shown only the
+// categorized subset. The endpoint is public and the client wrapper
+// returns `null` on error so the UI can hide the badge instead of
+// crashing the whole page.
+
+describe("getUncategorizedMaterialCount (NFM-4030)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("returns the unwrapped count from the envelope", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { count: 47 },
+        error: null,
+      }),
+    }) as unknown as typeof fetch
+
+    const { getUncategorizedMaterialCount } = await import("./materials-api")
+
+    expect(await getUncategorizedMaterialCount()).toBe(47)
+  })
+
+  it("returns null on network error so the badge hides cleanly", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("boom")) as unknown as typeof fetch
+
+    const { getUncategorizedMaterialCount } = await import("./materials-api")
+
+    expect(await getUncategorizedMaterialCount()).toBeNull()
+  })
+
+  it("hits /api/v1/materials/uncategorized-count", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { count: 0 },
+        error: null,
+      }),
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const { getUncategorizedMaterialCount } = await import("./materials-api")
+
+    await getUncategorizedMaterialCount()
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/v1/materials/uncategorized-count",
+    )
+  })
+})

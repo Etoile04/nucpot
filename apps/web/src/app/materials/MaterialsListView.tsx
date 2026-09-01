@@ -17,6 +17,7 @@ import {
 import type { ColumnsType } from "antd/es/table"
 import { request } from "@/lib/api-client"
 import {
+  getUncategorizedMaterialCount,
   listMaterialCategories,
   type MaterialCategory,
 } from "@/lib/materials-api"
@@ -178,14 +179,28 @@ export function MaterialsListView() {
   const [categories, setCategories] = useState<ReadonlyArray<MaterialCategory>>(
     [],
   )
+  // NFM-4030: number of materials with `category_id IS NULL`. Null while
+  // loading or on network error so the badge stays hidden rather than
+  // flashing a misleading "0".
+  const [uncategorizedCount, setUncategorizedCount] = useState<number | null>(
+    null,
+  )
 
-  // Load the taxonomy once. The endpoint is public and the page is
-  // usually long-lived; a single fetch on mount is correct here.
+  // Load the taxonomy + uncategorized count once. The endpoints are
+  // public and the page is usually long-lived; a single fetch on mount
+  // is correct here. The two requests are independent so we fire them
+  // in parallel and update state independently — no need to await both
+  // before the dropdown renders.
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const cats = await listMaterialCategories()
-      if (!cancelled) setCategories(cats)
+      const [cats, uncat] = await Promise.all([
+        listMaterialCategories(),
+        getUncategorizedMaterialCount(),
+      ])
+      if (cancelled) return
+      setCategories(cats)
+      setUncategorizedCount(uncat)
     })()
     return () => {
       cancelled = true
@@ -319,6 +334,19 @@ export function MaterialsListView() {
             </Text>
           }
         />
+        {/* NFM-4030 silent-data-gap badge.
+            Renders only when we know there are uncategorized materials
+            AND no category filter is active (the badge is redundant once
+            the user is already looking at a specific subset). */}
+        {uncategorizedCount !== null && uncategorizedCount > 0 && categoryId === null && (
+          <Tag
+            color="warning"
+            data-testid="materials-uncategorized-badge"
+            title="这些材料未分配任何类别,不会出现在上方任何类别筛选结果中"
+          >
+            {uncategorizedCount} 条材料尚未分类
+          </Tag>
+        )}
       </div>
 
       {state.error && (

@@ -478,4 +478,129 @@ describe("MaterialsListView", () => {
       `/materials?category_id=${FIRST_CATEGORY_ID}&page=2`,
     )
   })
+
+  // ── NFM-4030: silent data gap badge ─────────────────────────────────
+
+  it("renders the uncategorized badge when /api/v1/materials/uncategorized-count returns > 0 and no filter is active", async () => {
+    mockRequest.mockImplementation((endpoint: string) => {
+      if (endpoint === "/api/v1/material-categories") {
+        return Promise.resolve({
+          success: true,
+          data: { items: SAMPLE_CATEGORIES },
+        })
+      }
+      if (endpoint === "/api/v1/materials/uncategorized-count") {
+        return Promise.resolve({
+          success: true,
+          data: { count: 47 },
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        data: { items: mockMaterials, total: 2, page: 1, per_page: 20 },
+      })
+    })
+    renderComponent()
+
+    vi.advanceTimersByTime(500)
+    vi.useRealTimers()
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("materials-uncategorized-badge"),
+      ).toBeDefined()
+      expect(screen.getByText(/47 条材料尚未分类/)).toBeDefined()
+    })
+  })
+
+  it("hides the uncategorized badge when count is 0", async () => {
+    mockRequest.mockImplementation((endpoint: string) => {
+      if (endpoint === "/api/v1/material-categories") {
+        return Promise.resolve({
+          success: true,
+          data: { items: SAMPLE_CATEGORIES },
+        })
+      }
+      if (endpoint === "/api/v1/materials/uncategorized-count") {
+        return Promise.resolve({
+          success: true,
+          data: { count: 0 },
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        data: { items: mockMaterials, total: 2, page: 1, per_page: 20 },
+      })
+    })
+    renderComponent()
+
+    vi.advanceTimersByTime(500)
+    vi.useRealTimers()
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalled()
+    })
+    expect(screen.queryByTestId("materials-uncategorized-badge")).toBeNull()
+  })
+
+  it("hides the uncategorized badge when a category filter is active (redundant with the dropdown)", async () => {
+    mockQueryString = `category_id=${FIRST_CATEGORY_ID}`
+    mockRequest.mockImplementation((endpoint: string) => {
+      if (endpoint === "/api/v1/material-categories") {
+        return Promise.resolve({
+          success: true,
+          data: { items: SAMPLE_CATEGORIES },
+        })
+      }
+      if (endpoint === "/api/v1/materials/uncategorized-count") {
+        return Promise.resolve({
+          success: true,
+          data: { count: 47 },
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        data: { items: mockMaterials, total: 2, page: 1, per_page: 20 },
+      })
+    })
+    renderComponent()
+
+    vi.advanceTimersByTime(500)
+    vi.useRealTimers()
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalled()
+    })
+    expect(screen.queryByTestId("materials-uncategorized-badge")).toBeNull()
+  })
+
+  it("hides the uncategorized badge on network error (does not crash the page)", async () => {
+    mockRequest.mockImplementation((endpoint: string) => {
+      if (endpoint === "/api/v1/material-categories") {
+        return Promise.resolve({
+          success: true,
+          data: { items: SAMPLE_CATEGORIES },
+        })
+      }
+      if (endpoint === "/api/v1/materials/uncategorized-count") {
+        return Promise.reject(new Error("count endpoint down"))
+      }
+      return Promise.resolve({
+        success: true,
+        data: { items: mockMaterials, total: 2, page: 1, per_page: 20 },
+      })
+    })
+    renderComponent()
+
+    vi.advanceTimersByTime(500)
+    vi.useRealTimers()
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalled()
+      // The page must still render its title even when the count
+      // endpoint is down — the badge is purely additive.
+      expect(screen.getByText("材料列表")).toBeDefined()
+    })
+    expect(screen.queryByTestId("materials-uncategorized-badge")).toBeNull()
+  })
 })

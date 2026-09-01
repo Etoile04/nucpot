@@ -474,3 +474,56 @@ class TestListMaterialCategoriesEndpoint:
         resp = await async_client.get("/api/v1/material-categories")
         assert resp.status_code == 200
         assert resp.json()["data"]["items"][0]["slug"] == "public-cat"
+
+
+# ============================================================
+# GET /materials/uncategorized-count  (NFM-4030)
+# ============================================================
+
+
+class TestUncategorizedCountEndpoint:
+    """Tests for GET /materials/uncategorized-count.
+
+    NFM-4030: surfaces the silent data gap where ~47/135 materials have
+    `category_id IS NULL` and would never appear under any category
+    dropdown selection.
+    """
+
+    @pytest.mark.asyncio
+    async def test_count_zero_when_no_materials(
+        self,
+        async_client: AsyncClient,
+    ) -> None:
+        resp = await async_client.get("/api/v1/materials/uncategorized-count")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"] == {"count": 0}
+
+    @pytest.mark.asyncio
+    async def test_count_excludes_categorized(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        cat = await _seed_category(db_session, name="Fuel", slug="fuel")
+        await _seed_material(db_session, name="UO2_cat", category_id=cat.id)
+        await _seed_material(db_session, name="Uncat1", category_id=None)
+        await _seed_material(db_session, name="Uncat2", category_id=None)
+
+        resp = await async_client.get("/api/v1/materials/uncategorized-count")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_count_is_public(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """The badge has to render for anonymous viewers — no auth."""
+        await _seed_material(db_session, name="Uncat", category_id=None)
+
+        resp = await async_client.get("/api/v1/materials/uncategorized-count")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["count"] == 1

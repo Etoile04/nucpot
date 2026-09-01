@@ -89,6 +89,38 @@ export async function listMaterialCategories(): Promise<ReadonlyArray<MaterialCa
   }
 }
 
+// ── Uncategorized count (NFM-4030) ──────────────────────────────────────
+
+/**
+ * Response envelope for `GET /api/v1/materials/uncategorized-count`.
+ *
+ * Surfaces the silent-data-gap on the ``/materials`` page — the category
+ * dropdown can never reach materials with ``category_id IS NULL``, so
+ * the count has to be visible to the user independently.
+ */
+export interface UncategorizedCountEnvelope {
+  readonly count: number
+}
+
+/**
+ * Fetch the count of materials with no category assigned (NFM-4030).
+ *
+ * Public, read-only — same posture as ``listMaterialCategories`` so
+ * the badge renders for anonymous viewers. Returns ``null`` on a
+ * network error so the caller can hide the badge rather than crash
+ * the whole page; the API surface stays optional.
+ */
+export async function getUncategorizedMaterialCount(): Promise<number | null> {
+  try {
+    const envelope = await request<
+      ApiResponse<UncategorizedCountEnvelope>
+    >("/api/v1/materials/uncategorized-count")
+    return envelope.data.count
+  } catch {
+    return null
+  }
+}
+
 // ── API functions ─────────────────────────────────────────────────────
 
 /**

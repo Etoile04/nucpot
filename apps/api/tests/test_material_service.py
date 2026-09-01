@@ -7,6 +7,7 @@ import pytest
 
 from nfm_db.models import Material, MaterialAlias, MaterialCategory, MaterialComposition
 from nfm_db.services.material_service import (
+    count_uncategorized_materials,
     create_material,
     get_material,
     list_materials,
@@ -119,6 +120,35 @@ async def test_list_filters_by_category_id(db_session) -> None:
     result = await list_materials(db_session, page=1, limit=20, category_id=cat1.id)
     assert result.total == 1
     assert result.items[0].name == "Mat1"
+
+
+# ── count_uncategorized_materials (NFM-4030) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_count_uncategorized_zero_when_no_materials(db_session) -> None:
+    """Empty DB: 0 materials, 0 uncategorized."""
+    assert await count_uncategorized_materials(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_count_uncategorized_excludes_categorized(db_session) -> None:
+    """Only count rows where category_id IS NULL — never the categorized rows."""
+    cat = await _seed_category(db_session, name="Fuel", slug="fuel")
+    await _seed_material(db_session, name="UO2_cat", category_id=cat.id)
+    await _seed_material(db_session, name="Uncat1", category_id=None)
+
+    assert await count_uncategorized_materials(db_session) == 1
+
+
+@pytest.mark.asyncio
+async def test_count_uncategorized_returns_total_when_all_uncategorized(db_session) -> None:
+    """All materials uncategorized: count == total."""
+    await _seed_material(db_session, name="Mat1", category_id=None)
+    await _seed_material(db_session, name="Mat2", category_id=None)
+    await _seed_material(db_session, name="Mat3", category_id=None)
+
+    assert await count_uncategorized_materials(db_session) == 3
 
 
 @pytest.mark.asyncio
