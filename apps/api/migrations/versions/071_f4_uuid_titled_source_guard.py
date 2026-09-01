@@ -199,6 +199,21 @@ def _build_trigger_function_sql() -> str:
     inlined directly in the plpgsql body, with single quotes
     doubled so a future edit cannot introduce a SQL-injection
     vector.
+
+    health_events.id policy
+    -----------------------
+
+    ``health_events.id`` (NFM-2220 / migration 037) is
+    ``uuid NOT NULL PRIMARY KEY`` **without** a server-side
+    ``DEFAULT``.  The trigger's ``INSERT INTO health_events`` must
+    therefore populate ``id`` explicitly; we use
+    ``gen_random_uuid()`` so the column list stays declarative
+    (NFM-4097 finding 1, regression-guard: a future edit that
+    omits ``id`` again raises ``psycopg2.errors.NotNullViolation``
+    instead of the intended ``check_violation`` and silently
+    masks the production-side alert).  The structural test
+    ``test_trigger_insert_includes_id_with_gen_random_uuid`` pins
+    this invariant.
     """
     # Inline the regex as a single-quoted PL/pgSQL literal.
     # PostgreSQL dollar-quote the body with ``$func$ ... $func$`` so
@@ -214,8 +229,9 @@ def _build_trigger_function_sql() -> str:
         BEGIN
             IF NEW.title ~ '{regex_literal}' THEN
                 INSERT INTO health_events (
-                    event_type, severity, source_service, context, created_at
+                    id, event_type, severity, source_service, context, created_at
                 ) VALUES (
+                    gen_random_uuid(),
                     '{_TRIGGER_EVENT_TYPE}', 'critical', 'ingest',
                     json_build_object(
                         'source_id', NEW.id,

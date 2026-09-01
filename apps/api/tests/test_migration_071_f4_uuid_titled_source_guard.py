@@ -388,6 +388,74 @@ class TestMigration071HealthEvents:
                 f"upgrade's CHECK constraint must retain original event_type '{event_type}'"
             )
 
+    def test_trigger_insert_includes_id_with_gen_random_uuid(
+        self, trigger_function_sql: str
+    ) -> None:
+        """Regression-guard for NFM-4097 finding 1.
+
+        ``health_events.id`` (NFM-2220 / migration 037) is
+        ``uuid NOT NULL PRIMARY KEY`` **without** a server-side
+        ``DEFAULT``.  The trigger's ``INSERT INTO health_events``
+        must therefore populate ``id`` explicitly via
+        ``gen_random_uuid()`` — otherwise the prior INSERT raises
+        ``psycopg2.errors.NotNullViolation`` and **aborts the
+        function before the RAISE EXCEPTION** runs, masking the
+        intended ``check_violation`` and silently killing AC-4's
+        monitoring data.
+
+        The structural check below pins two invariants so a
+        future regression cannot slip through:
+
+          1. The column list declares ``id`` (so PG is not asked
+             to infer a NULL primary key).
+          2. The VALUES clause evaluates ``gen_random_uuid()``
+             for that column (so the row actually inserts).
+
+        Both substrings must appear **inside the plpgsql block**
+        (i.e. after ``AS $func$`` and before ``$func$ LANGUAGE
+        plpgsql``); a stray global ``id`` somewhere else in the
+        migration does not satisfy the invariant — we search the
+        rendered function SQL only.
+        """
+        # Extract the plpgsql body between $func$ ... $func$ so a
+        # stray ``id`` elsewhere does not pass.
+        m = re.search(
+            r"AS\s+\$func\$(.*?)\$func\$\s+LANGUAGE\s+plpgsql",
+            trigger_function_sql,
+            flags=re.DOTALL,
+        )
+        assert m is not None, (
+            "trigger SQL must define a plpgsql block delimited with "
+            "$func$ ... $func$ LANGUAGE plpgsql"
+        )
+        plpgsql_body = m.group(1)
+
+        # INVARIANT 1: column list declares ``id`` alongside the
+        # other health_events columns.
+        assert re.search(
+            r"INSERT\s+INTO\s+health_events\s*\(\s*[^)]*\bid\b",
+            plpgsql_body,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger INSERT INTO health_events must declare 'id' in "
+            "the column list — health_events.id is NOT NULL with no "
+            "server-side DEFAULT (NFM-2220 / migration 037); the "
+            "omission raised psycopg2.errors.NotNullViolation and "
+            "masked the intended check_violation in NFM-4097 finding 1"
+        )
+
+        # INVARIANT 2: VALUES clause evaluates gen_random_uuid() so
+        # the row actually inserts and AC-4 monitoring flips.
+        assert re.search(
+            r"VALUES\s*\([^)]*gen_random_uuid\(\)",
+            plpgsql_body,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger INSERT INTO health_events must call "
+            "gen_random_uuid() in the VALUES clause to populate "
+            "the 'id' column (NFM-4097 finding 1)"
+        )
+
     def test_check_constraint_drop_and_recreate_present(self, migration_source: str) -> None:
         """The migration source must issue a DROP CONSTRAINT +
         ADD CONSTRAINT pair for ``ck_health_events_event_type``.
