@@ -194,7 +194,7 @@ def test_default_datasource_id_is_owen2023_9320cb50() -> None:
 
 
 def test_tsv_columns_match_ac1_header() -> None:
-    """TSV column order matches the AC-1 spec."""
+    """TSV column order matches the AC-1 v2 spec (catalog_gap? appended)."""
     assert HARNESS.TSV_COLUMNS == (
         "rank",
         "raw_property_name",
@@ -204,4 +204,62 @@ def test_tsv_columns_match_ac1_header() -> None:
         "frequency",
         "sample_value",
         "source_papers",
+        "catalog_gap?",
     )
+
+
+def test_aggregate_classifies_catalog_gap_when_known_names_supplied() -> None:
+    """AC-1 v2: rows where the normalized_property_name is in property_types are
+    catalog_gap='FALSE' (LLM-side mismatch); otherwise 'TRUE' (catalog gap)."""
+    records = [
+        {"category_slug": "physical", "raw_category": "physical", "property_name": "Density"},
+        {"category_slug": "thermal", "raw_category": "thermal", "property_name": "MysteryProp"},
+    ]
+    rows = HARNESS._aggregate(records, known_property_names={"density"})
+    by_name = {r.normalized_property_name: r for r in rows}
+    assert by_name["density"].catalog_gap == "FALSE"
+    assert by_name["mysteryprop"].catalog_gap == "TRUE"
+
+
+def test_aggregate_catalog_gap_unknown_when_no_catalog_supplied() -> None:
+    """Without a catalog, catalog_gap defaults to 'UNKNOWN' (not destructive)."""
+    records = [
+        {"category_slug": "physical", "raw_category": "physical", "property_name": "Density"},
+    ]
+    rows = HARNESS._aggregate(records)
+    assert rows[0].catalog_gap == "UNKNOWN"
+
+
+def test_write_tsv_emits_catalog_gap_column(tmp_path: Path) -> None:
+    """AC-1 v2 condition (c): the TSV file carries the catalog_gap? column."""
+    records = [
+        {
+            "category_slug": "physical",
+            "raw_category": "physical",
+            "property_name": "solubility_limit",
+            "sample_value": "7800.0",
+            "source_doi": None,
+            "source_file": "literature/x.pdf",
+            "material_name": "UO2",
+        },
+        {
+            "category_slug": None,
+            "raw_category": None,
+            "property_name": "bulk_modulus",
+            "sample_value": "207.5",
+            "source_doi": None,
+            "source_file": "literature/y.pdf",
+            "material_name": "UO2",
+        },
+    ]
+    rows = HARNESS._aggregate(records, known_property_names={"bulk_modulus"})
+    out = tmp_path / "out.tsv"
+    HARNESS._write_tsv(rows, out)
+    with out.open(newline="", encoding="utf-8") as fh:
+        reader = csv.reader(fh, delimiter="\t")
+        header = next(reader)
+        assert "catalog_gap?" in header
+        data = list(reader)
+    by_name = {row[2]: row for row in data}
+    assert by_name["solubility_limit"][-1] == "TRUE"
+    assert by_name["bulk_modulus"][-1] == "FALSE"

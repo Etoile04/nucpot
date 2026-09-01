@@ -42,6 +42,7 @@ import argparse
 import asyncio
 import csv
 import logging
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -83,6 +84,7 @@ TSV_COLUMNS: tuple[str, ...] = (
     "frequency",
     "sample_value",
     "source_papers",
+    "catalog_gap?",
 )
 
 
@@ -102,6 +104,7 @@ class AggregateRow:
     frequency: int
     sample_value: Any
     source_papers: tuple[str, ...]
+    catalog_gap: str = "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------
@@ -140,13 +143,25 @@ def _normalize_category_slug(slug: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _aggregate(records: list[dict[str, Any]]) -> list[AggregateRow]:
+def _aggregate(
+    records: list[dict[str, Any]],
+    known_property_names: set[str] | None = None,
+) -> list[AggregateRow]:
     """Aggregate a flat list of unknown-detail records into unique rows.
 
     Bucket key is ``(category_slug, raw_category, property_name)``. ``frequency``
     is the count across the sample; ``sample_value`` is the first non-null value
     seen (NFM-4012 § 3); ``source_papers`` is a sorted unique tuple of DOI /
     source_file / material_name joined strings.
+
+    If ``known_property_names`` is supplied (set of names currently in
+    ``property_types``), each row is annotated with ``catalog_gap``:
+
+    - ``"TRUE"`` — ``normalized_property_name`` is NOT in ``property_types``
+      (true catalog gap, AC-1 v2 condition (a))
+    - ``"FALSE"`` — ``normalized_property_name`` IS in ``property_types``;
+      the drop is an LLM-side category-context mismatch (different workstream)
+    - ``"UNKNOWN"`` — classification was not attempted (no catalog supplied)
     """
     bucket: dict[tuple[str | None, str, str], dict[str, Any]] = {}
 
@@ -188,15 +203,21 @@ def _aggregate(records: list[dict[str, Any]]) -> list[AggregateRow]:
 
     rows: list[AggregateRow] = []
     for entry in bucket.values():
+        normalized = entry["normalized_property_name"]
+        if known_property_names is None:
+            catalog_gap = "UNKNOWN"
+        else:
+            catalog_gap = "FALSE" if normalized in known_property_names else "TRUE"
         rows.append(
             AggregateRow(
                 raw_property_name=entry["raw_property_name"],
-                normalized_property_name=entry["normalized_property_name"],
+                normalized_property_name=normalized,
                 category_slug=entry["category_slug"],
                 raw_category=entry["raw_category"],
                 frequency=entry["frequency"],
                 sample_value=entry["sample_value"],
                 source_papers=tuple(sorted(entry["source_papers"])),
+                catalog_gap=catalog_gap,
             ),
         )
 
@@ -295,6 +316,7 @@ def _write_tsv(rows: list[AggregateRow], output_path: Path) -> None:
                     row.frequency,
                     "" if row.sample_value is None else str(row.sample_value),
                     ";".join(row.source_papers),
+                    row.catalog_gap,
                 ],
             )
 
@@ -330,7 +352,46 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         help="Python logging level. Default: INFO.",
     )
+    parser.add_argument(
+        "--database-url",
+        type=str,
+        default=os.environ.get("DATABASE_URL"),
+        help=(
+            "Postgres URL for the property_types catalog lookup that powers the "
+            "catalog_gap? classification column (AC-1 v2 condition (c)). "
+            "Defaults to the DATABASE_URL env var. Pass --skip-catalog-classification "
+            "to bypass the query and emit 'UNKNOWN' for every row."
+        ),
+    )
+    parser.add_argument(
+        "--skip-catalog-classification",
+        action="store_true",
+        help=(
+            "Skip the property_types catalog lookup and emit 'UNKNOWN' for the "
+            "catalog_gap? column. Useful for unit-test runs without a DB."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _load_property_type_names(database_url: str) -> set[str]:
+    """Query ``property_types.name`` and return a Python set.
+
+    Used by the harness to classify each dropped property name as a TRUE
+    catalog gap (absent from property_types) vs an LLM-side category-context
+    mismatch (present in property_types but dropped for category reasons).
+    The query is read-only and runs against the same target DB the sync
+    wrapper was driven against (per the AC-1 v2 wording).
+    """
+    import sqlalchemy as sa
+
+    engine = sa.create_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(sa.text("SELECT name FROM property_types"))
+            return {row[0] for row in result if row[0]}
+    finally:
+        engine.dispose()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -348,7 +409,24 @@ def main(argv: list[str] | None = None) -> int:
 
     all_records: list[dict[str, Any]] = _drive_all(datasource_ids)
 
-    rows = _aggregate(all_records)
+    known_property_names: set[str] | None
+    if args.skip_catalog_classification:
+        known_property_names = None
+        logger.info("catalog_gap? classification SKIPPED (--skip-catalog-classification)")
+    elif args.database_url:
+        known_property_names = _load_property_type_names(args.database_url)
+        logger.info(
+            "Loaded %d property_types names for catalog_gap? classification",
+            len(known_property_names),
+        )
+    else:
+        known_property_names = None
+        logger.warning(
+            "No DATABASE_URL and --skip-catalog-classification not set; "
+            "catalog_gap? column will be 'UNKNOWN' for every row.",
+        )
+
+    rows = _aggregate(all_records, known_property_names=known_property_names)
     _write_tsv(rows, args.output)
 
     unique_pairs = sum(1 for _ in rows)
