@@ -226,3 +226,63 @@ async def test_from_doi_idempotent_returns_original_id(
 
     # Same DOI → same literature_id (idempotent).
     assert first_id == second_id
+
+
+# ---------------------------------------------------------------------------
+# NFM-4089 E2E regression: fetch_paper_content() must NOT be called on a
+# duplicate DOI.  The prior revision moved the dedup probe below
+# ``fetch_paper_content()``, so a known DOI re-fetched from Semantic Scholar
+# and 502'd when that call failed (baseline was 200/4.8 ms no-network).
+# The early-return dedup probe (by DOI) must short-circuit before any
+# outbound HTTP happens.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_from_doi_duplicate_does_not_call_fetch_paper_content(
+    async_client,
+    db_session: AsyncSession,
+    mock_literature_env,
+) -> None:
+    """NFM-4089 ordering regression: duplicate DOI must skip Semantic Scholar."""
+    # Seed first so we already have a row with the matching DOI.
+    with _doi_happy_context():
+        resp1 = await async_client.post(
+            "/api/v1/literature/from-doi",
+            json={"doi": VALID_DOI},
+        )
+    assert resp1.status_code == 200
+
+    # Second DOI submit — patch fetch_paper_content to RAISE.  If the early-
+    # return probe is working, the fetcher is never reached and the second
+    # response is idempotent 200 with the original literature_id.
+    cm = ExitStack()
+    cm.enter_context(
+        patch(
+            "nfm_db.services.doi_fetcher.fetch_paper_content",
+            side_effect=Exception("Semantic Scholar unreachable"),
+        ),
+    )
+    cm.enter_context(
+        patch(
+            "nfm_db.services.literature_dispatcher._send_literature_task",
+            return_value=MagicMock(id="x"),
+        ),
+    )
+    with cm:
+        resp2 = await async_client.post(
+            "/api/v1/literature/from-doi",
+            json={"doi": VALID_DOI},
+        )
+
+    # Without the early-return probe this would have been 502 because
+    # fetch_paper_content would have been called and raised.  With the
+    # probe in place the fetcher is bypassed entirely.
+    assert resp2.status_code == 200, (
+        f"Duplicate DOI regressed to {resp2.status_code} — the dedup probe "
+        f"must short-circuit BEFORE fetch_paper_content (NFM-4089 ordering "
+        f"regression). Body: {resp2.text}"
+    )
+    first_id = uuid.UUID(resp1.json()["data"]["literature_id"])
+    second_id = uuid.UUID(resp2.json()["data"]["literature_id"])
+    assert first_id == second_id

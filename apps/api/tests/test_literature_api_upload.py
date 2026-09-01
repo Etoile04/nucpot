@@ -219,3 +219,58 @@ async def test_upload_idempotent_same_hash_returns_original_id(
 
     # Same hash → same literature_id (idempotent).
     assert first_id == second_id
+
+
+# ---------------------------------------------------------------------------
+# NFM-4089 E2E regression: storage.save() must NOT be called on a duplicate
+# upload.  The prior revision moved the dedup probe below ``storage.save()``,
+# producing 1 + N orphan storage dirs for N identical re-uploads.  The early-
+# return dedup probe (by ``file_hash``) must short-circuit before any storage
+# I/O happens.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upload_duplicate_does_not_call_storage_save(
+    async_client,
+    db_session: AsyncSession,
+    mock_literature_env,
+) -> None:
+    """NFM-4089 ordering regression: duplicate upload must skip storage I/O."""
+    # Seed first so we already have a row with the matching file_hash.
+    with _upload_context():
+        resp1 = await async_client.post(
+            "/api/v1/literature/upload",
+            files={
+                "file": ("paper.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf"),
+            },
+        )
+    assert resp1.status_code == 200
+
+    # Second upload of identical bytes — patch storage.save to detect any
+    # spurious invocation.  If the early-return probe is working, save() is
+    # never reached and the second response is idempotent.
+    with (
+        _upload_context(),
+        patch(
+            "nfm_db.services.storage.LocalDiskStorage.save",
+            autospec=True,
+        ) as mock_save,
+    ):
+        resp2 = await async_client.post(
+            "/api/v1/literature/upload",
+            files={
+                "file": ("copy.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf"),
+            },
+        )
+
+    assert resp2.status_code == 200
+    assert mock_save.call_count == 0, (
+        "storage.save() was called on a duplicate upload — the dedup probe "
+        "must short-circuit BEFORE the storage layer (NFM-4089 ordering "
+        "regression)."
+    )
+    # The response still carries the original literature_id.
+    first_id = uuid.UUID(resp1.json()["data"]["literature_id"])
+    second_id = uuid.UUID(resp2.json()["data"]["literature_id"])
+    assert first_id == second_id

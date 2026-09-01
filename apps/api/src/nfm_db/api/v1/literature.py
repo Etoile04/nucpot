@@ -225,33 +225,45 @@ async def _collect_extraction_results(
     """
     # --- 1. legacy manual entries ------------------------------------------
     er_rows = (
-        await db.execute(
-            select(ExtractionResult)
-            .where(ExtractionResult.source_id == source_id)
-            .order_by(ExtractionResult.created_at.desc())
-            .limit(_MAX_MANUAL_RESULTS)
+        (
+            await db.execute(
+                select(ExtractionResult)
+                .where(ExtractionResult.source_id == source_id)
+                .order_by(ExtractionResult.created_at.desc())
+                .limit(_MAX_MANUAL_RESULTS)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # --- 2. OntoFuel KG nodes ----------------------------------------------
     kg_node_rows = (
-        await db.execute(
-            select(KGNode)
-            .where(KGNode.source_id == source_id)
-            .order_by(KGNode.created_at.desc())
-            .limit(_MAX_KG_NODES_PER_SOURCE)
+        (
+            await db.execute(
+                select(KGNode)
+                .where(KGNode.source_id == source_id)
+                .order_by(KGNode.created_at.desc())
+                .limit(_MAX_KG_NODES_PER_SOURCE)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # --- 3. OntoFuel KG edges ----------------------------------------------
     kg_edge_rows = (
-        await db.execute(
-            select(KGEdge)
-            .where(KGEdge.source_id == source_id)
-            .order_by(KGEdge.created_at.desc())
-            .limit(_MAX_KG_EDGES_PER_SOURCE)
+        (
+            await db.execute(
+                select(KGEdge)
+                .where(KGEdge.source_id == source_id)
+                .order_by(KGEdge.created_at.desc())
+                .limit(_MAX_KG_EDGES_PER_SOURCE)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     combined: list[ExtractionResultItem] = (
         [_row_to_manual_item(er) for er in er_rows]
@@ -339,6 +351,26 @@ async def upload_literature(
     # --- Compute SHA-256 hash ------------------------------------------
     file_hash = hashlib.sha256(raw_bytes).hexdigest()
 
+    # --- Cheap dedup probe BEFORE touching storage (NFM-4089 ordering) --
+    # Idempotency contract: re-uploading an identical PDF must return the
+    # existing ``literature_id`` without writing a duplicate storage
+    # directory.  This is the early-return path the prior revision broke
+    # by moving ``storage.save()`` above the gate (3 identical uploads
+    # produced 3 storage dirs, 2 orphaned).  The full INSERT path below
+    # still goes through ``get_or_create_source`` which uses ``file_hash``
+    # as a belt-and-braces dedup key — the probe is the cheap pre-check.
+    from nfm_db.services.source_service import _find_source_by_file_hash
+
+    existing = await _find_source_by_file_hash(db, file_hash)
+    if existing is not None:
+        return ApiResponse(
+            success=True,
+            data=LiteratureUploadResponse(
+                literature_id=existing.id,
+                status=existing.parse_status,
+            ),
+        )
+
     # --- Save file via storage backend ----------------------------------
     datasource_id = uuid.uuid4()
     filename = file.filename or f"{datasource_id}.pdf"
@@ -350,9 +382,10 @@ async def upload_literature(
     file_path = storage.save(datasource_id, filename, raw_bytes)
 
     # --- Idempotency + INSERT via the NFM-4089 dedup gate ---------------
-    # ``file_hash`` is the primary dedup key for PDF uploads (no DOI).  If a
-    # sibling row already exists for this hash we return it without touching
-    # the storage layer; otherwise we register a fresh ``DataSource``.
+    # ``file_hash`` is the primary dedup key for PDF uploads (no DOI).
+    # ``get_or_create_source`` is kept as the INSERT-side gate so the
+    # rare race (probe misses, concurrent INSERT) still short-circuits
+    # inside the same transaction.
     from nfm_db.services.source_service import get_or_create_source
 
     source, created = await get_or_create_source(
@@ -428,6 +461,27 @@ async def from_doi_literature(
         raise HTTPException(
             status_code=400,
             detail="Invalid DOI format. Expected: 10.xxxx/yyyy.",
+        )
+
+    # --- Cheap dedup probe BEFORE fetching from Semantic Scholar --------
+    # Idempotency contract: re-submitting a known DOI must return the
+    # existing ``literature_id`` with no network round-trip.  This is the
+    # early-return path the prior revision broke by moving
+    # ``fetch_paper_content()`` above the gate — a known DOI re-fetched
+    # from Semantic Scholar and 502'd when that call failed (baseline
+    # was 200/4.8 ms no-network).  The full INSERT path below still goes
+    # through ``get_or_create_source`` which uses DOI as the primary
+    # dedup key.
+    from nfm_db.services.source_service import _find_source_by_doi
+
+    existing = await _find_source_by_doi(db, doi)
+    if existing is not None:
+        return ApiResponse(
+            success=True,
+            data=LiteratureUploadResponse(
+                literature_id=existing.id,
+                status=existing.parse_status,
+            ),
         )
 
     # --- Fetch content via doi_fetcher (AC #8: failure → 502) ---------
@@ -803,16 +857,14 @@ async def delete_literature(
 
     # First clean up extraction_results (no FK CASCADE on this table).
     await db.execute(
-        _sa_text(
-            "DELETE FROM extraction_results WHERE source_id = :sid"
-        ).bindparams(sid=literature_id)
+        _sa_text("DELETE FROM extraction_results WHERE source_id = :sid").bindparams(
+            sid=literature_id
+        )
     )
 
     # Now delete the data_source — CASCADE handles the rest.
     await db.execute(
-        _sa_text(
-            "DELETE FROM data_sources WHERE id = :sid"
-        ).bindparams(sid=literature_id)
+        _sa_text("DELETE FROM data_sources WHERE id = :sid").bindparams(sid=literature_id)
     )
     await db.commit()
 
@@ -937,7 +989,9 @@ async def get_literature_recall(
     """
     try:
         result = await compute_literature_recall(
-            session, literature_id, ontology_version,
+            session,
+            literature_id,
+            ontology_version,
         )
     except ValueError as exc:
         raise HTTPException(
