@@ -25,13 +25,29 @@ Usage::
     scripts/nfm-4048-refresh-owen2023-label-snapshot.py --dsn ... --dry-run
 
 Exit codes: 0 = snapshot already current or rewritten successfully;
-1 = query/connection failure or an empty corpus (which would silently
-weaken the pin, so it is treated as an error rather than a valid refresh).
+1 = driver missing, connection failed, query failed, or empty corpus
+(which would silently weaken the pin, so it is treated as an error
+rather than a valid refresh).
+
+NFM-4051 notes
+--------------
+* Uses ``asyncpg`` (the project-standard driver, declared in
+  ``apps/api/pyproject.toml``).  The original implementation reached for
+  ``psycopg[binary]``, which is not declared — the project venv had no
+  copy, so ``--dry-run`` against a reachable prod DB exited 1 with
+  ``No module named 'psycopg'``.
+* Distinguishes "driver missing" / "could not connect" / "query failed" in
+  its stderr output so an operator reading the message knows which to debug.
+* Threads ``--source-id`` through ``build_snapshot`` (CR LOW): the previous
+  version read ``source_id`` from the existing snapshot template, so a
+  caller passing ``--source-id <other-uuid>`` would silently write foreign
+  labels under the existing snapshot's provenance.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as dt
 import sys
 from pathlib import Path
@@ -40,6 +56,21 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TESTS = _REPO_ROOT / "apps" / "api"
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
+
+# asyncpg is a first-party dep (apps/api/pyproject.toml); if it is not
+# importable here, that is a venv mismatch the operator must fix before
+# this CLI is useful.  Surface the import problem with a specific error
+# rather than the bare "No module named 'psycopg'" the original produced.
+try:
+    import asyncpg
+except ImportError as exc:  # pragma: no cover - explicit operator-facing error
+    print(
+        f"ERROR: asyncpg is not importable in this Python environment: {exc}. "
+        "Install with `uv sync` (apps/api/pyproject.toml lists asyncpg as a "
+        "first-party dependency).",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 from tests._helpers.owen2023_corpus import (  # noqa: E402
     OWEN2023_SOURCE_ID,
@@ -52,14 +83,14 @@ from tests._helpers.owen2023_corpus import (  # noqa: E402
 _CORPUS_SQL = """
 SELECT DISTINCT label
 FROM kg_nodes
-WHERE source_id = %(source_id)s
+WHERE source_id = $1
   AND node_type = 'Material'
 """
 
 _NEWEST_SQL = """
 SELECT max(created_at)
 FROM kg_nodes
-WHERE source_id = %(source_id)s
+WHERE source_id = $1
 """
 
 
@@ -88,26 +119,47 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _fetch_corpus(dsn: str, source_id: str) -> tuple[list[str], str | None]:
-    """Return (labels, newest_node_created_at_iso) from the live KG."""
-    import psycopg
+async def _fetch_corpus(dsn: str, source_id: str) -> tuple[list[str], str | None]:
+    """Return (labels, newest_node_created_at_iso) from the live KG.
 
-    with psycopg.connect(dsn, connect_timeout=15) as conn, conn.cursor() as cur:
-        cur.execute(_CORPUS_SQL, {"source_id": source_id})
-        labels = [row[0] for row in cur.fetchall()]
-        cur.execute(_NEWEST_SQL, {"source_id": source_id})
-        row = cur.fetchone()
-    newest = row[0].isoformat() if row and row[0] is not None else None
+    asyncpg-only; no sync wrapper here so the call site can catch the
+    narrow exception types and label them usefully for the operator.
+    """
+    conn = await asyncpg.connect(dsn, timeout=15)
+    try:
+        rows = await conn.fetch(_CORPUS_SQL, source_id)
+        labels = [row["label"] for row in rows]
+        newest_row = await conn.fetchrow(_NEWEST_SQL, source_id)
+    finally:
+        await conn.close()
+    newest = newest_row[0].isoformat() if newest_row and newest_row[0] is not None else None
     return labels, newest
 
 
 def main(argv: list[str]) -> int:
     args = _parse_args(argv)
 
+    # NFM-4051 AC-4: narrow the catch so the operator can tell the three
+    # failure modes apart:
+    #   - connection refused / DNS failure / TLS handshake  -> OSError
+    #   - DB responded but rejected the query/credentials    -> asyncpg.PostgresError
+    # Anything else (programming error in this script) propagates with
+    # a real traceback rather than being misattributed to the DB.
     try:
-        labels, newest = _fetch_corpus(args.dsn, args.source_id)
-    except Exception as exc:  # surface any driver/connection error to the caller
-        print(f"ERROR: could not read the KG corpus: {exc}", file=sys.stderr)
+        labels, newest = asyncio.run(_fetch_corpus(args.dsn, args.source_id))
+    except OSError as exc:
+        print(
+            f"ERROR: could not connect to the KG database at {args.dsn!r}: "
+            f"{exc}. Check the DSN, host reachability, and pg_hba.",
+            file=sys.stderr,
+        )
+        return 1
+    except asyncpg.PostgresError as exc:
+        print(
+            f"ERROR: connected but the KG query failed: {exc}. "
+            "Check credentials, sslmode, and that the source_id exists.",
+            file=sys.stderr,
+        )
         return 1
 
     if not labels:
@@ -144,6 +196,7 @@ def main(argv: list[str]) -> int:
         labels,
         captured_at=dt.date.today().isoformat(),
         captured_from=args.captured_from,
+        source_id=args.source_id,  # NFM-4051 CR LOW: thread the caller's source_id
         newest_node_created_at=newest,
         template=previous,
     )

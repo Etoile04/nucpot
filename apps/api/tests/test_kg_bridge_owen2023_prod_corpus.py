@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 
+import asyncpg
 import pytest
 
 from nfm_db.services.kg_to_staging_bridge import _canonical_element_system
@@ -31,9 +32,20 @@ from tests._helpers.owen2023_corpus import (
     F8_ACCEPTED_ELEMENT_SYSTEMS,
     NON_F8_PROD_LABELS,
     OWEN2023_SOURCE_ID,
+    build_snapshot,
     load_snapshot,
     snapshot_labels,
 )
+
+#: asyncpg is the project-standard PostgreSQL driver (declared in
+#: ``apps/api/pyproject.toml``).  NFM-4048 originally reached for
+#: ``psycopg[binary]`` because the CR harness had it installed system-wide;
+#: the project venv (``uv sync``) does not, so the drift check was silently
+#: skipped — the very vacuous-guard pattern NFM-4048 exists to eliminate.
+#: Importing eagerly at module top is safe: ``asyncpg`` is a hard dependency,
+#: so the only ways this import fails are an interpreter fault (a real
+#: configuration error worth surfacing) or a venv mismatch — both deserve
+#: a hard failure rather than a silent skip.
 
 #: Set to a libpq connection string to enable the live-corpus drift check.
 #: Deliberately NOT ``DATABASE_URL``: pointing the drift check at whatever
@@ -51,6 +63,65 @@ WHERE source_id = %(source_id)s
 #: 17th is the ``Cr2O3`` carve-out).  A floor, not an equality: a growing
 #: corpus should raise it, and lowering it must be a deliberate, explained edit.
 _F8_REACHABILITY_FLOOR = 16
+
+
+def test_build_snapshot_threads_source_id_and_query():
+    """NFM-4051 CR LOW: ``build_snapshot`` must rebuild ``source_id`` and
+    ``query`` from the caller's argument, not the previous template.
+
+    Without this guarantee, ``scripts/.../refresh-owen2023-label-snapshot.py
+    --source-id <other-uuid>`` would silently write foreign labels under
+    the existing snapshot's provenance, while the
+    ``provenance is complete`` guard continued to pass against the
+    unchanged ``query`` field.
+    """
+    template = {
+        "_comment": ["carry me through"],
+        "captured_for_issue": "NFM-4048",
+        "schema_version": 1,
+        "source_name": "Owen2023",
+        "node_type": "Material",
+        "captured_from": "previous-run",
+        "captured_at": "2026-08-31",
+        "newest_node_created_at": "2026-08-31T00:00:00+00:00",
+        "labels": ["UO2"],
+        "label_count": 1,
+        "source_id": OWEN2023_SOURCE_ID,
+        "query": "SELECT DISTINCT label FROM kg_nodes WHERE source_id = "
+        f"'{OWEN2023_SOURCE_ID}' AND node_type = 'Material'",
+    }
+
+    # Default source_id: round-trip preserves the checked-in fixture shape.
+    out_default = build_snapshot(
+        ["UO2"],
+        captured_at="2026-09-01",
+        captured_from="test",
+        template=template,
+    )
+    assert out_default["source_id"] == OWEN2023_SOURCE_ID
+    assert out_default["source_name"] == "Owen2023"
+    assert (
+        out_default["query"] == f"SELECT DISTINCT label FROM kg_nodes WHERE source_id = "
+        f"'{OWEN2023_SOURCE_ID}' AND node_type = 'Material'"
+    )
+
+    # Custom source_id: rebuild source_id, source_name, and query from
+    # the argument — template provenance must not leak through.
+    other = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    out_custom = build_snapshot(
+        ["UO2"],
+        captured_at="2026-09-01",
+        captured_from="test",
+        source_id=other,
+        template=template,
+    )
+    assert out_custom["source_id"] == other
+    assert out_custom["source_name"] == "source-aaaaaaaa"
+    assert f"'{other}'" in out_custom["query"]
+    assert OWEN2023_SOURCE_ID not in out_custom["query"]
+    # Only the truly orthogonal comment fields survive from template.
+    assert out_custom["_comment"] == ["carry me through"]
+    assert out_custom["captured_for_issue"] == "NFM-4048"
 
 
 def test_snapshot_provenance_is_complete():
@@ -143,15 +214,29 @@ def test_snapshot_matches_live_corpus():
     that does (``NFM_OWEN2023_CORPUS_DSN=postgresql://… pytest -m
     integration -k live_corpus``) to catch a snapshot that has gone stale.
     Read-only: a single SELECT, no writes, no schema access.
-    """
-    psycopg = pytest.importorskip("psycopg")
 
+    Note (NFM-4051): uses ``asyncpg`` (declared in ``pyproject.toml``)
+    rather than ``psycopg[binary]`` (not declared; the project venv has no
+    copy, so the original ``importorskip`` silently skipped this test even
+    when the DSN was set and the DB was reachable).  Because ``asyncpg`` is
+    imported eagerly at module top, a missing driver is now a collection
+    error — fail-loud, not silently skipped.
+    """
     dsn = os.environ[_LIVE_DSN_ENV]
+
+    async def _fetch() -> list[str]:
+        conn = await asyncpg.connect(dsn, timeout=10)
+        try:
+            rows = await conn.fetch(
+                _LIVE_CORPUS_SQL.replace("%(source_id)s", "$1"), OWEN2023_SOURCE_ID
+            )
+        finally:
+            await conn.close()
+        return sorted(row["label"] for row in rows)
+
     try:
-        with psycopg.connect(dsn, connect_timeout=10) as conn, conn.cursor() as cur:
-            cur.execute(_LIVE_CORPUS_SQL, {"source_id": OWEN2023_SOURCE_ID})
-            live = sorted(row[0] for row in cur.fetchall())
-    except psycopg.Error as exc:
+        live = pytest_asyncio_run(_fetch())
+    except (OSError, asyncpg.PostgresError) as exc:
         pytest.fail(f"could not read the live Owen2023 corpus via {_LIVE_DSN_ENV}: {exc}")
 
     assert live, (
@@ -168,3 +253,18 @@ def test_snapshot_matches_live_corpus():
         "scripts/nfm-4048-refresh-owen2023-label-snapshot.py "
         f"(new in prod: {added}; gone from prod: {removed})"
     )
+
+
+def pytest_asyncio_run(coro):
+    """Tiny shim that runs an asyncpg coroutine from a sync pytest test.
+
+    ``pytest-asyncio`` is declared in the dev extra but this file uses the
+    standard ``asyncpg`` library directly — no event-loop fixtures.  Keeping
+    the runner inline avoids pulling ``pytest-asyncio`` into this test
+    module's contract and lets the drift check live alongside the rest of
+    ``test_kg_bridge_owen2023_prod_corpus.py`` without an ``asyncio_mode``
+    global flip.
+    """
+    import asyncio
+
+    return asyncio.run(coro)

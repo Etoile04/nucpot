@@ -43,6 +43,13 @@ OWEN2023_SOURCE_ID = "9320cb50-eb65-4178-8d2e-c56aeb848b21"
 #: ``sr.element_system = 'UO2'`` and ``sr.element_system IN ('UO2+Cr',
 #: 'U-Cr-O')``.  A label that canonicalises outside this set is invisible to
 #: every F8 check.
+#
+#: Traceability note (NFM-4051 CR MEDIUM): the cited SQL lives on the
+#: unmerged branch ``origin/NFM-4005-amend-scorecard-sql-bridge-union`` as
+#: of NFM-4048; the values are correct (verified by CR reading the SQL),
+#: but the citation will dangle until NFM-4005 lands.  Once that ships,
+#: consider parsing the predicates out of the SQL so this frozenset cannot
+#: silently diverge from the scorecard it mirrors.
 F8_ACCEPTED_ELEMENT_SYSTEMS: frozenset[str] = frozenset({"UO2", "UO2+Cr", "U-Cr-O"})
 
 #: Prod Owen2023 labels that intentionally canonicalise OUTSIDE the F8 buckets.
@@ -123,28 +130,58 @@ def build_snapshot(
     *,
     captured_at: str,
     captured_from: str,
+    source_id: str = OWEN2023_SOURCE_ID,
     newest_node_created_at: str | None = None,
     template: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a refreshed snapshot payload, preserving the existing preamble.
 
-    The ``_comment`` / ``query`` / ``source_name`` documentation fields are
-    carried over from ``template`` so a refresh never silently drops the
-    provenance narrative a reader needs to trust the file.
+    The ``_comment`` documentation field is carried over from ``template``
+    so a refresh never silently drops the provenance narrative a reader
+    needs to trust the file.  ``source_id``, ``source_name``, and
+    ``query`` are rebuilt from the caller's ``source_id`` argument (NFM-4051
+    CR LOW fix): the previous version read them from ``template``, so
+    ``--source-id <other-uuid>`` would silently write foreign labels under
+    the existing snapshot's provenance while the ``provenance is complete``
+    guard still passed against the unchanged ``query`` field.
+
+    ``node_type`` is intentionally NOT taken from ``source_id`` — it is a
+    fixed project convention (``Material``), and ``build_snapshot`` is not
+    the place to broaden it.
     """
     base = dict(template or {})
     unique = sorted(set(labels))
     return {
         **base,
         "schema_version": base.get("schema_version", 1),
-        "source_id": base.get("source_id", OWEN2023_SOURCE_ID),
+        "source_id": source_id,
+        "source_name": _infer_source_name(source_id),
         "node_type": base.get("node_type", "Material"),
+        "query": (
+            f"SELECT DISTINCT label FROM kg_nodes WHERE source_id = "
+            f"'{source_id}' AND node_type = 'Material'"
+        ),
         "captured_at": captured_at,
         "captured_from": captured_from,
         "newest_node_created_at": newest_node_created_at,
         "label_count": len(unique),
         "labels": unique,
     }
+
+
+def _infer_source_name(source_id: str) -> str:
+    """Return a human-readable source name for the snapshot's ``source_name``.
+
+    Falls back to ``"source-<uuid-prefix>"`` so the field is always populated
+    (the fixture loader does not require it, but the test
+    ``test_snapshot_provenance_is_complete`` reads provenance to verify
+    refresh reproducibility).  When the source_id is the canonical Owen2023
+    one, return ``"Owen2023"`` so refreshed snapshots stay byte-stable
+    against the checked-in fixture.
+    """
+    if source_id == OWEN2023_SOURCE_ID:
+        return "Owen2023"
+    return f"source-{source_id[:8]}"
 
 
 def dump_snapshot(payload: dict[str, Any]) -> str:
