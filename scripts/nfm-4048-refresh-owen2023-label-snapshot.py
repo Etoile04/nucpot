@@ -25,16 +25,19 @@ Usage::
     scripts/nfm-4048-refresh-owen2023-label-snapshot.py --dsn ... --dry-run
 
 Exit codes: 0 = snapshot already current or rewritten successfully;
-1 = query/connection failure or an empty corpus (which would silently
-weaken the pin, so it is treated as an error rather than a valid refresh).
+1 = database read failure or an empty corpus (which would silently weaken
+the pin, so it is treated as an error rather than a valid refresh);
+2 = environment error (e.g. ``asyncpg`` missing — see NFM-4051).
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as dt
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TESTS = _REPO_ROOT / "apps" / "api"
@@ -49,17 +52,20 @@ from tests._helpers.owen2023_corpus import (  # noqa: E402
     snapshot_path,
 )
 
+if TYPE_CHECKING:
+    import asyncpg
+
 _CORPUS_SQL = """
 SELECT DISTINCT label
 FROM kg_nodes
-WHERE source_id = %(source_id)s
+WHERE source_id = $1
   AND node_type = 'Material'
 """
 
 _NEWEST_SQL = """
 SELECT max(created_at)
 FROM kg_nodes
-WHERE source_id = %(source_id)s
+WHERE source_id = $1
 """
 
 
@@ -68,12 +74,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--dsn",
         required=True,
-        help="libpq connection string for the KG database (read-only usage)",
+        help=(
+            "libpq connection string for the KG database (read-only usage). "
+            "The plain ``postgresql://user:pass@host:port/db`` form is "
+            "expected; the SQLAlchemy ``+asyncpg`` URL suffix is rejected "
+            "by ``asyncpg.connect``."
+        ),
     )
     parser.add_argument(
         "--source-id",
         default=OWEN2023_SOURCE_ID,
-        help=f"datasource UUID to snapshot (default: {OWEN2023_SOURCE_ID})",
+        help=(
+            f"datasource UUID to snapshot. This script is purpose-built for "
+            f"the Owen2023 audit pin ({OWEN2023_SOURCE_ID}); any other value "
+            f"is rejected — see the NFM-4051 note in the README."
+        ),
     )
     parser.add_argument(
         "--captured-from",
@@ -88,26 +103,89 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _fetch_corpus(dsn: str, source_id: str) -> tuple[list[str], str | None]:
-    """Return (labels, newest_node_created_at_iso) from the live KG."""
-    import psycopg
+async def _fetch_corpus_async(
+    dsn: str,
+    source_id: str,
+    *,
+    pg: "asyncpg",
+) -> tuple[list[str], "object | None"]:
+    """Return (labels, newest_node_created_at) from the live KG via asyncpg.
 
-    with psycopg.connect(dsn, connect_timeout=15) as conn, conn.cursor() as cur:
-        cur.execute(_CORPUS_SQL, {"source_id": source_id})
-        labels = [row[0] for row in cur.fetchall()]
-        cur.execute(_NEWEST_SQL, {"source_id": source_id})
-        row = cur.fetchone()
-    newest = row[0].isoformat() if row and row[0] is not None else None
+    Parameterised queries (``$1``) — never string-interpolate ``source_id``.
+    Caller passes the already-imported ``asyncpg`` module so a missing
+    driver surfaces as ``ImportError`` at the CLI layer (exit 2) rather
+    than deep inside this helper.
+    """
+    conn = await pg.connect(dsn, timeout=15)
+    try:
+        label_rows = await conn.fetch(_CORPUS_SQL, source_id)
+        newest_row = await conn.fetchrow(_NEWEST_SQL, source_id)
+    finally:
+        await conn.close()
+    labels = [row["label"] for row in label_rows]
+    newest = newest_row[0] if newest_row is not None else None
     return labels, newest
+
+
+def _fetch_corpus(dsn: str, source_id: str) -> tuple[list[str], "object | None"]:
+    """Sync wrapper around :func:`_fetch_corpus_async` that bridges to asyncpg.
+
+    Raises ``ImportError`` if ``asyncpg`` is not installed (the operator
+    then sees a driver-missing diagnostic with exit code 2 — distinct from
+    the database-side error that exits 1).
+    """
+    import asyncpg
+
+    return asyncio.run(_fetch_corpus_async(dsn, source_id, pg=asyncpg))
 
 
 def main(argv: list[str]) -> int:
     args = _parse_args(argv)
 
+    # Defence-in-depth: even though build_snapshot now honours its source_id
+    # kwarg, this script's only reason to exist is the Owen2023 audit pin.
+    # Refuse a non-default --source-id at the CLI layer so a typo or
+    # experiment never silently writes another source's labels under the
+    # Owen2023 fixture (NFM-4051 CR follow-up on NFM-4048's LOW finding).
+    if args.source_id != OWEN2023_SOURCE_ID:
+        print(
+            f"ERROR: --source-id must be {OWEN2023_SOURCE_ID} (the Owen2023 "
+            f"datasource this script refreshes); got {args.source_id!r}. "
+            "To snapshot another datasource, write a new refresh script "
+            "with its own pin/fixture pair.",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         labels, newest = _fetch_corpus(args.dsn, args.source_id)
-    except Exception as exc:  # surface any driver/connection error to the caller
-        print(f"ERROR: could not read the KG corpus: {exc}", file=sys.stderr)
+    except ImportError as exc:
+        # Driver missing — distinct from a database-side failure so the
+        # operator does not waste time debugging connectivity.
+        print(
+            f"ERROR: could not load the asyncpg driver: {exc}. "
+            "asyncpg is a declared dependency in apps/api/pyproject.toml — "
+            "install it (or activate the project venv) before retrying.",
+            file=sys.stderr,
+        )
+        return 2
+    except (OSError, TimeoutError) as exc:
+        # Socket-level failure: DNS, port closed, connection refused,
+        # timeout.  Distinguishes "the host/port is wrong" from "the SQL
+        # query is wrong".
+        print(
+            f"ERROR: database connection failed for {args.dsn!r}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except Exception as exc:
+        # asyncpg.PostgresError and anything the driver itself raises
+        # (auth failure, syntax error, missing relation, ...).  Tag the
+        # type so the operator can grep without parsing prose.
+        print(
+            f"ERROR: database read failed ({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
         return 1
 
     if not labels:
@@ -144,7 +222,8 @@ def main(argv: list[str]) -> int:
         labels,
         captured_at=dt.date.today().isoformat(),
         captured_from=args.captured_from,
-        newest_node_created_at=newest,
+        newest_node_created_at=newest.isoformat() if newest is not None else None,
+        source_id=args.source_id,
         template=previous,
     )
     path.write_text(dump_snapshot(payload), encoding="utf-8")

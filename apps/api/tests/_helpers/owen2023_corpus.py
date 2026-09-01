@@ -39,10 +39,14 @@ _SNAPSHOT_ENV = "NFM_OWEN2023_LABEL_SNAPSHOT"
 OWEN2023_SOURCE_ID = "9320cb50-eb65-4178-8d2e-c56aeb848b21"
 
 #: ``element_system`` values the F8 scorecard predicates accept.  Pinned from
-#: ``apps/api/src/nfm_db/audit/f8_scorecard_v050.sql`` (commit ``c55bcf572``):
+#: ``apps/api/src/nfm_db/audit/f8_scorecard_v050.sql`` (commit ``c55bcf572``,
+#: branch ``NFM-4005-amend-scorecard-sql-bridge-union`` — **unmerged as of
+#: NFM-4048**, lands via [NFM-4005](/NFM/issues/NFM-4005); the values below
+#: were CR-verified against that branch):
 #: ``sr.element_system = 'UO2'`` and ``sr.element_system IN ('UO2+Cr',
 #: 'U-Cr-O')``.  A label that canonicalises outside this set is invisible to
-#: every F8 check.
+#: every F8 check.  Once NFM-4005 merges, prefer parsing the predicates out of
+#: the SQL so this frozenset cannot drift from the scorecard it mirrors.
 F8_ACCEPTED_ELEMENT_SYSTEMS: frozenset[str] = frozenset({"UO2", "UO2+Cr", "U-Cr-O"})
 
 #: Prod Owen2023 labels that intentionally canonicalise OUTSIDE the F8 buckets.
@@ -124,26 +128,38 @@ def build_snapshot(
     captured_at: str,
     captured_from: str,
     newest_node_created_at: str | None = None,
+    source_id: str = OWEN2023_SOURCE_ID,
     template: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a refreshed snapshot payload, preserving the existing preamble.
 
-    The ``_comment`` / ``query`` / ``source_name`` documentation fields are
-    carried over from ``template`` so a refresh never silently drops the
-    provenance narrative a reader needs to trust the file.
+    The ``_comment`` / ``source_name`` documentation fields are carried over
+    from ``template`` so a refresh never silently drops the provenance
+    narrative a reader needs to trust the file.  The ``source_id`` and the
+    reconstructed ``query`` are derived from the explicit ``source_id`` kwarg
+    so a caller cannot accidentally write foreign labels under Owen2023
+    provenance (NFM-4048 CR finding): the helper used to read ``source_id``
+    from ``template`` and never from the caller's intent, so a
+    ``--source-id <other-uuid>`` invocation wrote the other source's labels
+    into the fixture while leaving the recorded ``source_id`` /
+    ``query`` pointing at Owen2023.
     """
     base = dict(template or {})
     unique = sorted(set(labels))
     return {
         **base,
         "schema_version": base.get("schema_version", 1),
-        "source_id": base.get("source_id", OWEN2023_SOURCE_ID),
+        "source_id": source_id,
         "node_type": base.get("node_type", "Material"),
         "captured_at": captured_at,
         "captured_from": captured_from,
         "newest_node_created_at": newest_node_created_at,
         "label_count": len(unique),
         "labels": unique,
+        "query": (
+            f"SELECT DISTINCT label FROM kg_nodes "
+            f"WHERE source_id = '{source_id}' AND node_type = 'Material'"
+        ),
     }
 
 
