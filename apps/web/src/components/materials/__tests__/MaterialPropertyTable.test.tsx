@@ -979,6 +979,113 @@ describe("MaterialPropertyTable — NFM-4087 grouped rendering", () => {
     expect(screen.getByText("post-anneal")).toBeInTheDocument()
   })
 
+  it("wraps the expanded conditions sub-table in a horizontally-scrollable container so T/P/env/dpa/notes columns stay reachable on mobile (NFM-4118)", () => {
+    // NFM-4118 (QA-FOLLOWUP W2 from NFM-4087) — on a ~390px viewport,
+    // the parent MaterialPropertyTable's `scroll={{x: 800}}` does NOT
+    // cover the expander's hand-written sub-table (it renders nested
+    // inside Ant Table and so does not inherit the parent scroll). The
+    // sub-table must therefore carry its own overflow handling, with a
+    // minimum width wide enough to keep all six column headers
+    // readable when the user scrolls horizontally.
+    const source = makeSource({ title: "NFM-4118 source" })
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "n1",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-1",
+            temperature: 873.15,
+            pressure: 0.1,
+            environment: "inert",
+            irradiation_dose: 5.0,
+            notes: "pre-anneal",
+          }),
+        ],
+      }),
+      makeProperty({
+        id: "n2",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-2",
+            temperature: 1073.15,
+            pressure: 10.0,
+            environment: "oxidising",
+            irradiation_dose: 50.0,
+            notes: "post-anneal ramp 5 K/min",
+          }),
+        ],
+      }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    const expandButton = screen.getByRole("button", { name: "展开 conditions" })
+    fireEvent.click(expandButton)
+
+    // Heading confirms the expander opened.
+    const heading = screen.getByText(/底层 \d+ 条 measurement 的 conditions/)
+    expect(heading).toBeInTheDocument()
+
+    // All six column headers must be present in the expander sub-table
+    // — they are reachable via horizontal scroll on narrow viewports.
+    // (Headers are unique to the expander because the parent table uses
+    // "属性名称" / "数值" / etc., not "温度" / "压力" / "环境".)
+    expect(screen.getByText("温度")).toBeInTheDocument()
+    expect(screen.getByText("压力")).toBeInTheDocument()
+    expect(screen.getByText("环境")).toBeInTheDocument()
+    expect(screen.getByText("辐照剂量")).toBeInTheDocument()
+    expect(screen.getByText("备注")).toBeInTheDocument()
+
+    // Scope to the expander container (the bg-slate-900/40 div holding
+    // both the heading and the hand-written sub-table).
+    const expanderContainer = heading.parentElement
+    expect(expanderContainer).not.toBeNull()
+    const subTable = expanderContainer!.querySelector("table")
+    expect(subTable).not.toBeNull()
+
+    // The sub-table must be wrapped in a horizontally-scrollable
+    // container so the wider cells do not push the page off-screen on
+    // narrow viewports. The wrapper may be the expander container
+    // itself or a child wrapper — accept either, as long as the chain
+    // from the table up to the closest scroll-bearing ancestor includes
+    // an `overflow-x: auto` element.
+    const wrapper = subTable!.parentElement
+    expect(wrapper).not.toBeNull()
+    const wrapperStyle = wrapper!.className + " " + (wrapper!.getAttribute("style") ?? "")
+    expect(wrapperStyle).toMatch(/overflow-x-auto|overflow-x:\s*auto/)
+
+    // The inner table must enforce a minimum width wide enough for the
+    // six columns to remain readable when the wrapper scrolls. The
+    // implementation may use either an inline `style="min-width: Npx"`
+    // or a Tailwind arbitrary class `min-w-[Npx]` — both forms are
+    // accepted here. The numeric value must be at least 480px (enough
+    // for the six column headers plus their content to remain
+    // readable when scrolled horizontally on a 390px viewport).
+    const tableClass = subTable!.className
+    const tableStyle = subTable!.getAttribute("style") ?? ""
+    const inlineMatch = tableStyle.match(/min-width:\s*(\d+)px/)
+    const tailwindMatch = tableClass.match(/min-w-\[(\d+)px\]/)
+    const matchedPxRaw = inlineMatch?.[1] ?? tailwindMatch?.[1]
+    expect(matchedPxRaw).not.toBeUndefined()
+    const minWidthPx = matchedPxRaw !== undefined ? parseInt(matchedPxRaw, 10) : 0
+    expect(minWidthPx).toBeGreaterThanOrEqual(480)
+  })
+
   it("shows the page-level fold count next to the total when the page folded", () => {
     const source = makeSource({ title: "Folded source" })
     const rows: ReadonlyArray<MaterialProperty> = [1, 2].map((i) =>
