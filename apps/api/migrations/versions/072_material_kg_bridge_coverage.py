@@ -289,7 +289,7 @@ def upgrade() -> None:
             INSERT INTO data_sources (title, source_type, year)
             SELECT :title, :source_type, :year
             WHERE NOT EXISTS (
-                SELECT 1 FROM data_sources WHERE title = :title
+                SELECT 1 FROM data_sources WHERE title = CAST(:title AS text)
             )
             """
         ),
@@ -311,7 +311,7 @@ def upgrade() -> None:
             """
             UPDATE datasets d
             SET source_id = (
-                SELECT id FROM data_sources WHERE title = :oecd_nea_title
+                SELECT id FROM data_sources WHERE title = CAST(:oecd_nea_title AS text)
             )
             WHERE d.title = 'U-10Mo - Unknown Source'
               AND d.source_id IS NOT NULL
@@ -380,10 +380,10 @@ def upgrade() -> None:
                     )
                     SELECT 'Material', :label, CAST(:props AS jsonb), 1.0, ds.id, 'active'
                     FROM data_sources ds
-                    WHERE ds.title = :oecd_nea_title
+                    WHERE ds.title = CAST(:oecd_nea_title AS text)
                       AND NOT EXISTS (
                           SELECT 1 FROM kg_nodes kn2
-                          WHERE kn2.node_type = 'Material' AND kn2.label = :label
+                          WHERE kn2.node_type = 'Material' AND kn2.label = CAST(:label AS text)
                       )
                     """
                 ),
@@ -403,7 +403,7 @@ def upgrade() -> None:
                     SELECT 'Material', :label, CAST(:props AS jsonb), 1.0, CAST(:src_id AS uuid), 'active'
                     WHERE NOT EXISTS (
                         SELECT 1 FROM kg_nodes kn2
-                        WHERE kn2.node_type = 'Material' AND kn2.label = :label
+                        WHERE kn2.node_type = 'Material' AND kn2.label = CAST(:label AS text)
                     )
                       AND EXISTS (
                           SELECT 1 FROM data_sources ds
@@ -464,7 +464,7 @@ def downgrade() -> None:
             )
             WHERE d.title = 'U-10Mo - Unknown Source'
               AND d.source_id IN (
-                  SELECT id FROM data_sources WHERE title = :oecd_nea_title
+                  SELECT id FROM data_sources WHERE title = CAST(:oecd_nea_title AS text)
               )
             """
         ),
@@ -478,7 +478,7 @@ def downgrade() -> None:
             sa.text(
                 """
                 DELETE FROM kg_nodes
-                WHERE node_type = 'Material' AND label = :label
+                WHERE node_type = 'Material' AND label = CAST(:label AS text)
                 """
             ),
             {"label": label},
@@ -489,7 +489,7 @@ def downgrade() -> None:
         sa.text(
             """
             DELETE FROM data_sources
-            WHERE title = :title
+            WHERE title = CAST(:title AS text)
               AND NOT EXISTS (
                   SELECT 1 FROM datasets WHERE source_id = data_sources.id
               )
