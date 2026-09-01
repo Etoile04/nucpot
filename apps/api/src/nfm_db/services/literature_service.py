@@ -648,6 +648,74 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             db=db,
         )
 
+        # --- Step 3a: persist extraction chunks (BUG-16 wiring, NFM-4077) --
+        # `ontofuel_extract` chunks internally but discards them. The
+        # gap_scanner (Phase 4) reads `extraction_chunks` — without rows
+        # here, extraction_gaps can never populate. Persist one chunk row
+        # per (up to) 20K-char segment of content_md under a job tagged
+        # with the ontology version that produced the extraction, then
+        # run the per-literature gap scan so missed expected-properties
+        # become visible ExtractionGap rows.
+        try:
+            from nfm_db.models.extraction_chunk import ExtractionChunk as _Chunk
+            from nfm_db.models.extraction_job import ExtractionJob as _Job
+            from nfm_db.services.extraction_pipeline import (
+                _chunk_content as _chunk_split,
+            )
+            from nfm_db.services.extraction_pipeline import (
+                _get_latest_published_ontology,
+            )
+            from nfm_db.services.gap_scanner import GapScanService
+
+            _ov = await _get_latest_published_ontology(db)
+            if _ov is not None and ds.content_md:
+                _job = _Job(
+                    source_reference=str(ds.id),
+                    source_type="datasource",
+                    status="completed",
+                    corpus_id=str(ds.id),
+                    ontology_version_id=_ov.id,
+                )
+                db.add(_job)
+                await db.flush()
+
+                for _i, _seg in enumerate(_chunk_split(ds.content_md)):
+                    db.add(
+                        _Chunk(
+                            job_id=_job.id,
+                            step_name="chunk",
+                            source_reference=f"segment:{_i}",
+                            chunk_index=_i,
+                            content=_seg[:2000],  # preview cap
+                            token_count=max(1, len(_seg) // 4),
+                            metadata_={
+                                "segment_index": _i,
+                                "segment_chars": len(_seg),
+                            },
+                        )
+                    )
+
+                _gaps = await GapScanService(db).scan_literature(
+                    literature_id=ds.id,
+                    ontology_version=_ov.version,
+                    only_open=False,
+                )
+                logger.info(
+                    "process_literature: datasource_id=%s chunk+gap wiring: "
+                    "chunks=%d gaps=%d (ontology=%s)",
+                    ds.id,
+                    len(_chunk_split(ds.content_md)),
+                    len(_gaps),
+                    _ov.version,
+                )
+        except Exception:  # wiring is best-effort, never gates extraction
+            logger.warning(
+                "process_literature: datasource_id=%s — chunk persistence / "
+                "gap scan failed (non-fatal)",
+                ds.id,
+                exc_info=True,
+            )
+
         # --- Step 3b: heuristic supplement (NFM-3424) --------------------
         # Always run the regex extractor alongside the LLM path.
         # The LLM catches narrative prose; the heuristic catches inline
