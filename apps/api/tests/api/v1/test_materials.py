@@ -283,3 +283,166 @@ async def test_search_materials_paginated(async_client, db_session) -> None:
     data = response.json()["data"]
     assert data["total"] == 5
     assert len(data["items"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# NFM-4057 — placeholder canonical row hidden from list/search
+#
+# The `Unknown Material (canonical)` row is the Phase 4 strategy B target of
+# the NFM-3918 / NFM-4052 Unknown cleanup. It carries 96 measurements + 13
+# datasets so it cannot be deleted, but its bad-word name must not leak
+# onto the public `/materials` list or `/materials/search?q=…` results.
+#
+# Direct GET by UUID and the `/materials/{id}/properties` data path MUST
+# stay open — curation workflows depend on them.
+# ---------------------------------------------------------------------------
+
+# Matches the literal name applied by NFM-3918 / NFM-4052 cleanup. Treated
+# as a single-source-of-truth constant by the service-layer filter.
+PLACEHOLDER_CANONICAL_NAME = "Unknown Material (canonical)"
+# Materialized in prod 2026-09-01 11:08:05 UTC by NFM-4052.
+PLACEHOLDER_CANONICAL_ID = uuid.UUID("021036bf-d7cc-434c-8f91-a08030027b4a")
+
+
+@pytest.mark.asyncio
+async def test_list_materials_excludes_canonical_placeholder(
+    async_client, db_session
+) -> None:
+    """NFM-4057 AC: list endpoint never returns the canonical row."""
+    await _seed_material(db_session, name="Real-A")
+    await _seed_material(db_session, name="Real-B")
+    await _seed_material(
+        db_session,
+        id=PLACEHOLDER_CANONICAL_ID,
+        name=PLACEHOLDER_CANONICAL_NAME,
+    )
+
+    response = await async_client.get("/api/v1/materials?page=1&per_page=20")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    names = [item["name"] for item in data["items"]]
+    assert "Unknown Material (canonical)" not in names
+
+
+@pytest.mark.asyncio
+async def test_list_materials_pagination_never_shows_canonical(
+    async_client, db_session
+) -> None:
+    """Filter must apply to every page (not just page 1)."""
+    await _seed_material(
+        db_session,
+        id=PLACEHOLDER_CANONICAL_ID,
+        name=PLACEHOLDER_CANONICAL_NAME,
+    )
+    for i in range(25):
+        await _seed_material(db_session, name=f"Real-{i:02d}")
+
+    seen_names: set[str] = set()
+    for page in range(1, 4):  # per_page=10 → 3 pages, 25 + 1 = 26 rows
+        response = await async_client.get(
+            f"/api/v1/materials?page={page}&per_page=10"
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        for item in data["items"]:
+            seen_names.add(item["name"])
+
+    assert "Unknown Material (canonical)" not in seen_names
+
+
+@pytest.mark.asyncio
+async def test_search_materials_excludes_canonical_placeholder(
+    async_client, db_session
+) -> None:
+    """NFM-4057 AC: search results never contain the canonical row."""
+    await _seed_material(db_session, name="Uranium Dioxide")
+    await _seed_material(
+        db_session,
+        id=PLACEHOLDER_CANONICAL_ID,
+        name=PLACEHOLDER_CANONICAL_NAME,
+    )
+
+    response = await async_client.get("/api/v1/materials/search?q=unknown")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    names = [item["name"] for item in data["items"]]
+    assert "Unknown Material (canonical)" not in names
+
+
+@pytest.mark.asyncio
+async def test_get_material_canonical_uuid_still_returns_full_record(
+    async_client, db_session
+) -> None:
+    """NFM-4057 AC: direct GET by canonical UUID still returns 200.
+
+    Curation paths (NFM-3918 / NFM-4052 follow-ups) resolve the canonical by
+    UUID to reattribute the 96 measurements and 13 datasets. A 404 here
+    would break the entire curation backlog.
+    """
+    await _seed_material(
+        db_session,
+        id=PLACEHOLDER_CANONICAL_ID,
+        name=PLACEHOLDER_CANONICAL_NAME,
+    )
+
+    response = await async_client.get(
+        f"/api/v1/materials/{PLACEHOLDER_CANONICAL_ID}"
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["name"] == "Unknown Material (canonical)"
+    assert data["id"] == str(PLACEHOLDER_CANONICAL_ID)
+
+
+@pytest.mark.asyncio
+async def test_list_materials_total_reflects_filtered_count(
+    async_client, db_session
+) -> None:
+    """NFM-4057 AC: ``total`` is the post-filter count."""
+    await _seed_material(db_session, name="Real-1")
+    await _seed_material(db_session, name="Real-2")
+    await _seed_material(db_session, name="Real-3")
+    await _seed_material(
+        db_session,
+        id=PLACEHOLDER_CANONICAL_ID,
+        name=PLACEHOLDER_CANONICAL_NAME,
+    )
+
+    response = await async_client.get("/api/v1/materials")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] == 3  # excludes canonical
+
+
+@pytest.mark.asyncio
+async def test_list_material_properties_canonical_path_unblocked(
+    async_client, db_session
+) -> None:
+    """NFM-4057 AC integration: /materials/{canonical}/properties still returns 200.
+
+    This is the data path that surfaces the 96 measurements + 13 datasets
+    that the canonical carries. The filter is scoped to list/search only;
+    the per-material property endpoint must remain unblocked.
+    """
+    await _seed_material(
+        db_session,
+        id=PLACEHOLDER_CANONICAL_ID,
+        name=PLACEHOLDER_CANONICAL_NAME,
+    )
+
+    response = await async_client.get(
+        f"/api/v1/materials/{PLACEHOLDER_CANONICAL_ID}/properties"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # The /materials/{id}/properties endpoint uses the standard ApiResponse
+    # envelope on top of MaterialPropertyListResponse — distinct from the
+    # PaginatedResponse shape. The critical assertion is that the endpoint
+    # is reachable by the canonical UUID (200, well-formed envelope) — the
+    # 96 measurements + 13 datasets would populate ``body["data"]["data"]``
+    # if seeded.
+    assert body["success"] is True
+    inner = body["data"]
+    assert isinstance(inner.get("data"), list)
+    assert "meta" in inner
+    assert inner["meta"]["total"] == 0  # no datasets seeded
