@@ -86,13 +86,47 @@ _UNIT_ALIASES: dict[str, str] = {
 # Element-system canonicalization: unicode subscripts → plain formula.
 _SUBSCRIPTS = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 
+# Morphology adjectives the corpus attaches before the chemistry on a
+# Material KGNode label.  Order matters: compound prefixes ("undoped and
+# Cr-doped …") must come BEFORE their single-word counterparts so the
+# strip-loop matches the longer string first.
+#
+# These are the prefixes the Owen2023 (source 9320cb50) corpus emits;
+# add new ones here as the corpus grows.  Anything the loop doesn't
+# recognise falls through unchanged (existing pass-through behaviour),
+# so the table is intentionally additive.
+_ADJECTIVE_PREFIXES: tuple[str, ...] = (
+    "undoped and Cr-doped ",
+    "Cr-doped ",
+    "amorphous ",
+    "crystalline ",
+    "polycrystalline ",
+    "nano-",
+)
+
 _CONDITION_TEMP_RE = re.compile(r"^(temp_C|temp_K|temperature)$")
 _CONDITION_PRESSURE_RE = re.compile(r"^(pressure_MPa|pressure_GPa|pressure)$")
 _CELSIUS_TO_K = 273.15
 
 
 def _canonical_element_system(label: str) -> str:
-    """``U₂Mo`` → ``U-Mo``; ``UO2``/``U3Si2`` pass through as formulas."""
+    """Normalize a Material KGNode label to its canonical element_system.
+
+    Subscript-bearing alloy notation ``U₂Mo`` → ``U-Mo`` (alloy, not
+    stoichiometry).  Plain formulas ``UO2``/``U3Si2`` pass through.  The
+    corpus also attaches morphology adjectives ("amorphous UO2",
+    "Cr-doped UO2", "polycrystalline U-10Mo", …) which the F8 scorecard
+    (``audit/f8_scorecard_v050.sql``) cannot match — its predicates
+    accept only ``'UO2'``, ``'UO2+Cr'``, or ``'U-Cr-O'``.  We strip the
+    adjectives the corpus emits and collapse onto the bare chemistry.
+
+    Cr-bearing UO2 labels all map to ``'UO2+Cr'``: the Owen2023 corpus
+    describes a UO2 matrix + Cr dopant, never the bare U-Cr-O ternary,
+    so the matrix+dopant form is the unambiguous pick.  Add a new
+    ``elif`` branch if a future corpus introduces a Cr label without
+    UO2 in it (e.g. ``"Cr-U-O"`` from a chromium-uranium oxide paper)
+    and pin it to ``'U-Cr-O'``.
+    """
     # Subscript digits (₂) are alloy notation, not stoichiometry: hyphenate.
     # ASCII digits mean a real formula (UO2, U3Si2) — keep intact.
     has_subscript = any(ch in "₀₁₂₃₄₅₆₇₈₉" for ch in label)
@@ -102,7 +136,30 @@ def _canonical_element_system(label: str) -> str:
         if len(parts) > 1:
             return "-".join(parts)
         return plain
-    return plain
+    # ASCII label: check for Cr-bearing UO2 BEFORE stripping adjectives
+    # — "Cr-doped" is itself an adjective and would be removed by the
+    # loop below, hiding the dopant from the predicate.
+    has_cr = "Cr" in plain
+    stripped = plain
+    while True:
+        matched = False
+        for prefix in _ADJECTIVE_PREFIXES:
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix) :]
+                matched = True
+                break
+        if not matched:
+            break
+    if has_cr and "UO2" in stripped:
+        return "UO2+Cr"
+    if "UO2" in stripped:
+        return "UO2"
+    # Non-UO2 ASCII label: return ``stripped`` (== ``plain`` when the
+    # strip-loop matched nothing, otherwise the post-strip form).
+    # Preserves the pre-NFM-4037 behaviour for ``"U"``/``"Cr"``/
+    # ``"U3Si2"`` (no prefix matches → ``stripped == plain``) while
+    # letting ``"polycrystalline U-10Mo"`` collapse to ``"U-10Mo"``.
+    return stripped
 
 
 def _material_label(material: Any) -> str:
