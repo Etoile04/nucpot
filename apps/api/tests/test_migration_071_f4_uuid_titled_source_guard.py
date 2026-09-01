@@ -391,31 +391,32 @@ class TestMigration071HealthEvents:
     def test_trigger_insert_includes_id_with_gen_random_uuid(
         self, trigger_function_sql: str
     ) -> None:
-        """Regression-guard for NFM-4097 finding 1.
+        """Regression-guard for NFM-4097 finding 1 (dblink form).
 
         ``health_events.id`` (NFM-2220 / migration 037) is
         ``uuid NOT NULL PRIMARY KEY`` **without** a server-side
-        ``DEFAULT``.  The trigger's ``INSERT INTO health_events``
-        must therefore populate ``id`` explicitly via
-        ``gen_random_uuid()`` — otherwise the prior INSERT raises
-        ``psycopg2.errors.NotNullViolation`` and **aborts the
-        function before the RAISE EXCEPTION** runs, masking the
-        intended ``check_violation`` and silently killing AC-4's
-        monitoring data.
+        ``DEFAULT``.  The trigger's ``health_events`` INSERT now
+        runs inside a ``dblink_exec`` SQL string literal (NFM-4097
+        finding 2 — autonomous transaction so the row persists when
+        the outer ``RAISE EXCEPTION`` rolls back).  That string
+        literal must therefore:
 
-        The structural check below pins two invariants so a
-        future regression cannot slip through:
-
-          1. The column list declares ``id`` (so PG is not asked
+          1. Declare ``id`` in the column list (so PG is not asked
              to infer a NULL primary key).
-          2. The VALUES clause evaluates ``gen_random_uuid()``
-             for that column (so the row actually inserts).
+          2. Evaluate ``gen_random_uuid()`` in the ``VALUES`` clause
+             (so the row actually inserts).
 
-        Both substrings must appear **inside the plpgsql block**
-        (i.e. after ``AS $func$`` and before ``$func$ LANGUAGE
-        plpgsql``); a stray global ``id`` somewhere else in the
-        migration does not satisfy the invariant — we search the
-        rendered function SQL only.
+        Without these, the prior bug recurs: a NotNullViolation on
+        ``health_events.id`` aborts the dblink exec, the inner
+        exception handler re-raises, and the data_sources INSERT is
+        rejected — but AC-4's monitoring row never appears, leaving
+        ``/health`` permanently ``ok`` even when the trigger fires.
+
+        The dblink INSERT is built via ``format(...)`` with the
+        column list and VALUES spread across several adjacent
+        string-literal segments (PG-side string concatenation).
+        Collapse them first so the regex sees a single logical
+        string.
         """
         # Extract the plpgsql body between $func$ ... $func$ so a
         # stray ``id`` elsewhere does not pass.
@@ -430,17 +431,28 @@ class TestMigration071HealthEvents:
         )
         plpgsql_body = m.group(1)
 
+        # Collapse PG-side adjacent string-literal concatenation
+        # (``'abc' 'def'`` -> ``'abcdef'``) so the regex sees the
+        # logical SQL string as one token.  This is conservative:
+        # we only collapse single-quoted segments separated by
+        # whitespace, matching PG's literal-concatenation rule.
+        collapsed = re.sub(
+            r"'((?:[^']|'')*)'(?=\s*')",
+            r"'\1'",
+            plpgsql_body,
+        )
+
         # INVARIANT 1: column list declares ``id`` alongside the
         # other health_events columns.
         assert re.search(
             r"INSERT\s+INTO\s+health_events\s*\(\s*[^)]*\bid\b",
-            plpgsql_body,
+            collapsed,
             flags=re.IGNORECASE,
         ), (
-            "trigger INSERT INTO health_events must declare 'id' in "
-            "the column list — health_events.id is NOT NULL with no "
-            "server-side DEFAULT (NFM-2220 / migration 037); the "
-            "omission raised psycopg2.errors.NotNullViolation and "
+            "trigger's dblink_exec SQL must declare 'id' in the "
+            "health_events column list — health_events.id is NOT NULL "
+            "with no server-side DEFAULT (NFM-2220 / migration 037); "
+            "the omission raised psycopg2.errors.NotNullViolation and "
             "masked the intended check_violation in NFM-4097 finding 1"
         )
 
@@ -448,12 +460,12 @@ class TestMigration071HealthEvents:
         # the row actually inserts and AC-4 monitoring flips.
         assert re.search(
             r"VALUES\s*\([^)]*gen_random_uuid\(\)",
-            plpgsql_body,
+            collapsed,
             flags=re.IGNORECASE,
         ), (
-            "trigger INSERT INTO health_events must call "
-            "gen_random_uuid() in the VALUES clause to populate "
-            "the 'id' column (NFM-4097 finding 1)"
+            "trigger's dblink_exec SQL must call gen_random_uuid() in "
+            "the VALUES clause to populate health_events.id "
+            "(NFM-4097 finding 1)"
         )
 
     def test_check_constraint_drop_and_recreate_present(self, migration_source: str) -> None:
@@ -473,6 +485,221 @@ class TestMigration071HealthEvents:
             migration_source,
             flags=re.IGNORECASE,
         ), "migration must ADD CONSTRAINT ck_health_events_event_type with the extended enum"
+
+
+# ---------------------------------------------------------------------------
+# Autonomous transaction via dblink (NFM-4097 finding 2)
+# ---------------------------------------------------------------------------
+
+
+class TestMigration071DblinkAutonomousTransaction:
+    """The trigger must persist ``health_events`` via dblink so AC-4
+    can count blocks even when the outer ``RAISE EXCEPTION`` rolls
+    back the data_sources INSERT.
+
+    Without this indirection, a structural-only check (NFM-4097
+    finding 1) cannot catch the bug: the SQL string looks correct
+    but every ``health_events`` INSERT gets wiped by the same
+    transaction that aborts the data_sources INSERT.
+    """
+
+    def test_upgrade_creates_dblink_extension(self, migration_source: str) -> None:
+        """Upgrade must install the ``dblink`` extension before the
+        trigger that depends on it.
+
+        ``dblink`` ships with the ``postgresql-contrib`` package (the
+        ``pgvector/pgvector:pg16`` Docker image this stack uses
+        includes it).  ``CREATE EXTENSION IF NOT EXISTS`` is the
+        idempotent install primitive; an upgrade on a fresh DB
+        installs it, an upgrade on a DB that already has it is a
+        no-op.
+        """
+        assert re.search(
+            r"CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\s+dblink",
+            migration_source,
+            flags=re.IGNORECASE,
+        ), (
+            "upgrade must CREATE EXTENSION IF NOT EXISTS dblink — the "
+            "trigger's autonomous-transaction pattern requires the "
+            "dblink extension to be installed first (NFM-4097 finding 2)"
+        )
+
+    def test_trigger_uses_dblink_connect_u(
+        self, trigger_function_sql: str
+    ) -> None:
+        """The trigger must open the autonomous-transaction connection
+        via ``dblink_connect_u``.
+
+        ``dblink_connect_u`` (the untrusted variant) bypasses
+        ``pg_hba.conf`` and reuses the current session's credentials,
+        so the trigger does not need to embed a password.  A
+        non-``_u`` ``dblink_connect`` would require a libpq
+        connection string with credentials and is rejected here to
+        keep the migration portable across staging / prod.
+        """
+        assert re.search(
+            r"\bdblink_connect_u\s*\(",
+            trigger_function_sql,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger must call dblink_connect_u() — this opens the "
+            "autonomous-transaction connection used to persist "
+            "health_events past the outer RAISE EXCEPTION rollback "
+            "(NFM-4097 finding 2)"
+        )
+
+    def test_trigger_uses_dblink_exec(
+        self, trigger_function_sql: str
+    ) -> None:
+        """The trigger must run the ``INSERT INTO health_events``
+        via ``dblink_exec`` so it executes in the autonomous
+        transaction (not the outer one).
+        """
+        assert re.search(
+            r"\bdblink_exec\s*\(",
+            trigger_function_sql,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger must call dblink_exec() — the INSERT INTO "
+            "health_events must run inside the autonomous connection "
+            "(opened by dblink_connect_u), not in the outer "
+            "transaction (NFM-4097 finding 2)"
+        )
+
+    def test_trigger_uses_dblink_disconnect(
+        self, trigger_function_sql: str
+    ) -> None:
+        """The trigger must close the autonomous connection via
+        ``dblink_disconnect`` so the backend does not accumulate
+        idle dblink connections across repeated trigger firings.
+        """
+        assert re.search(
+            r"\bdblink_disconnect\s*\(",
+            trigger_function_sql,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger must call dblink_disconnect() to release the "
+            "autonomous-transaction connection (NFM-4097 finding 2)"
+        )
+
+    def test_trigger_dblink_conn_name_is_pid_suffixed(
+        self, trigger_function_sql: str
+    ) -> None:
+        """The dblink connection name must be suffixed with
+        ``pg_backend_pid()`` so two trigger firings in the same
+        backend do not collide on the named-connection namespace.
+
+        Without the suffix, a second trigger firing in the same
+        backend would either fail with ``connection already exists``
+        or step on the first connection's state.
+        """
+        # Look for pg_backend_pid() inside the plpgsql body (so a
+        # stray reference in a comment does not pass).
+        m = re.search(
+            r"AS\s+\$func\$(.*?)\$func\$\s+LANGUAGE\s+plpgsql",
+            trigger_function_sql,
+            flags=re.DOTALL,
+        )
+        assert m is not None, (
+            "trigger SQL must define a plpgsql block delimited with "
+            "$func$ ... $func$ LANGUAGE plpgsql"
+        )
+        plpgsql_body = m.group(1)
+        assert re.search(
+            r"pg_backend_pid\(\)",
+            plpgsql_body,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger's dblink connection name must include "
+            "pg_backend_pid() so concurrent firings in the same "
+            "backend do not collide on the named-connection namespace "
+            "(NFM-4097 finding 2)"
+        )
+
+    def test_trigger_dblink_connstr_uses_current_db_and_user(
+        self, trigger_function_sql: str
+    ) -> None:
+        """The dblink connection string must derive ``dbname`` and
+        ``user`` from the current session (``current_database()``,
+        ``current_user``) so the trigger is portable across staging
+        / prod without embedding credentials.
+        """
+        m = re.search(
+            r"AS\s+\$func\$(.*?)\$func\$\s+LANGUAGE\s+plpgsql",
+            trigger_function_sql,
+            flags=re.DOTALL,
+        )
+        assert m is not None, (
+            "trigger SQL must define a plpgsql block delimited with "
+            "$func$ ... $func$ LANGUAGE plpgsql"
+        )
+        plpgsql_body = m.group(1)
+        assert re.search(
+            r"current_database\(\)",
+            plpgsql_body,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger's dblink connection string must derive dbname "
+            "from current_database() so the trigger is portable "
+            "across staging / prod (NFM-4097 finding 2)"
+        )
+        assert re.search(
+            r"current_user\b",
+            plpgsql_body,
+            flags=re.IGNORECASE,
+        ), (
+            "trigger's dblink connection string must derive user "
+            "from current_user so the trigger is portable across "
+            "staging / prod (NFM-4097 finding 2)"
+        )
+
+    def test_trigger_no_direct_insert_into_health_events(
+        self, trigger_function_sql: str
+    ) -> None:
+        """The trigger must NOT contain a direct (non-dblink)
+        ``INSERT INTO health_events`` statement — a direct INSERT
+        runs in the outer transaction and is rolled back by the
+        subsequent ``RAISE EXCEPTION``, defeating AC-4.
+
+        The only ``INSERT INTO health_events`` in the function body
+        must be the SQL string literal passed to ``dblink_exec``.
+        This guard pins the autonomous-transaction invariant so a
+        future "simplification" cannot regress to the broken form
+        without breaking the test.
+        """
+        m = re.search(
+            r"AS\s+\$func\$(.*?)\$func\$\s+LANGUAGE\s+plpgsql",
+            trigger_function_sql,
+            flags=re.DOTALL,
+        )
+        assert m is not None, (
+            "trigger SQL must define a plpgsql block delimited with "
+            "$func$ ... $func$ LANGUAGE plpgsql"
+        )
+        plpgsql_body = m.group(1)
+
+        # The format() builder spreads the INSERT across several
+        # adjacent string segments, so we strip all single-quoted
+        # string literals first (replacing them with ``''``) and
+        # then search for any top-level ``INSERT INTO health_events``
+        # that runs in the outer transaction.  Any occurrence after
+        # stripping is the regression we are guarding against — a
+        # direct INSERT in the outer transaction would be rolled
+        # back by the subsequent ``RAISE EXCEPTION`` and defeat
+        # AC-4.
+        body_no_strings = re.sub(r"'(?:[^']|'')*'", "''", plpgsql_body)
+        direct_inserts = re.findall(
+            r"\bINSERT\s+INTO\s+health_events\b",
+            body_no_strings,
+            flags=re.IGNORECASE,
+        )
+        assert direct_inserts == [], (
+            "trigger must NOT execute a direct INSERT INTO health_events "
+            "in the outer transaction — every health_events write must "
+            "go through dblink_exec so it commits in an autonomous "
+            "transaction and survives the outer RAISE EXCEPTION rollback "
+            "(NFM-4097 finding 2). Found: " + repr(direct_inserts)
+        )
 
 
 # ---------------------------------------------------------------------------

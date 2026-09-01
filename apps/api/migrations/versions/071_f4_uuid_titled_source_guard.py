@@ -36,11 +36,16 @@ Trigger semantics
         ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 
     On match:
-      1. Writes one ``health_events`` row with
+      1. Writes one ``health_events`` row via an **autonomous
+         transaction** (the ``dblink`` extension), with
          ``event_type='uuid_titled_source_blocked'``,
          ``severity='critical'``, ``source_service='ingest'``,
          context carrying ``source_id`` / ``title`` / ``doi`` /
-         ``TG_OP`` / ``txid_current()``.
+         ``TG_OP`` / ``txid_current()``.  The autonomous
+         transaction is required because the subsequent
+         ``RAISE EXCEPTION`` rolls back the outer transaction,
+         which would otherwise wipe the ``health_events`` row
+         too (NFM-4097 finding 2).
       2. RAISES ``EXCEPTION ... USING ERRCODE = 'check_violation'``
          so the caller surfaces a SQLAlchemy ``IntegrityError``
          instead of a silent insert.
@@ -93,9 +98,26 @@ AC-4 coupling
 
 The AC-4 health-endpoint flip (``/health`` returns ``degraded``
 when ``uuid_titled_source_blocked`` events exist in the last 24h)
-depends on this trigger being installed, so the two ACs are
-shipped together as a single ticket per the CPO's QA-FOLLOWUP
-disposition (NFM-4097).
+depends on this trigger being installed AND on its autonomous-
+transaction semantics persisting the ``health_events`` row past
+the outer ``RAISE EXCEPTION``.  Without the ``dblink`` indirection
+the AC-4 health-events row would be silently rolled back and
+``/health`` would never observe the block; with the indirection
+the row commits in its own transaction and the health-endpoint
+reader can count it.  Both ACs are shipped together as a single
+ticket per the CPO's QA-FOLLOWUP disposition (NFM-4097).
+
+dblink extension
+----------------
+
+This migration calls ``CREATE EXTENSION IF NOT EXISTS dblink``
+in the upgrade.  ``dblink`` is a stock ``postgresql-contrib``
+extension (already available in the ``postgresql-16`` /
+``postgresql-contrib-16`` package shipped by the
+``pgvector/pgvector:pg16`` Docker image this stack uses).  The
+extension is left installed on downgrade — it is harmless when
+unused and dropping it would error if any session had a live
+``dblink`` connection.
 
 Cross-references
 ----------------
@@ -200,20 +222,56 @@ def _build_trigger_function_sql() -> str:
     doubled so a future edit cannot introduce a SQL-injection
     vector.
 
+    Autonomous transaction via ``dblink`` (NFM-4097 finding 2)
+    ---------------------------------------------------------
+
+    AC-3 + AC-4 jointly require:
+
+    * The ``INSERT INTO data_sources ...`` to **raise** an exception
+      so the caller surfaces ``IntegrityError`` (caller wants to know).
+    * The ``INSERT INTO health_events`` row to **persist** so
+      ``/api/v1/health`` can flip to ``degraded`` (monitoring wants
+      to know).
+
+    These two requirements are incompatible in standard Postgres: a
+    ``RAISE EXCEPTION`` aborts the entire transaction, rolling back
+    any writes performed in the trigger — including a naive
+    ``INSERT INTO health_events``.  A structural-only regression
+    guard (NFM-4097 finding 1, ``test_trigger_insert_includes_id_with_gen_random_uuid``)
+    cannot catch this because the SQL string is correct, it just
+    gets rolled back at runtime.
+
+    The fix is an **autonomous transaction** via the ``dblink``
+    extension (Postgres has no native autonomous transactions).
+    ``dblink_connect_u`` opens a backend connection using the
+    current session's credentials, ``dblink_exec`` runs the
+    ``INSERT INTO health_events`` in that connection's own
+    transaction, and the row commits independently of the outer
+    transaction's rollback.  The connection name is suffixed with
+    ``pg_backend_pid()`` so two triggers fired by the same backend
+    do not collide on the named-connection namespace.
+
+    The connection string derives ``dbname`` + ``user`` from the
+    current session (``current_database()`` / ``current_user``),
+    which keeps the trigger portable across staging / prod without
+    hardcoding credentials.  ``dblink_connect_u`` (the untrusted
+    variant) bypasses ``pg_hba.conf`` and reuses the current
+    session's authentication, so no password is embedded in the
+    function body.  NFM-4097 finding 2 (regression-guard:
+    ``test_trigger_uses_dblink_autonomous_transaction`` pins the
+    presence of ``dblink_connect_u`` + ``dblink_exec`` in the
+    function body so a future edit cannot regress to the
+    non-autonomous form without breaking the test).
+
     health_events.id policy
     -----------------------
 
     ``health_events.id`` (NFM-2220 / migration 037) is
     ``uuid NOT NULL PRIMARY KEY`` **without** a server-side
-    ``DEFAULT``.  The trigger's ``INSERT INTO health_events`` must
-    therefore populate ``id`` explicitly; we use
-    ``gen_random_uuid()`` so the column list stays declarative
-    (NFM-4097 finding 1, regression-guard: a future edit that
-    omits ``id`` again raises ``psycopg2.errors.NotNullViolation``
-    instead of the intended ``check_violation`` and silently
-    masks the production-side alert).  The structural test
-    ``test_trigger_insert_includes_id_with_gen_random_uuid`` pins
-    this invariant.
+    ``DEFAULT``.  The trigger's ``dblink_exec`` body populates
+    ``id`` explicitly via ``gen_random_uuid()``; the structural
+    test ``test_dblink_insert_includes_id_with_gen_random_uuid``
+    pins this invariant.
     """
     # Inline the regex as a single-quoted PL/pgSQL literal.
     # PostgreSQL dollar-quote the body with ``$func$ ... $func$`` so
@@ -226,22 +284,48 @@ def _build_trigger_function_sql() -> str:
         CREATE OR REPLACE FUNCTION {_TRIGGER_FN_NAME}()
         RETURNS trigger
         AS $func$
+        DECLARE
+            _dblink_conn text := 'nfm_uuid_blocked_' || pg_backend_pid()::text;
+            _dblink_connstr text := 'dbname=' || current_database() || ' user=' || current_user;
+            _dblink_connected boolean := false;
+            _event_context jsonb;
         BEGIN
             IF NEW.title ~ '{regex_literal}' THEN
-                INSERT INTO health_events (
-                    id, event_type, severity, source_service, context, created_at
-                ) VALUES (
-                    gen_random_uuid(),
-                    '{_TRIGGER_EVENT_TYPE}', 'critical', 'ingest',
-                    json_build_object(
-                        'source_id', NEW.id,
-                        'title', NEW.title,
-                        'doi', NEW.doi,
-                        'op', TG_OP,
-                        'txid', txid_current()
-                    ),
-                    NOW()
+                _event_context := jsonb_build_object(
+                    'source_id', NEW.id,
+                    'title', NEW.title,
+                    'doi', NEW.doi,
+                    'op', TG_OP,
+                    'txid', txid_current()
                 );
+                -- Autonomous transaction via dblink: persist health_events
+                -- so it survives the outer RAISE EXCEPTION rollback.  Any
+                -- dblink failure propagates via the inner EXCEPTION handler
+                -- so the INSERT is still rejected.
+                BEGIN
+                    PERFORM dblink_connect_u(_dblink_conn, _dblink_connstr);
+                    _dblink_connected := true;
+                    PERFORM dblink_exec(_dblink_conn, format(
+                        'INSERT INTO health_events ('
+                        'id, event_type, severity, source_service, context, created_at'
+                        ') VALUES (gen_random_uuid(), %L, %L, %L, %L::jsonb, NOW())',
+                        '{_TRIGGER_EVENT_TYPE}',
+                        'critical',
+                        'ingest',
+                        _event_context::text
+                    ));
+                    PERFORM dblink_disconnect(_dblink_conn);
+                    _dblink_connected := false;
+                EXCEPTION WHEN OTHERS THEN
+                    IF _dblink_connected THEN
+                        BEGIN
+                            PERFORM dblink_disconnect(_dblink_conn);
+                        EXCEPTION WHEN OTHERS THEN
+                            NULL;
+                        END;
+                    END IF;
+                    RAISE;
+                END;
                 RAISE EXCEPTION
                     'uuid_titled_source_blocked: source.title looks like a UUID (%)'
                     , NEW.title
@@ -279,24 +363,35 @@ def upgrade() -> None:
 
     Order of operations:
 
-    1. ``DROP CONSTRAINT ck_health_events_event_type`` — remove
+    1. ``CREATE EXTENSION IF NOT EXISTS dblink`` — required for the
+       autonomous-transaction pattern in the trigger function
+       (NFM-4097 finding 2; AC-4 needs ``health_events`` to persist
+       when the trigger's ``RAISE EXCEPTION`` rolls back the outer
+       INSERT).
+    2. ``DROP CONSTRAINT ck_health_events_event_type`` — remove
        the original NFM-2220 enum so we can replace it.
-    2. ``ADD CONSTRAINT ck_health_events_event_type ... CHECK (...)``
+    3. ``ADD CONSTRAINT ck_health_events_event_type ... CHECK (...)``
        with the original five values PLUS
        ``uuid_titled_source_blocked``.
-    3. ``CREATE OR REPLACE FUNCTION reject_uuid_titled_source()``
+    4. ``CREATE OR REPLACE FUNCTION reject_uuid_titled_source()``
        — install the plpgsql trigger function.
-    4. ``CREATE TRIGGER trg_data_sources_uuid_title`` — attach the
+    5. ``CREATE TRIGGER trg_data_sources_uuid_title`` — attach the
        trigger to ``data_sources``.
 
-    All four statements execute through ``bind.execute(sa.text(...))``
+    All five statements execute through ``bind.execute(sa.text(...))``
     with no bind params (NFM-4099 guard); the values originate from
     this module's own constants so literal inlining is safe.
     """
     bind = op.get_bind()
 
     # ------------------------------------------------------------------
-    # 1. Extend the health_events event_type CHECK constraint.
+    # 1. Install the dblink extension for the autonomous-transaction
+    #    pattern in the trigger function.
+    # ------------------------------------------------------------------
+    bind.execute(sa.text("CREATE EXTENSION IF NOT EXISTS dblink"))
+
+    # ------------------------------------------------------------------
+    # 2. Extend the health_events event_type CHECK constraint.
     # ------------------------------------------------------------------
     bind.execute(sa.text(f"ALTER TABLE health_events DROP CONSTRAINT {_EVENT_TYPE_CHECK_NAME}"))
     extended_event_types = (*_ORIGINAL_EVENT_TYPES, _TRIGGER_EVENT_TYPE)
@@ -309,7 +404,7 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 2. Install the trigger function + trigger.
+    # 3. Install the trigger function + trigger.
     # ------------------------------------------------------------------
     bind.execute(sa.text(_build_trigger_function_sql()))
     bind.execute(sa.text(_build_trigger_sql()))
