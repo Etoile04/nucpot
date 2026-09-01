@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from nfm_db.models import (
+    Author,
     Dataset,
     DataSource,
     DataSourceAuthor,
@@ -313,7 +314,7 @@ def _format_authors(data_source_authors: Iterable[DataSourceAuthor] | None) -> l
     return names
 
 
-def _author_display_name(author: Any) -> str:
+def _author_display_name(author: Author) -> str:
     """Render an Author as ``"Last, F."`` (initial-only first name).
 
     Falls back to ``full_name`` when ``first_name`` is missing so the
