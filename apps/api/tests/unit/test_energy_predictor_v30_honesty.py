@@ -133,15 +133,40 @@ class TestComputeEnergyConfidenceExploratory:
         codes = [w["code"] for w in warnings]
         assert "energy_model_exploratory" in codes
 
-    def test_warning_message_references_low_bucket(self, exploratory_metrics: dict) -> None:
+    def test_warning_message_references_exploratory_label(self, exploratory_metrics: dict) -> None:
+        """The warning message must reference the [EXPLORATORY] label and
+        the actual grouped-CV figure so the user can audit (NFM-3959
+        mandate 3)."""
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         _confidence, _source, warnings = _compute_energy_confidence(exploratory_metrics)
         msg = warnings[0]["message"].lower()
         assert "exploratory" in msg
-        assert "low" in msg
         # Must name the actual grouped-CV figure so the user can audit.
         assert f"{GROUPED_CV_R2_MEAN:.4f}" in warnings[0]["message"]
+
+    def test_warning_message_format_matches_nfm3959_spec(self, exploratory_metrics: dict) -> None:
+        """NFM-3959 mandate 3 pins the warning message format to:
+            "v3.0 metrics re-labeled [EXPLORATORY] under RD-3;
+             grouped-CV R^2=<value> reported as confidence until v3.1
+             ships (NFM-3958)."
+        Any future copy edit that drops the EXACT bracketed label, the
+        "RD-3" provenance tag, the "v3.1 ships (NFM-3958)" forward
+        reference, or the grouped-CV figure fails this test. Downstream
+        UIs grep the message text for these tokens.
+        """
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        _confidence, _source, warnings = _compute_energy_confidence(exploratory_metrics)
+        msg = warnings[0]["message"]
+        # Required tokens per the NFM-3959 spec.
+        assert "v3.0 metrics re-labeled" in msg
+        assert "[EXPLORATORY]" in msg
+        assert "RD-3" in msg
+        assert "reported as confidence" in msg
+        assert "until v3.1 ships (NFM-3958)" in msg
+        # The grouped-CV figure appears with 4-decimal precision.
+        assert f"{GROUPED_CV_R2_MEAN:.4f}" in msg
 
     def test_warning_message_does_not_advertise_headline(self, exploratory_metrics: dict) -> None:
         """The user-facing warning must not echo the inflated headline as a
@@ -227,12 +252,14 @@ class TestComputeEnergyConfidenceEdgeCases:
         # figure is unreliable.
         assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
 
-    def test_grouped_cv_summary_without_r2_mean_falls_back_to_none(self) -> None:
-        """An [EXPLORATORY] artifact whose grouped_cv_summary is missing
-        ``r2_mean`` must fall back to the legacy path (and warn), rather
-        than crashing. NFM-3956 round 2: legacy fallback returns
-        ``confidence=None`` so the inflated random-split headline is
-        never advertised."""
+    def test_exploratory_without_r2_mean_fails_loudly(self) -> None:
+        """NFM-3959 mandate 1: an [EXPLORATORY] artifact whose
+        grouped_cv_summary is missing ``r2_mean`` must FAIL LOUDLY
+        (RuntimeError), NOT fall back to the random-split headline. The
+        previous NFM-3956 round-2 fallback was wrong because it let a
+        misconfigured artifact silently advertise ``confidence=None`` and
+        a soft warning — the bug was still latent. NFM-3959 closes the
+        hole by raising."""
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         metrics = {
@@ -240,17 +267,32 @@ class TestComputeEnergyConfidenceEdgeCases:
             "rd2_label": "[EXPLORATORY]",
             "grouped_cv_summary": {"splitter": "GroupKFold(n_splits=5)"},
         }
-        confidence, source, warnings = _compute_energy_confidence(metrics)
-        assert confidence is None
-        assert source == "random_split_r2"
-        assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
+        with pytest.raises(RuntimeError, match=r"grouped_cv_summary.r2_mean"):
+            _compute_energy_confidence(metrics)
 
-    def test_grouped_cv_r2_clamped_to_unit_interval(self) -> None:
-        """A pathological artifact with grouped_cv_r2_mean > 1 must clamp."""
+    def test_exploratory_with_empty_grouped_cv_dict_fails_loudly(self) -> None:
+        """A misconfigured artifact with ``grouped_cv_summary={}`` and
+        ``rd2_label == "[EXPLORATORY]"`` is the same class of bug as the
+        missing-r2_mean case — fail loud, do not fall back."""
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         metrics = {
-            "r2": 0.9,
+            "r2": FORBIDDEN_HEADLINE_R2,
+            "rd2_label": "[EXPLORATORY]",
+            "grouped_cv_summary": {},
+        }
+        with pytest.raises(RuntimeError):
+            _compute_energy_confidence(metrics)
+
+    def test_grouped_cv_r2_clamped_to_unit_interval(self) -> None:
+        """A pathological artifact with grouped_cv_r2_mean > 1 must clamp
+        to [0, 1]. Under NFM-3959 mandate 2, the clamp is
+        ``max(0, min(r2_mean, r2_random, 1.0))``; with r2_random=2.0 and
+        r2_mean=1.5, the 1.0 ceiling wins."""
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        metrics = {
+            "r2": 2.0,
             "rd2_label": "[EXPLORATORY]",
             "grouped_cv_summary": {"r2_mean": 1.5, "r2_std": 0.1},
         }
@@ -270,6 +312,119 @@ class TestComputeEnergyConfidenceEdgeCases:
         }
         confidence, _source, _warnings = _compute_energy_confidence(metrics)
         assert confidence == 0.0
+
+    def test_mandate_2_clamp_invariant_clamps_when_metrics_r2_exceeds(self) -> None:
+        """NFM-3959 mandate 2: confidence must NEVER exceed the grouped-CV
+        R^2 for any artifact that carries grouped_cv_summary. A v3.0
+        artifact with metrics.r2=0.95 but grouped_cv_summary.r2_mean=0.40
+        must report ``confidence <= 0.40`` — never the inflated headline."""
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        metrics = {
+            "r2": 0.95,
+            "rd2_label": "[EXPLORATORY]",
+            "grouped_cv_summary": {"r2_mean": 0.40, "r2_std": 0.10},
+        }
+        confidence, _source, _warnings = _compute_energy_confidence(metrics)
+        assert confidence == pytest.approx(0.40, abs=1e-4)
+
+    def test_mandate_2_clamp_falls_back_to_r2_mean_when_metrics_r2_missing(self) -> None:
+        """If ``metrics.r2`` is absent, the clamp floor defaults to
+        ``r2_mean`` so the invariant ``confidence == r2_mean`` still
+        holds (i.e. the clamp is its own floor when no random-split
+        headline exists)."""
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        metrics = {
+            "rd2_label": "[EXPLORATORY]",
+            "grouped_cv_summary": {"r2_mean": 0.40, "r2_std": 0.10},
+        }
+        confidence, _source, _warnings = _compute_energy_confidence(metrics)
+        assert confidence == pytest.approx(0.40, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# 3b. v3.1 regression — NFM-3959 AC #5: non-EXPLORATORY successor model
+# ---------------------------------------------------------------------------
+
+
+class TestComputeEnergyConfidenceV31NonExploratory:
+    """NFM-3959 AC #5: regression test for the v3.1 successor artifact
+    (``rd2_label != "[EXPLORATORY]"``, but ``grouped_cv_summary`` is
+    present). The warning must NOT be emitted, and confidence must be
+    the v3.1 grouped-CV mean — still clamped by the mandate-2 invariant.
+
+    This locks in the behavior NFM-3958 will deliver: clearing the
+    ``rd2_label`` on v3.1 must silence ``energy_model_exploratory``
+    automatically, without a code change on the prediction path.
+    """
+
+    @pytest.fixture
+    def v31_metrics(self) -> dict:
+        """v3.1 candidate: high grouped-CV R^2, no [EXPLORATORY] label."""
+        return {
+            "r2": 0.86,
+            "cv_r2": 0.84,
+            "rmse": 0.10,
+            "mae": 0.06,
+            "rd2_label": "[PRODUCTION]",
+            "grouped_cv_summary": {
+                "sidecar": "models/energy_predictor_v3.1_groupedcv_metrics.json",
+                "r2_mean": 0.86,
+                "r2_std": 0.05,
+                "n_groups": 68,
+                "splitter": "GroupKFold(n_splits=5) by element system",
+                "seed": 42,
+                "decision_bucket": "mid",
+            },
+        }
+
+    def test_v31_emits_no_warning(self, v31_metrics: dict) -> None:
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        _confidence, _source, warnings = _compute_energy_confidence(v31_metrics)
+        codes = [w["code"] for w in warnings]
+        assert codes == [], f"v3.1 must not emit warnings, got: {codes}"
+        # Specifically the EXPLORATORY warning must be absent.
+        assert "energy_model_exploratory" not in codes
+
+    def test_v31_confidence_uses_grouped_cv_mean(self, v31_metrics: dict) -> None:
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        confidence, source, _warnings = _compute_energy_confidence(v31_metrics)
+        # v3.1 has r2_mean == metrics.r2 == 0.86, so confidence == 0.86.
+        assert confidence == pytest.approx(0.86, abs=1e-4)
+        assert source == "grouped_cv_r2_mean"
+
+    def test_v31_mandate_2_clamp_still_enforced(self) -> None:
+        """v3.1 with metrics.r2 > r2_mean must still clamp confidence to
+        r2_mean (mandate 2 invariant holds for every version with
+        grouped_cv_summary)."""
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        metrics = {
+            "r2": 0.95,  # hypothetical optimistic random-split figure
+            "rd2_label": "[PRODUCTION]",
+            "grouped_cv_summary": {"r2_mean": 0.80, "r2_std": 0.05},
+        }
+        confidence, _source, _warnings = _compute_energy_confidence(metrics)
+        # confidence must equal r2_mean (0.80), not the inflated r2 (0.95).
+        assert confidence == pytest.approx(0.80, abs=1e-4)
+
+    def test_v31_without_rd2_label_emits_no_warning(self) -> None:
+        """An artifact with grouped_cv_summary but NO ``rd2_label`` field
+        at all (e.g. a freshly trained model that has not been audited)
+        must not emit ``energy_model_exploratory``. The label is the
+        only trigger; absence means no warning."""
+        from nfm_db.ml.prediction_service import _compute_energy_confidence
+
+        metrics = {
+            "r2": 0.83,
+            "grouped_cv_summary": {"r2_mean": 0.83, "r2_std": 0.04},
+        }
+        _confidence, _source, warnings = _compute_energy_confidence(metrics)
+        codes = [w["code"] for w in warnings]
+        assert "energy_model_exploratory" not in codes
 
 
 # ---------------------------------------------------------------------------

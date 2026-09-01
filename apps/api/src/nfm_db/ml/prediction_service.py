@@ -8,8 +8,8 @@ Provides lazy-loaded model instances and inference functions for:
   predict_energy() dispatches by ``model_version`` so legacy callers
   don't regress (backward compat).
 
-Confidence disclosure for EnergyPredictor v3.0 (NFM-3956 — LE handoff from
-NFM-3953 grouped-CV confirmatory run):
+Confidence disclosure for EnergyPredictor v3.0 (NFM-3959 — LE handoff
+from NFM-3953 grouped-CV confirmatory run; supersedes NFM-3956):
   EnergyPredictor v3.0 is labeled **[EXPLORATORY]** on this branch. The
   random 80/20 hold-out headline (``metrics.r2``) and the random
   ``KFold(shuffle=True)`` CV figure (``metrics.cv_r2``) were both
@@ -20,12 +20,20 @@ NFM-3953 grouped-CV confirmatory run):
   a negative-R^2 fold (fold 3: R^2 = -0.5652).
 
   When the artifact (or sidecar JSON) carries ``rd2_label == "[EXPLORATORY]"``
-  and ``grouped_cv_summary.r2_mean``, this module reports the **grouped-CV
-  mean** as ``confidence`` and emits a ``energy_model_exploratory``
-  warning. When those fields are absent (legacy artifact), the module
-  falls back to the random-split ``r2`` field — caller must interpret
-  such artifacts as pre-NFM-3953 and therefore at risk of the same
-  optimism.
+  and ``grouped_cv_summary.r2_mean``, this module reports the **clamped
+  grouped-CV mean** as ``confidence`` and emits a
+  ``energy_model_exploratory`` warning. The clamp is
+  ``max(0, min(r2_mean, r2_random, 1.0))`` so ``confidence`` can never
+  exceed ``r2_mean`` for any model version (NFM-3959 mandate 2).
+
+  When ``rd2_label == "[EXPLORATORY]"`` is set but
+  ``grouped_cv_summary.r2_mean`` is absent, the helper raises
+  ``RuntimeError`` (NFM-3959 mandate 1: FAIL LOUDLY on misconfigured
+  artifact) rather than silently falling back to the random-split headline.
+  When both ``rd2_label`` and ``grouped_cv_summary`` are absent
+  (pre-NFM-3953 legacy artifact), the helper returns ``confidence=None``
+  and a ``energy_model_pre_grouped_cv`` warning so UIs render the
+  at-risk figure with a clear disclaimer instead of as a primary claim.
 
   See ``models/energy_predictor_v3.0_metrics.json`` for the full
   grouped-CV summary and per-fold breakdown.
@@ -677,22 +685,34 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
 def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[dict]]:
     """Compute the honest confidence score for an EnergyPredictor artifact.
 
-    Implements the NFM-3956 LE handoff from NFM-3953 grouped-CV LOW bucket:
-    when an artifact is labeled ``[EXPLORATORY]`` and carries a
-    ``grouped_cv_summary`` block, the reported confidence is the
-    grouped-CV mean R^2 (the protocol-correct generalization estimate),
-    not the random-split ``metrics.r2`` headline. A warning is emitted so
-    callers and downstream UIs can surface the disclaimer instead of
-    advertising the inflated random-split number.
+    Implements the CTO architectural mandates from NFM-3959 (RD-3
+    remediation), which tightened the NFM-3956 disclosure contract:
 
-    NFM-3956 E2E QA update (round 2):
-        The legacy fallback path (pre-NFM-3953 artifact) now returns
-        ``confidence=None`` rather than the random-split figure. The raw
-        R^2 is surfaced in the warning message so UIs can render the
-        at-risk figure with a clear disclaimer instead of as a primary
-        claim in the response ``confidence`` field. The schema
-        ``EnergyPredictResponse.confidence`` accepts ``None`` for this
-        reason.
+    Mandate 1 (FAIL LOUDLY):
+        An artifact labeled ``rd2_label == "[EXPLORATORY]"`` MUST carry
+        ``grouped_cv_summary.r2_mean``; if the key is absent the helper
+        raises ``RuntimeError`` rather than silently falling back to the
+        inflated random-split ``metrics.r2`` headline. The misconfiguration
+        is surfaced to the operator (it propagates through
+        ``_predict_energy_v30`` as a 5xx), not hidden behind a soft warning.
+
+    Mandate 2 (clamp invariant):
+        ``confidence`` must NEVER exceed ``grouped_cv_summary.r2_mean`` for
+        any artifact that embeds the summary. The clamp is enforced here,
+        next to the computation, so it holds for every model version (v3.0,
+        v3.1, ...) not only for the current [EXPLORATORY] v3.0.
+
+    Mandate 3 (rd2_label-driven warning):
+        ``PredictionWarning(code='energy_model_exploratory')`` is emitted
+        iff the model card carries ``rd2_label == '[EXPLORATORY]'``. When
+        NFM-3958 clears the label on v3.1 the warning disappears
+        automatically.
+
+    NFM-3956 legacy fallback:
+        Pre-NFM-3953 artifacts (no grouped-CV summary, no [EXPLORATORY]
+        label) still return ``confidence=None`` with a
+        ``energy_model_pre_grouped_cv`` warning so UIs render the at-risk
+        figure with a clear disclaimer instead of as a primary claim.
 
     Args:
         metrics: ``metrics`` dict from the model artifact. May contain:
@@ -704,38 +724,77 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[d
 
     Returns:
         Tuple of:
-            - ``confidence``: clamped to [0, 1]; ``None`` for legacy
-              artifacts (no trustworthy figure available until retraining)
-            - ``confidence_source``: ``"grouped_cv_r2_mean"`` (preferred)
-              or ``"random_split_r2"`` (legacy fallback)
+            - ``confidence``: clamped to ``[0, min(r2_mean, r2_random)]``
+              when ``grouped_cv_summary.r2_mean`` is present; ``None`` for
+              legacy artifacts (no trustworthy figure available until
+              retraining)
+            - ``confidence_source``: ``"grouped_cv_r2_mean"`` (preferred,
+              for any artifact with grouped_cv_summary) or
+              ``"random_split_r2"`` (legacy fallback)
             - ``warnings``: list of ``{code, message}`` dicts; empty when
               the artifact is post-NFM-3953 with no [EXPLORATORY] label
+
+    Raises:
+        RuntimeError: ``rd2_label == "[EXPLORATORY]"`` but the artifact
+            does not carry ``grouped_cv_summary.r2_mean``. Mandate 1.
     """
-    r2_random = float(metrics.get("r2", 0.0) or 0.0)
+    r2_random_raw = metrics.get("r2", 0.0) or 0.0
+    try:
+        r2_random = float(r2_random_raw)
+    except (TypeError, ValueError):
+        r2_random = 0.0
     grouped_cv = metrics.get("grouped_cv_summary") or {}
     is_exploratory = metrics.get("rd2_label") == "[EXPLORATORY]"
+    has_grouped_r2_mean = "r2_mean" in grouped_cv
 
-    if is_exploratory and "r2_mean" in grouped_cv:
-        r2_mean_raw = float(grouped_cv["r2_mean"])
-        r2_std = float(grouped_cv.get("r2_std", 0.0) or 0.0)
-        bucket = grouped_cv.get("decision_bucket", "low")
-        confidence = max(0.0, min(r2_mean_raw, 1.0))
-        warning_msg = (
-            f"EnergyPredictor v3.0 is labeled [EXPLORATORY] per NFM-3953. "
-            f"Grouped-CV R^2 = {r2_mean_raw:.4f} +/- {r2_std:.4f} "
-            f"(bucket: {bucket}). The random-split headline R^2 = "
-            f"{r2_random:.4f} was materially optimistic; reported "
-            f"confidence is from the grouped-CV figure. See "
-            f"energy_predictor_v3.0_groupedcv_metrics.json for per-fold "
-            f"breakdown."
+    # Mandate 1 (NFM-3959): FAIL LOUDLY when the artifact is labeled
+    # [EXPLORATORY] but the grouped_cv_summary.r2_mean key is absent. We
+    # must NOT silently fall back to the random-split headline; that would
+    # re-introduce the very bug NFM-3956 fixed. Raising RuntimeError
+    # propagates through _predict_energy_v30 as a 5xx so the operator sees
+    # the misconfiguration instead of consumers seeing a quiet fallback.
+    if is_exploratory and not has_grouped_r2_mean:
+        raise RuntimeError(
+            "EnergyPredictor artifact is labeled [EXPLORATORY] but does not "
+            "carry grouped_cv_summary.r2_mean; refusing to compute "
+            "confidence (NFM-3959 mandate 1). Re-train / re-evaluate the "
+            "artifact under NFM-3953 GroupKFold protocol and embed "
+            "grouped_cv_summary.r2_mean before redeploy."
         )
-        warnings: list[dict] = [
-            {
-                "code": "energy_model_exploratory",
-                "message": warning_msg,
-            }
-        ]
-        return round(confidence, 4), "grouped_cv_r2_mean", warnings
+
+    if has_grouped_r2_mean:
+        r2_mean_raw = float(grouped_cv["r2_mean"])
+        # Mandate 2 (NFM-3959): NEVER advertise a confidence higher than
+        # the grouped-CV R^2, for ANY model version. The clamp is
+        # ``min(r2_mean, r2_random, 1.0)`` so the invariant holds even if a
+        # future v3.1 ships with a random-split headline that exceeds the
+        # grouped-CV figure (or if metrics.r2 is absent, the clamp falls
+        # back to r2_mean as its own floor).
+        r2_clamp_floor = r2_random if r2_random > 0 else r2_mean_raw
+        confidence = max(0.0, min(r2_mean_raw, r2_clamp_floor, 1.0))
+
+        if is_exploratory:
+            # Mandate 3 (NFM-3959): the exact message per the spec. The
+            # warning drives off rd2_label so it disappears automatically
+            # when NFM-3958 clears the label on v3.1.
+            warning_msg = (
+                f"v3.0 metrics re-labeled [EXPLORATORY] under RD-3; "
+                f"grouped-CV R^2={r2_mean_raw:.4f} reported as confidence "
+                f"until v3.1 ships (NFM-3958)."
+            )
+            warnings: list[dict] = [
+                {
+                    "code": "energy_model_exploratory",
+                    "message": warning_msg,
+                }
+            ]
+            return round(confidence, 4), "grouped_cv_r2_mean", warnings
+
+        # Non-exploratory artifact with grouped_cv_summary (e.g. v3.1 once
+        # NFM-3958 ships). Confidence is the clamped grouped-CV mean, no
+        # warning is emitted — rd2_label == "[EXPLORATORY]" is the
+        # precondition for the warning, and v3.1 will clear it.
+        return round(confidence, 4), "grouped_cv_r2_mean", []
 
     # Legacy artifact: no grouped-CV summary, no [EXPLORATORY] label.
     # Return ``confidence=None`` so the response does NOT advertise the
@@ -766,11 +825,16 @@ def _predict_energy_v30(features: dict[str, float]) -> dict | None:
     feature schema as v1.1 (ENERGY_V11_FEATURE_NAMES); the improvement comes
     from the larger training set, not from feature engineering changes.
 
-    Confidence reporting follows the NFM-3956 disclosure contract: when the
-    artifact is labeled ``[EXPLORATORY]`` (NFM-3953 LOW bucket), the
-    response carries the grouped-CV mean R^2 as ``confidence`` and a
-    ``energy_model_exploratory`` warning. See module docstring + the
-    ``_compute_energy_confidence`` helper for the full rule.
+    Confidence reporting follows the NFM-3959 contract (which tightens
+    NFM-3956): when the artifact is labeled ``[EXPLORATORY]``
+    (NFM-3953 LOW bucket), the response carries the clamped grouped-CV
+    mean R^2 as ``confidence`` and a ``energy_model_exploratory``
+    warning. The mandate-1 misconfiguration (artifact labeled
+    [EXPLORATORY] but ``grouped_cv_summary.r2_mean`` absent) raises
+    ``RuntimeError`` from ``_compute_energy_confidence`` and is NOT
+    swallowed — it propagates as a 5xx so the operator sees the bug
+    instead of consumers seeing a quiet fallback. See module docstring +
+    the ``_compute_energy_confidence`` helper for the full rule.
 
     Expected artifact: ``models/energy_predictor_v30.joblib`` (joblib dict
     with keys ``model``, ``version``, ``metrics``, ``feature_names``).
@@ -799,17 +863,22 @@ def _predict_energy_v30(features: dict[str, float]) -> dict | None:
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         predicted = float(model.predict(X)[0])
         metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
-        confidence, confidence_source, warnings = _compute_energy_confidence(metrics)
-        return {
-            "predicted_energy": round(predicted, 6),
-            "confidence": confidence,
-            "confidence_source": confidence_source,
-            "model_version": raw.get("version", "v3.0") if isinstance(raw, dict) else "v3.0",
-            "warnings": warnings,
-        }
     except Exception:
         logger.exception("v3.0 energy prediction failed")
         return None
+
+    # Confidence computation is intentionally OUTSIDE the broad except
+    # above: a RuntimeError raised by ``_compute_energy_confidence`` for
+    # mandate-1 misconfigurations must propagate as a 5xx so the operator
+    # sees the bug (NFM-3959 mandate 1: FAIL LOUDLY).
+    confidence, confidence_source, warnings = _compute_energy_confidence(metrics)
+    return {
+        "predicted_energy": round(predicted, 6),
+        "confidence": confidence,
+        "confidence_source": confidence_source,
+        "model_version": raw.get("version", "v3.0") if isinstance(raw, dict) else "v3.0",
+        "warnings": warnings,
+    }
 
 
 def predict_energy(
