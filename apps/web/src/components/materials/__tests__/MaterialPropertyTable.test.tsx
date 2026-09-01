@@ -525,27 +525,64 @@ describe("renderSourceCell", () => {
 
 // ---------------------------------------------------------------------------
 // NFM-4087 — D2 duplicate-row grouping
+//
+// Group key: (name, value, source?.title).
+//
+// Why title and not id: pre-NFM-4088 the `data_sources` table holds
+// UUID-title duplicates — different UUIDs representing the same paper.
+// Keying on id in that state produced multiple buckets for one logical
+// paper. Title-keyed grouping matches the user mental model and gives
+// the same fold result before and after NFM-4088's data-side fix.
 // ---------------------------------------------------------------------------
 
 describe("groupKey", () => {
-  it("returns identical keys for rows that share (name, value, source.id)", () => {
+  it("returns identical keys for rows that share (name, value, source.title)", () => {
     const a = makeProperty({ id: "p1" })
     const b = makeProperty({ id: "p2" })
     expect(groupKey(a)).toBe(groupKey(b))
   })
 
-  it("differs when source.id changes even if name + value match", () => {
+  it("differs when source.title changes even if name + value match", () => {
     const a = makeProperty({
       name: "Activation Energy",
       value: "0.3",
-      source: makeSource({ id: "00000000-0000-0000-0000-000000000001" }),
+      source: makeSource({ title: "Hall 1989" }),
     })
     const b = makeProperty({
       name: "Activation Energy",
       value: "0.3",
-      source: makeSource({ id: "00000000-0000-0000-0000-000000000002" }),
+      source: makeSource({ title: "Owen 2023" }),
     })
     expect(groupKey(a)).not.toBe(groupKey(b))
+  })
+
+  it("returns identical keys when source.id differs but source.title matches (pre-NFM-4088 shape)", () => {
+    // This pins the production-realistic case QA Tester flagged in
+    // [QA-FAILED] on NFM-4087: data_sources had 4 different UUIDs all
+    // pointing at the same paper, so source.id-based grouping produced
+    // 4 buckets and the user saw 4 identical rows. The fix keys on
+    // source.title so two measurements with the same paper title fold
+    // together regardless of how many distinct data_sources UUIDs
+    // happen to back them.
+    const a = makeProperty({
+      id: "src-aaa",
+      name: "Activation Energy",
+      value: "0.3",
+      source: makeSource({
+        id: "00000000-0000-0000-0000-000000000001",
+        title: "Hall 1989 — UO2 activation energy",
+      }),
+    })
+    const b = makeProperty({
+      id: "src-bbb",
+      name: "Activation Energy",
+      value: "0.3",
+      source: makeSource({
+        id: "00000000-0000-0000-0000-000000000002",
+        title: "Hall 1989 — UO2 activation energy",
+      }),
+    })
+    expect(groupKey(a)).toBe(groupKey(b))
   })
 
   it("groups unsourced rows together (sentinel)", () => {
@@ -556,9 +593,11 @@ describe("groupKey", () => {
 })
 
 describe("groupRowsByKey", () => {
-  it("folds 4 rows of UO2 activation_energy into 1 group with count=4", () => {
-    // Reproduces the UO2 activation_energy=0.3 eV scenario described in
-    // the NFM-4084 / NFM-4087 backstory.
+  it("folds 4 rows of UO2 activation_energy into 1 group with count=4 (post-NFM-4088 shape)", () => {
+    // After NFM-4088 migration 070 collapses the data_sources UUID-title
+    // duplicates, all 4 measurements reference the same canonical source.id
+    // and source.title. This test pins that — a sanity check that the
+    // normal "same row → fold" path still works.
     const source = makeSource({
       id: "9320cb50-aaaa-bbbb-cccc-000000000001",
       title: "UO2 Activation Energy (Hall 1989)",
@@ -642,12 +681,73 @@ describe("groupRowsByKey", () => {
     ])
   })
 
-  it("does NOT group rows that differ on source.id even if title matches", () => {
-    // Regression guard: NFM-4084 F2 — two papers sharing a short title
-    // prefix ("Owen (2023). J. Nucl. Mater.") must not fold together
-    // when they reference distinct sources. Using `source.id` (stable
-    // UUID) instead of `source.title` is the whole point of D1's
-    // SourceRef upgrade; this test pins that contract.
+  it("folds 4 rows whose source.id differs but source.title matches (pre-NFM-4088 shape)", () => {
+    // Production-realistic case QA Tester flagged as [QA-FAILED]. Pre-NFM-4088
+    // the data_sources table held 4 different UUIDs all sharing the title
+    // `9320cb50-…`. Each measurement referenced a distinct UUID but the
+    // same paper. Keying on `source.title` collapses those 4 rows into
+    // one logical measurement, matching the user's mental model.
+    const sharedTitle = "9320cb50-eb65-4178-8d2e-c56aeb848b21"
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "ae-1",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source: makeSource({
+          id: "85cc8a6a-b429-487b-8d78-371740d21629",
+          title: sharedTitle,
+        }),
+      }),
+      makeProperty({
+        id: "ae-2",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source: makeSource({
+          id: "d6c7c8f7-5d4a-40be-b93a-88b83015239f",
+          title: sharedTitle,
+        }),
+      }),
+      makeProperty({
+        id: "ae-3",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source: makeSource({
+          id: "12e3a95c-9b83-447b-be87-cf32e39aefea",
+          title: sharedTitle,
+        }),
+      }),
+      makeProperty({
+        id: "ae-4",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source: makeSource({
+          id: "b4788e26-5fd4-4f20-b924-49aede7176b6",
+          title: sharedTitle,
+        }),
+      }),
+    ]
+
+    const grouped = groupRowsByKey(rows)
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0]?.count).toBe(4)
+    expect(grouped[0]?.allMeasurements.map((m) => m.id).sort()).toEqual([
+      "ae-1",
+      "ae-2",
+      "ae-3",
+      "ae-4",
+    ])
+  })
+
+  it("does NOT group rows that differ on source.title even if the values match", () => {
+    // Two distinct papers measuring the same property/value at the same
+    // name are not the same measurement — they must remain separate
+    // rows so curators can disambiguate. Title-based grouping only folds
+    // rows whose paper title is identical.
     const rows: ReadonlyArray<MaterialProperty> = [
       makeProperty({
         id: "p1",
@@ -655,7 +755,7 @@ describe("groupRowsByKey", () => {
         value: "10.5",
         source: makeSource({
           id: "00000000-0000-0000-0000-000000000001",
-          title: "Same title",
+          title: "Hall 1989",
         }),
       }),
       makeProperty({
@@ -664,7 +764,7 @@ describe("groupRowsByKey", () => {
         value: "10.5",
         source: makeSource({
           id: "00000000-0000-0000-0000-000000000002",
-          title: "Same title",
+          title: "Owen 2023",
         }),
       }),
     ]
@@ -680,7 +780,10 @@ describe("groupRowsByKey", () => {
     // The backend returns rows in a deterministic order (sort by name
     // asc). The grouping helper must NOT re-sort — that would scramble
     // adjacent duplicates and confuse the sort indicator.
-    const source = makeSource({ id: "00000000-0000-0000-0000-000000000003" })
+    const source = makeSource({
+      id: "00000000-0000-0000-0000-000000000003",
+      title: "Same paper",
+    })
     const rows: ReadonlyArray<MaterialProperty> = [
       makeProperty({ id: "a", name: "Alpha", value: "1", source }),
       makeProperty({ id: "b", name: "Beta", value: "2", source }),
@@ -732,20 +835,66 @@ describe("MaterialPropertyTable — NFM-4087 grouped rendering", () => {
     expect(screen.getByText("×4")).toBeInTheDocument()
   })
 
-  it("does NOT fold rows whose source.id differs even when the title matches", () => {
-    const sharedTitle = "Same citation title"
+  it("folds rows whose source.title matches even when their source.id differs (pre-NFM-4088 shape)", () => {
+    // Production-reality case: 4 measurements reference 4 different
+    // source.ids that all back the same paper title. With title-keyed
+    // grouping these fold into a single row carrying the ×4 badge.
+    const sharedTitle = "9320cb50 — UO2 activation energy"
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "src-1",
+        name: "Activation Energy",
+        value: "0.3",
+        source: makeSource({ id: "src-aaa", title: sharedTitle }),
+      }),
+      makeProperty({
+        id: "src-2",
+        name: "Activation Energy",
+        value: "0.3",
+        source: makeSource({ id: "src-bbb", title: sharedTitle }),
+      }),
+      makeProperty({
+        id: "src-3",
+        name: "Activation Energy",
+        value: "0.3",
+        source: makeSource({ id: "src-ccc", title: sharedTitle }),
+      }),
+      makeProperty({
+        id: "src-4",
+        name: "Activation Energy",
+        value: "0.3",
+        source: makeSource({ id: "src-ddd", title: sharedTitle }),
+      }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // All four fold into one row. The ×N badge reflects the fold count.
+    expect(screen.getAllByText("Activation Energy")).toHaveLength(1)
+    expect(screen.getByText("×4")).toBeInTheDocument()
+  })
+
+  it("does NOT fold rows whose source.title differs even when the value matches", () => {
+    // Two distinct papers at the same value must NOT fold together.
     const rows: ReadonlyArray<MaterialProperty> = [
       makeProperty({
         id: "src1",
         name: "Density",
         value: "10.5",
-        source: makeSource({ id: "src-aaa", title: sharedTitle }),
+        source: makeSource({ id: "src-aaa", title: "Hall 1989" }),
       }),
       makeProperty({
         id: "src2",
         name: "Density",
         value: "10.5",
-        source: makeSource({ id: "src-bbb", title: sharedTitle }),
+        source: makeSource({ id: "src-bbb", title: "Owen 2023" }),
       }),
     ]
 

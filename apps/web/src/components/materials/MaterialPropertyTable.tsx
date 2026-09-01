@@ -26,13 +26,26 @@
  *     React's text rendering (never `dangerouslySetInnerHTML`) so XSS is
  *     impossible regardless of how the curator entered the data.
  *
- * NFM-4087 — D2 重复行处置. Rows that share (name, value, source?.id) are
- * folded into a single display row whose CountBadge renders "×N" and whose
- * expand affordance reveals each underlying measurement's conditions
+ * NFM-4087 — D2 重复行处置. Rows that share (name, value, source?.title)
+ * are folded into a single display row whose CountBadge renders "×N" and
+ * whose expand affordance reveals each underlying measurement's conditions
  * (temperature / pressure / environment / irradiation_dose / notes).
- * Aggregation is performed client-side on the current page only; ``meta.total``
- * continues to reflect the raw measurement count so pagination math stays
- * consistent with the backend.
+ * Aggregation is performed client-side on the current page only;
+ * ``meta.total`` continues to reflect the raw measurement count so
+ * pagination math stays consistent with the backend.
+ *
+ * Why `source.title` rather than `source.id`: prior to NFM-4088's
+ * migration 070, the `data_sources` table held duplicate rows where the
+ * same paper appeared under multiple UUIDs (UUID-title duplicates). In
+ * that state four measurements referencing the same paper were four
+ * distinct `source.id`s; keying on `source.id` produced four buckets and
+ * the user saw four identical rows. After migration 070 collapses those
+ * duplicates, `source.id` becomes a stable identifier, but the user-facing
+ * dedup behaviour we want is "same paper title + same property + same
+ * value = one logical row". Using `source.title` is the invariant that
+ * holds in both pre- and post-migration DBs, and NFM-4088's write-path
+ * guard (``_find_source_by_title``) makes title-reuse the norm going
+ * forward, so title-instability risk is bounded.
  */
 
 import { useCallback, useMemo } from "react"
@@ -83,7 +96,7 @@ export interface TableChangeParams {
  * One display row in the MaterialPropertyTable.
  *
  * NFM-4087 — wraps one or more underlying `MaterialProperty` rows that
- * share the (name, value, source?.id) grouping key. ``allMeasurements``
+ * share the (name, value, source?.title) grouping key. ``allMeasurements``
  * is always non-empty and preserves the original array order so the
  * expanded "conditions" sub-table renders measurements in the same order
  * the backend returned them.
@@ -209,26 +222,32 @@ export function renderSourceCell(source: SourceRef | null): React.ReactNode {
 // ── Grouping helpers (NFM-4087) ──────────────────────────────────────────
 
 /**
- * Stable grouping key for the (name, value, source?.id) 3-tuple.
+ * Stable grouping key for the (name, value, source?.title) 3-tuple.
  *
  * The key MUST be derivable from a single measurement (so we can iterate
  * rows in O(n)) and MUST be identical for every row in the same group.
- * Using source.id rather than title is what makes the grouping stable
- * when the upstream extraction chain swaps two papers with similar titles
- * (NFM-4084 F2 risk).
+ *
+ * Why `source.title` and not `source.id`: see the file-level JSDoc above.
+ * In short — pre-NFM-4088 the data has UUID-title duplicates (4 rows
+ * reference 4 different UUIDs but the same paper title), so keying on
+ * `source.id` would have failed to fold what the user perceives as one
+ * logical measurement. `source.title` aligns with the user mental model
+ * and gives the same folding result before and after NFM-4088's
+ * migration 070 has been applied.
  *
  * `source=null` rows share a single sentinel ("__unsourced__") so two
  * unsourced measurements with identical name/value fold together. The
- * sentinel is opaque — never displayed — so its exact spelling doesn't
- * matter as long as it cannot collide with a real UUID.
+ * sentinel is opaque — never displayed — and is prefixed with double
+ * underscores so it cannot collide with a real paper title (titles can
+ * legitimately contain a single underscore).
  */
 export function groupKey(row: MaterialProperty): string {
-  const sourceId = row.source === null ? "__unsourced__" : row.source.id
-  return `${sourceId}::${row.name}::${row.value}`
+  const sourceKey = row.source === null ? "__unsourced__" : row.source.title
+  return `${sourceKey}::${row.name}::${row.value}`
 }
 
 /**
- * Group a flat list of measurements by `(name, value, source?.id)`.
+ * Group a flat list of measurements by `(name, value, source?.title)`.
  *
  * Exported so the test suite can assert the grouping without rendering
  * React.  The returned list preserves the order of first appearance of
@@ -423,7 +442,7 @@ export function MaterialPropertyTable({
   onPageChange,
   onFilterChange,
 }: MaterialPropertyTableProps) {
-  // NFM-4087 — fold rows that share (name, value, source?.id) into a
+  // NFM-4087 — fold rows that share (name, value, source?.title) into a
   // single display row. Aggregation is per-page: the backend returns the
   // raw measurement list, and we bucket here before handing it to Ant's
   // Table. The grouping is recomputed whenever `data` changes so that
