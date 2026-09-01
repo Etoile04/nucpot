@@ -857,10 +857,7 @@ class TestV068Downgrade:
             r"[\"']thermal[\"']",
             body,
             re.IGNORECASE,
-        ), (
-            "downgrade() must bind the 'thermal' category slug literal "
-            "in its params dict."
-        )
+        ), "downgrade() must bind the 'thermal' category slug literal in its params dict."
 
     def test_downgrade_targets_only_seeded_slugs(
         self,
