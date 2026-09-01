@@ -283,21 +283,22 @@ def upgrade() -> None:
     # --------------------------------------------------------------
     # 1. INSERT OECD-NEA canonical data_sources row (idempotent).
     # --------------------------------------------------------------
+    # Inline the title/source_type/year as SQL literals so asyncpg's
+    # per-context parameter type inference does not see two different
+    # type deductions for the same bind token (NFM-4099 variant:
+    # $1 → text vs character varying).  These are module-level
+    # constants with no special characters, so SQL injection is not a
+    # concern; the strings are not user input.
     bind.execute(
         sa.text(
-            """
+            f"""
             INSERT INTO data_sources (title, source_type, year)
-            SELECT :title, :source_type, :year
+            SELECT '{_OECD_NEA_TITLE}', '{_OECD_NEA_SOURCE_TYPE}', {_OECD_NEA_YEAR}
             WHERE NOT EXISTS (
-                SELECT 1 FROM data_sources WHERE title = CAST(:title AS text)
+                SELECT 1 FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
             )
             """
-        ),
-        {
-            "title": _OECD_NEA_TITLE,
-            "source_type": _OECD_NEA_SOURCE_TYPE,
-            "year": _OECD_NEA_YEAR,
-        },
+        )
     )
 
     # --------------------------------------------------------------
@@ -305,13 +306,14 @@ def upgrade() -> None:
     # --------------------------------------------------------------
     # 3 datasets titled 'U-10Mo - Unknown Source' (one per material
     # form / measurement set).  The data_sources row for OECD-NEA
-    # was just inserted; resolve its id at runtime.
+    # was just inserted; resolve its id at runtime.  The OECD-NEA
+    # title is inlined as a literal (see comment on step 1).
     bind.execute(
         sa.text(
-            """
+            f"""
             UPDATE datasets d
             SET source_id = (
-                SELECT id FROM data_sources WHERE title = CAST(:oecd_nea_title AS text)
+                SELECT id FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
             )
             WHERE d.title = 'U-10Mo - Unknown Source'
               AND d.source_id IS NOT NULL
@@ -320,8 +322,7 @@ def upgrade() -> None:
                   WHERE title IN ('Unknown Source', 'Unattributed source (no DOI)')
               )
             """
-        ),
-        {"oecd_nea_title": _OECD_NEA_TITLE},
+        )
     )
 
     # --------------------------------------------------------------
@@ -374,13 +375,13 @@ def upgrade() -> None:
         if src_marker == "OECD-NEA_RESOLVE":
             bind.execute(
                 sa.text(
-                    """
+                    f"""
                     INSERT INTO kg_nodes (
                         node_type, label, properties, confidence, source_id, status
                     )
-                    SELECT 'Material', :label, CAST(:props AS jsonb), 1.0, ds.id, 'active'
+                    SELECT 'Material', CAST(:label AS text), CAST(:props AS jsonb), 1.0, ds.id, 'active'
                     FROM data_sources ds
-                    WHERE ds.title = CAST(:oecd_nea_title AS text)
+                    WHERE ds.title = '{_OECD_NEA_TITLE}'
                       AND NOT EXISTS (
                           SELECT 1 FROM kg_nodes kn2
                           WHERE kn2.node_type = 'Material' AND kn2.label = CAST(:label AS text)
@@ -390,7 +391,6 @@ def upgrade() -> None:
                 {
                     "label": label,
                     "props": props_json,
-                    "oecd_nea_title": _OECD_NEA_TITLE,
                 },
             )
         else:
@@ -400,7 +400,7 @@ def upgrade() -> None:
                     INSERT INTO kg_nodes (
                         node_type, label, properties, confidence, source_id, status
                     )
-                    SELECT 'Material', :label, CAST(:props AS jsonb), 1.0, CAST(:src_id AS uuid), 'active'
+                    SELECT 'Material', CAST(:label AS text), CAST(:props AS jsonb), 1.0, CAST(:src_id AS uuid), 'active'
                     WHERE NOT EXISTS (
                         SELECT 1 FROM kg_nodes kn2
                         WHERE kn2.node_type = 'Material' AND kn2.label = CAST(:label AS text)
@@ -455,7 +455,7 @@ def downgrade() -> None:
     # Re-point U-10Mo datasets back to a placeholder source.
     bind.execute(
         sa.text(
-            """
+            f"""
             UPDATE datasets d
             SET source_id = (
                 SELECT id FROM data_sources
@@ -464,11 +464,10 @@ def downgrade() -> None:
             )
             WHERE d.title = 'U-10Mo - Unknown Source'
               AND d.source_id IN (
-                  SELECT id FROM data_sources WHERE title = CAST(:oecd_nea_title AS text)
+                  SELECT id FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
               )
             """
-        ),
-        {"oecd_nea_title": _OECD_NEA_TITLE},
+        )
     )
 
     # Delete the 55 new Material kg_nodes.
@@ -489,7 +488,7 @@ def downgrade() -> None:
         sa.text(
             """
             DELETE FROM data_sources
-            WHERE title = CAST(:title AS text)
+            WHERE title = '{_OECD_NEA_TITLE}'
               AND NOT EXISTS (
                   SELECT 1 FROM datasets WHERE source_id = data_sources.id
               )
@@ -497,6 +496,5 @@ def downgrade() -> None:
                   SELECT 1 FROM kg_nodes WHERE source_id = data_sources.id
               )
             """
-        ),
-        {"title": _OECD_NEA_TITLE},
+        )
     )
