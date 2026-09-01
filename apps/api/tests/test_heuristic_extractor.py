@@ -498,6 +498,58 @@ class TestF8UncertaintyExclusionNFM4080:
             f"±-prefixed bounds must be filtered; got {eV_values}"
         )
 
+    def test_primary_following_a_bound_is_not_suppressed(self):
+        """NFM-4080 F2b (CTO verification): a legitimate primary value
+        that merely FOLLOWS an uncertainty bound inside the 30-char
+        lookback window must still be emitted.
+
+        With an unanchored guard regex, ``search()`` over the fixed
+        window matched the ``±`` belonging to the PREVIOUS pair, so the
+        compact abstract/table form below silently dropped the real
+        Cr-doped Ea (0.26) — trading pollution for equally-silent recall
+        loss. The right-anchored, pair-aware guard keeps both primaries.
+        """
+        text = (
+            "The activation energy of UO2 is 0.30 eV ± 0.05 eV, 0.26 eV "
+            "for Cr-doped UO2."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-f2b")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"a primary value following a bound must survive the guard; "
+            f"got {eV_values}"
+        )
+
+    @pytest.mark.parametrize(
+        "qualifier",
+        ["± ", "+/- ", "+- ", "with uncertainty ", "with uncert. ",
+         "with uncert ", "with an uncertainty of ", "(± "],
+    )
+    def test_all_bound_spellings_are_suppressed(self, qualifier: str):
+        """Every spelling of the bound qualifier suppresses the value it
+        immediately precedes — including the ASCII ``+/-`` / ``+-`` forms
+        that appear when ``±`` fails to round-trip out of a PDF, and the
+        ``uncert.`` abbreviation whose trailing period previously broke
+        the word-boundary anchor.
+        """
+        text = (
+            f"The activation energy of UO2 is 0.30 eV {qualifier}0.05 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-spell")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.30]), (
+            f"qualifier {qualifier!r} must suppress the 0.05 bound; "
+            f"got {eV_values}"
+        )
+
 
 class TestF8UncertaintySweepOtherFamiliesNFM4080:
     """NFM-4080 sweep: the same X±Y defect surface exists beyond

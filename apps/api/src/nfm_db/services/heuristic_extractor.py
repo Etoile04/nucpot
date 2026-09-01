@@ -455,11 +455,33 @@ _F8_CONTEXT_LOOKBACK = 220
 # word-boundary anchors (``\b…\b``) silently fail to match it (``\b``
 # requires a word/non-word transition, and ``±`` has neither side as a
 # word char). Use a bare ``±`` alternative so the X±Y scientific
-# notation form (``0.30 ± 0.05 eV``) is also caught. The bare ``±`` is
-# sufficiently distinctive that false positives are not a practical
-# concern in the 30-char lookback window.
+# notation form (``0.30 ± 0.05 eV``) is also caught.
+#
+# NFM-4080 CTO verification (finding F2b): the pattern is RIGHT-ANCHORED
+# (``…$``) because both call sites match it against a fixed 30-char
+# lookback window with :meth:`re.Pattern.search`. An unanchored
+# alternative matches ANYWHERE in that window, so a legitimate primary
+# measurement that merely FOLLOWS a bound within 30 chars was silently
+# dropped:
+#
+#     "the activation energy of UO2 is 0.30 eV ± 0.05 eV, 0.26 eV for
+#      Cr-doped UO2"   ->  0.26 suppressed (verified false negative)
+#
+# Anchoring makes the guard *pair-aware*: it fires only when the
+# qualifier is the immediate left operand of the value, allowing just
+# ``of`` / whitespace / opening-bracket filler in between. That keeps
+# both the prose form ("with an uncertainty of 0.05 eV") and the
+# notation form ("± 0.05 eV") suppressed while primaries survive.
+#
+# Two further sub-fixes folded in:
+#   * ``\buncert\.?\b`` never matched a trailing-period abbreviation
+#     followed by a space ("uncert. 0.08 eV") because ``\b`` after
+#     ``\.`` requires a following word character. Moved the ``\b``
+#     before the optional period.
+#   * Added the ASCII ``+/-`` and ``+-`` spellings, which appear in
+#     text extracted from PDFs where ``±`` failed to round-trip.
 _F8_UNCERTAINTY_RE = re.compile(
-    r"\b(?:uncertainty|uncert\.?)\b|±",
+    r"(?:\b(?:uncertainty|uncert)\b\.?|±|\+/-|\+-)\s*(?:of\s+)?[(\[\s±]*$",
     re.IGNORECASE,
 )
 
