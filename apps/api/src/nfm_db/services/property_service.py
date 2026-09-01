@@ -389,7 +389,10 @@ async def list_material_properties(
     #    without N+1 queries. NFM-4086 extends the chain with the
     #    DataSource → DataSourceAuthor → Author hop so the response can
     #    serialize an enriched citation (doi + author list) without
-    #    triggering a lazy load per row.
+    #    triggering a lazy load per row. NFM-4087 extends the chain with
+    #    PropertyMeasurement.conditions so the frontend expander can
+    #    render temperature / pressure / environment without a lazy load
+    #    per row.
     stmt = (
         select(PropertyMeasurement)
         .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
@@ -398,6 +401,7 @@ async def list_material_properties(
                 PropertyType.default_unit
             ),
             selectinload(PropertyMeasurement.unit),
+            selectinload(PropertyMeasurement.conditions),
             selectinload(PropertyMeasurement.dataset)
             .selectinload(Dataset.source)
             .selectinload(DataSource.data_source_authors)
@@ -445,6 +449,17 @@ async def list_material_properties(
             if r.dataset is not None and r.dataset.source is not None
             else None
         )
+        # NFM-4087: serialise the per-measurement conditions so the
+        # frontend "+N conditions" expander can list temperature /
+        # pressure / environment / irradiation_dose / notes without
+        # triggering a lazy load per row. ``r.conditions`` is populated
+        # by ``selectinload(PropertyMeasurement.conditions)`` above.
+        # Order by ``MeasurementCondition.id`` (UUIDv4 lex order) for a
+        # stable render across pagination windows.
+        conditions = [
+            MeasurementConditionResponse.model_validate(c)
+            for c in sorted(r.conditions, key=lambda c: c.id)
+        ]
         items.append(
             MaterialPropertyItem(
                 id=r.id,
@@ -453,6 +468,7 @@ async def list_material_properties(
                 unit=_resolve_unit_symbol(r),
                 source=source_ref,
                 confidence=_derive_confidence(r),
+                conditions=conditions,
             )
         )
 

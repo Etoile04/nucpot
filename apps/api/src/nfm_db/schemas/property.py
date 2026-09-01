@@ -320,6 +320,13 @@ class MaterialPropertyItem(BaseModel):
     NFM-4086 changed ``source`` from ``str`` to ``SourceRef | None`` —
     this is a BREAKING change. Callers that still expect a string will
     see a Pydantic validation error.
+
+    NFM-4087 added ``conditions`` (list of MeasurementConditionResponse)
+    so the frontend can render a "+N conditions" expander that lists the
+    temperature / pressure / environment / irradiation_dose / notes
+    captured alongside each measurement. The list is ordered by
+    ``MeasurementCondition.id`` to give a stable rendering when the
+    frontend folds multiple measurements into one display row.
     """
 
     id: UUID
@@ -328,6 +335,7 @@ class MaterialPropertyItem(BaseModel):
     unit: str | None
     source: SourceRef | None = None
     confidence: float
+    conditions: list[MeasurementConditionResponse] = Field(default_factory=list)
 
 
 class MaterialPropertyListMeta(BaseModel):

@@ -612,6 +612,122 @@ async def test_material_property_source_none_when_orphan_dataset(db_session: Asy
     assert row_with_source.source.title == "ASM Handbook"
 
 
+# ---------------------------------------------------------------------------
+# NFM-4087 — D2 conditions field on list_material_properties
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_material_property_conditions_loaded(db_session: AsyncSession):
+    """Each MaterialPropertyItem carries its measurement's conditions.
+
+    NFM-4087 wires ``selectinload(PropertyMeasurement.conditions)`` into
+    the list query so the frontend "+N conditions" expander can render
+    temperature / pressure / environment / irradiation_dose / notes for
+    every underlying measurement without triggering a per-row lazy load.
+    """
+    mat = await _seed_material(db_session, name="UO2", formula="UO2")
+    src = await _seed_source(
+        db_session,
+        doi="10.1016/j.jnucmat.2023.123456",
+        title="UO2 activation energy",
+    )
+    cat = await _seed_category(db_session, name="Thermal", slug="thermal")
+    ptype = await _seed_type(
+        db_session, category=cat, name="Activation Energy", slug="ae"
+    )
+    ds = await _seed_dataset(db_session, material=mat, source=src)
+    meas_a = await _seed_measurement(
+        db_session, dataset=ds, property_type=ptype, value_scalar=0.3
+    )
+    meas_b = await _seed_measurement(
+        db_session, dataset=ds, property_type=ptype, value_scalar=0.3
+    )
+
+    # Two distinct conditions per measurement: NFM-4087 groups by
+    # (name, value, source.id); each measurement has its own conditions
+    # so the frontend expander lists all four rows.
+    await _seed_condition(
+        db_session,
+        measurement=meas_a,
+        temperature=298.15,
+        pressure=0.1,
+        environment="inert",
+    )
+    await _seed_condition(
+        db_session,
+        measurement=meas_a,
+        temperature=573.15,
+        pressure=0.1,
+        environment="inert",
+    )
+    await _seed_condition(
+        db_session,
+        measurement=meas_b,
+        temperature=873.15,
+        pressure=10.0,
+        environment="oxidising",
+        irradiation_dose=2.5,
+    )
+    await _seed_condition(
+        db_session,
+        measurement=meas_b,
+        temperature=1073.15,
+        pressure=10.0,
+        environment="oxidising",
+        notes="post-anneal",
+    )
+
+    result = await list_material_properties(db_session, material_id=mat.id)
+
+    assert result is not None
+    assert result.meta.total == 2
+
+    # Each measurement row carries exactly the conditions we seeded.
+    by_id = {row.id: row for row in result.data}
+    assert set(by_id.keys()) == {meas_a.id, meas_b.id}
+
+    a_conditions = by_id[meas_a.id].conditions
+    assert len(a_conditions) == 2
+    assert {c.temperature for c in a_conditions} == {298.15, 573.15}
+    assert all(c.pressure == 0.1 for c in a_conditions)
+    assert all(c.environment == "inert" for c in a_conditions)
+
+    b_conditions = by_id[meas_b.id].conditions
+    assert len(b_conditions) == 2
+    assert {c.temperature for c in b_conditions} == {873.15, 1073.15}
+    assert all(c.pressure == 10.0 for c in b_conditions)
+    assert all(c.environment == "oxidising" for c in b_conditions)
+    assert any(c.irradiation_dose == 2.5 for c in b_conditions)
+    assert any(c.notes == "post-anneal" for c in b_conditions)
+
+
+@pytest.mark.asyncio
+async def test_material_property_conditions_empty_when_none_seeded(
+    db_session: AsyncSession,
+):
+    """A measurement with no conditions yields an empty ``conditions`` list.
+
+    Regression guard for the ``conditions=[]`` default — without this,
+    the frontend would have to distinguish "field missing" from
+    "field empty list".
+    """
+    mat = await _seed_material(db_session, name="ZrO2", formula="ZrO2")
+    src = await _seed_source(db_session, doi="10.0000/x", title="ZrO2 paper")
+    cat = await _seed_category(db_session, name="Thermal", slug="thermal")
+    ptype = await _seed_type(
+        db_session, category=cat, name="Thermal Conductivity", slug="tc"
+    )
+    ds = await _seed_dataset(db_session, material=mat, source=src)
+    await _seed_measurement(db_session, dataset=ds, property_type=ptype, value_scalar=2.0)
+
+    result = await list_material_properties(db_session, material_id=mat.id)
+
+    assert result is not None
+    assert result.meta.total == 1
+    assert result.data[0].conditions == []
+
+
 @pytest.mark.asyncio
 async def test_authors_formatted_et_al(db_session: AsyncSession):
     """4+ authors are collapsed to the first three + ``"et al."``.

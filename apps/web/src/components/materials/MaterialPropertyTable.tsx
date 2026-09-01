@@ -6,7 +6,8 @@
  * input) are communicated back through callbacks so the parent can re-fetch
  * from the server.
  *
- * Columns: name, value, unit, source citation, confidence (ConfidenceBadge).
+ * Columns: name, value, unit, source citation, confidence (ConfidenceBadge),
+ *          count badge (NFM-4087).
  *
  * Spec: NFM-1066 §3
  *
@@ -24,14 +25,26 @@
  *   - User-supplied strings (title / journal / authors) flow through
  *     React's text rendering (never `dangerouslySetInnerHTML`) so XSS is
  *     impossible regardless of how the curator entered the data.
+ *
+ * NFM-4087 — D2 重复行处置. Rows that share (name, value, source?.id) are
+ * folded into a single display row whose CountBadge renders "×N" and whose
+ * expand affordance reveals each underlying measurement's conditions
+ * (temperature / pressure / environment / irradiation_dose / notes).
+ * Aggregation is performed client-side on the current page only; ``meta.total``
+ * continues to reflect the raw measurement count so pagination math stays
+ * consistent with the backend.
  */
 
 import { useCallback, useMemo } from "react"
-import { Table, Input, Empty, Spin, Typography, Tooltip } from "antd"
+import { Table, Input, Empty, Spin, Typography, Tooltip, Badge } from "antd"
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table"
 import type { SorterResult } from "antd/es/table/interface"
 import { ConfidenceBadge } from "@/components/shared/ConfidenceBadge"
-import type { MaterialProperty, SourceRef } from "@/lib/materials-api"
+import type {
+  MaterialProperty,
+  MeasurementCondition,
+  SourceRef,
+} from "@/lib/materials-api"
 
 const { Search } = Input
 const { Text } = Typography
@@ -66,6 +79,27 @@ export interface TableChangeParams {
   readonly sortOrder: "asc" | "desc" | null
 }
 
+/**
+ * One display row in the MaterialPropertyTable.
+ *
+ * NFM-4087 — wraps one or more underlying `MaterialProperty` rows that
+ * share the (name, value, source?.id) grouping key. ``allMeasurements``
+ * is always non-empty and preserves the original array order so the
+ * expanded "conditions" sub-table renders measurements in the same order
+ * the backend returned them.
+ */
+export interface GroupedMaterialProperty {
+  /** Stable row key — the smallest measurement id in the group. */
+  readonly key: string
+  readonly name: string
+  readonly value: string
+  readonly unit: string | null
+  readonly source: SourceRef | null
+  readonly confidence: number
+  readonly count: number
+  readonly allMeasurements: ReadonlyArray<MaterialProperty>
+}
+
 // ── Props ───────────────────────────────────────────────────────────────
 
 interface MaterialPropertyTableProps {
@@ -86,7 +120,7 @@ interface MaterialPropertyTableProps {
 
 /** Map Ant Design sort result to our `SortField | null`. */
 function extractSort(
-  sorter: SorterResult<MaterialProperty>,
+  sorter: SorterResult<GroupedMaterialProperty>,
 ): { sortField: SortField | null; sortOrder: "asc" | "desc" | null } {
   if (!sorter.order) {
     return { sortField: null, sortOrder: null }
@@ -172,6 +206,208 @@ export function renderSourceCell(source: SourceRef | null): React.ReactNode {
   )
 }
 
+// ── Grouping helpers (NFM-4087) ──────────────────────────────────────────
+
+/**
+ * Stable grouping key for the (name, value, source?.id) 3-tuple.
+ *
+ * The key MUST be derivable from a single measurement (so we can iterate
+ * rows in O(n)) and MUST be identical for every row in the same group.
+ * Using source.id rather than title is what makes the grouping stable
+ * when the upstream extraction chain swaps two papers with similar titles
+ * (NFM-4084 F2 risk).
+ *
+ * `source=null` rows share a single sentinel ("__unsourced__") so two
+ * unsourced measurements with identical name/value fold together. The
+ * sentinel is opaque — never displayed — so its exact spelling doesn't
+ * matter as long as it cannot collide with a real UUID.
+ */
+export function groupKey(row: MaterialProperty): string {
+  const sourceId = row.source === null ? "__unsourced__" : row.source.id
+  return `${sourceId}::${row.name}::${row.value}`
+}
+
+/**
+ * Group a flat list of measurements by `(name, value, source?.id)`.
+ *
+ * Exported so the test suite can assert the grouping without rendering
+ * React.  The returned list preserves the order of first appearance of
+ * each key in the input — important because the table sorts by the
+ * already-sorted backend payload and we don't want to disrupt that
+ * ordering when grouping re-buckets adjacent duplicates.
+ */
+export function groupRowsByKey(
+  rows: ReadonlyArray<MaterialProperty>,
+): ReadonlyArray<GroupedMaterialProperty> {
+  const buckets = new Map<string, MaterialProperty[]>()
+  const keyOrder: string[] = []
+  for (const row of rows) {
+    const key = groupKey(row)
+    let bucket = buckets.get(key)
+    if (bucket === undefined) {
+      bucket = []
+      buckets.set(key, bucket)
+      keyOrder.push(key)
+    }
+    bucket.push(row)
+  }
+  return keyOrder.map((key) => {
+    const measurements = buckets.get(key) as MaterialProperty[]
+    // Use the smallest measurement id as the stable row key. Sorting
+    // strings preserves UUID lex order which is well-defined for UUIDv4
+    // and gives the same key across renders. The bucket is non-empty by
+    // construction (we only enter this map for keys that already had a
+    // row pushed), so the [0] access is safe — but TS can't prove it,
+    // hence the explicit guard.
+    const sortedById = [...measurements].sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    )
+    const first = sortedById[0]
+    if (first === undefined) {
+      // Defensive — never reached because the bucket is built up above
+      // before we enter this map. Returning a placeholder keeps the
+      // function total so the return type is uniform.
+      return {
+        key: key,
+        name: "",
+        value: "",
+        unit: null,
+        source: null,
+        confidence: 0,
+        count: 0,
+        allMeasurements: measurements,
+      }
+    }
+    return {
+      key: first.id,
+      name: first.name,
+      value: first.value,
+      unit: first.unit,
+      source: first.source,
+      confidence: first.confidence,
+      count: measurements.length,
+      allMeasurements: measurements,
+    }
+  })
+}
+
+/**
+ * CountBadge — small `×N` indicator rendered after the confidence column.
+ *
+ * Exported for the same reason `renderSourceCell` is exported: the test
+ * suite asserts on its plain-text content. The badge is muted
+ * (``text-gray-400``) by design — it is metadata, not a primary signal,
+ * and a saturated colour would compete with the confidence pill.
+ */
+export function CountBadge({ count }: { readonly count: number }): React.ReactNode {
+  if (count <= 1) {
+    return null
+  }
+  return (
+    <Tooltip
+      title={`${count} 条 measurement 折叠为 1 行 (name + value + source 一致)`}
+      mouseEnterDelay={0.3}
+    >
+      <Badge
+        count={`×${count}`}
+        style={{
+          backgroundColor: "transparent",
+          color: "rgb(156 163 175)",
+          boxShadow: "none",
+          fontWeight: 500,
+          fontSize: "0.75rem",
+        }}
+      />
+    </Tooltip>
+  )
+}
+
+/**
+ * Render one row of the expanded conditions sub-table.
+ *
+ * NFM-4087 — the expander reveals per-measurement conditions; each row
+ * shows the citation (so curators can tell which source a condition
+ * belongs to) followed by T / P / environment / irradiation_dose / notes.
+ * Empty dimensions are rendered as "—" so the table reads as a uniform
+ * grid regardless of how sparse the source data is.
+ */
+function ConditionsSubRow({
+  measurement,
+}: {
+  readonly measurement: MaterialProperty
+}): React.ReactNode {
+  const sourceLabel = renderSourceCell(measurement.source)
+  const conds: ReadonlyArray<MeasurementCondition> = measurement.conditions
+  if (conds.length === 0) {
+    return (
+      <tr>
+        <td colSpan={6} className="text-gray-400 text-xs italic py-2">
+          这条 measurement 没有关联 conditions.
+        </td>
+      </tr>
+    )
+  }
+  return (
+    <>
+      {conds.map((c) => (
+        <tr key={c.id} className="text-xs">
+          <td className="text-gray-300 py-1 pr-3">{sourceLabel}</td>
+          <td className="text-gray-200 py-1 pr-3 font-mono">
+            {c.temperature === null ? "—" : `${c.temperature.toFixed(2)} K`}
+          </td>
+          <td className="text-gray-200 py-1 pr-3 font-mono">
+            {c.pressure === null ? "—" : `${c.pressure.toFixed(2)} MPa`}
+          </td>
+          <td className="text-gray-300 py-1 pr-3">
+            {c.environment ?? "—"}
+          </td>
+          <td className="text-gray-200 py-1 pr-3 font-mono">
+            {c.irradiation_dose === null ? "—" : `${c.irradiation_dose.toFixed(2)} dpa`}
+          </td>
+          <td className="text-gray-300 py-1 pr-3">{c.notes ?? "—"}</td>
+        </tr>
+      ))}
+    </>
+  )
+}
+
+/**
+ * The Ant Design expanded-row renderer. NFM-4087 wraps a sub-table that
+ * lists every underlying measurement's conditions; each row is anchored
+ * to the original measurement id so React keys remain stable even when
+ * two measurements have identical conditions.
+ */
+function ExpandedConditionsTable({
+  measurements,
+}: {
+  readonly measurements: ReadonlyArray<MaterialProperty>
+}): React.ReactNode {
+  return (
+    <div className="bg-slate-900/40 rounded-md p-3 my-1">
+      <Text className="text-gray-400 text-xs uppercase tracking-wide">
+        底层 {measurements.length} 条 measurement 的 conditions
+      </Text>
+      <table className="w-full mt-2 border-collapse">
+        <thead>
+          <tr className="text-left text-gray-400 text-xs">
+            <th className="py-1 pr-3 font-medium">来源</th>
+            <th className="py-1 pr-3 font-medium">温度</th>
+            <th className="py-1 pr-3 font-medium">压力</th>
+            <th className="py-1 pr-3 font-medium">环境</th>
+            <th className="py-1 pr-3 font-medium">辐照剂量</th>
+            <th className="py-1 pr-3 font-medium">备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          {measurements.map((m) => (
+            <ConditionsSubRow key={m.id} measurement={m} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Component ───────────────────────────────────────────────────────────
 
 export function MaterialPropertyTable({
@@ -187,7 +423,18 @@ export function MaterialPropertyTable({
   onPageChange,
   onFilterChange,
 }: MaterialPropertyTableProps) {
-  const columns: ColumnsType<MaterialProperty> = useMemo(
+  // NFM-4087 — fold rows that share (name, value, source?.id) into a
+  // single display row. Aggregation is per-page: the backend returns the
+  // raw measurement list, and we bucket here before handing it to Ant's
+  // Table. The grouping is recomputed whenever `data` changes so that
+  // server-side refetches (filter / sort / page change) refresh the
+  // visible rows without lingering stale buckets.
+  const groupedRows = useMemo(
+    () => groupRowsByKey(data),
+    [data],
+  )
+
+  const columns: ColumnsType<GroupedMaterialProperty> = useMemo(
     () => [
       {
         title: "属性名称",
@@ -235,6 +482,18 @@ export function MaterialPropertyTable({
         width: 100,
         render: (value: number) => <ConfidenceBadge value={value} size="sm" />,
       },
+      {
+        // NFM-4087 — "×N" indicator that the row folds N underlying
+        // measurements. Rendered in its own column (not adjacent to the
+        // name column) so it sits next to the confidence pill — visually
+        // grouping "data quality" signals together.
+        title: "计数",
+        key: "count",
+        width: 80,
+        render: (_value: unknown, row: GroupedMaterialProperty) => (
+          <CountBadge count={row.count} />
+        ),
+      },
     ],
     [sortField, sortOrder],
   )
@@ -243,9 +502,9 @@ export function MaterialPropertyTable({
     (
       pagination: TablePaginationConfig,
       _filters: Record<string, unknown>,
-      sorter: SorterResult<MaterialProperty> | SorterResult<MaterialProperty>[],
+      sorter: SorterResult<GroupedMaterialProperty> | SorterResult<GroupedMaterialProperty>[],
     ) => {
-      const singleSorter: SorterResult<MaterialProperty> | undefined = Array.isArray(sorter)
+      const singleSorter: SorterResult<GroupedMaterialProperty> | undefined = Array.isArray(sorter)
         ? sorter[0]
         : sorter
       if (singleSorter == null) {
@@ -270,6 +529,55 @@ export function MaterialPropertyTable({
     [onFilterChange],
   )
 
+  // NFM-4087 — aggregate-row highlight. We tint rows whose `count > 1`
+  // so the "folded" rows visually pop without needing the user to read
+  // the count badge. The colour is intentionally subtle (5% blue) so it
+  // does not compete with confidence or citation; consult the
+  // design-quality checklist before raising saturation.
+  const rowClassName = useCallback((row: GroupedMaterialProperty): string => {
+    if (row.count > 1) {
+      return "material-property-row material-property-row--grouped"
+    }
+    return "material-property-row"
+  }, [])
+
+  // NFM-4087 — only groups of 2+ can be expanded; single-measurement
+  // rows have nothing to disclose under the expander. Keeping
+  // `expandRowByClick` off so the disclosure triangle is the only way in
+  // — the table stays calm and the affordance is unambiguous.
+  const expandable = useMemo(
+    () => ({
+      rowExpandable: (row: GroupedMaterialProperty) => row.count > 1,
+      expandedRowRender: (row: GroupedMaterialProperty) => (
+        <ExpandedConditionsTable measurements={row.allMeasurements} />
+      ),
+      expandIcon: ({
+        expanded,
+        onExpand,
+        record,
+      }: {
+        expanded: boolean
+        onExpand: (record: GroupedMaterialProperty, e: React.MouseEvent<HTMLElement>) => void
+        record: GroupedMaterialProperty
+      }) => {
+        if (record.count <= 1) {
+          return <span className="inline-block w-4" />
+        }
+        return (
+          <button
+            type="button"
+            aria-label={expanded ? "折叠 conditions" : "展开 conditions"}
+            onClick={(e) => onExpand(record, e)}
+            className="inline-flex items-center justify-center w-4 h-4 text-gray-400 hover:text-gray-100 transition-colors"
+          >
+            <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          </button>
+        )
+      },
+    }),
+    [],
+  )
+
   if (error) {
     return (
       <Empty
@@ -285,7 +593,15 @@ export function MaterialPropertyTable({
       {/* Filter input */}
       <div className="flex items-center justify-between">
         <Text className="text-gray-400 text-sm">
+          {/* NFM-4087 — `meta.total` stays raw (measurement count, not
+              display row count) so pagination math matches the backend.
+              The page-level aggregate count is shown when it differs. */}
           共 {total} 条属性
+          {groupedRows.length < data.length ? (
+            <span className="ml-2 text-gray-500">
+              (本页折叠为 {groupedRows.length} 行)
+            </span>
+          ) : null}
         </Text>
         <Search
           placeholder="筛选属性..."
@@ -299,11 +615,13 @@ export function MaterialPropertyTable({
 
       {/* Table */}
       <Spin spinning={loading} tip="加载中...">
-        <Table<MaterialProperty>
+        <Table<GroupedMaterialProperty>
           columns={columns}
-          dataSource={[...data]}
-          rowKey="id"
+          dataSource={[...groupedRows]}
+          rowKey="key"
           size="middle"
+          rowClassName={rowClassName}
+          expandable={expandable}
           pagination={{
             current: page,
             pageSize,

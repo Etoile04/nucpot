@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
-import { MaterialPropertyTable, formatCitation, renderSourceCell } from "../MaterialPropertyTable"
-import type { MaterialProperty, SourceRef } from "@/lib/materials-api"
+import {
+  MaterialPropertyTable,
+  formatCitation,
+  groupKey,
+  groupRowsByKey,
+  renderSourceCell,
+} from "../MaterialPropertyTable"
+import type { MaterialProperty, MeasurementCondition, SourceRef } from "@/lib/materials-api"
 
 // ── Mock ConfidenceBadge ───────────────────────────────────────────────
 // ConfidenceBadge uses dynamic Tailwind classes that don't resolve in jsdom.
@@ -36,6 +42,22 @@ function makeProperty(overrides: Partial<MaterialProperty> = {}): MaterialProper
     unit: "g/cm³",
     source: makeSource({ title: "文献A" }),
     confidence: 0.95,
+    conditions: [],
+    ...overrides,
+  }
+}
+
+function makeCondition(
+  overrides: Partial<MeasurementCondition> = {},
+): MeasurementCondition {
+  return {
+    id: "cond-001",
+    measurement_id: "prop-001",
+    temperature: 298.15,
+    pressure: null,
+    environment: null,
+    irradiation_dose: null,
+    notes: null,
     ...overrides,
   }
 }
@@ -498,5 +520,357 @@ describe("renderSourceCell", () => {
   it("returns the Unsourced text node when source is null", () => {
     const node = renderSourceCell(null)
     expect(node).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// NFM-4087 — D2 duplicate-row grouping
+// ---------------------------------------------------------------------------
+
+describe("groupKey", () => {
+  it("returns identical keys for rows that share (name, value, source.id)", () => {
+    const a = makeProperty({ id: "p1" })
+    const b = makeProperty({ id: "p2" })
+    expect(groupKey(a)).toBe(groupKey(b))
+  })
+
+  it("differs when source.id changes even if name + value match", () => {
+    const a = makeProperty({
+      name: "Activation Energy",
+      value: "0.3",
+      source: makeSource({ id: "00000000-0000-0000-0000-000000000001" }),
+    })
+    const b = makeProperty({
+      name: "Activation Energy",
+      value: "0.3",
+      source: makeSource({ id: "00000000-0000-0000-0000-000000000002" }),
+    })
+    expect(groupKey(a)).not.toBe(groupKey(b))
+  })
+
+  it("groups unsourced rows together (sentinel)", () => {
+    const a = makeProperty({ source: null })
+    const b = makeProperty({ source: null, id: "p2" })
+    expect(groupKey(a)).toBe(groupKey(b))
+  })
+})
+
+describe("groupRowsByKey", () => {
+  it("folds 4 rows of UO2 activation_energy into 1 group with count=4", () => {
+    // Reproduces the UO2 activation_energy=0.3 eV scenario described in
+    // the NFM-4084 / NFM-4087 backstory.
+    const source = makeSource({
+      id: "9320cb50-aaaa-bbbb-cccc-000000000001",
+      title: "UO2 Activation Energy (Hall 1989)",
+    })
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "ae-1",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-1",
+            measurement_id: "ae-1",
+            temperature: 873.15,
+            pressure: 0.1,
+            environment: "inert",
+          }),
+        ],
+      }),
+      makeProperty({
+        id: "ae-2",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-2",
+            measurement_id: "ae-2",
+            temperature: 1073.15,
+            pressure: 0.1,
+            environment: "inert",
+          }),
+        ],
+      }),
+      makeProperty({
+        id: "ae-3",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-3",
+            measurement_id: "ae-3",
+            temperature: 1273.15,
+            pressure: 0.1,
+            environment: "inert",
+          }),
+        ],
+      }),
+      makeProperty({
+        id: "ae-4",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-4",
+            measurement_id: "ae-4",
+            temperature: 1473.15,
+            pressure: 0.1,
+            environment: "inert",
+          }),
+        ],
+      }),
+    ]
+
+    const grouped = groupRowsByKey(rows)
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0]?.count).toBe(4)
+    expect(grouped[0]?.allMeasurements.map((m) => m.id).sort()).toEqual([
+      "ae-1",
+      "ae-2",
+      "ae-3",
+      "ae-4",
+    ])
+  })
+
+  it("does NOT group rows that differ on source.id even if title matches", () => {
+    // Regression guard: NFM-4084 F2 — two papers sharing a short title
+    // prefix ("Owen (2023). J. Nucl. Mater.") must not fold together
+    // when they reference distinct sources. Using `source.id` (stable
+    // UUID) instead of `source.title` is the whole point of D1's
+    // SourceRef upgrade; this test pins that contract.
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "p1",
+        name: "Density",
+        value: "10.5",
+        source: makeSource({
+          id: "00000000-0000-0000-0000-000000000001",
+          title: "Same title",
+        }),
+      }),
+      makeProperty({
+        id: "p2",
+        name: "Density",
+        value: "10.5",
+        source: makeSource({
+          id: "00000000-0000-0000-0000-000000000002",
+          title: "Same title",
+        }),
+      }),
+    ]
+
+    const grouped = groupRowsByKey(rows)
+
+    expect(grouped).toHaveLength(2)
+    expect(grouped[0]?.count).toBe(1)
+    expect(grouped[1]?.count).toBe(1)
+  })
+
+  it("preserves the original first-appearance order across the page", () => {
+    // The backend returns rows in a deterministic order (sort by name
+    // asc). The grouping helper must NOT re-sort — that would scramble
+    // adjacent duplicates and confuse the sort indicator.
+    const source = makeSource({ id: "00000000-0000-0000-0000-000000000003" })
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({ id: "a", name: "Alpha", value: "1", source }),
+      makeProperty({ id: "b", name: "Beta", value: "2", source }),
+      makeProperty({ id: "a2", name: "Alpha", value: "1", source }),
+    ]
+
+    const grouped = groupRowsByKey(rows)
+
+    expect(grouped.map((g) => g.key)).toEqual(["a", "b"])
+    expect(grouped[0]?.allMeasurements.map((m) => m.id)).toEqual(["a", "a2"])
+  })
+})
+
+describe("MaterialPropertyTable — NFM-4087 grouped rendering", () => {
+  it("renders a single fold row with ×N count badge when 4 measurements share key", () => {
+    const source = makeSource({ title: "Folded source" })
+    const rows: ReadonlyArray<MaterialProperty> = [1, 2, 3, 4].map((i) =>
+      makeProperty({
+        id: `ae-${i}`,
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        confidence: 0.9,
+        conditions: [
+          makeCondition({
+            id: `c-${i}`,
+            measurement_id: `ae-${i}`,
+            temperature: 298.15 + i * 100,
+            pressure: 0.1,
+            environment: "inert",
+          }),
+        ],
+      }),
+    )
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // Exactly one row of attribute name "Activation Energy" is rendered,
+    // not four. The CountBadge carries the "×4" suffix.
+    expect(screen.getAllByText("Activation Energy")).toHaveLength(1)
+    expect(screen.getByText("×4")).toBeInTheDocument()
+  })
+
+  it("does NOT fold rows whose source.id differs even when the title matches", () => {
+    const sharedTitle = "Same citation title"
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "src1",
+        name: "Density",
+        value: "10.5",
+        source: makeSource({ id: "src-aaa", title: sharedTitle }),
+      }),
+      makeProperty({
+        id: "src2",
+        name: "Density",
+        value: "10.5",
+        source: makeSource({ id: "src-bbb", title: sharedTitle }),
+      }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // Both rows render separately; no count badge because neither group
+    // has count > 1.
+    expect(screen.getAllByText("Density")).toHaveLength(2)
+    expect(screen.queryByText(/^×/)).not.toBeInTheDocument()
+  })
+
+  it("expander reveals temperature / pressure / environment for each underlying measurement", () => {
+    const source = makeSource({ title: "Multi-condition source" })
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "ae-1",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-1",
+            measurement_id: "ae-1",
+            temperature: 873.15,
+            pressure: 0.1,
+            environment: "inert",
+          }),
+        ],
+      }),
+      makeProperty({
+        id: "ae-2",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-2",
+            measurement_id: "ae-2",
+            temperature: 1073.15,
+            pressure: 10.0,
+            environment: "oxidising",
+            notes: "post-anneal",
+          }),
+        ],
+      }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // The single grouped row has an expand affordance labelled
+    // "展开 conditions"; click it to open the sub-table.
+    const expandButton = screen.getByRole("button", { name: "展开 conditions" })
+    fireEvent.click(expandButton)
+
+    // The expander table shows the heading "底层 2 条 measurement 的 conditions".
+    expect(
+      screen.getByText("底层 2 条 measurement 的 conditions"),
+    ).toBeInTheDocument()
+
+    // Each condition row carries its temperature / pressure / environment.
+    expect(screen.getByText("873.15 K")).toBeInTheDocument()
+    expect(screen.getByText("0.10 MPa")).toBeInTheDocument()
+    expect(screen.getByText("1073.15 K")).toBeInTheDocument()
+    expect(screen.getByText("10.00 MPa")).toBeInTheDocument()
+    expect(screen.getByText("oxidising")).toBeInTheDocument()
+    expect(screen.getByText("post-anneal")).toBeInTheDocument()
+  })
+
+  it("shows the page-level fold count next to the total when the page folded", () => {
+    const source = makeSource({ title: "Folded source" })
+    const rows: ReadonlyArray<MaterialProperty> = [1, 2].map((i) =>
+      makeProperty({
+        id: `dup-${i}`,
+        name: "Density",
+        value: "10.5",
+        source,
+      }),
+    )
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // Header reads "共 2 条属性" (raw total) plus "(本页折叠为 1 行)" hint.
+    expect(screen.getByText(/共 2 条属性/)).toBeInTheDocument()
+    expect(screen.getByText("(本页折叠为 1 行)")).toBeInTheDocument()
+  })
+
+  it("omits the fold-count hint when the page is fully unfolded", () => {
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({ id: "p1", name: "Density", value: "10.5" }),
+      makeProperty({ id: "p2", name: "Melting", value: "1850" }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    expect(screen.getByText(/共 2 条属性/)).toBeInTheDocument()
+    expect(screen.queryByText(/本页折叠为/)).not.toBeInTheDocument()
   })
 })

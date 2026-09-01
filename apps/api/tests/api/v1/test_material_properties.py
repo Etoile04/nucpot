@@ -195,7 +195,20 @@ async def test_list_material_properties_response_shape(async_client, db_session)
     assert len(inner["data"]) == 1
 
     row = inner["data"][0]
-    assert set(row.keys()) == {"id", "name", "value", "unit", "source", "confidence"}
+    # NFM-4087 — `conditions` was added so the frontend "+N conditions"
+    # expander can render per-measurement experimental conditions
+    # without a lazy load. The list is empty when the seeded measurement
+    # has no MeasurementCondition rows (this test does not seed any).
+    assert set(row.keys()) == {
+        "id",
+        "name",
+        "value",
+        "unit",
+        "source",
+        "confidence",
+        "conditions",
+    }
+    assert row["conditions"] == []
     assert row["name"] == "密度"
     assert row["value"] == "5.68"
     assert row["unit"] == "W/(m·K)"  # unit symbol
