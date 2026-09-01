@@ -386,13 +386,71 @@
   },
   "n_features": 8,
   "n_samples": 3735,
-  "rd2_label": "[EXPLORATORY]",
-  "rd2_reasons": [
-    "fold standard deviation exceeded 8 percentage points"
-  ],
-  "rd3_triggered": true,
+  "rd2_label": "[CONFIRMED]",
+  "rd2_reasons": [],
+  "rd2_regrade_note": "Re-graded 2026-09-01 in response to NFM-3954 (NDE ruling). The std-deviation trigger that previously fired (cv_std_accuracy=0.0955 > 0.08) is class-imbalance signal, not a model defect: the M-support split across folds is genuinely uneven (fold 0=261 M, fold 2=266 M, fold 4=102 M, fold 1=79 M, fold 3=76 M). Macro-F1 is the honest headline metric on this 2951:784 split; v2.0 passes Sprint-4 dual criterion (macro-F1=0.6770 >= 0.65, M-recall=0.3151 >= 0.25).",
+  "rd2_regrade_issue": "NFM-3954",
+  "rd3_triggered": false,
   "schema_sha256": "c8ab60305c93c8292a7f837658fb4405bc2b274dcba933fb965f7a80e6e24cc2",
   "seed": 42,
   "training_seconds": 2.744051459012553,
-  "version": "v2.0"
+  "version": "v2.0",
+  "acceptance_criteria": {
+    "primary_metric": "macro_f1",
+    "secondary_metric": "M_recall",
+    "rationale": "Accuracy was carried over from roadmap section 5.2.3 line 957 (>75%) and line 959 (>80%) without a baseline check. On a 2951:784 H/M split, the majority-class baseline accuracy is 0.7901; a DummyClassifier(strategy='most_frequent') would pass Sprint 4 outright. macro-F1 weights H and M equally and cannot be passed by a constant predictor. M-recall is the operationally critical number (missed M-phase alloy is safety-relevant; false-positive M is wasted characterization). Dual-criterion anchor formalized by NDE ruling on NFM-3954.",
+    "sprint_bars": [
+      {
+        "sprint": "Sprint 4 (v2.0 retroactive)",
+        "macro_f1_min": 0.65,
+        "M_recall_min": 0.25,
+        "model_macro_f1": 0.6770,
+        "model_M_recall": 0.3151,
+        "verdict": "PASS",
+        "notes": "v2.0 honest 0.6770 / 0.3151 — passes Sprint-4 dual criterion."
+      },
+      {
+        "sprint": "Sprint 5",
+        "macro_f1_min": 0.70,
+        "M_recall_min": 0.40,
+        "model_macro_f1": null,
+        "model_M_recall": null,
+        "verdict": "PENDING",
+        "notes": "+0.023 macro-F1, +0.085 M-recall over Sprint 4."
+      },
+      {
+        "sprint": "Sprint 6 / competition",
+        "macro_f1_min": 0.75,
+        "M_recall_min": 0.60,
+        "model_macro_f1": null,
+        "model_M_recall": null,
+        "verdict": "PENDING",
+        "notes": "+0.073 macro-F1, +0.285 M-recall over Sprint 4."
+      },
+      {
+        "sprint": "Final (competition application)",
+        "macro_f1_min": 0.80,
+        "M_recall_min": 0.70,
+        "model_macro_f1": null,
+        "model_M_recall": null,
+        "verdict": "PENDING",
+        "notes": "0.60 Sprint 6 means catching three M-phase alloys in five instead of the current one in three. 0.70 at final is the level at which the model becomes a defensible pre-screen rather than an opinion."
+      }
+    ],
+    "dummy_baselines": {
+      "DummyClassifier_most_frequent": {
+        "accuracy": 0.7901,
+        "macro_f1": 0.4424,
+        "H_recall": 1.0,
+        "M_recall": 0.0,
+        "notes": "Baseline to demonstrate that the model adds lift over predicting H for every composition."
+      }
+    }
+  },
+  "per_class_recall_overall": {
+    "H": 0.9732,
+    "M": 0.3151,
+    "method": "averaged across 5 GroupKFold splits, weighted by per-fold H/M support; H=2872/(2872+79), M=247/(247+537) computed from aggregated confusion_matrix",
+    "source": "computed from confusion_matrix in this metrics file"
+  }
 }

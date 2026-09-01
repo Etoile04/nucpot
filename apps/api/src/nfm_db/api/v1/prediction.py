@@ -64,12 +64,10 @@ async def predict_phase_endpoint(
         raise HTTPException(
             status_code=503,
             detail="Phase classifier model is not available. "
-                   "Ensure the model artifact is deployed at models/phase_classifier_v01.joblib.",
+            "Ensure the model artifact is deployed at models/phase_classifier_v01.joblib.",
         )
 
-    feature_importance = (
-        result.get("feature_importance") if importance else None
-    )
+    feature_importance = result.get("feature_importance") if importance else None
 
     return ApiResponse(
         success=True,
@@ -120,12 +118,10 @@ async def predict_temperature_endpoint(
         raise HTTPException(
             status_code=503,
             detail="Temperature predictor model is not available. "
-                   "Ensure the model artifact is deployed at models/temp_predictor_v01.joblib.",
+            "Ensure the model artifact is deployed at models/temp_predictor_v01.joblib.",
         )
 
-    feature_importance = (
-        result.get("feature_importance") if importance else None
-    )
+    feature_importance = result.get("feature_importance") if importance else None
 
     return ApiResponse(
         success=True,
@@ -159,7 +155,15 @@ async def predict_temperature_endpoint(
 async def predict_energy_endpoint(
     payload: EnergyPredictRequest | EnergyPredictV11Request,
 ) -> ApiResponse[EnergyPredictResponse]:
-    """Predict formation energy (v1.0 8D features or v1.1 composition)."""
+    """Predict formation energy (v1.0 8D features or v1.1 composition).
+
+    NFM-3956 honesty contract: the response carries ``confidence_source``
+    so downstream UIs can render source-aware disclaimers without
+    parsing warning text. ``confidence`` is ``None`` for legacy
+    pre-NFM-3953 v3.0 artifacts (the inflated random-split headline is
+    surfaced only in the ``warnings`` array, not as the response's
+    primary ``confidence`` value).
+    """
     if isinstance(payload, EnergyPredictV11Request):
         result = predict_energy_from_composition(payload.composition)
     else:
@@ -170,7 +174,7 @@ async def predict_energy_endpoint(
         raise HTTPException(
             status_code=503,
             detail="Energy predictor model is not available. "
-                   "Ensure the model artifact is deployed at models/energy_predictor_v11.joblib (v1.1) or energy_predictor_v01.joblib (v1.0).",
+            "Ensure the model artifact is deployed at models/energy_predictor_v11.joblib (v1.1) or energy_predictor_v01.joblib (v1.0).",
         )
 
     return ApiResponse(
@@ -178,6 +182,7 @@ async def predict_energy_endpoint(
         data=EnergyPredictResponse(
             predicted_energy=result["predicted_energy"],
             confidence=result["confidence"],
+            confidence_source=result["confidence_source"],
             warnings=[
                 PredictionWarningItem(code=w["code"], message=w["message"])
                 for w in result.get("warnings", [])
@@ -222,9 +227,7 @@ async def predict_phase_from_composition_endpoint(
             ),
         )
 
-    feature_importance = (
-        result.get("feature_importance") if importance else None
-    )
+    feature_importance = result.get("feature_importance") if importance else None
 
     return ApiResponse(
         success=True,
